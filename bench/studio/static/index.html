@@ -69,7 +69,11 @@
   </details>
   <details id="study-section" open>
     <summary>Skin</summary>
-    <button id="material-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Material</span><span class="chevron"></span></button>
+    <!-- The structural-material picker is gone from view: the weight
+         system derives the material from the chosen skin, and the sprayed
+         distinction moved to the Pattern control. The hidden select below
+         remains the state the server contract reads. -->
+    <button id="material-picker" class="picker hidden" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Material</span><span class="chevron"></span></button>
     <div id="material-tiles" class="tile-grid hidden"></div>
     <select id="material-select" class="hidden">
       <option value="concrete">Concrete C30/37</option>
@@ -101,6 +105,8 @@
     <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
     <label>Relief <input id="material-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
     <label>Occlusion <input id="material-occlusion" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
+    <label>Variation <input id="material-variation" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
+    <button id="uv-randomise" title="Re-deal every voussoir's crop rotation so the courses stop looking aligned">Randomise texture</button>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note" class="hidden"></div>
     <div class="named"><span>Pattern</span><select id="pattern-select"></select></div>
@@ -109,6 +115,7 @@
       <span id="size-value">900</span><span id="size-units"> mm target</span>, <span id="piece-count">0</span> pieces in
       <span id="course-count">0</span> courses</label>
     <label>Thickness <input id="thickness-input" type="range" min="0.1" max="0.4" step="0.01" value="0.2"> <span id="thickness-value">200</span> mm</label>
+    <div id="weight-note" title="Areal load from the skin's density and the thickness: the q a true analysis runs on"></div>
   </details>
   <details id="analysis-section">
     <summary>Analysis</summary>
@@ -211,6 +218,10 @@
       <option value="dark-studio" selected>Dark studio</option>
     </select></label>
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
+    <label>Scale X <input id="ground-scale-x" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="ground-scale-x-value">100</span>%</label>
+    <label>Scale Y <input id="ground-scale-y" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="ground-scale-y-value">100</span>%</label>
+    <label>Relief <input id="ground-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
+    <button id="ground-randomise" title="Slide the floor pattern so the grout lines land somewhere new">Randomise floor</button>
 
     <span class="row-heading">Props</span>
     <div id="props-folder-row" class="folder-line">

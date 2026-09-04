@@ -18,6 +18,88 @@ export function segmentUVOffset(key) {
   return [(hash % 97) / 9.7, ((hash >>> 8) % 97) / 9.7];
 }
 
+// A quarter-turn per piece, from the same FNV hash family as the offset:
+// deterministic for a given key, so the same study always looks the same,
+// and re-seeded wholesale by the Randomise button (the key carries the
+// seed). Four turns are enough to break the alignment the eye finds when
+// every voussoir wears the crop the same way up.
+export function uvQuarterTurn(key) {
+  return Math.floor(segmentUVOffset(key)[1] * 9.7) % 4;
+}
+
+// One unit of the substance stretched to fit ONE voussoir: the QS rule
+// (the picture IS one unit's face) applied per piece, as Param asked --
+// "the material needs to be mapped to the voussoirs not to a world
+// mapping... each face should be a clean texture."
+//
+// The whole piece -- top face, bottom face and its thin joint walls -- is
+// projected onto the piece's own best-fit plane (Newell normal over the
+// triangle soup) and normalised to 0..1 over its footprint, so the crop
+// fills the face exactly, whatever the voussoir's size or aspect. The
+// joint walls inherit the rim of the crop, which keeps edges continuous
+// and is invisible inside a closed joint. rotation is 0..3 quarter turns
+// within the unit square.
+export function stretchUVs(positions, rotation = 0) {
+  // Newell's method over every triangle: robust for any winding and any
+  // curvature the cutter produces.
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < positions.length; i += 9) {
+    for (let corner = 0; corner < 3; corner++) {
+      const ax = positions[i + 3 * corner];
+      const ay = positions[i + 3 * corner + 1];
+      const az = positions[i + 3 * corner + 2];
+      const next = (corner + 1) % 3;
+      const bx = positions[i + 3 * next];
+      const by = positions[i + 3 * next + 1];
+      const bz = positions[i + 3 * next + 2];
+      nx += (ay - by) * (az + bz);
+      ny += (az - bz) * (ax + bx);
+      nz += (ax - bx) * (ay + by);
+    }
+  }
+  const length = Math.hypot(nx, ny, nz) || 1;
+  nx /= length; ny /= length; nz /= length;
+  // A stable in-plane basis: world X projected into the plane, unless the
+  // plane is nearly vertical-X, then world Y.
+  let e1x = 1 - nx * nx, e1y = -nx * ny, e1z = -nx * nz;
+  let e1len = Math.hypot(e1x, e1y, e1z);
+  if (e1len < 1e-6) {
+    e1x = -ny * nx; e1y = 1 - ny * ny; e1z = -ny * nz;
+    e1len = Math.hypot(e1x, e1y, e1z) || 1;
+  }
+  e1x /= e1len; e1y /= e1len; e1z /= e1len;
+  const e2x = ny * e1z - nz * e1y;
+  const e2y = nz * e1x - nx * e1z;
+  const e2z = nx * e1y - ny * e1x;
+
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  const flat = new Array((positions.length / 3) * 2);
+  for (let i = 0, j = 0; i < positions.length; i += 3, j += 2) {
+    const u = positions[i] * e1x + positions[i + 1] * e1y + positions[i + 2] * e1z;
+    const v = positions[i] * e2x + positions[i + 1] * e2y + positions[i + 2] * e2z;
+    flat[j] = u; flat[j + 1] = v;
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+  const spanU = maxU - minU || 1;
+  const spanV = maxV - minV || 1;
+  const uvs = new Array(flat.length);
+  for (let j = 0; j < flat.length; j += 2) {
+    let u = (flat[j] - minU) / spanU;
+    let v = (flat[j + 1] - minV) / spanV;
+    for (let turn = 0; turn < (rotation & 3); turn++) {
+      const kept = u;
+      u = v;
+      v = 1 - kept;
+    }
+    uvs[j] = u;
+    uvs[j + 1] = v;
+  }
+  return uvs;
+}
+
 // Box projection: each triangle is laid flat against whichever of the three
 // planes its own normal leans on most, and the two remaining world axes
 // become u and v. That is what makes a texture sit on a doubly curved shell

@@ -136,7 +136,13 @@ def test_a_piece_is_laid_out_in_metres_when_the_material_knows_its_size():
     assert "export function boxUVs(positions, centroid, offset, scaleU = 0.15, scaleV = scaleU)" in fields
     assert "* scaleU + offset[0]" in fields and "* scaleV + offset[1]" in fields
     source = studio()
-    assert "boxUVs(positions, centre, segmentUVOffset(piece.key), 1 / tile[0], 1 / tile[1])" in source
+    # Re-pinned 2026-09-04 on Param's ruling: a library material is mapped
+    # to the VOUSSOIR, one unit crop stretched to fit each piece with a
+    # seeded quarter-turn, not laid out across the world in metres. The
+    # metric layout survives where it belongs: the ground's tiling
+    # (groundRepeat) still turns real tile sizes into repeats.
+    assert "stretchUVs(positions, uvQuarterTurn(seedKey))" in source
+    assert 'piece.key + "#" + (state.appearance.uvSeed || 0)' in source
 
 
 def test_the_library_is_the_render_skin_and_stays_render_only():

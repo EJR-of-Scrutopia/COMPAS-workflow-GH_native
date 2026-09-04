@@ -155,7 +155,7 @@ body { overflow: hidden;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: var(--danger); color: #fff;
           border-radius: var(--radius); font-size: var(--t-2); z-index: 10; }
-#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note, #hdri-status { color: var(--ink-2); min-height: 1.2em; }
+#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
 /* The panel token, so the data sheet follows the theme: it kept a fixed
    near-black ground under themed text, which light mode made unreadable. */
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
@@ -566,7 +566,7 @@ body { overflow: hidden;
 
 /* Metadata is 11px wherever it appears, and nothing else is. */
 #run-status, #cut-status, #record-status, #import-status,
-#pattern-note, #appearance-note, #prop-credit, #scene-count,
+#pattern-note, #appearance-note, #prop-credit, #scene-count, #weight-note,
 #panel .folder-line span, .tile span, .scene-tile .scene-study {
   font-size: var(--t-meta); }
 

@@ -533,3 +533,87 @@ def test_the_sun_is_where_the_almanac_says_it_is(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+STRETCH_CHECK = textwrap.dedent("""
+    import { stretchUVs, uvQuarterTurn } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+
+    // A flat 2 x 1 metre face in the z = 0 plane, two triangles.
+    const face = [
+      0,0,0,  2,0,0,  2,1,0,
+      0,0,0,  2,1,0,  0,1,0,
+    ];
+    const uvs = stretchUVs(face);
+    // Stretch-to-fit: the crop fills 0..1 on BOTH axes regardless of the
+    // face being twice as wide as tall -- each face is one clean texture.
+    let minU = 1, maxU = 0, minV = 1, maxV = 0;
+    for (let j = 0; j < uvs.length; j += 2) {
+      minU = Math.min(minU, uvs[j]); maxU = Math.max(maxU, uvs[j]);
+      minV = Math.min(minV, uvs[j + 1]); maxV = Math.max(maxV, uvs[j + 1]);
+    }
+    expect(near(minU, 0) && near(maxU, 1) && near(minV, 0) && near(maxV, 1),
+      "the crop fills the face exactly on both axes");
+
+    // Deterministic, and rotation permutes the corners within the square.
+    const turned = stretchUVs(face, 1);
+    expect(!near(turned[0], uvs[0]) || !near(turned[1], uvs[1]),
+      "a quarter turn moves the corners");
+    let tMinU = 1, tMaxU = 0;
+    for (let j = 0; j < turned.length; j += 2) {
+      tMinU = Math.min(tMinU, turned[j]); tMaxU = Math.max(tMaxU, turned[j]);
+    }
+    expect(near(tMinU, 0) && near(tMaxU, 1),
+      "a turned crop still fills the unit square");
+    const again = stretchUVs(face, 5);
+    for (let j = 0; j < turned.length; j++) {
+      expect(near(again[j], turned[j]), "rotation is modulo four");
+    }
+
+    // A tilted face (45 degrees about x) still gets a full flat crop: the
+    // projection is the piece's own plane, not a world axis.
+    const tilted = [
+      0,0,0,  2,0,0,  2,1,1,
+      0,0,0,  2,1,1,  0,1,1,
+    ];
+    const tiltedUVs = stretchUVs(tilted);
+    let sMinV = 1, sMaxV = 0;
+    for (let j = 0; j < tiltedUVs.length; j += 2) {
+      sMinV = Math.min(sMinV, tiltedUVs[j + 1]);
+      sMaxV = Math.max(sMaxV, tiltedUVs[j + 1]);
+    }
+    expect(near(sMinV, 0) && near(sMaxV, 1),
+      "a tilted face is unrolled onto its own plane, not squashed by a world axis");
+
+    const turnA = uvQuarterTurn("piece-1#0");
+    const turnB = uvQuarterTurn("piece-1#0");
+    const turnSeeded = uvQuarterTurn("piece-1#123456");
+    expect(turnA === turnB, "the quarter turn is deterministic per key");
+    expect(turnA >= 0 && turnA < 4 && Number.isInteger(turnA), "a turn is 0..3");
+    // Different seeds MAY collide on one piece; across a handful of pieces
+    // at least one must differ or the button would do nothing.
+    let differs = false;
+    for (const piece of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      if (uvQuarterTurn(piece + "#0") !== uvQuarterTurn(piece + "#123456")) differs = true;
+    }
+    expect(differs, "re-seeding re-deals at least some pieces");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_stretch_uvs_fit_one_crop_per_voussoir(tmp_path):
+    """Param: 'the material needs to be mapped to the voussoirs not to a
+    world mapping... I think the materials should also stretch to fit on
+    the voussoirs as each face should be a clean texture.'"""
+
+    script = tmp_path / "check_stretch.mjs"
+    script.write_text(STRETCH_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
+    finished = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert finished.returncode == 0, finished.stderr or finished.stdout
+    assert "ok" in finished.stdout

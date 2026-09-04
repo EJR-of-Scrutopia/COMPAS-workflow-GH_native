@@ -15,7 +15,8 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
 import {
-  boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
+  boxUVs, segmentUVOffset, stretchUVs, uvQuarterTurn,
+  smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
   sunPosition, sunLight, timeAtElevation,
@@ -109,6 +110,10 @@ const state = {
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
+  // The floor texture's own dials: per-axis scale multipliers over the
+  // real-world repeat, its own relief depth, and a slid offset from the
+  // Randomise button (rebuildGround applies all four).
+  ground: { scaleX: 1, scaleY: 1, relief: 1, offset: [0, 0] },
   props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
   carrying: null,      // { record, from } while a prop follows the cursor (see carryNewProp)
   armedPropType: null,  // kept for the older arming path used by nothing in the panel now
@@ -168,7 +173,8 @@ const state = {
   // and persisted per material under "bench-studio-appearance:" + material
   // (see restoreAppearance/persistAppearance). null means no override; the
   // registry material (or a skin) shows through untouched.
-  appearance: { tint: null, finish: null, skin: "none" },
+  appearance: { tint: null, finish: null, skin: "none",
+    variation: 1, uvSeed: 0 },
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
@@ -734,7 +740,7 @@ async function loadGroundMaterial(key) {
     const set = await loadLibraryMaterial(entry, {
       px: VIEWPORT_PX,
       anisotropy: renderer.capabilities.getMaxAnisotropy(),
-      relief: state.relief,
+      relief: state.ground.relief,
       occlusion: state.occlusion,
       base: GROUND_BASE,
     });
@@ -797,16 +803,22 @@ function rebuildGround() {
     // The library knows how much of the world one picture shows, so the
     // repeat is arithmetic rather than a number tuned by eye. Every map,
     // not the albedo alone: each slot carries its own transform uniform and
-    // a mismatch shows the moment the sun moves.
+    // a mismatch shows the moment the sun moves. The scale dials multiply
+    // that truth per axis (Param: "a scale x and y is preferable"), and
+    // the randomised offset slides the whole pattern so two renders of the
+    // same floor need not land the same grout line under the same pier.
     const tile = groundLibrarySet.entry.tileMetres
       || [DEFAULT_TILE_METRES, DEFAULT_TILE_METRES];
     const [u, v] = groundRepeat(state.groundRadius, tile);
-    setRepeat(groundLibrarySet, u, v);
+    setRepeat(groundLibrarySet, u * state.ground.scaleX, v * state.ground.scaleY);
+    for (const texture of groundLibrarySet.textures) {
+      texture.offset.set(state.ground.offset[0], state.ground.offset[1]);
+    }
   } else {
     const tile = material.userData.groundTileMetres;
     if (tile && material.map) {
       const [u, v] = groundRepeat(state.groundRadius, tile);
-      material.map.repeat.set(u, v);
+      material.map.repeat.set(u * state.ground.scaleX, v * state.ground.scaleY);
     }
   }
   const ground = new THREE.Mesh(
@@ -1663,7 +1675,9 @@ function collectScene() {
       peakElevation: state.dayCycle.peakElevation,
       record: state.dayCycle.record,
     },
-    ground: { preset: state.groundPreset, radius: state.groundRadius },
+    ground: { preset: state.groundPreset, radius: state.groundRadius,
+      scaleX: state.ground.scaleX, scaleY: state.ground.scaleY,
+      relief: state.ground.relief, offset: state.ground.offset.slice() },
     props: state.props.map((record) => ({
       type: record.type, x: record.x, y: record.y, rotation: record.rotation,
     })),
@@ -1721,6 +1735,11 @@ async function applyScene(record) {
       control("ground-radius").value = scene_.ground.radius;
       control("ground-radius-value").textContent = scene_.ground.radius;
     }
+    if (typeof scene_.ground.scaleX === "number") state.ground.scaleX = scene_.ground.scaleX;
+    if (typeof scene_.ground.scaleY === "number") state.ground.scaleY = scene_.ground.scaleY;
+    if (typeof scene_.ground.relief === "number") state.ground.relief = scene_.ground.relief;
+    if (Array.isArray(scene_.ground.offset)) state.ground.offset = scene_.ground.offset.slice(0, 2);
+    syncGroundControls();
   }
   if (scene_.layers) state.layers = Object.assign({}, state.layers, scene_.layers);
   if (scene_.appearance) state.appearance = Object.assign({}, scene_.appearance);
@@ -2424,6 +2443,87 @@ async function ensureLibraryMaterial(key) {
   return loading;
 }
 
+// ---------- the weight system ----------
+// The first material dropdown is gone from the panel on Param's word: "the
+// logic for that is that it calculates weight of the material... automated
+// calculation worth setting up with the thickness of material plus the type
+// of material." The type now comes from the chosen SKIN, the weight from a
+// density table, and the sprayed distinction from the Pattern control.
+//
+// Densities in kg/m3. Family first, then name keywords refine the ones
+// where the family is not one substance: there are different metals and
+// different concretes, as he said. Values are the standard ones (BS EN
+// 1991-1-1 territory), with the structural seven mirroring staging.py so
+// the display never disagrees with the analysis' own self-weight.
+const STRUCTURAL_DENSITIES = {
+  concrete: 2400, "concrete-c50": 2400, "concrete-sprayed": 2300,
+  timber: 385, brick: 1900, tile: 1800, stone: 2500,
+};
+const FAMILY_DENSITIES = {
+  concrete: 2400, brick: 1900, clay: 1900, stone: 2400, timber: 500,
+  plaster: 850, paint: 2400, slate: 2800, metal: 7850, aggregate: 1600,
+};
+const NAME_DENSITIES = [
+  [/copper/, 8940], [/aluminium/, 2700], [/steel/, 7850], [/brass/, 8500],
+  [/granite/, 2700], [/marble/, 2700], [/limestone/, 2400],
+  [/sandstone/, 2300], [/rubble/, 2200], [/travertine/, 2400],
+];
+
+function skinDensity() {
+  const skin = state.appearance.skin;
+  if (isLibraryKey(skin)) {
+    const entry = libraryEntry(skin);
+    if (entry) {
+      for (const [pattern, density] of NAME_DENSITIES) {
+        if (pattern.test(entry.name)) return density;
+      }
+      if (FAMILY_DENSITIES[entry.family]) return FAMILY_DENSITIES[entry.family];
+    }
+  }
+  const structural = document.getElementById("material-select").value;
+  return STRUCTURAL_DENSITIES[structural] || 2400;
+}
+
+// Which of the server's seven structural materials this skin implies: the
+// cut request, friction and the analysis' self-weight all key on it. A
+// family with no structural analogue (a metal or plaster FINISH on a
+// vault) falls back to concrete; the sprayed variant is chosen by the
+// Pattern control, never here.
+const FAMILY_TO_STRUCTURAL = {
+  brick: "brick", stone: "stone", clay: "tile", timber: "timber",
+  concrete: "concrete",
+};
+
+function structuralClassFor(skin) {
+  if (patternIsMonolithic()) return "concrete-sprayed";
+  if (isLibraryKey(skin)) {
+    const entry = libraryEntry(skin);
+    if (entry && FAMILY_TO_STRUCTURAL[entry.family]) {
+      return FAMILY_TO_STRUCTURAL[entry.family];
+    }
+  }
+  return "concrete";
+}
+
+function patternIsMonolithic() {
+  return document.getElementById("pattern-select").value === "monolithic-bands";
+}
+
+// The readout: q = thickness x density x g, live under the thickness
+// slider. This is the number a true analysis load runs on, said where the
+// thickness is chosen.
+function updateWeightNote() {
+  const note = document.getElementById("weight-note");
+  if (!note) return;
+  const density = skinDensity();
+  const thickness = state.thickness;
+  const kgPerM2 = density * thickness;
+  const kNPerM2 = kgPerM2 * 9.80665 / 1000;
+  note.textContent = "weight: " + density + " kg/m3 x "
+    + Math.round(thickness * 1000) + " mm = "
+    + kNPerM2.toFixed(2) + " kN/m2 (" + Math.round(kgPerM2) + " kg/m2)";
+}
+
 // The size of one repeat, in metres, for whatever the vault is wearing.
 // Null when it is not wearing a library material at all, which is what
 // keeps the old hand-tuned 0.15 in force for the procedural skins.
@@ -2755,10 +2855,11 @@ function renderGroundPreview(preset, canvasEl) {
   previewRig.camera.position.set(0, -3.05, 1.02);
   previewRig.camera.lookAt(0, 0, 0);
   // Put the repeat back where the scene wants it, since the material is the
-  // same object the floor itself is drawn with.
+  // same object the floor itself is drawn with -- INCLUDING the scale
+  // dials, or painting one picker tile would silently reset the floor.
   if (tile && material.map) {
     const [u, v] = groundRepeat(state.groundRadius, tile);
-    material.map.repeat.set(u, v);
+    material.map.repeat.set(u * state.ground.scaleX, v * state.ground.scaleY);
   }
 }
 
@@ -4191,6 +4292,9 @@ async function fetchJson(url) {
 // pattern is not built yet says so in pattern-note instead of quietly
 // drawing bonded courses under the missing pattern's name.
 function patternLabel(pattern) {
+  // The monolithic cut IS the sprayed option now, and the control says so
+  // in the builder's own words (Param: "add the sprayed option there").
+  if (pattern === "monolithic-bands") return "Sprayed monolithic";
   // Sentence case, because every neighbouring control speaks it: "White
   // presentation", "Golden hour", "Per surface". Title Case here made the
   // pattern list the one Capitalised Column in the panel.
@@ -4641,10 +4745,23 @@ document.getElementById("study-select").addEventListener("change", (e) => {
   state.source = null;
   loadStudy(e.target.value);
 });
+// Set while a SKIN choice is driving the structural material, so the
+// change handler below keeps the appearance the user just chose instead of
+// restoring the one this material remembered -- without the flag, choosing
+// copper flipped material to concrete, whose memory restored last week's
+// brick, which flipped material to brick, wearing the wrong skin.
+let skinDrivenMaterialChange = false;
+
 document.getElementById("material-select").addEventListener("change", (e) => {
-  // Same rule as loadStudy: the incoming material's stored appearance is
-  // restored before anything is rebuilt, never after.
-  restoreAppearance(e.target.value);
+  if (skinDrivenMaterialChange) {
+    skinDrivenMaterialChange = false;
+    // The just-chosen appearance becomes this material's memory.
+    persistAppearance();
+  } else {
+    // Same rule as loadStudy: the incoming material's stored appearance is
+    // restored before anything is rebuilt, never after.
+    restoreAppearance(e.target.value);
+  }
   updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
   if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
@@ -4772,7 +4889,9 @@ function applySurfaceControls() {
   for (const set of libraryCache.values()) {
     setSurface(set, state.relief, state.occlusion);
   }
-  setSurface(groundLibrarySet, state.relief, state.occlusion);
+  // The floor's relief is its own dial now (state.ground.relief), so the
+  // vault's Relief slider no longer flattens or deepens the paving.
+  setSurface(groundLibrarySet, state.ground.relief, state.occlusion);
   document.getElementById("material-relief-value").textContent =
     Math.round(state.relief * 10);
   document.getElementById("material-occlusion-value").textContent =
@@ -4875,6 +4994,17 @@ document.getElementById("props-folder-choose").addEventListener("click", () =>
 document.getElementById("render-skin").addEventListener("change", async (e) => {
   state.appearance.skin = e.target.value;
   persistAppearance();
+  // The skin now decides the structural material (the weight system): a
+  // brick skin cuts and weighs as brick, a limestone one as stone. The
+  // sprayed variant is the Pattern control's call, so it is respected.
+  const derived = structuralClassFor(state.appearance.skin);
+  const structural = document.getElementById("material-select");
+  if (structural.value !== derived) {
+    skinDrivenMaterialChange = true;
+    structural.value = derived;
+    structural.dispatchEvent(new Event("change"));
+  }
+  updateWeightNote();
   // A library material has to arrive before it can be worn. rebuildAppearance
   // is called either way: once now, so the panel and the log keep up, and
   // again when the textures land.
@@ -4895,6 +5025,22 @@ document.getElementById("material-tint").addEventListener("change", (e) => {
   state.appearance.tint = e.target.value;
   persistAppearance();
   rebuildAppearance();
+});
+document.getElementById("material-variation").addEventListener("input", (e) => {
+  document.getElementById("material-variation-value").textContent = Math.round(+e.target.value * 100);
+});
+document.getElementById("material-variation").addEventListener("change", (e) => {
+  state.appearance.variation = +e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("uv-randomise").addEventListener("click", () => {
+  // A new deal, not an increment: pressing it twice should not walk back
+  // through the same sequence.
+  state.appearance.uvSeed = Math.floor(Math.random() * 1e9);
+  persistAppearance();
+  rebuildAppearance();
+  logStudio("texture crops re-dealt across the voussoirs");
 });
 document.getElementById("material-finish").addEventListener("input", (e) => {
   document.getElementById("material-finish-value").textContent = Math.round(+e.target.value * 100);
@@ -4935,9 +5081,21 @@ document.getElementById("source-toggle").addEventListener("change", async (e) =>
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
   state.patternChosen = true;
+  // The sprayed distinction lives HERE now, as Param asked: choosing the
+  // monolithic pattern makes the cut sprayed concrete; leaving it hands
+  // the material back to whatever the skin implies.
+  const structural = document.getElementById("material-select");
+  const derived = structuralClassFor(state.appearance.skin);
+  if (structural.value !== derived) {
+    skinDrivenMaterialChange = true;
+    structural.value = derived;
+    structural.dispatchEvent(new Event("change"));
+    updateWeightNote();
+    return;                      // the material change reloads if needed
+  }
+  updateWeightNote();
   const select = document.getElementById("study-select");
-  const material = document.getElementById("material-select").value;
-  if (select.value && !requestMatchesLoaded(material)) loadStudy(select.value);
+  if (select.value && !requestMatchesLoaded(structural.value)) loadStudy(select.value);
 });
 // Exactly the thickness slider's shape, and for the same reason: the piece
 // size is a property of the BUNDLE, not of the client. "input" only moves
@@ -4955,9 +5113,14 @@ document.getElementById("size-slider").addEventListener("change", (e) => {
 });
 document.getElementById("thickness-input").addEventListener("input", (e) => {
   document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
+  // The weight readout tracks the drag live: it is the number the
+  // thickness is being chosen FOR.
+  state.thickness = +e.target.value;
+  updateWeightNote();
 });
 document.getElementById("thickness-input").addEventListener("change", (e) => {
   state.thickness = +e.target.value;
+  updateWeightNote();
   scheduleReload();
 });
 // The joint gap and the crown taper lost their controls in the Skin panel
@@ -5067,6 +5230,40 @@ document.getElementById("ground-radius").addEventListener("input", (e) => {
   // there is nothing to defer to the end of the drag.
   if (state.objects.ground) rebuildGround();
 });
+function syncGroundControls() {
+  const pairs = [["ground-scale-x", state.ground.scaleX, 100],
+                 ["ground-scale-y", state.ground.scaleY, 100],
+                 ["ground-relief", state.ground.relief, 10]];
+  for (const [id, value, factor] of pairs) {
+    const slider = document.getElementById(id);
+    if (!slider) continue;
+    slider.value = value;
+    document.getElementById(id + "-value").textContent = Math.round(value * factor);
+  }
+}
+
+// The floor texture's own dials. Scale is a multiplier over the
+// real-world repeat, per axis; relief is the floor's own depth, decoupled
+// from the vault's; the randomise button slides the whole pattern.
+for (const [id, key, factor] of [["ground-scale-x", "scaleX", 100],
+                                 ["ground-scale-y", "scaleY", 100]]) {
+  document.getElementById(id).addEventListener("input", (e) => {
+    state.ground[key] = +e.target.value;
+    document.getElementById(id + "-value").textContent = Math.round(+e.target.value * factor);
+    if (state.objects.ground) rebuildGround();
+  });
+}
+document.getElementById("ground-relief").addEventListener("input", (e) => {
+  state.ground.relief = +e.target.value;
+  document.getElementById("ground-relief-value").textContent = Math.round(state.ground.relief * 10);
+  setSurface(groundLibrarySet, state.ground.relief, state.occlusion);
+});
+document.getElementById("ground-randomise").addEventListener("click", () => {
+  state.ground.offset = [Math.random(), Math.random()];
+  if (state.objects.ground) rebuildGround();
+  logStudio("floor pattern slid to a fresh offset");
+});
+
 document.getElementById("ground-preset").addEventListener("change", async (e) => {
   state.groundPreset = e.target.value;
   // A library floor has maps to fetch; loadGroundMaterial rebuilds when
@@ -5485,9 +5682,16 @@ function timelineDuration() {
 
 function pieceTint(key) {
   // A deterministic lightness nudge per casting, so no two pieces look
-  // identical and the same study always looks the same.
-  const offset = segmentUVOffset(key);
-  return (offset[0] % 1) * 0.06 - 0.03;
+  // identical and the same study always looks the same. The amount is now
+  // a dial (Param: "a slider for that too, changing the amount of colour
+  // differentiation"); 1 keeps the old +-0.03. Library skins sit on a
+  // white base whose lightness clamps upward, so their nudge is
+  // darken-only and the whole dialled range shows.
+  const amplitude = 0.06 * (state.appearance.variation ?? 1);
+  const t = segmentUVOffset(key)[0] % 1;
+  return isLibraryKey(state.appearance.skin)
+    ? -t * amplitude
+    : t * amplitude - amplitude / 2;
 }
 
 // Render skins. "none" is not a factory: it means "show the registry
@@ -5644,13 +5848,16 @@ function buildPieceMeshes() {
       ? welded.slice(offset, offset + positions.length)
       : creaseNormals(positions);
     offset += positions.length;
-    // UV units per metre: the reciprocal of how much of the world one
-    // repeat of the picture covers. A library material knows its own size,
-    // so a brick photographed at 230 by 61 millimetres lays as a brick. The
-    // procedural skins have no real size and keep the eyeballed 0.15.
+    // A library material is mapped to the VOUSSOIR, not the world: one
+    // unit crop stretched to fit each piece (the QS one-unit rule), with
+    // a hashed quarter-turn so the courses do not read as aligned copies.
+    // The seed rides in the key so the Randomise button re-deals every
+    // piece at once. The plain structural look keeps the eyeballed box
+    // projection: it has no picture to stretch.
+    const seedKey = piece.key + "#" + (state.appearance.uvSeed || 0);
     const uvs = tile
-      ? boxUVs(positions, centre, segmentUVOffset(piece.key), 1 / tile[0], 1 / tile[1])
-      : boxUVs(positions, centre, segmentUVOffset(piece.key));
+      ? stretchUVs(positions, uvQuarterTurn(seedKey))
+      : boxUVs(positions, centre, segmentUVOffset(seedKey));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
@@ -5676,7 +5883,12 @@ function buildPieceMeshes() {
 }
 
 function sprayedMaterial() {
-  return state.bundle && state.bundle.material === "concrete-sprayed";
+  // Keyed on the PATTERN, not the material name: the sprayed distinction
+  // is the Pattern control's now (Param: "all of those pattern changes
+  // will be kept to the skin pattern option we have"). The material check
+  // stays as a fallback for bundles cut before the pattern rode along.
+  return state.bundle && (state.bundle.pattern === "monolithic-bands"
+    || state.bundle.material === "concrete-sprayed");
 }
 
 function updateMaterialControls() {
@@ -5713,6 +5925,9 @@ function syncAppearanceControls() {
   const finish = state.appearance.finish !== null ? state.appearance.finish : 0.5;
   document.getElementById("material-finish").value = finish;
   document.getElementById("material-finish-value").textContent = Math.round(finish * 100);
+  const variation = state.appearance.variation ?? 1;
+  document.getElementById("material-variation").value = variation;
+  document.getElementById("material-variation-value").textContent = Math.round(variation * 100);
 }
 
 // Called from both the material-select change handler and loadStudy, both
@@ -5720,7 +5935,8 @@ function syncAppearanceControls() {
 // (or the lack of one) is always in state.appearance by the time
 // pieceMaterial first reads it for the material being switched to.
 function restoreAppearance(material) {
-  let appearance = { tint: null, finish: null, skin: "none" };
+  let appearance = { tint: null, finish: null, skin: "none",
+    variation: 1, uvSeed: 0 };
   const stored = localStorage.getItem(appearanceStorageKey(material));
   if (stored) {
     try {
@@ -5729,11 +5945,21 @@ function restoreAppearance(material) {
         tint: parsed.tint || null,
         finish: typeof parsed.finish === "number" ? parsed.finish : null,
         skin: typeof parsed.skin === "string" ? parsed.skin : "none",
+        variation: typeof parsed.variation === "number" ? parsed.variation : 1,
+        uvSeed: typeof parsed.uvSeed === "number" ? parsed.uvSeed : 0,
       };
     } catch (error) { /* corrupt localStorage entry: fall back to the defaults above */ }
   }
   state.appearance = appearance;
   syncAppearanceControls();
+  // The restore can install a library skin nothing has loaded yet -- the
+  // most silent of the fallback paths: the vault wore the registry look
+  // while the picker claimed the library material. Load it, then redraw.
+  if (isLibraryKey(appearance.skin) && !libraryCache.has(appearance.skin)) {
+    ensureLibraryMaterial(appearance.skin).then((set) => {
+      if (set && state.appearance.skin === appearance.skin) rebuildAppearance();
+    });
+  }
 }
 
 // The joint-gap handler's exact rebuild shape, reused across the four
@@ -5752,6 +5978,7 @@ function discloseAppearance() {
 
 function rebuildAppearance() {
   discloseAppearance();
+  updateWeightNote();
   if (!state.bundle) return;
   buildPieceMeshes();
   recolourSegments();
