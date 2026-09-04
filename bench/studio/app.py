@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 import shutil
@@ -344,6 +345,27 @@ def apply_saved_folders() -> dict:
         globals()[setter] = directory
         applied[key] = directory
     return applied
+
+
+def static_version() -> str:
+    """A short hash of every static file's size and modification time.
+
+    Not of their contents: hashing three hundred kilobytes of JavaScript on
+    every page load to save a cache miss is the wrong trade. Size and mtime
+    move together whenever a file is edited and stay put when none is, which
+    is all a cache buster has to promise.
+    """
+
+    marks = []
+    for path in sorted(STATIC_DIR.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in (".js", ".css", ".html", ".mjs"):
+            continue
+        stat = path.stat()
+        marks.append("{}:{}:{}".format(path.name, stat.st_size, int(stat.st_mtime)))
+    digest = hashlib.sha1("|".join(marks).encode("utf-8")).hexdigest()
+    return digest[:10]
 
 
 def read_material_sidecar() -> dict:
@@ -1398,7 +1420,34 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        """The page, with every asset it loads stamped with a version.
+
+        A Cache-Control header is a request not to cache, and this studio
+        has now been reported three times as "nothing has changed" when the
+        change was sitting on disk and the browser was holding yesterday's
+        stylesheet. A version in the URL is not a request: if the bytes
+        change the address changes, and no cache can return an old entry for
+        a new address whatever it believes about freshness.
+        """
+
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        stamp = static_version()
+        page = page.replace('href="/static/studio.css"',
+                            'href="/static/studio.css?v={}"'.format(stamp))
+        page = page.replace('src="/static/studio.js"',
+                            'src="/static/studio.js?v={}"'.format(stamp))
+        # The modules studio.js imports are each their own cache entry, and
+        # a stale panel.js is the exact fault that was reported. An import
+        # map can remap a URL as well as a bare specifier, so they are
+        # pointed at their versioned addresses here and studio.js goes on
+        # importing them by the plain path it always did.
+        for module in ("panel.js", "pbr.js", "fields.js"):
+            page = page.replace(
+                '"three/addons/": "/static/vendor/addons/"',
+                '"three/addons/": "/static/vendor/addons/",\n'
+                '    "/static/{0}": "/static/{0}?v={1}"'.format(module, stamp))
+        page = page.replace("__BUILD__", stamp)
+        return Response(page, media_type="text/html")
 
     @app.middleware("http")
     async def no_stale_static(request: Request, call_next):

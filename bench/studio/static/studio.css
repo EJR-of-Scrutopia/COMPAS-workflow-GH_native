@@ -42,6 +42,32 @@
   --t-head:   16px;      /* a section heading */
 
   --panel-w:  260px;     /* standard-panel-width */
+
+  /* The panel's own ground, translucent. Everything ON it stays opaque. */
+  --panel-veil: rgba(27, 27, 27, 0.72);
+}
+
+/* The light theme. Spectrum's light ramp, not the dark one inverted, which
+   is the difference between a theme and a photographic negative: light
+   surfaces get DARKER as they rise, where dark surfaces get lighter, and
+   the border sits below the surfaces rather than above them. */
+:root[data-theme="light"] {
+  --ground:   #f8f8f8;
+  --panel:    #ffffff;
+  --raised:   #f4f4f4;
+  --well:     #e6e6e6;
+  --line:     #d5d5d5;
+  --line-lit: #8f8f8f;
+  --off:      #c9c9c9;
+
+  --ink:      #1b1b1b;
+  --ink-2:    #5a5a5a;
+  --ink-3:    #8f8f8f;
+
+  --accent:   #2451e0;
+  --accent-bg:#e3eaff;
+
+  --panel-veil: rgba(252, 252, 252, 0.74);
 }
 
 :root { color-scheme: dark; }
@@ -52,13 +78,18 @@ body { overflow: hidden;
        font-size: var(--t); letter-spacing: 0;
        background: var(--ground); color: var(--ink); }
 #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-/* Opaque, not translucent. A blurred panel over a moving viewport makes
-   every grey in it a different grey depending on what is behind it, which
-   is the opposite of adopting a surface ramp. */
+/* Translucent ground, opaque controls. A blurred panel over a moving
+   viewport makes every grey in it depend on what is behind it, which is why
+   only the panel's own ground is see-through: every tile, button and field
+   on top of it is solid, so the surface ramp survives contact with whatever
+   the vault happens to be doing. */
 #panel { position: fixed; top: 0; right: 0; width: var(--panel-w);
          min-width: 200px; max-width: 400px; height: 100%;
          overflow-y: auto; padding: var(--s3);
-         background: var(--panel); border-left: 1px solid var(--line); }
+         background: var(--panel-veil);
+         backdrop-filter: blur(18px) saturate(115%);
+         -webkit-backdrop-filter: blur(18px) saturate(115%);
+         border-left: 1px solid var(--line); }
 #panel summary { font-size: var(--t-2); text-transform: uppercase;
                  letter-spacing: 0.08em; color: var(--ink-3);
                  margin: var(--s6) 0 var(--s2); cursor: pointer;
@@ -644,3 +675,33 @@ body { overflow: hidden;
 #panel .scene-delete {
   width: 18px; height: 18px; padding: 0;
 }
+
+/* The theme toggle and the build stamp, on one line above everything. The
+   stamp is there for a specific reported problem: "nothing has changed on
+   the interface" needs an answer that is a fact, and a version that does
+   not move after an edit says the page is cached rather than unchanged. */
+#panel-top { display: flex; align-items: center; gap: var(--s2);
+  margin-bottom: var(--s2); }
+#panel #theme-toggle { width: auto; height: var(--h-small);
+  padding: 0 var(--s2); font-size: var(--t-2); }
+#build-stamp { margin-left: auto; color: var(--ink-3);
+  font-size: var(--t-meta); font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em; }
+
+/* The HUD and the event log are NOT themed. They sit on the viewport, and
+   the viewport is a rendering surface whose ground comes from the
+   environment the vault is lit by: it stays dark when the panel goes light,
+   so dark text on it would be unreadable. The legend and the cut overlay
+   have grounds of their own, so those do take the theme. */
+:root[data-theme="light"] #legend { background: rgba(255, 255, 255, 0.82);
+  color: var(--ink); }
+:root[data-theme="light"] #cut-overlay { background: rgba(255, 255, 255, 0.9); }
+:root[data-theme="light"] #live-toggle { background: var(--raised);
+  border-color: var(--line); color: var(--ink-3); }
+:root[data-theme="light"] #live-toggle.on { color: var(--ink);
+  border-color: #d8a0a0; }
+
+/* A colour scheme is a browser-level fact too: it decides what a native
+   scrollbar, a select's popup and a colour picker look like. */
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }

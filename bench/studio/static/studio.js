@@ -2294,6 +2294,39 @@ const GROUP_SUMMARIES = {
 
 setGroupSummaries(GROUP_SUMMARIES);
 
+// ---------- light or dark ----------
+// Nine variables, because the panel's colours all come from the token block
+// now. Before the Spectrum pass this would have been thirty hexes found by
+// hand and half of them missed.
+function applyTheme(theme) {
+  const light = theme === "light";
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+  const button = document.getElementById("theme-toggle");
+  // The button names what it will DO, not what is on, which is the one
+  // choice that stops a toggle being ambiguous in a screenshot.
+  if (button) button.textContent = light ? "Dark" : "Light";
+  try {
+    localStorage.setItem("bench-studio-theme", light ? "light" : "dark");
+  } catch (error) {
+    /* a private window is not a reason to refuse a theme */
+  }
+}
+
+{
+  let remembered = null;
+  try {
+    remembered = localStorage.getItem("bench-studio-theme");
+  } catch (error) { remembered = null; }
+  applyTheme(remembered === "light" ? "light" : "dark");
+  const button = document.getElementById("theme-toggle");
+  if (button) {
+    button.addEventListener("click", () => {
+      applyTheme(document.documentElement.dataset.theme === "light"
+        ? "dark" : "light");
+    });
+  }
+}
+
 // ---------- the material library ----------
 // Loaded sets, most recently used last. Small on purpose: a set is four
 // textures at 1024 square with mipmaps, about 21 MB of video memory, and
@@ -6291,6 +6324,11 @@ guarded("the panel groups", buildGroups);
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
 refreshMaterialLibrary().catch(
   (error) => logStudio("material library: " + error.message));
+// Said once at boot, and printed in the panel. A page that reports the same
+// build after an edit is a cached page, which is a different problem from a
+// change that did not land, and the two have been confused three times.
+logStudio("studio build "
+  + ((document.getElementById("build-stamp") || {}).textContent || "unstamped"));
 showMaterialFolder();
 // The sky list used to be reachable only by entering HDRI mode, so the Sky
 // picker showed a placeholder word until then and a remembered sky was not
