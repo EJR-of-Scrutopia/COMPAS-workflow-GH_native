@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers.Binary;
 using System.Collections;
 using System.Collections.Generic;
@@ -2498,12 +2498,17 @@ internal static class Program
                 + "then deferred, ALL THREE documents go down the ONE "
                 + "exports route with no special case for any of them, a 2xx "
                 + "is stored, a 409 retries until the schedule runs out, "
-                + "anything else is refused, and the set key reads the "
-                + "Name, the Studio and every document EXCEPT the form "
-                + "document's thrust mesh, whose fresh uuid per serialisation "
-                + "would stop the key ever repeating. The study name is "
-                + "escaped into the route, and a deferred document names the "
-                + "run the studio is busy with when the 409 body carries one.");
+                + "anything else is refused. THE CHANGE KEY IS ONE PER "
+                + "DOCUMENT: every kind reads its own bytes whole, and form "
+                + "alone reads its CONTRACT half plus a mark saying whether "
+                + "a thrust mesh went with it, the mesh's own bytes being "
+                + "skipped because a fresh uuid per serialisation would stop "
+                + "the key ever repeating. The Name and the Studio are not "
+                + "in the key at all; they are the LEDGER's, and check 5's "
+                + "sections 7 and 7b measure them against real sends to real "
+                + "routes. The study name is escaped into the route, and a "
+                + "deferred document names the run the studio is busy with "
+                + "when the 409 body carries one.");
         }
         catch (Exception exception)
         {
@@ -2521,12 +2526,34 @@ internal static class Program
                 + "runs with Live off as much as with Live on because J is "
                 + "fed by it, and Write builds SYNCHRONOUSLY on the calling "
                 + "thread and hands back the set the disk write then uses. "
-                + "Driven through the real uploader, its real one-shot timer "
-                + "and its real single flight.");
+                + "A write whose build FAILED hands back nothing rather than "
+                + "the last set that worked, and says both that nothing was "
+                + "written and what went wrong. Driven through the real "
+                + "uploader, its real one-shot timer and its real single "
+                + "flight.");
         }
         catch (Exception exception)
         {
             failures.Add($"Export rest schedule: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportSendHoldsTheBuildGate(plugin);
+            Console.WriteLine(
+                "PASS  Export builds nothing while documents are ON THE "
+                + "WIRE: measured through a wire that takes a document and "
+                + "does not answer, a Write landing inside a send builds "
+                + "once on its own thread and leaves the send's hold on the "
+                + "build gate standing, so a canvas solving behind it costs "
+                + "no builds at all; and the request that arrived while the "
+                + "wire was busy is built and sent the moment the wire is "
+                + "free rather than dropped.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Export build gate: {DescribeException(exception)}");
         }
 
         try
@@ -2538,10 +2565,11 @@ internal static class Program
                 + "nothing at all, a formwork-only change sends formwork "
                 + "alone and a form-only change sends form alone; the thrust "
                 + "mesh is built for a push the studio has not had and for a "
-                + "write, and NEVER for a refresh that only feeds J; "
+                + "WRITE even when the studio already holds that exact form "
+                + "document, and NEVER for a refresh that only feeds J; "
                 + "toggling Live clears the ledger and sends the set again; "
-                + "and a different study name is a different ledger and its "
-                + "own route.");
+                + "and a different study name, or a different STUDIO ROOT, "
+                + "is a different ledger and its own routes.");
         }
         catch (Exception exception)
         {
@@ -2561,8 +2589,10 @@ internal static class Program
                 + "demonstrated in the same fixture by cancelling a token, "
                 + "which does restart the worker, so the survival above is "
                 + "not vacuous. Export is no longer task-capable, so the "
-                + "solution's token cannot reach the dispatch at all, and "
-                + "the component's lifetime is the one thing that ends it.");
+                + "solution's token cannot reach the dispatch at all, the "
+                + "component's lifetime is the one thing that ends it, and a "
+                + "component added back after a delete has a LIVE lifetime "
+                + "again rather than one cancelled for the session.");
         }
         catch (Exception exception)
         {
@@ -32453,6 +32483,15 @@ internal static class Program
         internal readonly List<string> Routes = new();
         internal int Outcomes;
 
+        /// <summary>
+        /// A SLOW WIRE, when a check sets one: awaited by every PUT before
+        /// it answers, so a send can be held on the wire while the check
+        /// does something else. The recording wire completes instantly,
+        /// which is why the overlap between a send and a build could not be
+        /// measured at all until this existed.
+        /// </summary>
+        internal Func<Task>? Hold;
+
         internal RestHarness(Assembly plugin)
         {
             UploaderType = plugin.GetType(
@@ -32470,15 +32509,17 @@ internal static class Program
                     + "is what the J output carries now.");
             var onOutcome = new Action(() => Interlocked.Increment(ref Outcomes));
             var put = new Func<string, string, CancellationToken,
-                Task<HttpResponseMessage>>((route, json, token) =>
+                Task<HttpResponseMessage>>(async (route, json, token) =>
                 {
                     lock (Routes)
                         Routes.Add(route);
-                    return Task.FromResult(new HttpResponseMessage(
-                        HttpStatusCode.OK)
+                    Func<Task>? hold = Hold;
+                    if (hold is not null)
+                        await hold().ConfigureAwait(false);
+                    return new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = new StringContent(string.Empty),
-                    });
+                    };
                 });
             Uploader = Activator.CreateInstance(
                 UploaderType,
@@ -32767,6 +32808,57 @@ internal static class Program
                 + string.Join(", ", harness.Sent()) + " went out.");
         }
 
+        // A WRITE WHOSE BUILD FAILED HANDS BACK NOTHING, and above all not
+        // the last set that worked. BuildNow used to return the last ADOPTED
+        // build, so a build that threw left the previous one standing and
+        // handed THAT to the caller: the write then put an older solve's
+        // documents on disk under this solve's names and reported them as
+        // written. With Live off nothing on the component said a word,
+        // because the build's failure text reaches the Status line through
+        // the Live branch alone. A silent stale write is the one thing the
+        // design singles out about Write.
+        object? nothing = harness.BuildNow(harness.Pending(
+            "http://127.0.0.1:8600",
+            "arch",
+            live: false,
+            write: true,
+            want => throw new InvalidOperationException(
+                "the clone failed")));
+        if (nothing is not null)
+        {
+            throw new InvalidOperationException(
+                "A write whose build FAILED hands the caller nothing, so "
+                + "that nothing is written: it handed back "
+                + string.Join(
+                    ", ",
+                    harness.Documents(nothing)!.Select(d => d.Json))
+                + ", which is the previous build and would go on disk under "
+                + "this solve's names, reported as written.");
+        }
+        // And what the author is told when that happens, which is the other
+        // half of the same defect: a write is the one path where the files
+        // are missing and the reason has to be on the component. The
+        // sentence is read here; that SolveInstance raises it as an Error is
+        // read in the source, a solve needing a running Grasshopper.
+        MethodInfo builtNothing = RequireComponentType(plugin, "ExportComponent")
+            .GetMethod(
+                "WriteBuiltNothing",
+                BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.WriteBuiltNothing was not found; a write "
+                + "that built nothing has to say so somewhere.");
+        string toldTheAuthor = (string)builtNothing.Invoke(
+            null, new object?[] { "build failed: the clone failed" })!;
+        if (!toldTheAuthor.Contains("NOTHING", StringComparison.Ordinal) ||
+            !toldTheAuthor.Contains(
+                "build failed: the clone failed", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A write that built nothing says BOTH that nothing was "
+                + "written and what the build said went wrong; it read '"
+                + toldTheAuthor + "'.");
+        }
+
         // AND THE PORT SAYS SO. "always live" was the J port's own promise
         // and it is not true any more: on a canvas that never rests longer
         // than the debounce, J lags by design, so the port has to say the
@@ -32794,6 +32886,115 @@ internal static class Program
                 "And it no longer says the outputs are 'always live', which "
                 + "was true while every solve built the set and is the "
                 + "sentence rule 3.2 replaces.");
+        }
+    }
+
+    /// <summary>
+    /// THE BUILD GATE IS HELD BY THE SEND, and released by whoever took it.
+    ///
+    /// This is the corner the previous round left uncovered and the review
+    /// round found a defect in. One flag stood for "a build is running", set
+    /// by whoever started one and cleared by whichever build finished, and a
+    /// SEND borrowed that same flag to keep builds off the wire. A write does
+    /// not wait its turn, by design, so a Write landing inside a send cleared
+    /// the flag the send was holding. The ledger of what the studio holds is
+    /// not latched until the send's own tail, so every tick after that read
+    /// all three documents as moved, found the wire busy, re-armed the timer
+    /// and built again: against an unreachable studio, thirty seconds a
+    /// document, that is a build every half second for a minute and a half,
+    /// animation sweep and worker round trip included, on a canvas nobody is
+    /// touching.
+    ///
+    /// It needs a SLOW WIRE, which is why it could not be measured before:
+    /// the recording wire answers instantly and the overlap never exists.
+    /// </summary>
+    private static void ValidateExportSendHoldsTheBuildGate(Assembly plugin)
+    {
+        var harness = new RestHarness(plugin);
+        int debounce = harness.Debounce;
+        int builds = 0;
+        var release = new ManualResetEventSlim(false);
+        object Set(int solve, bool write) => harness.Pending(
+            "http://127.0.0.1:8600",
+            "arch",
+            live: true,
+            write: write,
+            want =>
+            {
+                Interlocked.Increment(ref builds);
+                return Task.FromResult(harness.Built(
+                    new List<(string, string)>
+                    {
+                        ("form", "{\"solve\":" + solve + "}"),
+                    }));
+            });
+
+        try
+        {
+            // The wire takes the first document and does not answer.
+            harness.Hold = () => Task.Run(() => release.Wait(30000));
+            harness.Schedule(Set(1, write: false));
+            WaitUntil(
+                () => Volatile.Read(ref builds) >= 1 &&
+                    harness.Sent().Length >= 1,
+                "the first set to be built and its send to reach the wire");
+
+            // A WRITE LANDS INSIDE THAT SEND. It builds on this thread, by
+            // rule 3.2, and it cannot send: the wire is busy. What it must
+            // not do is leave the gate open behind it.
+            harness.BuildNow(Set(2, write: true));
+            int afterWrite = Volatile.Read(ref builds);
+            if (afterWrite != 2)
+            {
+                throw new InvalidOperationException(
+                    "The write built once on the calling thread; "
+                    + afterWrite + " builds had run.");
+            }
+
+            // And now the canvas solves again, which is the ordinary case:
+            // the component pokes the debouncer and the tick comes round
+            // while the studio is still not answering.
+            harness.Schedule(Set(3, write: false));
+            Thread.Sleep(debounce * 4);
+            if (Volatile.Read(ref builds) != afterWrite)
+            {
+                throw new InvalidOperationException(
+                    "NO SET IS BUILT WHILE DOCUMENTS ARE ON THE WIRE, and a "
+                    + "write landing inside a send does not open that gate: "
+                    + (Volatile.Read(ref builds) - afterWrite)
+                    + " further build(s) ran in "
+                    + (debounce * 4) + " ms against a studio that had not "
+                    + "answered. The ledger is not latched until the send's "
+                    + "tail, so each of those reads every document as moved "
+                    + "and re-arms the timer: against an unreachable studio "
+                    + "that is a full build, animation sweep and worker round "
+                    + "trip included, every half second for as long as the "
+                    + "send takes, on an idle canvas.");
+            }
+
+            // AND NOTHING IS LOST BY WAITING. The request that arrived while
+            // the wire was busy is pending, not dropped, and the send's own
+            // tail re-arms the timer for it.
+            harness.Hold = null;
+            release.Set();
+            WaitUntil(
+                () => Volatile.Read(ref builds) >= afterWrite + 1,
+                "the request held behind the send to be built once the wire "
+                + "was free");
+            WaitUntil(() => harness.Phase == "Done", "the tick to finish");
+            if (!harness.Sent().Any(route =>
+                    route.EndsWith("/form", StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    "and it reaches the wire; nothing was sent at all.");
+            }
+        }
+        finally
+        {
+            // A held wire outlives a failed assertion, and the send is
+            // sitting on a thread-pool thread waiting for it.
+            harness.Hold = null;
+            release.Set();
         }
     }
 
@@ -32835,9 +33036,10 @@ internal static class Program
             string formwork,
             bool live = true,
             bool write = false,
-            string study = "arch") =>
+            string study = "arch",
+            string studio = Studio) =>
             harness.Pending(
-                Studio,
+                studio,
                 study,
                 live,
                 write,
@@ -32865,11 +33067,17 @@ internal static class Program
                         }));
                 });
 
-        void Rest(object pending, int expectedBuilds)
+        // ONE MORE BUILD THAN HAD RUN, counted against the reading taken here
+        // rather than against a number written into the call. The write
+        // sections below build too, and a hard-coded running total lets a
+        // Rest that never built at all be satisfied by somebody else's build
+        // and assert on the PREVIOUS tick's routes.
+        void Rest(object pending)
         {
+            int before = Volatile.Read(ref builds);
             harness.Schedule(pending);
             WaitUntil(
-                () => Volatile.Read(ref builds) >= expectedBuilds,
+                () => Volatile.Read(ref builds) > before,
                 "the build to land on rest");
             // The send runs after the build on its own task, so the tick is
             // waited out to its own Done rather than for a guessed interval:
@@ -32884,7 +33092,7 @@ internal static class Program
 
         // 1. THE FIRST SEND CARRIES EVERYTHING. The studio holds nothing
         // for this study, so every document has moved.
-        Rest(Set(1, "guid-a", "{\"s\":1}", "{\"w\":1}"), 1);
+        Rest(Set(1, "guid-a", "{\"s\":1}", "{\"w\":1}"));
         if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
         {
             throw new InvalidOperationException(
@@ -32902,7 +33110,7 @@ internal static class Program
 
         // 2. AN IDENTICAL SET SENDS NOTHING.
         harness.Forget();
-        Rest(Set(1, "guid-b", "{\"s\":1}", "{\"w\":1}"), 2);
+        Rest(Set(1, "guid-b", "{\"s\":1}", "{\"w\":1}"));
         if (harness.KindsSent().Length != 0)
         {
             throw new InvalidOperationException(
@@ -32920,12 +33128,56 @@ internal static class Program
                 + "holds a document carrying a mesh, so a second mesh would "
                 + "be a round trip for a document that is not going "
                 + "anywhere. It asked "
-                + Volatile.Read(ref meshes) + " times.");
+                + Volatile.Read(ref meshes) + " times in total.");
+        }
+
+        // 2b. A WRITE PAYS FOR A MESH WHATEVER THE STUDIO ALREADY HOLDS.
+        // This is the set section 2 has just proved the studio holds, mesh
+        // and all, so every other reason to build one is absent: what makes
+        // this build pay is WRITE, which is the first line of the gate.
+        // Without that line a Button press against a study the studio
+        // already has lands on disk with "thrustMesh": null, and a study
+        // with a null mesh loads, cuts and animates but cannot run a staged
+        // analysis, which is exactly the failure R-010(d) and R-012(f)
+        // describe. It is asserted through BuildNow rather than through a
+        // rest tick because a write is the one build that does not wait.
+        harness.Forget();
+        int beforeWrite = Volatile.Read(ref meshes);
+        object? writtenSet = harness.BuildNow(Set(
+            1, "guid-w", "{\"s\":1}", "{\"w\":1}", live: true, write: true));
+        if (Volatile.Read(ref meshes) != beforeWrite + 1)
+        {
+            throw new InvalidOperationException(
+                "A WRITE builds the thrust mesh even when the studio already "
+                + "holds this exact form document: the mesh is going on DISK "
+                + "and a form document with none is a study that cannot be "
+                + "analysed. The gate asked for "
+                + (Volatile.Read(ref meshes) - beforeWrite)
+                + " meshes on the write.");
+        }
+        IReadOnlyList<(string Kind, string Json)>? writeDocuments =
+            harness.Documents(writtenSet);
+        if (writeDocuments is null || writeDocuments.Count != 3 ||
+            writeDocuments[0].Kind != "form" ||
+            !writeDocuments[0].Json.Contains(
+                "guid-w", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And the form document the write puts on disk CARRIES it: "
+                + "paying for a mesh and then writing the mesh-less document "
+                + "would be the same failure with a worker round trip added. "
+                + "It handed back "
+                + (writeDocuments is null
+                    ? "nothing at all"
+                    : string.Join(
+                        ", ",
+                        writeDocuments.Select(d => d.Kind + " " + d.Json)))
+                + ".");
         }
 
         // 3. A FORMWORK-ONLY CHANGE SENDS FORMWORK ALONE.
         harness.Forget();
-        Rest(Set(1, "guid-c", "{\"s\":1}", "{\"w\":2}"), 3);
+        Rest(Set(1, "guid-c", "{\"s\":1}", "{\"w\":2}"));
         if (!harness.KindsSent().SequenceEqual(new[] { "formwork" }))
         {
             throw new InvalidOperationException(
@@ -32937,20 +33189,25 @@ internal static class Program
 
         // 4. A FORM-ONLY CHANGE SENDS FORM ALONE, and pays for one mesh.
         harness.Forget();
-        Rest(Set(22, "guid-d", "{\"s\":1}", "{\"w\":2}"), 4);
+        // Counted against the reading taken HERE and not against a running
+        // total: the write in 2b pays for a mesh of its own, and a total
+        // written into this assertion would have to be re-derived every time
+        // a section is added above it.
+        int beforeFormChange = Volatile.Read(ref meshes);
+        Rest(Set(22, "guid-d", "{\"s\":1}", "{\"w\":2}"));
         if (!harness.KindsSent().SequenceEqual(new[] { "form" }))
         {
             throw new InvalidOperationException(
                 "A form-only change sends the FORM document alone; it sent "
                 + string.Join(", ", harness.KindsSent()) + ".");
         }
-        if (Volatile.Read(ref meshes) != 2)
+        if (Volatile.Read(ref meshes) != beforeFormChange + 1)
         {
             throw new InvalidOperationException(
                 "A form document that IS going to the studio is worth its "
-                + "thrust mesh, and this is the second one this check has "
-                + "paid for; the build asked "
-                + Volatile.Read(ref meshes) + " times.");
+                + "thrust mesh, and exactly one: the build asked "
+                + (Volatile.Read(ref meshes) - beforeFormChange)
+                + " times for this one.");
         }
 
         // 5. A REFRESH THAT FEEDS ONLY J BUILDS NO MESH. Live off, Write
@@ -32959,9 +33216,7 @@ internal static class Program
         // null and says so.
         harness.Forget();
         int beforeRefresh = Volatile.Read(ref meshes);
-        Rest(
-            Set(33, "guid-e", "{\"s\":9}", "{\"w\":9}", live: false),
-            5);
+        Rest(Set(33, "guid-e", "{\"s\":9}", "{\"w\":9}", live: false));
         if (Volatile.Read(ref meshes) != beforeRefresh)
         {
             throw new InvalidOperationException(
@@ -32982,7 +33237,7 @@ internal static class Program
         // without touching the Result.
         harness.Cancel();
         harness.Forget();
-        Rest(Set(22, "guid-f", "{\"s\":1}", "{\"w\":2}"), 6);
+        Rest(Set(22, "guid-f", "{\"s\":1}", "{\"w\":2}"));
         if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
         {
             throw new InvalidOperationException(
@@ -32994,13 +33249,11 @@ internal static class Program
         // 7. A DIFFERENT STUDY IS A DIFFERENT LEDGER. The keys describe one
         // study on one server, and nothing there answers for another.
         harness.Forget();
-        Rest(Set(22, "guid-g", "{\"s\":1}", "{\"w\":2}"), 7);
+        Rest(Set(22, "guid-g", "{\"s\":1}", "{\"w\":2}"));
         if (harness.KindsSent().Length != 0)
             throw new InvalidOperationException("The same set to the same study sends nothing.");
         harness.Forget();
-        Rest(
-            Set(22, "guid-h", "{\"s\":1}", "{\"w\":2}", study: "arch-two"),
-            8);
+        Rest(Set(22, "guid-h", "{\"s\":1}", "{\"w\":2}", study: "arch-two"));
         if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
         {
             throw new InvalidOperationException(
@@ -33015,6 +33268,50 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"And they go to that study's own route; '{route}' does not.");
             }
+        }
+
+        // 7b. AND A DIFFERENT STUDIO IS A DIFFERENT LEDGER, which is the
+        // half of that sentence nothing in this harness used to measure. The
+        // ledger says what ONE server holds; repointing Studio at another
+        // machine leaves the new server holding NOTHING, whatever the Result
+        // did. Without this the author repoints Studio, the Result has not
+        // moved, and the component reports "unchanged since: form: stored"
+        // while the new studio never receives a single document.
+        const string Elsewhere = "http://127.0.0.1:8611";
+        harness.Forget();
+        Rest(Set(
+            22, "guid-i", "{\"s\":1}", "{\"w\":2}",
+            study: "arch-two", studio: Elsewhere));
+        if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
+        {
+            throw new InvalidOperationException(
+                "The same documents sent to a DIFFERENT Studio are three "
+                + "documents THAT server has never seen, and all three go: "
+                + "it sent " + string.Join(", ", harness.KindsSent()) + ".");
+        }
+        foreach (string route in harness.Sent())
+        {
+            if (!route.StartsWith(Elsewhere, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "And they go to the NEW studio's own root, since a "
+                    + "document filed at the old one is a document the author "
+                    + $"cannot see; '{route}' does not.");
+            }
+        }
+        // And the new ledger is kept, so this is not "a send that always
+        // sends": the same set to the same studio a second time goes
+        // nowhere.
+        harness.Forget();
+        Rest(Set(
+            22, "guid-j", "{\"s\":1}", "{\"w\":2}",
+            study: "arch-two", studio: Elsewhere));
+        if (harness.KindsSent().Length != 0)
+        {
+            throw new InvalidOperationException(
+                "The ledger MOVED to the new studio rather than being "
+                + "abandoned: an identical set to it sends nothing, and this "
+                + "one sent " + string.Join(", ", harness.KindsSent()) + ".");
         }
 
         // 8. THE BUILD'S OWN HALF OF THE GATE, driven through
@@ -33452,6 +33749,39 @@ internal static class Program
                 "The component leaving the canvas ends the lifetime, which "
                 + "is the ONE thing allowed to cancel a thrust-mesh request "
                 + "(rule 3.4); it did not.");
+        }
+        // AND A COMPONENT THAT COMES BACK HAS A LIFETIME AGAIN. Grasshopper
+        // hands the SAME instance back when a delete is undone, which is why
+        // the uploader beside it is not readonly either. A cancelled source
+        // cannot be un-cancelled, so a lifetime built once and kept for the
+        // object's life left every thrust-mesh request of the rest of the
+        // session refusing before it started: the only trace was a Warning
+        // reading "thrustMesh: A task was canceled." on a component that
+        // looked healthy, and every form document written or pushed from
+        // then on carried "thrustMesh": null.
+        //
+        // Driven through EnsureUploader, which is the one line
+        // AddedToDocument runs and the one SolveInstance runs before it
+        // reads the token into a build. That AddedToDocument is what calls
+        // it is READ and not run, adding a component to a document needing a
+        // running Grasshopper, and it is one line.
+        MethodInfo revive = exportType.GetMethod(
+            "EnsureUploader",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.EnsureUploader was not found; it is what "
+                + "revives a component handed back to a document.");
+        revive.Invoke(export, null);
+        if ((bool)ended.GetValue(export)!)
+        {
+            throw new InvalidOperationException(
+                "A component whose lifetime was ended and which is then "
+                + "ADDED BACK has a live lifetime again: an undone delete "
+                + "gives Grasshopper's same instance back, and a token that "
+                + "stayed cancelled cancels every thrust-mesh request for "
+                + "the rest of the session, leaving 'thrustMesh': null in "
+                + "every form document the author writes or pushes and "
+                + "nothing but a task-canceled warning to explain it.");
         }
     }
 
