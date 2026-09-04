@@ -1387,6 +1387,35 @@ public sealed class SkinComponent : NativeComponentBase
     /// both the component's Warning and check 12.6(e).
     /// </summary>
     /// <summary>
+    /// A THICKNESS THAT CANNOT BE BUILT IS FLOORED TO ZERO, AND SAID SO
+    /// (spec 2026-09-04 section 7 item 4). Th keeps its own sign always,
+    /// being a direction and not a magnitude, so only a NON-FINITE value
+    /// is refused, and it is floored to 0 -- no thickening -- rather than
+    /// to the port default, which is 0 anyway.
+    ///
+    /// THE WARNING IS THE POINT OF THIS BEING A METHOD. <c>Thickening</c>
+    /// already refuses a NaN, so the geometry was safe; what was missing is
+    /// that the refusal was SILENT. An author whose upstream expression
+    /// divides by zero sees a component that simply stops thickening and
+    /// no reason anywhere, which is the same defect class as a clamp that
+    /// does not name the clamped value. Returned rather than raised, so
+    /// one arithmetic serves both the component's Warning and the
+    /// harness's check.
+    /// </summary>
+    internal static double FloorThickness(
+        double asked, out bool floored, out string warning)
+    {
+        floored = !double.IsFinite(asked);
+        warning = floored
+            ? "Th must be finite; using 0 (no thickening). A NaN or an " +
+              "infinity here is usually an upstream expression dividing " +
+              "by zero, and it would otherwise stop the thickener in " +
+              "silence."
+            : string.Empty;
+        return floored ? 0.0 : asked;
+    }
+
+    /// <summary>
     /// THE SLIDER'S OWN BOUNDS (spec 2026-09-04 section 2), as a static so
     /// the harness can drive them without a canvas. Anything above 1
     /// clamps to 1, anything below 0 clamps to 0, and a value that is not
@@ -1496,18 +1525,13 @@ public sealed class SkinComponent : NativeComponentBase
             extrudeInput, out bool extrudeClamped, out string extrudeRemark);
         if (extrudeClamped && report)
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, extrudeRemark);
-        // Th keeps its own sign always (it is a direction, not a
-        // magnitude), so only non-finite is refused, floored to 0 -- no
-        // thickening -- rather than to the port default, which IS 0.
-        if (!double.IsFinite(thicknessInput))
+        thicknessInput = FloorThickness(
+            thicknessInput, out bool thicknessFloored,
+            out string thicknessWarning);
+        if (thicknessFloored && report)
         {
-            if (report)
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    "Th must be finite; using 0 (no thickening).");
-            }
-            thicknessInput = 0.0;
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Warning, thicknessWarning);
         }
 
         var errors = new List<string>(resultValue.Validate());

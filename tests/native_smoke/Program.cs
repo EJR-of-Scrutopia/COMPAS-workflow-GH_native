@@ -1290,7 +1290,12 @@ internal static class Program
                 "fall back to the port default of 0, each with a REMARK " +
                 "naming the clamped value; and 0, 0.5 and 1 pass through " +
                 "untouched and in silence, so the message means something " +
-                "when it comes.");
+                "when it comes. AND Th's OWN FLOOR (section 7 item 4) now " +
+                "SPEAKS: a NaN or an infinity is floored to 0 with a " +
+                "Warning saying so, where it used to stop the thickener in " +
+                "silence, and every finite Th passes through untouched, " +
+                "sign and all, because Th is a direction and a negative " +
+                "one builds inward.");
         }
         catch (Exception exception)
         {
@@ -25852,6 +25857,59 @@ internal static class Program
                     $"Extrude {asked} is inside 0 to 1 and must pass " +
                     $"through untouched and in silence; it gave {got}, " +
                     $"flagged {flagged}, saying '{message}'.");
+            }
+        }
+
+        // ---- AND THE SAME DEFECT CLASS ON Th (spec section 7 item 4). A
+        // non-finite Thickness was floored to 0 IN SILENCE: Thickening
+        // already refused it, so the geometry was safe, but an author
+        // whose upstream expression divides by zero saw a component simply
+        // stop thickening with no reason given anywhere. It now floors
+        // with a Warning, and Th keeps its own SIGN, being a direction and
+        // not a magnitude, so a negative value passes through untouched.
+        MethodInfo floorTh = RequireStatic(skinType, "FloorThickness");
+        double Floored(double asked, out bool flagged, out string message)
+        {
+            object?[] arguments = { asked, null, null };
+            double answer = (double)floorTh.Invoke(null, arguments)!;
+            flagged = (bool)arguments[1]!;
+            message = (string)arguments[2]!;
+            return answer;
+        }
+        foreach (double refused in new[]
+                 {
+                     double.NaN, double.PositiveInfinity,
+                     double.NegativeInfinity
+                 })
+        {
+            double got = Floored(refused, out bool flagged, out string message);
+            if (got != 0.0 || !flagged)
+            {
+                throw new InvalidOperationException(
+                    $"A Th of {refused} cannot be built, so it is floored " +
+                    "to 0 AND SAID SO: it gave " + got + ", flagged " +
+                    flagged + ". A silent no-op is the defect this item " +
+                    "exists to remove.");
+            }
+            if (!message.Contains("finite", StringComparison.Ordinal) ||
+                !message.Contains("no thickening", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Warning must say the value is not finite and that " +
+                    $"nothing is being thickened; it said '{message}'.");
+            }
+        }
+        foreach (double kept in new[] { 0.0, 0.29, -0.29, 1.0e-300 })
+        {
+            double got = Floored(kept, out bool flagged, out string message);
+            if (got != kept || flagged || message.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Th {kept} is finite and passes through untouched and " +
+                    $"in silence, sign and all; it gave {got}, flagged " +
+                    $"{flagged}, saying '{message}'. Th is a DIRECTION and " +
+                    "not a magnitude, so a negative one builds inward and " +
+                    "is not an error.");
             }
         }
     }
