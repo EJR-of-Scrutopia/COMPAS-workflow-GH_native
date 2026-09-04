@@ -4453,8 +4453,26 @@ internal static class SkinPatterns
     /// normal, and it is what blocks.py answers too.
     /// </summary>
     public static IReadOnlyList<double[]> VertexNormals(
-        IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
+        IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces) =>
+        NormaliseCrosses(AccumulateCrosses(vertices, faces, out _));
+
+    /// <summary>
+    /// ONE WALK OF THE FACES, feeding both readings of the same crosses:
+    /// the per-vertex accumulator <see cref="VertexNormals"/> normalises,
+    /// and the global sum <see cref="GlobalCrossSum"/> reads the winding
+    /// off. They were two walks until the orientation of rule 4 landed, and
+    /// two walks put the field over the fifth of the pattern's own time
+    /// that check 12.9(b) holds it under, measured at 37.6 ms against a
+    /// limit of 35.5 on the fine dome. Nothing about the arithmetic moves:
+    /// the crosses are accumulated in the same order into the same doubles,
+    /// and the field is bit-identical to what the two walks gave.
+    /// </summary>
+    private static double[][] AccumulateCrosses(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces,
+        out double[] total)
     {
+        double sx = 0.0, sy = 0.0, sz = 0.0;
         var accumulator = new double[vertices.Count][];
         for (int at = 0; at < vertices.Count; at++)
             accumulator[at] = new double[3];
@@ -4485,6 +4503,9 @@ internal static class SkinPatterns
                 double nx = (uy * vz) - (uz * vy);
                 double ny = (uz * vx) - (ux * vz);
                 double nz = (ux * vy) - (uy * vx);
+                sx += nx;
+                sy += ny;
+                sz += nz;
                 foreach (int index in new[] { a, b, c })
                 {
                     accumulator[index][0] += nx;
@@ -4493,8 +4514,16 @@ internal static class SkinPatterns
                 }
             }
         }
-        var normals = new double[vertices.Count][];
-        for (int at = 0; at < vertices.Count; at++)
+        total = new[] { sx, sy, sz };
+        return accumulator;
+    }
+
+    /// <summary>The accumulator, one unit vector per vertex, with the
+    /// degenerate fan's (0, 0, 1) fallback.</summary>
+    private static double[][] NormaliseCrosses(double[][] accumulator)
+    {
+        var normals = new double[accumulator.Length][];
+        for (int at = 0; at < accumulator.Length; at++)
         {
             double[] sum = accumulator[at];
             double length = Math.Sqrt(
@@ -4523,37 +4552,8 @@ internal static class SkinPatterns
     public static double[] GlobalCrossSum(
         IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
     {
-        double sx = 0.0, sy = 0.0, sz = 0.0;
-        foreach (int[] face in faces)
-        {
-            if (face.Length < 3)
-                continue;
-            for (int corner = 1; corner + 1 < face.Length; corner++)
-            {
-                int a = face[0];
-                int b = face[corner];
-                int c = face[corner + 1];
-                if (a < 0 || a >= vertices.Count ||
-                    b < 0 || b >= vertices.Count ||
-                    c < 0 || c >= vertices.Count)
-                {
-                    continue;
-                }
-                double[] pa = vertices[a];
-                double[] pb = vertices[b];
-                double[] pc = vertices[c];
-                double ux = pb[0] - pa[0];
-                double uy = pb[1] - pa[1];
-                double uz = pb[2] - pa[2];
-                double vx = pc[0] - pa[0];
-                double vy = pc[1] - pa[1];
-                double vz = pc[2] - pa[2];
-                sx += (uy * vz) - (uz * vy);
-                sy += (uz * vx) - (ux * vz);
-                sz += (ux * vy) - (uy * vx);
-            }
-        }
-        return new[] { sx, sy, sz };
+        AccumulateCrosses(vertices, faces, out double[] total);
+        return total;
     }
 
     /// <summary>
@@ -4579,23 +4579,24 @@ internal static class SkinPatterns
     /// this way and not as a hemisphere test.
     ///
     /// A ZERO OR POSITIVE Z IS LEFT ALONE, so a net already wound up comes
-    /// back BIT-IDENTICAL rather than merely equal: the very list the
-    /// unoriented field built, untouched. A flat net whose sum is exactly
-    /// zero has no winding to read and is left as it is.
+    /// back BIT-IDENTICAL rather than merely equal: double for double what
+    /// the unoriented field gives, since both are the same accumulation
+    /// normalised the same way. A flat net whose sum is exactly zero has no
+    /// winding to read and is left as it is.
     /// </summary>
     public static IReadOnlyList<double[]> OrientedVertexNormals(
         IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
     {
-        IReadOnlyList<double[]> normals = VertexNormals(vertices, faces);
-        if (GlobalCrossSum(vertices, faces)[2] >= 0.0)
+        double[][] normals = NormaliseCrosses(
+            AccumulateCrosses(vertices, faces, out double[] total));
+        if (total[2] >= 0.0)
             return normals;
-        var flipped = new double[normals.Count][];
-        for (int at = 0; at < normals.Count; at++)
+        for (int at = 0; at < normals.Length; at++)
         {
             double[] normal = normals[at];
-            flipped[at] = new[] { -normal[0], -normal[1], -normal[2] };
+            normals[at] = new[] { -normal[0], -normal[1], -normal[2] };
         }
-        return flipped;
+        return normals;
     }
 
     /// <summary>
