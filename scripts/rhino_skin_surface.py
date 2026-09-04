@@ -20,13 +20,17 @@ itself states: construction happens on the SOLVE thread, in
 SkinComponents.cs, and native_smoke can measure the SECTIONS a cell
 carries but not the Brep a section lofts into.
 
-Part three (NEW, 2026-09-03) is the THICKNESS half of spec 2026-09-02 as
-amended by spec 2026-09-03 (skin-offset-surface): a planar and a
-non-planar cell thickened at Th 0.2 and -0.2 in both the EXTRUDE and the
-OFFSET branch, each asserted watertight and outward, the planar one
-against its own exact volume in the extrude branch, two neighbours'
-shared wall asserted coincident in BOTH branches, and the side-by-side
-count of cells that close into a solid under each. IT HAS NEVER BEEN RUN.
+Part three (NEW, 2026-09-03, amended 2026-09-04) is the THICKNESS half
+of spec 2026-09-02 as amended by spec 2026-09-03 (skin-offset-surface)
+and again by spec 2026-09-04 (skin-offset-extrude-slider): a planar and
+a non-planar cell thickened at Th 0.2 and -0.2 at the SLIDER STOPS 0,
+0.5 and 1, each asserted watertight and outward, every moved corner
+asserted exactly |Th| from the corner it came from because the blend is
+renormalised, the top ring congruent to the bottom at Extrude 1, two
+neighbours' shared corner asserted WELDED at 0 and OPEN at 1, and the
+side-by-side count of cells that close into a solid at each stop. No
+volume is predicted anywhere any more: the world-Z branch is deleted and
+both ends of the slider are on the net's own normal. IT HAS NEVER BEEN RUN.
 It was written by an agent with no Rhino, to this file's own conventions,
 and its first execution is Param's.
 """
@@ -559,16 +563,38 @@ def run_behavioural_checks():
 # ThicknessOffset and says so in its own check text.
 #
 # AMENDED 2026-09-03 by spec skin-offset-surface. The toggle that used to
-# say Along Normal now says OFFSET, its true branch is an OFFSET SURFACE
-# rather than a per-cell extrusion, and it DEFAULTS TRUE, so the mode this
-# script had never exercised at all is now the shipped one. Every case
-# below is therefore run in BOTH branches, and 12.5(h) gains its offset
-# half: two cells that share an outline corner must both carry a vertex at
-# that corner moved by the SAME vector, since the normal is read at the
-# POINT and not off the cell. Under the deleted per-cell normal that half
-# would have failed by construction, which is why it could not be written
-# before. ThickenCellSurface also takes the NET now, between the outline
-# and Th, because the field it reads lives there.
+# say Along Normal came to say OFFSET, its true branch an OFFSET SURFACE
+# rather than a per-cell extrusion, and it defaulted TRUE, so the mode
+# this script had never exercised at all became the shipped one.
+#
+# AMENDED AGAIN 2026-09-04 by spec skin-offset-extrude-slider, and the
+# amendment is larger. THE TOGGLE IS GONE. Port 6 is a NUMBER, Extrude,
+# running 0 to 1 and defaulting 0, and BOTH ENDS ARE ON THE SURFACE
+# NORMAL: at 0 the outer skin is a true offset surface welded corner to
+# corner, at 1 each cell is extruded along its OWN normal and the joints
+# open. THE (0, 0, Th) WORLD-Z BRANCH IS DELETED, so every case below runs
+# at the SLIDER STOPS 0, 0.5 and 1 rather than in two branches, and no
+# case predicts a volume from a vertical translation any more.
+#
+# What replaces the volume predictions is the DISTANCE, which is exact at
+# every stop: the blended direction is renormalised, so every moved corner
+# stands exactly |Th| from the corner it came from whatever the slider
+# says. Those per-corner assertions are kept in full.
+#
+# 12.5(h) splits in two with the weld. At Extrude 0 two cells sharing an
+# outline corner must both carry a vertex at that corner moved by the SAME
+# vector, since the direction is read at the POINT and not off the cell.
+# At Extrude 1 they must NOT: the cell's own normal enters, the two
+# neighbours disagree, and the gap is the extrusion the slider slides
+# towards. Both halves are asserted, so a slider read and ignored fails
+# one of them whichever way it was ignored.
+#
+# ThickenCellSurface's signature moved twice. It takes the NET, because
+# the field it reads lives there, and it takes the cell's SECTIONS,
+# because the top face is now built by its own bottom's ROUTE: a
+# loft-route cell lofts its top from its own moved rails where it used to
+# be capped by a fan. The order is (face, outline, sections, net, Th,
+# extrude).
 #
 # WHAT THIS SCRIPT IS FOR, restated after the harness measured what it
 # could. tests/native_smoke can count the cells whose side wall is
@@ -611,20 +637,37 @@ def run_thickness_checks():
         return cell_surface_method.Invoke(
             None, System.Array[object]([cell, net]))
 
-    def thicken(face, outline, net, thickness, offset_surface):
+    def thicken(face, outline, sections, net, thickness, extrude):
         return thicken_method.Invoke(
             None,
             System.Array[object](
-                [face, outline, net, thickness, offset_surface]))
+                [face, outline, sections, net, thickness, extrude]))
 
     offset_method = _method(
         skin_component_type, "ThicknessOffset", nonpublic=True)
+    cell_normal_method = _method(
+        skin_component_type, "CellNormal", nonpublic=True)
+
+    # The three stops of the slider this script exercises. 0 is the
+    # shipped default and the offset surface; 1 is the per-cell extrusion;
+    # 0.5 is there because the blend's renormalisation is right at both
+    # ends and wrong in the middle if it is written as an interpolation of
+    # the two translations rather than of the two directions.
+    STOPS = (0.0, 0.5, 1.0)
 
     reports = []
     vertices, faces, rim = _hemisphere()
     net = _make_net(skin_net_type, skin_net_edge_type, vertices, faces, rim)
 
-    def point_offset(point, thickness, offset_surface):
+    def cell_normal(outline):
+        """The cell's OWN normal, N: the renormalised mean of its corners'
+        field normals. Taken off the engine rather than recomputed, so the
+        numbers asserted below are read from the same arithmetic the solid
+        was built with."""
+        return cell_normal_method.Invoke(
+            None, System.Array[object]([net, outline]))
+
+    def point_offset(point, normal, thickness, extrude):
         """The translation ONE point is copied by, taken straight off the
         engine, so that the exact numbers asserted below are read from the
         same arithmetic the solid was built with rather than from a second
@@ -632,8 +675,8 @@ def run_thickness_checks():
         return offset_method.Invoke(
             None,
             System.Array[object](
-                [net, System.Array[float](list(point)), thickness,
-                 offset_surface]))
+                [net, System.Array[float](list(point)), normal, thickness,
+                 extrude]))
 
     built = courses(net, 0.6, 0.35)
     cells = list(_property(built, "Cells"))
@@ -662,16 +705,22 @@ def run_thickness_checks():
             ]),
         )
 
-    # ---- 12.5(f): a PLANAR cell, where the EXTRUDE branch's arithmetic is
-    # exact. A unit square lying flat at z = 1 has plan area 1, so the
-    # extrusion encloses |Th| whatever the sign and spans z 1 to 1 + Th.
+    # ---- 12.5(f): a PLANAR cell, at every stop of the slider.
     #
-    # The OFFSET branch owes no such number here and is not asked for one.
-    # Its direction is read off THE NET at each corner, and the net under
-    # this square is a hemisphere, so the four corners move four different
-    # ways and the enclosed volume is a property of the hemisphere rather
-    # than of the square. What it still owes, and what is checked, is that
-    # the result CLOSES and is oriented outward.
+    # NO VOLUME IS PREDICTED ANY MORE, and the reason is the deletion of
+    # the world-Z branch. The old prediction, that a unit square thickened
+    # by |Th| encloses |Th|, was true only of a VERTICAL translation of a
+    # square lying flat. Both ends of the slider are now on the surface
+    # normal, which under this square is a hemisphere's, so the enclosed
+    # volume is a property of the hemisphere and not of the square at
+    # every stop.
+    #
+    # WHAT IS ASSERTED INSTEAD IS EXACT AT EVERY STOP. The blended
+    # direction is renormalised, so every moved corner stands exactly |Th|
+    # from the corner it came from; the solid must carry a vertex at each
+    # of them, which is what says its top stands on the outline its walls
+    # were built from; and at Extrude 1 the top ring must be CONGRUENT to
+    # the bottom, every corner having moved by the same vector Th * N.
     planar_outline = [
         (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
     ]
@@ -682,133 +731,132 @@ def run_thickness_checks():
             "FAIL (12.5(f), NEW, planar): CellSurface gave no face to "
             "thicken at all")
     else:
+        planar_ring = _property(planar_cell, "Outline")
+        planar_normal = cell_normal(planar_ring)
         for thickness in (0.2, -0.2):
-            for offset_surface in (False, True):
-                mode = "offset" if offset_surface else "extrude"
+            for extrude in STOPS:
                 solid = thicken(
-                    planar_face, _property(planar_cell, "Outline"), net,
-                    thickness, offset_surface)
+                    planar_face, planar_ring, None, net, thickness, extrude)
                 if solid is None:
                     reports.append(
-                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
-                        "returned NULL rather than a solid"
-                        % (thickness, mode))
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f at Extrude "
+                        "%.2f returned NULL rather than a solid"
+                        % (thickness, extrude))
                     continue
                 if not solid.IsSolid:
                     reports.append(
-                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
-                        "did not close; a thickened cell is a watertight "
-                        "Brep or it is nothing" % (thickness, mode))
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f at Extrude "
+                        "%.2f did not close; a thickened cell is a "
+                        "watertight Brep or it is nothing"
+                        % (thickness, extrude))
                     continue
                 if solid.SolidOrientation != rg.BrepSolidOrientation.Outward:
                     reports.append(
-                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
-                        "came back oriented %s; the spec asks for Outward"
-                        % (thickness, mode, solid.SolidOrientation))
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f at Extrude "
+                        "%.2f came back oriented %s; the spec asks for "
+                        "Outward"
+                        % (thickness, extrude, solid.SolidOrientation))
                     continue
                 volume = solid.GetVolume()
                 box = solid.GetBoundingBox(True)
                 low, high = box.Min.Z, box.Max.Z
-                if offset_surface:
-                    # NO VOLUME IS PREDICTED for this mode, the direction
-                    # being the net's and not the square's. But the
-                    # DISTANCE is exact and is asserted: the offset is a
-                    # UNIT normal times Th, so every moved corner stands
-                    # exactly |Th| from the corner it came from, whatever
-                    # direction it went, and the solid must carry a vertex
-                    # at each of them. Restored 2026-09-04: a mode whose
-                    # only assertion is "it closed" is the weaker half of
-                    # what this branch owes.
-                    faults = []
-                    corners = [v.Location for v in solid.Vertices]
-                    moved = []
-                    for point in planar_outline:
-                        step = point_offset(point, thickness, True)
-                        moved.append((
-                            point[0] + step[0],
-                            point[1] + step[1],
-                            point[2] + step[2]))
-                        walked = math.sqrt(
-                            (step[0] * step[0]) + (step[1] * step[1]) +
-                            (step[2] * step[2]))
-                        if abs(walked - abs(thickness)) > 1.0e-9:
-                            faults.append(
-                                "the corner (%.6f, %.6f, %.6f) moved "
-                                "%.12f rather than |Th| = %.12f, so the "
-                                "direction it moved in was not a UNIT "
-                                "normal"
-                                % (point[0], point[1], point[2],
-                                   walked, abs(thickness)))
-                    for point in moved:
-                        seat = rg.Point3d(point[0], point[1], point[2])
-                        if not any(
-                                seat.DistanceTo(at) <= 1.0e-9
-                                for at in corners):
-                            faults.append(
-                                "the solid carries no vertex at the moved "
-                                "corner (%.9f, %.9f, %.9f), so its top "
-                                "does not stand on the outline its walls "
-                                "were built from"
-                                % (point[0], point[1], point[2]))
-                    # ONE WALL'S TWO ENDS. The wall on outline edge 0 runs
-                    # from that corner to the corner it moved to, and that
-                    # span is |Th| exactly, which is the thickness this
-                    # cell actually carries at that corner.
-                    span = rg.Point3d(
-                        planar_outline[0][0], planar_outline[0][1],
-                        planar_outline[0][2]).DistanceTo(
-                            rg.Point3d(moved[0][0], moved[0][1], moved[0][2]))
-                    if abs(span - abs(thickness)) > 1.0e-9:
+                faults = []
+                corners = [v.Location for v in solid.Vertices]
+                moved = []
+                for point in planar_outline:
+                    step = point_offset(
+                        point, planar_normal, thickness, extrude)
+                    moved.append((
+                        point[0] + step[0],
+                        point[1] + step[1],
+                        point[2] + step[2]))
+                    walked = math.sqrt(
+                        (step[0] * step[0]) + (step[1] * step[1]) +
+                        (step[2] * step[2]))
+                    if abs(walked - abs(thickness)) > 1.0e-9:
                         faults.append(
-                            "the first wall's two ends span %.12f rather "
-                            "than |Th| = %.12f" % (span, abs(thickness)))
-                    if faults:
-                        reports.append(
-                            "FAIL (12.5(f), NEW, planar): Th %+.1f in %s "
-                            "mode: %s"
-                            % (thickness, mode, "; ".join(faults)))
-                        continue
+                            "the corner (%.6f, %.6f, %.6f) moved %.12f "
+                            "rather than |Th| = %.12f, so the blended "
+                            "direction was not RENORMALISED"
+                            % (point[0], point[1], point[2],
+                               walked, abs(thickness)))
+                for point in moved:
+                    seat = rg.Point3d(point[0], point[1], point[2])
+                    if not any(
+                            seat.DistanceTo(at) <= 1.0e-9 for at in corners):
+                        faults.append(
+                            "the solid carries no vertex at the moved "
+                            "corner (%.9f, %.9f, %.9f), so its top does "
+                            "not stand on the outline its walls were "
+                            "built from"
+                            % (point[0], point[1], point[2]))
+                # ONE WALL'S TWO ENDS. The wall on outline edge 0 runs from
+                # that corner to the corner it moved to, and that span is
+                # |Th| exactly, which is the thickness this cell actually
+                # carries at that corner.
+                span = rg.Point3d(
+                    planar_outline[0][0], planar_outline[0][1],
+                    planar_outline[0][2]).DistanceTo(
+                        rg.Point3d(moved[0][0], moved[0][1], moved[0][2]))
+                if abs(span - abs(thickness)) > 1.0e-9:
+                    faults.append(
+                        "the first wall's two ends span %.12f rather than "
+                        "|Th| = %.12f" % (span, abs(thickness)))
+                # CONGRUENCE AT 1, and only there. Every corner moves by
+                # the same vector Th * N, so the top ring's pairwise corner
+                # distances are the bottom's.
+                if extrude == 1.0:
+                    for a in range(len(planar_outline)):
+                        for b in range(a + 1, len(planar_outline)):
+                            below = rg.Point3d(
+                                planar_outline[a][0], planar_outline[a][1],
+                                planar_outline[a][2]).DistanceTo(
+                                    rg.Point3d(
+                                        planar_outline[b][0],
+                                        planar_outline[b][1],
+                                        planar_outline[b][2]))
+                            above = rg.Point3d(
+                                moved[a][0], moved[a][1],
+                                moved[a][2]).DistanceTo(
+                                    rg.Point3d(
+                                        moved[b][0], moved[b][1],
+                                        moved[b][2]))
+                            if abs(above - below) > 1.0e-9:
+                                faults.append(
+                                    "at Extrude 1 corners %d and %d are "
+                                    "%.12f apart below and %.12f above, "
+                                    "where a rigid translation keeps them "
+                                    "equal" % (a, b, below, above))
+                if faults:
                     reports.append(
-                        "PASS (12.5(f), NEW, UNVERIFIED BY ITS AUTHOR, "
-                        "planar): Th %+.1f in %s mode is a watertight "
-                        "outward solid of volume %.9f spanning z %.6f to "
-                        "%.6f, every one of its %d moved corners standing "
-                        "exactly |Th| from the corner it came from and "
-                        "carried as a vertex of the solid, the first "
-                        "wall's two ends spanning %.9f; no volume is "
-                        "predicted for this mode, the direction being the "
-                        "net's and not the square's"
-                        % (thickness, mode, volume, low, high, len(moved),
-                           span))
-                    continue
-                if abs(volume - abs(thickness)) > 1.0e-6:
-                    reports.append(
-                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
-                        "encloses %.9f, and a unit square thickened by "
-                        "|Th| encloses %.9f"
-                        % (thickness, mode, volume, abs(thickness)))
-                    continue
-                wanted = (1.0, 1.0 + thickness)
-                if abs(low - min(wanted)) > 1.0e-9 or \
-                        abs(high - max(wanted)) > 1.0e-9:
-                    reports.append(
-                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
-                        "spans z %.9f to %.9f; the SIGN chooses the "
-                        "direction, so it must span %.9f to %.9f"
-                        % (thickness, mode, low, high,
-                           min(wanted), max(wanted)))
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f at Extrude "
+                        "%.2f: %s"
+                        % (thickness, extrude, "; ".join(faults)))
                     continue
                 reports.append(
                     "PASS (12.5(f), NEW, UNVERIFIED BY ITS AUTHOR, "
-                    "planar): Th %+.1f in %s mode is a watertight outward "
-                    "solid of volume %.9f spanning z %.6f to %.6f"
-                    % (thickness, mode, volume, low, high))
+                    "planar): Th %+.1f at Extrude %.2f is a watertight "
+                    "outward solid of volume %.9f spanning z %.6f to "
+                    "%.6f, every one of its %d moved corners standing "
+                    "exactly |Th| from the corner it came from and "
+                    "carried as a vertex of the solid, the first wall's "
+                    "two ends spanning %.9f; no volume is predicted at "
+                    "any stop, both ends of the slider being on the net's "
+                    "own normal and not the square's"
+                    % (thickness, extrude, volume, low, high, len(moved),
+                       span))
 
     # ---- 12.5(g): a NON-PLANAR cell off the real courses engine, where no
     # volume is worth predicting by hand but closedness and orientation
     # still are. The cell chosen is the one whose corners depart furthest
     # from their own mean height, so this is not a nearly-flat cell in
     # disguise.
+    #
+    # IT CARRIES ITS OWN SECTIONS NOW, which is spec 2026-09-04 section 5:
+    # a courses cell is a LOFT of two bed runs, and its top must be lofted
+    # from those same rails moved rather than fanned over its outline. The
+    # fan over a lofted bottom is the triangulated crust in Param's
+    # screenshot, and this is the cell it appears on.
     def out_of_plane(cell):
         outline = [list(p) for p in _property(cell, "Outline")]
         if len(outline) < 4:
@@ -822,45 +870,51 @@ def run_thickness_checks():
         reports.append(
             "FAIL (12.5(g), NEW, non-planar): CellSurface gave no face")
     else:
+        warped_ring = _property(warped, "Outline")
+        warped_sections = _property(warped, "Sections")
         for thickness in (0.2, -0.2):
-            for offset_surface in (False, True):
-                mode = "offset" if offset_surface else "extrude"
+            for extrude in STOPS:
                 solid = thicken(
-                    warped_face, _property(warped, "Outline"), net,
-                    thickness, offset_surface)
+                    warped_face, warped_ring, warped_sections, net,
+                    thickness, extrude)
                 if solid is None or not solid.IsSolid:
                     reports.append(
-                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f in %s "
-                        "mode did not close into a watertight solid"
-                        % (thickness, mode))
+                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f at "
+                        "Extrude %.2f did not close into a watertight "
+                        "solid" % (thickness, extrude))
                     continue
                 if solid.SolidOrientation != rg.BrepSolidOrientation.Outward:
                     reports.append(
-                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f in %s "
-                        "mode came back oriented %s rather than Outward"
-                        % (thickness, mode, solid.SolidOrientation))
+                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f at "
+                        "Extrude %.2f came back oriented %s rather than "
+                        "Outward"
+                        % (thickness, extrude, solid.SolidOrientation))
                     continue
                 reports.append(
                     "PASS (12.5(g), NEW, UNVERIFIED BY ITS AUTHOR, "
-                    "non-planar): Th %+.1f in %s mode is a watertight "
+                    "non-planar): Th %+.1f at Extrude %.2f is a watertight "
                     "outward solid of %d faces, out-of-plane departure "
-                    "%.4f m" % (thickness, mode, solid.Faces.Count,
-                                out_of_plane(warped)))
+                    "%.4f m, its top lofted from %s rails rather than "
+                    "fanned"
+                    % (thickness, extrude, solid.Faces.Count,
+                       out_of_plane(warped),
+                       "no" if warped_sections is None
+                       else str(len(list(warped_sections)))))
 
-    # ---- 12.5(h): the SHARED WALL, and it is now measured in BOTH
-    # branches, which is the point of spec 2026-09-03.
+    # ---- 12.5(h): THE WELD AT 0 AND THE SPLIT AT 1, which is the whole of
+    # what the slider claims and the one thing only real Breps can show.
     #
-    # EXTRUDE. Two cells that share an outline corner add literally the same
-    # three doubles to it, so both solids carry a vertex at that corner and
-    # at the corner raised by Th.
+    # AT EXTRUDE 0 the direction is read at the POINT and off nothing else,
+    # so two cells that share an outline corner move it by the same vector
+    # and BOTH SOLIDS must carry a vertex at the corner and at the moved
+    # corner. Under the deleted per-cell normal that half would have failed
+    # by construction, which is why it could not be written before.
     #
-    # OFFSET. The normal is read at the POINT and not off the cell, so the
-    # two cells move the shared corner by the same vector there too, and
-    # both solids must carry a vertex at the corner AND at the corner moved
-    # by that one vector. Under the DELETED per-cell normal this half would
-    # have failed by construction, which is why it could not be written
-    # before; it is the whole of the change, taken where the harness cannot
-    # reach, on real Breps.
+    # AT EXTRUDE 1 they must NOT: the cell's own normal enters, the two
+    # neighbours disagree about it, and the joint opens. The gap is
+    # asserted to be REAL, above the 1e-6 the join is asked at, because a
+    # slider read and ignored would leave it at zero and pass the weld half
+    # alone.
     shared = None
     for i in range(len(cells)):
         left = [tuple(p) for p in _property(cells[i], "Outline")]
@@ -875,72 +929,97 @@ def run_thickness_checks():
     if shared is None:
         reports.append(
             "FAIL (12.5(h), NEW): no two cells of the fixture share an "
-            "outline corner, so the coincidence claim was measured on "
-            "nothing")
+            "outline corner, so the weld claim was measured on nothing")
     else:
         left_cell, right_cell, corner = shared
         thickness = 0.2
-        for offset_surface in (False, True):
-            mode = "offset" if offset_surface else "extrude"
-            moved = point_offset(corner, thickness, offset_surface)
-            wanted = [
-                rg.Point3d(corner[0], corner[1], corner[2]),
-                rg.Point3d(
-                    corner[0] + moved[0],
-                    corner[1] + moved[1],
-                    corner[2] + moved[2]),
-            ]
+        left_normal = cell_normal(_property(left_cell, "Outline"))
+        right_normal = cell_normal(_property(right_cell, "Outline"))
+        for extrude in (0.0, 1.0):
+            left_step = point_offset(
+                corner, left_normal, thickness, extrude)
+            right_step = point_offset(
+                corner, right_normal, thickness, extrude)
+            gap = math.sqrt(
+                sum((left_step[k] - right_step[k]) ** 2 for k in range(3)))
             faults = []
-            for label, cell in (("first", left_cell), ("second", right_cell)):
+            if extrude == 0.0 and gap > 1.0e-12:
+                faults.append(
+                    "the two cells moved the shared corner %.12f apart at "
+                    "Extrude 0, where the direction is a function of the "
+                    "POINT alone and they must agree exactly" % (gap,))
+            if extrude == 1.0 and gap <= 1.0e-6:
+                faults.append(
+                    "the two cells moved the shared corner only %.12f "
+                    "apart at Extrude 1, where each is meant to follow its "
+                    "OWN normal and the joint is meant to open; a slider "
+                    "read and ignored looks exactly like this" % (gap,))
+            wanted = []
+            for step in ((left_step, left_cell), (right_step, right_cell)):
+                wanted.append((
+                    step[1],
+                    rg.Point3d(corner[0], corner[1], corner[2]),
+                    rg.Point3d(
+                        corner[0] + step[0][0],
+                        corner[1] + step[0][1],
+                        corner[2] + step[0][2])))
+            for cell, seat, moved_seat in wanted:
                 face = cell_surface(cell, net)
                 solid = thicken(
-                    face, _property(cell, "Outline"), net, thickness,
-                    offset_surface)
+                    face, _property(cell, "Outline"),
+                    _property(cell, "Sections"), net, thickness, extrude)
                 if solid is None or not solid.IsSolid:
                     faults.append(
-                        "the %s cell did not close into a solid" % (label,))
+                        "one of the two cells did not close into a solid")
                     continue
                 corners = [v.Location for v in solid.Vertices]
-                for point in wanted:
+                for point in (seat, moved_seat):
                     if not any(
                             point.DistanceTo(at) <= 1.0e-9 for at in corners):
                         faults.append(
-                            "the %s cell's solid has no vertex at "
-                            "(%.9f, %.9f, %.9f)"
-                            % (label, point.X, point.Y, point.Z))
+                            "a cell's solid has no vertex at (%.9f, %.9f, "
+                            "%.9f)" % (point.X, point.Y, point.Z))
             if faults:
                 reports.append(
-                    "FAIL (12.5(h), NEW, shared wall, %s): %s"
-                    % (mode, "; ".join(sorted(set(faults)))))
+                    "FAIL (12.5(h), NEW, shared corner, Extrude %.2f): %s"
+                    % (extrude, "; ".join(sorted(set(faults)))))
             else:
                 reports.append(
                     "PASS (12.5(h), NEW, UNVERIFIED BY ITS AUTHOR, shared "
-                    "wall, %s): two cells sharing the corner (%.6f, %.6f, "
-                    "%.6f) both carry a vertex there and at that corner "
-                    "moved by (%.6f, %.6f, %.6f) at Th 0.2, so their walls "
-                    "meet by construction"
-                    % (mode, corner[0], corner[1], corner[2],
-                       moved[0], moved[1], moved[2]))
+                    "corner, Extrude %.2f): two cells sharing the corner "
+                    "(%.6f, %.6f, %.6f) at Th 0.2 move it %.12f m apart, "
+                    "and each solid carries a vertex at the corner and at "
+                    "its own moved corner. At 0 that gap is the WELD and "
+                    "at 1 it is the joint opening by design."
+                    % (extrude, corner[0], corner[1], corner[2], gap))
 
-    # ---- 12.5(i), NEW 2026-09-03: THE COUNT PARAM ASKED FOR, and the only
-    # place it can honestly be taken.
+    # ---- 12.5(i), NEW 2026-09-03, PER SLIDER STOP since 2026-09-04: THE
+    # COUNT PARAM ASKED FOR, and the only place it can honestly be taken.
     #
     # tests/native_smoke can count the cells whose side wall is ANNIHILATED
-    # into a line, and on 2026-09-03 that count was ZERO on every fixture,
-    # including Param's own net under both patterns. So spec section 1
-    # point 3 is not the mechanism behind his 148 of 262, and the refusal
-    # must be happening at one of the thickener's other three exits: a wall
-    # Rhino declines for its own reasons, a join that does not close, or a
-    # shell that is not solid. All three need the native core, so the count
+    # into a line, and that count is ZERO on every fixture at both ends of
+    # the slider, including Param's own net under both patterns. So the
+    # vertical-edge mechanism is not behind his 148 of 262, and the refusal
+    # must be happening at one of the thickener's other exits: a wall Rhino
+    # declines for its own reasons, a join that does not close, or a shell
+    # that is not solid. All three need the native core, so the count
     # belongs here.
     #
-    # It is a MEASUREMENT and not an assertion. Whether the offset branch
-    # closes more cells than the extrusion is exactly the open question,
+    # THE OPEN QUESTION THIS SCRIPT OWNS is the LOFT ROUTE. A courses cell
+    # is a loft of two bed runs, and until 2026-09-04 its top was fanned
+    # over its outline whatever its bottom was, so the top's boundary was
+    # the outline's straight chords where the bottom's was the loft's own
+    # rails: two boundaries that cannot join at the 1e-6 the join is asked
+    # at. That would refuse EVERY cell of the loft route rather than a
+    # scattering, which fits 148 of 262 far better than any vertical edge
+    # does. The counts below are what decides it.
+    #
+    # It is a MEASUREMENT and not an assertion. Whether one end of the
+    # slider closes more cells than the other is exactly the open question,
     # and a check that decided it in advance would be worthless.
     thickness = 0.29
     tally = {}
-    for offset_surface in (False, True):
-        mode = "offset" if offset_surface else "extrude"
+    for extrude in STOPS:
         faces_built = 0
         solids_built = 0
         for cell in cells:
@@ -949,23 +1028,25 @@ def run_thickness_checks():
                 continue
             faces_built += 1
             solid = thicken(
-                face, _property(cell, "Outline"), net, thickness,
-                offset_surface)
+                face, _property(cell, "Outline"),
+                _property(cell, "Sections"), net, thickness, extrude)
             if solid is not None and solid.IsSolid:
                 solids_built += 1
-        tally[mode] = (faces_built, solids_built)
+        tally[extrude] = (faces_built, solids_built)
     reports.append(
         "MEASURED (12.5(i), NEW, UNVERIFIED BY ITS AUTHOR): at Th %.2f "
-        "over %d cells, EXTRUDE built %d faces and closed %d of them into "
-        "solids (%d refused); OFFSET built %d faces and closed %d (%d "
-        "refused). If the two refusal counts are equal the thickener's "
-        "problem is not the offset direction and the next task belongs "
-        "elsewhere."
+        "over %d cells, %s. If the refusal counts are the same at every "
+        "stop, the thickener's problem is not the offset direction; if "
+        "they are near zero everywhere, the top-by-its-bottom's-route "
+        "change of spec 2026-09-04 section 5 is what closed them and the "
+        "148 are accounted for."
         % (thickness, len(cells),
-           tally["extrude"][0], tally["extrude"][1],
-           tally["extrude"][0] - tally["extrude"][1],
-           tally["offset"][0], tally["offset"][1],
-           tally["offset"][0] - tally["offset"][1]))
+           "; ".join(
+               "Extrude %.2f built %d faces and closed %d of them into "
+               "solids (%d refused)"
+               % (stop, tally[stop][0], tally[stop][1],
+                  tally[stop][0] - tally[stop][1])
+               for stop in STOPS)))
 
     return reports
 
