@@ -53,8 +53,14 @@ def load_contract(path) -> Dict[str, Any]:
 # The four names the studio writes into the upload folder itself. A file
 # ending in one of these belongs to a study; anything else in the folder is
 # a candidate study of its own.
+# The four the studio has always written, and the three the exporter is
+# moving to (the plugin session's REPLY to R-010 and R-011, 2026-09-03,
+# settled by Param: form, skin, formwork). Both sets resolve side by side,
+# because his existing studies must keep opening on the day the exporter
+# changes over.
 KIND_SUFFIXES = (
-    "-contract.json", "-compas.json", "-tessellation.json", "-frames.json")
+    "-contract.json", "-compas.json", "-tessellation.json", "-frames.json",
+    "-form.json", "-skin.json", "-formwork.json")
 
 # Verdicts for the loose scan below, keyed by path, size and mtime. The
 # browser polls the study list every two seconds and a contract runs to
@@ -108,13 +114,18 @@ def available_exports(directory) -> Dict[str, Dict[str, Path]]:
 
     directory = Path(directory)
     pairs: Dict[str, Dict[str, Path]] = {}
-    for contract in sorted(directory.glob("*-contract.json")):
-        name = contract.name[: -len("-contract.json")]
-        entry: Dict[str, Path] = {"contract": contract}
-        geometry = directory / (name + "-compas.json")
-        if geometry.is_file():
-            entry["geometry"] = geometry
-        pairs[name] = entry
+    # -form.json is the new name for what -contract.json holds, and it is
+    # read first so a study that has both lands on the newer document.
+    for suffix in ("-form.json", "-contract.json"):
+        for contract in sorted(directory.glob("*" + suffix)):
+            name = contract.name[: -len(suffix)]
+            if name in pairs:
+                continue
+            entry: Dict[str, Path] = {"contract": contract}
+            geometry = directory / (name + "-compas.json")
+            if geometry.is_file():
+                entry["geometry"] = geometry
+            pairs[name] = entry
     for path in sorted(directory.glob("*.json")):
         if any(path.name.endswith(suffix) for suffix in KIND_SUFFIXES):
             continue

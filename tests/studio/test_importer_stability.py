@@ -997,3 +997,81 @@ def test_the_saved_folder_is_applied_at_startup_not_at_app_build(tmp_path, monke
         json.dumps({"upload_folder": str(tmp_path / "gone")}), encoding="utf-8")
     assert app_module.apply_saved_folder() is None
     assert bundle_module.UPLOAD_DIR == uploads, "a folder that is gone is not obeyed"
+
+
+def test_the_three_document_set_resolves_beside_the_old_one(tmp_path, monkeypatch):
+    """The exporter is moving to form, skin and formwork (settled by Param,
+    recorded in the plugin session's reply to R-010 and R-011). The reader
+    takes both shapes at once, because his existing studies have to keep
+    opening on the day the exporter changes over.
+
+    Three rules: a -form.json is a study exactly as a -contract.json is; a
+    study carrying both lands on the newer document; and neither name is
+    ever offered as a study of its own, whatever is inside it."""
+
+    client, uploads, _studies = make_client(tmp_path, monkeypatch)
+    contract = json.dumps(tiny_contract())
+    (uploads / "New shape-form.json").write_text(contract, encoding="utf-8")
+    (uploads / "Old shape-contract.json").write_text(contract, encoding="utf-8")
+    (uploads / "Both-form.json").write_text(contract, encoding="utf-8")
+    (uploads / "Both-contract.json").write_text(contract, encoding="utf-8")
+    (uploads / "New shape-skin.json").write_text('{"cells": []}', encoding="utf-8")
+    (uploads / "New shape-formwork.json").write_text('{"frames": []}', encoding="utf-8")
+
+    listed = sorted(row["export"] for row in client.get("/api/studies").json()["studies"])
+    assert listed == ["Both", "New shape", "Old shape"], listed
+
+    geometry = studio()[2] if len(studio()) > 2 else None
+    import geometry as geometry_module
+    pairs = geometry_module.available_exports(uploads)
+    assert pairs["Both"]["contract"].name == "Both-form.json", "the newer document wins"
+    assert pairs["New shape"]["contract"].name == "New shape-form.json"
+    assert pairs["Old shape"]["contract"].name == "Old shape-contract.json"
+
+    import bundle as bundle_module
+    monkeypatch.setattr(bundle_module, "UPLOAD_DIR", uploads)
+    assert bundle_module.frames_sidecar("New shape").name == "New shape-formwork.json"
+    assert bundle_module.tessellation_sidecar("New shape").name == "New shape-skin.json"
+    # A study with only the old names still finds them.
+    (uploads / "Old shape-frames.json").write_text('{"frames": []}', encoding="utf-8")
+    assert bundle_module.frames_sidecar("Old shape").name == "Old shape-frames.json"
+
+
+def test_the_formwork_document_pairs_against_its_own_columns(tmp_path, monkeypatch):
+    """The formwork document is self-contained under the new set: it carries
+    the columns AND the frames, and its own columns block is what the
+    time-100 pairing check compares against, not the contract's mould block
+    (the plugin session's reply, point 2). An older document with no columns
+    of its own still pairs against the contract, so both shapes resolve.
+
+    This is the check that stands between a mis-paired export and an
+    animation that ends somewhere the vault is not, so it is worth having it
+    look at the right place."""
+
+    import frames as frames_module
+
+    contract = tiny_contract()
+    vertices = contract["equilibrium"]["vertices"]
+    contract["mould"] = {"columns": {"nodes": [{"x": 9, "y": 9, "z": 9}]}}
+    final = [[v["x"], v["y"], v["z"]] for v in vertices]
+    document = {
+        "vertexCount": len(vertices),
+        "columnNodeCount": 1,
+        "columns": {"nodes": [{"x": 1, "y": 2, "z": 3}]},
+        "frames": [{"time": 100.0, "phase": "hold", "vertices": final,
+                    "columnNodes": [[1, 2, 3]]}],
+    }
+    # The document agrees with ITSELF and disagrees with the contract's
+    # mould block, and that is a pass: the mould block is not the source.
+    assert frames_module.pairing_error(document, contract) is None
+
+    document["frames"][0]["columnNodes"] = [[1, 2, 3.5]]
+    reason = frames_module.pairing_error(document, contract)
+    assert reason and "formwork document's own columns block" in reason, reason
+
+    # With no columns block of its own, the contract's mould block is the
+    # source again, and disagreeing with it is a failure.
+    document.pop("columns")
+    document["frames"][0]["columnNodes"] = [[1, 2, 3]]
+    reason = frames_module.pairing_error(document, contract)
+    assert reason and "the contract's mould block" in reason, reason

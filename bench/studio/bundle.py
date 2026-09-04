@@ -81,14 +81,34 @@ def staging_path(slug: str, material: str, pattern: str, size: float, thickness:
         material, pattern, round(size * 1000), round(thickness * 1000))
 
 
-def frames_sidecar(export_name: str) -> Path:
-    """The formwork animation document beside the export pair."""
+def _sidecar(export_name: str, *suffixes: str) -> Path:
+    """The first of these documents that exists, or the last name tried.
 
-    return UPLOAD_DIR / "{}-frames.json".format(export_name)
+    Two shapes are in play while the exporter moves to its three-document
+    set: the newer name is looked for first and the older one is still
+    read, so a study written either way opens. Returning the last name
+    when neither exists keeps the callers' "does it exist" checks and
+    their error messages working on a real path.
+    """
+
+    last = UPLOAD_DIR / "{}{}".format(export_name, suffixes[-1])
+    for suffix in suffixes:
+        candidate = UPLOAD_DIR / "{}{}".format(export_name, suffix)
+        if candidate.is_file():
+            return candidate
+    return last
+
+
+def frames_sidecar(export_name: str) -> Path:
+    """The formwork document: the machine, still and moving."""
+
+    return _sidecar(export_name, "-formwork.json", "-frames.json")
 
 
 def tessellation_sidecar(export_name: str) -> Path:
-    return UPLOAD_DIR / "{}-tessellation.json".format(export_name)
+    """The skin document: the cells somebody authored."""
+
+    return _sidecar(export_name, "-skin.json", "-tessellation.json")
 
 
 _temporary_serial = itertools.count()

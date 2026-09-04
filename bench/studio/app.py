@@ -357,9 +357,25 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             u, v = edge.get("u"), edge.get("v")
             if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["vertexCount"]                     and 0 <= v < document["vertexCount"]:
                 edges.append([u, v])
+        # The formwork document's own members first: it is self-contained
+        # under the three-document set, and the contract's mould block is
+        # the fallback for the older shape rather than the authority.
         members = []
+        stored = document.get("columns")
+        if isinstance(stored, dict):
+            for member in stored.get("members") or []:
+                if isinstance(member, list) and len(member) == 2:
+                    u, v = member
+                elif isinstance(member, dict):
+                    u, v = member.get("u"), member.get("v")
+                else:
+                    continue
+                if isinstance(u, int) and isinstance(v, int) \
+                        and 0 <= u < document["columnNodeCount"] \
+                        and 0 <= v < document["columnNodeCount"]:
+                    members.append([u, v])
         columns = (contract.get("mould") or {}).get("columns") or {}
-        for member in columns.get("members") or []:
+        for member in [] if members else (columns.get("members") or []):
             u, v = member.get("u"), member.get("v")
             if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["columnNodeCount"]                     and 0 <= v < document["columnNodeCount"]:
                 members.append([u, v])

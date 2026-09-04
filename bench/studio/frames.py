@@ -233,27 +233,40 @@ def pairing_error(document: Mapping[str, Any], contract: Mapping[str, Any]) -> O
     # only when the contract carries a mould columns block; a frames
     # document with its own columns and no mould block has nothing to
     # disagree with.
-    mould = contract.get("mould") if isinstance(contract, Mapping) else None
-    columns = mould.get("columns") if isinstance(mould, Mapping) else None
-    nodes = columns.get("nodes") if isinstance(columns, Mapping) else None
+    # Where the column nodes come from changed with the three-document set.
+    # The formwork document is self-contained: it carries its own columns
+    # block, and that is the pairing source (the plugin session's REPLY to
+    # R-010 and R-011, point 2). The contract keeps its mould block for
+    # other consumers, and an older frames document with no columns block
+    # of its own still pairs against it, so both shapes resolve.
+    own = document.get("columns")
+    own_nodes = own.get("nodes") if isinstance(own, Mapping) else None
+    if isinstance(own_nodes, list):
+        nodes = own_nodes
+        held_by = "the formwork document's own columns block"
+    else:
+        mould = contract.get("mould") if isinstance(contract, Mapping) else None
+        columns = mould.get("columns") if isinstance(mould, Mapping) else None
+        nodes = columns.get("nodes") if isinstance(columns, Mapping) else None
+        held_by = "the contract's mould block"
     if isinstance(nodes, list):
         if len(nodes) != document["columnNodeCount"]:
             return (
-                "frames carry {} column nodes but the contract's mould "
-                "block carries {}; the machine is from another "
-                "solve.".format(document["columnNodeCount"], len(nodes)))
+                "frames carry {} column nodes but {} carries {}; the "
+                "machine is from another solve.".format(
+                    document["columnNodeCount"], held_by, len(nodes)))
         for i, point in enumerate(final["columnNodes"]):
             reference = nodes[i]
             for axis, value in zip("xyz", point):
                 target = reference.get(axis) if isinstance(reference, Mapping) else None
                 if isinstance(target, bool) or not isinstance(target, (int, float)):
                     return (
-                        "the contract's mould column node {} has no "
-                        "numeric {}.".format(i, axis))
+                        "column node {} in {} has no numeric {}.".format(
+                            i, held_by, axis))
                 if abs(value - float(target)) > PAIR_EPSILON:
                     return (
                         "the time-100 frame's column node {} axis {} "
-                        "differs from the contract's mould block by "
-                        "{:.3e}; the machine is from another solve.".format(
-                            i, axis, abs(value - float(target))))
+                        "differs from {} by {:.3e}; the machine is from "
+                        "another solve.".format(
+                            i, axis, held_by, abs(value - float(target))))
     return None
