@@ -55,14 +55,26 @@ const AGENT = "Bench Studio prop library (Ananke Eidos)";
 // rather than quietly bloating the scene, because draw calls and triangles
 // are what decide whether a vault study can afford entourage at all.
 const CLASS = {
-  // A canopy is not a boulder. Its silhouette is a cloud of alpha-clipped
-  // leaves that meshopt cannot weld across, so the target is lower and the
-  // maps smaller, and the reason a tree still costs three megabytes is that
-  // it is a photoscan of a tree.
-  canopy:  { triangles:  60000, bytes: 4.0e6, texture: 512 },
   hero:    { triangles:  90000, bytes: 3.0e6, texture: 1024 },
   mid:     { triangles:  30000, bytes: 1.2e6, texture: 512 },
   clutter: { triangles:   6000, bytes: 0.35e6, texture: 256 },
+};
+
+// Vegetation is priced apart, and higher. The first build shared the rock
+// budgets and the verdict came back: "have we also then lowered the quality
+// of the props? the tree has no branches i can see just floating leaves".
+// The complaint is exact: a canopy is not a boulder. The simplifier spends
+// its error where the triangles are thin, and nothing is thinner than a
+// branch, so branches go first and the leaves stay -- a cloud of foliage
+// around nothing. The cure is not a cleverer simplifier, it is a budget a
+// tree fits inside: a source at or under its target passes through
+// unsimplified. The machine driving the studio is an RTX 4090; a quarter
+// of a million triangles for a tree is cheaper than a floating canopy.
+// The byte lines are raised to match and remain reports, not gates.
+const PLANTING = {
+  canopy:  { triangles: 200000, bytes: 14.0e6, texture: 512 },
+  mid:     { triangles: 150000, bytes: 10.0e6, texture: 512 },
+  clutter: { triangles:  24000, bytes: 2.0e6, texture: 256 },
 };
 
 // group is what the studio's grid sorts by and what decides whether a prop
@@ -306,7 +318,9 @@ function boundsOf(document) {
 }
 
 async function buildOne(io, item) {
-  const budget = CLASS[item.size];
+  // Planting reads from its own, taller price list; everything else keeps
+  // the thrift that draw calls still justify for rocks and street furniture.
+  const budget = (item.group === "planting" ? PLANTING : CLASS)[item.size];
   const files = await getJson(`https://api.polyhaven.com/files/${item.slug}`);
   const gltf = files.gltf && (files.gltf["1k"] || files.gltf["2k"]);
   if (!gltf || !gltf.gltf) throw new Error("no gltf bundle published");

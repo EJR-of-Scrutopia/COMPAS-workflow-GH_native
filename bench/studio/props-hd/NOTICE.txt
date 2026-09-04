@@ -1,21 +1,6 @@
 Every model in this folder is from Poly Haven and is CC0 1.0.
 Poly Haven asks for no credit and this file is offered anyway.
 
-modular_factory_facade
-  Factory facade
-  https://polyhaven.com/a/modular_factory_facade
-modular_fire_escape
-  Fire escape
-  https://polyhaven.com/a/modular_fire_escape
-modular_fort_01
-  Stone fort kit
-  https://polyhaven.com/a/modular_fort_01
-modular_urban_apartments_facade
-  Apartment facade
-  https://polyhaven.com/a/modular_urban_apartments_facade
-modular_wooden_pier
-  Wooden pier
-  https://polyhaven.com/a/modular_wooden_pier
 anthurium_botany_01
   Anthurium
   https://polyhaven.com/a/anthurium_botany_01
