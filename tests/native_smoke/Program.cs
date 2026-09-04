@@ -839,8 +839,10 @@ internal static class Program
                 "every branch the cells run COMPONENT BY COMPONENT and each " +
                 "component in ONE direction, its signed arc strictly " +
                 "increasing, on a closed dome course and on the barrel's " +
-                "two open strips alike; the dome is one run per course, its " +
-                "crown rosette included, and the ridged barrel two. The " +
+                "two open strips alike; the dome is one run per course and " +
+                "two at its crown, where the keystone leads the rosette it " +
+                "must win its overlaps against, and the ridged barrel two. " +
+                "The " +
                 "order is measured against the CELLS' OWN CORNERS and not " +
                 "against the engine's sort key: the places where the order " +
                 "steps to a new run are exactly the places where two " +
@@ -893,8 +895,9 @@ internal static class Program
                 "and the reason is named with its numbers: five pairs of " +
                 "courses whose run counts differ, which is the topology " +
                 "changing at the merge, and a stop inside a pair where an " +
-                "earlier run has lost a cell, which is the running bond and " +
-                "is asserted to be a real difference rather than an excuse.");
+                "earlier run has lost a cell, which is the running bond, is " +
+                "genuine by construction and is held honest by the pinned " +
+                "count of indices the assertion covers.");
         }
         catch (Exception exception)
         {
@@ -19691,12 +19694,12 @@ internal static class Program
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
         foreach ((double[][] vertices, int[][] faces, string label,
-                  bool closed, int runs) fixture in new[]
+                  bool closed, string runs) fixture in new[]
                  {
                      (SkinDomeNet().Vertices, SkinDomeNet().Faces,
-                      "dome", true, 1),
+                      "dome", true, "1,1,1,2"),
                      (SkinBarrelNet().Vertices, SkinBarrelNet().Faces,
-                      "barrel", false, 2)
+                      "barrel", false, "2,2,2,2")
                  })
         {
             object net = Activator.CreateInstance(
@@ -19706,6 +19709,48 @@ internal static class Program
                 null, new object[] { net, 0.6, 0.5 })!;
             var cells = SkinCells(built);
             RequireRunsFollowTheGeometry(cells, fixture.label);
+            string runShape = string.Join(
+                ",",
+                cells
+                    .GroupBy(cell => cell.Course)
+                    .OrderBy(group => group.Key)
+                    .Select(group => SkinArrivalRuns(group.ToArray()).Count));
+            // THE RUN COUNT IS PINNED COURSE BY COURSE, and the numbers are
+            // the forms' own: the dome is ONE closed loop at every course, so
+            // one run, and the barrel is a ridge, so every course carries TWO
+            // strips and two runs. A pin of 1 is what catches a single
+            // component broken into pieces by a mirrored order, which is the
+            // whole defect.
+            //
+            // THE DOME'S CROWN COURSE IS THE ONE EXCEPTION AND IT IS RE-
+            // MEASURED, not relaxed. It used to read 1 because the centre
+            // disc of its rosette was walked with the wedges, its mid-span of
+            // 0 falling between them; rule 2.6.5 requires the KEYSTONE to win
+            // any overlap against its own wedges, so the disc now leads its
+            // rosette by the sort's LEAD term and the course arrives as the
+            // disc alone and then the ring walked in one direction: 2 runs of
+            // 1 and 2 cells at W = 2. This is a cap ordering ahead of a
+            // course, exactly as the whole cap already leads its branch, and
+            // it is not a component broken in two: the wedges are still one
+            // run and RequireRunsFollowTheGeometry has already walked them.
+            //
+            // AND THE STRAND SPLIT IS GONE. This check used to separate a
+            // ridge course's two components by watching for a U range already
+            // claimed, because SkinCell carried no component id and the
+            // sort's second key was a traced index that meant nothing across
+            // levels. The runs do that work now, and
+            // RequireRunsFollowTheGeometry above has already measured them
+            // against the CELLS' OWN CORNERS, which is a reading the engine's
+            // sort key cannot supply to itself.
+            if (runShape != fixture.runs)
+            {
+                throw new InvalidOperationException(
+                    $"On the {fixture.label} the runs per course are " +
+                    $"{fixture.runs}, course by course from the bottom, " +
+                    "which is one run per traced component and, at the " +
+                    "dome's crown, the keystone leading its rosette (rule " +
+                    $"3.1 and rule 2.6.5); got {runShape}.");
+            }
             foreach (IGrouping<int, (int Course, double[][] Outline,
                          bool Clipped, double U0, double U1, bool Cap)> branch in
                      cells.GroupBy(cell => cell.Course))
@@ -19727,36 +19772,6 @@ internal static class Program
                     }
                 }
 
-                // THE RUN COUNT IS PINNED PER FIXTURE, and the numbers are
-                // the forms' own: the dome is ONE closed loop at every
-                // course, its crown rosette included, since a disc and the
-                // wedges round it share the inner curve's corners and are
-                // walked as one run; the barrel is a ridge, so every course
-                // carries TWO strips and two runs. A pin of 1 is what
-                // catches a single component broken into pieces by a
-                // mirrored order, which is the whole defect.
-                //
-                // AND THE STRAND SPLIT IS GONE. This check used to separate
-                // a ridge course's two components by watching for a U range
-                // already claimed, because SkinCell carried no component id
-                // and the sort's second key was a traced index that meant
-                // nothing across levels. The runs do that work now, and
-                // RequireRunsFollowTheGeometry above has already measured
-                // them against the CELLS' OWN CORNERS, which is a reading
-                // the engine's sort key cannot supply to itself.
-                List<List<int>> runs = SkinArrivalRuns(inBranch);
-                if (runs.Count != fixture.runs)
-                {
-                    throw new InvalidOperationException(
-                        $"On the {fixture.label} every course is " +
-                        $"{fixture.runs} traced component(s) and therefore " +
-                        $"{fixture.runs} run(s) (rule 3.1); course " +
-                        $"{inBranch[0].Course} arrives in {runs.Count} runs " +
-                        "of " + string.Join(
-                            ", ", runs.Select(run => run.Count)) +
-                        " cells.");
-                }
-
                 // TWO ASSERTIONS THAT WERE WRITTEN HERE ARE NOT, and the
                 // reason is worth leaving behind so nobody writes them
                 // again. One re-tested that the signed arc strictly
@@ -19767,7 +19782,7 @@ internal static class Program
                 // is true and is the visible inversion of rule 7.1, but it
                 // follows from the arc order and no break of the engine
                 // reaches it either. An assertion that cannot be made red
-                // is not a check, and the run count above and the abutment
+                // is not a check, and the run shape above and the abutment
                 // in RequireRunsFollowTheGeometry both can be and both are.
             }
         }
@@ -19841,9 +19856,10 @@ internal static class Program
     /// stop the item-k claim being true everywhere and neither is a defect
     /// in the order:
     ///
-    ///   - A pair of branches with DIFFERENT RUN COUNTS. On the barrel the
-    ///     strips below the merge and the hump loops above it are not the
-    ///     same components at all, and the spec's own honesty bound says
+    ///   - A pair of branches with DIFFERENT RUN COUNTS, which is the only
+    ///     reason a whole pair is skipped. On the barrel the strips below
+    ///     the merge and the hump loops above it are not the same
+    ///     components at all, and the spec's own honesty bound says
     ///     alignment shifts by construction where the topology changes.
     ///   - A pair whose runs agree in count but not in SIZE. A course is
     ///     round(L / S) pieces and L shrinks with height, so the run that
@@ -19851,9 +19867,12 @@ internal static class Program
     ///     That is the running bond, and the Cells port says as much.
     ///
     /// So the assertion is made over the LEADING runs whose sizes agree
-    /// exactly, the count of cells it covers is reported per fixture, and
-    /// the first run whose sizes disagree is asserted to genuinely
-    /// disagree, so the stop is a measurement and not an excuse.
+    /// exactly, and the count of cells it covers is PINNED per fixture,
+    /// which is what stops a shortened reach passing quietly. The stop
+    /// itself is genuine by construction and carries no assertion: two
+    /// contiguous-block partitions cannot part company at an index without
+    /// an earlier run differing in size, and the guard that used to claim
+    /// otherwise is gone with its reasoning left at the site.
     /// </summary>
     private static void ValidateSkinWithinCourseOrder(Assembly plugin)
     {
@@ -19971,58 +19990,41 @@ internal static class Program
                     continue;
                 }
 
-                // IS THE PLAN ABLE TO TELL THESE RUNS APART AT ALL? Where a
-                // run's two nearest candidates in the next course tie, no
-                // measurement here means anything and the pair is skipped
-                // and named rather than asserted on. That is the two-hump
-                // barrel's own mirror symmetry across the merge, where the
-                // front strip stands equally far from both hump loops.
+                // A SECOND SKIP BRANCH STOOD HERE AND IS GONE, because it
+                // never ran. It asked whether a lower run's two nearest
+                // candidates in the next course TIE in plan, on the reading
+                // that the two-hump barrel's mirror symmetry would put its
+                // front strip equally far from both hump loops, and it
+                // skipped the pair when they did. Measured over all three
+                // fixtures, every pair it could have taken was already taken
+                // by the run-COUNT branch above it: the barrel skips 0/1 and
+                // 1/2, the arch 30/31, 31/32 and 32/33, and the row-swapped
+                // barrel skips nothing, which is the whole of the pinned
+                // skip counts with the tie branch never entered. That is not
+                // an accident of these fixtures either: a lower run stands
+                // equidistant from two upper runs only where one component
+                // has become two, and a component count that changes IS a
+                // run count that changes, so the count branch reaches it
+                // first. An unexercised branch that decides whether an
+                // assertion is made at all is a hole in the check, so it is
+                // out, and with it the report's claim that the tie was
+                // measured on the barrel's symmetry.
                 //
-                // THE RUN-TO-RUN CORRESPONDENCE IS NOT ASSERTED HERE, only
-                // measured for that tie. Asserting it would be the item-k
-                // test below at a coarser grain, over run centroids instead
-                // of over the cells the author actually picks, and it could
-                // never fire first: a component order that swaps between
-                // two courses moves every cell of the run, so the cell test
-                // reads it before the centroid test could.
-                bool ambiguous = false;
-                for (int run = 0; run < lowerRuns.Count && !ambiguous; run++)
-                {
-                    double[] from = SkinRunCentroid(lower, lowerRuns[run]);
-                    double best = double.PositiveInfinity;
-                    double second = double.PositiveInfinity;
-                    int nearest = -1;
-                    for (int other = 0; other < upperRuns.Count; other++)
-                    {
-                        double[] to = SkinRunCentroid(upper, upperRuns[other]);
-                        double gap = Math.Sqrt(
-                            ((from[0] - to[0]) * (from[0] - to[0])) +
-                            ((from[1] - to[1]) * (from[1] - to[1])));
-                        if (gap < best)
-                        {
-                            second = best;
-                            best = gap;
-                            nearest = other;
-                        }
-                        else if (gap < second)
-                        {
-                            second = gap;
-                        }
-                    }
-                    if (nearest >= 0 && upperRuns.Count > 1 &&
-                        second - best <= 1.0e-6)
-                    {
-                        ambiguous = true;
-                    }
-                }
-                if (ambiguous)
-                {
-                    skipped++;
-                    notes.Add(
-                        $"{branchCourses[at]}/{branchCourses[at + 1]} " +
-                        "runs tie in plan");
-                    continue;
-                }
+                // WHAT IS LEFT IS ONE SKIP REASON, the run counts differing,
+                // and the run SHAPE pinned above already fixes exactly which
+                // consecutive pairs carry it. A separate pin on the reason
+                // text would therefore be arithmetic off that shape and
+                // could never fire on its own; the reasons are still printed
+                // with their numbers, and the skip COUNT is pinned per
+                // fixture below.
+                //
+                // THE RUN-TO-RUN CORRESPONDENCE IS NOT ASSERTED HERE either.
+                // Asserting it would be the item-k test below at a coarser
+                // grain, over run centroids instead of over the cells the
+                // author actually picks, and it could never fire first: a
+                // component order that swaps between two courses moves every
+                // cell of the run, so the cell test reads it before the
+                // centroid test could.
 
                 // AND THE ITEM INDEX. Item k of both branches falls in the
                 // run of the same index, which is the whole of Param's
@@ -20093,19 +20095,27 @@ internal static class Program
                         "mirrored-selection find: an index taken across " +
                         "branches must walk one side of the vault.");
                 }
-                if (reach < shorter &&
-                    lowerRuns[lowerRunOf[reach]].Count ==
-                        upperRuns[upperRunOf[reach]].Count)
-                {
-                    throw new InvalidOperationException(
-                        $"{fixture.label}: the item-k claim stops at item " +
-                        $"{reach} of courses {branchCourses[at]} and " +
-                        $"{branchCourses[at + 1]} only because an earlier " +
-                        "run holds a different number of cells in the two, " +
-                        "which is the running bond; the runs it lands in " +
-                        "hold the same number, so the stop is an excuse " +
-                        "rather than a measurement.");
-                }
+                // WHERE THE REACH STOPS, THE STOP IS GENUINE BY CONSTRUCTION
+                // and no assertion is written for it. A guard stood here
+                // that compared the two runs the stop lands in and threw
+                // when their sizes agreed, on the reading that a stop with
+                // no size difference behind it would be an excuse. It
+                // asserted nothing of the kind and it could fire on correct
+                // output. Both runs partitions are CONTIGUOUS BLOCKS of
+                // their own branch, so runOf is non-decreasing in the index
+                // and the two agree up to reach and differ at it: that
+                // already forces some EARLIER run i to hold a different
+                // number of cells in the two courses, and reach is exactly
+                // (the cells before run i) + min of its two sizes. The stop
+                // therefore cannot be an excuse, and the guard was reading
+                // two runs at DIFFERENT indices: at lower sizes 10, 10
+                // against upper 9, 10 it compares lowerRuns[0] with
+                // upperRuns[1], finds 10 and 10, and throws on a running
+                // bond that is exactly right. It passed on these fixtures
+                // only because the barrel's runs happen to be 10 and 11.
+                // What the running bond actually costs is not hidden either:
+                // the COVERED total is pinned per fixture below, so a reach
+                // that shortened would move a pinned number.
                 covered += reach;
                 asserted++;
             }
@@ -20119,8 +20129,8 @@ internal static class Program
                     $"over {fixture.pairsAsserted} consecutive branch " +
                     $"pairs covering {fixture.coveredCells} item indices, " +
                     $"with {fixture.pairsSkipped} pairs named and skipped " +
-                    "where the topology or the plan tie makes the claim " +
-                    $"meaningless; measured {asserted} pairs, {covered} " +
+                    "where the run counts differ, which is the topology " +
+                    $"changing; measured {asserted} pairs, {covered} " +
                     $"indices and {skipped} skipped" +
                     (notes.Count > 0
                         ? " (" + string.Join("; ", notes) + ")"
@@ -21312,35 +21322,113 @@ internal static class Program
         var inBranch = cells
             .Where(cell => cell.Course == courseCount - 1)
             .ToArray();
-        // WHERE THE DISC ARRIVES, RE-MEASURED under spec 2026-09-04 rule
-        // 3.1. It used to arrive FIRST, because its mid-span is 0 and the
-        // seam-outward order sorted on |mid|. The rosette is now walked the
-        // way every other component is, in ascending signed arc, so the
-        // wedges either side of the disc arrive either side of it and the
-        // disc sits in the MIDDLE of its own run: at W wedges the branch is
-        // the W/2 wedges below u = 0, then the disc, then the rest. What is
-        // pinned instead is the property the old wording was actually
-        // reaching for, which is that the disc still WINS its overlaps: it
-        // is kept, all W + 1 cells are kept, and the branch is the rosette
-        // and nothing else, which the count assertion above already holds.
-        // The keystone being the piece least worth dropping is now carried
-        // by the LEVEL term of the sort, since the cap band sits below
-        // anything nested inside it, and not by a tie on |mid|.
+        // WHERE THE DISC ARRIVES, and why it is FIRST. Rule 2.6.5 is that
+        // the keystone wins any overlap against its own wedges under the
+        // first-emitted-wins filter, since it is the piece least worth
+        // dropping, and that the tie at ODD W, where the middle wedge is
+        // centred on the seam as the disc is, is broken "explicitly and in
+        // the disc's favour". Rule 7.1 gave that for nothing, on |mid|.
+        // Spec 2026-09-04 rule 3.1 walks the rosette in ascending SIGNED arc
+        // instead, where the disc and its wedges share course, cap flag,
+        // component rank and level, so the signed mid alone would decide it:
+        // at W = 3 and girth 1 the middle wedge's mid computes as -2.78e-17
+        // and it would lead the disc and take the overlap, which is rule
+        // 2.6.5 inverted. The engine's sort therefore carries a LEAD term,
+        // 0 for a centre disc and 1 for everything else, ranked after the
+        // level and before the arc, and this is its pin: the disc leads its
+        // own rosette at every W, odd or even.
+        //
+        // WHAT DOES NOT CARRY THIS. The level term does not: the disc and
+        // its wedges are emitted at ONE level, the cap band's own mid, so
+        // that term is a tie between them and orders only the cap against
+        // whatever a bisection nested inside it. Nor does the arrival order
+        // into the list, which put the wedges in first.
         int discAt = Array.FindIndex(
             inBranch,
             cell => cell.Cap &&
                 Math.Abs((cell.U0 + cell.U1) / 2.0) <= 1.0e-9 &&
                 cell.U1 - cell.U0 > maximum * 0.5);
-        if (discAt != wedges / 2)
+        if (discAt != 0)
         {
             throw new InvalidOperationException(
-                "The centre disc is walked with the ring, in ascending " +
-                $"signed arc, so at W = {wedges} wedges it arrives at " +
-                $"item {wedges / 2} of branch n - 1, after the wedges " +
-                "below u = 0 and before those above it (spec 2026-09-04 " +
-                $"rule 3.1); it arrived at item {discAt} of " +
-                $"{inBranch.Length}.");
+                "The centre disc LEADS its own rosette, at every W and not " +
+                "merely where the signed mid-spans happen to fall, so that " +
+                "the keystone wins any overlap against its own wedges " +
+                "(rule 2.6.5); at W = " + $"{wedges} it arrived at item " +
+                $"{discAt} of {inBranch.Length}.");
         }
+        // AND AT ODD W, WHICH IS THE CASE THE TIE-BREAK EXISTS FOR. At W = 4
+        // the disc leads on the arc alone, since no wedge is centred on the
+        // seam, so the pin above passes on this fixture whether the lead term
+        // is there or not. W = max(2, ceil(G / (S / MP))) moves with MP, so
+        // the same hemisphere is asked for an ODD W and the middle wedge that
+        // brings with it: the tie is MEASURED, its two spans centred on the
+        // seam to within the weld, and the disc is then asserted to lead it
+        // anyway. Rule 2.6.5's sentence is exactly this case.
+        int oddWedges = 0;
+        double oddMinPiece = 0.0;
+        for (int step = 1; step <= 19 && oddWedges == 0; step++)
+        {
+            double candidate = step * 0.05;
+            int count = WedgesAt(candidate);
+            if (count >= 3 && count % 2 == 1)
+            {
+                oddWedges = count;
+                oddMinPiece = candidate;
+            }
+        }
+        if (oddWedges == 0)
+        {
+            throw new InvalidOperationException(
+                "No Min Piece between 0.05 and 0.95 splits this cap into an " +
+                "ODD number of wedges, so rule 2.6.5's tie between the disc " +
+                "and a middle wedge both centred on the seam would go " +
+                "untested; W = max(2, ceil(G / (S / MP))) must reach an odd " +
+                "value on some MP for this fixture to be the right one.");
+        }
+        object oddSplit = courses.Invoke(
+            null, new object[] { net, 0.6, 1.2, oddMinPiece })!;
+        var oddCells = SkinCells(oddSplit);
+        int oddCourses = Reading<int>(oddSplit, "CourseCount");
+        double oddDiscGirth = (double)((IList)oddSplit.GetType()
+            .GetProperty("CapGirths")!.GetValue(oddSplit)!)[0]!;
+        var oddBranch = oddCells
+            .Where(cell => cell.Course == oddCourses - 1)
+            .ToArray();
+        int oddDiscAt = Array.FindIndex(
+            oddBranch,
+            cell => cell.Cap &&
+                Math.Abs(cell.U1 - cell.U0 - oddDiscGirth) <= 1.0e-9);
+        bool tied = oddBranch.Any(
+            cell => cell.Cap &&
+                Math.Abs(cell.U1 - cell.U0 - oddDiscGirth) > 1.0e-9 &&
+                Math.Abs((cell.U0 + cell.U1) / 2.0) <= 1.0e-6);
+        if (!tied)
+        {
+            throw new InvalidOperationException(
+                $"At MP {oddMinPiece} the cap splits into an odd W = " +
+                $"{oddWedges}, so ONE wedge straddles the seam and its " +
+                "mid-span ties the disc's 0 to within the 1e-6 m weld, " +
+                "which is the tie rule 2.6.5 breaks in the disc's favour; " +
+                "no wedge in branch n - 1 is centred there, so the case " +
+                "this pin exists for is not present after all.");
+        }
+        if (oddDiscAt != 0)
+        {
+            throw new InvalidOperationException(
+                $"At MP {oddMinPiece} and an ODD W = {oddWedges} the middle " +
+                "wedge is centred on the seam exactly as the disc is, and " +
+                "the signed arc cannot separate them: rule 2.6.5 breaks " +
+                "that tie EXPLICITLY and in the disc's favour, so the disc " +
+                $"still leads its rosette; it arrived at item {oddDiscAt} " +
+                $"of {oddBranch.Length}.");
+        }
+        Console.WriteLine(
+            "      Skin cap split, rule 2.6.5's tie: at Min Piece " +
+            $"{oddMinPiece.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"the same hemisphere splits into an ODD W = {oddWedges}, a " +
+            "wedge is centred on the seam within the 1e-6 m weld exactly as " +
+            "the disc is, and the disc leads the branch all the same.");
         // The piece-length statistics contain NONE of the W + 1 spans, which
         // pins the amended rule 2.3.2a: a ring of wedges left in the list
         // would carry check 12.3(d)'s ratio past its bar on any dome by
