@@ -1181,23 +1181,49 @@ def test_hdri_mode_loads_estimates_and_persists():
     assert '"/api/hdri"' in refresh
     assert 'localStorage.getItem("bench-studio-hdri")' in refresh
     assert "no HDRIs installed" in refresh
-    # The upload path PUTs to the guarded route and then adopts the file.
-    assert '"/api/uploads/hdri/"' in js
+    # The sky is now TWO files with one job each. The lighting file is
+    # 1024 across because three.js derives its environment cube from the
+    # source width over four and keeps a ping-pong target beside it, so an
+    # 8k source costs about a gigabyte of peak video memory to prefilter for
+    # a picture the prefilter then blurs into a 256 pixel cube.
+    assert '"/light"' in body or '+ "/light"' in body, (
+        "loadHdri must take the derived lighting file, not the original"
+    )
+    assert "loadHdriBackdrop" in js, (
+        "the sharp visible sky is a separate, tone-mapped texture"
+    )
+    backdrop = _function_body(js, "loadHdriBackdrop")
+    assert '"/background"' in backdrop or '+ "/background"' in backdrop
+    assert "THREE.SRGBColorSpace" in backdrop, (
+        "a tone-mapped PNG is colour data and must say so"
+    )
+    assert "state.hdriName !== wanted" in backdrop, (
+        "a slow sky that lost the race must not replace the one that won it"
+    )
+    # And the folder picker replaced the upload control outright.
+    assert '"/api/uploads/hdri/"' not in js
+    assert 'getElementById("hdri-folder-choose")' in js
 
 
 def test_hdri_failures_reach_the_banner():
-    """Task 5: refreshHdriList, loadHdri and the upload handler must not
-    fail silently into #hdri-status alone; every failure routes through the
-    studio's own error banner (showBanner) or its fetchJson wrapper, which
-    throws with the failing URL in the message."""
+    """refreshHdriList and loadHdri must not fail silently into #hdri-status
+    alone; every failure routes through the studio's own error banner
+    (showBanner) or its fetchJson wrapper, which throws with the failing URL
+    in the message.
+
+    The upload handler this used to cover as well is gone with its control:
+    a folder picker answers the question it was asked to answer. What is
+    checked in its place is that the folder handler says which of its two
+    steps failed, since "it did not work" about a dialog and a validation is
+    two different problems.
+    """
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     for name in ("refreshHdriList", "loadHdri"):
         assert "showBanner" in _function_body(js, name) or "fetchJson" in _function_body(js, name), name
-    upload_handler = js[js.index('getElementById("hdri-upload")'):]
-    upload_handler = upload_handler[:upload_handler.index("\n});") + 4]
-    assert "showBanner" in upload_handler
-    assert 'event.target.value = ""' in upload_handler
-    assert "finally" in upload_handler
+    folder = _function_body(js, "chooseLibraryFolder")
+    assert "the folder dialog could not be opened" in folder
+    assert "not a folder: " in folder
+    assert "body.detail" in folder, "the server's own reason must be shown"
 
 
 def test_props_come_from_a_library_of_real_models():

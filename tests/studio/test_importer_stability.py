@@ -1185,4 +1185,24 @@ def test_the_sky_thumbnail_route_builds_once(tmp_path, monkeypatch):
     (skies / "not-a-sky.hdr").write_bytes(b"just text")
     damaged = client.get("/api/hdri/not-a-sky.hdr/thumbnail")
     assert damaged.status_code == 400
-    assert "could not be previewed" in damaged.json()["detail"]
+    assert "could not be read" in damaged.json()["detail"]
+
+    # A sky is THREE derived files now, not one, and the browser sees none of
+    # the original. The lighting file stays Radiance because it has to keep
+    # its dynamic range; the background is an ordinary PNG, because a
+    # background sits behind the tone mapper and has no use for one.
+    light = client.get("/api/hdri/sky.hdr/light")
+    assert light.status_code == 200
+    assert light.content.startswith(b"#?RADIANCE")
+    assert (skies / ".thumbnails" / "sky.hdr.light.hdr").is_file()
+
+    background = client.get("/api/hdri/sky.hdr/background")
+    assert background.status_code == 200
+    assert background.headers["content-type"] == "image/png"
+    assert (skies / ".thumbnails" / "sky.hdr.bg.png").is_file()
+
+    # And each is kept, on the same rule as the thumbnail.
+    light_stamp = (skies / ".thumbnails" / "sky.hdr.light.hdr").stat().st_mtime_ns
+    assert client.get("/api/hdri/sky.hdr/light").status_code == 200
+    assert (skies / ".thumbnails" / "sky.hdr.light.hdr").stat().st_mtime_ns \
+        == light_stamp, "the second ask reuses the first"

@@ -170,6 +170,7 @@ const state = {
   // (see restoreAppearance/persistAppearance). null means no override; the
   // registry material (or a skin) shows through untouched.
   appearance: { tint: null, finish: null, skin: "none" },
+  hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
 };
@@ -458,8 +459,8 @@ function applyHdriBackdrop() {
   // Equirects are authored Y-up; the scene is Z-up, so the environment
   // sampler rotates a quarter turn about X, same as the old flat backdrop.
   scene.environmentRotation.set(Math.PI / 2, 0, rotation);
-  if (state.hdriProjection === "projected" && state.hdriTexture) {
-    const dome = new GroundedSkybox(state.hdriTexture, state.hdriHeight, state.hdriScale);
+  if (state.hdriProjection === "projected" && backdropTexture()) {
+    const dome = new GroundedSkybox(backdropTexture(), state.hdriHeight, state.hdriScale);
     // GroundedSkybox is centred on the camera by default; position.y lifts
     // its flattened ground disc up to the dome's own origin (three's own
     // documented usage), then the wrapping group's x = PI/2 stands the
@@ -479,7 +480,7 @@ function applyHdriBackdrop() {
     hdriDome = group;
     scene.background = null;
   } else {
-    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
+    scene.background = backdropTexture(); // null paints the clear colour until a file loads
     scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
   }
 }
@@ -519,15 +520,59 @@ async function refreshHdriList(selectName) {
   return files;
 }
 
+// The sharp visible sky, separate from the one that lights the scene.
+// Two cheap textures doing one job each beat one expensive texture doing
+// both badly: 2048 of 8-bit sRGB is 16 MB and looks right behind a vault,
+// where 8192 of half-float is 256 MB and is then thrown away by the blur.
+async function loadHdriBackdrop(name) {
+  const wanted = name;
+  try {
+    const texture = await new THREE.TextureLoader().loadAsync(
+      "/api/hdri/" + encodeURIComponent(name) + "/background");
+    // A slower sky that lost the race must not replace a faster one that
+    // won it: the user may have changed their mind while this was in flight.
+    if (state.hdriName !== wanted) { texture.dispose(); return; }
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    if (state.hdriBackdrop) state.hdriBackdrop.dispose();
+    state.hdriBackdrop = texture;
+    applyHdriBackdrop();
+  } catch (error) {
+    logStudio("the sharp sky for " + name + " did not arrive: " + error.message);
+  }
+}
+
+function backdropTexture() {
+  // The sharp one when it has arrived, the lighting one until then, so a
+  // sky appears at once and gets better rather than appearing late.
+  return state.hdriBackdrop || state.hdriTexture;
+}
+
 async function loadHdri(name) {
   const status = document.getElementById("hdri-status");
   status.textContent = "loading " + name;
   try {
+    // The DERIVED lighting file, not the original. 1024 by 512 is what
+    // three.js asks for in as many words, and the difference is not small:
+    // an 8k source is 256 MB of half-float texture and about a gigabyte of
+    // peak video memory to prefilter, for a picture the prefilter then
+    // blurs into a 256 pixel cube.
+    //
+    // FloatType stays. It doubles the source texture, but at 1k that is
+    // 4 MB rather than 512, and estimateSunFromEquirect below wants
+    // Float32Array pixels to find the sun in.
     const loader = new HDRLoader().setDataType(THREE.FloatType);
-    const texture = await loader.loadAsync("/api/hdri/" + encodeURIComponent(name));
+    const texture = await loader.loadAsync(
+      "/api/hdri/" + encodeURIComponent(name) + "/light");
     texture.mapping = THREE.EquirectangularReflectionMapping;
     if (state.hdriTexture) state.hdriTexture.dispose();
     state.hdriTexture = texture;
+    // And the sharp one, for the sky the eye actually looks at. It is an
+    // ordinary tone-mapped PNG: a background sits behind the tone mapper
+    // anyway and has no use for the dynamic range. Loaded in parallel and
+    // allowed to fail, because a soft sky is a disappointment and a missing
+    // sky is a black frame.
+    loadHdriBackdrop(name);
     state.hdriName = name;
     localStorage.setItem("bench-studio-hdri", name);
     const image = texture.image;
@@ -4416,6 +4461,52 @@ document.getElementById("material-select").addEventListener("change", (e) => {
   if (search) search.addEventListener("input", () => buildSkinTiles());
 }
 
+// One handler for every library folder. The vault folder proved the shape
+// and it is copied rather than reinvented: browse without setting, so the
+// validating and the remembering live in one place; the tail of the path,
+// because the end of a path is the part worth reading; and a failure that
+// says which of the two steps failed.
+async function showLibraryFolder(kind, rowId, unit) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  try {
+    const folder = await fetchJson("/api/" + kind + "/folder");
+    if (!folder.path) { row.textContent = "no folder chosen"; return; }
+    const parts = folder.path.split(/[\\/]/).filter(Boolean);
+    row.textContent = parts.length > 2
+      ? "..." + parts.slice(-2).join("/") : folder.path;
+    row.title = folder.path + " (" + folder.count + " " + unit + ")";
+  } catch (error) {
+    row.textContent = "could not read the folder";
+  }
+}
+
+async function chooseLibraryFolder(kind, rowId, unit, afterwards) {
+  const row = document.getElementById(rowId);
+  row.textContent = "waiting for the folder dialog...";
+  let chosen = null;
+  try {
+    chosen = (await (await fetch("/api/" + kind + "/folder/browse",
+      { method: "POST" })).json()).path;
+  } catch (error) {
+    row.textContent = "the folder dialog could not be opened";
+    return;
+  }
+  if (!chosen) { await showLibraryFolder(kind, rowId, unit); return; }
+  const response = await fetch("/api/" + kind + "/folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: chosen }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    row.textContent = "not a folder: " + (body.detail || response.status);
+    return;
+  }
+  await afterwards();
+  await showLibraryFolder(kind, rowId, unit);
+}
+
 async function showMaterialFolder() {
   const row = document.getElementById("material-folder-path");
   if (!row) return;
@@ -4463,6 +4554,27 @@ document.getElementById("material-folder-choose").addEventListener("click", asyn
   await refreshMaterialLibrary();
   await showMaterialFolder();
 });
+
+document.getElementById("hdri-folder-choose").addEventListener("click", () =>
+  chooseLibraryFolder("hdri", "hdri-folder-path", "skies", async () => {
+    // The sky on screen came out of the old folder, so it goes with it.
+    if (state.hdriTexture) { state.hdriTexture.dispose(); state.hdriTexture = null; }
+    if (state.hdriBackdrop) { state.hdriBackdrop.dispose(); state.hdriBackdrop = null; }
+    state.hdriName = null;
+    disposeHdriDome();
+    const files = await refreshHdriList(null);
+    if (files && files.length) await loadHdri(files[0]);
+    else applyEnvironment();
+  }));
+
+document.getElementById("props-folder-choose").addEventListener("click", () =>
+  chooseLibraryFolder("props", "props-folder-path", "models", async () => {
+    // Every template belongs to the old folder. Placed props keep standing
+    // until a study is reloaded, which is the honest behaviour: they are in
+    // the scene, and the scene has not been asked to change.
+    propTemplates.clear();
+    await loadPropLibrary();
+  }));
 
 document.getElementById("render-skin").addEventListener("change", async (e) => {
   state.appearance.skin = e.target.value;
@@ -4606,32 +4718,6 @@ document.getElementById("environment-mode").addEventListener("change", async (e)
 });
 document.getElementById("hdri-select").addEventListener("change", (e) => {
   if (e.target.value) loadHdri(e.target.value);
-});
-document.getElementById("hdri-upload").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const status = document.getElementById("hdri-status");
-  status.textContent = "uploading " + file.name;
-  try {
-    const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
-      method: "PUT",
-      body: file,
-    });
-    if (!response.ok) throw new Error(await response.text());
-    status.textContent = "";
-    const files = await refreshHdriList(file.name);
-    if (files === null) return; // fetch failed; already bannered
-    await loadHdri(file.name);
-  } catch (error) {
-    status.textContent = "";
-    showBanner("Failed to upload " + file.name + ": " + error.message, "error");
-  } finally {
-    // Always runs, success or failure, so a failed upload never jams the
-    // input: without this, choosing the same filename again after a
-    // failure does not re-fire "change" (the value never changed), and
-    // the picker looks like it silently does nothing on the retry.
-    event.target.value = "";
-  }
 });
 document.getElementById("hdri-projection").addEventListener("change", (e) => {
   state.hdriProjection = e.target.value;
@@ -6090,6 +6176,12 @@ loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
 refreshMaterialLibrary().catch(
   (error) => logStudio("material library: " + error.message));
 showMaterialFolder();
+// The sky list used to be reachable only by entering HDRI mode, so the Sky
+// picker showed a placeholder word until then and a remembered sky was not
+// offered back. Built at boot, like every other library.
+refreshHdriList(null).catch(() => {});
+showLibraryFolder("hdri", "hdri-folder-path", "skies");
+showLibraryFolder("props", "props-folder-path", "models");
 boot();
 requestAnimationFrame(frame);
 

@@ -1081,13 +1081,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         return {"files": sorted(
             p.name for p in HDRI_DIR.glob("*.hdr") if p.is_file())}
 
-    @app.get("/api/hdri/{name}/thumbnail")
-    def hdri_thumbnail(name: str):
-        """A small tone-mapped preview of a sky, decoded once and kept.
+    def _derived_sky(name: str, suffix: str, builder, media_type: str):
+        """One of a sky's three derived files, built once and kept.
 
-        The files are 100 to 350 MB, so this cannot happen in the browser
-        and must not happen twice. The thumbnail lands beside the skies in
-        a dot-folder and is rebuilt only when the sky is newer than it.
+        The originals are 100 to 350 MB. Nothing that size can be decoded in
+        a browser, and nothing should be decoded twice here either, so every
+        derivation lands beside the skies in a dot-folder and is rebuilt only
+        when the sky itself is newer than it.
         """
 
         if "/" in name or "\\" in name or ".." in name or ":" in name:
@@ -1097,16 +1097,48 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         source = HDRI_DIR / name
         if not source.is_file():
             raise HTTPException(404, "no hdri file {}".format(name))
-        thumbnail = HDRI_DIR / ".thumbnails" / (name + ".png")
-        if (not thumbnail.is_file()
-                or thumbnail.stat().st_mtime < source.stat().st_mtime):
+        derived = HDRI_DIR / ".thumbnails" / (name + suffix)
+        if (not derived.is_file()
+                or derived.stat().st_mtime < source.stat().st_mtime):
             try:
-                built = hdri_preview.build_preview(source, thumbnail)
+                derived = builder(source, derived)
             except (OSError, ValueError) as error:
                 raise HTTPException(
-                    400, "{} could not be previewed ({})".format(name, error))
-            thumbnail = built
-        return FileResponse(thumbnail, media_type="image/png")
+                    400, "{} could not be read ({})".format(name, error))
+        return FileResponse(derived, media_type=media_type)
+
+    @app.get("/api/hdri/{name}/thumbnail")
+    def hdri_thumbnail(name: str):
+        """The picture in the sky picker: a 2:1 strip, 256 across."""
+
+        return _derived_sky(name, ".png", hdri_preview.build_preview,
+                            "image/png")
+
+    @app.get("/api/hdri/{name}/light")
+    def hdri_light(name: str):
+        """The sky the renderer LIGHTS with: 1024 across, still Radiance.
+
+        three.js derives its environment cube from the source width over
+        four and keeps a ping-pong target beside it, so prefiltering an 8k
+        sky costs about a gigabyte of peak video memory for a picture that
+        is then blurred into a 256 pixel cube. three's own note asks for
+        1024 by 512, and this is that file.
+        """
+
+        return _derived_sky(name, ".light.hdr", hdri_preview.build_lighting,
+                            "image/vnd.radiance")
+
+    @app.get("/api/hdri/{name}/background")
+    def hdri_background(name: str):
+        """The sky the eye LOOKS at: 2048 across, tone-mapped, eight bits.
+
+        A background does not need float. It sits behind the tone mapper
+        anyway, and separating the two jobs is what lets the lighting file
+        be small enough to prefilter cheaply.
+        """
+
+        return _derived_sky(name, ".bg.png", hdri_preview.build_background,
+                            "image/png")
 
     @app.get("/api/hdri/{name}")
     def hdri_file(name: str):
