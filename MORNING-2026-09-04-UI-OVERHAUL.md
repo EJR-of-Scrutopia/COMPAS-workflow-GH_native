@@ -70,11 +70,13 @@ real site, through exactly the same code path a chosen time takes.
 
 ### Props are a library of real models
 
-Fifteen CC0 models from poly.pizza, which is where the Google Poly archive
+Twenty-seven CC0 models from poly.pizza, which is where the Google Poly archive
 survives alongside the Kenney and Quaternius packs: two figures, a pine and
 a broadleaf tree, a bush, a hedge, a bench, a table, a planter, a lamp
-column, a car, a cone, a barrier, a fence, a pallet. The whole library is
-10,673 triangles, less than one course of the vault.
+column, a car, a cone, a barrier, a fence, a pallet, and then a second round:
+a third figure and a worker, a chair, grass, flowers, a rock, scaffold, a
+ladder, a barrel, a bin, a skip and a bollard. Twenty-seven models,
+19,332 triangles for the whole library, less than two courses of the vault.
 
 They are chosen from the same tile grid the materials use, each tile a
 render of the model from a fixed three-quarter view.
@@ -88,6 +90,39 @@ nothing; it is credited anyway.
 
 The hand-modelled props remain as the fallback for an empty library folder,
 which is what made this safe to ship overnight.
+
+### The weather is previewed too
+
+Clear, hazy, overcast, golden hour and night are small renders of the sky
+each preset actually produces, three to a row. The preview rig gets its own
+Sky mesh rather than borrowing the scene's, because the viewport is drawing
+from those uniforms. Where a preset does not pin the sun's height, the tile
+uses the height your sun is standing at, so the row answers what this
+weather would look like NOW.
+
+### The exporter's three documents, read
+
+The plugin session replied at 23:30 and settled everything: three
+documents, form, skin and formwork, with the formwork document
+self-contained. Their half starts when their skin build lands, hours not
+days. My half is already in:
+
+- `<study>-form.json` resolves a study exactly as `-contract.json` does, and
+  a study carrying both lands on the newer document;
+- the sidecars read `-formwork.json` before `-frames.json` and `-skin.json`
+  before `-tessellation.json`, with the old names still read, so your
+  existing studies keep opening on the day they switch;
+- the time-100 pairing check now compares against the formwork document's
+  OWN columns block rather than the contract's mould block, which is what
+  they asked for, and the refusal messages name which source disagreed.
+
+Two items are still mine and are recorded in the channel: the thrust mesh
+carried at the top of the form document as the FEA geometry once the compas
+document goes, and the SSE stream that replaces the two second poll.
+
+They also raised something worth your knowing: you asked them to take over
+this worktree, believing this session had finished. It had not, and they
+declined and said so. The reader stays here, the writer stays with them.
 
 ### The panel
 
@@ -198,5 +233,12 @@ Ordered by what I think they would be worth to you.
   (it extrapolated below the horizon instead of clamping).
 - Smoke tested in headless Chromium after each wave: the module evaluates,
   boot runs, all fifteen props load, nothing reports to the diagnostics log.
-- Commits: dd60673, fad84e0, bf71156, 7077608, 9536db4, c45e6fb, and the
-  earlier session work from ad23d1b back.
+- Commits: dd60673, fad84e0, bf71156, 7077608, 9536db4, c45e6fb, 7eca39c,
+  8227280, 5199726, b367224, cafecc9, 1b3d5b6, and the earlier session work
+  from ad23d1b back.
+- One honest note: 8227280 went in on a red suite for about four minutes.
+  A chained shell command took the tail's exit status rather than pytest's,
+  so the commit ran when it should not have. Nothing was wrong with the
+  code; a test's way of FINDING a function had broken, and 5199726 fixed
+  it four minutes later. Recorded because the alternative is pretending
+  the suite was green when it was not.
