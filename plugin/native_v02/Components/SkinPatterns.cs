@@ -637,6 +637,33 @@ internal static class SkinPatterns
     /// NOT be cached across solves (rule 1.4.5): a Result whose vertices
     /// moved is a different field.
     /// </summary>
+    /// <summary>
+    /// Everything a SkinNet derives from its own arrays, in one call and
+    /// with ONE triangulation: the triangles, the field, the seed identity
+    /// and the vertex normals. The comment on SkinNet's own `_built` carries
+    /// the reason it is one call; the short of it is that four property
+    /// initialisers cannot see one another, so the triangulation was being
+    /// computed three times on every net a quad mesh built.
+    /// </summary>
+    public static (
+        IReadOnlyList<int[]> Triangles,
+        IReadOnlyList<double> Levels,
+        IReadOnlyList<int> Seeds,
+        IReadOnlyList<double[]> Normals) BuildNet(
+            IReadOnlyList<double[]> vertices,
+            IReadOnlyList<int[]> faces,
+            IReadOnlyList<int> rim)
+    {
+        IReadOnlyList<int[]> triangles = Triangulate(vertices, faces);
+        (IReadOnlyList<double> levels, IReadOnlyList<int> seeds) =
+            RimDistanceFieldWithSeeds(vertices, triangles, rim);
+        return (
+            triangles,
+            levels,
+            seeds,
+            OrientedVertexNormals(vertices, triangles));
+    }
+
     public static IReadOnlyList<double> RimDistanceField(
         IReadOnlyList<double[]> vertices,
         IReadOnlyList<int[]> faces,
