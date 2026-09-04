@@ -440,7 +440,22 @@ internal static class FormDocument
     public static string Json(ResultDto result, string study, string? thrustMesh)
     {
         ArgumentNullException.ThrowIfNull(result);
-        string contract = ContractJson.Serialize(result);
+        return JsonFromContract(ContractJson.Serialize(result), study, thrustMesh);
+    }
+
+    /// <summary>
+    /// The same document from a contract already serialised, which is how a
+    /// build that ends up wanting a thrust mesh pays for the contract's own
+    /// bytes ONCE: the cheap document is written first so its key can be
+    /// asked about, and the answered one is spliced from the same string
+    /// rather than from a second serialisation of the same Result.
+    /// </summary>
+    public static string JsonFromContract(
+        string contract,
+        string study,
+        string? thrustMesh)
+    {
+        ArgumentNullException.ThrowIfNull(contract);
         // The contract's own body, between its braces. Serialize always
         // writes an object, and the empty one is handled rather than
         // trusted not to happen: an object with no keys would otherwise
@@ -498,9 +513,38 @@ internal static class FormDocument
         return json[..at]
             + ThrustMeshMember
             + (value.StartsWith("null".AsSpan(), StringComparison.Ordinal)
-                ? "null}"
-                : "\"present\"}");
+                ? AbsentMesh
+                : PresentMesh);
     }
+
+    /// <summary>The two endings <see cref="KeyMaterial"/> can produce.</summary>
+    public const string AbsentMesh = "null}";
+
+    public const string PresentMesh = "\"present\"}";
+
+    /// <summary>
+    /// The CONTRACT half of one key material, which is what decides whether
+    /// a form document has anything new in it, and the presence half beside
+    /// it, which is what decides whether a build that could not reach the
+    /// worker is still owed a retry (rule 3.3). They are read apart because
+    /// the two answer different questions: the contract half decides whether
+    /// to SEND, and it must not move when only a uuid did; the presence half
+    /// decides whether to BUILD a mesh at all, and a document already sent
+    /// with one is never rebuilt for its sake.
+    /// </summary>
+    public static string ContractHalf(string keyMaterial)
+    {
+        if (keyMaterial is null)
+            return string.Empty;
+        int at = keyMaterial.LastIndexOf(
+            ThrustMeshMember, StringComparison.Ordinal);
+        return at < 0 ? keyMaterial : keyMaterial[..at];
+    }
+
+    public static bool CarriesMesh(string keyMaterial) =>
+        keyMaterial is not null &&
+        keyMaterial.EndsWith(
+            ThrustMeshMember + PresentMesh, StringComparison.Ordinal);
 }
 
 /// <summary>

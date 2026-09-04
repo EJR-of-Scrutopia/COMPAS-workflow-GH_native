@@ -101,11 +101,34 @@ internal sealed record ExportSetWrite(
     string? FailedTarget,
     string? Error);
 
-public sealed record ExportComponentTaskResult(
-    IReadOnlyList<(string Kind, string Json)>? Payloads,
-    string? Warning,
-    Exception? Error,
-    TimeSpan Elapsed);
+/// <summary>
+/// Everything ONE build reads, captured on the solve thread and never read
+/// from it again (design of 2026-09-04 section 3).
+///
+/// This is the whole of the marshalling discipline, in one place. The build
+/// runs on the uploader's timer thread now, so a Grasshopper object, a
+/// RhinoDoc or a live curve reaching it would be a read off the UI thread
+/// from a thread that is not it: the Result is a deep CLONE, the cells are
+/// already reduced to plain numbers by <c>PrepareTessellationCells</c>, and
+/// the unit factor is resolved by <c>ResolveUnitFactor</c> before this record
+/// is built. Nothing in here is live.
+///
+/// <c>Worker</c> is the one dispatch a build makes, as a seam rather than a
+/// call, so the thrust mesh can be driven against a host of somebody else's
+/// choosing. <c>Lifetime</c> is the COMPONENT's token and never the
+/// solution's (rule 3.4): a superseded build finishes on it and is
+/// discarded, so no scrub, drag or re-solve can cancel a worker request and
+/// take the worker down with it.
+/// </summary>
+internal sealed record ExportBuildInputs(
+    ResultDto Result,
+    string Study,
+    IReadOnlyList<TessellationCell>? Cells,
+    string? CellWarning,
+    double UnitFactor,
+    double Radius,
+    Func<string, object, CancellationToken, Task<JsonElement>> Worker,
+    CancellationToken Lifetime);
 
 /// <summary>
 /// One Export solve's eight inputs, gathered and validated on the solve
@@ -142,10 +165,21 @@ public sealed record TessellationCell(
 /// the machine and its motion together. Write puts the set on disk as
 /// <c>&lt;Name&gt;-&lt;kind&gt;.json</c>; Live pushes the same set to the
 /// studio, debounced, off the UI thread.
+///
+/// A SOLVE BUILDS NOTHING (design of 2026-09-04 section 3, rule 3.1). It
+/// reads its inputs, captures them, and pokes the debouncer; the set is
+/// built when the canvas RESTS, or synchronously on the solve that sets
+/// Write, and on nothing else. So a slider scrub costs no documents at all,
+/// and J carries the set one solve after the rest that built it.
 /// </summary>
-public sealed class ExportComponent :
-    NativeTaskComponentBase<ExportComponentTaskResult>
+public sealed class ExportComponent : NativeComponentBase
 {
+    /// <summary>
+    /// The one worker command Export sends, named once so the dispatch seam
+    /// and the check that drives it cannot drift apart.
+    /// </summary>
+    internal const string ThrustMeshCommand = "export.compas";
+
     private const string DefaultStudio = "http://127.0.0.1:8600";
     private const string DefaultName = "ananke-export";
     private const double DefaultColumnRadius = 0.05;
@@ -193,6 +227,17 @@ public sealed class ExportComponent :
     private bool _liveHoldRead;
     private bool _liveHeld;
 
+    // THE COMPONENT'S OWN LIFETIME, and the token every thrust-mesh request
+    // runs on (rule 3.4). Grasshopper's solution cancellation used to reach
+    // the worker through the task-capable base's CancelToken, and a cancelled
+    // worker request is not a cancelled request: WorkerHost.cs:911-991 KILLS
+    // the worker process and starts a fresh one behind a new handshake, so a
+    // scrub over a canvas carrying an Export tore the worker down and built
+    // it again, over and over. Nothing but this component leaving the
+    // document cancels this, so a superseded build finishes and its result is
+    // discarded instead.
+    private readonly CancellationTokenSource _lifetime = new();
+
     public ExportComponent()
         : base(
             "Export",
@@ -232,8 +277,37 @@ public sealed class ExportComponent :
     public override void RemovedFromDocument(GH_Document document)
     {
         _uploader?.Dispose();
+        EndLifetime();
         base.RemovedFromDocument(document);
     }
+
+    /// <summary>
+    /// The component has left the canvas, so the work it asked for is nobody's
+    /// any more: the token every thrust-mesh request runs on is cancelled
+    /// HERE and in no other place, which is the whole of rule 3.4's
+    /// "cancelled only when the component is removed or the document closes".
+    ///
+    /// Its own method so the lifetime can be ended without a GH_Document,
+    /// which is what lets the token's two states be measured at all.
+    /// </summary>
+    internal void EndLifetime()
+    {
+        try
+        {
+            _lifetime.Cancel();
+        }
+        catch (Exception)
+        {
+            // A throw here came out of somebody else's cancellation
+            // callback, on a component that is already leaving.
+        }
+    }
+
+    /// <summary>
+    /// Whether the lifetime token has been cancelled, which is the only
+    /// thing that can cancel a thrust-mesh request.
+    /// </summary>
+    internal bool LifetimeEnded => _lifetime.IsCancellationRequested;
 
     /// <summary>
     /// The live uploader, built on first use and rebuilt after a disposal.
@@ -344,12 +418,15 @@ public sealed class ExportComponent :
         parameters.AddBooleanParameter(
             "Live",
             "L",
-            "Push the set to the studio on every solve, debounced half a " +
-            "second so a slider scrub sends only the final state, " +
-            "retrying a 409 (the studio has a run in flight for this " +
-            "study) after 2, 4 and 8 seconds and then deferring. A set " +
-            "identical to the last one sent is NOT sent again: change the " +
-            "Result, or toggle Live off and on. Failures are warnings; " +
+            "Push the set to the studio when the canvas RESTS: the build " +
+            "and the send both wait half a second after the last solve, so " +
+            "a slider scrub costs one build and one push at the end of it " +
+            "rather than one of each a frame. Only the DOCUMENTS THAT " +
+            "CHANGED go: a form move does not resend the animation, and a " +
+            "set identical to the last one sent sends nothing at all " +
+            "(change the Result, or toggle Live off and on). A 409 (the " +
+            "studio has a run in flight for this study) is retried after " +
+            "2, 4 and 8 seconds and then deferred. Failures are warnings; " +
             "the files and outputs stand. After a file whose ports moved " +
             "is opened, Live is held until it is set off and then on " +
             "again, so a wire that landed here by accident cannot push a " +
@@ -361,9 +438,10 @@ public sealed class ExportComponent :
             "Write",
             "W",
             "Push the export to disk: while True, every document this " +
-            "Result carries is written under Path on every solve. Wire a " +
-            "button for one-shot writes. The JSON outputs themselves are " +
-            "always live.",
+            "Result carries is BUILT ON THIS SOLVE, synchronously, and " +
+            "written under Path. A write is a deliberate act, so it does " +
+            "not wait for the canvas to rest the way every other build " +
+            "does. Wire a button for one-shot writes.",
             GH_ParamAccess.item,
             false);
         parameters[7].Optional = true;
@@ -383,21 +461,40 @@ public sealed class ExportComponent :
             "simply not in the list, and every text names itself, so a " +
             "reader knows what each item is without counting slots: form " +
             "by its kind and schemaVersion, skin and formwork by their " +
-            "schema. Every one of them also carries its own study name.",
+            "schema. Every one of them also carries its own study name. " +
+            "BUILT ON REST, not on every solve: the set is built half a " +
+            "second after the last solve, or on the spot when Write is " +
+            "True, so this carries the previous build until the new one " +
+            "lands and a canvas that never rests that long carries " +
+            "nothing. The form document here holds \"thrustMesh\": null " +
+            "unless the mesh was built for a write or for a push, since " +
+            "that string costs a worker round trip and no reader of this " +
+            "port has ever wanted it.",
             GH_ParamAccess.list);
         parameters.AddTextParameter(
             "Status",
             "ST",
             "What this solve did, one per line. written: <path> per file " +
-            "of the most recent write, or written: nothing; then live: " +
-            "<kind>: <outcome> per kind, or live: off while Live is " +
-            "False, live: sending while a set is waiting out the debounce " +
-            "or on the wire, and a live: held line when the file's ports " +
-            "moved on load and Live is waiting to be set off and on; then " +
-            "any warning this solve raised, in its own words.",
+            "of the most recent write, or written: nothing; then built: " +
+            "how many documents the last build produced, or that none has " +
+            "landed yet, since the set is built on rest; then live: " +
+            "<kind>: <outcome> per document actually sent, or live: off " +
+            "while Live is False, live: waiting for rest while the " +
+            "debounce is running, live: building or live: sending while " +
+            "the tick is doing one of those, and a live: held line when " +
+            "the file's ports moved on load and Live is waiting to be set " +
+            "off and on; then any warning this solve raised, in its own " +
+            "words.",
             GH_ParamAccess.item);
     }
 
+    /// <summary>
+    /// A SOLVE BUILDS NOTHING (rule 3.1). It reads the eight inputs,
+    /// captures everything a build would read, and pokes the debouncer;
+    /// the documents themselves are built when the canvas rests, or on
+    /// this thread when Write is True, and the outputs carry the last
+    /// build that landed.
+    /// </summary>
     protected override void SolveInstance(IGH_DataAccess data)
     {
         // FdSolve/Deconstruct sibling parity: without a local catch here,
@@ -408,32 +505,11 @@ public sealed class ExportComponent :
         // uglier message than AddRuntimeMessage does.
         try
         {
-            if (InPreSolve)
-            {
-                if (!TryReadInputs(data, out ExportInputs? pre, report: false))
-                    return;
-                // Resolved here, on the solve thread: RhinoDoc.ActiveDoc
-                // is not a background thread's to read, and the lambda
-                // below runs on one.
-                double unitFactor = ResolveUnitFactor();
-                TaskList.Add(Task.Run(
-                    () => ComputeAsync(
-                        CloneResult(pre!.Result),
-                        StudyName(pre.Name),
-                        pre.Cells,
-                        pre.CellWarning,
-                        unitFactor,
-                        pre.Radius,
-                        CancelToken),
-                    CancelToken));
-                return;
-            }
-
             // One Export is one study: it writes one set of
-            // <name>-<kind>.json files and enqueues one upload. Slot 0 is
+            // <name>-<kind>.json files and schedules one build. Slot 0 is
             // item access, so a Result tree with more than one item makes
             // every iteration after the first overwrite the files the last
-            // one wrote and supersede the set it enqueued, and only the
+            // one wrote and supersede the build it scheduled, and only the
             // last one survives. Said once, on the second iteration, so a
             // wide tree does not repeat itself down the whole chin.
             if (data.Iteration == 1)
@@ -444,60 +520,8 @@ public sealed class ExportComponent :
                     "one wins.");
             }
 
-            // The post phase re-reads the inputs itself: the disk write
-            // and the upload are side effects and belong on this thread,
-            // where a Button's release re-solve cannot cancel them
-            // mid-flight, and where a cancelled pre-solve branch cannot
-            // leave half a set behind.
             if (!TryReadInputs(data, out ExportInputs? inputs))
                 return;
-            ExportComponentTaskResult taskResult;
-            bool haveTaskResult = GetSolveResults(data, out taskResult!);
-            if (!haveTaskResult ||
-                taskResult.Error is OperationCanceledException)
-            {
-                // A cancelled background task is a scheduling race, not a
-                // verdict on the current inputs; recompute synchronously
-                // so a late cancellation cannot strand the canvas on
-                // "Cancelled".
-                taskResult = ComputeAsync(
-                        CloneResult(inputs!.Result),
-                        StudyName(inputs.Name),
-                        inputs.Cells,
-                        inputs.CellWarning,
-                        ResolveUnitFactor(),
-                        inputs.Radius,
-                        CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-            }
-
-            if (taskResult.Error is not null)
-            {
-                Message = taskResult.Error is OperationCanceledException
-                    ? "Cancelled"
-                    : "Failed";
-                AddRuntimeMessage(
-                    taskResult.Error is OperationCanceledException
-                        ? GH_RuntimeMessageLevel.Warning
-                        : GH_RuntimeMessageLevel.Error,
-                    "Export: " + taskResult.Error.GetBaseException().Message);
-                return;
-            }
-            if (taskResult.Payloads is null || taskResult.Payloads.Count == 0)
-            {
-                Message = "Failed";
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Error,
-                    "Export produced no JSON.");
-                return;
-            }
-            if (taskResult.Warning is not null)
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    "Export: " + taskResult.Warning);
-            }
 
             string name = StudyName(inputs!.Name);
             // Checked after the blank-to-default, so the default is never
@@ -514,13 +538,17 @@ public sealed class ExportComponent :
                     "written and nothing was sent.");
             }
 
-            bool wroteThisSolve = false;
+            // The write target is resolved BEFORE anything is built, because
+            // whether there is one is what decides whether this solve builds
+            // at all: a write is deliberate and builds on the spot, and
+            // everything else waits for rest.
+            string? folder = null;
             if (inputs.Write && nameIsOneSegment &&
                 !string.IsNullOrWhiteSpace(inputs.Path))
             {
                 if (!TryResolveWriteFolder(
                         inputs.Path,
-                        out string folder,
+                        out string resolved,
                         out string refusal))
                 {
                     AddRuntimeMessage(
@@ -529,8 +557,55 @@ public sealed class ExportComponent :
                 }
                 else
                 {
+                    folder = resolved;
+                }
+            }
+
+            // The hold, latched on the first solve after the archive was
+            // read and cleared by a solve that sees Live False.
+            bool liveHeld = LiveHeldOnThisSolve(inputs.Live);
+            bool live = inputs.Live && !liveHeld && nameIsOneSegment;
+            bool write = folder is not null;
+
+            LiveUploader uploader = EnsureUploader();
+            if (!inputs.Live)
+            {
+                // Live off means nothing is sent, including a send already
+                // sleeping between 409 retries, and the ledger of what the
+                // studio holds is dropped so that turning Live back on
+                // sends the same set again. The BUILD is not cancelled: the
+                // J output is fed by it and is not Live's to switch off.
+                uploader.Cancel();
+            }
+
+            var pending = new LiveUploader.Pending(
+                inputs.Studio,
+                name,
+                live,
+                write,
+                BuildFor(new ExportBuildInputs(
+                    // Cloned, reduced and resolved HERE, on the solve
+                    // thread, because the build runs on the uploader's
+                    // timer thread and nothing off the UI thread may touch
+                    // a Grasshopper object or a live Rhino document.
+                    CloneResult(inputs.Result),
+                    name,
+                    inputs.Cells,
+                    inputs.CellWarning,
+                    ResolveUnitFactor(),
+                    inputs.Radius,
+                    DispatchToWorker,
+                    _lifetime.Token)));
+
+            LiveUploader.Built? built;
+            bool wroteThisSolve = false;
+            if (write)
+            {
+                built = uploader.BuildNow(pending);
+                if (built is not null)
+                {
                     ExportSetWrite outcome =
-                        WriteSet(folder, name, taskResult.Payloads);
+                        WriteSet(folder!, name, built.Payloads);
                     if (outcome.Error is not null)
                     {
                         AddRuntimeMessage(
@@ -547,23 +622,28 @@ public sealed class ExportComponent :
                     wroteThisSolve = outcome.Written.Count > 0;
                 }
             }
+            else
+            {
+                uploader.Schedule(pending);
+                built = uploader.LatestBuild;
+            }
 
-            // The hold, latched on the first solve after the archive was
-            // read and cleared by a solve that sees Live False.
-            bool liveHeld = LiveHeldOnThisSolve(inputs.Live);
+            if (built is not null && !string.IsNullOrEmpty(built.Warning))
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Export: " + built.Warning);
+            }
+            if (built is not null && !string.IsNullOrEmpty(built.Note))
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Remark, built.Note);
+            }
 
-            // Enqueued here and never in InPreSolve: a send is a side
-            // effect on the studio, the pre phase runs once per branch and
-            // can be cancelled, and the uploader is not the solve thread's
-            // to drive twice.
-            string uploaded = "off";
+            string uploaded;
             if (!inputs.Live)
             {
-                // Live off means nothing is sent, including a set already
-                // waiting out its debounce and a send already sleeping
-                // between 409 retries, which without this went on for
-                // another quarter of a minute after the toggle.
-                _uploader?.Cancel();
+                uploaded = "off";
             }
             else if (liveHeld)
             {
@@ -571,46 +651,33 @@ public sealed class ExportComponent :
                     "held: ports changed on load; set Live off then on to " +
                     "resume";
             }
-            else
+            else if (!nameIsOneSegment)
             {
-                LiveUploader uploader = EnsureUploader();
-                // Why nothing was enqueued this solve, where nothing was.
-                // Live is on and the uploader still holds the LAST set's
+                // Why nothing was sent this solve, where nothing was. Live
+                // is on and the uploader still holds the LAST send's
                 // outcome, so reporting that outcome would say "live:
                 // stored" on a solve that sent nothing at all, one line
-                // under a Warning saying nothing was sent. Null while a set
-                // did go out.
-                string? notSent = nameIsOneSegment
-                    ? null
-                    : "name refused";
-                if (notSent is null)
-                {
-                    uploader.Enqueue(new LiveUploader.Pending(
-                        inputs.Studio,
-                        name,
-                        taskResult.Payloads));
-                }
+                // under a Warning saying nothing was sent.
+                uploaded = "nothing sent this solve (name refused)";
+            }
+            else
+            {
                 // Read ONCE, under one lock acquisition: the text and the
                 // verdict taken separately let a send land between them,
                 // and the component would print one set's failure with
                 // the other set's flag.
                 LiveUploader.Snapshot state = uploader.Current;
-                uploaded = notSent is null
-                    ? Display(state)
-                    : "nothing sent this solve (" + notSent + ")";
+                uploaded = Display(state);
                 // The upload is best effort: the files and the JSON
                 // outputs stand whatever the studio said, so a refusal, a
                 // deferral or a transport failure is a Warning here and
                 // never an Error. Whether it was one is the uploader's own
                 // record of the verdicts it classified, not this
                 // component's reading of its prose. Only an outcome that
-                // has landed is worth a Warning; a set still going carries
-                // the previous verdict and nothing to say about this one.
-                // A solve that enqueued nothing has no outcome of its own
-                // to report, and the previous set's failure was reported on
-                // the solve it happened.
-                if (notSent is null &&
-                    state.Failed && state.Phase == LiveUploader.Phase.Done)
+                // has landed is worth a Warning; a set still building or
+                // still going carries the previous verdict and nothing to
+                // say about this one.
+                if (state.Failed && state.Phase == LiveUploader.Phase.Done)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
@@ -622,16 +689,22 @@ public sealed class ExportComponent :
             // itself: a reader tells them apart by reading one, not by
             // counting slots, and a kind that is absent or that failed is
             // simply not in the list.
-            var payloads = new List<string>(taskResult.Payloads.Count);
-            foreach ((string _, string json) in taskResult.Payloads)
-                payloads.Add(json);
+            var payloads = new List<string>(
+                built?.Payloads.Count ?? 0);
+            if (built is not null)
+            {
+                foreach ((string _, string json) in built.Payloads)
+                    payloads.Add(json);
+            }
 
             // What this solve did, in lines. The written list is the
             // session's latest rather than this solve's, so a one-shot
             // Button write stays visible after the button releases; the
-            // live lines are the uploader's own, one per kind; and the
-            // warnings are repeated here because a bubble is not a value
-            // and the chin holds one line.
+            // built line is the last build that landed, which on a canvas
+            // that never rests is the previous one; the live lines are the
+            // uploader's own, one per document sent; and the warnings are
+            // repeated here because a bubble is not a value and the chin
+            // holds one line.
             var status = new List<string>();
             if (_lastWritten is null || _lastWritten.Count == 0)
             {
@@ -642,6 +715,9 @@ public sealed class ExportComponent :
                 foreach (string written in _lastWritten)
                     status.Add("written: " + written);
             }
+            status.Add(built is null
+                ? "built: " + LiveUploader.NothingBuiltYet
+                : "built: " + built.Payloads.Count + " documents on rest");
             foreach (string line in uploaded
                 .Replace("\r\n", "\n", StringComparison.Ordinal)
                 .Split('\n'))
@@ -657,7 +733,7 @@ public sealed class ExportComponent :
             data.SetDataList(0, payloads);
             data.SetData(1, string.Join(Environment.NewLine, status));
             Message =
-                $"{taskResult.Payloads.Count} kinds · live {FirstLine(uploaded)}" +
+                $"{payloads.Count} documents · live {FirstLine(uploaded)}" +
                 (wroteThisSolve ? " written" : string.Empty);
         }
         catch (Exception error)
@@ -666,6 +742,25 @@ public sealed class ExportComponent :
             ReportException("Export failed", error);
         }
     }
+
+    /// <summary>
+    /// The build itself, as the uploader takes it: one delegate over inputs
+    /// already captured, answering the one question the uploader asks back.
+    /// </summary>
+    private static Func<Func<string, bool>, Task<LiveUploader.Built>> BuildFor(
+        ExportBuildInputs inputs) =>
+        wantMesh => BuildDocumentsAsync(inputs, wantMesh);
+
+    /// <summary>
+    /// The one worker dispatch Export makes, and the only reason this
+    /// component knows a worker exists.
+    /// </summary>
+    private static Task<JsonElement> DispatchToWorker(
+        string command,
+        object payload,
+        CancellationToken token) =>
+        WorkerRuntime.Host.RequestAsync<JsonElement>(
+            command, payload, token);
 
     /// <summary>
     /// Whether Live is held on THIS solve, and the whole of the latch that
@@ -696,17 +791,19 @@ public sealed class ExportComponent :
     }
 
     /// <summary>
-    /// What Uploaded says for one reading of the uploader. A set waiting
-    /// out the debounce or on the wire says "sending" rather than showing
-    /// the PREVIOUS set's outcome: against an unreachable studio a set
-    /// takes half a minute a kind, and a "stored" left standing for two
-    /// minutes claims a send that never happened.
+    /// What the live line says for one reading of the uploader. A set still
+    /// waiting for rest, still building or still on the wire says WHICH of
+    /// those it is rather than showing the PREVIOUS set's outcome as though
+    /// it were this one's: against an unreachable studio a set takes half a
+    /// minute a document, and a "stored" left standing for two minutes
+    /// claims a send that never happened.
     /// </summary>
     private static string Display(LiveUploader.Snapshot state) =>
         state.Phase switch
         {
-            LiveUploader.Phase.Pending or LiveUploader.Phase.Sending =>
-                "sending",
+            LiveUploader.Phase.Pending => "waiting for rest",
+            LiveUploader.Phase.Building => "building",
+            LiveUploader.Phase.Sending => "sending",
             _ => state.Text,
         };
 
@@ -1195,169 +1292,183 @@ public sealed class ExportComponent :
 
     /// <summary>
     /// The three documents the Result can be, in ExportPlan's order, built
-    /// once. FORM is always asked for; SKIN joins it when cells were wired
-    /// and FORMWORK when the Mould block carries at least one member. Each
-    /// document's own warning joins the one warning the post phase reports,
-    /// and a thrust mesh the worker could not produce is one of those
-    /// warnings rather than the end of the whole export.
+    /// ONCE, on whichever thread the rest schedule is running on. FORM is
+    /// always asked for; SKIN joins it when cells were wired and FORMWORK
+    /// when the Mould block carries at least one member.
+    ///
+    /// THE THRUST MESH IS BUILT ON DEMAND (rule 3.3). The form document is
+    /// written first with no mesh at all, which costs one serialisation of a
+    /// contract this build needs anyway, and <paramref name="wantMesh"/> is
+    /// then asked about that document: only a write, or a push the studio
+    /// has not already had, is worth a worker round trip. A refresh that
+    /// only feeds the J output answers no, keeps "thrustMesh": null, and
+    /// says so in one line, so an idle canvas never calls a worker.
+    ///
+    /// Each document's own warning joins the one warning the component
+    /// reports, and a thrust mesh the worker could not produce is one of
+    /// those warnings rather than the end of the whole export.
     /// </summary>
-    private static async Task<ExportComponentTaskResult> ComputeAsync(
-        ResultDto result,
-        string studyName,
-        IReadOnlyList<TessellationCell>? cells,
-        string? cellWarning,
-        double unitFactor,
-        double radius,
-        CancellationToken cancellationToken)
+    internal static async Task<LiveUploader.Built> BuildDocumentsAsync(
+        ExportBuildInputs inputs,
+        Func<string, bool> wantMesh)
     {
-        var stopwatch = Stopwatch.StartNew();
-        try
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(wantMesh);
+        ResultDto result = inputs.Result;
+        MouldColumnsDto? block = result.Mould?.Columns;
+        bool hasColumns = block is not null && block.Members.Count > 0;
+        bool hasCells = inputs.Cells is not null && inputs.Cells.Count > 0;
+        string[] kinds = ExportPlan.Kinds(hasCells, hasColumns);
+        var payloads = new List<(string Kind, string Json)>(kinds.Length);
+        var warnings = new List<string>();
+        string? note = null;
+
+        // THE UNIT FACTOR IS DISCLOSED FOR THE WHOLE SET, not inside
+        // one document, which is the whole-branch review's finding 16.
+        // The disclosure used to live inside one kind, so a study with a
+        // Mould block and no wired cells never reached it and wrote its
+        // animation in millimetres with no message anywhere on the
+        // component. Every document of the set is affected by the
+        // document unit, one by converting and one by declaring, so the
+        // disclosure belongs to the set. Disclosed the way
+        // ImportPiecesComponent discloses its own factor: a silent
+        // scale is the thing that makes a units mismatch hard to find
+        // later.
+        if (Math.Abs(inputs.UnitFactor - 1.0) > 1e-12)
         {
-            MouldColumnsDto? block = result.Mould?.Columns;
-            bool hasColumns = block is not null && block.Members.Count > 0;
-            bool hasCells = cells is not null && cells.Count > 0;
-            string[] kinds = ExportPlan.Kinds(hasCells, hasColumns);
-            var payloads = new List<(string Kind, string Json)>(kinds.Length);
-            var warnings = new List<string>();
+            warnings.Add(
+                "Document is not in metres: the skin document is CONVERTED by a factor of " +
+                inputs.UnitFactor.ToString(
+                    "0.################",
+                    System.Globalization.CultureInfo.InvariantCulture) +
+                "; the formwork document declares that factor as lengthUnitToMetres and keeps the document's own coordinates.");
+        }
 
-            // THE UNIT FACTOR IS DISCLOSED FOR THE WHOLE SET, not inside
-            // one document, which is the whole-branch review's finding 16.
-            // The disclosure used to live inside one kind, so a study with a
-            // Mould block and no wired cells never reached it and wrote its
-            // animation in millimetres with no message anywhere on the
-            // component. Every document of the set is affected by the
-            // document unit, one by converting and one by declaring, so the
-            // disclosure belongs to the set. Disclosed the way
-            // ImportPiecesComponent discloses its own factor: a silent
-            // scale is the thing that makes a units mismatch hard to find
-            // later.
-            if (Math.Abs(unitFactor - 1.0) > 1e-12)
+        foreach (string kind in kinds)
+        {
+            switch (kind)
             {
-                warnings.Add(
-                    "Document is not in metres: the skin document is CONVERTED by a factor of " +
-                    unitFactor.ToString(
-                        "0.################",
-                        System.Globalization.CultureInfo.InvariantCulture) +
-                    "; the formwork document declares that factor as lengthUnitToMetres and keeps the document's own coordinates.");
-            }
-
-            foreach (string kind in kinds)
-            {
-                switch (kind)
+                case ExportPlan.FormKind:
                 {
-                    case ExportPlan.FormKind:
+                    // The contract's bytes, serialised ONCE and spliced
+                    // twice: the mesh-less document is what the change key
+                    // is read off, and the answered one is the same string
+                    // with the mesh in it.
+                    string contract = ContractJson.Serialize(result);
+                    string json = FormDocument.JsonFromContract(
+                        contract, inputs.Study, null);
+                    if (!wantMesh(json))
                     {
-                        // The one document that needs the worker, and so
-                        // the only one that can fail because something
-                        // outside this component is down. The thrust mesh
-                        // is caught on its own: a worker that will not
-                        // start, a request that times out or a worker-side
-                        // error must not cost the contract, the skin, the
-                        // formwork, the disk write and the Written output
-                        // too, none of which ever touch the worker. The
-                        // form document is still written, with
-                        // "thrustMesh": null, so the study still resolves
-                        // and only the staged analysis is unavailable.
-                        string? thrustMesh = null;
-                        try
-                        {
-                            (string? mesh, string? warning) =
-                                await BuildThrustMeshAsync(
-                                        result, cancellationToken)
-                                    .ConfigureAwait(false);
-                            thrustMesh = mesh;
-                            if (!string.IsNullOrEmpty(warning))
-                                warnings.Add(warning!);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // A cancellation is not a verdict on the
-                            // worker; the post phase recomputes.
-                            throw;
-                        }
-                        catch (Exception meshError)
-                        {
-                            warnings.Add(
-                                "thrustMesh: " +
-                                meshError.GetBaseException().Message);
-                        }
-                        payloads.Add((
-                            kind,
-                            FormDocument.Json(result, studyName, thrustMesh)));
+                        // The one-line note the design asks for, said as a
+                        // Remark rather than a Warning: a J-only refresh
+                        // carrying no mesh is the intended cheap path and
+                        // not a fault, but a reader of that document has to
+                        // know why the key is null.
+                        note =
+                            "thrustMesh is null in the J output: the mesh " +
+                            "is built for a write or for a push and not " +
+                            "for a refresh, because it costs a worker " +
+                            "round trip. Set Write, or Live, to build it.";
+                        payloads.Add((kind, json));
                         break;
                     }
-                    case ExportPlan.SkinKind:
+                    // The one document that needs the worker, and so
+                    // the only one that can fail because something
+                    // outside this component is down. The thrust mesh
+                    // is caught on its own: a worker that will not
+                    // start, a request that times out or a worker-side
+                    // error must not cost the contract, the skin, the
+                    // formwork, the disk write and the outputs too,
+                    // none of which ever touch the worker. The form
+                    // document is still written, with "thrustMesh":
+                    // null, so the study still resolves and only the
+                    // staged analysis is unavailable.
+                    try
                     {
-                        // Pure serialisation of cells already reduced to
-                        // plain numbers on the solve thread; no worker, no
-                        // geometry.
-                        payloads.Add((
-                            kind,
-                            BuildSkinJson(
-                                cells!,
-                                unitFactor,
-                                studyName,
-                                result.Equilibrium?.Vertices.Count ?? 0,
-                                result.Equilibrium?.TopologyHash
-                                    ?? string.Empty)));
-                        if (!string.IsNullOrEmpty(cellWarning))
-                            warnings.Add(cellWarning!);
-                        break;
+                        (string? mesh, string? warning) =
+                            await BuildThrustMeshAsync(
+                                    result, inputs.Worker, inputs.Lifetime)
+                                .ConfigureAwait(false);
+                        if (!string.IsNullOrEmpty(warning))
+                            warnings.Add(warning!);
+                        if (mesh is not null)
+                        {
+                            json = FormDocument.JsonFromContract(
+                                contract, inputs.Study, mesh);
+                        }
                     }
-                    case ExportPlan.FormworkKind:
+                    catch (Exception meshError)
                     {
-                        // Caught on its own, the way the thrust mesh is.
-                        // The sweep runs the animation engine over a Result
-                        // the author may never have wired an Animate to, so
-                        // a Result the engine cannot animate (no edges,
-                        // say), or one whose machine and motion disagree,
-                        // must cost this document and nothing else: form,
-                        // skin, the disk write and the outputs all stand,
-                        // and the set simply lacks its formwork.
-                        try
-                        {
-                            payloads.Add((
-                                kind,
-                                FormworkDocument.Json(
-                                    result,
-                                    studyName,
-                                    unitFactor,
-                                    radius,
-                                    ForceUnitOf(result))));
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception formworkError)
-                        {
-                            warnings.Add(
-                                "formwork: " +
-                                formworkError.GetBaseException().Message);
-                        }
-                        break;
+                        // A CANCELLATION IS NOT RETHROWN HERE. The only
+                        // token this can carry is the component's own
+                        // lifetime, so a cancelled request means the
+                        // component has left the canvas and there is
+                        // nothing left to recompute for: the set is
+                        // finished with the mesh it has, and the schedule
+                        // that asked for it is gone with the component.
+                        warnings.Add(
+                            "thrustMesh: " +
+                            meshError.GetBaseException().Message);
                     }
-                    default:
-                        throw new InvalidOperationException(
-                            $"Export does not know the kind '{kind}'.");
+                    payloads.Add((kind, json));
+                    break;
                 }
+                case ExportPlan.SkinKind:
+                {
+                    // Pure serialisation of cells already reduced to
+                    // plain numbers on the solve thread; no worker, no
+                    // geometry.
+                    payloads.Add((
+                        kind,
+                        BuildSkinJson(
+                            inputs.Cells!,
+                            inputs.UnitFactor,
+                            inputs.Study,
+                            result.Equilibrium?.Vertices.Count ?? 0,
+                            result.Equilibrium?.TopologyHash
+                                ?? string.Empty)));
+                    if (!string.IsNullOrEmpty(inputs.CellWarning))
+                        warnings.Add(inputs.CellWarning!);
+                    break;
+                }
+                case ExportPlan.FormworkKind:
+                {
+                    // Caught on its own, the way the thrust mesh is.
+                    // The sweep runs the animation engine over a Result
+                    // the author may never have wired an Animate to, so
+                    // a Result the engine cannot animate (no edges,
+                    // say), or one whose machine and motion disagree,
+                    // must cost this document and nothing else: form,
+                    // skin, the disk write and the outputs all stand,
+                    // and the set simply lacks its formwork.
+                    try
+                    {
+                        payloads.Add((
+                            kind,
+                            FormworkDocument.Json(
+                                result,
+                                inputs.Study,
+                                inputs.UnitFactor,
+                                inputs.Radius,
+                                ForceUnitOf(result))));
+                    }
+                    catch (Exception formworkError)
+                    {
+                        warnings.Add(
+                            "formwork: " +
+                            formworkError.GetBaseException().Message);
+                    }
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException(
+                        $"Export does not know the kind '{kind}'.");
             }
-            stopwatch.Stop();
-            return new ExportComponentTaskResult(
-                payloads,
-                warnings.Count == 0 ? null : string.Join(" ", warnings),
-                null,
-                stopwatch.Elapsed);
         }
-        catch (Exception error)
-        {
-            stopwatch.Stop();
-            return new ExportComponentTaskResult(
-                null,
-                null,
-                error,
-                stopwatch.Elapsed);
-        }
+        return new LiveUploader.Built(
+            payloads,
+            warnings.Count == 0 ? null : string.Join(" ", warnings),
+            note);
     }
 
     /// <summary>
@@ -1397,9 +1508,10 @@ public sealed class ExportComponent :
     /// <c>form["thrustMesh"]</c>, which is where their ananke_fea/mesh.py
     /// json_loads it.
     /// </summary>
-    private static async Task<(string? ThrustMesh, string? Warning)> BuildThrustMeshAsync(
+    internal static async Task<(string? ThrustMesh, string? Warning)> BuildThrustMeshAsync(
         ResultDto result,
-        CancellationToken cancellationToken)
+        Func<string, object, CancellationToken, Task<JsonElement>> worker,
+        CancellationToken lifetime)
     {
         object resultPayload;
         string? warning;
@@ -1422,11 +1534,16 @@ public sealed class ExportComponent :
         {
             ["result"] = resultPayload
         };
-        JsonElement response = await WorkerRuntime.Host
-            .RequestAsync<JsonElement>(
-                "export.compas",
-                payload,
-                cancellationToken)
+        // THE TOKEN IS THE COMPONENT'S LIFETIME AND NEVER THE SOLUTION'S
+        // (rule 3.4). WorkerHost registers a callback on whatever token it is
+        // handed, and that callback KILLS the worker process and starts a
+        // fresh one behind a new handshake (WorkerHost.cs:911-991), so a
+        // token that a re-solve cancels is a worker torn down mid-scrub. A
+        // superseded build is not cancelled at all: it finishes on this
+        // token, and the schedule that asked for it discards what it
+        // produced.
+        JsonElement response = await worker(
+                ThrustMeshCommand, payload, lifetime)
             .ConfigureAwait(false);
         return (OptionalString(response, "thrustMesh"), warning);
     }

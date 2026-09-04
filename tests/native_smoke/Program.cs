@@ -1,12 +1,19 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Ananke.COMPAS.NativeSmoke;
 
@@ -357,6 +364,14 @@ internal static class Program
 
     public static int Main(string[] args)
     {
+        // The worker half of check 6, before anything else in this process
+        // runs: a fake worker speaks framed JSON on stdin and stdout and
+        // must put nothing else on either.
+        if (args.Length > 0 &&
+            string.Equals(args[0], FakeWorkerFlag, StringComparison.Ordinal))
+        {
+            return RunFakeWorker();
+        }
         try
         {
             Options options = Options.Parse(args);
@@ -2493,6 +2508,65 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"LiveUploader: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportRestSchedule(plugin);
+            Console.WriteLine(
+                "PASS  Export builds ON REST (design of 2026-09-04 rules 3.1 "
+                + "and 3.2): a solve builds nothing and only pokes the "
+                + "debouncer, six solves inside one half-second window are "
+                + "exactly ONE build and it is the LAST solve's, the build "
+                + "runs with Live off as much as with Live on because J is "
+                + "fed by it, and Write builds SYNCHRONOUSLY on the calling "
+                + "thread and hands back the set the disk write then uses. "
+                + "Driven through the real uploader, its real one-shot timer "
+                + "and its real single flight.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Export rest schedule: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportChangeKeys(plugin);
+            Console.WriteLine(
+                "PASS  Export sends ONLY WHAT CHANGED (rule 3.3): the first "
+                + "set carries all three documents, an identical set sends "
+                + "nothing at all, a formwork-only change sends formwork "
+                + "alone and a form-only change sends form alone; the thrust "
+                + "mesh is built for a push the studio has not had and for a "
+                + "write, and NEVER for a refresh that only feeds J; "
+                + "toggling Live clears the ledger and sends the set again; "
+                + "and a different study name is a different ledger and its "
+                + "own route.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Export change keys: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportWorkerSurvivesSupersession(plugin);
+            Console.WriteLine(
+                "PASS  Export never kills the worker (rule 3.4): against a "
+                + "REAL WorkerHost driving a real child process, a build "
+                + "superseded while its thrust-mesh request was on the wire "
+                + "FINISHES, is discarded, and leaves the SAME process "
+                + "serving the next request, by process id and by that "
+                + "process's own request count. The kill path is "
+                + "demonstrated in the same fixture by cancelling a token, "
+                + "which does restart the worker, so the survival above is "
+                + "not vacuous. Export is no longer task-capable, so the "
+                + "solution's token cannot reach the dispatch at all, and "
+                + "the component's lifetime is the one thing that ends it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Export worker survival: {DescribeException(exception)}");
         }
 
         try
@@ -32193,7 +32267,6 @@ internal static class Program
         MethodInfo delay = RequirePublicStatic(uploader, "RetryDelay");
         MethodInfo route = RequirePublicStatic(uploader, "RouteFor");
         MethodInfo outcome = RequirePublicStatic(uploader, "Outcome");
-        MethodInfo key = RequirePublicStatic(uploader, "SetKey");
         int? Delay(int attempt) => (int?)delay.Invoke(null, new object?[] { attempt });
         if (Delay(0) != 2000 || Delay(1) != 4000 || Delay(2) != 8000 || Delay(3) is not null)
             throw new InvalidOperationException("The retry schedule is 2000, 4000, 8000 then null.");
@@ -32259,59 +32332,45 @@ internal static class Program
             throw new InvalidOperationException("A body that is not that JSON falls back to the body itself.");
         if (Detail("{\"detail\": \"busy\"}") != "{\"detail\": \"busy\"}")
             throw new InvalidOperationException("JSON carrying no run falls back to the body itself.");
-        // The set key. It decides whether a re-solve sends again, and the
+        // THE CHANGE KEY, ONE PER DOCUMENT (design of 2026-09-04 rule 3.3).
+        // It decides whether a document is re-sent at all, and the
         // component expires itself on every outcome, so a key that cannot
         // repeat is an unbounded loop of worker calls and PUTs rather than
-        // a cosmetic defect. What it must read: the Name, the Studio and
-        // every document by name and by content. What it must NOT read:
-        // the FORM document's thrust mesh, because the worker's json_dumps
-        // stamps a fresh uuid4 into every serialisation of the same Result
-        // (compas/data/data.py), so those bytes differ on every solve of an
-        // unchanged definition. That lesson was the compas kind's before
-        // the form document absorbed the one string anybody read out of it,
-        // and the hazard moved with the string.
-        string Key(string name, string studio, List<(string, string)> set) =>
-            (string)key.Invoke(null, new object?[] { name, studio, set })!;
-        const string Studio = "http://127.0.0.1:8600";
+        // a cosmetic defect. What it must read: the document's own bytes.
+        // What it must NOT read: the FORM document's thrust mesh, because
+        // the worker's json_dumps stamps a fresh uuid4 into every
+        // serialisation of the same Result (compas/data/data.py), so those
+        // bytes differ on every build of an unchanged definition. That
+        // lesson was the compas kind's before the form document absorbed the
+        // one string anybody read out of it, and the hazard moved with the
+        // string.
+        MethodInfo key = RequirePublicStatic(uploader, "DocumentKey");
+        string Key(string kind, string json) =>
+            (string)key.Invoke(null, new object?[] { kind, json })!;
         string Form(string contract, string mesh) =>
             "{\"study\":\"arch\"," + contract + ",\"thrustMesh\":\"" + mesh + "\"}";
-        var a = new List<(string, string)>
+        if (Key("form", Form("\"a\":1", "guid-aaa")) !=
+            Key("form", Form("\"a\":1", "guid-aaa")))
         {
-            ("form", Form("\"a\":1", "guid-aaa")),
-            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
-        };
-        var b = new List<(string, string)>
-        {
-            ("form", Form("\"a\":1", "guid-aaa")),
-            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
-        };
-        if (Key("arch", Studio, a) != Key("arch", Studio, b))
-            throw new InvalidOperationException("Equal sets key the same.");
-        // The loop guard itself: same Result, second solve, a fresh guid
+            throw new InvalidOperationException("Equal documents key the same.");
+        }
+        // The loop guard itself: same Result, second build, a fresh guid
         // inside the thrust mesh and nothing else changed.
-        var freshGuid = new List<(string, string)>
-        {
-            ("form", Form("\"a\":1", "guid-bbb")),
-            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
-        };
-        if (Key("arch", Studio, a) != Key("arch", Studio, freshGuid))
+        if (Key("form", Form("\"a\":1", "guid-aaa")) !=
+            Key("form", Form("\"a\":1", "guid-bbb")))
         {
             throw new InvalidOperationException(
-                "Two sets differing ONLY in the form document's thrust mesh must key the SAME: "
+                "Two form documents differing ONLY in the thrust mesh must key the SAME: "
                 + "the worker mints a fresh uuid per serialisation, so a key that read "
                 + "those bytes could never repeat and the expire-on-outcome loop would "
                 + "never terminate.");
         }
         // What the key does read, one part at a time.
-        var changedContract = new List<(string, string)>
-        {
-            ("form", Form("\"a\":2", "guid-aaa")),
-            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
-        };
-        if (Key("arch", Studio, a) == Key("arch", Studio, changedContract))
+        if (Key("form", Form("\"a\":1", "guid-aaa")) ==
+            Key("form", Form("\"a\":2", "guid-aaa")))
         {
             throw new InvalidOperationException(
-                "A set differing in the CONTRACT half of the form document keys "
+                "A form document differing in its CONTRACT half keys "
                 + "differently: that half is the whole of what a changed Result "
                 + "changes, so a key blind to it would never send again.");
         }
@@ -32320,42 +32379,1095 @@ internal static class Program
         // A worker that will not start leaves "thrustMesh": null in the
         // form document; the same Result recovered on the next build
         // carries the real mesh. If the two keyed alike the uploader would
-        // report "unchanged since: ..." and never send the recovered set,
-        // so the studio would keep a form document with no thrust mesh and
-        // no staged analysis until the Result itself changed or Live was
-        // toggled off and on, with nothing on the canvas saying so.
-        var workerDown = new List<(string, string)>
-        {
-            ("form", "{\"study\":\"arch\",\"a\":1,\"thrustMesh\":null}"),
-            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
-        };
-        if (Key("arch", Studio, a) == Key("arch", Studio, workerDown))
+        // report "unchanged since: ..." and never send the recovered
+        // document, so the studio would keep a form document with no thrust
+        // mesh and no staged analysis until the Result itself changed or
+        // Live was toggled off and on, with nothing on the canvas saying so.
+        if (Key("form", Form("\"a\":1", "guid-aaa")) ==
+            Key("form", "{\"study\":\"arch\",\"a\":1,\"thrustMesh\":null}"))
         {
             throw new InvalidOperationException(
-                "A set whose form document carries a thrust mesh and the "
-                + "same set whose form document carries 'thrustMesh': null "
-                + "must key DIFFERENTLY, or a set recovered after a worker "
+                "A form document carrying a thrust mesh and the same "
+                + "document carrying 'thrustMesh': null must key "
+                + "DIFFERENTLY, or a document recovered after a worker "
                 + "failure is reported unchanged and never sent.");
         }
-        var withoutFormwork = new List<(string, string)>
-        {
-            ("form", Form("\"a\":1", "guid-aaa")),
-        };
-        if (Key("arch", Studio, a) == Key("arch", Studio, withoutFormwork))
+        // And the presence half is READABLE from the key, because the build
+        // asks it a question the send does not: whether to pay a worker
+        // round trip at all. A key that hid it would either build a mesh on
+        // every rest tick or never rebuild one after a failure.
+        string mark = (string)uploader.GetField(
+            "MeshMark", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+        string noMark = (string)uploader.GetField(
+            "NoMeshMark", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+        if (!Key("form", Form("\"a\":1", "guid-aaa")).EndsWith(mark, StringComparison.Ordinal) ||
+            !Key("form", "{\"study\":\"arch\",\"a\":1,\"thrustMesh\":null}")
+                .EndsWith(noMark, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "A set carrying a formwork document and the same set without one must "
-                + "key differently, or a set recovered after a failed formwork build is "
-                + "skipped rather than sent.");
+                "A form key SAYS whether the document it stands for carries "
+                + "a mesh, because the build reads that to decide whether to "
+                + "call a worker at all; got '"
+                + Key("form", Form("\"a\":1", "guid-aaa")) + "' and '"
+                + Key("form", "{\"study\":\"arch\",\"a\":1,\"thrustMesh\":null}")
+                + "'.");
         }
-        if (Key("arch", Studio, a) == Key("arch-b", Studio, a))
-            throw new InvalidOperationException("The same set under a different Name keys differently.");
-        if (Key("arch", Studio, a) == Key("arch", "http://127.0.0.1:8601", a))
-            throw new InvalidOperationException("The same set going to a different Studio keys differently.");
-        var d = new List<(string, string)> { ("skin", "{\"a\":1}") };
-        var e = new List<(string, string)> { ("formwork", "{\"a\":1}") };
-        if (Key("arch", Studio, d) == Key("arch", Studio, e))
-            throw new InvalidOperationException("A set differing only in Kind keys differently.");
+        // Every other kind keys on its own bytes, whole, and the thrust-mesh
+        // reduction is the form document's alone: a skin document that
+        // happened to carry that member would be a document whose change was
+        // invisible.
+        foreach (string kind in new[] { "skin", "formwork" })
+        {
+            if (Key(kind, Form("\"a\":1", "guid-aaa")) ==
+                Key(kind, Form("\"a\":1", "guid-bbb")))
+            {
+                throw new InvalidOperationException(
+                    $"The '{kind}' document keys on its own bytes, whole; the "
+                    + "thrust-mesh reduction belongs to the form document and "
+                    + "to nothing else.");
+            }
+            if (Key(kind, "{\"a\":1}") == Key(kind, "{\"a\":2}"))
+                throw new InvalidOperationException($"A changed {kind} document keys differently.");
+        }
+    }
+
+    /// <summary>
+    /// The seam every rest check drives: one real <c>LiveUploader</c>, its
+    /// real debounce, its real single flight and its real ledger, with the
+    /// two things a check cannot have substituted. The BUILD is a closure
+    /// the check counts, exactly as the component's own is a closure over
+    /// inputs it captured at solve time; the WIRE is a recorder, so the
+    /// documents that would have been PUT are readable without a studio
+    /// listening on 8600. Nothing else is replaced: the timer, the phases,
+    /// the discard of a superseded build and the key comparison are the
+    /// shipped ones.
+    /// </summary>
+    private sealed class RestHarness
+    {
+        internal readonly Type UploaderType;
+        internal readonly Type PendingType;
+        internal readonly Type BuiltType;
+        internal readonly object Uploader;
+        internal readonly List<string> Routes = new();
+        internal int Outcomes;
+
+        internal RestHarness(Assembly plugin)
+        {
+            UploaderType = plugin.GetType(
+                "Ananke.COMPAS.Native.Components.LiveUploader",
+                throwOnError: true)!;
+            PendingType = UploaderType.GetNestedType(
+                "Pending", BindingFlags.Public)
+                ?? throw new InvalidOperationException(
+                    "LiveUploader.Pending was not found; the build request "
+                    + "is what a solve hands the debouncer now.");
+            BuiltType = UploaderType.GetNestedType(
+                "Built", BindingFlags.Public)
+                ?? throw new InvalidOperationException(
+                    "LiveUploader.Built was not found; the build's product "
+                    + "is what the J output carries now.");
+            var onOutcome = new Action(() => Interlocked.Increment(ref Outcomes));
+            var put = new Func<string, string, CancellationToken,
+                Task<HttpResponseMessage>>((route, json, token) =>
+                {
+                    lock (Routes)
+                        Routes.Add(route);
+                    return Task.FromResult(new HttpResponseMessage(
+                        HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(string.Empty),
+                    });
+                });
+            Uploader = Activator.CreateInstance(
+                UploaderType,
+                BindingFlags.Instance | BindingFlags.Public
+                    | BindingFlags.NonPublic,
+                binder: null,
+                args: new object?[] { onOutcome, put },
+                culture: null)
+                ?? throw new InvalidOperationException(
+                    "LiveUploader could not be constructed.");
+        }
+
+        internal object Built(
+            IReadOnlyList<(string Kind, string Json)> payloads,
+            string? warning = null,
+            string? note = null) =>
+            Activator.CreateInstance(
+                BuiltType, new object?[] { payloads, warning, note })!;
+
+        internal object Pending(
+            string studio,
+            string name,
+            bool live,
+            bool write,
+            Func<Func<string, bool>, Task<object>> build)
+        {
+            MethodInfo bridge = typeof(Program).GetMethod(
+                nameof(BuildDelegate),
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            object built = bridge.MakeGenericMethod(BuiltType)
+                .Invoke(null, new object?[] { build })!;
+            return Activator.CreateInstance(
+                PendingType,
+                new object?[] { studio, name, live, write, built })!;
+        }
+
+        internal void Schedule(object pending) =>
+            UploaderType.GetMethod("Schedule")!
+                .Invoke(Uploader, new[] { pending });
+
+        internal object? BuildNow(object pending) =>
+            UploaderType.GetMethod("BuildNow")!
+                .Invoke(Uploader, new[] { pending });
+
+        internal void Cancel() =>
+            UploaderType.GetMethod("Cancel")!.Invoke(Uploader, null);
+
+        internal object? LatestBuild =>
+            UploaderType.GetProperty("LatestBuild")!.GetValue(Uploader);
+
+        internal IReadOnlyList<(string Kind, string Json)>? Documents(
+            object? built) =>
+            built is null
+                ? null
+                : (IReadOnlyList<(string Kind, string Json)>)
+                    BuiltType.GetProperty("Payloads")!.GetValue(built)!;
+
+        internal int Debounce => (int)UploaderType.GetField(
+            "DebounceMilliseconds",
+            BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+
+        internal string[] Sent()
+        {
+            lock (Routes)
+                return Routes.ToArray();
+        }
+
+        internal void Forget()
+        {
+            lock (Routes)
+                Routes.Clear();
+        }
+
+        internal string[] KindsSent() =>
+            Sent().Select(route => route[(route.LastIndexOf('/') + 1)..])
+                .ToArray();
+    }
+
+    /// <summary>
+    /// The one bridge a check needs into the plug-in's own delegate type:
+    /// <c>Pending.Build</c> returns a <c>Task&lt;Built&gt;</c> of a type this
+    /// assembly cannot name, so the closure is written against
+    /// <c>Task&lt;object&gt;</c> and cast here under the real type.
+    /// </summary>
+    private static Delegate BuildDelegate<TBuilt>(
+        Func<Func<string, bool>, Task<object>> inner) =>
+        new Func<Func<string, bool>, Task<TBuilt>>(
+            async want => (TBuilt)await inner(want).ConfigureAwait(false));
+
+    private static void WaitUntil(
+        Func<bool> ready,
+        string what,
+        int timeoutMs = 20000)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!ready())
+        {
+            if (clock.ElapsedMilliseconds > timeoutMs)
+            {
+                throw new InvalidOperationException(
+                    $"Timed out after {timeoutMs} ms waiting for {what}.");
+            }
+            Thread.Sleep(20);
+        }
+    }
+
+    /// <summary>
+    /// CHECK 4 of the design's section 5: THE SET IS BUILT ON REST, AND ON
+    /// A WRITE, AND ON NOTHING ELSE (rules 3.1 and 3.2).
+    ///
+    /// The defect this closes is the measured slow canvas: the five-kind set
+    /// was built unconditionally on EVERY solve, so a slider scrub built and
+    /// threw away a whole export per frame, the animation sweep included.
+    /// The debounce moved in front of the build, so a burst of solves inside
+    /// the window is ONE build at the end of it.
+    ///
+    /// Every property here is driven through the real uploader: the real
+    /// half-second one-shot, reset by every schedule, and the real single
+    /// flight. What is a check's own is the build closure it counts and the
+    /// wire it records, and neither of those is what is being asserted.
+    /// </summary>
+    private static void ValidateExportRestSchedule(Assembly plugin)
+    {
+        var harness = new RestHarness(plugin);
+        int debounce = harness.Debounce;
+        if (debounce is < 100 or > 5000)
+        {
+            throw new InvalidOperationException(
+                $"The debounce is the uploader's own half second; it reads {debounce} ms.");
+        }
+
+        int builds = 0;
+        int lastSolveBuilt = -1;
+        int buildThread = -1;
+        object BuildFor(int solve) => harness.Pending(
+            "http://127.0.0.1:8600",
+            "arch",
+            live: false,
+            write: false,
+            want =>
+            {
+                Interlocked.Increment(ref builds);
+                Volatile.Write(ref lastSolveBuilt, solve);
+                Volatile.Write(
+                    ref buildThread, Environment.CurrentManagedThreadId);
+                return Task.FromResult(harness.Built(
+                    new List<(string, string)>
+                    {
+                        ("form", "{\"solve\":" + solve + "}"),
+                    }));
+            });
+
+        // A SOLVE BUILDS NOTHING. The first schedule is followed
+        // immediately, well inside the window, by a read: a build that had
+        // happened by now would be a build on the solve.
+        harness.Schedule(BuildFor(0));
+        Thread.Sleep(debounce / 4);
+        if (Volatile.Read(ref builds) != 0)
+        {
+            throw new InvalidOperationException(
+                "A SOLVE BUILDS NOTHING (rule 3.1): "
+                + Volatile.Read(ref builds) + " build(s) had already run "
+                + $"{debounce / 4} ms after the solve, which is inside the "
+                + "debounce window. The set is built when the canvas rests, "
+                + "and a build on the solve is the slow canvas the studio "
+                + "measured.");
+        }
+
+        // N SOLVES IN THE WINDOW, ONE BUILD. Each schedule lands inside the
+        // window the one before it opened, so a timer that was not reset
+        // would fire five times and a build per solve would run five times.
+        const int Burst = 5;
+        for (int solve = 1; solve <= Burst; solve++)
+        {
+            harness.Schedule(BuildFor(solve));
+            Thread.Sleep(debounce / 5);
+        }
+        WaitUntil(
+            () => Volatile.Read(ref builds) >= 1,
+            "the burst's one build to land");
+        Thread.Sleep(debounce * 2);
+        if (Volatile.Read(ref builds) != 1)
+        {
+            throw new InvalidOperationException(
+                $"{Burst + 1} solves inside one debounce window must trigger "
+                + "exactly ONE build, at the end of it; "
+                + Volatile.Read(ref builds) + " ran. That is the whole of "
+                + "what 'built on rest' buys, and a drag is thousands of "
+                + "these.");
+        }
+        // And it is the LAST solve's inputs that were built, not the first
+        // one's: a debouncer that kept the earliest request would show the
+        // author the state they dragged away from.
+        if (Volatile.Read(ref lastSolveBuilt) != Burst)
+        {
+            throw new InvalidOperationException(
+                "The build that runs on rest is the LAST solve's, not the "
+                + "first's; solve "
+                + Volatile.Read(ref lastSolveBuilt) + " was built out of "
+                + $"{Burst}.");
+        }
+        // The build feeds J whatever Live says: this whole burst ran with
+        // Live false, and the documents are on the uploader for the next
+        // solve to read.
+        IReadOnlyList<(string Kind, string Json)>? documents =
+            harness.Documents(harness.LatestBuild);
+        if (documents is null || documents.Count != 1 ||
+            documents[0].Json != "{\"solve\":" + Burst + "}")
+        {
+            throw new InvalidOperationException(
+                "The build that landed is what J carries on the next solve, "
+                + "with Live off as much as with Live on: the documents are "
+                + "the author's and the studio's copy is the side effect. "
+                + "Got " + (documents is null
+                    ? "no build at all"
+                    : string.Join(", ", documents.Select(d => d.Json))) + ".");
+        }
+
+        // A WRITE BUILDS SYNCHRONOUSLY, ON THIS SOLVE. A button press puts
+        // the set on disk in the solve that pressed it, so the build has to
+        // have happened by the time BuildNow returns, and on the caller's
+        // own thread rather than on the timer's.
+        int before = Volatile.Read(ref builds);
+        int caller = Environment.CurrentManagedThreadId;
+        object? written = harness.BuildNow(harness.Pending(
+            "http://127.0.0.1:8600",
+            "arch",
+            live: false,
+            write: true,
+            want =>
+            {
+                Interlocked.Increment(ref builds);
+                Volatile.Write(
+                    ref buildThread, Environment.CurrentManagedThreadId);
+                return Task.FromResult(harness.Built(
+                    new List<(string, string)> { ("form", "{\"write\":1}") }));
+            }));
+        if (Volatile.Read(ref builds) != before + 1)
+        {
+            throw new InvalidOperationException(
+                "Write BUILDS SYNCHRONOUSLY on the solve that set it (rule "
+                + "3.2): the build had not run by the time BuildNow "
+                + "returned, so the write that follows it would put the "
+                + "PREVIOUS set on disk.");
+        }
+        if (Volatile.Read(ref buildThread) != caller)
+        {
+            throw new InvalidOperationException(
+                "A write builds on the solve thread itself, because the "
+                + "files are written from what it returns; it ran on thread "
+                + Volatile.Read(ref buildThread) + " against the caller's "
+                + caller + ".");
+        }
+        IReadOnlyList<(string Kind, string Json)>? writtenDocuments =
+            harness.Documents(written);
+        if (writtenDocuments is null || writtenDocuments.Count != 1 ||
+            writtenDocuments[0].Json != "{\"write\":1}")
+        {
+            throw new InvalidOperationException(
+                "BuildNow hands the caller the set it built, because that "
+                + "set is what reaches disk.");
+        }
+        // Nothing was sent by any of it: Live was off throughout.
+        if (harness.Sent().Length != 0)
+        {
+            throw new InvalidOperationException(
+                "With Live off the build still runs and NOTHING is sent; "
+                + string.Join(", ", harness.Sent()) + " went out.");
+        }
+    }
+
+    /// <summary>
+    /// CHECK 5 of the design's section 5: ONLY WHAT CHANGED IS SENT, and
+    /// only what is needed is built (rule 3.3).
+    ///
+    /// The studio's Live ask 2, accepted in the REPLY: a form move does not
+    /// need the animation resent, and 1.3 MB a solve is the wrong shape for
+    /// a live wire whatever the transport. So each document carries its own
+    /// change key, the uploader remembers the key it last sent for each
+    /// kind, and a send carries the documents whose keys moved and no
+    /// others.
+    ///
+    /// The same ledger answers the build's own question, which is the half
+    /// that costs a worker: the thrust mesh is produced for a write, or for
+    /// a push the studio has not already had, and never for a refresh that
+    /// only feeds J.
+    /// </summary>
+    private static void ValidateExportChangeKeys(Assembly plugin)
+    {
+        var harness = new RestHarness(plugin);
+        const string Studio = "http://127.0.0.1:8600";
+        int builds = 0;
+        int meshes = 0;
+
+        // The form document as the real build writes it: the same contract
+        // bytes either way, and the thrust mesh present or null. Splitting
+        // the two is the whole point of the change key, so the fixture has
+        // to be able to move one without the other.
+        string FormJson(int contract, string? mesh) =>
+            "{\"study\":\"arch\",\"c\":" + contract + ",\"thrustMesh\":" +
+            (mesh is null ? "null" : "\"" + mesh + "\"") + "}";
+
+        object Set(
+            int contract,
+            string mesh,
+            string skin,
+            string formwork,
+            bool live = true,
+            bool write = false,
+            string study = "arch") =>
+            harness.Pending(
+                Studio,
+                study,
+                live,
+                write,
+                want =>
+                {
+                    Interlocked.Increment(ref builds);
+                    // The form document is written with NO mesh first, and
+                    // the uploader is asked about THAT document: this is the
+                    // real question the real build asks, in the real order,
+                    // and the answer is what decides whether a worker is
+                    // called at all.
+                    string cheap = FormJson(contract, null);
+                    string carried = cheap;
+                    if (want(cheap))
+                    {
+                        Interlocked.Increment(ref meshes);
+                        carried = FormJson(contract, mesh);
+                    }
+                    return Task.FromResult(harness.Built(
+                        new List<(string, string)>
+                        {
+                            ("form", carried),
+                            ("skin", skin),
+                            ("formwork", formwork),
+                        }));
+                });
+
+        void Rest(object pending, int expectedBuilds)
+        {
+            harness.Schedule(pending);
+            WaitUntil(
+                () => Volatile.Read(ref builds) >= expectedBuilds,
+                "the build to land on rest");
+            // The send is started after the build, on its own task, so a
+            // moment is allowed for it to reach the wire before the routes
+            // are read. A send that never happens is what the assertions
+            // below are looking for, so this wait is what makes "nothing was
+            // sent" mean anything at all.
+            Thread.Sleep(harness.Debounce);
+        }
+
+        // 1. THE FIRST SEND CARRIES EVERYTHING. The studio holds nothing
+        // for this study, so every document has moved.
+        Rest(Set(1, "guid-a", "{\"s\":1}", "{\"w\":1}"), 1);
+        if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
+        {
+            throw new InvalidOperationException(
+                "The first send carries all three documents, in the plan's "
+                + "order; it carried "
+                + string.Join(", ", harness.KindsSent()) + ".");
+        }
+        if (Volatile.Read(ref meshes) != 1)
+        {
+            throw new InvalidOperationException(
+                "A form document the studio has never had is worth a thrust "
+                + "mesh; the build asked for "
+                + Volatile.Read(ref meshes) + ".");
+        }
+
+        // 2. AN IDENTICAL SET SENDS NOTHING.
+        harness.Forget();
+        Rest(Set(1, "guid-b", "{\"s\":1}", "{\"w\":1}"), 2);
+        if (harness.KindsSent().Length != 0)
+        {
+            throw new InvalidOperationException(
+                "A set identical to the one the studio already holds sends "
+                + "NOTHING, thrust mesh guid included: "
+                + string.Join(", ", harness.KindsSent()) + " went out. The "
+                + "component expires itself on every outcome, so a set that "
+                + "always looks new is an unbounded loop of PUTs.");
+        }
+        if (Volatile.Read(ref meshes) != 1)
+        {
+            throw new InvalidOperationException(
+                "And no worker is called for it either: the contract half of "
+                + "the form document has not moved and the studio already "
+                + "holds a document carrying a mesh, so a second mesh would "
+                + "be a round trip for a document that is not going "
+                + "anywhere. It asked "
+                + Volatile.Read(ref meshes) + " times.");
+        }
+
+        // 3. A FORMWORK-ONLY CHANGE SENDS FORMWORK ALONE.
+        harness.Forget();
+        Rest(Set(1, "guid-c", "{\"s\":1}", "{\"w\":2}"), 3);
+        if (!harness.KindsSent().SequenceEqual(new[] { "formwork" }))
+        {
+            throw new InvalidOperationException(
+                "A formwork-only change sends the FORMWORK document alone: "
+                + "the animation is the biggest document in the set and the "
+                + "form and skin the studio holds are still current. It sent "
+                + string.Join(", ", harness.KindsSent()) + ".");
+        }
+
+        // 4. A FORM-ONLY CHANGE SENDS FORM ALONE, and pays for one mesh.
+        harness.Forget();
+        Rest(Set(22, "guid-d", "{\"s\":1}", "{\"w\":2}"), 4);
+        if (!harness.KindsSent().SequenceEqual(new[] { "form" }))
+        {
+            throw new InvalidOperationException(
+                "A form-only change sends the FORM document alone; it sent "
+                + string.Join(", ", harness.KindsSent()) + ".");
+        }
+        if (Volatile.Read(ref meshes) != 2)
+        {
+            throw new InvalidOperationException(
+                "A form document that IS going to the studio is worth its "
+                + "thrust mesh, and this is the second one this check has "
+                + "paid for; the build asked "
+                + Volatile.Read(ref meshes) + " times.");
+        }
+
+        // 5. A REFRESH THAT FEEDS ONLY J BUILDS NO MESH. Live off, Write
+        // off: the mesh costs a worker round trip and no reader of the J
+        // output has ever wanted it, so the form document there carries
+        // null and says so.
+        harness.Forget();
+        int beforeRefresh = Volatile.Read(ref meshes);
+        Rest(
+            Set(33, "guid-e", "{\"s\":9}", "{\"w\":9}", live: false),
+            5);
+        if (Volatile.Read(ref meshes) != beforeRefresh)
+        {
+            throw new InvalidOperationException(
+                "A build with Live off and Write off must call NO worker: "
+                + "it feeds the J output alone, which is the one refresh "
+                + "that has to stay cheap. It asked for a mesh anyway.");
+        }
+        if (harness.KindsSent().Length != 0)
+        {
+            throw new InvalidOperationException(
+                "And it sends nothing, Live being off; "
+                + string.Join(", ", harness.KindsSent()) + " went out.");
+        }
+
+        // 6. LIVE OFF AND ON SENDS THE SAME SET AGAIN. The ledger describes
+        // what the studio holds, and toggling Live is the author saying they
+        // no longer believe it: a deleted study has to be recoverable
+        // without touching the Result.
+        harness.Cancel();
+        harness.Forget();
+        Rest(Set(22, "guid-f", "{\"s\":1}", "{\"w\":2}"), 6);
+        if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
+        {
+            throw new InvalidOperationException(
+                "Toggling Live off and on clears the ledger, so the whole "
+                + "set goes again even though not one document changed: it "
+                + "sent " + string.Join(", ", harness.KindsSent()) + ".");
+        }
+
+        // 7. A DIFFERENT STUDY IS A DIFFERENT LEDGER. The keys describe one
+        // study on one server, and nothing there answers for another.
+        harness.Forget();
+        Rest(Set(22, "guid-g", "{\"s\":1}", "{\"w\":2}"), 7);
+        if (harness.KindsSent().Length != 0)
+            throw new InvalidOperationException("The same set to the same study sends nothing.");
+        harness.Forget();
+        Rest(
+            Set(22, "guid-h", "{\"s\":1}", "{\"w\":2}", study: "arch-two"),
+            8);
+        if (!harness.KindsSent().SequenceEqual(new[] { "form", "skin", "formwork" }))
+        {
+            throw new InvalidOperationException(
+                "The same documents under a DIFFERENT study name are three "
+                + "documents the studio has never seen, and all three go: it "
+                + "sent " + string.Join(", ", harness.KindsSent()) + ".");
+        }
+        foreach (string route in harness.Sent())
+        {
+            if (!route.Contains("/arch-two/", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"And they go to that study's own route; '{route}' does not.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// CHECK 6 of the design's section 5: A SUPERSEDED BUILD LEAVES THE SAME
+    /// WORKER PROCESS SERVING THE NEXT REQUEST (rule 3.4).
+    ///
+    /// The measured defect, and the reason the rule exists: Export used to
+    /// dispatch its thrust mesh on Grasshopper's own solution token, and
+    /// WorkerHost registers a callback on whatever token it is handed which
+    /// KILLS the worker process and starts a fresh one behind a new
+    /// handshake (RecoverCancelledRequestAsync, WorkerHost.cs:911-991). So
+    /// every re-solve that superseded an in-flight export tore the worker
+    /// down mid-scrub, and the next solver component paid for a cold start.
+    ///
+    /// This is measured against a REAL WorkerHost driving a REAL child
+    /// process: the harness re-launches itself in a fake-worker mode that
+    /// speaks the framed protocol, answers export.compas with its own
+    /// process id and a per-process serial number, and delays its
+    /// odd-numbered answers so a request can be superseded while it is on
+    /// the wire. A restart is therefore visible twice over, as a new process
+    /// id and as a serial that starts again.
+    ///
+    /// The negative half is measured too, at the end and deliberately last:
+    /// cancelling the token DOES kill the worker, through this very seam. So
+    /// the positive half is not vacuous, and no mutation is needed to show
+    /// what it would look like if supersession cancelled anything.
+    /// </summary>
+    private static void ValidateExportWorkerSurvivesSupersession(
+        Assembly plugin)
+    {
+        string marker = Path.Combine(
+            Path.GetTempPath(),
+            "ananke-smoke-fake-worker-" + Guid.NewGuid().ToString("N"));
+        Type configType = plugin.GetType(
+            "Ananke.COMPAS.Native.Backend.WorkerConfiguration",
+            throwOnError: true)!;
+        object configuration = Activator.CreateInstance(configType)!;
+        (string executable, List<string> arguments) = FakeWorkerCommand();
+        configType.GetProperty("Executable")!
+            .SetValue(configuration, executable);
+        configType.GetProperty("Arguments")!
+            .SetValue(configuration, arguments);
+        configType.GetProperty("WorkingDirectory")!
+            .SetValue(configuration, AppContext.BaseDirectory);
+        configType.GetProperty("EnvironmentName")!
+            .SetValue(configuration, "export-rest-check");
+        configType.GetProperty("StartupTimeoutMs")!
+            .SetValue(configuration, 30000);
+        configType.GetProperty("RequestTimeoutMs")!
+            .SetValue(configuration, 30000);
+        configType.GetProperty("CancellationGraceMs")!
+            .SetValue(configuration, 100);
+        configType.GetProperty("ShutdownTimeoutMs")!
+            .SetValue(configuration, 3000);
+        var environment = (Dictionary<string, string>)configType
+            .GetProperty("Environment")!.GetValue(configuration)!;
+        environment[FakeWorkerMarkerVariable] = marker;
+
+        Type hostType = plugin.GetType(
+            "Ananke.COMPAS.Native.Backend.WorkerHost",
+            throwOnError: true)!;
+        object host = Activator.CreateInstance(
+            hostType, new object?[] { configuration, null })!;
+        MethodInfo request = hostType.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance)
+            .Single(method =>
+                method.Name == "RequestAsync" &&
+                method.GetGenericArguments().Length == 1 &&
+                method.GetParameters().Length == 3);
+        MethodInfo requestJson = request.MakeGenericMethod(typeof(JsonElement));
+        var worker = new Func<string, object, CancellationToken,
+            Task<JsonElement>>(async (command, payload, token) =>
+            {
+                var task = (Task)requestJson.Invoke(
+                    host, new object?[] { command, payload, token })!;
+                await task.ConfigureAwait(false);
+                return (JsonElement)task.GetType()
+                    .GetProperty("Result")!.GetValue(task)!;
+            });
+
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo buildMesh = exportType.GetMethod(
+            "BuildThrustMeshAsync",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildThrustMeshAsync was not found; it is "
+                + "the one worker dispatch Export makes.");
+        object result = ThrustMeshFixture(plugin);
+        var lifetime = new CancellationTokenSource();
+        string? Mesh(CancellationToken token)
+        {
+            var task = (Task)buildMesh.Invoke(
+                null, new object?[] { result, worker, token })!;
+            task.GetAwaiter().GetResult();
+            var value = ((string?, string?))task.GetType()
+                .GetProperty("Result")!.GetValue(task)!;
+            return value.Item1;
+        }
+
+        var harness = new RestHarness(plugin);
+        string? superseded = null;
+        string? adopted = null;
+        try
+        {
+            // BUILD A asks for a mesh and is answered slowly. The marker
+            // file the fake worker writes is what says the request is on the
+            // wire, so the supersession below is not a guess about timing.
+            object first = harness.Pending(
+                "http://127.0.0.1:8600",
+                "arch",
+                live: false,
+                write: true,
+                want =>
+                {
+                    Volatile.Write(ref superseded, Mesh(lifetime.Token));
+                    return Task.FromResult(harness.Built(
+                        new List<(string, string)>
+                        {
+                            ("form", "{\"build\":\"a\"}"),
+                        }));
+                });
+            object second = harness.Pending(
+                "http://127.0.0.1:8600",
+                "arch",
+                live: false,
+                write: true,
+                want =>
+                {
+                    Volatile.Write(ref adopted, Mesh(lifetime.Token));
+                    return Task.FromResult(harness.Built(
+                        new List<(string, string)>
+                        {
+                            ("form", "{\"build\":\"b\"}"),
+                        }));
+                });
+
+            harness.Schedule(first);
+            WaitUntil(
+                () => File.Exists(marker + ".1"),
+                "the first build's thrust-mesh request to reach the worker");
+            // THE SUPERSESSION, while that request is on the wire.
+            harness.Schedule(second);
+            WaitUntil(
+                () => Volatile.Read(ref adopted) is not null,
+                "the second build to finish");
+            Thread.Sleep(200);
+
+            string? one = Volatile.Read(ref superseded);
+            string? two = Volatile.Read(ref adopted);
+            if (one is null)
+            {
+                throw new InvalidOperationException(
+                    "A SUPERSEDED BUILD FINISHES (rule 3.4): the first "
+                    + "build's thrust-mesh request came back with nothing, "
+                    + "which is what a cancelled request looks like. Nothing "
+                    + "in the schedule is allowed to cancel a worker "
+                    + "request, because a cancelled request kills the "
+                    + "worker.");
+            }
+            (int firstPid, int firstSerial) = ReadFakeMesh(one);
+            (int secondPid, int secondSerial) = ReadFakeMesh(two!);
+            if (firstPid != secondPid)
+            {
+                throw new InvalidOperationException(
+                    "A superseded build must leave the SAME worker process "
+                    + "serving the next request; the first request was "
+                    + $"answered by process {firstPid} and the next by "
+                    + $"{secondPid}. That is the RecoverCancelledRequestAsync "
+                    + "kill path, and on a scrub it fires once a frame.");
+            }
+            if (firstSerial != 1 || secondSerial != 2)
+            {
+                throw new InvalidOperationException(
+                    "And it is the same process by its own count, not only "
+                    + "by its id: the two requests read as serial "
+                    + $"{firstSerial} and {secondSerial} of that process, "
+                    + "and a restarted worker starts again at 1.");
+            }
+            // AND THE SUPERSEDED BUILD'S PRODUCT IS DISCARDED: what J
+            // carries is the newer build, not the one that took longer.
+            IReadOnlyList<(string Kind, string Json)>? documents =
+                harness.Documents(harness.LatestBuild);
+            if (documents is null || documents.Count != 1 ||
+                documents[0].Json != "{\"build\":\"b\"}")
+            {
+                throw new InvalidOperationException(
+                    "A superseded build finishes and is DISCARDED: the "
+                    + "outputs carry "
+                    + (documents is null
+                        ? "no build at all"
+                        : documents[0].Json)
+                    + " rather than the newer build's own set.");
+            }
+
+            // THE NEGATIVE HALF, last because it takes the worker down.
+            // Cancelling the token this request runs on is what kills the
+            // worker, so the assertions above are about a mechanism that
+            // demonstrably exists rather than about one that could not fire.
+            using var cancelling = new CancellationTokenSource();
+            var killed = Task.Run(() =>
+            {
+                try
+                {
+                    return Mesh(cancelling.Token);
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            });
+            WaitUntil(
+                () => File.Exists(marker + ".3"),
+                "the cancellation probe to reach the worker");
+            cancelling.Cancel();
+            killed.GetAwaiter().GetResult();
+            Thread.Sleep(500);
+            (int afterPid, int afterSerial) =
+                ReadFakeMesh(Mesh(CancellationToken.None)!);
+            if (afterPid == firstPid || afterSerial != 1)
+            {
+                throw new InvalidOperationException(
+                    "The kill path could not be demonstrated at all: "
+                    + $"cancelling a request left process {afterPid} at "
+                    + $"serial {afterSerial} against the original "
+                    + $"{firstPid}. The check above would then be asserting "
+                    + "nothing, so this fixture is wrong rather than the "
+                    + "component.");
+            }
+        }
+        finally
+        {
+            lifetime.Dispose();
+            try
+            {
+                ((IDisposable)host).Dispose();
+            }
+            catch (Exception)
+            {
+            }
+            foreach (string leftover in new[] { ".1", ".2", ".3", ".4" })
+            {
+                try
+                {
+                    if (File.Exists(marker + leftover))
+                        File.Delete(marker + leftover);
+                }
+                catch (IOException)
+                {
+                }
+            }
+        }
+
+        // The half that is READ rather than run, said plainly: the token
+        // BuildThrustMeshAsync is handed above is the component's own
+        // lifetime, and the component has no other to give. Export is not a
+        // task-capable component any more, so Grasshopper's CancelToken does
+        // not exist on it, and the lifetime is cancelled in one place.
+        if (exportType.GetInterface("IGH_TaskCapableComponent") is not null ||
+            exportType.BaseType?.Name.Contains(
+                "TaskCapable", StringComparison.Ordinal) == true)
+        {
+            throw new InvalidOperationException(
+                "A SOLVE BUILDS NOTHING, so Export is not a task-capable "
+                + "component at all: while it was one, its base's CancelToken "
+                + "was the token the thrust mesh ran on, which is the "
+                + "solution's, which is the worker killed on every "
+                + "supersession.");
+        }
+        object export = Activator.CreateInstance(exportType)!;
+        PropertyInfo ended = exportType.GetProperty(
+            "LifetimeEnded",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.LifetimeEnded was not found.");
+        if ((bool)ended.GetValue(export)!)
+        {
+            throw new InvalidOperationException(
+                "A fresh component's lifetime token is not cancelled, or "
+                + "every thrust-mesh request would refuse to run.");
+        }
+        exportType.GetMethod(
+            "EndLifetime", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(export, null);
+        if (!(bool)ended.GetValue(export)!)
+        {
+            throw new InvalidOperationException(
+                "The component leaving the canvas ends the lifetime, which "
+                + "is the ONE thing allowed to cancel a thrust-mesh request "
+                + "(rule 3.4); it did not.");
+        }
+    }
+
+    /// <summary>
+    /// A Result the export.compas dispatch can be driven with. It needs no
+    /// solved geometry: the fake worker answers with its own identity, and
+    /// what is being measured is which process answers, not what it says.
+    /// </summary>
+    private static object ThrustMeshFixture(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Array vertices = Array.CreateInstance(point, 2);
+        vertices.SetValue(Activator.CreateInstance(point, 0.0, 0.0, 0.0), 0);
+        vertices.SetValue(Activator.CreateInstance(point, 1.0, 0.0, 0.0), 1);
+        Array edges = Array.CreateInstance(edgeType, 1);
+        edges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertices);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces", new[] { 1.0 });
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0 });
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(
+            result, resultType, "RawWire", "{\"solver\":\"fd\"}");
+        return result;
+    }
+
+    /// <summary>
+    /// What the fake worker answers with: its own process id and the
+    /// serial number of the request within that process, which is what
+    /// makes a restart visible twice over.
+    /// </summary>
+    private static (int Pid, int Serial) ReadFakeMesh(string mesh)
+    {
+        JsonNode node = JsonNode.Parse(mesh)
+            ?? throw new InvalidOperationException(
+                "The fake worker's thrust mesh did not parse: " + mesh);
+        return (
+            node["pid"]!.GetValue<int>(),
+            node["serial"]!.GetValue<int>());
+    }
+
+    /// <summary>
+    /// How to launch this same assembly as a worker. Under <c>dotnet run</c>
+    /// the process is the built apphost and can simply be run again; under a
+    /// bare <c>dotnet</c> host the assembly path is passed first.
+    /// </summary>
+    private static (string Executable, List<string> Arguments)
+        FakeWorkerCommand()
+    {
+        string? process = Environment.ProcessPath;
+        string assembly = Assembly.GetExecutingAssembly().Location;
+        if (process is null)
+            return ("dotnet", new List<string> { assembly, FakeWorkerFlag });
+        string name = Path.GetFileNameWithoutExtension(process);
+        if (string.Equals(name, "dotnet", StringComparison.OrdinalIgnoreCase))
+            return (process, new List<string> { assembly, FakeWorkerFlag });
+        return (process, new List<string> { FakeWorkerFlag });
+    }
+
+    internal const string FakeWorkerFlag = "--fake-worker";
+
+    internal const string FakeWorkerMarkerVariable =
+        "ANANKE_SMOKE_FAKE_WORKER_MARKER";
+
+    private static readonly object FakeWorkerWriteGate = new();
+
+    /// <summary>
+    /// The fake worker itself: framed JSON on stdin and stdout, the
+    /// handshake the host validates, and an export.compas that answers with
+    /// this process's id and the serial number of the request. Odd-numbered
+    /// requests are answered SLOWLY, which is what lets a request be
+    /// superseded, or cancelled, while it is still on the wire.
+    ///
+    /// It is deliberately its own process and not a stub inside the check:
+    /// what is being measured is whether the worker PROCESS survives, and
+    /// only a process can answer that.
+    /// </summary>
+    private static int RunFakeWorker()
+    {
+        string? marker = Environment.GetEnvironmentVariable(
+            FakeWorkerMarkerVariable);
+        using Stream input = Console.OpenStandardInput();
+        using Stream output = Console.OpenStandardOutput();
+        int serial = 0;
+        while (true)
+        {
+            byte[]? frame = ReadFakeFrame(input);
+            if (frame is null)
+                return 0;
+            using JsonDocument envelope = JsonDocument.Parse(frame);
+            JsonElement root = envelope.RootElement;
+            string id = root.GetProperty("id").GetString() ?? string.Empty;
+            string command =
+                root.GetProperty("command").GetString() ?? string.Empty;
+            switch (command)
+            {
+                case "system.hello":
+                    WriteFakeResult(output, id, new Dictionary<string, object?>
+                    {
+                        ["name"] = "ananke-smoke-fake-worker",
+                        ["protocol_version"] = 1,
+                        ["schema_version"] = "0.1",
+                        ["max_frame_bytes"] = 32 * 1024 * 1024,
+                        ["commands"] = new[]
+                        {
+                            "system.hello", "system.health", "system.shutdown",
+                            "export.compas",
+                        },
+                        ["health"] = new Dictionary<string, object?>
+                        {
+                            ["status"] = "ok",
+                        },
+                    });
+                    break;
+                case "system.health":
+                    WriteFakeResult(output, id, new Dictionary<string, object?>
+                    {
+                        ["status"] = "ok",
+                    });
+                    break;
+                case "system.shutdown":
+                    WriteFakeResult(
+                        output, id, new Dictionary<string, object?>());
+                    return 0;
+                case "export.compas":
+                {
+                    int mine = ++serial;
+                    if (marker is not null)
+                    {
+                        try
+                        {
+                            File.WriteAllText(marker + "." + mine, "on the wire");
+                        }
+                        catch (IOException)
+                        {
+                        }
+                    }
+                    int pid = Environment.ProcessId;
+                    // Answered on its own thread, so a slow answer does not
+                    // stop the next request being read: a superseded request
+                    // and the one that supersedes it are both in flight.
+                    _ = Task.Run(() =>
+                    {
+                        if (mine % 2 == 1)
+                            Thread.Sleep(1200);
+                        WriteFakeResult(output, id, new Dictionary<string, object?>
+                        {
+                            ["thrustMesh"] =
+                                "{\"pid\":" + pid + ",\"serial\":" + mine + "}",
+                        });
+                    });
+                    break;
+                }
+                default:
+                    WriteFakeResult(
+                        output, id, new Dictionary<string, object?>());
+                    break;
+            }
+        }
+    }
+
+    private static byte[]? ReadFakeFrame(Stream stream)
+    {
+        byte[] header = new byte[4];
+        int read = 0;
+        while (read < header.Length)
+        {
+            int taken = stream.Read(header, read, header.Length - read);
+            if (taken == 0)
+                return read == 0 ? null : throw new EndOfStreamException();
+            read += taken;
+        }
+        int length = BinaryPrimitives.ReadInt32BigEndian(header);
+        byte[] payload = new byte[length];
+        read = 0;
+        while (read < length)
+        {
+            int taken = stream.Read(payload, read, length - read);
+            if (taken == 0)
+                throw new EndOfStreamException();
+            read += taken;
+        }
+        return payload;
+    }
+
+    private static void WriteFakeResult(
+        Stream stream,
+        string id,
+        Dictionary<string, object?> result)
+    {
+        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(
+            new Dictionary<string, object?>
+            {
+                ["v"] = 1,
+                ["type"] = "result",
+                ["id"] = id,
+                ["result"] = result,
+            });
+        byte[] header = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(header, payload.Length);
+        lock (FakeWorkerWriteGate)
+        {
+            stream.Write(header, 0, header.Length);
+            stream.Write(payload, 0, payload.Length);
+            stream.Flush();
+        }
     }
 
     /// <summary>
