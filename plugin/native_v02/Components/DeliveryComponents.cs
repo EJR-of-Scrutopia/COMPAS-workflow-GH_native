@@ -113,6 +113,14 @@ internal sealed record ExportSetWrite(
 /// the unit factor is resolved by <c>ResolveUnitFactor</c> before this record
 /// is built. Nothing in here is live.
 ///
+/// The one exception is the Result, which is REFERENCED here and deep cloned
+/// by the build itself. That is safe for the same reason the reference is
+/// worth keeping: a ResultDto is an immutable record, a new solve produces a
+/// new one and schedules a new request carrying it, and this one therefore
+/// still describes the solve that captured it. Cloning on the solve thread
+/// instead would charge every frame of a drag for a serialisation the build
+/// may never read.
+///
 /// <c>Worker</c> is the one dispatch a build makes, as a seam rather than a
 /// call, so the thrust mesh can be driven against a host of somebody else's
 /// choosing. <c>Lifetime</c> is the COMPONENT's token and never the
@@ -584,11 +592,17 @@ public sealed class ExportComponent : NativeComponentBase
                 live,
                 write,
                 BuildFor(new ExportBuildInputs(
-                    // Cloned, reduced and resolved HERE, on the solve
-                    // thread, because the build runs on the uploader's
-                    // timer thread and nothing off the UI thread may touch
-                    // a Grasshopper object or a live Rhino document.
-                    CloneResult(inputs.Result),
+                    // Captured here, on the solve thread, because the build
+                    // runs on the uploader's timer thread and nothing off the
+                    // UI thread may touch a Grasshopper object or a live
+                    // Rhino document. The CELLS were reduced to plain numbers
+                    // by TryReadInputs and the unit factor is read off the
+                    // active document below, both of which have to happen
+                    // here; the Result is only REFERENCED here and is deep
+                    // cloned by the build itself, where the old pre-phase
+                    // cloned it too, because a solve that never rests must
+                    // not pay for a serialisation nobody reads.
+                    inputs.Result,
                     name,
                     inputs.Cells,
                     inputs.CellWarning,
@@ -1314,7 +1328,12 @@ public sealed class ExportComponent : NativeComponentBase
     {
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(wantMesh);
-        ResultDto result = inputs.Result;
+        // THE SNAPSHOT, taken here rather than on the solve thread: the
+        // clone is a full round trip through the Result's own serialiser and
+        // a solve that only pokes the debouncer must not pay for it. This is
+        // where the pre-phase took it too, inside the task rather than
+        // before it.
+        ResultDto result = CloneResult(inputs.Result);
         MouldColumnsDto? block = result.Mould?.Columns;
         bool hasColumns = block is not null && block.Members.Count > 0;
         bool hasCells = inputs.Cells is not null && inputs.Cells.Count > 0;
