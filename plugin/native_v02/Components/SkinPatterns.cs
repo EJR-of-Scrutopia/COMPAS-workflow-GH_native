@@ -5955,10 +5955,13 @@ internal static class SkinPatterns
             // twice on the two-hump barrel. With ">= 0" this line wrote "1
             // seam was CLOSED with 0 stones" while the component's own
             // TransitionSeamLine, whose guard is "stones <= 0", correctly
-            // fell back to the hole Warning. Two readings of one seam had
+            // fell back to the hole WORDING. Two readings of one seam had
             // drifted apart, which is the exact thing the comment at
             // SkinComponents.TransitionSeamLine says cannot happen. The two
-            // guards now agree.
+            // guards now agree. A later finding of the same day caught the
+            // half of it this one missed: the component had the wording
+            // right and raised it at Remark regardless, so the same guard
+            // now chooses the SEVERITY there too.
             return
                 $"{skipped} seam" + (skipped == 1 ? " was" : "s were") +
                 $" CLOSED with {closerCells} stone" +

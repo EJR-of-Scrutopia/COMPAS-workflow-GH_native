@@ -364,23 +364,31 @@ public sealed class SkinComponent : NativeComponentBase
 
             // A SEAM, where the level curves change component count and the
             // two course families stop corresponding. It used to be a HOLE
-            // and this used to be a Warning; the closer band of the seam
-            // spec of 2026-09-04 covers the interval, so it is a REMARK, and
+            // and always a Warning; where the closer band of the seam spec
+            // of 2026-09-04 COVERS the interval it is a REMARK instead, and
             // it says what the author now needs to know: that the skin
-            // changes species there, where, and with how many stones. The
-            // heights and the wording are TransitionSeamLine's, which reads
-            // the same TransitionWhere the engine's own diagnostics line
-            // reads, so the two readings of one seam cannot drift apart.
-            string? transitionLine = TransitionSeamLine(
-                generated.TransitionBands,
-                generated.CloserCells,
-                generated.TransitionIntervals,
-                generated.FieldKind);
+            // changes species there, where, and with how many stones.
+            //
+            // THE SEVERITY IS NOT UNCONDITIONAL, and reading it off the
+            // stones is a review finding rather than a preference. This one
+            // path serves all three patterns, and rule 2.1's own deferral
+            // leaves the closer wired into the courses engine alone: a
+            // honeycomb solve that refuses a row still reports the refusal
+            // here with no stone laid in it, and that is a HOLE and a
+            // Warning, which is what it was before this wave. The wording
+            // and the level come out of the SAME guard inside
+            // TransitionSeamLine so a caller cannot pair one with the other.
+            // The heights are TransitionWhere's, the same arithmetic the
+            // engine's own diagnostics line uses, so the two readings of one
+            // seam cannot drift apart.
+            (string? transitionLine, GH_RuntimeMessageLevel transitionLevel) =
+                TransitionSeamLine(
+                    generated.TransitionBands,
+                    generated.CloserCells,
+                    generated.TransitionIntervals,
+                    generated.FieldKind);
             if (transitionLine is not null)
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Remark, transitionLine);
-            }
+                AddRuntimeMessage(transitionLevel, transitionLine);
 
             // Every cell the pattern proposed and did not deliver, of all
             // four kinds, in one sentence sized by the fraction lost.
@@ -710,37 +718,55 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
-    /// The SEAM line, or null where the pattern found none: rule 2.5 of the
-    /// 2026-09-04 seam spec, which turns this message from a Warning about a
-    /// hole into a Remark about a change of species.
+    /// The SEAM line AND THE LEVEL IT DESERVES, or a null line where the
+    /// pattern found no refusal: rule 2.5 of the 2026-09-04 seam spec, which
+    /// turns this message from a Warning about a hole into a Remark about a
+    /// change of species.
     ///
     /// TransitionWarningLine above is KEPT and is not dead: it is the
     /// wording for a refusal the closer did not cover, and a pattern that
     /// refuses an interval and lays no stone in it still has a hole and
-    /// still deserves a Warning. What has changed is that the courses engine
-    /// no longer produces that case on any fixture, so the line the canvas
-    /// sees is this one.
+    /// still deserves a Warning.
+    ///
+    /// THE LEVEL IS RETURNED BESIDE THE WORDING, on one guard, and this is a
+    /// review finding of 2026-09-04 rather than a preference. Rule 2.5
+    /// authorises the Remark for a seam that was CLOSED and says nothing
+    /// about an uncovered hole; while the call site chose the level on its
+    /// own it raised the HOLE wording at Remark, the lowest severity
+    /// Grasshopper has, on every pattern that refuses an interval and lays
+    /// no stone in it. That is not a corner case: SolveNative runs one path
+    /// for all three patterns, and the honeycomb reports its own skipped
+    /// rows here with a closer count of zero, because rule 2.1's recorded
+    /// deferral leaves the closer wired into the courses engine alone. So
+    /// the stones guard now chooses BOTH, and the two cannot be given
+    /// different answers by a caller reading one of them.
     /// </summary>
-    internal static string? TransitionSeamLine(
-        int seams,
-        int stones,
-        IReadOnlyList<(double Low, double High)> intervals,
-        string fieldKind)
+    internal static (string? Line, GH_RuntimeMessageLevel Level)
+        TransitionSeamLine(
+            int seams,
+            int stones,
+            IReadOnlyList<(double Low, double High)> intervals,
+            string fieldKind)
     {
         if (seams <= 0)
-            return null;
+            return (null, GH_RuntimeMessageLevel.Remark);
         if (stones <= 0)
-            return TransitionWarningLine(seams, intervals, fieldKind);
+        {
+            return (
+                TransitionWarningLine(seams, intervals, fieldKind),
+                GH_RuntimeMessageLevel.Warning);
+        }
         string where = intervals.Count > 0
             ? " " + SkinPatterns.TransitionWhere(intervals, fieldKind) + "."
             : ".";
-        return
+        return (
             $"{seams} seam" + (seams == 1 ? " was" : "s were") +
             $" CLOSED with {stones} stone" +
             (stones == 1 ? string.Empty : "s") +
             " of a closer band cut along the seam, because the level " +
             "curves stop corresponding there and no ordinary course can " +
-            "bond across it." + where;
+            "bond across it." + where,
+            GH_RuntimeMessageLevel.Remark);
     }
 
     /// <summary>

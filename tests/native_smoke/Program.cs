@@ -21319,11 +21319,31 @@ internal static class Program
             .GetProperty("TransitionIntervals")!.GetValue(built)!;
         string crownFieldKind = (string)built.GetType()
             .GetProperty("FieldKind")!.GetValue(built)!;
+        // THE COMPONENT'S SEAM MESSAGE IS A PAIR, the wording and the level
+        // it is raised at, and it is read as one here because a review round
+        // of 2026-09-04 found the level chosen OUTSIDE the guard that chooses
+        // the wording: the call site raised whatever came back at Remark, so
+        // the HOLE sentence reached the canvas at the lowest severity
+        // Grasshopper has. Rule 2.5 authorises the Remark for a seam that was
+        // CLOSED and says nothing about demoting an uncovered hole.
+        (string? Line, string Level) SeamMessage(int stones)
+        {
+            object pair = seamLine.Invoke(
+                null,
+                new object?[]
+                {
+                    1, stones, crownIntervals, crownFieldKind
+                })!;
+            Type shape = pair.GetType();
+            return (
+                (string?)shape.GetField("Item1")!.GetValue(pair),
+                shape.GetField("Item2")!.GetValue(pair)!.ToString()!);
+        }
+
         string? engineWithNone = (string?)transitionLine.Invoke(
             null,
             new object?[] { "courses", 1, crownIntervals, crownFieldKind, 0 });
-        string? componentWithNone = (string?)seamLine.Invoke(
-            null, new object?[] { 1, 0, crownIntervals, crownFieldKind });
+        (string? componentWithNone, string levelWithNone) = SeamMessage(0);
         if (engineWithNone is null ||
             engineWithNone.Contains("CLOSED", StringComparison.Ordinal) ||
             !engineWithNone.Contains(
@@ -21343,14 +21363,23 @@ internal static class Program
                 "stoneless refusal, and the two readings of one seam are " +
                 $"what must not drift apart; got '{componentWithNone ?? "<null>"}'.");
         }
+        if (levelWithNone != "Warning")
+        {
+            throw new InvalidOperationException(
+                "And it raises it as a WARNING. A sentence that says the " +
+                "skin has a HOLE and does not cover the surface is not a " +
+                "Remark, and rule 2.5 authorises the Remark only for a seam " +
+                "that was CLOSED; got the hole wording at " +
+                $"GH_RuntimeMessageLevel.{levelWithNone}.");
+        }
         string? engineWithStones = (string?)transitionLine.Invoke(
             null,
             new object?[]
             {
                 "courses", 1, crownIntervals, crownFieldKind, 60
             });
-        string? componentWithStones = (string?)seamLine.Invoke(
-            null, new object?[] { 1, 60, crownIntervals, crownFieldKind });
+        (string? componentWithStones, string levelWithStones) =
+            SeamMessage(60);
         if (engineWithStones is null ||
             !engineWithStones.Contains(
                 "1 seam was CLOSED with 60 stones", StringComparison.Ordinal) ||
@@ -21363,6 +21392,116 @@ internal static class Program
                 "the seam was CLOSED and with how many. Got engine " +
                 $"'{engineWithStones ?? "<null>"}' and component " +
                 $"'{componentWithStones ?? "<null>"}'.");
+        }
+        if (levelWithStones != "Remark")
+        {
+            throw new InvalidOperationException(
+                "And THAT one is rule 2.5's Remark, which is the whole of " +
+                "what the rule authorises: a closed seam is a change of " +
+                "species and not a loss. Got " +
+                $"GH_RuntimeMessageLevel.{levelWithStones}.");
+        }
+
+        // ---- CHECK 7(c). THE WORDING AND THE SEVERITY ARE ONE DECISION,
+        // over EVERY input and not the two samples 7(b) reads. A review round
+        // of 2026-09-04 found them made in two places: the guard inside
+        // TransitionSeamLine chose the hole wording where no stone was laid,
+        // and the call site raised whatever came back at Remark regardless,
+        // so a sentence saying the skin has a HOLE and does not cover the
+        // surface arrived at the lowest severity Grasshopper has. Rule 2.5
+        // authorises the Remark for a seam that was CLOSED and says nothing
+        // about demoting an uncovered hole.
+        //
+        // THIS MATTERS BEYOND THE COURSES ENGINE, and that is the whole
+        // weight of it. SolveNative runs ONE message path for all three
+        // patterns, and rule 2.1's own recorded deferral leaves the closer
+        // wired into the courses engine alone, so the honeycomb reports its
+        // own refused rows here with a closer count that is structurally zero
+        // (check 1(d) pins that zero). The pair below is therefore asserted
+        // exhaustively rather than sampled: the stoneless line must be
+        // TransitionWarningLine's own sentence, character for character, AND
+        // must come back at Warning; the line with stones must be the CLOSED
+        // sentence AND come back at Remark; and a pattern that refused
+        // nothing must say nothing.
+        //
+        // WHAT THIS CHECK DOES NOT DO, stated rather than implied. No fixture
+        // in this harness reaches the stoneless branch through an engine:
+        // seventy-eight honeycomb solves were run over thirteen nets while
+        // this check was written (the crown arch, the two-hump barrel, the
+        // split-and-death and two-peak nets, the dome, the ring and walled
+        // vaults, the plain barrel, the gentle wedge, the shallow taper, the
+        // L-shape, the two-oculus net and the serpentine, each at six
+        // settings) and every one of them refused NOTHING, because the
+        // honeycomb's ChainCorresponds compares one curve to one curve and
+        // only a Closed or Depth change inside a single chart breaks it. So
+        // the branch is proved on constructed arguments, which is the honest
+        // reach of this harness, and the call site's own line is protected
+        // structurally instead: TransitionSeamLine returns the level BESIDE
+        // the wording, out of the one guard, so there is no constant left at
+        // the call site to get wrong.
+        MethodInfo warningLine = RequireStatic(
+            skinComponent, "TransitionWarningLine");
+        foreach (int seamCount in new[] { 0, 1, 2 })
+        {
+            foreach (int stoneCount in new[] { -1, 0, 1, 60 })
+            {
+                object pair = seamLine.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        seamCount, stoneCount, crownIntervals, crownFieldKind
+                    })!;
+                Type shape = pair.GetType();
+                string? line =
+                    (string?)shape.GetField("Item1")!.GetValue(pair);
+                string level =
+                    shape.GetField("Item2")!.GetValue(pair)!.ToString()!;
+                if (seamCount <= 0)
+                {
+                    if (line is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "A pattern that refused nothing says nothing " +
+                            $"about seams; at {seamCount} seam(s) and " +
+                            $"{stoneCount} stone(s) it said '{line}'.");
+                    }
+                    continue;
+                }
+                bool covered = stoneCount > 0;
+                string want = covered ? "Remark" : "Warning";
+                if (level != want)
+                {
+                    throw new InvalidOperationException(
+                        $"{seamCount} refused seam(s) with {stoneCount} " +
+                        "closer stone(s) in them is " +
+                        (covered
+                            ? "rule 2.5's CLOSED seam, a change of species " +
+                              "and not a loss, so a Remark"
+                            : "a HOLE, which rule 2.5 never asked to demote " +
+                              "and which the honeycomb reaches on every row " +
+                              "it refuses, so a Warning") +
+                        $"; got GH_RuntimeMessageLevel.{level}.");
+                }
+                string? holeWording = (string?)warningLine.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        seamCount, crownIntervals, crownFieldKind
+                    });
+                bool isHoleWording = string.Equals(
+                    line, holeWording, StringComparison.Ordinal);
+                if (isHoleWording == covered)
+                {
+                    throw new InvalidOperationException(
+                        "And the SEVERITY and the WORDING are one decision, " +
+                        "so the hole sentence and the Warning must arrive " +
+                        $"together: at {seamCount} seam(s) and {stoneCount} " +
+                        $"stone(s) the level was {level} and the line was " +
+                        (isHoleWording
+                            ? "TransitionWarningLine's own hole sentence"
+                            : $"'{line ?? "<null>"}'") + ".");
+                }
+            }
         }
 
         void SeamFixture(
