@@ -2199,14 +2199,22 @@ def test_the_sun_colour_is_overridable_until_the_next_preset():
     # the captured colour already does.
     assert "sunIntensityOverride" in js
     # Preset changes reset the override; the override wins between presets.
-    weather = js[js.index('document.getElementById("weather-preset")'):]
+    # Re-pinned 2026-09-04: the weather presets are a tile grid now, so the
+    # first mention of the select is the grid that builds them and the
+    # handler has to be found by its listener rather than by that name.
+    weather = js[js.index('getElementById("weather-preset").addEventListener'):]
     assert "sunColourOverride = null" in weather[:600]
     assert "sunIntensityOverride = null" in weather[:600]
-    # F3: applyEnvironment must sync the input itself when a preset (not an
-    # override) picks the colour, or the swatch can show a stale colour --
-    # a previous preset's or an already-cleared override's -- while the sun
-    # is actually lit some other colour entirely.
-    assert 'getElementById("sun-colour")' in _function_body(js, "applyEnvironment")
+    # F3, re-pinned the same day: the swatch must never show a colour the
+    # sun is not lit with. It used to be applyEnvironment's job to keep them
+    # together; the sun instrument owns the colour now, applyEnvironment
+    # calls it, and it writes the input every time it places the sun.
+    placer = _function_body(js, "applySunFromTime")
+    assert 'getElementById("sun-colour")' in placer
+    assert "if (!state.sunColourOverride) sun.color.copy(colour);" in placer, (
+        "an override still wins over the derived colour"
+    )
+    assert "if (sunInstrumentReady) applySunFromTime();" in _function_body(js, "applyEnvironment")
 
 
 def test_the_day_cycle_is_a_pure_second_clock():
