@@ -4706,7 +4706,16 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
   button.disabled = true;
   status.textContent = "restarting...";
   try {
-    await fetch("/api/restart", { method: "POST" });
+    const asked = await fetch("/api/restart", { method: "POST" });
+    // A 404 is not a network error and sails straight past a catch. A
+    // server old enough to lack this route cannot restart itself, and
+    // waiting forty seconds for it to is the wrong thing to do next.
+    if (asked.status === 404) {
+      button.disabled = false;
+      status.textContent = "this server is older than the button; "
+        + "close its window and start it again";
+      return;
+    }
   } catch (error) {
     // The connection dropping IS the restart, on a server that got as far
     // as replacing itself before answering. Carry on and wait for it.

@@ -224,10 +224,22 @@
      one place a stale copy cannot reach. -->
 <script>
 (function () {
+  // Styled inline, every property of it. This notice exists for the case
+  // where the stylesheet is the stale file, and a rule in studio.css would
+  // be the first casualty: an unstyled div appended to the end of the body
+  // sits below a panel several screens long, off the bottom of the window.
+  // Reported exactly so -- the check was right, the notice was invisible.
   function shout(html) {
     if (document.getElementById("stale-server")) return;
     var notice = document.createElement("div");
     notice.id = "stale-server";
+    notice.setAttribute("style", [
+      "position:fixed", "left:50%", "top:16px", "transform:translateX(-50%)",
+      "z-index:2147483647", "max-width:680px", "padding:14px 18px",
+      "border-radius:6px", "background:#7a2b20", "color:#fff",
+      "font:14px/1.5 system-ui,sans-serif",
+      "box-shadow:0 8px 30px rgba(0,0,0,0.5)",
+    ].join(";"));
     notice.innerHTML = html;
     (document.body || document.documentElement).appendChild(notice);
   }
@@ -247,12 +259,27 @@
     // trap worth two lines of awkwardness to close.
     var placeholder = "__" + "BUILD" + "__";
     if (!stamp || stamp.textContent.trim() !== placeholder) return;
+
+    // Two causes, and they need different answers. Either the BROWSER is
+    // holding an old copy of this page, which the page can cure itself by
+    // asking for an address the cache has never seen; or the SERVER is old
+    // and does not fill the stamp in at all, which no reload will fix.
+    // They are indistinguishable until the first is tried, so try it, once.
+    if (location.search.indexOf("fresh=") === -1) {
+      location.replace(location.pathname + "?fresh=" + Date.now());
+      return;
+    }
+
+    // A guaranteed-fresh fetch came back with the placeholder still in it,
+    // so this is the server and not the cache.
     stamp.textContent = "stale";
     stamp.className = "stale";
-    shout("<b>This page came from an old server.</b> Stop it and run "
-      + "<code>bench/studio/serve.py</code> again. Until then the browser "
-      + "is being handed un-versioned files, and may be showing you a "
-      + "cached studio from before the last change.");
+    shout("<b>The server is older than this page.</b> It is not filling in "
+      + "the build stamp, which means it started before that was added, and "
+      + "it is handing the browser un-versioned files. Close its window and "
+      + "run <code>bench/studio/serve.py</code> again. If its window is "
+      + "already gone, the process is still running: the new one will stop "
+      + "it for you.");
   });
 
   // A module-level throw halfway down studio.js leaves half a panel built
