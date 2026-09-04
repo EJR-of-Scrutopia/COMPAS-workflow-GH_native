@@ -87,6 +87,61 @@ at its smallest, which is not even near enough".
 - 685 tests green; sheet contract proved by four mutations, the scene
   pin by two.
 
+## The second walk (2026-09-05): scale truth, assets, quality
+
+- SCALE, for real this time (891ee52 then 72131f5): the "same scale
+  between objects" break had a beautiful root cause -- a voussoir is a
+  CLOSED solid and Newell's signed normal cancels to zero over one, so
+  every piece's projection plane was noise. Fixed with the area-weighted
+  orientation tensor; then fixed AGAIN because a 200 mm piece's joint
+  walls out-weigh its faces and tipped the tensor edge-on: the frame is
+  now found on the TOP SURFACE alone (frameSource, from the surface
+  flags), with a projection gain so curved pieces keep sheet density.
+  Live: 1501 pieces at min 2.67 / median 2.67 / max 3.01 m per texture
+  unit -- a 1.13 spread, residue = honest within-piece curvature.
+- PROPS EDIT MODE (00e74aa): placed props are furniture until the Edit
+  button says otherwise; in the mode, click picks up (drag or click to
+  place), R/Shift+R rotate, +/- scale, Delete removes, Escape cancels.
+- TREES AND ROCKS SWEPT (9a674e4): 34 new CC0 props (cliffs, coasts,
+  boulders, roots, trunks, moon rocks). The five modular building KITS
+  removed on his word -- they render as disassembled panels. 89 props.
+- VEGETATION RE-PRICED (the floating-leaves complaint): its own budget
+  table (canopy 200k / mid 150k / clutter 24k), sources at or under
+  target pass unsimplified; all 44 planting props rebuilt, broadleaf
+  tree 60k -> 200k triangles.
+- 32 NEW SKINS from ambientCG (CC0, 4K): five marbles, three
+  travertines, granite; corten, blackened/polished steels, zinc, brass,
+  corrugated; oak/ash/birch/fir planks, herringbone parquet, plywood;
+  seven cast concretes. studio-skin now 162 materials.
+- SKY AT FULL QUALITY ("i would like them at maximum quality please"):
+  the visible backdrop was derived at 2048 wide (~340 px per 60 degree
+  view -- his blur); now derived at min(source, 16384) under the
+  versioned .bg-full.png suffix. An 8k sky serves at native 8192x4096,
+  verified live. First derivation of a big sky takes real time, once.
+- LOADING TOAST: translucent card + turning ring top-centre for skin,
+  floor, sky and prop loads; counted, so overlapping loads keep one
+  card up until the last lands.
+
+## TREES and PEOPLE: the sourcing answers (researched 2026-09-05)
+
+- The free people site he half-remembered is almost certainly
+  **xoio-air.de** (Berlin viz studio xoio): ~25 free photogrammetry
+  3D people (2014/2015/2017 sets), OBJ + 3ds Max, 2K textures, free
+  commercial use, no registration. Newer and sharper:
+  **humanscanrepository.com/free-3d-human-models/** -- free full-body
+  scans, retopo real-time versions, 8K/16K textures, commercial with
+  credit. 3dscanstore.com free samples have contradictory terms -- ask
+  before commercial use. Skalgubbar/MrCutout are 2D cutouts only.
+- BRITISH TREES: no free source has oak, elm, birch or ash at renderer
+  quality. Closest: **Quixel Megascans on Fab** -- the European Beech,
+  Black Alder, Hornbeam and Norway Maple species packs are FREE with an
+  Epic account under the Fab Standard Licence (any engine), BUT ship as
+  Unreal packages only: a UE round-trip export to glTF is needed, and
+  the wind/season shaders do not survive. Viz-People has 18 free
+  high-detail birches (3ds Max oriented). Sketchfab still serves CC0
+  glTF scans (free account, per-model licence check). Poly Haven's own
+  broadleaf trees are all over the 30 MB source guard.
+
 ## PEOPLE: the licence wall, and Param's one-click list
 
 Photoreal people exist under NO CC0 licence anywhere (verified across
