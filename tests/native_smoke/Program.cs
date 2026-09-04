@@ -21148,6 +21148,73 @@ internal static class Program
             expectedStones: 22, coverageFloor: 0.928, dropsAllowed: 0,
             expectedSeamChords: 0);
 
+        // ---- CHECK 7(b). THE TWO READINGS OF ONE SEAM, WITH NO STONE LAID.
+        // A refusal the closer did not cover is still a HOLE, and both the
+        // engine's diagnostics line and the component's runtime message must
+        // say so. They are read off ONE refusal here, the crown arch's own,
+        // with the stone count driven to zero, because a review round found
+        // them disagreeing: the engine branched on "closerCells >= 0" and so
+        // wrote "1 seam was CLOSED with 0 stones", while
+        // TransitionSeamLine's own guard is "stones <= 0" and correctly fell
+        // back to the Warning. The case is reachable rather than
+        // hypothetical: CloserBand returns nothing when either bounding
+        // family is empty, and every stone it proposes can be refused by the
+        // fold test or by the max(Size, 4 x thickness) head-joint bound,
+        // which already fires twice on the two-hump barrel.
+        MethodInfo transitionLine = RequireStatic(patterns, "TransitionLine");
+        Type skinComponent = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo seamLine = RequireStatic(
+            skinComponent, "TransitionSeamLine");
+        object crownIntervals = built.GetType()
+            .GetProperty("TransitionIntervals")!.GetValue(built)!;
+        string crownFieldKind = (string)built.GetType()
+            .GetProperty("FieldKind")!.GetValue(built)!;
+        string? engineWithNone = (string?)transitionLine.Invoke(
+            null,
+            new object?[] { "courses", 1, crownIntervals, crownFieldKind, 0 });
+        string? componentWithNone = (string?)seamLine.Invoke(
+            null, new object?[] { 1, 0, crownIntervals, crownFieldKind });
+        if (engineWithNone is null ||
+            engineWithNone.Contains("CLOSED", StringComparison.Ordinal) ||
+            !engineWithNone.Contains(
+                "Transition bands skipped: 1", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A seam the closer laid NO stone in is still a hole, so the " +
+                "engine's own line must fall back to the skipped-band " +
+                "wording rather than announce a seam CLOSED with nothing; " +
+                $"got '{engineWithNone ?? "<null>"}'.");
+        }
+        if (componentWithNone is null ||
+            !componentWithNone.Contains("HOLE", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The component raises the HOLE warning for the same " +
+                "stoneless refusal, and the two readings of one seam are " +
+                $"what must not drift apart; got '{componentWithNone ?? "<null>"}'.");
+        }
+        string? engineWithStones = (string?)transitionLine.Invoke(
+            null,
+            new object?[]
+            {
+                "courses", 1, crownIntervals, crownFieldKind, 60
+            });
+        string? componentWithStones = (string?)seamLine.Invoke(
+            null, new object?[] { 1, 60, crownIntervals, crownFieldKind });
+        if (engineWithStones is null ||
+            !engineWithStones.Contains(
+                "1 seam was CLOSED with 60 stones", StringComparison.Ordinal) ||
+            componentWithStones is null ||
+            !componentWithStones.Contains(
+                "1 seam was CLOSED with 60 stones", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And with stones laid the two agree the other way: both say " +
+                "the seam was CLOSED and with how many. Got engine " +
+                $"'{engineWithStones ?? "<null>"}' and component " +
+                $"'{componentWithStones ?? "<null>"}'.");
+        }
+
         void SeamFixture(
             string label,
             object net,

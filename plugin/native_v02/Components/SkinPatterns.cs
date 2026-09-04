@@ -5874,7 +5874,7 @@ internal static class SkinPatterns
         if (skipped == 0 || transitions.Count == 0)
             return null;
         string where = TransitionWhere(transitions, fieldKind);
-        if (closerCells >= 0)
+        if (closerCells > 0)
         {
             // RULE 2.5's REMARK. Before the closer band this line said a
             // band had been SKIPPED and the component raised it as a
@@ -5882,6 +5882,20 @@ internal static class SkinPatterns
             // any more: the interval is covered by the closer's own stones,
             // and what the author needs to know is that the skin changes
             // species there, not that it is missing.
+            //
+            // THE TEST IS "> 0" AND NOT ">= 0", and a review round found it
+            // the other way round. A courses solve that refuses an interval
+            // and lays NO stone in it still has a hole: CloserBand returns
+            // nothing when either bounding family is empty, and every stone
+            // it proposes can be refused by the fold test or by the
+            // max(Size, 4 x thickness) head-joint bound, which already fires
+            // twice on the two-hump barrel. With ">= 0" this line wrote "1
+            // seam was CLOSED with 0 stones" while the component's own
+            // TransitionSeamLine, whose guard is "stones <= 0", correctly
+            // fell back to the hole Warning. Two readings of one seam had
+            // drifted apart, which is the exact thing the comment at
+            // SkinComponents.TransitionSeamLine says cannot happen. The two
+            // guards now agree.
             return
                 $"{skipped} seam" + (skipped == 1 ? " was" : "s were") +
                 $" CLOSED with {closerCells} stone" +
