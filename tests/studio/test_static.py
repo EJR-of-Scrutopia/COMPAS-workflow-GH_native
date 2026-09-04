@@ -2655,3 +2655,25 @@ def test_the_take_ends_on_the_vault_not_on_the_strike():
     # The strike itself is unchanged: it still clamps at 1, so the tail
     # holds the struck state rather than replaying it.
     assert "Math.min(1, (build - buildEnd) / STRIKE_SECONDS)" in js
+
+
+def test_a_scene_keeps_the_prop_sizes_and_the_floors_lay_angle():
+    """Param's walk found the floor Randomise doing nothing: sliding a
+    periodic pattern lands the grid back on itself, so the button now
+    deals a fresh LAY ANGLE too -- and what the eye composed must survive
+    a scene round trip. Prop scale was saved to layouts but silently
+    dropped from scenes; both it and the rotation ride along now."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # The save carries them...
+    assert "rotation: state.ground.rotation" in js
+    assert "scale: record.scale," in js
+    # ...the restore reads them back...
+    assert ('if (typeof scene_.ground.rotation === "number") '
+            "state.ground.rotation = scene_.ground.rotation;") in js
+    # ...and the button actually deals an angle the floor then wears.
+    assert "state.ground.rotation = Math.random() * Math.PI * 2;" in js
+    assert js.count("texture.rotation = state.ground.rotation || 0;") == 1
+    assert "material.map.rotation = state.ground.rotation || 0;" in js
+    # The picker thumbnails stay squared up: the lay angle is the floor's.
+    assert "material.map.rotation = 0;" in js
