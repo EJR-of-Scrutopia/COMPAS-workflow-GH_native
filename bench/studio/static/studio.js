@@ -347,8 +347,20 @@ function applyEnvironment() {
   // PMREM lives in regenerateEnvironment only (E6).
   applySunFromSliders();
   document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
-  document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
-  document.getElementById("weather-tiles").classList.toggle("hidden", state.environmentMode !== "sky");
+  // The picker too, not only its grid: outside Sky mode the weather picker
+  // did nothing but could still be opened, and the next pass through here
+  // slammed the grid shut on whoever had just opened it. A mode-dependent
+  // control shows only in its mode, exactly as the HDRI block already does.
+  // (#weather-row, the legacy select, stays hidden for good: it is the
+  // state holder behind the picker, not a control.)
+  document.getElementById("weather-picker").classList.toggle("hidden", state.environmentMode !== "sky");
+  // Hide-only for the grid: forcing it OPEN in sky mode fought the picker,
+  // which owns opening -- every pass through here reopened a grid the user
+  // had just closed. Leaving sky mode shuts it and resets the chevron.
+  if (state.environmentMode !== "sky") {
+    document.getElementById("weather-tiles").classList.add("hidden");
+    document.getElementById("weather-picker").classList.remove("open");
+  }
   document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
   if (state.environmentMode !== "hdri") disposeHdriDome();
   if (state.environmentMode === "sky") {
@@ -1912,14 +1924,16 @@ function renderSceneList() {
   const count = document.getElementById("scene-count");
   if (count) {
     count.textContent = state.scenes.length
-      ? state.scenes.length + " saved" : "none saved yet";
+      ? state.scenes.length + " saved" : "none saved";
   }
   if (!list) return;
   list.innerHTML = "";
   if (!state.scenes.length) {
     const empty = document.createElement("div");
     empty.className = "scene-empty";
-    empty.textContent = "No saved scenes yet. Frame a view and press Save scene.";
+    // Named after the button that actually exists (it says Save, not
+    // "Save scene"), in the same lowercase register as the other empties.
+    empty.textContent = "no saved scenes yet -- frame a view and press Save";
     list.appendChild(empty);
     return;
   }
@@ -1968,7 +1982,9 @@ function renderSceneList() {
     });
     const remove = document.createElement("button");
     remove.className = "scene-delete";
-    remove.textContent = "x";
+    // The same glyph the banner close uses: a letter x sits on the text
+    // baseline, low and left in an 18px square, where this one centres.
+    remove.textContent = "✕";
     remove.title = "Delete this scene";
     remove.addEventListener("click", async (event) => {
       event.stopPropagation();
@@ -2582,12 +2598,25 @@ previewRig = buildPreviewRig();
 // The tile is a 2D canvas: the WebGL canvas is drawn into it once, so one
 // context serves any number of tiles and none of them holds a live context
 // open. Same rule as the scene thumbnail: render and read in one turn.
+//
+// Cover semantics, not stretch: the rig renders square, and a tile whose
+// canvas is wider than tall (a 2:1 sky) takes the central band of that
+// square at full width instead of a squashed copy of all of it. The CSS
+// box and the buffer then agree on one aspect, and nothing the painter
+// composed is cropped away by the box it is shown in.
 function drawPreview(canvasEl) {
   const context = canvasEl.getContext("2d");
   context.clearRect(0, 0, canvasEl.width, canvasEl.height);
   if (!previewRig) return false;
   previewRig.renderer.render(previewRig.scene, previewRig.camera);
-  context.drawImage(previewRig.renderer.domElement, 0, 0, canvasEl.width, canvasEl.height);
+  const source = previewRig.renderer.domElement;
+  const scale = Math.min(source.width / canvasEl.width,
+    source.height / canvasEl.height);
+  const cutWidth = canvasEl.width * scale;
+  const cutHeight = canvasEl.height * scale;
+  context.drawImage(source,
+    (source.width - cutWidth) / 2, (source.height - cutHeight) / 2,
+    cutWidth, cutHeight, 0, 0, canvasEl.width, canvasEl.height);
   return true;
 }
 
@@ -2608,14 +2637,16 @@ function renderMaterialPreview(material, canvasEl) {
 }
 
 // A tile: the preview, and the name beneath it. Nothing else, and no text
-// beside the picture.
-function previewTile(value, label, paint) {
+// beside the picture. The buffer takes the same aspect the CSS box shows
+// (1 for a material, 2 for a sky), stated by the caller once.
+function previewTile(value, label, paint, aspect = 1) {
   const tile = document.createElement("button");
   tile.className = "tile";
   tile.dataset.value = value;
   tile.title = label;
   const canvasEl = document.createElement("canvas");
-  canvasEl.width = canvasEl.height = PREVIEW_SIZE;
+  canvasEl.width = PREVIEW_SIZE;
+  canvasEl.height = Math.round(PREVIEW_SIZE / aspect);
   tile.appendChild(canvasEl);
   const name = document.createElement("span");
   name.textContent = label;
@@ -2753,8 +2784,11 @@ function buildWeatherTiles() {
   if (!holder || !select) return;
   holder.innerHTML = "";
   for (const option of select.options) {
+    // 2:1 like the HDRI grid: both grids offer skies, and a sky keeps one
+    // shape. The cover-crop in drawPreview keeps the horizon band the
+    // painter composed.
     const tile = previewTile(option.value, option.textContent,
-      (canvasEl) => renderWeatherPreview(option.value, canvasEl));
+      (canvasEl) => renderWeatherPreview(option.value, canvasEl), 2);
     tile.addEventListener("click", () => {
       if (select.value === option.value) return;
       select.value = option.value;
@@ -4119,7 +4153,11 @@ async function fetchJson(url) {
 // pattern is not built yet says so in pattern-note instead of quietly
 // drawing bonded courses under the missing pattern's name.
 function patternLabel(pattern) {
-  return pattern.split("-").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
+  // Sentence case, because every neighbouring control speaks it: "White
+  // presentation", "Golden hour", "Per surface". Title Case here made the
+  // pattern list the one Capitalised Column in the panel.
+  const words = pattern.split("-").join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function populatePatternSelect(payload) {

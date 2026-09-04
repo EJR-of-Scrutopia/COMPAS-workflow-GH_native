@@ -2246,12 +2246,14 @@ def test_the_event_log_reports_studio_events():
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert 'id="event-log"' in html
     assert "#event-log" in css and "pointer-events: none" in css.split("#event-log", 1)[1][:400]
-    # F6: the log sat at right: 16px, painting over the 300px control panel
-    # (#legend already solves the identical collision at 316px); pin the
-    # same clearance here so the two cannot drift apart again.
-    # 276 = the panel's 260 plus a 16px margin. It was 316 while the panel
-    # was 300 wide; Spectrum's standard-panel-width is 260.
-    assert "right: 276px" in css.split("#event-log", 1)[1][:400]
+    # F6: the log sat at right: 16px, painting over the control panel
+    # (#legend already solves the identical collision). The clearance is
+    # DERIVED from the panel width token now, so the two cannot drift when
+    # the panel is resized: it hard-coded 276px while the panel was 260,
+    # and 316px while it was 300, and each number went stale in turn.
+    clearance = "right: calc(var(--panel-w) + var(--s4))"
+    assert clearance in css.split("#event-log", 1)[1][:400]
+    assert clearance in css.split("#legend {", 1)[1][:400]
     body = _function_body(js, "logStudio")
     assert "toLocaleTimeString" in body or "toTimeString" in body
     # The banner helper mirrors into the log, and the named sites report.

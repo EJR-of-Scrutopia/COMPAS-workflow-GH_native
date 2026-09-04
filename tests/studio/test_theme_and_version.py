@@ -144,5 +144,11 @@ def test_the_overlays_are_not_themed():
     joined = " ".join(themed)
     assert "#hud" not in joined
     assert "#event-log" not in joined
-    # The two that DO have grounds of their own still take the theme.
-    assert "#legend" in joined and "#cut-overlay" in joined
+    # The two that DO have grounds of their own still take the theme, via
+    # the one overlay token: each paints var(--scrim), and the light block
+    # overrides --scrim once instead of restating each overlay by hand.
+    for selector in ("#legend {", "#cut-overlay {"):
+        block = css.split(selector, 1)[1]
+        assert "var(--scrim)" in block[:block.index("}")]
+    light_block = css.split(':root[data-theme="light"] {', 1)[1]
+    assert "--scrim:" in light_block[:light_block.index("}")]

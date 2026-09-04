@@ -32,8 +32,8 @@
   </div>
   <details id="import-section">
     <summary>Import</summary>
-    <div id="folder-row">
-      <button id="folder-choose" title="Pick the folder your vault JSONs are saved in">Choose folder</button>
+    <div id="folder-row" class="folder-line">
+      <button id="folder-choose" title="Pick the folder your vault JSONs are saved in">Vault folder</button>
       <span id="folder-path" title="">no folder chosen</span>
     </div>
     <div id="vault-row">
@@ -67,11 +67,14 @@
       <option value="tile">Fired clay tile</option>
       <option value="stone">Limestone</option>
     </select>
+    <button id="skin-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Render skin</span><span class="chevron"></span></button>
+    <!-- The folder feeds the render-skin library below it, not the built-in
+         structural materials above: source row above the grid it fills,
+         the same order the sky and prop folders already follow. -->
     <div id="material-folder-row" class="folder-line">
       <button id="material-folder-choose" title="Pick your material library folder">Material folder</button>
       <span id="material-folder-path" title="">no folder chosen</span>
     </div>
-    <button id="skin-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Render skin</span><span class="chevron"></span></button>
     <input id="skin-search" type="search" class="hidden" placeholder="Search materials">
     <div id="skin-tiles" class="tile-grid hidden"></div>
     <select id="render-skin" class="hidden">
@@ -98,7 +101,7 @@
     <button id="run-button">Run staged analysis</button>
     <div id="run-status"></div>
     <div id="layer-toggles"></div>
-    <label class="named">Stress surface <select id="stress-surface">
+    <label class="named"><span>Stress surface</span> <select id="stress-surface">
       <option value="per" selected>Per surface</option>
       <option value="worst">Worst of both</option>
       <option value="top">Top</option>
@@ -124,7 +127,7 @@
       <canvas id="sun-dial" width="234" height="150"></canvas>
       <div id="sun-readout"><span id="sun-time">12:00</span><span id="sun-angles">180 / 60</span></div>
     </div>
-    <canvas id="day-track" width="234" height="26"></canvas>
+    <canvas id="day-track" width="234" height="24"></canvas>
     <div id="day-cycle-row">
       <button id="day-cycle-button">Day cycle</button>
       <label><input id="day-cycle-record" type="checkbox"> During recordings</label>
@@ -165,8 +168,8 @@
       <option value="hdri">HDRI</option>
     </select></label>
     <button id="weather-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
-    <div id="weather-tiles" class="tile-grid hidden hidden"></div>
-    <label id="weather-row" class="hidden" style="display:none">Weather <select id="weather-preset">
+    <div id="weather-tiles" class="tile-grid hidden"></div>
+    <label id="weather-row" class="hidden">Weather <select id="weather-preset">
       <option value="clear" selected>Clear</option>
       <option value="hazy">Hazy</option>
       <option value="overcast">Overcast</option>
@@ -182,7 +185,7 @@
     <div id="hdri-tiles" class="tile-grid hidden"></div>
       <label class="hidden">HDRI <select id="hdri-select"></select></label>
       <div id="hdri-status"></div>
-      <label>Projection <select id="hdri-projection">
+      <label class="named"><span>Projection</span> <select id="hdri-projection">
         <option value="projected" selected>Projected</option>
         <option value="infinite">Infinite</option>
       </select></label>
@@ -233,10 +236,13 @@
     if (document.getElementById("stale-server")) return;
     var notice = document.createElement("div");
     notice.id = "stale-server";
+    // The literals mirror the tokens in studio.css (--danger, --radius,
+    // the 4/8/12/16 spacing scale); they cannot reference them, because
+    // this notice exists for the case where that stylesheet never arrived.
     notice.setAttribute("style", [
-      "position:fixed", "left:50%", "top:16px", "transform:translateX(-50%)",
-      "z-index:2147483647", "max-width:680px", "padding:14px 18px",
-      "border-radius:6px", "background:#7a2b20", "color:#fff",
+      "position:fixed", "left:50%", "top:12px", "transform:translateX(-50%)",
+      "z-index:2147483647", "max-width:680px", "padding:12px 16px",
+      "border-radius:4px", "background:#7a2b20", "color:#fff",
       "font:14px/1.5 system-ui,sans-serif",
       "box-shadow:0 8px 30px rgba(0,0,0,0.5)",
     ].join(";"));
