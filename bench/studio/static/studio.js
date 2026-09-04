@@ -118,6 +118,7 @@ const state = {
   carrying: null,      // { record, from } while a prop follows the cursor (see carryNewProp)
   armedPropType: null,  // kept for the older arming path used by nothing in the panel now
   selectedProp: null,   // the record whose object is highlighted and keyboard-driven
+  propEdit: false,      // the Edit button: only then do clicks grab placed props
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
@@ -5361,6 +5362,9 @@ function dropCarriedProp() {
   if (!state.carrying) return;
   state.carrying = null;
   controls.enabled = true;
+  // Outside edit mode the landed prop goes back to being furniture: no
+  // outline lingers, and no key can quietly move it afterwards.
+  if (!state.propEdit) selectProp(null);
   saveProps();
 }
 
@@ -5389,6 +5393,22 @@ document.getElementById("prop-browse").addEventListener("click", () => {
   library.classList.toggle("hidden");
 });
 
+document.getElementById("prop-edit").addEventListener("click", (e) => {
+  state.propEdit = !state.propEdit;
+  e.target.classList.toggle("active", state.propEdit);
+  canvas.style.cursor = state.propEdit ? "pointer" : "";
+  if (state.propEdit) {
+    logStudio("prop edit on: click a prop to pick it up and drag or click to place; "
+      + "R and Shift+R rotate, + and - scale, Delete removes, Escape cancels");
+  } else {
+    // Leaving edit mode drops any carry and clears the selection: the
+    // scene goes back to being all camera.
+    if (state.carrying) dropCarriedProp();
+    selectProp(null);
+    logStudio("prop edit off");
+  }
+});
+
 document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
@@ -5398,12 +5418,17 @@ document.getElementById("props-clear").addEventListener("click", () => {
 });
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state.bundle) return;
-  // Carrying something: this click puts it down.
+  // Carrying something: this click puts it down (whatever the mode -- the
+  // carry began with a deliberate library choice).
   if (state.carrying) {
     dropCarriedProp();
     return;
   }
-  const record = propRecordAt(event);
+  // Placed props are furniture until the Edit button says otherwise: a
+  // click on a tree while composing the camera must never yank the tree
+  // (Param: "when an object is placed we can only click the edit mode to
+  // move the props around, scale them and rotate them").
+  const record = state.propEdit ? propRecordAt(event) : null;
   if (record) {
     // Clicking a prop picks it back up, which is the same gesture that
     // placed it. Dragging still works for anyone who prefers to drag: the
@@ -5451,7 +5476,7 @@ window.addEventListener("keydown", (event) => {
   }
   const tag = document.activeElement ? document.activeElement.tagName : "";
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-  if (!state.selectedProp) return;
+  if (!state.propEdit || !state.selectedProp) return;
   if (event.key === "r" || event.key === "R") {
     // R turns one way, Shift+R the other: fifteen degrees a press.
     const step = event.shiftKey ? -Math.PI / 12 : Math.PI / 12;
