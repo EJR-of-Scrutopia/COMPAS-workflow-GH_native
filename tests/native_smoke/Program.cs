@@ -26765,15 +26765,47 @@ internal static class Program
             Array.Empty<(int, int, double)>());
         double[] endA = Unit(new[] { -3.0, -2.0, 3.0 });
         double[] endB = Unit(new[] { -1.0, -1.0, 2.0 });
+        // THE GUARD READS ONE SIDE OFF THE ENGINE (spec section 7 item 7).
+        // Until 2026-09-04 it compared endA against endB, two hand-written
+        // constants of this file's own, so it could never fire whatever
+        // the engine did: a check that cannot go red is not a check. It now
+        // asks the WEDGE NET for its own normals at v1 and v2, which is the
+        // pair the sample below interpolates, and requires them to differ.
+        // A field that made them agree, on this fixture or on a fixture
+        // someone edits later, reddens here instead of hollowing out the
+        // interpolation check in silence.
+        //
+        // And the two hand-computed values are pinned against the engine's
+        // own, so the guard and the expectation cannot be satisfied by an
+        // engine that agrees with neither.
+        IList wedgeField =
+            (IList)netType.GetProperty("Normals")!.GetValue(wedge)!;
+        var engineA = (double[])wedgeField[1]!;
+        var engineB = (double[])wedgeField[2]!;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (Math.Abs(engineA[axis] - endA[axis]) > 1.0e-12 ||
+                Math.Abs(engineB[axis] - endB[axis]) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "The wedge's v1 belongs to all three faces and sums to " +
+                    "(-3, -2, 3), and its v2 to A and B and sums to " +
+                    "(-1, -1, 2), both hand-computed from the fixture. The " +
+                    $"engine gave ({engineA[0]}, {engineA[1]}, " +
+                    $"{engineA[2]}) and ({engineB[0]}, {engineB[1]}, " +
+                    $"{engineB[2]}).");
+            }
+        }
         double endAgreement =
-            (endA[0] * endB[0]) + (endA[1] * endB[1]) + (endA[2] * endB[2]);
+            (engineA[0] * engineB[0]) + (engineA[1] * engineB[1]) +
+            (engineA[2] * engineB[2]);
         if (endAgreement > 0.999)
         {
             throw new InvalidOperationException(
                 "The shared edge this check samples must have endpoint " +
                 "normals that GENUINELY DIFFER, or every weighting of them " +
                 "gives the same answer and the interpolation is measured " +
-                $"on nothing; the two agree to {endAgreement}.");
+                $"on nothing; the ENGINE's own two agree to {endAgreement}.");
         }
         double[] quarter =
             Unit(new[]
@@ -29599,7 +29631,26 @@ internal static class Program
                 "one-sidedness below would be measured mostly on rule 2's " +
                 "OFF-MESH branch rather than on the faces themselves.");
         }
-        if (cornersOffMesh > 0 && leastVerticalOffMesh > 0.99)
+        // THE POPULATION IS ASSERTED THE WAY ITS SIBLING'S IS (spec
+        // section 7 item 6). The verticality claim below was guarded on
+        // "cornersOffMesh > 0" and nothing said the population existed, so
+        // a fixture change that sent every corner onto a face would have
+        // hollowed the check out in silence and left it green. Measured on
+        // Param's own net, 172 of 8870 corners find no face under them in
+        // plan, which is the finding rule 2's off-mesh branch exists for.
+        if (cornersOffMesh <= 0)
+        {
+            throw new InvalidOperationException(
+                "Param's own net must still produce corners with NO face " +
+                "under them in plan, or rule 2's off-mesh branch is " +
+                $"measured on nothing here: {cornersOffMesh} of " +
+                $"{cornersMeasured}. The count was 172 when the branch was " +
+                "written, and it is the reason the branch exists: a traced " +
+                "level curve runs along the net's own boundary edges, and " +
+                "the plan-containment test claims a boundary point for a " +
+                "face only about half the time.");
+        }
+        if (leastVerticalOffMesh > 0.99)
         {
             throw new InvalidOperationException(
                 $"All {cornersOffMesh} of {cornersMeasured} cell corners " +
