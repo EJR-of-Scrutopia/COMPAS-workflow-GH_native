@@ -1,45 +1,135 @@
 Every model in this folder is from Poly Haven and is CC0 1.0.
 Poly Haven asks for no credit and this file is offered anyway.
 
+modular_factory_facade
+  Factory facade
+  https://polyhaven.com/a/modular_factory_facade
+modular_fire_escape
+  Fire escape
+  https://polyhaven.com/a/modular_fire_escape
+modular_fort_01
+  Stone fort kit
+  https://polyhaven.com/a/modular_fort_01
+modular_urban_apartments_facade
+  Apartment facade
+  https://polyhaven.com/a/modular_urban_apartments_facade
+modular_wooden_pier
+  Wooden pier
+  https://polyhaven.com/a/modular_wooden_pier
+anthurium_botany_01
+  Anthurium
+  https://polyhaven.com/a/anthurium_botany_01
+calathea_orbifolia_01
+  Calathea
+  https://polyhaven.com/a/calathea_orbifolia_01
+celandine_01
+  Celandine
+  https://polyhaven.com/a/celandine_01
+cheiridopsis_succulent
+  Cheiridopsis
+  https://polyhaven.com/a/cheiridopsis_succulent
+crystalline_iceplant
+  Iceplant
+  https://polyhaven.com/a/crystalline_iceplant
 dandelion_01
   Dandelion
   https://polyhaven.com/a/dandelion_01
+dead_quiver_trunk
+  Quiver trunk
+  https://polyhaven.com/a/dead_quiver_trunk
 dead_tree_trunk_02
   Dead trunk
   https://polyhaven.com/a/dead_tree_trunk_02
+didelta_spinosa
+  Didelta shrub
+  https://polyhaven.com/a/didelta_spinosa
 fern_02
   Fern
   https://polyhaven.com/a/fern_02
+fir_sapling
+  Small fir
+  https://polyhaven.com/a/fir_sapling
 fir_sapling_medium
   Fir sapling
   https://polyhaven.com/a/fir_sapling_medium
-fir_tree_01
-  Fir
-  https://polyhaven.com/a/fir_tree_01
 flower_gazania
   Gazania
   https://polyhaven.com/a/flower_gazania
-island_tree_02
-  Island tree
-  https://polyhaven.com/a/island_tree_02
+flower_ursinia
+  Ursinia
+  https://polyhaven.com/a/flower_ursinia
+grass_medium_01
+  Grass clumps
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_02
+  Grass tufts
+  https://polyhaven.com/a/grass_medium_02
 nettle_plant
   Nettles
   https://polyhaven.com/a/nettle_plant
-pine_tree_01
-  Pine
-  https://polyhaven.com/a/pine_tree_01
+othonna_cerarioides
+  Othonna tree
+  https://polyhaven.com/a/othonna_cerarioides
+pachira_aquatica_01
+  Pachira
+  https://polyhaven.com/a/pachira_aquatica_01
+periwinkle_plant
+  Periwinkle
+  https://polyhaven.com/a/periwinkle_plant
+pine_sapling_small
+  Small pine
+  https://polyhaven.com/a/pine_sapling_small
+planter_box_01
+  Planter box
+  https://polyhaven.com/a/planter_box_01
+planter_box_03
+  Long planter
+  https://polyhaven.com/a/planter_box_03
 potted_plant_01
   Potted plant
   https://polyhaven.com/a/potted_plant_01
+potted_plant_02
+  Planter plant
+  https://polyhaven.com/a/potted_plant_02
+potted_plant_04
+  Potted aloe
+  https://polyhaven.com/a/potted_plant_04
+quiver_tree_01
+  Quiver tree
+  https://polyhaven.com/a/quiver_tree_01
+quiver_tree_02
+  Quiver tree small
+  https://polyhaven.com/a/quiver_tree_02
 searsia_lucida
   Searsia
   https://polyhaven.com/a/searsia_lucida
+shrub_01
+  Flowering shrub
+  https://polyhaven.com/a/shrub_01
+shrub_02
+  Hedge mass
+  https://polyhaven.com/a/shrub_02
+shrub_03
+  Meadow shrub
+  https://polyhaven.com/a/shrub_03
+shrub_04
+  Undergrowth
+  https://polyhaven.com/a/shrub_04
 tree_small_02
   Broadleaf tree
   https://polyhaven.com/a/tree_small_02
 tree_stump_01
   Tree stump
   https://polyhaven.com/a/tree_stump_01
+tree_stump_02
+  Old stump
+  https://polyhaven.com/a/tree_stump_02
+weed_plant_02
+  Weeds
+  https://polyhaven.com/a/weed_plant_02
+wild_rooibos_bush
+  Rooibos bush
+  https://polyhaven.com/a/wild_rooibos_bush
 Barrel_02
   Barrel
   https://polyhaven.com/a/Barrel_02
@@ -70,6 +160,9 @@ WetFloorSign_01
 concrete_road_barrier
   Road barrier
   https://polyhaven.com/a/concrete_road_barrier
+concrete_road_barrier_02
+  Road barrier low
+  https://polyhaven.com/a/concrete_road_barrier_02
 fire_hydrant
   Fire hydrant
   https://polyhaven.com/a/fire_hydrant
@@ -82,6 +175,9 @@ modular_electricity_poles
 utility_box_01
   Utility box
   https://polyhaven.com/a/utility_box_01
+utility_box_02
+  Utility cabinet
+  https://polyhaven.com/a/utility_box_02
 water_manhole_cover
   Manhole cover
   https://polyhaven.com/a/water_manhole_cover

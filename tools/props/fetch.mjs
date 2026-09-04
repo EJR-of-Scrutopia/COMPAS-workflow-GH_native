@@ -111,7 +111,57 @@ const LIST = [
   { slug: "WetFloorSign_01",     label: "Wet floor sign",   group: "site", size: "clutter" },
   { slug: "cement_bag",          label: "Cement bag",       group: "site", size: "clutter" },
   { slug: "Barrel_02",           label: "Barrel",           group: "site", size: "clutter" },
+  // The 2026-09-04 vegetation expansion: every entry below was verified
+  // against the API's own gltf .bin sizes (the honest number; polycount
+  // lies for geonodes assets) and sits far under the canopy-failure class.
+  // Poly Haven has no oak/maple/birch: what a CC0 catalogue holds is what
+  // a CC0 library gets.
+  { slug: "quiver_tree_01",      label: "Quiver tree",      group: "planting", size: "canopy" },
+  { slug: "quiver_tree_02",      label: "Quiver tree small", group: "planting", size: "mid" },
+  { slug: "othonna_cerarioides", label: "Othonna tree",     group: "planting", size: "canopy" },
+  { slug: "pachira_aquatica_01", label: "Pachira",          group: "planting", size: "canopy" },
+  { slug: "fir_sapling",         label: "Small fir",        group: "planting", size: "mid" },
+  { slug: "pine_sapling_small",  label: "Small pine",       group: "planting", size: "mid" },
+  { slug: "dead_quiver_trunk",   label: "Quiver trunk",     group: "planting", size: "clutter" },
+  { slug: "tree_stump_02",       label: "Old stump",        group: "planting", size: "mid" },
+  { slug: "didelta_spinosa",     label: "Didelta shrub",    group: "planting", size: "mid" },
+  { slug: "shrub_01",            label: "Flowering shrub",  group: "planting", size: "mid" },
+  { slug: "shrub_02",            label: "Hedge mass",       group: "planting", size: "mid" },
+  { slug: "shrub_03",            label: "Meadow shrub",     group: "planting", size: "clutter" },
+  { slug: "shrub_04",            label: "Undergrowth",      group: "planting", size: "clutter" },
+  { slug: "wild_rooibos_bush",   label: "Rooibos bush",     group: "planting", size: "mid" },
+  { slug: "weed_plant_02",       label: "Weeds",            group: "planting", size: "clutter" },
+  { slug: "anthurium_botany_01", label: "Anthurium",        group: "planting", size: "mid" },
+  { slug: "calathea_orbifolia_01", label: "Calathea",       group: "planting", size: "clutter" },
+  { slug: "flower_ursinia",      label: "Ursinia",          group: "planting", size: "clutter" },
+  { slug: "periwinkle_plant",    label: "Periwinkle",       group: "planting", size: "clutter" },
+  { slug: "crystalline_iceplant", label: "Iceplant",        group: "planting", size: "clutter" },
+  { slug: "cheiridopsis_succulent", label: "Cheiridopsis",  group: "planting", size: "clutter" },
+  { slug: "celandine_01",        label: "Celandine",        group: "planting", size: "clutter" },
+  { slug: "grass_medium_01",     label: "Grass clumps",     group: "planting", size: "clutter" },
+  { slug: "grass_medium_02",     label: "Grass tufts",      group: "planting", size: "clutter" },
+  { slug: "potted_plant_02",     label: "Planter plant",    group: "planting", size: "mid" },
+  { slug: "potted_plant_04",     label: "Potted aloe",      group: "planting", size: "clutter" },
+  { slug: "planter_box_01",      label: "Planter box",      group: "planting", size: "clutter" },
+  { slug: "planter_box_03",      label: "Long planter",     group: "planting", size: "clutter" },
+  // Buildings: everything CC0 and building-shaped that Poly Haven holds
+  // (13 in its buildings category, most of them doors and shutters; these
+  // are the ones that read as CONTEXT beside a vault). Photoreal people
+  // exist under no CC0 licence anywhere -- that hole is documented in the
+  // wave register with the account-gated sources Param can pull himself.
+  { slug: "modular_urban_apartments_facade", label: "Apartment facade", group: "buildings", size: "hero" },
+  { slug: "modular_factory_facade", label: "Factory facade", group: "buildings", size: "hero" },
+  { slug: "modular_fort_01",     label: "Stone fort kit",   group: "buildings", size: "hero" },
+  { slug: "modular_wooden_pier", label: "Wooden pier",      group: "buildings", size: "mid" },
+  { slug: "modular_fire_escape", label: "Fire escape",      group: "buildings", size: "mid" },
+  { slug: "utility_box_02",      label: "Utility cabinet",  group: "street", size: "mid" },
+  { slug: "concrete_road_barrier_02", label: "Road barrier low", group: "street", size: "clutter" },
 ];
+
+// The pre-flight rule that would have caught every canopy failure before a
+// byte was downloaded: the API's gltf .bin size at the chosen resolution is
+// the honest measure of what the export really holds.
+const MAX_SOURCE_BIN_BYTES = 30e6;
 
 async function getJson(url) {
   const response = await fetch(url, { headers: { "User-Agent": AGENT } });
@@ -214,6 +264,21 @@ async function buildOne(io, item) {
   const gltf = files.gltf && (files.gltf["1k"] || files.gltf["2k"]);
   if (!gltf || !gltf.gltf) throw new Error("no gltf bundle published");
   const bundle = gltf.gltf;
+
+  // Refuse the canopy-failure class before a byte is downloaded: the
+  // included .bin size is the honest measure of what the export holds
+  // (polycount lies for geometry-nodes assets, in both directions). All
+  // three known failures -- pine_tree_01, fir_tree_01, island_tree_02 --
+  // and every flagged sibling would have been caught by this one rule.
+  let sourceBytes = 0;
+  for (const entry of Object.values(bundle.include || {})) {
+    sourceBytes += entry.size || 0;
+  }
+  if (sourceBytes > MAX_SOURCE_BIN_BYTES) {
+    throw new Error(`source geometry is ${(sourceBytes / 1e6).toFixed(1)} MB; `
+      + `over the ${(MAX_SOURCE_BIN_BYTES / 1e6).toFixed(0)} MB line a dense `
+      + `canopy cannot decimate across`);
+  }
 
   const work = path.join(WORK, item.slug);
   await rm(work, { recursive: true, force: true });

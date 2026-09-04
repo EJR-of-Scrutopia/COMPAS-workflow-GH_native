@@ -23,6 +23,65 @@ list." Work autonomously, commit per fix, never push.
   dead-server casualties; every probed material serves 200s when a
   server is alive.
 
+## Done in the autonomous run (evening 2026-09-04)
+
+- 1 CLEAR RULING: scene-row Clear removed; props Clear is the one Clear
+  (clearScene stays as the internal study-switching primitive). (d12d72d)
+- 2 TAB PANEL: shipped and verified live -- rail on the viewport, one
+  section at a time, permanent header/footer, remembered tab. (d12d72d)
+- 3 MATERIALS SYSTEM: shipped. Two curated library folders (studio-skin
+  130 / studio-ground 70, real copies beside the QS stack -- ruling:
+  OneDrive+junctions are a known bad pair, and 5.5 GB of folder he can
+  open beats a clever link; delete the folders to undo). Weight system
+  live (skin drives structural class + density table + q readout);
+  dropdown hidden; 'Sprayed monolithic' on the Pattern control;
+  one-crop-per-voussoir stretch UVs + Randomise texture + Variation
+  slider; secondary-map failures no longer veto a material; the silent
+  restore-without-load hole closed. (8936a6b, 059bf43)
+- 4 GROUND CONTROLS: Scale X/Y, Relief (decoupled), Randomise floor;
+  persisted in scenes. (059bf43)
+- 5a PROPS EDIT: select then R / Shift+R rotates, + / - scales from the
+  ground up (feet-anchored by construction), Delete removes; scale in
+  the record schema, layouts and scenes. Gizmo-style drag handles are a
+  possible later upgrade (TransformControls is not vendored). (80a269f)
+- 5b TREES: 28 new Poly Haven CC0 vegetation props fetched, decimated
+  and manifested (verified against real .bin sizes; a 30 MB pre-flight
+  guard now refuses the canopy-failure class before download). Poly
+  Haven holds NO oak/maple/birch/palm -- what a CC0 catalogue has is
+  what we got. Buildings batch (facades, fort kit, pier, fire escape)
+  fetched after.
+- 6 VAULTED: title, SVG favicon with the arch + wordmark, Vaulted.lnk
+  with a proper .ico (Bench Studio.lnk removed). (80a269f)
+- 7 CAMERA: never below floor; clamp in renderView, the one choke point
+  every camera writer passes through. (80a269f)
+- Plus, earlier the same evening: the restart/silent-boot server chain
+  (b9cdc90, ec3caec), recording motion + orbit + the Animation output
+  folder, and the orbit holding still through the formwork act.
+
+## PEOPLE: the licence wall, and Param's one-click list
+
+Photoreal people exist under NO CC0 licence anywhere (verified across
+Poly Haven, Sketchfab, BlenderKit, Renderpeople, Mixamo, Fab). The good
+sources are account-gated manual downloads -- and any GLB dropped into
+the props-hd folder is auto-offered by the studio with no manifest edit:
+
+- Renderpeople free (photoreal, native GLB, free commercial use; their
+  licence forbids serving raw GLBs where third parties could extract
+  them -- fine for this local studio):
+  https://renderpeople.com/free-3d-people/  (Dennis Posed 004, Mei
+  Posed 001, Carla Rigged 001, Manuel Animated 001)
+- Sketchfab CC0 statuary (museum scans, fully clean, read beautifully
+  in an architectural vignette; needs a free Sketchfab login):
+  Venus de Milo by smkmuseum (24k, web-ready), Lion Statue by
+  nebulousflynn, the noe-3d.at Vienna series (need decimation).
+  CC0 filter: https://sketchfab.com/search?type=models&features=downloadable&licenses=7c23a1ba438d4306920229c12afcb5f9
+- Stylised CC0 scale figures, fetchable any time: Kenney character
+  packs (kenney.nl, CC0 GLB) or poly.pizza with the CC0 filter.
+
+An earth/grass GROUND MATERIAL family is still a gap in the QS stack
+(good CC0 sources: ambientCG Ground###/Grass###; the fetch tooling for
+materials is tools/fetch_tile_sizes.py territory, a future errand).
+
 ## The queue, in order
 
 1. CLEAR RULING. The props Clear (props-only) is correct; the Scenes-row
