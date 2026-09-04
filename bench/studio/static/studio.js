@@ -711,9 +711,53 @@ const GROUNDS = {
 
 const groundMaterialCache = {};
 
+// The ground's own loaded library material, separate from the vault's.
+// Repeat lives on the texture, and two surfaces wearing one material want
+// different repeats, so sharing one set would mean the floor's tiling and
+// the vault's fighting over the same object.
+let groundLibrarySet = null;
+
 function groundMaterial(preset) {
+  if (isLibraryKey(preset)) {
+    // Until the maps arrive, the studio floor stands in. A frame of dark
+    // grey beats a frame of white default material.
+    return groundLibrarySet && groundLibrarySet.entry.key === preset
+      ? groundLibrarySet.material : groundMaterial("dark-studio");
+  }
+  if (!GROUNDS[preset]) preset = "dark-studio";
   if (!groundMaterialCache[preset]) groundMaterialCache[preset] = GROUNDS[preset]();
   return groundMaterialCache[preset];
+}
+
+async function loadGroundMaterial(key) {
+  if (!isLibraryKey(key)) {
+    // Leaving the library frees what it was wearing: the floor is one
+    // surface and there is no reason to keep a set nothing draws.
+    if (groundLibrarySet) { disposeLibraryMaterial(groundLibrarySet); groundLibrarySet = null; }
+    rebuildGround();
+    return;
+  }
+  const entry = libraryEntry(key);
+  if (!entry) return;
+  try {
+    const set = await loadLibraryMaterial(entry, {
+      px: VIEWPORT_PX,
+      anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+    });
+    // A floor is seen from one side, so it costs nothing to say so, and
+    // single-sided geometry is half the fragment work.
+    set.material.side = THREE.FrontSide;
+    if (groundLibrarySet) disposeLibraryMaterial(groundLibrarySet);
+    groundLibrarySet = set;
+    logStudio("floor: " + entry.label + (entry.tileMetres
+      ? " at " + Math.round(entry.tileMetres[0] * 1000) + " x "
+        + Math.round(entry.tileMetres[1] * 1000) + " mm"
+      : " at an unknown size"));
+  } catch (error) {
+    logStudio("floor " + key + " would not load: " + error.message);
+    return;
+  }
+  rebuildGround();
 }
 
 // The plane everything stands on, and the reason it is not zero.
@@ -755,10 +799,21 @@ function rebuildGround() {
     state.objects.ground = null;
   }
   const material = groundMaterial(state.groundPreset);
-  const tile = material.userData.groundTileMetres;
-  if (tile && material.map) {
+  if (groundLibrarySet && material === groundLibrarySet.material) {
+    // The library knows how much of the world one picture shows, so the
+    // repeat is arithmetic rather than a number tuned by eye. Every map,
+    // not the albedo alone: each slot carries its own transform uniform and
+    // a mismatch shows the moment the sun moves.
+    const tile = groundLibrarySet.entry.tileMetres
+      || [DEFAULT_TILE_METRES, DEFAULT_TILE_METRES];
     const [u, v] = groundRepeat(state.groundRadius, tile);
-    material.map.repeat.set(u, v);
+    setRepeat(groundLibrarySet, u, v);
+  } else {
+    const tile = material.userData.groundTileMetres;
+    if (tile && material.map) {
+      const [u, v] = groundRepeat(state.groundRadius, tile);
+      material.map.repeat.set(u, v);
+    }
   }
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(state.groundRadius, 64), material);
@@ -2335,7 +2390,28 @@ async function refreshMaterialLibrary() {
       select.value = "none";
     }
   }
+  const ground = document.getElementById("ground-preset");
+  for (const option of Array.from(ground.options)) {
+    if (isLibraryKey(option.value)) option.remove();
+  }
+  for (const entry of state.materialLibrary) {
+    const option = document.createElement("option");
+    option.value = entry.key;
+    option.textContent = entry.label;
+    ground.appendChild(option);
+  }
+  if (isLibraryKey(state.groundPreset)) {
+    if (libraryEntry(state.groundPreset)) {
+      ground.value = state.groundPreset;
+      await loadGroundMaterial(state.groundPreset);
+    } else {
+      state.groundPreset = "dark-studio";
+      ground.value = "dark-studio";
+      rebuildGround();
+    }
+  }
   buildSkinTiles();
+  buildGroundTiles();
   logStudio("material library: " + state.materialLibrary.length
     + " materials in " + (state.materialLibrary.length
       ? new Set(state.materialLibrary.map((e) => e.family)).size : 0)
@@ -2686,25 +2762,6 @@ function buildHdriTiles(names) {
   paintTileSelection(holder, select.value);
 }
 
-function buildGroundTiles() {
-  const holder = document.getElementById("ground-tiles");
-  const select = document.getElementById("ground-preset");
-  if (!holder || !select) return;
-  holder.innerHTML = "";
-  for (const option of select.options) {
-    const tile = previewTile(option.value, option.textContent,
-      (canvasEl) => renderGroundPreview(option.value, canvasEl));
-    tile.addEventListener("click", () => {
-      if (select.value === option.value) return;
-      select.value = option.value;
-      select.dispatchEvent(new Event("change"));
-      paintTileSelection(holder, option.value);
-    });
-    holder.appendChild(tile);
-  }
-  paintTileSelection(holder, select.value);
-}
-
 function buildMaterialTiles() {
   buildTileGrid("material-tiles", "material-select",
     (value) => materials[value] || null);
@@ -2742,35 +2799,38 @@ function chooseSkin(value) {
   paintTileSelection(document.getElementById("skin-tiles"), value);
 }
 
-function buildSkinTiles() {
-  const holder = document.getElementById("skin-tiles");
-  const select = document.getElementById("render-skin");
+// One grid for both places a library material can be worn: the vault and
+// the ground it stands on. The built-in presets come first and are rendered
+// on the preview object, because there are a handful of them and they have
+// no picture of their own; the library follows as pictures, in families.
+function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin) {
+  const holder = document.getElementById(holderId);
+  const select = document.getElementById(selectId);
   if (!holder || !select) return;
-  const query = ((document.getElementById("skin-search") || {}).value || "")
+  const query = ((document.getElementById(searchId) || {}).value || "")
     .trim().toLowerCase();
   holder.innerHTML = "";
 
-  // The built-in skins first, rendered on the preview ball as before. They
-  // are four, they need no folder, and they are what the vault wears until
-  // somebody chooses otherwise.
+  const choose = (value) => {
+    if (select.value === value) return;
+    select.value = value;
+    select.dispatchEvent(new Event("change"));
+    paintTileSelection(holder, value);
+  };
+
   if (!query) {
     for (const option of select.options) {
       if (isLibraryKey(option.value)) continue;
-      const material = option.value === "none"
-        ? (materials[document.getElementById("material-select").value] || materials.concrete)
-        : (skinMaterialCache[option.value]
-          || (SKINS[option.value] && (skinMaterialCache[option.value] = SKINS[option.value]())));
-      if (!material) continue;
       const tile = previewTile(option.value, option.textContent,
-        (canvasEl) => renderMaterialPreview(material, canvasEl));
-      tile.addEventListener("click", () => chooseSkin(option.value));
+        (canvasEl) => paintBuiltin(option.value, canvasEl));
+      tile.addEventListener("click", () => choose(option.value));
       holder.appendChild(tile);
     }
   }
 
-  // Then the library, in families, because a search across a hundred and
-  // fifty-eight near-identical bricks is the difference between adjusting a
-  // choice and making a new one.
+  // The library in families, because a search across a hundred and fifty
+  // near-identical bricks is the difference between adjusting a choice and
+  // making a new one.
   let family = null;
   for (const entry of state.materialLibrary) {
     if (query && !(entry.key + " " + entry.label).toLowerCase().includes(query)) continue;
@@ -2789,10 +2849,30 @@ function buildSkinTiles() {
         + Math.round(entry.tileMetres[0] * 1000) + " x "
         + Math.round(entry.tileMetres[1] * 1000) + " mm";
     }
-    tile.addEventListener("click", () => chooseSkin(entry.key));
+    tile.addEventListener("click", () => choose(entry.key));
     holder.appendChild(tile);
   }
   paintTileSelection(holder, select.value);
+}
+
+function buildSkinTiles() {
+  buildLibraryGrid("skin-tiles", "render-skin", "skin-search",
+    (value, canvasEl) => {
+      const material = value === "none"
+        ? (materials[document.getElementById("material-select").value]
+          || materials.concrete)
+        : (skinMaterialCache[value]
+          || (SKINS[value] && (skinMaterialCache[value] = SKINS[value]())));
+      if (material) renderMaterialPreview(material, canvasEl);
+    });
+}
+
+function buildGroundTiles() {
+  // A floor previewed on a floor: the plane is tilted away from the camera
+  // so the joint spacing reads, which a sphere cannot show, and the size of
+  // the pieces is the whole reason for choosing paving over concrete.
+  buildLibraryGrid("ground-tiles", "ground-preset", "ground-search",
+    (value, canvasEl) => renderGroundPreview(value, canvasEl));
 }
 
 function paintMaterialSwatches() {
@@ -4771,10 +4851,18 @@ document.getElementById("ground-radius").addEventListener("input", (e) => {
   // there is nothing to defer to the end of the drag.
   if (state.objects.ground) rebuildGround();
 });
-document.getElementById("ground-preset").addEventListener("change", (e) => {
+document.getElementById("ground-preset").addEventListener("change", async (e) => {
   state.groundPreset = e.target.value;
+  // A library floor has maps to fetch; loadGroundMaterial rebuilds when
+  // they land, and rebuilds at once for a built-in preset.
+  await loadGroundMaterial(state.groundPreset);
   if (state.objects.ground) rebuildGround();
 });
+
+{
+  const search = document.getElementById("ground-search");
+  if (search) search.addEventListener("input", () => buildGroundTiles());
+}
 // ---------- carrying a prop ----------
 // One idea in place of two. A prop being carried is a real prop in the
 // scene that happens to be following the cursor: it can be looked at from
