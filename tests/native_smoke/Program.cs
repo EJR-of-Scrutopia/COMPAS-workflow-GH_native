@@ -31770,6 +31770,21 @@ internal static class Program
         // 3. Every frame the same shape, every coordinate finite, and the
         // phase label the ENGINE's own state machine at that time rather than
         // a word the writer chose for itself.
+        // AT DOCUMENT LEVEL, which is where their validator reads them:
+        // it takes both counts before it reads a frame (their R-011(e)), so
+        // a document that carried them inside the frames array or inside
+        // the columns block would be refused before a single vertex was
+        // looked at.
+        foreach (string count in new[] { "vertexCount", "columnNodeCount" })
+        {
+            if (root[count] is null)
+            {
+                throw new InvalidOperationException(
+                    $"'{count}' stands at DOCUMENT level in the formwork "
+                    + "document, because the studio's validator reads both "
+                    + "counts before it reads a frame. It is missing.");
+            }
+        }
         int vertexCount = root["vertexCount"]!.GetValue<int>();
         int columnNodeCount = root["columnNodeCount"]!.GetValue<int>();
         if (vertexCount != 9)
