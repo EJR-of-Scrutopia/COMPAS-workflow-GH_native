@@ -176,10 +176,18 @@ function projectionGain(positions, frame) {
 // times its projection gain, in metres, measured in the same frame
 // sheetUVs will project with. The caller takes the max over every piece
 // to size the sheet.
-export function footprintSpan(positions, grain = false) {
-  const frame = pieceFrame(positions, grain);
+//
+// frameSource: the triangles the frame and gain are measured over, when
+// they should not be the whole soup. A vault piece is 200 mm thick with
+// a small face, so over the WHOLE solid the joint walls out-weigh the
+// faces and the tensor tips edge-on (measured live: median piece 3x
+// compressed, worst 73x). The caller passes the TOP SURFACE alone -- it
+// knows which triangles those are -- and the walls merely project along.
+export function footprintSpan(positions, grain = false, frameSource = null) {
+  const source = frameSource && frameSource.length ? frameSource : positions;
+  const frame = pieceFrame(source, grain);
   const bounds = projectedBounds(positions, frame);
-  return Math.max(bounds.spanU, bounds.spanV) * projectionGain(positions, frame);
+  return Math.max(bounds.spanU, bounds.spanV) * projectionGain(source, frame);
 }
 
 // ONE sheet of material for the whole vault, cut into voussoirs. The crop
@@ -197,12 +205,14 @@ export function footprintSpan(positions, grain = false) {
 // inside a closed joint. rotation is 0..3 quarter turns within the unit
 // square, so the window never leaves the sheet.
 export function sheetUVs(positions, sheet, options = {}) {
-  const { grain = false, windowU = 0, windowV = 0, rotation = 0 } = options;
-  const frame = pieceFrame(positions, grain);
+  const { grain = false, windowU = 0, windowV = 0, rotation = 0,
+    frameSource = null } = options;
+  const source = frameSource && frameSource.length ? frameSource : positions;
+  const frame = pieceFrame(source, grain);
   const bounds = projectedBounds(positions, frame);
   // The gain stretches the projection back to true surface size, so a
   // curved piece wears its picture at the same density as a flat one.
-  const gain = projectionGain(positions, frame);
+  const gain = projectionGain(source, frame);
   // A sheet smaller than the piece would spill past the picture's edge;
   // never let it (the caller's max-over-pieces makes this a no-op).
   const metres = Math.max(sheet, bounds.spanU * gain, bounds.spanV * gain) || 1;

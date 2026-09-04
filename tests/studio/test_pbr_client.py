@@ -143,9 +143,13 @@ def test_a_piece_is_laid_out_in_metres_when_the_material_knows_its_size():
     # footprint, each piece sampling its own hashed window at the same
     # scale. The metric layout survives where it belongs: the ground's
     # tiling (groundRepeat) still turns real tile sizes into repeats.
-    assert "sheet = Math.max(sheet, footprintSpan(entry.positions, grain))" in source
+    assert "sheet = Math.max(sheet, footprintSpan(positions, grain, top))" in source
     assert "sheetUVs(positions, sheet," in source
     assert "windowU: window_[0], windowV: window_[1]" in source
+    assert "frameSource: entry.top" in source, (
+        "the frame is found on the top surface alone: the joint walls of a"
+        " 200 mm piece out-weigh its face and tip the plane edge-on"
+    )
     assert 'piece.key + "#" + seed' in source
 
 

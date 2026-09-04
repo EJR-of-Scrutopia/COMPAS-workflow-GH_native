@@ -681,6 +681,19 @@ SHEET_CHECK = textwrap.dedent("""
     const chunkyUVs = sheetUVs(chunky, sheet);
     expect(Math.abs(patchDensity(chunky, chunkyUVs, 0, 2) - sheet) < 0.05 * sheet,
       "joint walls do not drag a piece's density off the sheet");
+    // A REAL vault piece is 200 mm thick with a small face: its joint
+    // walls out-weigh its faces, and a frame measured over the whole
+    // solid tips edge-on (live: median piece 3x compressed, worst 73x).
+    // The caller hands the TOP SURFACE as frameSource and the plane
+    // comes true again.
+    const stubby = solid(1, 0.5, 0.6);
+    const stubbyTop = stubby.slice(0, 18);
+    expect(Math.abs(footprintSpan(stubby, false, stubbyTop) - 1) < 0.03,
+      "a wall-heavy piece framed by its top face keeps its plan footprint");
+    const stubbyUVs = sheetUVs(stubby, sheet, { frameSource: stubbyTop });
+    expect(Math.abs(patchDensity(stubby, stubbyUVs, 0, 2) - sheet) < 0.05 * sheet,
+      "a wall-heavy piece reads at sheet density through its frameSource");
+
     // A curved piece foreshortens on its plane; the projection gain must
     // bring its density back to the sheet, or curved pieces wear
     // magnified pictures next to flat neighbours.

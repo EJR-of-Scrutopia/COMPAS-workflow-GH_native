@@ -5952,7 +5952,19 @@ function buildPieceMeshes() {
   let sheet = 0;
   if (tile) {
     for (const entry of built) {
-      sheet = Math.max(sheet, footprintSpan(entry.positions, grain));
+      // The frame is found on the TOP SURFACE alone: a piece is 200 mm
+      // thick with a small face, so over the whole solid the joint walls
+      // out-weigh the faces and tip the plane edge-on. The surface flags
+      // already say which triangles are the top.
+      const top = [];
+      const { positions, surface } = entry;
+      for (let i = 0, v = 0; i < positions.length; i += 9, v += 3) {
+        if (surface[v] === 1 && surface[v + 1] === 1 && surface[v + 2] === 1) {
+          for (let j = 0; j < 9; j++) top.push(positions[i + j]);
+        }
+      }
+      entry.top = top;
+      sheet = Math.max(sheet, footprintSpan(positions, grain, top));
     }
   }
   const seed = state.appearance.uvSeed || 0;
@@ -5976,7 +5988,8 @@ function buildPieceMeshes() {
     const window_ = segmentWindow(seedKey);
     const uvs = tile
       ? sheetUVs(positions, sheet,
-          { grain, windowU: window_[0], windowV: window_[1], rotation: turn })
+          { grain, windowU: window_[0], windowV: window_[1], rotation: turn,
+            frameSource: entry.top })
       : boxUVs(positions, centre, segmentUVOffset(seedKey));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
