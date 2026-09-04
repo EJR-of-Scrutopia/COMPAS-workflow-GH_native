@@ -32,8 +32,8 @@ Kinetic AI\PHD robotics\papers\additional papers\Block Research Group).
 5. A negative density fed to vertical_from_zmax returns a NEGATIVE scale (measured -27.73 against
    +27.73). Under this design the library never sees a density again, so the hazard is retired on
    this path rather than patched.
-6. solvers.py:670 silently ZEROES every nodal load when a surface load is wired. Behaviour kept
-   (the surface load replaces nodal loads by design) but it must be SAID.
+6. solvers.py:670 silently ZEROES every nodal load when a surface load is wired. RETIRED by rule
+   2.4(b): nodal loads ride beside the self-weight, additive, and the diagnostics say both totals.
 
 ## 2. The design
 
@@ -70,8 +70,8 @@ be doing the rhino vault sequence and config." Their model, adopted:
   c. THE SEQUENCE IS THEIRS: horizontal equilibrium first (load-free by construction, since
      vertical loads vanish in plan), then the vertical solve where the load enters as the
      right-hand side. Our pipeline already has this order; this spec writes it down as the
-     reference architecture, and the horizontal equilibrium station (its own spec, awaiting
-     Param's section 6 answers) is step one's missing half for hand-drawn patterns.
+     reference architecture, and the TNA Horizontal component (its own spec,
+     now ruled) is step one's missing half for hand-drawn patterns.
 
 RULE 2.5. DIAGNOSTICS. The worker ships per-solve: rounds run, total load per round, final
 relative drift, converged or fenced. The chin carries one line: "self-weight settled in K rounds
@@ -89,7 +89,8 @@ say what mode the weight was evaluated in.
    Warning names the drift.
 4. Finiteness guard: inject a NaN through the test seam, assert the named error carries a vertex
    key and round number.
-5. The Remark of rule 2.4 appears exactly when a surface load replaces nodal loads.
+5. Rule 2.4(b): a canvas with BOTH self-weight and nodal loads wired gets both, additive; the
+   diagnostics carry the two totals separately; proved red by restoring the pz = 0.0 zeroing.
 6. Python-side: tests/test_tna_stages.py gains the refinement loop's unit coverage (rounds,
    tolerance, fence) against a hand-built fixture; the existing stage tests keep passing
    unchanged, since a zero-density solve with persisted loads is exactly what natural mode
@@ -97,7 +98,7 @@ say what mode the weight was evaluated in.
 
 ## 4. Out of scope, said so nobody reinvents it
 
-The horizontal equilibrium station (its own spec, awaiting Param's answers). Any change to
+The horizontal equilibrium station (its own spec, now RULED: TNA Horizontal, its own wave after this one). Any change to
 RhinoVAULT sign conventions beyond retiring the density path. compas_tna itself is never edited:
 everything lives in our worker layer. The envelope-normalised total-weight rescale
 (meshenvelope.py's trick) is noted as a future refinement of rule 2.2's evaluation, not built.
