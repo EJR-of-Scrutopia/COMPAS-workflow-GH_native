@@ -362,21 +362,24 @@ public sealed class SkinComponent : NativeComponentBase
                     "larger Min Piece for bigger stones, is the remedy.");
             }
 
-            // A band the engine REFUSED because the level curves changed
-            // component count across it (a low loop splitting into
-            // separate strips higher up, a two-hump barrel). The engine
-            // records the heights in D; the canvas has to be told there
-            // is a HOLE, because an author who only sees the cells would
-            // read the gap as a pattern he chose. The heights themselves
-            // are named by TransitionWarningLine below.
-            string? transitionLine = TransitionWarningLine(
+            // A SEAM, where the level curves change component count and the
+            // two course families stop corresponding. It used to be a HOLE
+            // and this used to be a Warning; the closer band of the seam
+            // spec of 2026-09-04 covers the interval, so it is a REMARK, and
+            // it says what the author now needs to know: that the skin
+            // changes species there, where, and with how many stones. The
+            // heights and the wording are TransitionSeamLine's, which reads
+            // the same TransitionWhere the engine's own diagnostics line
+            // reads, so the two readings of one seam cannot drift apart.
+            string? transitionLine = TransitionSeamLine(
                 generated.TransitionBands,
+                generated.CloserCells,
                 generated.TransitionIntervals,
                 generated.FieldKind);
             if (transitionLine is not null)
             {
                 AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning, transitionLine);
+                    GH_RuntimeMessageLevel.Remark, transitionLine);
             }
 
             // Every cell the pattern proposed and did not deliver, of all
@@ -704,6 +707,40 @@ public sealed class SkinComponent : NativeComponentBase
             " skipped where the level curves split, so the skin has a " +
             "HOLE at those heights and this pattern does not cover the " +
             "surface." + where;
+    }
+
+    /// <summary>
+    /// The SEAM line, or null where the pattern found none: rule 2.5 of the
+    /// 2026-09-04 seam spec, which turns this message from a Warning about a
+    /// hole into a Remark about a change of species.
+    ///
+    /// TransitionWarningLine above is KEPT and is not dead: it is the
+    /// wording for a refusal the closer did not cover, and a pattern that
+    /// refuses an interval and lays no stone in it still has a hole and
+    /// still deserves a Warning. What has changed is that the courses engine
+    /// no longer produces that case on any fixture, so the line the canvas
+    /// sees is this one.
+    /// </summary>
+    internal static string? TransitionSeamLine(
+        int seams,
+        int stones,
+        IReadOnlyList<(double Low, double High)> intervals,
+        string fieldKind)
+    {
+        if (seams <= 0)
+            return null;
+        if (stones <= 0)
+            return TransitionWarningLine(seams, intervals, fieldKind);
+        string where = intervals.Count > 0
+            ? " " + SkinPatterns.TransitionWhere(intervals, fieldKind) + "."
+            : ".";
+        return
+            $"{seams} seam" + (seams == 1 ? " was" : "s were") +
+            $" CLOSED with {stones} stone" +
+            (stones == 1 ? string.Empty : "s") +
+            " of a closer band cut along the seam, because the level " +
+            "curves stop corresponding there and no ordinary course can " +
+            "bond across it." + where;
     }
 
     /// <summary>

@@ -2397,6 +2397,21 @@ alternative and its reason are worth more later than the ruling itself.
    an explicit critical-point solve, which is exact and needs a saddle classifier the engine does not
    have and this wave cannot carry beside everything else in it. A bounded 5.5 mm hole or a later
    wave for the exact answer: his call, and rule 8.2.6 marks the departure as mine until he makes it.
+
+   ERRATUM, 2026-09-04. THIS ITEM IS CLOSED, and by neither of the two answers it offered him. It is
+   closed by the CLOSER BAND of the seam spec of 2026-09-04: the refused interval is covered by
+   stones of its own species, built from the surface's own level sets at the two refused levels
+   rather than from a correspondence between the two course families, cut along the seam the seed
+   identity of that spec's rule 1.1 recovers, and emitted as ordinary cells at the band's own course.
+   There is no residual hole left to bound and no critical-point solve was needed. Measured on
+   Param's own crown arch, the refused interval's own plan area comes back covered to 99.95 per cent
+   at S 0.10 and CH 0.30 and to 99.91 per cent at S 0.17 and CH 0.375, and on the two-hump barrel to
+   92.87 per cent. The wording goes with the hole: what read "Transition bands skipped" now reads
+   "1 seam was CLOSED with N stones between d=a and d=b", and it is a Remark and not a Warning.
+   What is left of this item is a smaller and better-stated question, carried in the seam spec's own
+   honesty bounds rather than here: where the slab PINCHES, as the two-hump barrel's does at each of
+   its three ridge dips, the two families bound it with ENDS rather than with sides and no ribbon
+   between two curves reaches into the lune. That is the 7.13 per cent.
 4. THE CAP THAT CANNOT BE SPLIT, which is the honest residue of his own crown-cap ruling and not a
    reopening of it. The split of section 2.6 needs an inner level whose curve is under the maximum,
    and on a dome whose plan is not a circle there may be none: the cut locus is a segment rather than
