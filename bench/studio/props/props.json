@@ -165,6 +165,138 @@
       "licence": "CC0 1.0",
       "source": "https://poly.pizza/m/J6bhnc2wFP",
       "triangles": 108
+    },
+    {
+      "key": "figure-woman",
+      "label": "Figure standing",
+      "file": "figure-woman.glb",
+      "group": "scale",
+      "heightMetres": 1.68,
+      "credit": "Animated Woman by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/9kF7eTDbhO",
+      "triangles": 1908
+    },
+    {
+      "key": "figure-worker",
+      "label": "Worker",
+      "file": "figure-worker.glb",
+      "group": "scale",
+      "heightMetres": 1.8,
+      "credit": "Worker by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/Yg2bQZO6Hj",
+      "triangles": 3350
+    },
+    {
+      "key": "chair",
+      "label": "Chair",
+      "file": "chair.glb",
+      "group": "furniture",
+      "heightMetres": 0.9,
+      "credit": "Chair by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/iMNqRzPwwe",
+      "triangles": 216
+    },
+    {
+      "key": "grass",
+      "label": "Grass",
+      "file": "grass.glb",
+      "group": "planting",
+      "heightMetres": 0.35,
+      "credit": "Grass by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/vUJjrRsFp4",
+      "triangles": 155
+    },
+    {
+      "key": "flowers",
+      "label": "Flowers",
+      "file": "flowers.glb",
+      "group": "planting",
+      "heightMetres": 0.4,
+      "credit": "Flowers by CreativeTrio",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/RP8p3h7JHJ",
+      "triangles": 496
+    },
+    {
+      "key": "rock",
+      "label": "Rock",
+      "file": "rock.glb",
+      "group": "planting",
+      "heightMetres": 0.9,
+      "credit": "Rock by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/Z6M4GNkgWt",
+      "triangles": 160
+    },
+    {
+      "key": "scaffold",
+      "label": "Scaffold",
+      "file": "scaffold.glb",
+      "group": "site",
+      "heightMetres": 2.5,
+      "credit": "Scaffolding by lakescorp",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/AYQd5RQ8w4",
+      "triangles": 384
+    },
+    {
+      "key": "ladder",
+      "label": "Ladder",
+      "file": "ladder.glb",
+      "group": "site",
+      "heightMetres": 2.4,
+      "credit": "Ladder by CreativeTrio",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/p1RR8Ls9EH",
+      "triangles": 220
+    },
+    {
+      "key": "barrel",
+      "label": "Barrel",
+      "file": "barrel.glb",
+      "group": "site",
+      "heightMetres": 0.9,
+      "credit": "Barrel by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/zjCQP1TAci",
+      "triangles": 1312
+    },
+    {
+      "key": "bin",
+      "label": "Bin",
+      "file": "bin.glb",
+      "group": "street",
+      "heightMetres": 1.0,
+      "credit": "Trash Bin by CreativeTrio",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/AAX1n0Bt0v",
+      "triangles": 238
+    },
+    {
+      "key": "dumpster",
+      "label": "Skip",
+      "file": "dumpster.glb",
+      "group": "site",
+      "heightMetres": 1.3,
+      "credit": "Dumpster by Kay Lousberg",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/QmYKHtUnxb",
+      "triangles": 126
+    },
+    {
+      "key": "bollard",
+      "label": "Bollard",
+      "file": "bollard.glb",
+      "group": "street",
+      "heightMetres": 1.0,
+      "credit": "Fence Pillar by Kay Lousberg",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/O8wNXcCDLL",
+      "triangles": 94
     }
   ]
 }

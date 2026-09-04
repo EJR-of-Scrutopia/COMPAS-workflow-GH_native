@@ -18,3 +18,15 @@ cone             Traffic Cone               Quaternius     https://poly.pizza/m/
 barrier          Traffic Barrier            Quaternius     https://poly.pizza/m/nugx3heueH
 fence            Metal Fence                Quaternius     https://poly.pizza/m/qWKhREFj7H
 pallet           Pallet                     Kenney         https://poly.pizza/m/J6bhnc2wFP
+figure-woman     Animated Woman             Quaternius     https://poly.pizza/m/9kF7eTDbhO
+figure-worker    Worker                     Quaternius     https://poly.pizza/m/Yg2bQZO6Hj
+chair            Chair                      Quaternius     https://poly.pizza/m/iMNqRzPwwe
+grass            Grass                      Quaternius     https://poly.pizza/m/vUJjrRsFp4
+flowers          Flowers                    CreativeTrio   https://poly.pizza/m/RP8p3h7JHJ
+rock             Rock                       Quaternius     https://poly.pizza/m/Z6M4GNkgWt
+scaffold         Scaffolding                lakescorp      https://poly.pizza/m/AYQd5RQ8w4
+ladder           Ladder                     CreativeTrio   https://poly.pizza/m/p1RR8Ls9EH
+barrel           Barrel                     Quaternius     https://poly.pizza/m/zjCQP1TAci
+bin              Trash Bin                  CreativeTrio   https://poly.pizza/m/AAX1n0Bt0v
+dumpster         Dumpster                   Kay Lousberg   https://poly.pizza/m/QmYKHtUnxb
+bollard          Fence Pillar               Kay Lousberg   https://poly.pizza/m/O8wNXcCDLL
