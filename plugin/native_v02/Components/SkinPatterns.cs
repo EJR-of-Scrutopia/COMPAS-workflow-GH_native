@@ -4377,6 +4377,51 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// THE FACE A POINT IS READ OFF, whether or not the point is on the
+    /// mesh at all: the face under it in plan, or, where none contains it,
+    /// the face whose PLAN CENTROID is nearest. Minus one only for a net
+    /// with no faces, which is the one case neither caller can index.
+    ///
+    /// EXTRACTED 2026-09-04 (spec section 7 item 5). The eighteen-line
+    /// nearest-face loop stood twice, once in <see cref="LevelAt"/> and
+    /// once in <see cref="NormalAt"/>, and only the second carried the
+    /// empty-net guard: the first would have indexed net.Faces[0] on a net
+    /// with none. One helper carries the guard and both callers ask it, so
+    /// the two siblings cannot drift apart about which face answers for a
+    /// point, which is a thing the weld depends on.
+    ///
+    /// ANSWER-PRESERVING, and proved so rather than argued: NormalAt and
+    /// LevelAt were dumped at round-trip precision over all 8870 cell
+    /// corners of Param's own crown arch and a 484-point grid well off it,
+    /// before and after the extraction, and the two dumps hash to the same
+    /// SHA256, 86F5A147FAF6AEE691973C4DC4F56501314483C18A6E0479CB53F203D92FE45D.
+    /// </summary>
+    private static int FaceFor(SkinNet net, double[] at)
+    {
+        if (net.Faces.Count == 0)
+            return -1;
+        int face = FaceUnder(net, at);
+        if (face >= 0)
+            return face;
+        int nearest = 0;
+        double best = double.PositiveInfinity;
+        for (int candidate = 0; candidate < net.Faces.Count; candidate++)
+        {
+            int[] corners = net.Faces[candidate];
+            double cx = corners.Average(c => net.Vertices[c][0]);
+            double cy = corners.Average(c => net.Vertices[c][1]);
+            double distance =
+                ((cx - at[0]) * (cx - at[0])) + ((cy - at[1]) * (cy - at[1]));
+            if (distance < best)
+            {
+                best = distance;
+                nearest = candidate;
+            }
+        }
+        return nearest;
+    }
+
+    /// <summary>
     /// The field of rule 1.4.4 evaluated at a point: the piecewise-linear
     /// interpolant of the vertex Levels over the triangles. The point's face
     /// is found in plan and the value is the barycentric combination of that
@@ -4387,25 +4432,13 @@ internal static class SkinPatterns
     /// </summary>
     public static double LevelAt(SkinNet net, double[] at)
     {
-        int face = FaceUnder(net, at);
+        int face = FaceFor(net, at);
         if (face < 0)
         {
-            int nearest = 0;
-            double best = double.PositiveInfinity;
-            for (int candidate = 0; candidate < net.Faces.Count; candidate++)
-            {
-                int[] corners = net.Faces[candidate];
-                double cx = corners.Average(c => net.Vertices[c][0]);
-                double cy = corners.Average(c => net.Vertices[c][1]);
-                double distance =
-                    ((cx - at[0]) * (cx - at[0])) + ((cy - at[1]) * (cy - at[1]));
-                if (distance < best)
-                {
-                    best = distance;
-                    nearest = candidate;
-                }
-            }
-            face = nearest;
+            // A net with NO FACES carries no field to read. It reached
+            // net.Faces[0] before the shared helper landed, which is an
+            // index out of range rather than an answer.
+            return 0.0;
         }
         int[] triangle = net.Faces[face];
         double[] a = net.Vertices[triangle[0]];
@@ -4642,28 +4675,9 @@ internal static class SkinPatterns
     /// </summary>
     public static double[] NormalAt(SkinNet net, double[] at)
     {
-        if (net.Faces.Count == 0)
-            return new[] { 0.0, 0.0, 1.0 };
-        int face = FaceUnder(net, at);
+        int face = FaceFor(net, at);
         if (face < 0)
-        {
-            int nearest = 0;
-            double best = double.PositiveInfinity;
-            for (int candidate = 0; candidate < net.Faces.Count; candidate++)
-            {
-                int[] corners = net.Faces[candidate];
-                double cx = corners.Average(c => net.Vertices[c][0]);
-                double cy = corners.Average(c => net.Vertices[c][1]);
-                double distance =
-                    ((cx - at[0]) * (cx - at[0])) + ((cy - at[1]) * (cy - at[1]));
-                if (distance < best)
-                {
-                    best = distance;
-                    nearest = candidate;
-                }
-            }
-            face = nearest;
-        }
+            return new[] { 0.0, 0.0, 1.0 };
         int[] triangle = net.Faces[face];
         double[] a = net.Vertices[triangle[0]];
         double[] b = net.Vertices[triangle[1]];

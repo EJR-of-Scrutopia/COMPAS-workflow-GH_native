@@ -26860,6 +26860,23 @@ internal static class Program
                 "the answer is the finite fallback (0, 0, 1); got " +
                 $"({noFace[0]}, {noFace[1]}, {noFace[2]}).");
         }
+        // AND ITS SIBLING SURVIVES THE SAME NET (spec section 7 item 5).
+        // The eighteen-line nearest-face loop stood TWICE, and only
+        // NormalAt carried the empty-net guard: LevelAt indexed
+        // net.Faces[0] on a faceless net and threw where its sibling
+        // answered. One shared helper carries the guard now, and this is
+        // the assertion that says so; it reddens the moment the two drift
+        // apart again.
+        MethodInfo levelAt = RequirePublicStatic(patterns, "LevelAt");
+        double bareLevel = (double)levelAt.Invoke(
+            null, new object?[] { bare, new[] { 0.2, 0.2, 0.0 } })!;
+        if (bareLevel != 0.0)
+        {
+            throw new InvalidOperationException(
+                "LevelAt on a net with NO FACES must answer finitely, the " +
+                "way NormalAt already did, rather than indexing a face " +
+                $"that is not there; it gave {bareLevel}.");
+        }
 
         // ---- AND A FACE WITH NO PLAN AREA TO SPEAK OF, at the SAME 1e-15
         // LevelAt refuses to divide by on the SAME triangle. Barycentric
