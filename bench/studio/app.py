@@ -380,10 +380,16 @@ def schedule_restart(delay: float = RESTART_DELAY) -> None:
     def go():
         time.sleep(delay)
         try:
-            # A console of its own, because that is what the shortcut gives
-            # and where the studio's log has always been read. The old
-            # window goes when the old process does.
-            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            # NO console, because that is what the shortcut gives now: the
+            # studio runs under pythonw so no terminal's closing can kill
+            # it, and a replacement spawned WITH a console would undo that
+            # for every studio born of the Restart button. CREATE_NO_WINDOW
+            # keeps a console-build python hidden too; either way the child
+            # arrives without usable stdio, and serve.py's ensure_stdio()
+            # gives it a log file before anything prints. (A print to the
+            # None stdio of a bare pythonw child killed the replacement
+            # AFTER it had stopped its parent, which vanished the studio.)
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             subprocess.Popen(command, cwd=working, close_fds=True,
                              creationflags=flags)
         except OSError as error:

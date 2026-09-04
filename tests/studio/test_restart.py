@@ -217,3 +217,63 @@ def test_the_button_is_at_the_very_bottom():
         "Param asked for it at the very bottom, under the three views"
     )
     assert page.index('id="restart-studio"') < page.index("</aside>")
+
+
+def test_a_child_born_without_stdio_gets_a_log_file_before_it_prints():
+    """The studio runs under pythonw so no terminal's closing can kill it,
+    and the Restart button's replacement child arrives with sys.stdout and
+    sys.stderr of None. Its first print then raised, AFTER it had already
+    stopped its parent: the studio vanished, and every thumbnail and HDRI
+    on the open page failed with 'would not load: undefined'."""
+
+    import serve
+
+    kept_out, kept_err = sys.stdout, sys.stderr
+    import os as os_module
+    kept_env = os_module.environ.get("LOCALAPPDATA")
+    try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as home:
+            os_module.environ["LOCALAPPDATA"] = home
+            sys.stdout = None
+            sys.stderr = None
+            serve.ensure_stdio()
+            assert sys.stdout is not None and sys.stderr is not None
+            print("a replacement studio says hello")
+            sys.stdout.flush()
+            logs = list((Path(home) / "BenchStudio" / "logs").glob(
+                "server-*-respawn.log"))
+            assert logs, "the rescued stream must be a readable log file"
+            assert "says hello" in logs[0].read_text(encoding="utf-8")
+            # Close before the tempdir cleans up, or Windows refuses to
+            # delete a file the rescued stream still holds open.
+            sys.stdout.close()
+    finally:
+        sys.stdout, sys.stderr = kept_out, kept_err
+        if kept_env is None:
+            os_module.environ.pop("LOCALAPPDATA", None)
+        else:
+            os_module.environ["LOCALAPPDATA"] = kept_env
+
+
+def test_streams_that_exist_are_left_alone():
+    """The launcher's redirects land the logs where they always did; the
+    rescue is only for streams that are actually absent."""
+
+    import serve
+
+    kept_out, kept_err = sys.stdout, sys.stderr
+    serve.ensure_stdio()
+    assert sys.stdout is kept_out and sys.stderr is kept_err
+
+
+def test_the_restart_spawn_opens_no_console():
+    """CREATE_NEW_CONSOLE would pop a terminal on every Restart press and
+    tie the replacement's life to it, undoing the whole no-console policy.
+    CREATE_NO_WINDOW keeps even a console-build python hidden."""
+
+    import inspect
+
+    body = inspect.getsource(studio_app.schedule_restart)
+    assert "CREATE_NO_WINDOW" in body
+    assert "CREATE_NEW_CONSOLE" not in body

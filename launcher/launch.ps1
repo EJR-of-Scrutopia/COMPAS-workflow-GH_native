@@ -86,6 +86,22 @@ if ($existingLogs.Count -ge 10) {
 }
 
 $servePy = Join-Path $repoRoot "bench\studio\serve.py"
+
+# Who owns the port BEFORE this launch. Readiness below is "health answers
+# from a different process than that": during a handover the old studio
+# answers until the new one stops it, so the pid changing is the one signal
+# that cannot be faked by the very server being replaced. (The err-log was
+# watched for uvicorn's banner before, but under pythonw the stub does not
+# always hand the stderr pipe through, and the banner never arrives.)
+function Get-HealthPid([int]$onPort) {
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$onPort/api/health" -TimeoutSec 2
+        if ($health.studio) { return [string]$health.pid }
+    } catch { }
+    return $null
+}
+$previousPid = Get-HealthPid $port
+
 if (-not $Quiet) {
     Write-Host "Starting Bench Studio on port $port (logging to $logFile)..."
 }
@@ -94,25 +110,17 @@ $serverProcess = Start-Process -FilePath $venvPython -ArgumentList "`"$servePy`"
     -RedirectStandardOutput $logFile -RedirectStandardError $errFile -PassThru
 Set-Content -LiteralPath $pidFile -Value $serverProcess.Id
 
-# Wait for THIS run's own log to say the server has bound. Not "the port
-# answers" (during a handover the OLD studio still answers until the new
-# one stops it), and not a pid match against $serverProcess (a venv's
-# python.exe is a stub that runs the real interpreter as a child, so the
-# pid that binds the port is never the pid Start-Process returned). The
-# log file is stamped per run, so its "Uvicorn running" line can only
-# mean this launch succeeded. uvicorn logs to stderr, hence $errFile.
 $deadline = (Get-Date).AddSeconds(40)
 $up = $false
 while ((Get-Date) -lt $deadline) {
-    if (Test-Path $errFile) {
-        $said = Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
-        if ($said -match "Uvicorn running on") { $up = $true; break }
-    }
-    if ($serverProcess.HasExited) {
-        # Exited without binding: portcheck refused, or the boot failed.
-        # Give the redirects a beat to flush before reporting.
-        Start-Sleep -Milliseconds 300
-        break
+    $answering = Get-HealthPid $port
+    if ($answering -and $answering -ne $previousPid) { $up = $true; break }
+    if ($serverProcess.HasExited -and -not $answering) {
+        # The stub exits once its child is up, so an exit alone is not a
+        # failure; an exit with nothing answering is. Give the redirects a
+        # beat to flush before reporting.
+        Start-Sleep -Milliseconds 700
+        if (-not (Get-HealthPid $port)) { break }
     }
     Start-Sleep -Milliseconds 400
 }

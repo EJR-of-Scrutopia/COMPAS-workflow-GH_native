@@ -6,12 +6,50 @@ interpreter if the picker chose something else, then serve on localhost.
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[0] / "demo"))
 sys.path.insert(0, str(HERE))
+
+
+def ensure_stdio() -> None:
+    """Give absent standard streams a real file, before anything prints.
+
+    The studio runs under pythonw (no console, so no terminal's closing can
+    kill it), and a pythonw process spawned WITHOUT redirected handles gets
+    sys.stdout and sys.stderr of None. print() to None raises, so the first
+    casualty was the Restart button: its replacement child stopped the old
+    server, then died on its own first print before ever binding the port,
+    and the studio simply vanished. Measured live: port empty, no log,
+    'Failed to fetch' across the page.
+
+    Streams that exist are left alone (the launcher's redirects land the
+    logs where they always did); only a None stream gets the fallback file.
+    """
+
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    logs = Path(os.environ.get("LOCALAPPDATA")
+                or tempfile.gettempdir()) / "BenchStudio" / "logs"
+    try:
+        logs.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stream = open(logs / "server-{}-respawn.log".format(stamp),
+                      "a", encoding="utf-8", buffering=1)
+    except OSError:
+        stream = open(os.devnull, "a", encoding="utf-8")
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
+ensure_stdio()
 
 from _bootstrap import ensure_venv  # noqa: E402
 
