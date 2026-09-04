@@ -166,7 +166,19 @@ internal sealed class LiveUploader : IDisposable
     private string _lastOutcome = NothingBuiltYet;
     private bool _lastOutcomeFailed;
     private bool _disposed;
-    private bool _building;
+    // HOW MANY BUILDS ARE RUNNING, counted rather than asserted. It was one
+    // flag, set by whoever started a build and cleared by whichever build
+    // finished, which is only sound while exactly one build can be in flight.
+    // A write does not wait its turn (that is the whole of rule 3.2), so a
+    // Write landing during a send used to clear the flag the SEND was
+    // holding, and the ledger is not latched until the send's own tail: every
+    // rest tick after that read all three documents as moved, found the wire
+    // busy, re-armed the timer and built again, for as long as the send took.
+    // Against an unreachable studio that is ninety seconds of full builds,
+    // animation sweep and worker round trip included, on an idle canvas.
+    // A build now releases only its own count, and the gate a build has to
+    // pass is this count AND _sending, so a send still holds it.
+    private int _buildsRunning;
     private bool _sending;
     private long _latestStarted;
     private Phase _phase = Phase.NeverSent;
@@ -397,7 +409,8 @@ internal sealed class LiveUploader : IDisposable
     }
 
     /// <summary>
-    /// Build NOW, on the caller's own thread, and hand back what was built.
+    /// Build NOW, on the caller's own thread, and hand back THIS REQUEST'S
+    /// own product, or null when it produced none.
     ///
     /// This is the write path and nothing else: a write is a deliberate act,
     /// so it builds on the solve that asked for it rather than half a second
@@ -405,11 +418,20 @@ internal sealed class LiveUploader : IDisposable
     /// and a build already running finishes and is discarded, exactly as a
     /// superseded one is.
     ///
+    /// IT RETURNS ITS OWN BUILD AND NOT THE LAST ADOPTED ONE. Reading the
+    /// adopted build back out of the field meant that a build which THREW
+    /// (a failed clone, a failed serialisation) handed the caller the
+    /// PREVIOUS solve's documents, which the write then put on disk under
+    /// this solve's names and reported as written, with nothing anywhere
+    /// saying so while Live was off. A silent stale write is the one thing
+    /// the design singles out about Write.
+    ///
     /// The send that follows, if Live is on and anything moved, is not
     /// synchronous: nothing waits on a studio while a solve is running.
     /// </summary>
     public Built? BuildNow(Pending pending)
     {
+        long sequence;
         lock (_gate)
         {
             if (_disposed)
@@ -418,18 +440,15 @@ internal sealed class LiveUploader : IDisposable
             _timer?.Dispose();
             _timer = null;
             _phase = Phase.Building;
-        }
-        long sequence;
-        lock (_gate)
-        {
             sequence = ++_latestStarted;
-            _building = true;
+            // A write does not wait for the wire to be free, so this may be
+            // the second build in flight. It counts itself in and out again;
+            // what it must not do is release a count somebody else took.
+            _buildsRunning++;
         }
-        RunAsync(pending, sequence, awaitSend: false)
+        return RunAsync(pending, sequence, awaitSend: false)
             .GetAwaiter()
             .GetResult();
-        lock (_gate)
-            return _built;
     }
 
     /// <summary>
@@ -500,13 +519,21 @@ internal sealed class LiveUploader : IDisposable
                 // re-arms the timer for whatever is pending by then, so the
                 // newer request is built after the older one finishes and
                 // the older one's product is discarded.
-                if (_disposed || _building)
+                //
+                // A SEND HOLDS THIS GATE TOO, and holds it in its own name
+                // rather than by borrowing the build count: no set is built
+                // while documents are on the wire, because the ledger of what
+                // the studio holds is not latched until that send's tail and
+                // a build before it would read every document as moved. The
+                // send's own tail re-arms the timer for whatever is pending
+                // by then, so nothing is lost by waiting.
+                if (_disposed || _buildsRunning > 0 || _sending)
                     return;
                 set = _pending;
                 if (set is null)
                     return;
                 _pending = null;
-                _building = true;
+                _buildsRunning++;
                 started = true;
                 _phase = Phase.Building;
                 sequence = ++_latestStarted;
@@ -518,13 +545,13 @@ internal sealed class LiveUploader : IDisposable
             // A timer callback runs on a thread-pool thread, where an
             // escaping exception is not a failed build but a killed
             // process. What must not be dropped is the uploader's ability
-            // to build the next set, so the single-flight flag goes back.
+            // to build the next set, so this build's own count goes back.
             if (!started)
                 return;
             try
             {
                 lock (_gate)
-                    _building = false;
+                    _buildsRunning--;
             }
             catch (Exception)
             {
@@ -537,11 +564,16 @@ internal sealed class LiveUploader : IDisposable
     /// component's own closure and carries the component's own cancellation;
     /// the send carries the uploader's, because Live going off must stop a
     /// send and must not stop a build.
+    ///
+    /// IT RETURNS WHAT IT BUILT, not what has been adopted: the write path
+    /// puts exactly this on disk, and a build that failed must hand back
+    /// nothing rather than the last set that worked.
     /// </summary>
-    private async Task RunAsync(Pending set, long sequence, bool awaitSend)
+    private async Task<Built?> RunAsync(Pending set, long sequence, bool awaitSend)
     {
         Built? built = null;
         string? failure = null;
+        bool released = false;
         try
         {
             built = await set.Build(material => WantMesh(set, material))
@@ -561,15 +593,18 @@ internal sealed class LiveUploader : IDisposable
         {
             lock (_gate)
             {
-                // The single-flight flag is put back in EVERY branch below
-                // except the one that starts a send: a send holds it too, so
-                // no build can begin while documents are on the wire. That is
-                // what makes the "a send was already running" case below a
-                // corner rather than the ordinary one, and it costs nothing:
-                // a build landing during a send could not send anyway.
-                _building = false;
+                // THIS BUILD'S OWN COUNT, and nobody else's. A send that
+                // starts below takes the gate in its own name (_sending), so
+                // releasing here cannot open the gate under a send in
+                // flight, which is what a shared flag did when a write built
+                // while the wire was busy. That is also what makes the "a
+                // send was already running" case below a corner rather than
+                // the ordinary one, and it costs nothing: a build landing
+                // during a send could not send anyway.
+                _buildsRunning--;
+                released = true;
                 if (_disposed)
-                    return;
+                    return built;
                 // SUPERSEDED: a newer request arrived, or a newer build has
                 // already started and landed. This one finished, and is
                 // discarded rather than shown, because showing it would put
@@ -586,7 +621,7 @@ internal sealed class LiveUploader : IDisposable
                             DebounceMilliseconds,
                             Timeout.Infinite);
                     }
-                    return;
+                    return built;
                 }
                 if (failure is not null || built is null)
                 {
@@ -612,22 +647,22 @@ internal sealed class LiveUploader : IDisposable
                     send = moved.Count > 0 && !_sending;
                     if (send)
                     {
+                        // AND _sending HOLDS THE BUILD GATE, from here to the
+                        // send's own tail: no build begins while documents
+                        // are on the wire, because one send at a time is what
+                        // keeps the ledger and the outcome text describing
+                        // the same set. It is held in the send's own name so
+                        // that a build finishing meanwhile cannot release it.
                         _sending = true;
-                        // AND _building STAYS TRUE, held from here to the
-                        // send's own tail: a build that started now could
-                        // not send its documents, because one send at a time
-                        // is what keeps the ledger and the outcome text
-                        // describing the same set.
-                        _building = true;
                         _phase = Phase.Sending;
                         generation = _cancelGeneration;
                         token = _cancel.Token;
                     }
                     else if (moved.Count > 0)
                     {
-                        // A send was already on the wire, which takes two
-                        // writes overlapping, since every other path holds
-                        // the build flag across its send. These documents are
+                        // A send was already on the wire, which takes a WRITE
+                        // landing inside one, since every other path waits at
+                        // the gate the send holds. These documents are
                         // NOT dropped: the request goes back as pending and
                         // the next tick builds and sends it. Dropping them
                         // would leave the studio holding a set the canvas has
@@ -654,13 +689,19 @@ internal sealed class LiveUploader : IDisposable
         {
             try
             {
-                lock (_gate)
-                    _building = false;
+                // Only if the release above had not already happened: the
+                // count is this build's own and giving it back twice would
+                // let two builds through the gate at once.
+                if (!released)
+                {
+                    lock (_gate)
+                        _buildsRunning--;
+                }
             }
             catch (Exception)
             {
             }
-            return;
+            return built;
         }
 
         // The build first, because the outputs are the author's and the
@@ -669,7 +710,7 @@ internal sealed class LiveUploader : IDisposable
         if (announce)
             Announce();
         if (!send)
-            return;
+            return built;
         // The write path does not wait on a studio: the solve thread is in
         // here, and a set going to an unreachable server takes 30 seconds a
         // document.
@@ -677,9 +718,10 @@ internal sealed class LiveUploader : IDisposable
         {
             await SendAsync(set, moved, sequence, generation, token)
                 .ConfigureAwait(false);
-            return;
+            return built;
         }
         _ = Task.Run(() => SendAsync(set, moved, sequence, generation, token));
+        return built;
     }
 
     /// <summary>
@@ -906,10 +948,10 @@ internal sealed class LiveUploader : IDisposable
 
             lock (_gate)
             {
+                // The build gate goes back HERE, having been held from the
+                // build that started this send, so that no build could begin
+                // while the documents were on the wire.
                 _sending = false;
-                // Held from the build that started this send, so that no
-                // build could begin while the documents were on the wire.
-                _building = false;
                 if (!_disposed && sequence == _latestStarted)
                 {
                     // Not latched across a Cancel: that cleared the ledger on
@@ -947,15 +989,14 @@ internal sealed class LiveUploader : IDisposable
             // it in. This task is a discard, so a fault here is an
             // unobserved task exception: the outcome is lost in silence on
             // a default runtime and takes the process on one configured to
-            // throw. BOTH single-flight flags go back, the build's as well as
-            // the send's, so the next set can still be built and still go.
+            // throw. The send's hold on the build gate goes back, so the next
+            // set can still be built and still go. The build count is not
+            // touched: this send's own build gave that back before the send
+            // began, and taking one off here would be taking somebody else's.
             try
             {
                 lock (_gate)
-                {
                     _sending = false;
-                    _building = false;
-                }
             }
             catch (Exception)
             {
