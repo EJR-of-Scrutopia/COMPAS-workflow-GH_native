@@ -173,3 +173,45 @@ case with the mean of the triangle's three values, and the same reading is open 
 its three vertex normals, which would give a horizontal direction where the surface is vertical.
 It is NOT taken in this pass, because it is a change of answer rather than of tolerance and it is
 Param's to rule on.
+
+RULED, 2026-09-04. He took it. The mean of the three vertex normals is now the answer, and the
+reasoning and the ruling both live in section 6 of
+docs/superpowers/specs/2026-09-04-skin-offset-extrude-slider.md. Measured on the walled vault, six
+points on its two exactly vertical walls come back pointing OUT of their own wall by at least
+0.984, where every one of them read (0, 0, 1) before. Paragraph 8 above stands as the record of
+why the change was parked rather than taken in the earlier pass.
+
+## 6. ERRATUM, 2026-09-04, SECOND PART: RULE 5 AND ITS CHECK 4 ARE SUPERSEDED
+
+Written after docs/superpowers/specs/2026-09-04-skin-offset-extrude-slider.md was built. Rules 1 to
+4 of this document stand and are load-bearing. Rule 5 does not.
+
+9. THE PORT IS NO LONGER A TOGGLE. Rule 5's "Offset" ("OF") Boolean, defaulting TRUE, is replaced by
+"Extrude" ("EX"), a Number from 0 to 1 defaulting 0, at the SAME INDEX. Param's words of 2026-09-04:
+"Offset button doesnt mean the direction changes from surface normal to world Z, it will always be
+on the normal direction ... That means we can remove the button and put in this slider." An archived
+Boolean still casts: measured through the port itself, False reads 0 and True reads 1, so his canvas
+toggle at False lands on the new default and no wire is lost.
+
+10. THE (0, 0, Th) BRANCH IS DELETED, and rule 5's own description of it goes with it. Both ends of
+the slider are on the surface normal. Nothing in the engine may offset by a direction the surface
+does not own.
+
+11. SECTION 4 CHECK 4 DIES WITH THAT BRANCH. "NO REGRESSION IN THE EXTRUDE BRANCH. Offset OFF
+reproduces today's (0, 0, Th) translation exactly" is not a claim anything can make about an engine
+that has no such branch, and a pin on a deleted behaviour is worse than no pin: it would have to be
+satisfied by resurrecting the defect. The pin is deleted from tests/native_smoke. What stands where
+it stood is the opposite assertion, that NO offset anywhere on the dome's 45 degree flank is world
+Z, at three thicknesses and four stops of the slider.
+
+12. SECTION 4 CHECK 2 SURVIVES AS A DEFERRAL, restated. It asked for a cell refused under Offset OFF
+and built under Offset ON; the two modes are now the two ends of the slider. The mechanism is still
+asserted on hand-written corners; the count is still ZERO on every fixture at both ends; the owner
+is still scripts/rhino_skin_surface.py 12.5(i). The ONE-WAY GUARD that stood beside it is deleted,
+because its whole argument was that a vertical offset is parallel to every vertical edge at once
+where a surface normal is not, and there is no vertical offset any more.
+
+13. THE DATELINES. Several commits of this wave landed late on 2026-09-03 while carrying 2026-09-04
+datelines in their text, and the text is left as it is rather than corrected. The date written is
+the WORKING DATE the author was reasoning under, not the commit date; git carries the commit date
+and needs no help from the prose.

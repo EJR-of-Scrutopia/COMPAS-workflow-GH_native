@@ -56,6 +56,14 @@ dotnet run --project tests/native_smoke/Ananke.COMPAS.NativeSmoke.csproj -c Rele
   build 0 warnings 0 errors, harness exit 0 with exactly one DEFER (the coarse-net foot
   convergence, owned by spec sections 8.2 to 8.4, which nothing here touches).
 
+  AMENDED 2026-09-04. The DEFER set is TWO, not one, and the second is sanctioned rather than
+  an escape. It is the vertical edge of the offset spec section 4 check 2, restated for the
+  slider: some cell somewhere is refused for an annihilated wall at one end of Extrude and built
+  at the other. Its OWNER is scripts/rhino_skin_surface.py 12.5(i), run inside Rhino, which is
+  the only place a cell refusal can be counted at all. It is deferred because the mechanism is
+  real geometry, asserted on hand-written corners, while its REACH is refuted on every fixture
+  this harness can build, Param own net included: the count is zero at both ends everywhere.
+
 ---
 
 ### Task 1: the messages tell the truth, and a face is never thrown away
@@ -105,7 +113,9 @@ dotnet run --project tests/native_smoke/Ananke.COMPAS.NativeSmoke.csproj -c Rele
   SevenSidedCells; the transition warning carries an interval. Then break each covered line in
   turn, run the harness, record the RED text, restore, and re-run green.
 
-- [ ] **Step 6: build clean, harness green at exit 0 with one DEFER, clash scan, commit by path.**
+- [ ] **Step 6: build clean, harness green at exit 0 with TWO DEFERs (the coarse-net foot, owned
+  by spec sections 8.2 to 8.4, and the vertical edge, owned by scripts/rhino_skin_surface.py
+  12.5(i)), clash scan, commit by path.**
 
 ---
 
