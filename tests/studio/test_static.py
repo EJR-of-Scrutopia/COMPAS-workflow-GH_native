@@ -2176,12 +2176,16 @@ def test_the_ground_presets_swap_one_discs_material():
 
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "window.__studio = { state, scene, camera, controls, applyDayCycle }" in js, (
+    assert ("window.__studio = { state, scene, camera, controls, "
+            "applyDayCycle, placeProp }" in js), (
         "the probe rig reads app state through this hook, and frames "
         "detail captures through the camera and controls; applyDayCycle is "
         "exposed too (Task 3) so a probe can drive the day cycle directly "
         "instead of re-deriving its formula in probe script JS, which would "
-        "drift from the pure function it is meant to be checking")
+        "drift from the pure function it is meant to be checking; and "
+        "placeProp, so a probe can populate a scene without synthesising a "
+        "pointer gesture per prop, which is how a check nobody runs gets "
+        "written")
 
 
 def test_the_postprocessing_addons_are_vendored():

@@ -1,0 +1,87 @@
+Every model in this folder is from Poly Haven and is CC0 1.0.
+Poly Haven asks for no credit and this file is offered anyway.
+
+dandelion_01
+  Dandelion
+  https://polyhaven.com/a/dandelion_01
+dead_tree_trunk_02
+  Dead trunk
+  https://polyhaven.com/a/dead_tree_trunk_02
+fern_02
+  Fern
+  https://polyhaven.com/a/fern_02
+fir_sapling_medium
+  Fir sapling
+  https://polyhaven.com/a/fir_sapling_medium
+fir_tree_01
+  Fir
+  https://polyhaven.com/a/fir_tree_01
+flower_gazania
+  Gazania
+  https://polyhaven.com/a/flower_gazania
+island_tree_02
+  Island tree
+  https://polyhaven.com/a/island_tree_02
+nettle_plant
+  Nettles
+  https://polyhaven.com/a/nettle_plant
+pine_tree_01
+  Pine
+  https://polyhaven.com/a/pine_tree_01
+potted_plant_01
+  Potted plant
+  https://polyhaven.com/a/potted_plant_01
+searsia_lucida
+  Searsia
+  https://polyhaven.com/a/searsia_lucida
+tree_small_02
+  Broadleaf tree
+  https://polyhaven.com/a/tree_small_02
+tree_stump_01
+  Tree stump
+  https://polyhaven.com/a/tree_stump_01
+Barrel_02
+  Barrel
+  https://polyhaven.com/a/Barrel_02
+boulder_01
+  Small boulder
+  https://polyhaven.com/a/boulder_01
+cement_bag
+  Cement bag
+  https://polyhaven.com/a/cement_bag
+namaqualand_boulder_02
+  Boulder
+  https://polyhaven.com/a/namaqualand_boulder_02
+namaqualand_boulders_01
+  Boulders
+  https://polyhaven.com/a/namaqualand_boulders_01
+namaqualand_stones_01
+  Stones
+  https://polyhaven.com/a/namaqualand_stones_01
+rock_moss_set_01
+  Mossy rocks
+  https://polyhaven.com/a/rock_moss_set_01
+sand_rocks_small_01
+  Sand rocks
+  https://polyhaven.com/a/sand_rocks_small_01
+WetFloorSign_01
+  Wet floor sign
+  https://polyhaven.com/a/WetFloorSign_01
+concrete_road_barrier
+  Road barrier
+  https://polyhaven.com/a/concrete_road_barrier
+fire_hydrant
+  Fire hydrant
+  https://polyhaven.com/a/fire_hydrant
+modular_chainlink_fence
+  Chainlink fence
+  https://polyhaven.com/a/modular_chainlink_fence
+modular_electricity_poles
+  Power pole
+  https://polyhaven.com/a/modular_electricity_poles
+utility_box_01
+  Utility box
+  https://polyhaven.com/a/utility_box_01
+water_manhole_cover
+  Manhole cover
+  https://polyhaven.com/a/water_manhole_cover

@@ -475,9 +475,34 @@ Whole folder under 60 MB; entourage on screen under 1.2M triangles. A prop
 that misses its budget fails the build rather than quietly bloating the
 scene.
 
-`meshopt_decoder.module.js` is vendored, one file, and wired beside the
-existing `GLTFLoader`. KTX2 is not, in this wave: it needs seven files and
-a `detectSupport` against the renderer, and it deserves its own change.
+**Nothing is vendored, in the end.** The plan called for
+`meshopt_decoder.module.js`; the pipeline uses `KHR_mesh_quantization`
+instead, which three's own GLTFLoader supports natively and which does the
+same job for geometry that is already being decimated. KTX2 is still out of
+scope: seven files and a `detectSupport` against the renderer, and it
+deserves its own change.
+
+**Measured, 2026-09-04.** 28 props built. The non-vegetation set comes out
+between 40 KB and 1.8 MB apiece and is unremarkable. The trees are the
+whole problem and the research called it: `pine_tree_01` is 17.2 million
+triangles behind 958 MB of source, and asked for 90,000 it stopped at
+247,000 and weighed 26 MB. Five trees were 68 MB of an 80 MB library.
+
+So a canopy gets its own class: 60,000 triangles, 512 pixel maps, and a
+third simplify pass at a wide enough error bound to let a leaf go, because
+meshopt will not cross a seam it has been told to keep and a canopy is
+mostly seams. That brings the five to between 2.7 and 5.8 MB and the folder
+to 37 MB. A tree still costs three megabytes because it is a photoscan of a
+tree.
+
+**One trap, and it cost an hour.** `@gltf-transform/functions` pulls
+`ndarray-pixels`, which depends on its OWN `sharp` at a different version,
+so npm installs two. Two native libvips builds in one process do not fail
+loudly: the second `.node` fails to `dlopen`, and thereafter every resize on
+the FIRST throws "colourspace: parameter space not set" while `metadata()`
+goes on working perfectly. The symptom is a texture pipeline that reports
+success and silently changes nothing. An `overrides` entry pinning one
+version is the whole fix, and there is a test that keeps it pinned.
 
 `castShadow` goes off for grass, flowers and ground litter, set from the
 manifest `group`. Draw calls become the bottleneck before triangles do, and

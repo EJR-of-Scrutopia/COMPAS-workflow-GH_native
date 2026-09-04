@@ -1016,6 +1016,20 @@ async function loadPropLibrary() {
   if (propsAwaitingLibrary) restoreProps();
 }
 
+// Whose shadow is worth a shadow pass. Draw calls become the bottleneck
+// before triangles do, and a tuft of grass casting a shadow doubles its
+// cost for something nobody will ever look for.
+const SHADOWLESS = new Set(["planting"]);
+
+function castsShadow(entry) {
+  if (!entry) return true;
+  if (!SHADOWLESS.has(entry.group)) return true;
+  // A tree is planting and its shadow is half the reason to place it; a
+  // dandelion is planting too. The size decides, not the group alone.
+  const height = entry.sizeMetres ? entry.sizeMetres[1] : null;
+  return height === null || height > 1.2;
+}
+
 async function loadPropTemplate(entry) {
   const gltf = await propLoader.loadAsync("/api/props/" + encodeURIComponent(entry.file));
   const model = gltf.scene;
@@ -1024,15 +1038,25 @@ async function loadPropTemplate(entry) {
   model.updateMatrixWorld(true);
   const measured = new THREE.Box3().setFromObject(model);
   const height = measured.max.z - measured.min.z;
-  const wanted = +entry.heightMetres > 0 ? +entry.heightMetres : 1;
-  if (height > 0.0001) model.scale.multiplyScalar(wanted / height);
+  // Scale ONLY when the manifest declares a height, and trust the file
+  // otherwise. The old fallback was `: 1`, which quietly made every prop
+  // exactly one metre tall: a photoscanned pine tree came into the scene the
+  // size of a fire hydrant, and so did the fire hydrant. Poly Haven's models
+  // are authored in metres and are already right; the hand-built props
+  // declare a height because they are not modelled to any scale at all.
+  const wanted = +entry.heightMetres > 0 ? +entry.heightMetres : null;
+  if (wanted && height > 0.0001) model.scale.multiplyScalar(wanted / height);
   model.updateMatrixWorld(true);
   // Stood on the ground rather than centred on it: a prop's feet are its
   // origin as far as the scene is concerned.
   const stood = new THREE.Box3().setFromObject(model);
   model.position.z -= stood.min.z;
+  // Not everything casts. Draw calls become the bottleneck before triangles
+  // do, and a shadow pass over a hundred tufts of grass costs as much as one
+  // over a hundred buildings for something nobody will ever look for.
+  const casts = castsShadow(entry);
   model.traverse((child) => {
-    if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    if (child.isMesh) { child.castShadow = casts; child.receiveShadow = true; }
   });
   const template = new THREE.Group();
   template.add(model);
@@ -1044,12 +1068,31 @@ function buildPropTiles() {
   const select = document.getElementById("prop-type");
   if (!holder) return;
   holder.innerHTML = "";
-  for (const entry of state.propLibrary) {
+  // In groups, on the manifest's own `group`, which the client has carried
+  // and ignored since the library arrived. Planting, site, street and
+  // furniture are what a person is looking for when they open this, and
+  // twenty-nine ungrouped tiles are a pile.
+  const ordered = [...state.propLibrary].sort((a, b) =>
+    String(a.group || "other").localeCompare(String(b.group || "other"))
+    || String(a.label || a.key).localeCompare(String(b.label || b.key)));
+  let group = null;
+  for (const entry of ordered) {
     const template = propTemplates.get(entry.key);
     if (!template) continue;
+    if ((entry.group || "other") !== group) {
+      group = entry.group || "other";
+      const heading = document.createElement("span");
+      heading.className = "tile-family";
+      heading.textContent = group;
+      holder.appendChild(heading);
+    }
     const tile = previewTile(entry.key, entry.label || entry.key,
       (canvasEl) => renderObjectPreview(template, canvasEl));
+    // Scale in words, which is Blender's own advice and the only method in
+    // the whole survey that does not put a stock human being in the picture.
     tile.title = (entry.label || entry.key)
+      + (entry.sizeMetres ? "  " + entry.sizeMetres.map(
+        (n) => n.toFixed(n < 1 ? 2 : 1)).join(" x ") + " m" : "")
       + (entry.credit ? " -- " + entry.credit : "");
     tile.addEventListener("click", () => {
       select.value = entry.key;
@@ -6279,6 +6322,9 @@ requestAnimationFrame(frame);
 // applyDayCycle is exposed too (Task 3), so a probe can drive u directly
 // through the real pure function instead of re-deriving its formula in
 // probe-script JS, which would drift from the function it is meant to check.
-window.__studio = { state, scene, camera, controls, applyDayCycle };
+// placeProp joins them so a probe can populate a scene without synthesising
+// a pointer gesture per prop. Placing twenty by hand through click events is
+// how a check nobody runs gets written.
+window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp };
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

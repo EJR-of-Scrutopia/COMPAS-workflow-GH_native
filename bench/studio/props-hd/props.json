@@ -1,0 +1,405 @@
+{
+  "library": "Poly Haven, CC0. Decimated and packed by tools/props/fetch.mjs.",
+  "props": [
+    {
+      "key": "dandelion_01",
+      "label": "Dandelion",
+      "file": "dandelion_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        4.214,
+        0.17,
+        0.257
+      ],
+      "triangles": 5981,
+      "bytes": 242956,
+      "credit": "Dandelion by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dandelion_01"
+    },
+    {
+      "key": "dead_tree_trunk_02",
+      "label": "Dead trunk",
+      "file": "dead_tree_trunk_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        4.051,
+        1.054,
+        1.055
+      ],
+      "triangles": 29996,
+      "bytes": 742164,
+      "credit": "Dead trunk by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dead_tree_trunk_02"
+    },
+    {
+      "key": "fern_02",
+      "label": "Fern",
+      "file": "fern_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.973,
+        0.428,
+        1.724
+      ],
+      "triangles": 6000,
+      "bytes": 146876,
+      "credit": "Fern by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/fern_02"
+    },
+    {
+      "key": "fir_sapling_medium",
+      "label": "Fir sapling",
+      "file": "fir_sapling_medium.glb",
+      "group": "planting",
+      "sizeMetres": [
+        14.636,
+        8.456,
+        5.143
+      ],
+      "triangles": 29983,
+      "bytes": 2666084,
+      "credit": "Fir sapling by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/fir_sapling_medium"
+    },
+    {
+      "key": "flower_gazania",
+      "label": "Gazania",
+      "file": "flower_gazania.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.481,
+        0.166,
+        0.703
+      ],
+      "triangles": 6000,
+      "bytes": 310148,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "nettle_plant",
+      "label": "Nettles",
+      "file": "nettle_plant.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.083,
+        0.218,
+        0.095
+      ],
+      "triangles": 5999,
+      "bytes": 206580,
+      "credit": "Nettles by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/nettle_plant"
+    },
+    {
+      "key": "potted_plant_01",
+      "label": "Potted plant",
+      "file": "potted_plant_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.587,
+        1.336,
+        0.634
+      ],
+      "triangles": 29912,
+      "bytes": 964828,
+      "credit": "Potted plant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/potted_plant_01"
+    },
+    {
+      "key": "searsia_lucida",
+      "label": "Searsia",
+      "file": "searsia_lucida.glb",
+      "group": "planting",
+      "sizeMetres": [
+        4.776,
+        2.331,
+        2.828
+      ],
+      "triangles": 59989,
+      "bytes": 3029108,
+      "credit": "Searsia by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/searsia_lucida"
+    },
+    {
+      "key": "tree_small_02",
+      "label": "Broadleaf tree",
+      "file": "tree_small_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        2.893,
+        4.554,
+        4.214
+      ],
+      "triangles": 60796,
+      "bytes": 2744348,
+      "credit": "Broadleaf tree by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/tree_small_02"
+    },
+    {
+      "key": "tree_stump_01",
+      "label": "Tree stump",
+      "file": "tree_stump_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.425,
+        0.573,
+        1.59
+      ],
+      "triangles": 30000,
+      "bytes": 745128,
+      "credit": "Tree stump by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/tree_stump_01"
+    },
+    {
+      "key": "Barrel_02",
+      "label": "Barrel",
+      "file": "Barrel_02.glb",
+      "group": "site",
+      "sizeMetres": [
+        0.488,
+        0.88,
+        0.485
+      ],
+      "triangles": 2688,
+      "bytes": 90788,
+      "credit": "Barrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/Barrel_02"
+    },
+    {
+      "key": "boulder_01",
+      "label": "Small boulder",
+      "file": "boulder_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        1.272,
+        1.004,
+        1.828
+      ],
+      "triangles": 51616,
+      "bytes": 1626704,
+      "credit": "Small boulder by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/boulder_01"
+    },
+    {
+      "key": "cement_bag",
+      "label": "Cement bag",
+      "file": "cement_bag.glb",
+      "group": "site",
+      "sizeMetres": [
+        0.462,
+        0.18,
+        0.7
+      ],
+      "triangles": 844,
+      "bytes": 42068,
+      "credit": "Cement bag by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cement_bag"
+    },
+    {
+      "key": "namaqualand_boulder_02",
+      "label": "Boulder",
+      "file": "namaqualand_boulder_02.glb",
+      "group": "site",
+      "sizeMetres": [
+        2.532,
+        0.883,
+        1.234
+      ],
+      "triangles": 29992,
+      "bytes": 734072,
+      "credit": "Boulder by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/namaqualand_boulder_02"
+    },
+    {
+      "key": "namaqualand_boulders_01",
+      "label": "Boulders",
+      "file": "namaqualand_boulders_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        1.058,
+        0.252,
+        0.587
+      ],
+      "triangles": 30000,
+      "bytes": 688664,
+      "credit": "Boulders by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/namaqualand_boulders_01"
+    },
+    {
+      "key": "namaqualand_stones_01",
+      "label": "Stones",
+      "file": "namaqualand_stones_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        1.022,
+        0.084,
+        0.112
+      ],
+      "triangles": 6000,
+      "bytes": 154428,
+      "credit": "Stones by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+    },
+    {
+      "key": "rock_moss_set_01",
+      "label": "Mossy rocks",
+      "file": "rock_moss_set_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        8.005,
+        1.768,
+        6.949
+      ],
+      "triangles": 29993,
+      "bytes": 691976,
+      "credit": "Mossy rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/rock_moss_set_01"
+    },
+    {
+      "key": "sand_rocks_small_01",
+      "label": "Sand rocks",
+      "file": "sand_rocks_small_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        4.625,
+        0.533,
+        3.882
+      ],
+      "triangles": 5999,
+      "bytes": 175848,
+      "credit": "Sand rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/sand_rocks_small_01"
+    },
+    {
+      "key": "WetFloorSign_01",
+      "label": "Wet floor sign",
+      "file": "WetFloorSign_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        0.3,
+        0.63,
+        0.359
+      ],
+      "triangles": 228,
+      "bytes": 35600,
+      "credit": "Wet floor sign by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/WetFloorSign_01"
+    },
+    {
+      "key": "concrete_road_barrier",
+      "label": "Road barrier",
+      "file": "concrete_road_barrier.glb",
+      "group": "street",
+      "sizeMetres": [
+        1.545,
+        0.831,
+        0.639
+      ],
+      "triangles": 30000,
+      "bytes": 621480,
+      "credit": "Road barrier by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/concrete_road_barrier"
+    },
+    {
+      "key": "fire_hydrant",
+      "label": "Fire hydrant",
+      "file": "fire_hydrant.glb",
+      "group": "street",
+      "sizeMetres": [
+        0.875,
+        0.799,
+        0.317
+      ],
+      "triangles": 30000,
+      "bytes": 554360,
+      "credit": "Fire hydrant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/fire_hydrant"
+    },
+    {
+      "key": "modular_chainlink_fence",
+      "label": "Chainlink fence",
+      "file": "modular_chainlink_fence.glb",
+      "group": "street",
+      "sizeMetres": [
+        8.115,
+        2.523,
+        2.149
+      ],
+      "triangles": 30056,
+      "bytes": 1271052,
+      "credit": "Chainlink fence by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/modular_chainlink_fence"
+    },
+    {
+      "key": "modular_electricity_poles",
+      "label": "Power pole",
+      "file": "modular_electricity_poles.glb",
+      "group": "street",
+      "sizeMetres": [
+        13.099,
+        6.993,
+        1.941
+      ],
+      "triangles": 34917,
+      "bytes": 1751152,
+      "credit": "Power pole by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/modular_electricity_poles"
+    },
+    {
+      "key": "utility_box_01",
+      "label": "Utility box",
+      "file": "utility_box_01.glb",
+      "group": "street",
+      "sizeMetres": [
+        0.52,
+        1.12,
+        0.432
+      ],
+      "triangles": 4404,
+      "bytes": 220484,
+      "credit": "Utility box by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/utility_box_01"
+    },
+    {
+      "key": "water_manhole_cover",
+      "label": "Manhole cover",
+      "file": "water_manhole_cover.glb",
+      "group": "street",
+      "sizeMetres": [
+        0.691,
+        0.068,
+        0.691
+      ],
+      "triangles": 5999,
+      "bytes": 180260,
+      "credit": "Manhole cover by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/water_manhole_cover"
+    }
+  ]
+}

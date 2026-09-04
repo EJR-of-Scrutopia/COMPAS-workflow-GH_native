@@ -81,3 +81,16 @@ upstream/
 # The probe rig's node install: bench/scripts/studio_probe.mjs needs
 # puppeteer-core, installed locally next to it rather than pinned in the repo.
 bench/scripts/probe-env/
+
+# The prop library is a BUILD PRODUCT of tools/props/fetch.mjs. Photoscanned
+# models run to megabytes apiece and the script can fetch and rebuild them
+# from Poly Haven at any time, so the models stay out and the manifest that
+# describes them, which is small and is what the studio reads, stays in.
+bench/studio/props-hd/*.glb
+tools/props/node_modules/
+tools/props/.work/
+tools/props/probe*.mjs
+tools/props/package-lock.json
+
+# The studio's remembered folders. They name paths on one machine.
+bench/studio/settings.json
