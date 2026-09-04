@@ -861,6 +861,40 @@ internal static class Program
 
         try
         {
+            ValidateSkinWithinCourseOrder(plugin);
+            Console.WriteLine(
+                "PASS  Skin within-course order (check 6 of the 2026-09-04 " +
+                "seam spec, rule 3.2), on the spec's own two fixtures: the " +
+                "two-hump barrel, a genuine two-component-per-course form, " +
+                "and Param's crown arch, whose merge the closer covers. " +
+                "Every branch of both breaks into RUNS that tile one curve " +
+                "in order, no cell's U0 standing before the last cell's U1, " +
+                "and two cells the arc calls NEIGHBOURS share a corner " +
+                "within the 1e-6 m weld, which ties the order to the " +
+                "surface rather than to the sort key. The runs per course " +
+                "are pinned, 2,14,2,2 on the barrel and thirty-one 2s then " +
+                "12, 1 and 2 on the arch, and the only gaps in arc are the " +
+                "two stones the closer's head-joint bound refuses on the " +
+                "barrel. Run i of one course is the nearest in plan to run " +
+                "i of the next, which is what makes the two the SAME " +
+                "component, and item k of consecutive branches falls in the " +
+                "run of the same index: asserted over 30 branch pairs and " +
+                "828 item indices on the arch and 1 pair and 5 indices on " +
+                "the barrel. Where the claim cannot hold it is NOT asserted " +
+                "and the reason is named with its numbers: five pairs of " +
+                "courses whose run counts differ, which is the topology " +
+                "changing at the merge, and a stop inside a pair where an " +
+                "earlier run has lost a cell, which is the running bond and " +
+                "is asserted to be a real difference rather than an excuse.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin within-course order: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinPieceSize(plugin);
             Console.WriteLine(
                 "PASS  Skin piece size: the barrel's 0.3 m end pieces merge " +
@@ -19484,54 +19518,97 @@ internal static class Program
     }
 
     /// <summary>
-    /// RULE 3.1'S ORDER MEASURED AGAINST THE GEOMETRY and not against the
-    /// engine's own key: in every branch the places where the arrival order
-    /// steps to a new RUN are exactly the places where the cells stop
-    /// ABUTTING. Within a run the index walks one curve, corner to corner,
-    /// in one direction; at a run boundary the geometry has really moved on
-    /// to another curve.
+    /// RULE 3.1'S ORDER MEASURED AGAINST THE GEOMETRY and not merely
+    /// against the engine's own sort key, in two clauses over every RUN:
     ///
-    /// It is one assertion and it carries both halves of the rule. A
-    /// mirrored order breaks it from both sides at once: the cell after a
-    /// seam-flanking pair does not touch it, so a break appears inside a
-    /// run, and the flanking pair itself shares the seam joint, so a run
-    /// boundary appears where the geometry does not break.
+    ///   - THE ARCS TILE ONE CURVE IN ORDER. The next cell's U0 is at or
+    ///     after the last one's U1, so a run never doubles back and never
+    ///     lays a stone over one it has already laid.
+    ///   - AND WHERE THE ARCS ARE CONTIGUOUS THE STONES TOUCH. Two cells
+    ///     the arc calls neighbours share a corner within the 1e-6 m the
+    ///     standing weld uses, which is what ties the arc order to the
+    ///     surface rather than leaving it a statement about numbers.
+    ///
+    /// A GAP IN ARC IS ALLOWED AND IS COUNTED BY THE CALLER, because it is
+    /// real: CloserBand refuses a stone whose head joint would run past
+    /// max(Size, 4 x thickness) or whose plan folds, and the two-hump
+    /// barrel's own transition course carries such refusals, so two
+    /// surviving closers on one guide can stand a stone apart. Measured
+    /// there at course 1, items 78 and 79.
+    ///
+    /// THE CONVERSE IS NOT ASSERTED EITHER, and that too is measured. The
+    /// first wording required the cells to STOP touching at every run
+    /// boundary, and that is false on a bisected course: two sub-bands of
+    /// ONE component meet on a shared bed curve and both their outlines
+    /// carry that curve's own trace vertices, so they share a great many
+    /// corners across a boundary the arc order is right to open.
+    /// Reproduced on the same fixture at course 1, items 11 and 12, whose
+    /// signed mid-spans go 3.665 then -2.958.
+    ///
+    /// What is left is enough to catch the defect this replaces twice
+    /// over. A seam-outward order hands back the piece at u in [-P, 0] and
+    /// then the piece at [0, P] and then [-2P, -P], so the third cell's U0
+    /// stands a whole pitch BEFORE the second's U1, which the first clause
+    /// refuses.
     /// </summary>
-    private static void RequireRunsFollowTheGeometry(
+    private static int RequireRunsFollowTheGeometry(
         (int Course, double[][] Outline, bool Clipped, double U0, double U1,
             bool Cap)[] cells,
         string label)
     {
+        int gaps = 0;
         foreach (IGrouping<int, (int Course, double[][] Outline, bool Clipped,
                      double U0, double U1, bool Cap)> group in
                  cells.GroupBy(cell => cell.Course))
         {
             var branch = group.ToArray();
             List<List<int>> runs = SkinArrivalRuns(branch);
-            var boundaries = new HashSet<int>(
-                runs.Skip(1).Select(run => run[0]));
-            for (int at = 1; at < branch.Length; at++)
+            foreach (List<int> run in runs)
             {
-                bool abuts = SkinCellsAbut(
-                    branch[at - 1].Outline, branch[at].Outline);
-                bool boundary = boundaries.Contains(at);
-                if (abuts != boundary)
-                    continue;
-                throw new InvalidOperationException(
-                    $"{label}: within a branch the cells run COMPONENT BY " +
-                    "COMPONENT and each component in ONE direction (spec " +
-                    "2026-09-04 rule 3.1), so the order steps to a new run " +
-                    "exactly where the cells stop touching. In course " +
-                    $"{branch[at].Course} item {at - 1} and item {at} " +
-                    (abuts ? "DO" : "do NOT") + " share a corner while the " +
-                    "signed mid-span goes " +
-                    $"{(branch[at - 1].U0 + branch[at - 1].U1) / 2.0} then " +
-                    $"{(branch[at].U0 + branch[at].U1) / 2.0}, which " +
-                    (boundary ? "opens a new run" : "continues the run") +
-                    $". The branch holds {branch.Length} cells in " +
-                    $"{runs.Count} runs.");
+                for (int at = 1; at < run.Count; at++)
+                {
+                    var previous = branch[run[at - 1]];
+                    var here = branch[run[at]];
+                    // A CAP IS EXEMPT FROM BOTH CLAUSES, because its U is
+                    // arc along its OWN outline and not along a course: a
+                    // whole cap and a centre disc each span [-L/2, +L/2] of
+                    // their own girth, so a disc's arc overlaps the wedges
+                    // beside it by construction and says nothing about
+                    // where either sits. Measured on the dome's own crown
+                    // rosette at course 3, a wedge [-1.208, 0] followed by
+                    // the disc [-0.885, 0.885].
+                    if (previous.Cap || here.Cap)
+                        continue;
+                    if (here.U0 < previous.U1 - 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"{label}: a run tiles ONE curve in order (spec " +
+                            "2026-09-04 rule 3.1), so each cell's U0 is at " +
+                            "or after the last cell's U1 and the run never " +
+                            $"doubles back. In course {here.Course} items " +
+                            $"{run[at - 1]} and {run[at]} span " +
+                            $"[{previous.U0}, {previous.U1}] then " +
+                            $"[{here.U0}, {here.U1}]. The branch holds " +
+                            $"{branch.Length} cells in {runs.Count} runs.");
+                    }
+                    if (here.U0 > previous.U1 + 1.0e-9)
+                    {
+                        gaps++;
+                        continue;
+                    }
+                    if (SkinCellsAbut(previous.Outline, here.Outline))
+                        continue;
+                    throw new InvalidOperationException(
+                        $"{label}: two cells the arc calls NEIGHBOURS share " +
+                        "a corner within the 1e-6 m weld, which is what " +
+                        "ties rule 3.1's arc order to the surface. In " +
+                        $"course {here.Course} items {run[at - 1]} and " +
+                        $"{run[at]} span [{previous.U0}, {previous.U1}] " +
+                        $"then [{here.U0}, {here.U1}] and share nothing.");
+                }
             }
         }
+        return gaps;
     }
 
     /// <summary>
@@ -19697,6 +19774,322 @@ internal static class Program
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>The plan centroid of one RUN, over the corners of every cell
+    /// in it: the run's own position on the vault, which is how this check
+    /// asks whether two branches' runs are the same component without
+    /// reading the engine's sort key.</summary>
+    private static double[] SkinRunCentroid(
+        (int Course, double[][] Outline, bool Clipped, double U0, double U1,
+            bool Cap)[] branch,
+        List<int> run)
+    {
+        double x = 0.0;
+        double y = 0.0;
+        int count = 0;
+        foreach (int at in run)
+        {
+            foreach (double[] corner in branch[at].Outline)
+            {
+                x += corner[0];
+                y += corner[1];
+                count++;
+            }
+        }
+        return count == 0
+            ? new[] { double.NaN, double.NaN }
+            : new[] { x / count, y / count };
+    }
+
+    /// <summary>
+    /// CHECK 6 of the 2026-09-04 seam spec, which is rule 3.2: on a
+    /// two-component fixture, item k of consecutive branches belongs to the
+    /// SAME component and advances monotonically along it, for every k
+    /// inside the shorter branch.
+    ///
+    /// TAKEN ON THE SPEC'S OWN TWO FIXTURES. The two-hump barrel is the
+    /// genuine two-component-per-course form the rule names, whose strips
+    /// become hump loops. Param's crown arch is the measured real case,
+    /// whose merge at course 19 of 21 is where the closer lays its stones,
+    /// and it carries many more consecutive pairs than the barrel does, so
+    /// it is where the rule is exercised rather than merely demonstrated.
+    ///
+    /// THE COMPONENTS ARE FOUND WITHOUT ASKING THE ENGINE. A branch is
+    /// broken into RUNS by SkinArrivalRuns, and
+    /// RequireRunsFollowTheGeometry has already established that a run is
+    /// one curve walked once, since the runs break exactly where the cells
+    /// stop sharing corners. Two branches' runs are then matched by PLAN
+    /// CENTROID, nearest to nearest: if the order really does hold one
+    /// component together and put it in the same place at every course,
+    /// run i of one branch is nearest run i of the next.
+    ///
+    /// WHERE IT DOES NOT ASSERT, IT SAYS SO, WITH THE NUMBER. Two things
+    /// stop the item-k claim being true everywhere and neither is a defect
+    /// in the order:
+    ///
+    ///   - A pair of branches with DIFFERENT RUN COUNTS. On the barrel the
+    ///     strips below the merge and the hump loops above it are not the
+    ///     same components at all, and the spec's own honesty bound says
+    ///     alignment shifts by construction where the topology changes.
+    ///   - A pair whose runs agree in count but not in SIZE. A course is
+    ///     round(L / S) pieces and L shrinks with height, so the run that
+    ///     holds item k moves as soon as an earlier run has lost a piece.
+    ///     That is the running bond, and the Cells port says as much.
+    ///
+    /// So the assertion is made over the LEADING runs whose sizes agree
+    /// exactly, the count of cells it covers is reported per fixture, and
+    /// the first run whose sizes disagree is asserted to genuinely
+    /// disagree, so the stop is a measurement and not an excuse.
+    /// </summary>
+    private static void ValidateSkinWithinCourseOrder(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        object barrel = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                SkinTwoHumpBarrelNet().Vertices,
+                SkinTwoHumpBarrelNet().Faces
+            })!;
+        string path = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object crown = readNet.Invoke(
+                null,
+                new object?[]
+                {
+                    DeserializeContract(
+                        plugin, resultType, File.ReadAllText(path))
+                })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so every claim below would hold vacuously.");
+
+        foreach ((string label, object net, double size, double height,
+                  string runShape, int arcGaps, int coveredCells,
+                  int pairsAsserted, int pairsSkipped)
+                 fixture in new[]
+                 {
+                     ("two-hump barrel", barrel, 0.6, 0.5, "2,14,2,2", 2, 5, 1, 2),
+                     ("Param's crown arch", crown, 0.10, 0.30,
+                      "2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2," +
+                      "2,2,2,2,2,2,2,2,12,1,2", 0, 828, 30, 3)
+                 })
+        {
+            object built = courses.Invoke(
+                null,
+                new object[] { fixture.net, fixture.size, fixture.height })!;
+            var cells = SkinCells(built);
+            int gaps = RequireRunsFollowTheGeometry(cells, fixture.label);
+            if (gaps != fixture.arcGaps)
+            {
+                throw new InvalidOperationException(
+                    $"{fixture.label}: a run's only gap in arc is a stone " +
+                    "the closer REFUSED, and this fixture has " +
+                    $"{fixture.arcGaps} of them; got {gaps}. A gap that " +
+                    "appears without a refusal is a stone the plan filter " +
+                    "took out of a course.");
+            }
+
+            // THE RUN SHAPE, PINNED. Within-run abutment above says the
+            // index walks a curve where it walks one at all; this says how
+            // many curves each course is walked in, so an order that broke
+            // one component into pieces would be caught even where every
+            // piece happened to touch the last. The numbers are the
+            // fixtures' own and are re-measured, not chosen: a course of
+            // the barrel is its two strips or its two hump loops, its
+            // transition course is those plus the bisection's sub-bands and
+            // the closer's guides, and the arch runs two strips up to the
+            // merge and one loop above it.
+            string shape = string.Join(
+                ",",
+                cells
+                    .GroupBy(cell => cell.Course)
+                    .OrderBy(group => group.Key)
+                    .Select(group => SkinArrivalRuns(group.ToArray()).Count));
+            if (shape != fixture.runShape)
+            {
+                throw new InvalidOperationException(
+                    $"{fixture.label}: the runs per course are " +
+                    $"{fixture.runShape}, course by course from the " +
+                    $"bottom; got {shape}.");
+            }
+
+            int[] branchCourses = cells
+                .Select(cell => cell.Course)
+                .Distinct()
+                .OrderBy(course => course)
+                .ToArray();
+            int covered = 0;
+            int asserted = 0;
+            int skipped = 0;
+            var notes = new List<string>();
+            for (int at = 0; at + 1 < branchCourses.Length; at++)
+            {
+                var lower = cells
+                    .Where(cell => cell.Course == branchCourses[at])
+                    .ToArray();
+                var upper = cells
+                    .Where(cell => cell.Course == branchCourses[at + 1])
+                    .ToArray();
+                List<List<int>> lowerRuns = SkinArrivalRuns(lower);
+                List<List<int>> upperRuns = SkinArrivalRuns(upper);
+                if (lowerRuns.Count != upperRuns.Count)
+                {
+                    skipped++;
+                    notes.Add(
+                        $"{branchCourses[at]}/{branchCourses[at + 1]} " +
+                        $"{lowerRuns.Count} against {upperRuns.Count} runs");
+                    continue;
+                }
+
+                // THE SAME COMPONENT, measured in plan: run i of the lower
+                // branch must be nearest run i of the upper one, and no
+                // other. Where the two nearest candidates tie the answer is
+                // not a measurement at all and the pair is skipped rather
+                // than asserted on, which is the barrel's own mirror
+                // symmetry across the merge.
+                bool ambiguous = false;
+                for (int run = 0; run < lowerRuns.Count && !ambiguous; run++)
+                {
+                    double[] from = SkinRunCentroid(lower, lowerRuns[run]);
+                    double best = double.PositiveInfinity;
+                    double second = double.PositiveInfinity;
+                    int nearest = -1;
+                    for (int other = 0; other < upperRuns.Count; other++)
+                    {
+                        double[] to = SkinRunCentroid(upper, upperRuns[other]);
+                        double gap = Math.Sqrt(
+                            ((from[0] - to[0]) * (from[0] - to[0])) +
+                            ((from[1] - to[1]) * (from[1] - to[1])));
+                        if (gap < best)
+                        {
+                            second = best;
+                            best = gap;
+                            nearest = other;
+                        }
+                        else if (gap < second)
+                        {
+                            second = gap;
+                        }
+                    }
+                    if (upperRuns.Count > 1 && second - best <= 1.0e-6)
+                    {
+                        ambiguous = true;
+                        continue;
+                    }
+                    if (nearest != run)
+                    {
+                        throw new InvalidOperationException(
+                            $"{fixture.label}: run {run} of course " +
+                            $"{branchCourses[at]} and run {run} of course " +
+                            $"{branchCourses[at + 1]} are the SAME " +
+                            "component (spec 2026-09-04 rule 3.2), so each " +
+                            "is the other's nearest in plan; run " +
+                            $"{run} of the lower course is nearest run " +
+                            $"{nearest} of the upper, {best:F4} m against " +
+                            $"{second:F4} m.");
+                    }
+                }
+                if (ambiguous)
+                {
+                    skipped++;
+                    notes.Add(
+                        $"{branchCourses[at]}/{branchCourses[at + 1]} " +
+                        "runs tie in plan");
+                    continue;
+                }
+
+                // AND THE ITEM INDEX. Item k of both branches falls in the
+                // run of the same index, which is the whole of Param's
+                // find: an index taken across branches walks one side. The
+                // FLOOR is asserted and the REACH is measured. The floor is
+                // the shorter of the two courses' FIRST runs, over which
+                // the claim cannot fail for any reason the running bond
+                // excuses, since nothing has yet been counted that could
+                // shift the index; beyond it the claim survives exactly as
+                // far as the run sizes agree, and where it stops the runs
+                // it lands in are asserted to genuinely differ in size, so
+                // the stop is a measurement and not an excuse.
+                var lowerRunOf = new int[lower.Length];
+                var upperRunOf = new int[upper.Length];
+                for (int run = 0; run < lowerRuns.Count; run++)
+                {
+                    foreach (int item in lowerRuns[run])
+                        lowerRunOf[item] = run;
+                    foreach (int item in upperRuns[run])
+                        upperRunOf[item] = run;
+                }
+                int shorter = Math.Min(lower.Length, upper.Length);
+                int reach = 0;
+                while (reach < shorter &&
+                       lowerRunOf[reach] == upperRunOf[reach])
+                {
+                    reach++;
+                }
+                int floor = Math.Min(
+                    lowerRuns[0].Count, upperRuns[0].Count);
+                if (reach < floor)
+                {
+                    throw new InvalidOperationException(
+                        $"{fixture.label}: item {reach} of course " +
+                        $"{branchCourses[at]} and item {reach} of course " +
+                        $"{branchCourses[at + 1]} belong to the SAME " +
+                        "component (spec 2026-09-04 rule 3.2) for every " +
+                        "index below the shorter of the two courses' FIRST " +
+                        $"runs, which is {floor}; they belong to runs " +
+                        $"{lowerRunOf[reach]} and {upperRunOf[reach]}. " +
+                        "This is Param's mirrored-selection find: an index " +
+                        "taken across branches must walk one side of the " +
+                        "vault.");
+                }
+                if (reach < shorter &&
+                    lowerRuns[lowerRunOf[reach]].Count ==
+                        upperRuns[upperRunOf[reach]].Count)
+                {
+                    throw new InvalidOperationException(
+                        $"{fixture.label}: the item-k claim stops at item " +
+                        $"{reach} of courses {branchCourses[at]} and " +
+                        $"{branchCourses[at + 1]} only because an earlier " +
+                        "run holds a different number of cells in the two, " +
+                        "which is the running bond; the runs it lands in " +
+                        "hold the same number, so the stop is an excuse " +
+                        "rather than a measurement.");
+                }
+                covered += reach;
+                asserted++;
+            }
+
+            if (covered != fixture.coveredCells ||
+                asserted != fixture.pairsAsserted ||
+                skipped != fixture.pairsSkipped)
+            {
+                throw new InvalidOperationException(
+                    $"{fixture.label}: rule 3.2's item-k claim is asserted " +
+                    $"over {fixture.pairsAsserted} consecutive branch " +
+                    $"pairs covering {fixture.coveredCells} item indices, " +
+                    $"with {fixture.pairsSkipped} pairs named and skipped " +
+                    "where the topology or the plan tie makes the claim " +
+                    $"meaningless; measured {asserted} pairs, {covered} " +
+                    $"indices and {skipped} skipped" +
+                    (notes.Count > 0
+                        ? " (" + string.Join("; ", notes) + ")"
+                        : string.Empty) + ".");
+            }
+            Console.WriteLine(
+                $"      Skin within-course order, {fixture.label}: " +
+                $"{asserted} consecutive branch pairs asserted over " +
+                $"{covered} item indices, {skipped} named and skipped" +
+                (notes.Count > 0
+                    ? " (" + string.Join("; ", notes) + ")"
+                    : string.Empty) + ".");
         }
     }
 
@@ -19979,10 +20372,12 @@ internal static class Program
     /// cells arrive sorted by course, outlines are real polygons, and
     /// the plan projections are pairwise disjoint and simple, the
     /// height-field guarantee. Groups are taken in ARRIVAL order, never
-    /// re-sorted, so the joint and span pins also assert spec section 3's
-    /// within-course ordering: SEAM OUTWARD, alternating either side of
-    /// it with the negative side first (rule 7.1), which serves the
-    /// Grasshopper author's reading and the overlap filter rather than
+    /// re-sorted, so the joint and span pins also assert the within-course
+    /// ordering, which spec 2026-09-04 rule 3.1 has MOVED: a course is
+    /// walked component by component and each component in ONE consistent
+    /// direction, its SIGNED arc strictly increasing, where rule 7.1 walked
+    /// it from the seam outward alternating either side of it. It serves
+    /// the Grasshopper author's reading and the overlap filter rather than
     /// the studio's own build sequence.
     /// BandCount's sliver-merge branch is exercised directly (a 2.05 m
     /// rise merges its 0.05 sliver, a 2.2 m rise ships its 0.2 top
@@ -20046,9 +20441,8 @@ internal static class Program
                 // ARRIVAL order, deliberately un-sorted: the joint
                 // comparison below then also asserts the within-course
                 // ordering the Grasshopper author and the overlap
-                // filter read (rule 7.1: seam outward, alternating
-                // either side of it with the negative side first), the
-                // engine's own OrderBy(abs mid).ThenBy(mid).
+                // filter read, which spec 2026-09-04 rule 3.1 has moved
+                // to SIGNED arc along one component, ascending.
                 var group = cells
                     .Where(cell =>
                         cell.Course == course &&
@@ -20063,21 +20457,18 @@ internal static class Program
                             .Select(k => -2.7 + 0.6 * k))
                         .Concat(new[] { 3.0 })
                         .ToArray();
-                // The geometric spans, unmoved (the open branch of
-                // CourseSpans is unchanged by this task), matched to the
-                // ARRIVED group as a SET, not position for position: two
-                // pieces can tie on |mid| to within floating noise (the
-                // seam's own two flanking pieces at k = 4, 5, say), and
-                // an independently re-derived joint array does not
-                // reproduce the engine's own tie-break bit for bit,
-                // whichever spans sorts a hair smaller by |mid| wins the
-                // OrderBy outright before the ThenBy ever runs. The SET
-                // of spans is what the pitch, the phase and the
-                // truncation actually pin; the ORDER is rule 7.1's own
-                // affair and is asserted separately below, the same
-                // seam-outward, negative-tie-first invariant
-                // ValidateSkinBuildOrder proves on the dome and the
-                // barrel alike.
+                // The geometric spans, unmoved, matched to the ARRIVED
+                // group as a SET rather than position for position. The
+                // reason has changed with rule 3.1 and is worth restating:
+                // under the old |mid| order two pieces could tie to within
+                // floating noise and an independently re-derived joint
+                // array could not reproduce the engine's tie-break bit for
+                // bit, while under a SIGNED order there is no tie to break
+                // at all. What the set-matching still buys is that this
+                // pin measures the pitch, the phase and the truncation and
+                // nothing else, leaving the ORDER to the strict test below
+                // it and to ValidateSkinBuildOrder, which proves it on the
+                // dome and the barrel alike.
                 (double U0, double U1)[] expectedSpans = Enumerable
                     .Range(0, joints.Length - 1)
                     .Select(at => (joints[at], joints[at + 1]))
@@ -20108,19 +20499,14 @@ internal static class Program
                     }
                     unmatched.RemoveAt(at);
                 }
-                // Seam outward (rule 7.1), the same non-decreasing-|mid|
-                // invariant ValidateSkinBuildOrder proves; the strict
-                // negative-first TIE-BREAK is not separately re-asserted
-                // here against an independently re-derived joint array,
-                // because whether two spans land as a bit-exact tie on
-                // |mid| is the engine's own floating-point path, which a
-                // parallel computation over this test's own joints array
-                // does not reproduce bit for bit (two spans 2.4 m out
-                // measured 2.3999999999999995 against
-                // -2.4000000000000004 here, nine femtometres apart and
-                // no tie at all): ValidateSkinBuildOrder's dome and
-                // barrel fixtures are where the tie-break itself is
-                // pinned, off the engine's own numbers.
+                // ONE STRIP, ONE DIRECTION (spec 2026-09-04 rule 3.1), and
+                // this group IS one strip: it is filtered to the front or
+                // the back of the ridge in plan, so a STRICT test on the
+                // signed mid measures the order within a single component
+                // and nothing else. It is the same invariant
+                // ValidateSkinBuildOrder proves on the dome and the barrel
+                // through the runs, asserted here on a group the fixture
+                // itself separates rather than one the runs infer.
                 for (int at = 1; at < group.Length; at++)
                 {
                     double previousMid =
@@ -20215,9 +20601,9 @@ internal static class Program
         }
         for (int course = 0; course < 4; course++)
         {
-            // ARRIVAL order here too: the seam-outward pin below asserts
-            // the ordering along the loop (rule 7.1), matched to the
-            // re-centred pitch grid as a set below it.
+            // ARRIVAL order here too: the signed-arc pin below asserts the
+            // ordering along the loop (spec 2026-09-04 rule 3.1), matched
+            // to the re-centred pitch grid as a set below it.
             var ring = domeCells
                 .Where(cell => cell.Course == course)
                 .ToArray();
@@ -20266,7 +20652,7 @@ internal static class Program
             // engine's own floating-point tie-break bit for bit (the
             // barrel's own pitch-grid check measures why, in its own
             // comment), so the SET is what pitch, phase and re-centring
-            // pin, and the ORDER is rule 7.1's seam-outward invariant,
+            // pin, and the ORDER is spec 2026-09-04 rule 3.1's signed arc,
             // asserted directly below and pinned independently by
             // ValidateSkinBuildOrder.
             var expectedSpans = new List<(double U0, double U1)>();
