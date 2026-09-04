@@ -6137,8 +6137,10 @@ function captureOrbitBase() {
     // collapsing onto the axis.
     radius: radius > 0.05 ? radius : camera.position.distanceTo(state.centre),
     height: offset.z,
+    // The same clamped clock applyTimeline adds back, or a capture taken
+    // mid-take jumps the camera by exactly the opening act's length.
     azimuth: Math.atan2(offset.y, offset.x)
-      - state.timeline.orbitSpeed * state.timeline.t,
+      - state.timeline.orbitSpeed * Math.max(0, state.timeline.t - openingSeconds()),
   };
 }
 
@@ -6147,7 +6149,11 @@ function applyTimeline(t) {
   const base = state.timeline.orbitBase;
   if (base && state.timeline.autoSpin && !state.userDragging) {
     const centre = state.centre;
-    const angle = base.azimuth + state.timeline.orbitSpeed * t;
+    // The camera holds its framing through the whole opening act -- the
+    // formwork growing into its final form deserves a still witness, Param
+    // ruled -- and starts its turn the instant build time begins.
+    const angle = base.azimuth
+      + state.timeline.orbitSpeed * Math.max(0, t - openingSeconds());
     camera.position.set(
       centre.x + base.radius * Math.cos(angle),
       centre.y + base.radius * Math.sin(angle),
@@ -6177,6 +6183,16 @@ async function recordAnimation() {
   const wasDayCyclePlaying = state.dayCycle.playing;
   state.timeline.playing = false;
   state.dayCycle.playing = false;
+  // Everything startPlaying arms, recording must arm too. Without the
+  // timeline show mode, applyShowMode erased every computed frame back to
+  // the finished vault (and hid the formwork act outright); without an
+  // orbit base, applyTimeline held the camera still. Both were only ever
+  // set by pressing Play, which is why a recording taken after Play looked
+  // fine and a fresh one came out frozen.
+  const wasShowMode = state.showMode;
+  state.showMode = "timeline";
+  paintShowButtons();
+  captureOrbitBase();
   renderer.setSize(1920, 1080, false);
   composer.setSize(1920, 1080);
   camera.aspect = 1920 / 1080;
@@ -6225,6 +6241,9 @@ async function recordAnimation() {
     state.recording = false;
     state.timeline.playing = wasPlaying;
     state.dayCycle.playing = wasDayCyclePlaying;
+    state.showMode = wasShowMode;
+    paintShowButtons();
+    applyShowMode();
   }
 }
 document.getElementById("record-button").addEventListener("click", recordAnimation);

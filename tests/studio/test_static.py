@@ -2531,8 +2531,11 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
     capture = _function_body(js, "captureOrbitBase")
     assert "camera.position.clone().sub(state.centre)" in capture
     assert "Math.atan2(offset.y, offset.x)" in capture
-    assert "- state.timeline.orbitSpeed * state.timeline.t" in capture, (
-        "the bearing must have the current rotation taken out of it"
+    assert ("- state.timeline.orbitSpeed * "
+            "Math.max(0, state.timeline.t - openingSeconds())") in capture, (
+        "the bearing must have the current rotation taken out of it, on the "
+        "same clamped clock applyTimeline adds back (the orbit waits out "
+        "the opening act, so the capture must subtract the same wait)"
     )
     body = _function_body(js, "applyTimeline")
     assert "base.radius" in body and "centre.z + base.height" in body

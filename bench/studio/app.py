@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import os
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -54,6 +55,11 @@ PROPS_DIR = Path(__file__).resolve().parent / "props"
 # vaults are read from. Beside the studio, not in the folder itself, so
 # pointing at a new folder cannot lose the way back.
 SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
+# Where a finished take is delivered (overridable via the recordings_folder
+# setting): the PhD Animation folder Param asked for by name.
+RECORDINGS_DIR = Path(
+    r"C:\Users\Param\OneDrive - Ananke-eidos\Documents\Kinetic AI"
+    r"\PHD robotics\Animation")
 # What went wrong on screen, one JSON object per line, newest last. Trimmed
 # rather than rotated: this is a thing to read after a failure, not an
 # archive, and a file that grows without bound is a file nobody opens.
@@ -349,6 +355,32 @@ def apply_saved_folders() -> dict:
     return applied
 
 
+def deliver_recording(run_id: str, video: Path) -> Path:
+    """The take lands where the animations live, stamped and named.
+
+    Param: "can we also set a new animation record output folder" -- the
+    PhD Animation folder, not a studio/ subfolder three levels into the
+    repo that nobody browses. The folder is a setting so it can move
+    without a code change; each take keeps its own name (study slug plus
+    timestamp) so a re-record never overwrites yesterday's. The repo copy
+    stays where it was: if the delivery fails (folder unreachable,
+    OneDrive offline) the recording still exists and the original path is
+    returned instead.
+    """
+
+    stored = read_settings().get("recordings_folder")
+    destination = Path(stored) if stored else RECORDINGS_DIR
+    slug = run_id[len("study-"):] if run_id.startswith("study-") else run_id
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        named = destination / "{}-{}.mp4".format(slug, stamp)
+        shutil.copy2(video, named)
+        return named
+    except OSError:
+        return video
+
+
 RESTART_DELAY = 0.5
 
 
@@ -380,18 +412,28 @@ def schedule_restart(delay: float = RESTART_DELAY) -> None:
     def go():
         time.sleep(delay)
         try:
-            # NO console, because that is what the shortcut gives now: the
-            # studio runs under pythonw so no terminal's closing can kill
-            # it, and a replacement spawned WITH a console would undo that
-            # for every studio born of the Restart button. CREATE_NO_WINDOW
-            # keeps a console-build python hidden too; either way the child
-            # arrives without usable stdio, and serve.py's ensure_stdio()
-            # gives it a log file before anything prints. (A print to the
-            # None stdio of a bare pythonw child killed the replacement
-            # AFTER it had stopped its parent, which vanished the studio.)
+            # NO console window (CREATE_NO_WINDOW), and REAL file handles.
+            # Both halves have each killed a replacement studio in turn: a
+            # console ties the child's life to a closable window, and a
+            # child spawned with no usable stdio died on its first print
+            # AFTER stopping its parent -- measured as an empty respawn log
+            # and an empty port. Explicit log files close both doors, and
+            # mean the next crash writes a traceback somewhere readable.
+            logs = (Path(os.environ.get("LOCALAPPDATA")
+                         or tempfile.gettempdir()) / "BenchStudio" / "logs")
+            logs.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            out = open(logs / "server-{}-restart.log".format(stamp), "ab")
+            err = open(logs / "server-{}-restart.err.log".format(stamp), "ab")
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.Popen(command, cwd=working, close_fds=True,
-                             creationflags=flags)
+            try:
+                subprocess.Popen(command, cwd=working, close_fds=True,
+                                 creationflags=flags, stdin=subprocess.DEVNULL,
+                                 stdout=out, stderr=err)
+            finally:
+                # The child holds duplicated handles; these copies are ours.
+                out.close()
+                err.close()
         except OSError as error:
             # A failed spawn leaves this process running and healthy, which
             # is the right way to fail: the studio the user is looking at
@@ -1495,7 +1537,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if completed.returncode != 0:
             raise HTTPException(500, "ffmpeg failed: {}".format(
                 completed.stderr[-2000:]))
-        return {"video": str(video)}
+        return {"video": str(deliver_recording(run_id, video))}
 
     @app.get("/")
     def index():
