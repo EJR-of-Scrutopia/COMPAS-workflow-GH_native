@@ -3921,6 +3921,11 @@ async function boot(preferredExport) {
     state.columnFiles = payload.columns || [];
     await reloadColumns(columnsForStudy(state.columnFiles, document.getElementById("study-select").value));
   } catch (error) {
+    // The error object, not just its message: a banner-sourced report
+    // carries no stack, and "Cannot set properties of null" without one is
+    // a symptom with nowhere to look. The diagnostics log is for finding
+    // things, so it gets the whole error.
+    reportProblem("boot failed: " + error.message, error);
     showBanner("Server not reachable: " + error.message, "error");
   }
 }
