@@ -97,10 +97,41 @@ print(fan_a_cap())
 # Part two, checks 12.5(b) to 12.5(e): the ACTUAL plugin, driven directly.
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGIN_PATH = os.path.join(
-    REPO_ROOT, "plugin", "native_v02", "bin", "Release", "net8.0-windows",
+# Rhino's script editor runs a COPY of this file from its own rhinocode
+# cache, so a repo root derived from __file__ resolves into ProgramData and
+# checks 12.5(b) onward never ran on Param's first execution (measured
+# 2026-09-04: "Built plugin not found at 'C:\ProgramData\McNeel\...'").
+# The candidates are therefore tried in order, and the one that answered
+# is printed so a stale fallback cannot masquerade as the fresh build:
+# the __file__ route (running from the repo), the repo's own absolute
+# path (running inside Rhino), and the INSTALLED plugin as a last resort,
+# which lags the repo build by one install and says so.
+_FILE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT_ABSOLUTE = (
+    "C:\\Users\\Param\\OneDrive - Ananke-eidos\\Documents\\"
+    "Ananke Eidos Studio\\VS code\\COMPAS Workflow"
+)
+_BUILT_TAIL = os.path.join(
+    "plugin", "native_v02", "bin", "Release", "net8.0-windows",
     "Ananke.COMPAS.gha",
+)
+_INSTALLED = os.path.join(
+    os.environ.get("APPDATA", ""), "Grasshopper", "Libraries",
+    "Ananke_COMPAS", "Ananke.COMPAS.gha",
+)
+_CANDIDATES = [
+    ("the repo build beside this script", os.path.join(_FILE_ROOT, _BUILT_TAIL)),
+    ("the repo build at the absolute path", os.path.join(_REPO_ROOT_ABSOLUTE, _BUILT_TAIL)),
+    ("the INSTALLED plugin (lags the repo build by one install)", _INSTALLED),
+]
+REPO_ROOT = _REPO_ROOT_ABSOLUTE
+PLUGIN_PATH = next(
+    (path for _, path in _CANDIDATES if os.path.isfile(path)),
+    os.path.join(_REPO_ROOT_ABSOLUTE, _BUILT_TAIL),
+)
+PLUGIN_SOURCE_NOTE = next(
+    (note for note, path in _CANDIDATES if path == PLUGIN_PATH),
+    "no candidate existed",
 )
 
 BindingFlags = reflection.BindingFlags
@@ -111,9 +142,11 @@ _NONPUBLIC_STATIC = BindingFlags.NonPublic | BindingFlags.Static
 def _load_plugin(path):
     if not os.path.isfile(path):
         raise RuntimeError(
-            "Built plugin not found at %r; run the two dotnet build "
-            "commands in the task brief first." % (path,)
+            "Built plugin not found at %r (tried: %s); run the two dotnet "
+            "build commands in the task brief first."
+            % (path, "; ".join(candidate for _, candidate in _CANDIDATES))
         )
+    print("plugin loaded from %s: %s" % (PLUGIN_SOURCE_NOTE, path))
     return reflection.Assembly.LoadFrom(path)
 
 
