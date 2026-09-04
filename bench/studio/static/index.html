@@ -214,6 +214,55 @@
   </div>
 </aside>
 <div id="data-panel" class="hidden"><button id="data-close">Close</button><div id="data-content"></div></div>
+<!-- Two checks that must not live in studio.js, because the fault they
+     exist for is a studio.js the browser is serving from its own cache. The
+     page is read from disk by every server on every request, so this is the
+     one place a stale copy cannot reach. -->
+<script>
+(function () {
+  function shout(html) {
+    if (document.getElementById("stale-server")) return;
+    var notice = document.createElement("div");
+    notice.id = "stale-server";
+    notice.innerHTML = html;
+    (document.body || document.documentElement).appendChild(notice);
+  }
+
+  // A stamp still reading the placeholder was not filled in, which means
+  // the page was not served by the route that fills it in, which means the
+  // server is older than that route. Everything else is downstream: the
+  // folder routes answer 404, and the browser is handed un-versioned asset
+  // URLs its own cache can satisfy with yesterday's files.
+  document.addEventListener("DOMContentLoaded", function () {
+    var stamp = document.getElementById("build-stamp");
+    // Assembled, never written whole. The server fills the placeholder in
+    // with a replace-every-occurrence, so a literal here would be rewritten
+    // to the stamp itself and this test would ask whether the stamp differs
+    // from the stamp: never true, so the warning fired on every load. A
+    // self-check whose own text is rewritten by the thing it checks is a
+    // trap worth two lines of awkwardness to close.
+    var placeholder = "__" + "BUILD" + "__";
+    if (!stamp || stamp.textContent.trim() !== placeholder) return;
+    stamp.textContent = "stale";
+    stamp.className = "stale";
+    shout("<b>This page came from an old server.</b> Stop it and run "
+      + "<code>bench/studio/serve.py</code> again. Until then the browser "
+      + "is being handed un-versioned files, and may be showing you a "
+      + "cached studio from before the last change.");
+  });
+
+  // A module-level throw halfway down studio.js leaves half a panel built
+  // and the rest silently never built, which looks merely disappointing
+  // rather than broken. Registered before the module loads, so it catches
+  // one however early it happens.
+  window.addEventListener("error", function (event) {
+    shout("<b>The studio stopped setting itself up.</b> "
+      + ((event && event.message) || "An error was thrown")
+      + ". The panel is half-built. If the build stamp above is not the one "
+      + "you expect, this is a cached script: reload with Ctrl+Shift+R.");
+  });
+}());
+</script>
 <script type="module" src="/static/studio.js"></script>
 </body>
 </html>

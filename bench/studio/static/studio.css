@@ -705,3 +705,17 @@ body { overflow: hidden;
    scrollbar, a select's popup and a colour picker look like. */
 :root { color-scheme: dark; }
 :root[data-theme="light"] { color-scheme: light; }
+
+/* The one message in this studio allowed to be large and in the way. It
+   appears only when the page came from a server too old to version its
+   assets, or when the module threw while wiring itself up. Both leave a
+   panel that looks merely disappointing, and both have now been reported
+   three times as "nothing has changed on the interface". */
+#stale-server { position: fixed; left: 50%; top: 0; transform: translateX(-50%);
+  z-index: 100; max-width: 680px; margin: 12px;
+  padding: 12px 16px; border-radius: 4px;
+  background: #7a2b20; color: #fff; font-size: 14px; line-height: 1.5;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+#stale-server code { padding: 1px 5px; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.28); font-family: ui-monospace, monospace; }
+#build-stamp.stale { color: #ff8f7a; font-weight: 600; }
