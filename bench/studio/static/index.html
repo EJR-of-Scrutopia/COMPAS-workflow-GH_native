@@ -63,7 +63,12 @@
       <option value="tile">Fired clay tile</option>
       <option value="stone">Limestone</option>
     </select>
+    <div id="material-folder-row" class="folder-line">
+      <button id="material-folder-choose" title="Pick your material library folder">Material folder</button>
+      <span id="material-folder-path" title="">no folder chosen</span>
+    </div>
     <button id="skin-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Render skin</span><span class="chevron"></span></button>
+    <input id="skin-search" type="search" class="hidden" placeholder="Search materials">
     <div id="skin-tiles" class="tile-grid hidden"></div>
     <select id="render-skin" class="hidden">
       <option value="none" selected>None (material)</option>

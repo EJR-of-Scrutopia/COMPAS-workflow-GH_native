@@ -1102,10 +1102,19 @@ def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
             "{} must branch on whether the cut is authored before quoting "
             "the requested size as a target".format(name)
         )
-        assert "size control is not used" in body, (
-            "{} must say the size control is not used by an authored "
-            "cut".format(name)
-        )
+    # The HUD carries the explanation, because a sentence belongs where
+    # there is room for one.
+    assert "size control is not used" in _function_body(js, "updateHud")
+    # The panel carries the correction and nothing more. It used to carry
+    # the sentence too -- 466 pixels of it inside a 300 pixel panel, which
+    # printed through the words "Piece size" and then off the right edge.
+    # The claim the original test was defending is unchanged: an authored
+    # size is never called a target.
+    cut = _function_body(js, "applyCut")
+    assert '" mm requested"' in cut and '" mm target"' in cut
+    assert "size control is not used" not in cut, (
+        "the panel row is a readout, not a paragraph; the HUD says why"
+    )
 
 
 def test_a_finished_run_restores_the_material_note_with_the_material():

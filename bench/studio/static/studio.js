@@ -20,6 +20,10 @@ import {
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
   sunPosition, sunLight, timeAtElevation,
 } from "/static/fields.js";
+import {
+  loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat,
+  repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX,
+} from "/static/pbr.js";
 
 // ---------- diagnosis ----------
 // When something goes wrong on screen it writes itself down, with enough
@@ -166,6 +170,8 @@ const state = {
   // (see restoreAppearance/persistAppearance). null means no override; the
   // registry material (or a skin) shows through untouched.
   appearance: { tint: null, finish: null, skin: "none" },
+  materialLibrary: [],   // the index from /api/materials, or empty
+  materialRoot: "",      // where it is being read from, for the panel
 };
 
 const canvas = document.getElementById("view");
@@ -2188,6 +2194,109 @@ const GROUP_SUMMARIES = {
 
 setGroupSummaries(GROUP_SUMMARIES);
 
+// ---------- the material library ----------
+// Loaded sets, most recently used last. Small on purpose: a set is four
+// textures at 1024 square with mipmaps, about 21 MB of video memory, and
+// nothing in this studio looks at more than one or two at a time. Eviction
+// DISPOSES, unlike the QS plugin's caches, because a WebGL texture is not
+// reclaimed by dropping a reference the way a GDI+ bitmap is.
+const LIBRARY_CACHE_LIMIT = 6;
+const libraryCache = new Map();
+const libraryLoads = new Map();     // key -> in-flight promise, so a double
+                                    // click does not fetch the set twice
+
+function libraryEntry(key) {
+  return state.materialLibrary.find((entry) => entry.key === key) || null;
+}
+
+function isLibraryKey(key) {
+  return typeof key === "string" && key.includes("/");
+}
+
+async function ensureLibraryMaterial(key) {
+  if (libraryCache.has(key)) {
+    // Touch it: a Map keeps insertion order, so deleting and re-setting is
+    // what makes this least-recently-used rather than first-in-first-out.
+    const set = libraryCache.get(key);
+    libraryCache.delete(key);
+    libraryCache.set(key, set);
+    return set;
+  }
+  if (libraryLoads.has(key)) return libraryLoads.get(key);
+  const entry = libraryEntry(key);
+  if (!entry) return null;
+  const loading = loadLibraryMaterial(entry, {
+    px: VIEWPORT_PX,
+    anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+  }).then((set) => {
+    libraryCache.set(key, set);
+    while (libraryCache.size > LIBRARY_CACHE_LIMIT) {
+      const oldest = libraryCache.keys().next().value;
+      if (oldest === key || oldest === state.appearance.skin) break;
+      disposeLibraryMaterial(libraryCache.get(oldest));
+      libraryCache.delete(oldest);
+    }
+    return set;
+  }).catch((error) => {
+    logStudio("material " + key + " would not load: " + error.message);
+    return null;
+  }).finally(() => libraryLoads.delete(key));
+  libraryLoads.set(key, loading);
+  return loading;
+}
+
+// The size of one repeat, in metres, for whatever the vault is wearing.
+// Null when it is not wearing a library material at all, which is what
+// keeps the old hand-tuned 0.15 in force for the procedural skins.
+function activeTileMetres() {
+  if (!isLibraryKey(state.appearance.skin)) return null;
+  const entry = libraryEntry(state.appearance.skin);
+  if (!entry) return null;
+  return entry.tileMetres || [DEFAULT_TILE_METRES, DEFAULT_TILE_METRES];
+}
+
+async function refreshMaterialLibrary() {
+  let payload = null;
+  try {
+    payload = await fetchJson("/api/materials");
+  } catch (error) {
+    return;                         // no library chosen, the skins stand
+  }
+  state.materialLibrary = payload.materials || [];
+  state.materialRoot = payload.root || "";
+  const select = document.getElementById("render-skin");
+  // The four built-in skins keep their places at the top: they need no
+  // folder and they are what a study looks like before anybody chooses.
+  for (const option of Array.from(select.options)) {
+    if (isLibraryKey(option.value)) option.remove();
+  }
+  for (const entry of state.materialLibrary) {
+    const option = document.createElement("option");
+    option.value = entry.key;
+    option.textContent = entry.label;
+    select.appendChild(option);
+  }
+  // A remembered choice that survived a folder change is honoured; one
+  // whose material has gone falls back rather than showing nothing.
+  if (isLibraryKey(state.appearance.skin)) {
+    if (libraryEntry(state.appearance.skin)) {
+      select.value = state.appearance.skin;
+      await ensureLibraryMaterial(state.appearance.skin);
+      rebuildAppearance();
+    } else {
+      logStudio("the remembered material " + state.appearance.skin
+        + " is not in this library");
+      state.appearance.skin = "none";
+      select.value = "none";
+    }
+  }
+  buildSkinTiles();
+  logStudio("material library: " + state.materialLibrary.length
+    + " materials in " + (state.materialLibrary.length
+      ? new Set(state.materialLibrary.map((e) => e.family)).size : 0)
+    + " families");
+}
+
 // ---------- pickers ----------
 // A tile grid is a choice, so it stays shut until it is wanted, and the
 // trigger carries what is currently chosen: a small round preview and the
@@ -2198,10 +2307,19 @@ function wirePicker(triggerId, holderId, selectId, paint) {
   const holder = document.getElementById(holderId);
   const select = document.getElementById(selectId);
   if (!trigger || !holder || !select) return;
+  // A grid big enough to need a search box gets one, named after the grid
+  // it filters, and it opens and shuts with it. Only the material library
+  // has one today; the others are four tiles and a search field over four
+  // tiles is furniture.
+  const search = document.getElementById(holderId.replace("-tiles", "-search"));
   trigger.addEventListener("click", () => {
     const opening = holder.classList.contains("hidden");
     holder.classList.toggle("hidden", !opening);
     trigger.classList.toggle("open", opening);
+    if (search) {
+      search.classList.toggle("hidden", !opening);
+      if (opening) search.focus();
+    }
   });
   select.addEventListener("change", () => paintPicker(triggerId, selectId, paint));
   paintPicker(triggerId, selectId, paint);
@@ -2545,12 +2663,91 @@ function buildGroundTiles() {
 function buildMaterialTiles() {
   buildTileGrid("material-tiles", "material-select",
     (value) => materials[value] || null);
-  buildTileGrid("skin-tiles", "render-skin", (value) => {
-    if (value === "none") return materials[document.getElementById("material-select").value]
-      || materials.concrete;
-    if (!skinMaterialCache[value] && SKINS[value]) skinMaterialCache[value] = SKINS[value]();
-    return skinMaterialCache[value] || null;
-  });
+  buildSkinTiles();
+}
+
+// A tile whose picture is a file rather than a render. The library's own
+// 256 pixel colour crop, served by the backend and drawn by the browser, so
+// a hundred and fifty-eight of them cost no video memory whatever. This is
+// also the most legible thing that could go in a tile: QS crops each
+// picture to ONE unit before it enters the stack, and a picture of one
+// brick reads at 180 pixels where a picture of a wall does not.
+function imageTile(value, label, source) {
+  const tile = document.createElement("button");
+  tile.className = "tile";
+  tile.dataset.value = value;
+  tile.title = label;
+  const image = document.createElement("img");
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.alt = "";
+  image.src = source;
+  tile.appendChild(image);
+  const name = document.createElement("span");
+  name.textContent = label;
+  tile.appendChild(name);
+  return tile;
+}
+
+function chooseSkin(value) {
+  const select = document.getElementById("render-skin");
+  if (select.value === value) return;
+  select.value = value;
+  select.dispatchEvent(new Event("change"));
+  paintTileSelection(document.getElementById("skin-tiles"), value);
+}
+
+function buildSkinTiles() {
+  const holder = document.getElementById("skin-tiles");
+  const select = document.getElementById("render-skin");
+  if (!holder || !select) return;
+  const query = ((document.getElementById("skin-search") || {}).value || "")
+    .trim().toLowerCase();
+  holder.innerHTML = "";
+
+  // The built-in skins first, rendered on the preview ball as before. They
+  // are four, they need no folder, and they are what the vault wears until
+  // somebody chooses otherwise.
+  if (!query) {
+    for (const option of select.options) {
+      if (isLibraryKey(option.value)) continue;
+      const material = option.value === "none"
+        ? (materials[document.getElementById("material-select").value] || materials.concrete)
+        : (skinMaterialCache[option.value]
+          || (SKINS[option.value] && (skinMaterialCache[option.value] = SKINS[option.value]())));
+      if (!material) continue;
+      const tile = previewTile(option.value, option.textContent,
+        (canvasEl) => renderMaterialPreview(material, canvasEl));
+      tile.addEventListener("click", () => chooseSkin(option.value));
+      holder.appendChild(tile);
+    }
+  }
+
+  // Then the library, in families, because a search across a hundred and
+  // fifty-eight near-identical bricks is the difference between adjusting a
+  // choice and making a new one.
+  let family = null;
+  for (const entry of state.materialLibrary) {
+    if (query && !(entry.key + " " + entry.label).toLowerCase().includes(query)) continue;
+    if (entry.family !== family) {
+      family = entry.family;
+      const heading = document.createElement("span");
+      heading.className = "tile-family";
+      heading.textContent = family;
+      holder.appendChild(heading);
+    }
+    const tile = imageTile(entry.key, entry.label, tileUrl(entry));
+    // The size is what an architect wants to know about a picture of a
+    // brick, and it is the number that decides how it lays on.
+    if (entry.tileMetres) {
+      tile.title = entry.label + "  "
+        + Math.round(entry.tileMetres[0] * 1000) + " x "
+        + Math.round(entry.tileMetres[1] * 1000) + " mm";
+    }
+    tile.addEventListener("click", () => chooseSkin(entry.key));
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
 }
 
 function paintMaterialSwatches() {
@@ -2610,10 +2807,14 @@ function applyCut(preserve) {
   // claim the Data panel already refuses to make. The units span, which
   // the slider's live input handler never touches, carries the correction
   // so a mid-drag label stays true rather than reverting to "mm target".
+  // The correction is two words, not a sentence. The long form ran to 466
+  // pixels inside a 300 pixel panel, printed straight through the words
+  // "Piece size" and then off the right edge -- found in the first
+  // screenshot of the studio ever taken here, 2026-09-04. The HUD carries
+  // the explanation in full, which is where a sentence belongs.
   document.getElementById("size-units").textContent =
     state.bundle.tessellation.source === "imported"
-      ? " mm requested, but this cut is authored in Grasshopper and the size control is not used"
-      : " mm target";
+      ? " mm requested" : " mm target";
   // Same defence for the pattern (Task 9, the half of C1 Task 8 left open):
   // an authored cut's own pattern name (tess["pattern"] in staging.py, not
   // the requested one) is only adopted when it is one the server actually
@@ -4207,9 +4408,79 @@ document.getElementById("material-select").addEventListener("change", (e) => {
   const select = document.getElementById("study-select");
   if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
 });
-document.getElementById("render-skin").addEventListener("change", (e) => {
+// The search filters the grid as it is typed. It matches "family/name" as
+// one string, which is how the QS picker does it and is what a person means
+// when they type "brick stock".
+{
+  const search = document.getElementById("skin-search");
+  if (search) search.addEventListener("input", () => buildSkinTiles());
+}
+
+async function showMaterialFolder() {
+  const row = document.getElementById("material-folder-path");
+  if (!row) return;
+  try {
+    const folder = await fetchJson("/api/materials/folder");
+    if (!folder.path) { row.textContent = "no folder chosen"; return; }
+    const parts = folder.path.split(/[\\/]/).filter(Boolean);
+    row.textContent = parts.length > 2
+      ? "..." + parts.slice(-2).join("/") : folder.path;
+    row.title = folder.path + " (" + folder.count + " materials)";
+  } catch (error) {
+    row.textContent = "could not read the folder";
+  }
+}
+
+document.getElementById("material-folder-choose").addEventListener("click", async () => {
+  const row = document.getElementById("material-folder-path");
+  row.textContent = "waiting for the folder dialog...";
+  let chosen = null;
+  try {
+    chosen = (await (await fetch(
+      "/api/materials/folder/browse", { method: "POST" })).json()).path;
+  } catch (error) {
+    row.textContent = "the folder dialog could not be opened";
+    return;
+  }
+  if (!chosen) { await showMaterialFolder(); return; }
+  const response = await fetch("/api/materials/folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: chosen }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    row.textContent = "not a folder: " + (body.detail || response.status);
+    return;
+  }
+  // Everything currently loaded came out of the OLD folder, so it goes:
+  // a material cached under "brick/stock-red" from one library is not the
+  // same material as "brick/stock-red" in another.
+  for (const [key, set] of libraryCache) {
+    if (key !== state.appearance.skin) disposeLibraryMaterial(set);
+  }
+  libraryCache.clear();
+  await refreshMaterialLibrary();
+  await showMaterialFolder();
+});
+
+document.getElementById("render-skin").addEventListener("change", async (e) => {
   state.appearance.skin = e.target.value;
   persistAppearance();
+  // A library material has to arrive before it can be worn. rebuildAppearance
+  // is called either way: once now, so the panel and the log keep up, and
+  // again when the textures land.
+  if (isLibraryKey(state.appearance.skin)) {
+    const set = await ensureLibraryMaterial(state.appearance.skin);
+    if (set) {
+      const entry = set.entry;
+      logStudio("wearing " + entry.label + (entry.tileMetres
+        ? " at " + Math.round(entry.tileMetres[0] * 1000) + " x "
+          + Math.round(entry.tileMetres[1] * 1000) + " mm"
+        : " at an unknown size, laid at "
+          + Math.round(DEFAULT_TILE_METRES * 1000) + " mm"));
+    }
+  }
   rebuildAppearance();
 });
 document.getElementById("material-tint").addEventListener("change", (e) => {
@@ -4864,6 +5135,12 @@ function appearanceMaterialBase() {
   // the ANALYSIS material being concrete-sprayed -- keeps working exactly
   // as before under any skin, including "none".
   const skin = state.appearance.skin;
+  // A library material, if one is chosen AND has finished loading. Before
+  // it has, the registry entry stands in: a frame of the old material beats
+  // a frame of nothing, and rebuildAppearance runs again when it arrives.
+  if (isLibraryKey(skin) && libraryCache.has(skin)) {
+    return libraryCache.get(skin).material;
+  }
   if (skin !== "none" && SKINS[skin]) {
     if (!skinMaterialCache[skin]) skinMaterialCache[skin] = SKINS[skin]();
     return skinMaterialCache[skin];
@@ -4905,6 +5182,7 @@ function taperAt(course) {
 
 function buildPieceMeshes() {
   disposeShell();
+  const tile = activeTileMetres();
   const group = new THREE.Group();
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
@@ -4989,7 +5267,13 @@ function buildPieceMeshes() {
       ? welded.slice(offset, offset + positions.length)
       : creaseNormals(positions);
     offset += positions.length;
-    const uvs = boxUVs(positions, centre, segmentUVOffset(piece.key));
+    // UV units per metre: the reciprocal of how much of the world one
+    // repeat of the picture covers. A library material knows its own size,
+    // so a brick photographed at 230 by 61 millimetres lays as a brick. The
+    // procedural skins have no real size and keep the eyeballed 0.15.
+    const uvs = tile
+      ? boxUVs(positions, centre, segmentUVOffset(piece.key), 1 / tile[0], 1 / tile[1])
+      : boxUVs(positions, centre, segmentUVOffset(piece.key));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
@@ -5799,9 +6083,13 @@ guarded("the pickers", wireAllPickers);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the slider rows", () => upgradeSliders());
 guarded("the panel groups", buildGroups);
-// The library loads in the background: the studio is usable before it
-// arrives, and a folder with nothing in it simply leaves the old props.
+// The libraries load in the background: the studio is usable before either
+// arrives, a folder with nothing in it simply leaves the old props, and no
+// material folder chosen leaves the four built-in skins.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
+refreshMaterialLibrary().catch(
+  (error) => logStudio("material library: " + error.message));
+showMaterialFolder();
 boot();
 requestAnimationFrame(frame);
 

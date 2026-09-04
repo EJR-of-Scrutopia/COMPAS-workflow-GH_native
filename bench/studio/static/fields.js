@@ -18,7 +18,21 @@ export function segmentUVOffset(key) {
   return [(hash % 97) / 9.7, ((hash >>> 8) % 97) / 9.7];
 }
 
-export function boxUVs(positions, centroid, offset) {
+// Box projection: each triangle is laid flat against whichever of the three
+// planes its own normal leans on most, and the two remaining world axes
+// become u and v. That is what makes a texture sit on a doubly curved shell
+// without a seam anybody can find.
+//
+// scaleU and scaleV are UV UNITS PER METRE, which is to say the reciprocal
+// of how many metres one repeat of the picture covers. They used to be a
+// single hard-coded 0.15 -- one repeat per 6.67 m, a number chosen by eye
+// for a procedural noise that had no real size. A library material does
+// have one: a brick photographed at 230 by 61 millimetres wants 1/0.230 and
+// 1/0.061, and passing anything else lays bricks the size of doors.
+//
+// The default keeps every existing caller and every existing test on the
+// number they were written against.
+export function boxUVs(positions, centroid, offset, scaleU = 0.15, scaleV = scaleU) {
   const uvs = [];
   for (let i = 0; i < positions.length; i += 9) {
     const u = [
@@ -46,8 +60,8 @@ export function boxUVs(positions, centroid, offset) {
         positions[i + 3 * corner + 2],
       ];
       uvs.push(
-        (point[uAxis] - centroid[uAxis]) * 0.15 + offset[0],
-        (point[vAxis] - centroid[vAxis]) * 0.15 + offset[1],
+        (point[uAxis] - centroid[uAxis]) * scaleU + offset[0],
+        (point[vAxis] - centroid[vAxis]) * scaleV + offset[1],
       );
     }
   }
