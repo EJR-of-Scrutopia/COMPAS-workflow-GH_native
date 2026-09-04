@@ -1,0 +1,796 @@
+{
+  "tileMetres": {
+    "aggregate/gravel-dark": [
+      1.5,
+      1.5
+    ],
+    "aggregate/gravel-fine-grey": [
+      6.0,
+      6.0
+    ],
+    "aggregate/gravel-fine-pale": [
+      1.0,
+      1.0
+    ],
+    "aggregate/gravel-grey": [
+      0.8,
+      0.8
+    ],
+    "aggregate/gravel-mixed": [
+      1.5,
+      1.5
+    ],
+    "aggregate/gravel-sandy": [
+      1.0,
+      1.0
+    ],
+    "aggregate/sand-brown": [
+      2.0,
+      2.0
+    ],
+    "aggregate/sand-buff": [
+      3.5,
+      3.5
+    ],
+    "aggregate/sand-coarse": [
+      1.5,
+      1.5
+    ],
+    "aggregate/sand-golden": [
+      1.0,
+      1.0
+    ],
+    "aggregate/sand-ochre": [
+      2.0,
+      2.0
+    ],
+    "aggregate/sand-pale": [
+      1.0,
+      1.0
+    ],
+    "aggregate/sand-yellow": [
+      1.0,
+      1.0
+    ],
+    "aggregate/shingle-mixed": [
+      1.5,
+      1.5
+    ],
+    "aggregate/shingle-white": [
+      1.5,
+      1.5
+    ],
+    "brick/engineering-red": [
+      0.1826,
+      0.0342
+    ],
+    "brick/handmade-bright-red": [
+      0.1504,
+      0.0376
+    ],
+    "brick/handmade-dark": [
+      0.1935,
+      0.0633
+    ],
+    "brick/handmade-mossy": [
+      0.0903,
+      0.0208
+    ],
+    "brick/handmade-red": [
+      0.4038,
+      0.1226
+    ],
+    "brick/paver-dark": [
+      0.0685,
+      0.0513
+    ],
+    "brick/paver-stencilled": [
+      0.1805,
+      0.0473
+    ],
+    "brick/reclaimed-buff": [
+      0.9866,
+      0.3369
+    ],
+    "brick/reclaimed-grey": [
+      0.2754,
+      0.2061
+    ],
+    "brick/stock-buff": [
+      0.1869,
+      0.0873
+    ],
+    "brick/stock-grey": [
+      0.1758,
+      0.0562
+    ],
+    "brick/stock-multi": [
+      0.1031,
+      0.0451
+    ],
+    "brick/stock-orange": [
+      0.215,
+      0.065
+    ],
+    "brick/stock-red": [
+      0.215,
+      0.065
+    ],
+    "brick/wirecut-brown": [
+      0.215,
+      0.065
+    ],
+    "brick/wirecut-cream": [
+      0.215,
+      0.065
+    ],
+    "brick/wirecut-deep-red": [
+      0.215,
+      0.065
+    ],
+    "brick/wirecut-grey": [
+      0.215,
+      0.065
+    ],
+    "brick/wirecut-orange": [
+      0.1947,
+      0.0416
+    ],
+    "brick/wirecut-red": [
+      0.2304,
+      0.0613
+    ],
+    "clay/glazed-blush": [
+      0.15,
+      0.15
+    ],
+    "clay/glazed-green": [
+      0.15,
+      0.15
+    ],
+    "clay/glazed-marble": [
+      0.15,
+      0.15
+    ],
+    "clay/glazed-white": [
+      0.15,
+      0.15
+    ],
+    "clay/mosaic-aqua": [
+      0.15,
+      0.15
+    ],
+    "clay/mosaic-blue": [
+      0.15,
+      0.15
+    ],
+    "clay/porcelain-ivory": [
+      0.15,
+      0.15
+    ],
+    "clay/porcelain-white": [
+      0.15,
+      0.15
+    ],
+    "clay/roofing-clay": [
+      0.0824,
+      0.1825
+    ],
+    "clay/terracotta-blue": [
+      0.15,
+      0.15
+    ],
+    "clay/terracotta-orange": [
+      0.15,
+      0.15
+    ],
+    "clay/terracotta-white": [
+      0.15,
+      0.15
+    ],
+    "clay/unglazed-buff": [
+      0.957,
+      0.7422
+    ],
+    "clay/unglazed-grey": [
+      0.4297,
+      0.2734
+    ],
+    "concrete/block-facing-buff": [
+      0.9866,
+      0.3369
+    ],
+    "concrete/block-facing-grey": [
+      0.1104,
+      0.0366
+    ],
+    "concrete/board-marked-brown": [
+      1.8,
+      1.8
+    ],
+    "concrete/board-marked-cream": [
+      2.4,
+      2.4
+    ],
+    "concrete/board-marked-dark": [
+      1.5,
+      1.5
+    ],
+    "concrete/board-marked-grey": [
+      1.5,
+      1.5
+    ],
+    "concrete/board-marked-pale": [
+      1.1,
+      0.55
+    ],
+    "concrete/brushed-dark": [
+      0.9204,
+      0.9204
+    ],
+    "concrete/exposed-aggregate-coarse": [
+      2.0,
+      2.0
+    ],
+    "concrete/exposed-aggregate-cream": [
+      1.23,
+      1.23
+    ],
+    "concrete/exposed-aggregate-fine": [
+      2.1,
+      2.1
+    ],
+    "concrete/exposed-aggregate-grey": [
+      2.4,
+      2.4
+    ],
+    "concrete/fair-faced-brown": [
+      1.5,
+      1.5
+    ],
+    "concrete/fair-faced-brushed": [
+      2.5,
+      2.5
+    ],
+    "concrete/fair-faced-dark": [
+      1.5,
+      1.5
+    ],
+    "concrete/fair-faced-grey": [
+      1.5,
+      1.5
+    ],
+    "concrete/fair-faced-olive": [
+      1.5,
+      1.5
+    ],
+    "concrete/fair-faced-pale": [
+      1.5,
+      1.5
+    ],
+    "concrete/fair-faced-weathered": [
+      1.5,
+      1.5
+    ],
+    "concrete/painted-grey": [
+      4.0,
+      4.0
+    ],
+    "concrete/screed-power-float-grey": [
+      1.8864,
+      1.8864
+    ],
+    "concrete/terrazzo-monochrome": [
+      1.5,
+      1.5
+    ],
+    "concrete/terrazzo-pale": [
+      1.5,
+      1.5
+    ],
+    "metal/aluminium-mill-grey": [
+      1.0,
+      1.0
+    ],
+    "metal/aluminium-mill-white": [
+      1.0,
+      1.0
+    ],
+    "metal/copper-brushed-pink": [
+      1.0,
+      1.0
+    ],
+    "metal/copper-mill-bronze": [
+      1.0,
+      1.0
+    ],
+    "metal/copper-mill-copper": [
+      1.0,
+      1.0
+    ],
+    "metal/copper-patinated-pale": [
+      1.0,
+      1.0
+    ],
+    "metal/steel-brushed": [
+      1.0,
+      1.0
+    ],
+    "metal/steel-corrugated-green": [
+      1.94,
+      1.94
+    ],
+    "metal/steel-mill-grey": [
+      1.0,
+      1.0
+    ],
+    "metal/steel-mill-white": [
+      1.0,
+      1.0
+    ],
+    "metal/steel-profiled-red": [
+      2.0,
+      2.0
+    ],
+    "paint/matt-white": [
+      2.0,
+      2.0
+    ],
+    "plaster/board-beige": [
+      3.0,
+      3.0
+    ],
+    "plaster/board-grey": [
+      1.5,
+      1.5
+    ],
+    "plaster/board-white": [
+      1.0,
+      1.0
+    ],
+    "plaster/float-grey": [
+      1.5,
+      1.5
+    ],
+    "plaster/float-mottled": [
+      1.5,
+      1.5
+    ],
+    "plaster/float-pale": [
+      1.5,
+      1.5
+    ],
+    "plaster/float-white": [
+      1.5,
+      1.5
+    ],
+    "plaster/render-monocouche-beige": [
+      3.0,
+      3.0
+    ],
+    "plaster/render-monocouche-cream": [
+      2.0,
+      2.0
+    ],
+    "plaster/render-roughcast-white": [
+      1.9981,
+      1.9981
+    ],
+    "plaster/render-sand-cement-charcoal": [
+      2.0,
+      2.0
+    ],
+    "plaster/render-sand-cement-grey": [
+      1.5,
+      1.5
+    ],
+    "plaster/render-sand-cement-white": [
+      2.0,
+      2.0
+    ],
+    "plaster/skim-cream": [
+      1.5,
+      1.5
+    ],
+    "plaster/skim-pale": [
+      1.5,
+      1.5
+    ],
+    "plaster/skim-white": [
+      1.5,
+      1.5
+    ],
+    "plastic/eps-fine": [
+      0.6,
+      0.6
+    ],
+    "plastic/eps-grey": [
+      0.6,
+      0.6
+    ],
+    "plastic/eps-white": [
+      0.6,
+      0.6
+    ],
+    "plastic/laminate-oak": [
+      0.1757,
+      0.2483
+    ],
+    "slate/roofing-grey": [
+      0.1208,
+      0.063
+    ],
+    "stone/granite-dark": [
+      0.6,
+      0.3
+    ],
+    "stone/limestone-buff": [
+      0.6,
+      0.3
+    ],
+    "stone/limestone-grey": [
+      0.4297,
+      0.2734
+    ],
+    "stone/limestone-silver": [
+      0.377,
+      0.1738
+    ],
+    "stone/marble-cream": [
+      0.5277,
+      0.3164
+    ],
+    "stone/rubble-buff": [
+      0.1336,
+      0.0718
+    ],
+    "stone/sandstone-buff": [
+      0.9866,
+      0.3369
+    ],
+    "stone/sandstone-cream": [
+      0.9514,
+      0.438
+    ],
+    "stone/sandstone-grey": [
+      0.6,
+      0.3
+    ],
+    "stone/sandstone-orange": [
+      2.0,
+      2.0
+    ],
+    "stone/sandstone-tan": [
+      0.2893,
+      0.5361
+    ],
+    "stone/sandstone-white": [
+      0.2441,
+      0.0635
+    ],
+    "stone/tile-granite-brown": [
+      0.3169,
+      0.3291
+    ],
+    "stone/tile-granite-dark": [
+      0.3156,
+      0.3903
+    ],
+    "stone/tile-marble-grey": [
+      0.0817,
+      0.1022
+    ],
+    "timber/board-cedar": [
+      0.0524,
+      0.2952
+    ],
+    "timber/board-figured": [
+      0.1507,
+      0.1864
+    ],
+    "timber/board-hinoki": [
+      0.5962,
+      0.1011
+    ],
+    "timber/cladding-terracotta": [
+      0.1652,
+      0.0578
+    ],
+    "timber/cork-coarse": [
+      1.2,
+      0.15
+    ],
+    "timber/cork-fine": [
+      1.2,
+      0.15
+    ],
+    "timber/cork-medium": [
+      1.2,
+      0.15
+    ],
+    "timber/decking-slat": [
+      0.0459,
+      0.8232
+    ],
+    "timber/grain-amber": [
+      0.4,
+      0.4
+    ],
+    "timber/grain-blush": [
+      1.2,
+      0.15
+    ],
+    "timber/grain-brown": [
+      0.6,
+      0.6
+    ],
+    "timber/grain-copper": [
+      1.2,
+      0.15
+    ],
+    "timber/grain-espresso": [
+      0.4,
+      0.4
+    ],
+    "timber/grain-honey": [
+      1.2,
+      0.15
+    ],
+    "timber/grain-light": [
+      0.4,
+      0.4
+    ],
+    "timber/grain-mid": [
+      0.8,
+      0.8
+    ],
+    "timber/grain-pale": [
+      0.8,
+      0.8
+    ],
+    "timber/grain-russet": [
+      1.2,
+      0.15
+    ],
+    "timber/painted-white": [
+      0.0664,
+      0.6394
+    ],
+    "timber/sheet-chipboard-fine": [
+      1.2,
+      0.15
+    ],
+    "timber/sheet-chipboard-orange": [
+      1.2,
+      0.15
+    ],
+    "timber/sheet-chipboard-pale": [
+      1.2,
+      0.15
+    ],
+    "timber/sheet-osb": [
+      2.51,
+      2.51
+    ],
+    "timber/sheet-plywood": [
+      0.5,
+      0.5
+    ],
+    "timber/stained-black": [
+      0.8,
+      0.8
+    ],
+    "timber/stained-pine": [
+      0.7251,
+      0.0578
+    ],
+    "timber/veneer-oak": [
+      1.83,
+      1.83
+    ],
+    "timber/veneer-oak-grey": [
+      1.0,
+      1.0
+    ],
+    "timber/veneer-rosewood": [
+      1.0,
+      1.0
+    ],
+    "timber/veneer-smoked-walnut": [
+      1.0,
+      1.0
+    ],
+    "timber/veneer-teak": [
+      1.0,
+      1.0
+    ],
+    "timber/veneer-walnut": [
+      1.0,
+      1.0
+    ],
+    "timber/veneer-white-oak": [
+      0.5,
+      0.5
+    ],
+    "timber/weathered-brown": [
+      0.2703,
+      0.1589
+    ],
+    "timber/weathered-dark": [
+      0.5067,
+      0.1121
+    ],
+    "timber/weathered-grey": [
+      0.0884,
+      0.3918
+    ],
+    "timber/weathered-mottled": [
+      0.1294,
+      0.4136
+    ],
+    "timber/weathered-silver": [
+      0.0708,
+      0.4846
+    ]
+  },
+  "tileSource": {
+    "aggregate/gravel-dark": "ambientCG gravel024",
+    "aggregate/gravel-fine-grey": "ambientCG gravel028",
+    "aggregate/gravel-fine-pale": "assumed (aggregate)",
+    "aggregate/gravel-grey": "ambientCG gravel020",
+    "aggregate/gravel-mixed": "ambientCG gravel022",
+    "aggregate/gravel-sandy": "assumed (aggregate)",
+    "aggregate/sand-brown": "Poly Haven dirt",
+    "aggregate/sand-buff": "ambientCG ground054",
+    "aggregate/sand-coarse": "Poly Haven sand_01",
+    "aggregate/sand-golden": "assumed (aggregate)",
+    "aggregate/sand-ochre": "Poly Haven excavated_soil_wall",
+    "aggregate/sand-pale": "assumed (aggregate)",
+    "aggregate/sand-yellow": "assumed (aggregate)",
+    "aggregate/shingle-mixed": "ambientCG gravel026",
+    "aggregate/shingle-white": "ambientCG gravel023",
+    "brick/engineering-red": "Poly Haven red_brick_03, cropped",
+    "brick/handmade-bright-red": "Poly Haven red_brick, cropped",
+    "brick/handmade-dark": "Poly Haven dark_brick_wall, cropped",
+    "brick/handmade-mossy": "Poly Haven brick_4, cropped",
+    "brick/handmade-red": "Poly Haven large_red_bricks, cropped",
+    "brick/paver-dark": "Poly Haven brick_floor_04, cropped",
+    "brick/paver-stencilled": "Poly Haven stenciled_brick_floor, cropped",
+    "brick/reclaimed-buff": "Poly Haven sandstone_blocks_05, cropped",
+    "brick/reclaimed-grey": "ambientCG bricks076a, cropped",
+    "brick/stock-buff": "ambientCG bricks038, cropped",
+    "brick/stock-grey": "Poly Haven brick_wall_13, cropped",
+    "brick/stock-multi": "Poly Haven brick_wall_09, cropped",
+    "brick/stock-orange": "assumed (brick)",
+    "brick/stock-red": "assumed (brick)",
+    "brick/wirecut-brown": "assumed (brick)",
+    "brick/wirecut-cream": "assumed (brick)",
+    "brick/wirecut-deep-red": "assumed (brick)",
+    "brick/wirecut-grey": "assumed (brick)",
+    "brick/wirecut-orange": "ambientCG bricks092, cropped",
+    "brick/wirecut-red": "ambientCG bricks051, cropped",
+    "clay/glazed-blush": "assumed (clay)",
+    "clay/glazed-green": "assumed (clay)",
+    "clay/glazed-marble": "assumed (clay)",
+    "clay/glazed-white": "assumed (clay)",
+    "clay/mosaic-aqua": "assumed (clay)",
+    "clay/mosaic-blue": "assumed (clay)",
+    "clay/porcelain-ivory": "assumed (clay)",
+    "clay/porcelain-white": "assumed (clay)",
+    "clay/roofing-clay": "Poly Haven clay_roof_tiles_02, cropped",
+    "clay/terracotta-blue": "assumed (clay)",
+    "clay/terracotta-orange": "assumed (clay)",
+    "clay/terracotta-white": "assumed (clay)",
+    "clay/unglazed-buff": "Poly Haven floor_tiles_04, cropped",
+    "clay/unglazed-grey": "Poly Haven floor_tiles_02, cropped",
+    "concrete/block-facing-buff": "Poly Haven sandstone_blocks_05, cropped",
+    "concrete/block-facing-grey": "Poly Haven exterior_wall_cladding, cropped",
+    "concrete/board-marked-brown": "Poly Haven wood_textured_concrete",
+    "concrete/board-marked-cream": "ambientCG concrete046",
+    "concrete/board-marked-dark": "assumed (concrete)",
+    "concrete/board-marked-grey": "assumed (concrete)",
+    "concrete/board-marked-pale": "ambientCG concrete034",
+    "concrete/brushed-dark": "Poly Haven brushed_concrete_04, cropped",
+    "concrete/exposed-aggregate-coarse": "Poly Haven gravel_embedded_concrete",
+    "concrete/exposed-aggregate-cream": "Poly Haven rough_concrete",
+    "concrete/exposed-aggregate-fine": "Poly Haven gravel_concrete_03",
+    "concrete/exposed-aggregate-grey": "Poly Haven granular_concrete",
+    "concrete/fair-faced-brown": "assumed (concrete)",
+    "concrete/fair-faced-brushed": "Poly Haven brushed_concrete",
+    "concrete/fair-faced-dark": "assumed (concrete)",
+    "concrete/fair-faced-grey": "assumed (concrete)",
+    "concrete/fair-faced-olive": "assumed (concrete)",
+    "concrete/fair-faced-pale": "assumed (concrete)",
+    "concrete/fair-faced-weathered": "assumed (concrete)",
+    "concrete/painted-grey": "Poly Haven painted_concrete_02",
+    "concrete/screed-power-float-grey": "Poly Haven garage_floor",
+    "concrete/terrazzo-monochrome": "assumed (concrete)",
+    "concrete/terrazzo-pale": "assumed (concrete)",
+    "metal/aluminium-mill-grey": "assumed (metal)",
+    "metal/aluminium-mill-white": "assumed (metal)",
+    "metal/copper-brushed-pink": "assumed (metal)",
+    "metal/copper-mill-bronze": "assumed (metal)",
+    "metal/copper-mill-copper": "assumed (metal)",
+    "metal/copper-patinated-pale": "assumed (metal)",
+    "metal/steel-brushed": "assumed (metal)",
+    "metal/steel-corrugated-green": "Poly Haven container_side",
+    "metal/steel-mill-grey": "assumed (metal)",
+    "metal/steel-mill-white": "assumed (metal)",
+    "metal/steel-profiled-red": "Poly Haven box_profile_metal_sheet",
+    "paint/matt-white": "Poly Haven painted_plaster_wall",
+    "plaster/board-beige": "Poly Haven beige_wall_001",
+    "plaster/board-grey": "Poly Haven plaster_grey_04",
+    "plaster/board-white": "Poly Haven white_plaster_02",
+    "plaster/float-grey": "assumed (plaster)",
+    "plaster/float-mottled": "assumed (plaster)",
+    "plaster/float-pale": "assumed (plaster)",
+    "plaster/float-white": "assumed (plaster)",
+    "plaster/render-monocouche-beige": "Poly Haven beige_wall_001",
+    "plaster/render-monocouche-cream": "Poly Haven plastered_wall",
+    "plaster/render-roughcast-white": "Poly Haven white_stucco",
+    "plaster/render-sand-cement-charcoal": "Poly Haven plastered_wall_05",
+    "plaster/render-sand-cement-grey": "Poly Haven plaster_grey_04",
+    "plaster/render-sand-cement-white": "Poly Haven painted_plaster_wall",
+    "plaster/skim-cream": "assumed (plaster)",
+    "plaster/skim-pale": "assumed (plaster)",
+    "plaster/skim-white": "assumed (plaster)",
+    "plastic/eps-fine": "assumed (plastic)",
+    "plastic/eps-grey": "assumed (plastic)",
+    "plastic/eps-white": "assumed (plastic)",
+    "plastic/laminate-oak": "Poly Haven laminate_floor_03, cropped",
+    "slate/roofing-grey": "Poly Haven roof_slates_03, cropped",
+    "stone/granite-dark": "assumed (stone)",
+    "stone/limestone-buff": "assumed (stone)",
+    "stone/limestone-grey": "Poly Haven floor_tiles_02, cropped",
+    "stone/limestone-silver": "Poly Haven stone_tile_wall, cropped",
+    "stone/marble-cream": "Poly Haven marble_01, cropped",
+    "stone/rubble-buff": "Poly Haven rough_block_wall, cropped",
+    "stone/sandstone-buff": "Poly Haven sandstone_blocks_05, cropped",
+    "stone/sandstone-cream": "Poly Haven concrete_brick_wall_001, cropped",
+    "stone/sandstone-grey": "assumed (stone)",
+    "stone/sandstone-orange": "Poly Haven sandstone_cracks",
+    "stone/sandstone-tan": "Poly Haven sandstone_blocks_08, cropped",
+    "stone/sandstone-white": "Poly Haven white_sandstone_bricks_03, cropped",
+    "stone/tile-granite-brown": "Poly Haven granite_tile_04, cropped",
+    "stone/tile-granite-dark": "Poly Haven granite_tile, cropped",
+    "stone/tile-marble-grey": "Poly Haven grey_cartago_03, cropped",
+    "timber/board-cedar": "Poly Haven japanese_cedar_planks, cropped",
+    "timber/board-figured": "Poly Haven wood_floor, cropped",
+    "timber/board-hinoki": "Poly Haven hinoki_planks, cropped",
+    "timber/cladding-terracotta": "Poly Haven exterior_wall_cladding_02, cropped",
+    "timber/cork-coarse": "assumed (timber)",
+    "timber/cork-fine": "assumed (timber)",
+    "timber/cork-medium": "assumed (timber)",
+    "timber/decking-slat": "Poly Haven synthetic_wood, cropped",
+    "timber/grain-amber": "ambientCG wood066",
+    "timber/grain-blush": "assumed (timber)",
+    "timber/grain-brown": "Poly Haven kitchen_wood",
+    "timber/grain-copper": "assumed (timber)",
+    "timber/grain-espresso": "ambientCG wood067",
+    "timber/grain-honey": "assumed (timber)",
+    "timber/grain-light": "ambientCG wood058",
+    "timber/grain-mid": "ambientCG wood049",
+    "timber/grain-pale": "ambientCG wood048",
+    "timber/grain-russet": "assumed (timber)",
+    "timber/painted-white": "Poly Haven white_planks_clean, cropped",
+    "timber/sheet-chipboard-fine": "assumed (timber)",
+    "timber/sheet-chipboard-orange": "assumed (timber)",
+    "timber/sheet-chipboard-pale": "assumed (timber)",
+    "timber/sheet-osb": "Poly Haven oriented_strand_board",
+    "timber/sheet-plywood": "Poly Haven plywood",
+    "timber/stained-black": "ambientCG wood051",
+    "timber/stained-pine": "Poly Haven stained_pine, cropped",
+    "timber/veneer-oak": "Poly Haven oak_veneer_01",
+    "timber/veneer-oak-grey": "Poly Haven oak_veneer_05",
+    "timber/veneer-rosewood": "Poly Haven rosewood_veneer_02",
+    "timber/veneer-smoked-walnut": "Poly Haven smoked_walnut_veneer",
+    "timber/veneer-teak": "Poly Haven teak_veneer",
+    "timber/veneer-walnut": "Poly Haven walnut_veneer_02",
+    "timber/veneer-white-oak": "Poly Haven white_oak_veneer",
+    "timber/weathered-brown": "Poly Haven planks_brown_10, cropped",
+    "timber/weathered-dark": "Poly Haven weathered_brown_planks, cropped",
+    "timber/weathered-grey": "Poly Haven brown_planks_03, cropped",
+    "timber/weathered-mottled": "Poly Haven wood_planks_dirt, cropped",
+    "timber/weathered-silver": "Poly Haven rough_wood, cropped"
+  }
+}
