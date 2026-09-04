@@ -7,15 +7,15 @@
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $quiet = Join-Path $repoRoot "launcher\launch-quiet.vbs"
 $desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktop "Bench Studio.lnk"
+$shortcutPath = Join-Path $desktop "Vaulted.lnk"
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = "C:\Windows\System32\wscript.exe"
 $shortcut.Arguments = '"' + $quiet + '"'
 $shortcut.WorkingDirectory = $repoRoot
-$shortcut.IconLocation = "shell32.dll,220"
-$shortcut.Description = "Launch Bench Studio"
+$shortcut.IconLocation = (Join-Path $repoRoot "launcher\vaulted.ico") + ",0"
+$shortcut.Description = "Vaulted"
 $shortcut.Save()
 
 Write-Host "Shortcut created at $shortcutPath"

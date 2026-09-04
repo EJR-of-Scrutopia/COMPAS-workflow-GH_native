@@ -240,7 +240,23 @@ function applyGrade() {
   gradePass.uniforms.contrast.value = state.contrast;
 }
 
+// The eye never goes below the floor (Param: "i dont want the camera to be
+// able to go below floor level"). The clamp lives HERE, the one choke
+// point every camera writer passes through before a pixel is drawn:
+// OrbitControls with damping, the take's own autoSpin (which bypasses the
+// controls entirely), a restored scene's raw position, and the recording
+// loop's renderView all funnel into this call. A controls limit alone
+// cannot hold, because the orbit target sits at the vault's centroid, not
+// on the floor. groundLevel needs a loaded bundle for the true floor;
+// before one arrives the plain z = 0 plane stands in.
+function clampCameraAboveFloor() {
+  const floor = state.bundle ? groundLevel() : 0;
+  const eye = floor + 0.2;
+  if (camera.position.z < eye) camera.position.z = eye;
+}
+
 function renderView() {
+  clampCameraAboveFloor();
   composer.render();
 }
 
@@ -924,7 +940,8 @@ function propsKey() {
 }
 
 function saveProps() {
-  const layout = state.props.map((p) => ({ type: p.type, x: p.x, y: p.y, rotation: p.rotation }));
+  const layout = state.props.map((p) => ({
+    type: p.type, x: p.x, y: p.y, rotation: p.rotation, scale: p.scale || 1 }));
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
 
@@ -972,7 +989,8 @@ function restoreProps() {
       propsAwaitingLibrary = true;
       continue;
     }
-    placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
+    placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0,
+      false, +entry.scale || 1);
   }
 }
 
@@ -1152,7 +1170,7 @@ function renderObjectPreview(object, canvasEl) {
   previewRig.camera.lookAt(0, 0, 0);
 }
 
-function placeProp(type, x, y, rotation, save) {
+function placeProp(type, x, y, rotation, save, scale = 1) {
   const template = propTemplates.get(type);
   // A clone shares geometry and materials with its template, which is what
   // makes twenty figures cost one model; it is also why disposeProp does
@@ -1160,9 +1178,14 @@ function placeProp(type, x, y, rotation, save) {
   const object = template ? template.clone() : makeProp(type);
   object.position.set(x, y, 0);
   object.rotation.z = rotation;
+  // A prop's feet are its origin (loadPropTemplate shifts min.z to 0), so
+  // a uniform scale about the origin grows it from the GROUND UP -- the
+  // rule Param set: "make sure they always stay attached to ground and
+  // not grow from center, but ground up."
+  object.scale.setScalar(scale);
   propsGroup.add(object);
   object.userData.fromLibrary = !!template;
-  const record = { type, x, y, rotation, object };
+  const record = { type, x, y, rotation, scale, object };
   state.props.push(record);
   if (save) saveProps();
   return record;
@@ -1197,9 +1220,16 @@ function refreshPropOutline() {
   if (propOutline) propOutline.update();
 }
 
+let propEditHinted = false;
+
 function selectProp(record) {
   state.selectedProp = record;
   setPropOutline(record);
+  if (record && !propEditHinted) {
+    propEditHinted = true;
+    logStudio("selected prop: R / Shift+R rotates, + / - scales from the "
+      + "ground up, Delete removes");
+  }
 }
 
 function armProp(type) {
@@ -1764,7 +1794,8 @@ async function applyScene(record) {
     state.selectedProp = null;
     for (const entry of scene_.props) {
       if (!knownPropType(entry.type)) continue;
-      placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
+      placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0,
+        false, +entry.scale || 1);
     }
   }
 
@@ -5394,8 +5425,22 @@ window.addEventListener("keydown", (event) => {
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (!state.selectedProp) return;
   if (event.key === "r" || event.key === "R") {
-    state.selectedProp.rotation += Math.PI / 12;
+    // R turns one way, Shift+R the other: fifteen degrees a press.
+    const step = event.shiftKey ? -Math.PI / 12 : Math.PI / 12;
+    state.selectedProp.rotation += step;
     state.selectedProp.object.rotation.z = state.selectedProp.rotation;
+    refreshPropOutline();
+    saveProps();
+  } else if (event.key === "+" || event.key === "=" || event.key === "-"
+      || event.key === "_") {
+    // Scale about the feet, never the centre: the prop's origin IS the
+    // ground (placeProp), so growing keeps it planted. Clamped so a
+    // mis-tap cannot make a 40 m dandelion or an invisible tree.
+    const grow = event.key === "+" || event.key === "=";
+    const next = (state.selectedProp.scale || 1) * (grow ? 1.1 : 1 / 1.1);
+    state.selectedProp.scale = Math.min(5, Math.max(0.2, next));
+    state.selectedProp.object.scale.setScalar(state.selectedProp.scale);
+    refreshPropOutline();
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
     disposeProp(state.selectedProp.object);
