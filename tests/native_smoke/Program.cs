@@ -1662,18 +1662,21 @@ internal static class Program
             ValidateSkinOffsetOneSided(plugin);
             Console.WriteLine(
                 "PASS  Skin offset goes to ONE side (finding 10, restated " +
-                "against the field that replaced the per-cell normal): on " +
-                "PARAM'S OWN NET every face's vertex-normal field agrees " +
-                "with that face's own winding, recomputed here rather " +
-                "than read off the engine, and at one positive Th no cell " +
-                "sends its own corners to opposite sides. A net carries " +
-                "ONE winding, so the field is one-sided by construction " +
-                "and needs no upward-hemisphere correction; before the " +
-                "field replaced the Newell sum, one Th gave 546 cells up " +
-                "and 486 down. The corners with NO face under them in " +
-                "plan are counted by asking FaceUnder, not by recognising " +
-                "an offset of (0, 0, Th) that a level crown facet " +
-                "produces honestly, and they no longer offset vertically.");
+                "against the field that replaced the per-cell normal and " +
+                "again against rule 4's orientation): on PARAM'S OWN NET " +
+                "the field carries ONE SIGN over all 800 faces, and which " +
+                "sign is predicted from the net's own cross-sum Z, " +
+                "recomputed here rather than read off the engine. His net " +
+                "is wound DOWN, cross-sum Z -52.1, so the ORIENTED field " +
+                "opposes every one of his faces where the raw field agreed " +
+                "with every one: that flip is the defect rule 4 removes " +
+                "and not a regression. At one positive Th no cell sends " +
+                "its own corners to opposite sides; before the field " +
+                "replaced the Newell sum, one Th gave 546 cells up and 486 " +
+                "down. The corners with NO face under them in plan are " +
+                "counted by asking FaceUnder, not by recognising a " +
+                "vertical offset that a level crown facet produces " +
+                "honestly, and they no longer offset vertically.");
         }
         catch (Exception exception)
         {
@@ -29452,11 +29455,13 @@ internal static class Program
         //
         // IT IS CLASSIFIED BY ASKING FACEUNDER, not by reading the offset's
         // VALUE. The sub-check that stood here until 2026-09-04 called an
-        // offset of exactly (0, 0, Th) a fallback, which is also what a
-        // genuine world-Z normal on a level crown facet produces, so it
-        // counted honest answers as failures of the lookup and could have
-        // reported the fallback where there was none. The lookup is the
-        // thing being classified, so the lookup is what is asked.
+        // exactly vertical offset a fallback, which is also what a level
+        // crown facet's own normal produces honestly, so it counted honest
+        // answers as failures of the lookup and could have reported the
+        // fallback where there was none. The lookup is the thing being
+        // classified, so the lookup is what is asked. (Nothing here is
+        // about the DELETED world-Z offset branch, which never existed on
+        // this path: an upright normal is a reading of the surface.)
         //
         // WHAT THE OFF-MESH CORNERS NOW GET (rule 2 as amended 2026-09-04):
         // the NEAREST face's own answer, not a vertical (0, 0, 1). That is
@@ -29558,7 +29563,7 @@ internal static class Program
             $"to {leastVerticalOnFace:F6}), so they are answers of the " +
             "same field and not artefacts of being off it; before the " +
             "amendment every one of the " + cornersOffMesh +
-            " was exactly (0, 0, Th). No cell turned, the least " +
+            " offset exactly vertically. No cell turned, the least " +
             $"agreement within a cell {leastWithinCell:F6}.");
     }
 
