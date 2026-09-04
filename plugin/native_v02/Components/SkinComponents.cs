@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -1171,6 +1171,15 @@ public sealed class SkinComponent : NativeComponentBase
     /// (<see cref="TopTakesLoft"/>), so no new case is invented and the two
     /// cannot drift apart.
     ///
+    /// AND A LOFT THAT WILL NOT LOFT IS REFUSED RATHER THAN FANNED
+    /// (<see cref="TopRefused"/>, added 2026-09-04 on the approving
+    /// review's first finding). MovedSections answers null for two
+    /// different reasons -- the cell is not a loft at all, and the cell IS
+    /// a loft but carries a section under two points -- and both nulls used
+    /// to fall through to the fan. The second is now a refusal, so a cell
+    /// that cannot be capped honestly keeps its face and lands in the
+    /// thicken-failure count where an author can see it.
+    ///
     /// EVERY POINT MOVES BY ITS OWN BLENDED DIRECTION (rule 3.1), under the
     /// ONE cell normal <see cref="CellNormal"/> reads off this cell's
     /// outline. The rails are moved under that same N and not under one of
@@ -1208,6 +1217,8 @@ public sealed class SkinComponent : NativeComponentBase
 
         IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
             MovedSections(net, sections, cellNormal, thickness, extrude);
+        if (TopRefused(sections, movedSections))
+            return null;
         Brep? top = movedSections is not null
             ? LoftSections(movedSections)
             : OffsetTopFace(net, outline, moved, cellNormal, thickness, extrude);
@@ -1263,8 +1274,47 @@ public sealed class SkinComponent : NativeComponentBase
         sections is not null && sections.Count >= 2;
 
     /// <summary>
-    /// A CELL'S SECTION RAILS, MOVED, or null where the cell is not a loft
-    /// at all. Every point of every rail moves by its own blended direction
+    /// IS THIS CELL'S TOP REFUSED OUTRIGHT? The gap the approving review of
+    /// 2026-09-04 found in section 5, closed here rather than argued away.
+    ///
+    /// <see cref="TopTakesLoft"/> answers on the section COUNT alone, but
+    /// <see cref="MovedSections"/> also hands back null where a section it
+    /// was going to move carries under two points, which is a rail no loft
+    /// can be built from. Both nulls used to fall through to the same
+    /// <see cref="OffsetTopFace"/>, so a cell that IS a loft by the one
+    /// route predicate, and whose bottom therefore lofted, could still be
+    /// capped by a FAN: exactly the triangulated crust section 5 exists to
+    /// abolish, reached by the back door.
+    ///
+    /// THE ANSWER IS A REFUSAL AND NOT A FAN. A cell whose route says loft
+    /// and whose rails will not loft has nothing honest to be capped with,
+    /// so it is refused: it keeps its own untouched Surface face and lands
+    /// in the thicken-failure count where an author can see it, rather
+    /// than being quietly given a top that does not share its bottom's
+    /// boundary and then failing the join for a reason nothing names.
+    ///
+    /// A fan-route cell is untouched by this. Its sections are null or
+    /// single, TopTakesLoft is false, MovedSections is null BECAUSE the
+    /// cell was never a loft, and the fan is the right top for it.
+    ///
+    /// Its own method, and internal, because the refusal cannot be
+    /// measured through a Brep outside Rhino: the harness drives this
+    /// predicate on a hand-built degenerate section list, which is the
+    /// only place in this process the case exists at all.
+    /// </summary>
+    internal static bool TopRefused(
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
+        IReadOnlyList<IReadOnlyList<double[]>>? movedSections) =>
+        TopTakesLoft(sections) && movedSections is null;
+
+    /// <summary>
+    /// A CELL'S SECTION RAILS, MOVED, or null. THE NULL CARRIES TWO
+    /// DIFFERENT MEANINGS and the caller must tell them apart: the cell is
+    /// not a loft at all, in which case the fan is right, or the cell IS a
+    /// loft and one of its sections carries under two points, which is a
+    /// rail no loft can be built from and a cell that must be REFUSED
+    /// rather than fanned. <see cref="TopRefused"/> is where they are
+    /// separated. Every point of every rail moves by its own blended direction
     /// under the ONE cell normal handed in, so the moved rails are the top
     /// face's own boundary and meet the moved outline the walls stand on.
     ///

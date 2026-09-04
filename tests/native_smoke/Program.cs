@@ -25401,7 +25401,31 @@ internal static class Program
     /// same place the outline moves it, bit for bit, so the top's boundary
     /// stands exactly on the wall quads built off that outline. A rail that
     /// computed its own cell normal, rather than taking the one the outline
-    /// used, fails here and nowhere else.
+    /// used, fails here and nowhere else -- but only since 2026-09-04, when
+    /// the comparison began running at Extrude 0.5 and 1 as well as 0. At 0
+    /// alone the claim was FALSE: the direction there is n(p) and the cell
+    /// normal never enters, so that break was applied and the whole suite
+    /// stayed green.
+    ///
+    /// ON BOTH PATTERNS SINCE 2026-09-04, which is the approving review's
+    /// own finding and the one that mattered. This ran on the FORCE-ALIGNED
+    /// barrel alone, and a force-aligned cell stores its sections as
+    /// {lowerRun, Reverse(upperRun)} against an outline of the same two
+    /// runs concatenated. A BandCell, which is what COURSES builds and
+    /// courses is the pattern Param actually uses, stores {lower, upper}
+    /// UN-reversed against an outline of lower ++ reverse(upper), and then
+    /// dedupes that outline. That is a different shape, its loft top was
+    /// unproven, and one fixture cannot speak for both. The same loop now
+    /// runs over the Courses dome as well, and the populations and the
+    /// shared-corner coincidence are asserted separately on each.
+    ///
+    /// AND A LOFT-ROUTE CELL THAT CANNOT LOFT IS REFUSED, NOT FANNED, which
+    /// is the same review's first finding. TopTakesLoft answers on the
+    /// section COUNT, but MovedSections also hands back null where a section
+    /// carries under two points, and that second null used to fall through
+    /// to the fan. No fixture in this process builds such a cell, so the
+    /// case is driven straight through SkinComponent.TopRefused on a
+    /// hand-built section list, which is the only place it exists here.
     /// </summary>
     private static void ValidateSkinTopByBottomRoute(Assembly plugin)
     {
@@ -25416,212 +25440,336 @@ internal static class Program
         MethodInfo forceAligned = RequirePublicStatic(
             patterns, "ForceAligned",
             netType, typeof(double), typeof(double), typeof(double));
-
-        (double[][] vertices, int[][] faces) = SkinBarrelNet();
-        object net = SkinNetWith(
-            netType, edgeType, vertices, faces, SkinBarrelRim(),
-            SkinBarrelArchForces());
-        object generated = forceAligned.Invoke(
-            null, new object[] { net, 0.6, 0.5, 1.0 / 3.0 })!;
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo topRefused = RequireStatic(skinType, "TopRefused");
 
         const double Th = 0.29;
-        int lofted = 0;
-        int fanned = 0;
-        int railsCounted = 0;
-        int sharedCorners = 0;
-        IList cellObjects = (IList)generated.GetType()
-            .GetProperty("Cells")!.GetValue(generated)!;
-        foreach (object? boxed in cellObjects)
-        {
-            object cell = boxed!;
-            object? sections = cell.GetType()
-                .GetProperty("Sections")!.GetValue(cell);
-            var outline = new List<double[]>();
-            foreach (object? item in (IEnumerable)cell.GetType()
-                         .GetProperty("Outline")!.GetValue(cell)!)
-            {
-                outline.Add((double[])item!);
-            }
-            bool loft = (bool)takesLoft.Invoke(
-                null, new object?[] { sections })!;
-            // THE PREDICATE IS THE SPEC'S OWN GATE, recomputed here so that
-            // a defect in the engine's reading and a defect in this check
-            // cannot cancel: two or more sections lofts, anything else fans.
-            int sectionCount =
-                sections is null ? 0 : ((IList)sections).Count;
-            if (loft != sectionCount >= 2)
-            {
-                throw new InvalidOperationException(
-                    "TopTakesLoft is the ONE predicate the bottom face and " +
-                    "the top face read the route off, and it is two or " +
-                    $"more sections: this cell carries {sectionCount} and " +
-                    $"the predicate answered {loft}.");
-            }
 
-            double[] cellNormal = (double[])cellNormalMethod.Invoke(
-                null, new object?[] { net, outline })!;
-            foreach (double extrude in new[] { 0.0, 0.5, 1.0 })
+        // ONE LOOP, ASKED OF EACH PATTERN'S OWN CELLS AND ANSWERING FOR
+        // THAT PATTERN ALONE. The counts come back rather than being
+        // accumulated across the two, so a fixture carrying no loft cell at
+        // all could not hide behind the other fixture's population.
+        (int Lofted, int Fanned, int Rails, int Shared) Measure(
+            object net, object generated, string fixture)
+        {
+            int lofted = 0;
+            int fanned = 0;
+            int railsCounted = 0;
+            int sharedCorners = 0;
+            IList cellObjects = (IList)generated.GetType()
+                .GetProperty("Cells")!.GetValue(generated)!;
+            foreach (object? boxed in cellObjects)
             {
-                object? moved = movedSections.Invoke(
-                    null,
-                    new object?[]
-                    {
-                        net, sections, cellNormal, Th, extrude
-                    });
-                if (!loft)
+                object cell = boxed!;
+                object? sections = cell.GetType()
+                    .GetProperty("Sections")!.GetValue(cell);
+                var outline = new List<double[]>();
+                foreach (object? item in (IEnumerable)cell.GetType()
+                             .GetProperty("Outline")!.GetValue(cell)!)
                 {
-                    if (moved is not null)
-                    {
-                        throw new InvalidOperationException(
-                            "A cell whose BOTTOM is a fan has no rails to " +
-                            "loft, so MovedSections answers null and the " +
-                            "top fans over the moved outline; it answered " +
-                            "with rails at Extrude " + extrude + ".");
-                    }
-                    continue;
+                    outline.Add((double[])item!);
                 }
-                if (moved is null)
+                bool loft = (bool)takesLoft.Invoke(
+                    null, new object?[] { sections })!;
+                // THE PREDICATE IS THE SPEC'S OWN GATE, recomputed here so
+                // that a defect in the engine's reading and a defect in this
+                // check cannot cancel: two or more sections lofts, anything
+                // else fans.
+                int sectionCount =
+                    sections is null ? 0 : ((IList)sections).Count;
+                if (loft != sectionCount >= 2)
                 {
                     throw new InvalidOperationException(
-                        "A cell whose BOTTOM is a LOFT must loft its top " +
-                        $"from its own moved rails (spec section 5); at " +
-                        $"Extrude {extrude} MovedSections answered null, " +
-                        "so the top falls back to a FAN and the " +
-                        "triangulated crust is back.");
+                        "TopTakesLoft is the ONE predicate the bottom face " +
+                        "and the top face read the route off, and it is " +
+                        "two or more sections: this cell of the " +
+                        $"{fixture} carries {sectionCount} and the " +
+                        $"predicate answered {loft}.");
                 }
-                var rails = (IList)moved;
-                var sectionList = (IList)sections!;
-                if (rails.Count != sectionList.Count)
+
+                double[] cellNormal = (double[])cellNormalMethod.Invoke(
+                    null, new object?[] { net, outline })!;
+                foreach (double extrude in new[] { 0.0, 0.5, 1.0 })
                 {
-                    throw new InvalidOperationException(
-                        "The top carries ONE RAIL PER SECTION, so its loft " +
-                        "has the bottom's own structure: " +
-                        $"{sectionList.Count} sections gave {rails.Count} " +
-                        "rails.");
-                }
-                for (int at = 0; at < rails.Count; at++)
-                {
-                    var section =
-                        ((IList)sectionList[at]!).Cast<double[]>().ToArray();
-                    var rail =
-                        ((IList)rails[at]!).Cast<double[]>().ToArray();
-                    if (rail.Length != section.Length)
+                    object? moved = movedSections.Invoke(
+                        null,
+                        new object?[]
+                        {
+                            net, sections, cellNormal, Th, extrude
+                        });
+                    if (!loft)
                     {
-                        throw new InvalidOperationException(
-                            $"Rail {at} carries its own section's points, " +
-                            $"one for one: {section.Length} points gave " +
-                            $"{rail.Length}.");
-                    }
-                    if (extrude == 0.0)
-                        railsCounted++;
-                    for (int point = 0; point < rail.Length; point++)
-                    {
-                        double span = Math.Sqrt(
-                            Math.Pow(rail[point][0] - section[point][0], 2) +
-                            Math.Pow(rail[point][1] - section[point][1], 2) +
-                            Math.Pow(rail[point][2] - section[point][2], 2));
-                        if (Math.Abs(span - Th) > 1.0e-12)
+                        if (moved is not null)
                         {
                             throw new InvalidOperationException(
-                                "Every point of every rail moves by |Th| " +
-                                $"like every outline corner: rail {at} " +
-                                $"point {point} moved {span} at Extrude " +
-                                $"{extrude}, where |Th| is {Th}.");
+                                "A cell whose BOTTOM is a fan has no rails " +
+                                "to loft, so MovedSections answers null and " +
+                                "the top fans over the moved outline; on " +
+                                $"the {fixture} it answered with rails at " +
+                                $"Extrude {extrude}.");
+                        }
+                        continue;
+                    }
+                    if (moved is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A cell whose BOTTOM is a LOFT must loft its " +
+                            "top from its own moved rails (spec section " +
+                            $"5); on the {fixture} at Extrude {extrude} " +
+                            "MovedSections answered null, so the top falls " +
+                            "back to a FAN and the triangulated crust is " +
+                            "back.");
+                    }
+                    var rails = (IList)moved;
+                    var sectionList = (IList)sections!;
+                    if (rails.Count != sectionList.Count)
+                    {
+                        throw new InvalidOperationException(
+                            "The top carries ONE RAIL PER SECTION, so its " +
+                            "loft has the bottom's own structure: on the " +
+                            $"{fixture} {sectionList.Count} sections gave " +
+                            $"{rails.Count} rails.");
+                    }
+                    for (int at = 0; at < rails.Count; at++)
+                    {
+                        var section = ((IList)sectionList[at]!)
+                            .Cast<double[]>().ToArray();
+                        var rail =
+                            ((IList)rails[at]!).Cast<double[]>().ToArray();
+                        if (rail.Length != section.Length)
+                        {
+                            throw new InvalidOperationException(
+                                $"Rail {at} carries its own section's " +
+                                $"points, one for one: on the {fixture} " +
+                                $"{section.Length} points gave " +
+                                $"{rail.Length}.");
+                        }
+                        if (extrude == 0.0)
+                            railsCounted++;
+                        for (int point = 0; point < rail.Length; point++)
+                        {
+                            double span = Math.Sqrt(
+                                Math.Pow(
+                                    rail[point][0] - section[point][0], 2) +
+                                Math.Pow(
+                                    rail[point][1] - section[point][1], 2) +
+                                Math.Pow(
+                                    rail[point][2] - section[point][2], 2));
+                            if (Math.Abs(span - Th) > 1.0e-12)
+                            {
+                                throw new InvalidOperationException(
+                                    "Every point of every rail moves by " +
+                                    "|Th| like every outline corner: on " +
+                                    $"the {fixture} rail {at} point " +
+                                    $"{point} moved {span} at Extrude " +
+                                    $"{extrude}, where |Th| is {Th}.");
+                            }
                         }
                     }
                 }
-            }
 
-            if (!loft)
-            {
-                fanned++;
-                continue;
-            }
-            lofted++;
+                if (!loft)
+                {
+                    fanned++;
+                    continue;
+                }
+                lofted++;
 
-            // ---- THE RAILS MEET THE WALLS. Every point a section shares
-            // with the OUTLINE must move to the same place the outline's
-            // own move sends it, or the top's boundary stands off the wall
-            // quads built on that outline and the join is refused.
-            var movedOutline = new List<double[]>();
-            foreach (object? item in (IEnumerable)outlineMethod.Invoke(
-                         null, new object?[] { net, outline, Th, 0.0 })!)
-            {
-                movedOutline.Add((double[])item!);
-            }
-            var movedRails = (IList)movedSections.Invoke(
-                null,
-                new object?[]
+                // ---- THE RAILS MEET THE WALLS. Every point a section
+                // shares with the OUTLINE must move to the same place the
+                // outline's own move sends it, or the top's boundary stands
+                // off the wall quads built on that outline and the join is
+                // refused.
+                //
+                // AT EVERY STOP OF THE SLIDER, and that is not decoration.
+                // Until 2026-09-04 this ran at Extrude 0 ALONE, where the
+                // direction is n(p) and the cell normal does not enter the
+                // arithmetic at all: a rail computing its OWN cell normal
+                // instead of taking the outline's could not have reddened
+                // it, which is precisely the defect the block's own comment
+                // claimed to catch. Measured: that break was applied and
+                // the suite stayed green. At 0.5 and 1 the cell normal is
+                // most of the direction and the two disagree at once.
+                foreach (double stop in new[] { 0.0, 0.5, 1.0 })
                 {
-                    net, sections, cellNormal, Th, 0.0
-                })!;
-            var sectionsList = (IList)sections!;
-            for (int at = 0; at < movedRails.Count; at++)
-            {
-                var section =
-                    ((IList)sectionsList[at]!).Cast<double[]>().ToArray();
-                var rail =
-                    ((IList)movedRails[at]!).Cast<double[]>().ToArray();
-                for (int point = 0; point < section.Length; point++)
-                {
-                    for (int corner = 0; corner < outline.Count; corner++)
+                    var movedOutline = new List<double[]>();
+                    foreach (object? item in (IEnumerable)outlineMethod
+                                 .Invoke(
+                                     null,
+                                     new object?[] { net, outline, Th, stop })!)
                     {
-                        if (section[point][0] != outline[corner][0] ||
-                            section[point][1] != outline[corner][1] ||
-                            section[point][2] != outline[corner][2])
+                        movedOutline.Add((double[])item!);
+                    }
+                    var movedRails = (IList)movedSections.Invoke(
+                        null,
+                        new object?[]
                         {
-                            continue;
-                        }
-                        sharedCorners++;
-                        for (int axis = 0; axis < 3; axis++)
+                            net, sections, cellNormal, Th, stop
+                        })!;
+                    var sectionsList = (IList)sections!;
+                    for (int at = 0; at < movedRails.Count; at++)
+                    {
+                        var section = ((IList)sectionsList[at]!)
+                            .Cast<double[]>().ToArray();
+                        var rail = ((IList)movedRails[at]!)
+                            .Cast<double[]>().ToArray();
+                        for (int point = 0; point < section.Length; point++)
                         {
-                            if (rail[point][axis] !=
-                                movedOutline[corner][axis])
+                            for (int corner = 0;
+                                 corner < outline.Count;
+                                 corner++)
                             {
-                                throw new InvalidOperationException(
-                                    "A point the SECTION shares with the " +
-                                    "OUTLINE must move to the same place " +
-                                    "both ways, or the lofted top stands " +
-                                    "off the wall quads built on that " +
-                                    $"outline: rail {at} point {point} " +
-                                    $"axis {axis} went to " +
-                                    $"{rail[point][axis]} where the " +
-                                    "outline sent the same corner to " +
-                                    $"{movedOutline[corner][axis]}. The " +
-                                    "rails must take the cell normal the " +
-                                    "outline used and not one of their " +
-                                    "own.");
+                                if (section[point][0] != outline[corner][0] ||
+                                    section[point][1] != outline[corner][1] ||
+                                    section[point][2] != outline[corner][2])
+                                {
+                                    continue;
+                                }
+                                if (stop == 0.0)
+                                    sharedCorners++;
+                                for (int axis = 0; axis < 3; axis++)
+                                {
+                                    if (rail[point][axis] ==
+                                        movedOutline[corner][axis])
+                                    {
+                                        continue;
+                                    }
+                                    throw new InvalidOperationException(
+                                        "A point the SECTION shares with " +
+                                        "the OUTLINE must move to the same " +
+                                        "place both ways, or the lofted " +
+                                        "top stands off the wall quads " +
+                                        "built on that outline: on the " +
+                                        $"{fixture} at Extrude {stop} rail " +
+                                        $"{at} point {point} axis {axis} " +
+                                        $"went to {rail[point][axis]} " +
+                                        "where the outline sent the same " +
+                                        "corner to " +
+                                        $"{movedOutline[corner][axis]}. " +
+                                        "The rails must take the cell " +
+                                        "normal the outline used and not " +
+                                        "one of their own.");
+                                }
                             }
                         }
                     }
                 }
             }
+
+            if (lofted == 0)
+            {
+                throw new InvalidOperationException(
+                    "The LOFT arm of the route must be measured on real " +
+                    $"cells or this check passes on nothing: the {fixture} " +
+                    "gave no loft-route cell at all.");
+            }
+            if (sharedCorners == 0)
+            {
+                throw new InvalidOperationException(
+                    $"No section point on any cell of the {fixture} " +
+                    "coincides with an outline corner, so the claim that " +
+                    "the lofted top meets the walls was measured on " +
+                    "nothing.");
+            }
+            return (lofted, fanned, railsCounted, sharedCorners);
         }
 
-        if (lofted == 0 || fanned == 0)
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object barrelNet = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(),
+            SkinBarrelArchForces());
+        (int Lofted, int Fanned, int Rails, int Shared) barrel = Measure(
+            barrelNet,
+            forceAligned.Invoke(
+                null, new object[] { barrelNet, 0.6, 0.5, 1.0 / 3.0 })!,
+            "force-aligned barrel");
+        if (barrel.Fanned == 0)
         {
             throw new InvalidOperationException(
-                "Both arms of the route must be measured on real cells, or " +
-                "this check passes on nothing: the force-aligned barrel " +
-                $"gave {lofted} loft-route cells and {fanned} fan-route " +
-                "cells.");
+                "BOTH arms of the route must be measured on real cells, " +
+                "and the force-aligned barrel is the fixture that carries " +
+                $"both: it gave {barrel.Lofted} loft-route cells and " +
+                $"{barrel.Fanned} fan-route cells.");
         }
-        if (sharedCorners == 0)
+
+        // THE COURSES DOME, the pattern Param actually uses and the one
+        // whose loft top was unproven until the approving review of
+        // 2026-09-04 said so. A BandCell stores {lower, upper} un-reversed
+        // against an outline of lower ++ reverse(upper), then deduped: a
+        // DIFFERENT shape from the force-aligned cell's {lowerRun,
+        // Reverse(upperRun)}, and one of them cannot answer for the other.
+        // Same S and CH as ValidateSkinOffsetWeld's dome, deliberately, so
+        // the weld and the route are read off one fixture.
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object domeNet = SkinNetWith(
+            netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        (int Lofted, int Fanned, int Rails, int Shared) dome = Measure(
+            domeNet,
+            courses.Invoke(null, new object[] { domeNet, 0.9, 0.6 })!,
+            "courses dome");
+
+        // ---- A LOFT-ROUTE CELL THAT CANNOT LOFT IS REFUSED, NOT FANNED,
+        // which is the approving review's first finding. Two sections, the
+        // second of ONE point: TopTakesLoft says LOFT on the count,
+        // MovedSections refuses the rail, and the answer must be a refusal
+        // rather than the fan section 5 exists to abolish. No fixture in
+        // this process builds such a cell, so it is built by hand and
+        // driven through the engine's own predicate.
+        double[] seat = { 0.0, 0.0, 0.0 };
+        var crippled = new IReadOnlyList<double[]>[]
+        {
+            new[] { seat, seat }, new[] { seat }
+        };
+        object? crippledRails = movedSections.Invoke(
+            null,
+            new object?[]
+            {
+                barrelNet, crippled, new[] { 0.0, 0.0, 1.0 }, Th, 0.0
+            });
+        if (crippledRails is not null)
         {
             throw new InvalidOperationException(
-                "No section point on any cell coincides with an outline " +
-                "corner, so the claim that the lofted top meets the walls " +
-                "was measured on nothing.");
+                "A section of ONE point is a rail no loft can be built " +
+                "from, so MovedSections refuses the whole cell's rails; it " +
+                "handed some back.");
         }
+        if (!(bool)topRefused.Invoke(
+                null, new object?[] { crippled, crippledRails })!)
+        {
+            throw new InvalidOperationException(
+                "A cell whose route says LOFT and whose rails will NOT " +
+                "loft is REFUSED, not fanned (spec section 5, and the " +
+                "approving review's first finding): two sections, the " +
+                "second of one point, and the engine answered that the top " +
+                "may be built anyway. That answer is the triangulated " +
+                "crust reached by the back door, and it costs the cell its " +
+                "honest place in the thicken-failure count.");
+        }
+        if ((bool)topRefused.Invoke(null, new object?[] { null, null })!)
+        {
+            throw new InvalidOperationException(
+                "A FAN-route cell is untouched by that refusal: its " +
+                "sections are null, MovedSections is null BECAUSE it was " +
+                "never a loft, and the fan is the right top for it. The " +
+                "engine refused it anyway, which would lose every " +
+                "fan-route cell on the canvas.");
+        }
+
         Console.WriteLine(
-            $"      Skin top by bottom's route (section 5): {lofted} " +
-            $"loft-route cells and {fanned} fan-route cells on the " +
-            $"force-aligned barrel; the loft cells hand back {railsCounted} " +
-            "moved rails, one per section and point for point, every point " +
-            $"moved exactly {Th} m at Extrude 0, 0.5 and 1, and the " +
-            $"{sharedCorners} section points that ARE outline corners move " +
-            "to the outline's own moved corner bit for bit, so the top " +
-            "stands on the walls.");
+            $"      Skin top by bottom's route (section 5): {barrel.Lofted} " +
+            $"loft-route cells and {barrel.Fanned} fan-route cells on the " +
+            $"force-aligned barrel and {dome.Lofted} and {dome.Fanned} on " +
+            "the COURSES dome, whose BandCell stores its sections in the " +
+            $"other order; the loft cells hand back {barrel.Rails} and " +
+            $"{dome.Rails} moved rails, one per section and point for " +
+            $"point, every point moved exactly {Th} m at Extrude 0, 0.5 " +
+            $"and 1, and the {barrel.Shared} and {dome.Shared} section " +
+            "points that ARE outline corners move to the outline's own " +
+            "moved corner bit for bit, so the top stands on the walls on " +
+            "BOTH patterns. A loft-route cell whose rails will not loft is " +
+            "refused rather than fanned.");
     }
 
     /// <summary>
