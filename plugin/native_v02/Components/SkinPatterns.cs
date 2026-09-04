@@ -3293,6 +3293,146 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// ONE COMPONENT'S PLACE IN ITS COURSE (spec 2026-09-04 rule 3.1), as a
+    /// sort key: the seam curve it is associated with, then the plan
+    /// position of its START.
+    ///
+    /// WHAT IT IS FOR. A branch of the Cells tree is one COURSE, and a
+    /// course on a two-component form carries cells from two separate
+    /// traced components at once. Before this key the second sort term was
+    /// the component's INDEX IN ITS OWN LEVEL'S TRACED LIST, which comes
+    /// from face-array order and means nothing from one level to the next,
+    /// so item k of one branch and item k of the next could sit on
+    /// different components. This key is computed from the GEOMETRY, so
+    /// two levels' matching components sort into the same place.
+    ///
+    /// IT IS ASKED OF A CHART AND NEVER OF A LOOSE CURVE, and that is a
+    /// measured requirement rather than a tidiness. A level curve's own
+    /// start MOVES with the level, so a course that the bisection split
+    /// into sub-bands holds several curves of ONE component whose starts
+    /// are metres apart, and keying each of them separately puts one
+    /// component's cells in two places in the branch. The chart is the
+    /// engine's own name for a component followed across levels, chained by
+    /// the same MatchBelow every other consumer uses; the key is taken ONCE
+    /// off the chart's lowest curve and every curve in the chart carries it.
+    ///
+    /// THE START IS PointAt(curve, 0), the curve's own seam origin, and
+    /// that is the whole reason it tracks between courses rather than
+    /// wandering: AssignSeams propagates a closed loop's seam from the loop
+    /// below it, nearest in plan, and gives an open strip its arc midpoint,
+    /// so a component's start moves with the component and not with the
+    /// mesh. It is the same point rule 3.1's own "plan position of their
+    /// starts" names.
+    ///
+    /// ROUNDED TO THE MICRON, the same 1e-6 m the standing corner weld
+    /// uses, and the reason is a measured hazard rather than a taste. On a
+    /// form with mirror symmetry two components' starts tie in one
+    /// coordinate exactly: the two-hump barrel's front and back strips both
+    /// take their arc midpoint at x = 3 by the fixture's own symmetry.
+    /// Compared raw, a tie decided by the last bits can fall either way at
+    /// one course and the other way at the next, which is the very defect
+    /// this key exists to remove. Rounded, the tie is a TIE, and the next
+    /// coordinate decides it the same way at every course.
+    ///
+    /// THE SEAM ASSOCIATION IS SHORT-CIRCUITED at fewer than two seam
+    /// curves, and the short circuit is EXACT rather than an approximation:
+    /// with no seam there is nothing to associate with and with one seam
+    /// every component associates with it, so the answer is constant and
+    /// the plan position is what orders. Every fixture in the harness today
+    /// is one of those two cases, so this loop costs nothing on any of
+    /// them; it is written for the form that carries two meeting lines, a
+    /// groin among them, where the components either side of one line must
+    /// stay together as a new component is born at the other.
+    /// </summary>
+    private readonly record struct SkinComponentOrder(
+        int SeamAt,
+        double StartX,
+        double StartY);
+
+    private static SkinComponentOrder ComponentOrder(
+        SkinLevelCurve curve,
+        IReadOnlyList<double[][]> seams)
+    {
+        double[] start = curve.Points.Count > 0
+            ? PointAt(curve, 0.0)
+            : new[] { 0.0, 0.0, 0.0 };
+        int seamAt = -1;
+        if (seams.Count > 1)
+        {
+            double best = double.PositiveInfinity;
+            for (int at = 0; at < seams.Count; at++)
+            {
+                double score = double.PositiveInfinity;
+                foreach (double[] point in curve.Points)
+                {
+                    foreach (double[] node in seams[at])
+                    {
+                        double dx = point[0] - node[0];
+                        double dy = point[1] - node[1];
+                        score = Math.Min(score, dx * dx + dy * dy);
+                    }
+                }
+                if (score < best - 1.0e-12)
+                {
+                    best = score;
+                    seamAt = at;
+                }
+            }
+        }
+        else if (seams.Count == 1)
+        {
+            seamAt = 0;
+        }
+        return new SkinComponentOrder(
+            seamAt,
+            Math.Round(start[0], 6),
+            Math.Round(start[1], 6));
+    }
+
+    /// <summary>
+    /// Rule 3.1's component order turned into a RANK PER TRACED CURVE: every
+    /// curve of a chart carries its chart's own rank, and the ranks run in
+    /// the order <see cref="ComponentOrder"/> states.
+    ///
+    /// WHY A RANK AND NOT THE KEY ITSELF. The sort wants one integer per
+    /// component so that the term after it, the LEVEL, can put a bisected
+    /// course's sub-bands of one component in their own bottom-up order.
+    /// Carrying the key through would sort by a plan position that belongs
+    /// to the chart's foot and then by a level, which reads the same but
+    /// says less about what it is doing.
+    ///
+    /// A curve this map does not hold ranks LAST rather than throwing. Every
+    /// curve the courses engine sets a cell out on comes from
+    /// resolved.Traced, which is exactly what the charts are built over, so
+    /// the case is unreachable today; a later caller that reaches it gets
+    /// its cells at the end of their branch rather than an exception on the
+    /// canvas thread.
+    /// </summary>
+    private static Dictionary<SkinLevelCurve, int> ComponentRanks(
+        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced,
+        IReadOnlyList<double[][]> seams)
+    {
+        List<SkinChart> charts = BuildCharts(traced);
+        var ranked = new Dictionary<SkinLevelCurve, int>();
+        int rank = 0;
+        foreach (SkinChart chart in charts
+                     .Where(chart => chart.Curves.Count > 0)
+                     .Select(chart => (
+                         Chart: chart,
+                         Key: ComponentOrder(chart.Curves[0], seams)))
+                     .OrderBy(entry => entry.Key.SeamAt)
+                     .ThenBy(entry => entry.Key.StartX)
+                     .ThenBy(entry => entry.Key.StartY)
+                     .Select(entry => entry.Chart))
+        {
+            foreach (SkinLevelCurve curve in chart.Curves)
+                ranked[curve] = rank;
+            rank++;
+        }
+        return ranked;
+    }
+
+    /// <summary>
     /// Running-bond quads, the Bench Studio bonded-courses algorithm
     /// restated on the thrust surface. Bands of Course Height from the
     /// base; on each band's MID-height level curve the pitch is
@@ -3450,8 +3590,40 @@ internal static class SkinPatterns
         for (int at = 0; at < resolved.Levels.Count; at++)
             levelIndex[resolved.Levels[at]] = at;
 
-        var keyed =
-            new List<(int Course, int Order, double U0, SkinCell Cell)>();
+        // THE WITHIN-COURSE ORDER (spec 2026-09-04 rules 3.1 and 3.2), which
+        // is Param's mirrored-selection find off the six-lobe test: he took
+        // one item index across branches and the cells it picked landed on
+        // opposite sides of the vault. Two things caused that and both are
+        // fixed at the sort below. The second key was the component's INDEX
+        // in its own level's traced list, which face-array order decides and
+        // which therefore names a different component from one level to the
+        // next; it is now SkinComponentOrder, computed from the geometry. And
+        // the third key was |mid| then mid, rule 7.1's seam-outward order,
+        // which walks a course by ALTERNATING either side of the seam, so an
+        // index steps left, right, left, right by construction. It is now the
+        // SIGNED mid, one consistent direction along the curve.
+        //
+        // WHAT MAKES THE DIRECTION CONSISTENT BETWEEN COURSES is not this
+        // sort: it is NormaliseDirections, which already turns every closed
+        // loop counter-clockwise in plan and runs every open strip the way
+        // the strip matched below it runs, and AssignSeams, which already
+        // propagates the arc origin from the course below. Signed arc about
+        // that origin, ascending, therefore walks the same way round at every
+        // course, and the ordering READS that propagation rather than
+        // re-deriving one of its own.
+        // THE COMPONENT RANKS, taken off the FINAL traced list: the cap pass
+        // above can insert two levels and re-trace, and a chart map built
+        // before that would hold curve objects the tiling loop no longer
+        // sees.
+        Dictionary<SkinLevelCurve, int> componentRank =
+            ComponentRanks(resolved.Traced, seams);
+        int RankOf(SkinLevelCurve curve) =>
+            componentRank.TryGetValue(curve, out int rank)
+                ? rank
+                : int.MaxValue;
+
+        var keyed = new List<(
+            int Course, int Rank, double Level, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
         int mergedPieces = 0;
         int mergedShortKept = 0;
@@ -3474,7 +3646,15 @@ internal static class SkinPatterns
                  resolved.Refused)
         {
             AddTransition(transitions, low, high);
-            foreach ((int order, SkinCell cell) in CloserBand(
+            // RULE 3.2'S LAST SENTENCE: a closer stone sorts AT ITS
+            // COMPONENT'S POSITION in the same scheme. The component it
+            // belongs to is the GUIDE curve it was cut on, so the key is
+            // taken off that curve and off nothing else. A refused interval
+            // is CH/64 from the sub-bands the bisection left tileable beside
+            // it, and those sub-bands share this course, so the two kinds
+            // interleave by component rather than the closers arriving in a
+            // block of their own at one end of the branch.
+            foreach ((SkinLevelCurve guide, SkinCell cell) in CloserBand(
                          resolved.Traced[levelIndex[low]],
                          resolved.Traced[levelIndex[high]],
                          refusedCourse,
@@ -3489,7 +3669,8 @@ internal static class SkinPatterns
                          ref closerUndersized))
             {
                 closerCells++;
-                keyed.Add((cell.Course, order, cell.U0, cell));
+                keyed.Add((
+                    cell.Course, RankOf(guide), guide.Level, cell));
             }
         }
         int transitionBands = resolved.Refused.Count;
@@ -3520,6 +3701,13 @@ internal static class SkinPatterns
                     continue;
                 SkinLevelCurve lowerCurve = lowers[lowerAt];
                 SkinLevelCurve upperCurve = uppers[upperAt];
+                // Rule 3.1's component rank, taken ONCE per component off the
+                // curve every cell of it is set out on, which is the MID
+                // curve: BandCell's u0 and u1 are mid-curve arc length, so
+                // the rank and the signed arc that follows it are read off
+                // one curve and cannot disagree about which component this
+                // is.
+                int rank = RankOf(mid);
 
                 // THE CAP'S OUTLINE IS THE LEVEL CURVE, whole, from its seam
                 // round to its seam (rule 2.3.1), or a ring of wedges about a
@@ -3569,7 +3757,7 @@ internal static class SkinPatterns
                             capGirths.Add(outer.Length);
                             capWedges.Add(0);
                             keyed.Add((
-                                band.Course, component, 0.0,
+                                band.Course, rank, band.Mid,
                                 new SkinCell(
                                     band.Course, loop, false,
                                     -outer.Length / 2.0,
@@ -3618,7 +3806,7 @@ internal static class SkinPatterns
                             capGirths.Add(outer.Length);
                             capWedges.Add(0);
                             keyed.Add((
-                                band.Course, component, 0.0,
+                                band.Course, rank, band.Mid,
                                 new SkinCell(
                                     band.Course, whole, false,
                                     -outer.Length / 2.0,
@@ -3659,7 +3847,7 @@ internal static class SkinPatterns
                             continue;
                         }
                         keyed.Add((
-                            band.Course, component, u0,
+                            band.Course, rank, band.Mid,
                             wedge with { Cap = true }));
                     }
                     var disc = Dedupe(
@@ -3667,7 +3855,7 @@ internal static class SkinPatterns
                     if (disc.Count >= 3)
                     {
                         keyed.Add((
-                            band.Course, component, 0.0,
+                            band.Course, rank, band.Mid,
                             new SkinCell(
                                 band.Course, disc, false,
                                 -innerCurve.Length / 2.0,
@@ -3772,16 +3960,58 @@ internal static class SkinPatterns
                         weldCollapsed++;
                         continue;
                     }
-                    keyed.Add((band.Course, component, cell.U0, cell));
+                    keyed.Add((band.Course, rank, band.Mid, cell));
                 }
             }
         }
+        // RULE 3.1'S ORDER, in four terms: the COURSE, which is the branch;
+        // then the COMPONENT, ranked by seam association and by the plan
+        // position of its start; then the LEVEL, which orders one component's
+        // several curves within one course bottom-up; then SIGNED ARC along
+        // the curve, ascending, which is one consistent direction round it.
+        // The tree's SHAPE is untouched by all of this, the path is still the
+        // course alone, and Export's own course derivation and the staging
+        // read the path.
+        //
+        // THE LEVEL TERM IS RULE 3.1'S SUB-BAND CLAUSE, which the rule as
+        // written does not reach: section 8's bisection can leave ONE course
+        // holding several tileable sub-bands, so one component of one course
+        // is several CURVES and not one, and a closer's guide is a curve of
+        // its own beside them. Ordered bottom-up, a course reads the way it
+        // is built, and the order is decided by a number rather than by which
+        // band the resolution happened to append first.
+        //
+        // ONE CONSEQUENCE IS NOT SILENT, and it is why the level term is not
+        // optional. KeepValidPlans runs in this order and keeps the FIRST of
+        // an overlapping pair. Where a bisected top course carries both a
+        // CROWN CAP and the sub-band rings nested inside it, the cap sits at
+        // the lower level, is emitted first and is kept, which is the outcome
+        // the two-dome fixture pins and the one the studio wants: a crown
+        // covered by one stone beats a crown covered by a ring a centimetre
+        // across. Under the seam-outward order that outcome rested on the two
+        // tying at |mid| = 0 and on which band the resolution listed first,
+        // which is a tie-break and not a reason.
+        //
+        // AND THE CAP LEADS ITS BRANCH, ahead of the component order rather
+        // than inside it. A cap is not a piece of a course: its U is arc
+        // along its OWN outline and not along a course, so it has no place
+        // in a course's arc order, and rule 3.1 does not describe one for
+        // it. What decides where it goes is rule 2.6.6, that a refusal at
+        // the crown is a hole at the crown. MEASURED on the elliptical dome
+        // at CH 0.35, whose segment cut locus starts CHARTS OF ITS OWN at
+        // the crown: the thirteen bisected sub-band rings nested inside the
+        // oversized whole cap belong to those crown charts and not to the
+        // dome's own, so no term inside the component order can reach them,
+        // and ranked by their charts' starts they came first and took the
+        // cap with them. Cells went from 95 to 108 and the cap count from 1
+        // to 0, against rule 2.6.6's own pin. Led by the cap, the fixture
+        // reads 95 and 1 again, which is where it stood.
         List<SkinCell> cells = KeepValidPlans(
             keyed
                 .OrderBy(item => item.Course)
-                .ThenBy(item => item.Order)
-                .ThenBy(item => Math.Abs(
-                    (item.Cell.U0 + item.Cell.U1) / 2.0))
+                .ThenBy(item => item.Cell.Cap ? 0 : 1)
+                .ThenBy(item => item.Rank)
+                .ThenBy(item => item.Level)
                 .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
                 .Select(item => item.Cell)
                 .ToList(),
@@ -5595,7 +5825,7 @@ internal static class SkinPatterns
     /// small is a stone the author can see and re-cut, while a refusal at
     /// this point would put back the hole the whole band exists to close.
     /// </summary>
-    private static List<(int Order, SkinCell Cell)> CloserBand(
+    private static List<(SkinLevelCurve Guide, SkinCell Cell)> CloserBand(
         IReadOnlyList<SkinLevelCurve> lows,
         IReadOnlyList<SkinLevelCurve> highs,
         int course,
@@ -5609,7 +5839,13 @@ internal static class SkinPatterns
         ref int refused,
         ref int undersized)
     {
-        var closers = new List<(int Order, SkinCell Cell)>();
+        // THE GUIDE COMES BACK WITH EVERY STONE, and not the guide's INDEX,
+        // which is rule 3.2's last sentence made possible: a closer sorts at
+        // its component's position in the same scheme the ordinary cells use,
+        // and that scheme reads the CURVE. An index into a list this method
+        // built out of whichever family carried more components would name
+        // nothing the caller could compare an ordinary cell against.
+        var closers = new List<(SkinLevelCurve Guide, SkinCell Cell)>();
         if (lows.Count == 0 || highs.Count == 0)
             return closers;
         // THE HEAD-JOINT BOUND (the same discipline the force-aligned
@@ -5742,7 +5978,7 @@ internal static class SkinPatterns
                 // not twist.
                 var upper = new List<double[]>(back);
                 upper.Reverse();
-                closers.Add((at, new SkinCell(
+                closers.Add((guide, new SkinCell(
                     course, ring, clipped, u0, u1, false,
                     Sections: new[]
                     {

@@ -834,12 +834,24 @@ internal static class Program
         {
             ValidateSkinBuildOrder(plugin);
             Console.WriteLine(
-                "PASS  Skin build order: within every branch the cells run " +
-                "from the seam outward, alternating either side of it with " +
-                "the negative side first, on a closed dome course and on " +
-                "an open barrel strip alike, the closed course's spans " +
-                "having been re-centred into (-L/2, +L/2] at source so U " +
-                "means signed arc about the seam everywhere in the engine.");
+                "PASS  Skin build order (spec 2026-09-04 rule 3.1, which " +
+                "REPLACES rule 7.1's seam-outward alternation): within " +
+                "every branch the cells run COMPONENT BY COMPONENT and each " +
+                "component in ONE direction, its signed arc strictly " +
+                "increasing, on a closed dome course and on the barrel's " +
+                "two open strips alike; the dome is one run per course, its " +
+                "crown rosette included, and the ridged barrel two. The " +
+                "order is measured against the CELLS' OWN CORNERS and not " +
+                "against the engine's sort key: the places where the order " +
+                "steps to a new run are exactly the places where two " +
+                "consecutive cells stop sharing a corner within the 1e-6 m " +
+                "weld, which a mirrored order breaks from both sides at " +
+                "once. A course whose joint falls AT the seam hands its two " +
+                "flanking pieces back one after the other, because the " +
+                "order now walks through the seam instead of opening at it, " +
+                "and the closed course's spans are still re-centred into " +
+                "(-L/2, +L/2] at source so U means signed arc about the " +
+                "seam everywhere in the engine.");
         }
         catch (Exception exception)
         {
@@ -924,9 +936,10 @@ internal static class Program
                 "with 0.3 end pieces, mirror-symmetric about the seam); " +
                 "the dome's closed courses are round(L/S) equal pieces " +
                 "rotated half a pitch on odd courses; cells arrive in " +
-                "build order (course, then position along it), engine " +
-                "outlines are open rings, the sliver-merge rule holds, " +
-                "and every plan projection is disjoint and simple.");
+                "build order (course, then component, then SIGNED arc " +
+                "along it, strictly increasing), engine outlines are open " +
+                "rings, the sliver-merge rule holds, and every plan " +
+                "projection is disjoint and simple.");
         }
         catch (Exception exception)
         {
@@ -19421,24 +19434,127 @@ internal static class Program
     /// apex, and the surface above it is covered by nothing.
     /// </summary>
     /// <summary>
-    /// Build order (spec section 7), checks 12.7(a) and 12.7(b). Within
-    /// every branch the absolute seam-relative mid-span is non-decreasing
-    /// and the first two cells lie on OPPOSITE SIDES of the seam. That
-    /// second bar is only reachable because of rule 7.1.1: on a closed
-    /// course CourseSpans emits every span non-negative, so without the
-    /// re-centring no cell ever has a negative mid and the bar fails on
-    /// every dome fixture. Taken on a closed course and on an open strip,
-    /// since the two reach it by different routes, and in ARRIVAL order,
-    /// never re-sorted.
+    /// A BRANCH BROKEN INTO ITS ARRIVAL RUNS: the maximal stretches over
+    /// which the signed seam-relative mid-span STRICTLY INCREASES. Under
+    /// spec 2026-09-04 rule 3.1 a run is one component's own curve walked
+    /// once in one direction, and a new run begins exactly where the order
+    /// moves on to the next curve.
+    /// </summary>
+    private static List<List<int>> SkinArrivalRuns(
+        (int Course, double[][] Outline, bool Clipped, double U0, double U1,
+            bool Cap)[] branch)
+    {
+        var runs = new List<List<int>>();
+        for (int at = 0; at < branch.Length; at++)
+        {
+            double mid = (branch[at].U0 + branch[at].U1) / 2.0;
+            if (runs.Count > 0)
+            {
+                List<int> open = runs[^1];
+                double previous =
+                    (branch[open[^1]].U0 + branch[open[^1]].U1) / 2.0;
+                if (mid > previous + 1.0e-12)
+                {
+                    open.Add(at);
+                    continue;
+                }
+            }
+            runs.Add(new List<int> { at });
+        }
+        return runs;
+    }
+
+    /// <summary>Do two cells ABUT, sharing a corner within the 1e-6 m the
+    /// standing corner weld uses? Two cells cut from ONE level curve at
+    /// neighbouring spans share their joint exactly; two cells on different
+    /// components, or on one component at two levels, share nothing. It is
+    /// the harness's own reading of "the next cell along this component",
+    /// owing nothing to the engine's sort key.</summary>
+    private static bool SkinCellsAbut(double[][] one, double[][] other)
+    {
+        foreach (double[] corner in one)
+        {
+            foreach (double[] against in other)
+            {
+                if (Distance3(corner, against) <= 1.0e-6)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// RULE 3.1'S ORDER MEASURED AGAINST THE GEOMETRY and not against the
+    /// engine's own key: in every branch the places where the arrival order
+    /// steps to a new RUN are exactly the places where the cells stop
+    /// ABUTTING. Within a run the index walks one curve, corner to corner,
+    /// in one direction; at a run boundary the geometry has really moved on
+    /// to another curve.
     ///
-    /// A COURSE and a BRANCH are not the same thing on this harness's own
-    /// barrel fixture, which is a ridge (ruled by two slopes), so its
-    /// non-topmost courses carry TWO physically separate traced components
-    /// at once, both spanning the same signed U range, and SkinCell keeps
-    /// no component id for the harness to tell them apart by; see the
-    /// "## Deviations" entry against this task for the measurement and
-    /// the strand split it needed. The ODD-course straddling exception
-    /// below is the other half of the same deviation.
+    /// It is one assertion and it carries both halves of the rule. A
+    /// mirrored order breaks it from both sides at once: the cell after a
+    /// seam-flanking pair does not touch it, so a break appears inside a
+    /// run, and the flanking pair itself shares the seam joint, so a run
+    /// boundary appears where the geometry does not break.
+    /// </summary>
+    private static void RequireRunsFollowTheGeometry(
+        (int Course, double[][] Outline, bool Clipped, double U0, double U1,
+            bool Cap)[] cells,
+        string label)
+    {
+        foreach (IGrouping<int, (int Course, double[][] Outline, bool Clipped,
+                     double U0, double U1, bool Cap)> group in
+                 cells.GroupBy(cell => cell.Course))
+        {
+            var branch = group.ToArray();
+            List<List<int>> runs = SkinArrivalRuns(branch);
+            var boundaries = new HashSet<int>(
+                runs.Skip(1).Select(run => run[0]));
+            for (int at = 1; at < branch.Length; at++)
+            {
+                bool abuts = SkinCellsAbut(
+                    branch[at - 1].Outline, branch[at].Outline);
+                bool boundary = boundaries.Contains(at);
+                if (abuts != boundary)
+                    continue;
+                throw new InvalidOperationException(
+                    $"{label}: within a branch the cells run COMPONENT BY " +
+                    "COMPONENT and each component in ONE direction (spec " +
+                    "2026-09-04 rule 3.1), so the order steps to a new run " +
+                    "exactly where the cells stop touching. In course " +
+                    $"{branch[at].Course} item {at - 1} and item {at} " +
+                    (abuts ? "DO" : "do NOT") + " share a corner while the " +
+                    "signed mid-span goes " +
+                    $"{(branch[at - 1].U0 + branch[at - 1].U1) / 2.0} then " +
+                    $"{(branch[at].U0 + branch[at].U1) / 2.0}, which " +
+                    (boundary ? "opens a new run" : "continues the run") +
+                    $". The branch holds {branch.Length} cells in " +
+                    $"{runs.Count} runs.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Build order, checks 12.7(a) and 12.7(b), RE-MEASURED against spec
+    /// 2026-09-04 rule 3.1 and no longer against rule 7.1.
+    ///
+    /// WHAT MOVED AND WHY. Rule 7.1 ordered a course FROM THE SEAM OUTWARD,
+    /// alternating either side of it, and this check pinned exactly that: a
+    /// non-decreasing |mid| and a first pair on opposite sides with the
+    /// negative one leading. Param's mirrored-selection find off the
+    /// six-lobe test is that order seen from the canvas: he took one item
+    /// index across branches and the cells it picked landed on opposite
+    /// sides of the vault, because an alternating order makes an index step
+    /// left, right, left, right by construction. Rule 3.1 replaces it with
+    /// component by component and signed arc in one consistent direction,
+    /// so the old pins are not relaxed here, they are INVERTED. The new bar
+    /// is the stricter of the two: a STRICTLY increasing mid within a run
+    /// admits exactly one arrival order per component, where non-decreasing
+    /// |mid| admitted two at every tie.
+    ///
+    /// Taken on a closed dome course and on the barrel's open strips, since
+    /// the two reach the order by different routes, and in ARRIVAL order,
+    /// never re-sorted.
     /// </summary>
     private static void ValidateSkinBuildOrder(Assembly plugin)
     {
@@ -19447,12 +19563,12 @@ internal static class Program
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
         foreach ((double[][] vertices, int[][] faces, string label,
-                  bool closed) fixture in new[]
+                  bool closed, int runs) fixture in new[]
                  {
                      (SkinDomeNet().Vertices, SkinDomeNet().Faces,
-                      "dome", true),
+                      "dome", true, 1),
                      (SkinBarrelNet().Vertices, SkinBarrelNet().Faces,
-                      "barrel", false)
+                      "barrel", false, 2)
                  })
         {
             object net = Activator.CreateInstance(
@@ -19461,6 +19577,7 @@ internal static class Program
             object built = courses.Invoke(
                 null, new object[] { net, 0.6, 0.5 })!;
             var cells = SkinCells(built);
+            RequireRunsFollowTheGeometry(cells, fixture.label);
             foreach (IGrouping<int, (int Course, double[][] Outline,
                          bool Clipped, double U0, double U1, bool Cap)> branch in
                      cells.GroupBy(cell => cell.Course))
@@ -19482,108 +19599,101 @@ internal static class Program
                     }
                 }
 
-                // A COURSE, not a STRAND: SkinBarrelNet is a ridge (two
-                // slopes), so a non-topmost course carries TWO physically
-                // separate traced components at once, both spanning the
-                // same signed U range, and SkinCell keeps no component id
-                // for the harness to read them apart by. What DOES tell
-                // them apart, without any engine change, is the one thing
-                // rule 7.1's own tiling guarantees and a repeat cannot:
-                // within one physical strand the pieces' U ranges are
-                // disjoint, because they tile the strand once. A cell
-                // whose U range OVERLAPS a range already claimed in the
-                // current strand can therefore only be the first cell of
-                // the NEXT strand, arriving right after the sort's
-                // Course-then-Order key moves on (rule 7.1's own "within
-                // each" from section 5). This split never fires on a
-                // single-strand course (the dome, and the barrel's own
-                // ridge course), and it never uses the very ordering
-                // property under test to decide where a strand ends, so a
-                // genuine ordering regression inside one strand still
-                // shows there rather than being read as a new strand.
-                var strands = new List<List<(int Course, double[][] Outline,
-                    bool Clipped, double U0, double U1, bool Cap)>>();
-                var claimed = new List<(double Lo, double Hi)>();
-                List<(int, double[][], bool, double, double, bool)>? current =
-                    null;
-                foreach (var cell in inBranch.Where(cell => !cell.Cap))
+                // THE RUN COUNT IS PINNED PER FIXTURE, and the numbers are
+                // the forms' own: the dome is ONE closed loop at every
+                // course, its crown rosette included, since a disc and the
+                // wedges round it share the inner curve's corners and are
+                // walked as one run; the barrel is a ridge, so every course
+                // carries TWO strips and two runs. A pin of 1 is what
+                // catches a single component broken into pieces by a
+                // mirrored order, which is the whole defect.
+                //
+                // AND THE STRAND SPLIT IS GONE. This check used to separate
+                // a ridge course's two components by watching for a U range
+                // already claimed, because SkinCell carried no component id
+                // and the sort's second key was a traced index that meant
+                // nothing across levels. The runs do that work now, and
+                // RequireRunsFollowTheGeometry above has already measured
+                // them against the CELLS' OWN CORNERS, which is a reading
+                // the engine's sort key cannot supply to itself.
+                List<List<int>> runs = SkinArrivalRuns(inBranch);
+                if (runs.Count != fixture.runs)
                 {
-                    double lo = Math.Min(cell.U0, cell.U1);
-                    double hi = Math.Max(cell.U0, cell.U1);
-                    bool overlapsClaimed = claimed.Any(range =>
-                        lo < range.Hi - 1.0e-9 && hi > range.Lo + 1.0e-9);
-                    if (current is null || overlapsClaimed)
-                    {
-                        current = new List<(int, double[][], bool, double,
-                            double, bool)>();
-                        strands.Add(current);
-                        claimed.Clear();
-                    }
-                    current.Add(cell);
-                    claimed.Add((lo, hi));
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} every course is " +
+                        $"{fixture.runs} traced component(s) and therefore " +
+                        $"{fixture.runs} run(s) (rule 3.1); course " +
+                        $"{inBranch[0].Course} arrives in {runs.Count} runs " +
+                        "of " + string.Join(
+                            ", ", runs.Select(run => run.Count)) +
+                        " cells.");
                 }
 
-                foreach (var strand in strands)
+                foreach (List<int> run in runs)
                 {
-                    double previous = -1.0;
-                    foreach (var cell in strand)
+                    for (int at = 1; at < run.Count; at++)
                     {
-                        double mid = Math.Abs((cell.U0 + cell.U1) / 2.0);
-                        if (mid < previous - 1.0e-9)
+                        double previous =
+                            (inBranch[run[at - 1]].U0 +
+                             inBranch[run[at - 1]].U1) / 2.0;
+                        double mid =
+                            (inBranch[run[at]].U0 +
+                             inBranch[run[at]].U1) / 2.0;
+                        if (mid <= previous)
                         {
                             throw new InvalidOperationException(
-                                $"On the {fixture.label}, cells within a " +
-                                "branch run FROM THE SEAM OUTWARD, so the " +
-                                "absolute mid-span is non-decreasing (rule " +
-                                $"7.1); course {cell.Course} goes " +
-                                $"{previous} then {mid}.");
+                                $"On the {fixture.label} the signed arc " +
+                                "STRICTLY increases along one component, " +
+                                "which is rule 3.1's one consistent " +
+                                "direction and the reason an index walks " +
+                                $"one side; course {inBranch[0].Course} " +
+                                $"goes {previous} then {mid}.");
                         }
-                        previous = mid;
                     }
-                    // A half-pitch-staggered ODD course can put one whole,
-                    // regular piece dead-centred on the seam (its own U
-                    // range straddling zero rather than sitting to one
-                    // side), the masonry bond's course-to-course joint
-                    // offset landing a full stone across the seam instead
-                    // of a joint at it. That piece IS the smallest-abs-mid
-                    // arrival, and it has no partner to alternate against:
-                    // the "opposite sides" bar only means something once
-                    // the seam itself is a JOINT rather than the middle of
-                    // a stone, so it is skipped exactly when the strand's
-                    // own first cell straddles zero.
-                    bool firstStraddles = strand.Count >= 1 &&
-                        Math.Min(strand[0].U0, strand[0].U1) < -1.0e-9 &&
-                        Math.Max(strand[0].U0, strand[0].U1) > 1.0e-9;
-                    if (strand.Count >= 2 && !firstStraddles)
+                    // THE SEAM IS NO LONGER WHERE A COURSE OPENS, and the
+                    // old bar is inverted rather than dropped. Rule 7.1 put
+                    // the two pieces flanking the seam first, on opposite
+                    // sides of it, the negative one leading; rule 3.1 opens
+                    // a component at the far end of its own signed arc and
+                    // walks through the seam without pausing at it. So the
+                    // first cell of a run is the one with the LOWEST mid in
+                    // that run, which is what the strictly increasing test
+                    // above already says, and the seam-flanking pair is now
+                    // adjacent in the middle of the run rather than split
+                    // across its opening. Asserted here as the pair that
+                    // shares the u = 0 joint arriving CONSECUTIVELY, on a
+                    // course that has such a pair at all.
+                    int flanking = -1;
+                    for (int at = 0; at + 1 < run.Count; at++)
                     {
-                        double first = (strand[0].U0 + strand[0].U1) / 2.0;
-                        double second = (strand[1].U0 + strand[1].U1) / 2.0;
-                        if (!(first < 0.0 && second > 0.0) &&
-                            !(first > 0.0 && second < 0.0))
+                        if (!inBranch[run[at]].Cap &&
+                            !inBranch[run[at + 1]].Cap &&
+                            Math.Abs(inBranch[run[at]].U1) <= 1.0e-9 &&
+                            Math.Abs(inBranch[run[at + 1]].U0) <= 1.0e-9)
                         {
-                            throw new InvalidOperationException(
-                                $"On the {fixture.label}, the order " +
-                                "alternates either side of the seam and a " +
-                                "tie goes to the NEGATIVE side first (rule " +
-                                $"7.1); course {strand[0].Course} opens " +
-                                $"with mids {first} and {second}.");
+                            flanking = at;
+                            break;
                         }
-                        // OPPOSITE SIDES alone accepts either order; the
-                        // seam's own two flanking pieces are an EXACT
-                        // bit-tie on |mid| by construction (a clean
-                        // division either side of a shared joint), so
-                        // this is where "negative first" is actually
-                        // reachable, and it is asserted directly rather
-                        // than only implied by which one happens to
-                        // arrive first.
-                        if (first > 0.0)
-                        {
-                            throw new InvalidOperationException(
-                                $"On the {fixture.label}, a tie on |mid| " +
-                                "goes to the NEGATIVE side first (rule " +
-                                $"7.1); course {strand[0].Course} opens " +
-                                $"with mids {first} and {second}.");
-                        }
+                    }
+                    // A CAP RUN IS EXEMPT, because its u is not a course's
+                    // u at all: a whole cap and a centre disc both span
+                    // [-L/2, +L/2] of their own outline and a wedge takes an
+                    // equal share of a ring, so a wedge ending at u = 0 is
+                    // the middle of a rosette and not a joint at a seam.
+                    // Named as an exemption rather than left to be found.
+                    bool hasJointAtSeam = run.Any(at =>
+                        !inBranch[at].Cap &&
+                        Math.Abs(inBranch[at].U1) <= 1.0e-9);
+                    if (hasJointAtSeam && run.Count >= 2 && flanking < 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"On the {fixture.label} a course whose joint " +
+                            "falls AT the seam hands its two flanking " +
+                            "pieces back one after the other, because the " +
+                            "order walks through the seam instead of " +
+                            "opening at it (rule 3.1). Course " +
+                            $"{inBranch[0].Course} has a piece ending at " +
+                            "u = 0 and no piece starting there next.");
                     }
                 }
             }
@@ -20016,10 +20126,13 @@ internal static class Program
                     double previousMid =
                         (group[at - 1].U0 + group[at - 1].U1) / 2.0;
                     double mid = (group[at].U0 + group[at].U1) / 2.0;
-                    if (Math.Abs(mid) < Math.Abs(previousMid) - 1.0e-9)
+                    if (mid <= previousMid)
                     {
                         throw new InvalidOperationException(
-                            "The pieces arrive seam outward (rule 7.1): " +
+                            "The pieces of ONE strip arrive in SIGNED arc " +
+                            "order, ascending, which is spec 2026-09-04 " +
+                            "rule 3.1's one consistent direction and " +
+                            "replaces rule 7.1's seam-outward alternation: " +
                             $"course {course} piece {at - 1} has mid " +
                             $"{previousMid} and piece {at} has mid {mid}.");
                     }
@@ -20192,12 +20305,15 @@ internal static class Program
                 double previousMid = (ring[at - 1].U0 + ring[at - 1].U1) /
                     2.0;
                 double mid = (ring[at].U0 + ring[at].U1) / 2.0;
-                if (Math.Abs(mid) < Math.Abs(previousMid) - 1.0e-9)
+                if (mid <= previousMid)
                 {
                     throw new InvalidOperationException(
-                        "The pieces arrive seam outward (rule 7.1): " +
-                        $"course {course} piece {at - 1} has mid " +
-                        $"{previousMid} and piece {at} has mid {mid}.");
+                        "A closed course arrives in SIGNED arc order, " +
+                        "ascending, walking the loop ONE way round (spec " +
+                        "2026-09-04 rule 3.1) rather than alternating out " +
+                        $"from the seam: course {course} piece {at - 1} " +
+                        $"has mid {previousMid} and piece {at} has mid " +
+                        $"{mid}.");
                 }
             }
         }
@@ -20767,16 +20883,34 @@ internal static class Program
         var inBranch = cells
             .Where(cell => cell.Course == courseCount - 1)
             .ToArray();
-        if (!inBranch[0].Cap || Math.Abs(
-                (inBranch[0].U0 + inBranch[0].U1) / 2.0) > 1.0e-9)
+        // WHERE THE DISC ARRIVES, RE-MEASURED under spec 2026-09-04 rule
+        // 3.1. It used to arrive FIRST, because its mid-span is 0 and the
+        // seam-outward order sorted on |mid|. The rosette is now walked the
+        // way every other component is, in ascending signed arc, so the
+        // wedges either side of the disc arrive either side of it and the
+        // disc sits in the MIDDLE of its own run: at W wedges the branch is
+        // the W/2 wedges below u = 0, then the disc, then the rest. What is
+        // pinned instead is the property the old wording was actually
+        // reaching for, which is that the disc still WINS its overlaps: it
+        // is kept, all W + 1 cells are kept, and the branch is the rosette
+        // and nothing else, which the count assertion above already holds.
+        // The keystone being the piece least worth dropping is now carried
+        // by the LEVEL term of the sort, since the cap band sits below
+        // anything nested inside it, and not by a tie on |mid|.
+        int discAt = Array.FindIndex(
+            inBranch,
+            cell => cell.Cap &&
+                Math.Abs((cell.U0 + cell.U1) / 2.0) <= 1.0e-9 &&
+                cell.U1 - cell.U0 > maximum * 0.5);
+        if (discAt != wedges / 2)
         {
             throw new InvalidOperationException(
-                "The disc's mid-span is 0, so it is emitted FIRST and " +
-                "WINS any overlap against its own wedges under the " +
-                "first-emitted-wins filter (rule 2.6.5); where W is odd the " +
-                "middle wedge's mid-span is 0 as well and the tie is broken " +
-                "in the disc's favour, since the keystone is the piece " +
-                "least worth dropping.");
+                "The centre disc is walked with the ring, in ascending " +
+                $"signed arc, so at W = {wedges} wedges it arrives at " +
+                $"item {wedges / 2} of branch n - 1, after the wedges " +
+                "below u = 0 and before those above it (spec 2026-09-04 " +
+                $"rule 3.1); it arrived at item {discAt} of " +
+                $"{inBranch.Length}.");
         }
         // The piece-length statistics contain NONE of the W + 1 spans, which
         // pins the amended rule 2.3.2a: a ring of wedges left in the list
@@ -27634,6 +27768,33 @@ internal static class Program
                 "branch is not above item k of the next; a text that " +
                 "dropped either would leave the author with a different " +
                 "false belief in place of the old one.");
+        }
+        // AND THE ORDER THE TEXT NAMES IS THE ORDER THE ENGINE KEEPS (spec
+        // 2026-09-04 rule 3.1). The sentence that stood here said the cells
+        // run FROM THE SEAM OUTWARD, alternating either side of it, and that
+        // the cells nearest the seam survive an overlap. Both were true of
+        // rule 7.1 and neither is true now, and a port that describes the
+        // old order is the same kind of false belief the clause above exists
+        // to stop: it is exactly what Param read before he took one item
+        // index across branches and watched the picked cells split onto
+        // opposite sides of the vault.
+        if (text.Contains("SEAM OUTWARD", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The seam-outward sentence is GONE from the Cells port: " +
+                "rule 3.1 orders a branch component by component and each " +
+                "component in one direction, and an alternating order is " +
+                "what made an index step from one side of the vault to the " +
+                "other.");
+        }
+        if (!text.Contains(
+                "COMPONENT BY COMPONENT", StringComparison.Ordinal) ||
+            !text.Contains("ONE DIRECTION", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And the replacement says what the order IS, in the two " +
+                "clauses rule 3.1 turns on, COMPONENT BY COMPONENT and ONE " +
+                $"DIRECTION along each; got '{text}'.");
         }
 
         IList inputs = (IList)parameters.GetType()
