@@ -586,10 +586,15 @@ Each was found by reading the code during this research and each is cheap:
 4. `refreshHdriList` is never called at boot, so the Sky picker shows a
    placeholder until HDRI mode is entered (L8).
 5. `concrete-slab` ground grain scales with disc size (L6).
-6. `vendor/three.core.js` is 1,443,056 bytes against a reported 1,443,059
-   for three@0.185.0. Every other vendored file matches byte for byte.
-   Given this machine's history of OneDrive name-clash files splitting
-   content, this gets one checksum before anything is built on it.
+6. `vendor/three.core.js` was 3 bytes short of npm's three@0.185.0, which
+   on this machine is the signature of a OneDrive name clash splitting a
+   file. Settled on 2026-09-04 and it is nothing: the vendored file is
+   byte-for-byte the GitHub `r185` tag's own `build/three.core.js`
+   (sha256 3718df12...fb7759). npm published from a slightly later commit,
+   and the whole difference is one statement in `ShapePath` hole detection,
+   `containsBox(entry.boundingBox)` where npm has
+   `containsPoint(entry.interiorPoint)`. The studio builds no shapes from
+   paths, so it cannot reach that code. No action.
 
 ## Not in this wave
 
