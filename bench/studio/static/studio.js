@@ -1017,7 +1017,9 @@ function knownPropType(type) {
 function restoreProps() {
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
-  state.selectedProp = null;
+  // Through selectProp, never by assignment: the outline and the gumball
+  // follow the selection, and a bare null leaves them orbiting a corpse.
+  selectProp(null);
   let layout = [];
   try {
     layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
@@ -1261,6 +1263,11 @@ function setPropOutline(record) {
   propOutline = new THREE.BoxHelper(record.object, 0x93a6bb);
   propOutline.material.depthTest = false;
   propOutline.renderOrder = 2;
+  // The outline must never CATCH the pointer: it lives in propsGroup, and
+  // a line raycast has a one-metre default threshold, so the box around
+  // the selected prop was hijacking clicks near its edges -- "if i click
+  // on an object it doesnt always select".
+  propOutline.raycast = () => {};
   propsGroup.add(propOutline);
 }
 
@@ -1270,15 +1277,80 @@ function refreshPropOutline() {
   if (propOutline) propOutline.update();
 }
 
+// ---------- the gumball ----------
+// Rhino's gesture set, cut down to what a ground prop can do (Param:
+// "can we do a gumball where the rotate is like we might find in rhino
+// and scale is also like that off the gumball"): a blue ring about Z to
+// rotate, a gold square off the ring to scale about the feet, and the
+// body itself to move (the existing carry). The record stays the truth;
+// saveProps runs on release, not per pixel.
+let propGumball = null;
+
+function clearPropGumball() {
+  if (!propGumball) return;
+  propsGroup.remove(propGumball);
+  for (const part of propGumball.children) {
+    part.geometry.dispose();
+    part.material.dispose();
+  }
+  propGumball = null;
+}
+
+function setPropGumball(record) {
+  clearPropGumball();
+  if (!record || !state.propEdit) return;
+  const box = new THREE.Box3().setFromObject(record.object);
+  const radius = Math.max(0.5,
+    0.62 * Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y));
+  propGumball = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(radius, Math.max(0.02, radius * 0.03), 10, 96),
+    new THREE.MeshBasicMaterial({ color: 0x2f6fe4, transparent: true,
+      opacity: 0.85, depthTest: false }));
+  ring.renderOrder = 3;
+  ring.userData.handle = "rotate";
+  const grip = new THREE.Mesh(
+    new THREE.BoxGeometry(radius * 0.16, radius * 0.16, radius * 0.16),
+    new THREE.MeshBasicMaterial({ color: 0xd2a53c, transparent: true,
+      opacity: 0.95, depthTest: false }));
+  grip.renderOrder = 3;
+  grip.position.set(radius * 1.28, 0, 0);
+  grip.userData.handle = "scale";
+  propGumball.add(ring, grip);
+  propGumball.position.set(record.x, record.y, 0.02);
+  propGumball.rotation.z = record.rotation || 0;
+  propsGroup.add(propGumball);
+}
+
+// Cheap follow while a prop is carried or turned: position and spin only.
+// A size change rebuilds instead (setPropGumball), so the ring re-fits.
+function refreshPropGumball() {
+  if (!propGumball || !state.selectedProp) return;
+  propGumball.position.set(state.selectedProp.x, state.selectedProp.y, 0.02);
+  propGumball.rotation.z = state.selectedProp.rotation || 0;
+}
+
+function gumballHandleAt(event) {
+  if (!propGumball) return null;
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  const hits = propRaycaster.intersectObjects(propGumball.children, false);
+  return hits.length ? hits[0].object.userData.handle : null;
+}
+
 let propEditHinted = false;
 
 function selectProp(record) {
   state.selectedProp = record;
   setPropOutline(record);
+  setPropGumball(record);
   if (record && !propEditHinted) {
     propEditHinted = true;
-    logStudio("selected prop: R / Shift+R rotates, + / - scales from the "
-      + "ground up, Delete removes");
+    logStudio("selected prop: drag the ring to rotate, the square to "
+      + "scale, the body to move; Delete removes");
   }
 }
 
@@ -1318,11 +1390,31 @@ function propRecordAt(event) {
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
     -((event.clientY - rect.top) / rect.height) * 2 + 1);
   propRaycaster.setFromCamera(ndc, camera);
+  // Every hit is tried, not only the first: the nearest hit can be a
+  // helper or another prop's stray leaf card, and returning null for it
+  // reads as a selection that just did not work.
   const hits = propRaycaster.intersectObjects(propsGroup.children, true);
-  if (!hits.length) return null;
-  let node = hits[0].object;
-  while (node.parent && node.parent !== propsGroup) node = node.parent;
-  return state.props.find((p) => p.object === node) || null;
+  for (const hit of hits) {
+    let node = hit.object;
+    while (node.parent && node.parent !== propsGroup) node = node.parent;
+    const record = state.props.find((p) => p.object === node);
+    if (record) return record;
+  }
+  // A tree is mostly air: a click between the leaves misses every
+  // triangle. Fall back to the bounding boxes, nearest box first, so
+  // clicking "the tree" means the tree rather than a lottery over its
+  // leaf cards.
+  const box = new THREE.Box3();
+  const point = new THREE.Vector3();
+  let best = null;
+  let bestDistance = Infinity;
+  for (const record of state.props) {
+    box.setFromObject(record.object);
+    if (!propRaycaster.ray.intersectBox(box, point)) continue;
+    const distance = point.distanceToSquared(propRaycaster.ray.origin);
+    if (distance < bestDistance) { bestDistance = distance; best = record; }
+  }
+  return best;
 }
 
 const materials = {
@@ -5454,7 +5546,7 @@ document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
-  state.selectedProp = null;
+  selectProp(null);
   saveProps();
 });
 canvas.addEventListener("pointerdown", (event) => {
@@ -5464,6 +5556,28 @@ canvas.addEventListener("pointerdown", (event) => {
   if (state.carrying) {
     dropCarriedProp();
     return;
+  }
+  // The gumball outranks everything: its handles are the explicit
+  // controls and they sit over other geometry by design.
+  if (state.propEdit && state.selectedProp) {
+    const handle = gumballHandleAt(event);
+    if (handle) {
+      const record = state.selectedProp;
+      const ground = groundPointAt(event);
+      if (ground) {
+        state.gumball = {
+          mode: handle, record,
+          startRotation: record.rotation || 0,
+          startScale: record.scale || 1,
+          startAngle: Math.atan2(ground.y - record.y, ground.x - record.x),
+          startDistance: Math.max(0.05,
+            Math.hypot(ground.x - record.x, ground.y - record.y)),
+        };
+        controls.enabled = false;
+        canvas.setPointerCapture(event.pointerId);
+      }
+      return;
+    }
   }
   // Placed props are furniture until the Edit button says otherwise: a
   // click on a tree while composing the camera must never yank the tree
@@ -5482,6 +5596,28 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 });
 canvas.addEventListener("pointermove", (event) => {
+  // A live gumball drag: the ring turns the prop, the square scales it,
+  // both measured in plan about the prop's feet, the way Rhino reads a
+  // gumball drag in top view.
+  if (state.gumball) {
+    const ground = groundPointAt(event);
+    if (!ground) return;
+    const { mode, record, startRotation, startScale, startAngle,
+      startDistance } = state.gumball;
+    if (mode === "rotate") {
+      const angle = Math.atan2(ground.y - record.y, ground.x - record.x);
+      record.rotation = startRotation + (angle - startAngle);
+      record.object.rotation.z = record.rotation;
+    } else {
+      const distance = Math.hypot(ground.x - record.x, ground.y - record.y);
+      record.scale = Math.min(5, Math.max(0.2,
+        startScale * distance / startDistance));
+      record.object.scale.setScalar(record.scale);
+    }
+    refreshPropOutline();
+    refreshPropGumball();
+    return;
+  }
   const carried = state.carrying && state.carrying.record;
   if (!carried) return;
   const hit = groundPointAt(event);
@@ -5490,10 +5626,20 @@ canvas.addEventListener("pointermove", (event) => {
   carried.y = hit.y;
   carried.object.position.set(hit.x, hit.y, 0);
   refreshPropOutline();
+  refreshPropGumball();
 });
 function endPropDrag(event) {
   if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
     canvas.releasePointerCapture(event.pointerId);
+  }
+  if (state.gumball) {
+    const record = state.gumball.record;
+    state.gumball = null;
+    controls.enabled = true;
+    // A scale drag changed the prop's size: rebuild the ring to fit.
+    setPropGumball(record);
+    saveProps();
+    return;
   }
   if (!state.propDrag) return;
   state.propDrag = false;
@@ -5524,6 +5670,7 @@ window.addEventListener("keydown", (event) => {
     state.selectedProp.rotation += step;
     state.selectedProp.object.rotation.z = state.selectedProp.rotation;
     refreshPropOutline();
+    refreshPropGumball();
     saveProps();
   } else if (event.key === "+" || event.key === "=" || event.key === "-"
       || event.key === "_") {
@@ -5535,12 +5682,22 @@ window.addEventListener("keydown", (event) => {
     state.selectedProp.scale = Math.min(5, Math.max(0.2, next));
     state.selectedProp.object.scale.setScalar(state.selectedProp.scale);
     refreshPropOutline();
+    setPropGumball(state.selectedProp);  // the ring re-fits the new size
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
-    disposeProp(state.selectedProp.object);
-    propsGroup.remove(state.selectedProp.object);
-    state.props = state.props.filter((p) => p !== state.selectedProp);
-    state.selectedProp = null;
+    const record = state.selectedProp;
+    // Deleting a prop that is being CARRIED must also put the carry
+    // down, or the outline keeps following the cursor around a prop
+    // that no longer exists and the camera stays locked.
+    if (state.carrying && state.carrying.record === record) {
+      state.carrying = null;
+      state.propDrag = false;
+      controls.enabled = true;
+    }
+    disposeProp(record.object);
+    propsGroup.remove(record.object);
+    state.props = state.props.filter((p) => p !== record);
+    selectProp(null);
     saveProps();
   }
 });
