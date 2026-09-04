@@ -93,6 +93,36 @@ def test_a_studio_on_the_port_is_stopped_and_named(monkeypatch):
     assert "abc123" in " ".join(said)
 
 
+def test_a_studio_too_old_to_introduce_itself_is_still_recognised(monkeypatch):
+    """/api/health was added in the same change as this module, so the
+    server that most needs displacing answers it with 404. Measured on a
+    live pair: the old studio on 8600 gave 404 and the new one on 8601 gave
+    its build. Without the second question the launcher would politely
+    refuse to touch the very process it exists to replace."""
+
+    asked = []
+
+    def answer(port, path, timeout):
+        asked.append(path)
+        if path == "/api/health":
+            return None                      # a 404 reads as no answer
+        return {"studies": ["a-vault"], "patterns": []}
+
+    monkeypatch.setattr(portcheck, "_ask", answer)
+    found = portcheck.who_is_there(8600)
+    assert found is not None and found["studio"] is True
+    assert asked == ["/api/health", "/api/studies"]
+
+
+def test_something_that_answers_neither_question_is_left_alone(monkeypatch):
+    monkeypatch.setattr(portcheck, "_ask", lambda port, path, timeout: None)
+    assert portcheck.who_is_there(8600) is None
+    # And a JSON body that is not ours is not ours.
+    monkeypatch.setattr(portcheck, "_ask",
+                        lambda port, path, timeout: {"jenkins": True})
+    assert portcheck.who_is_there(8600) is None
+
+
 def test_a_free_port_needs_no_action(monkeypatch):
     monkeypatch.setattr(portcheck, "_netstat", lambda: NETSTAT)
     stopped = []

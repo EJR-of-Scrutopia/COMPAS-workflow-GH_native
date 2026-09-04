@@ -64,24 +64,45 @@ def _netstat() -> str:
     return finished.stdout or ""
 
 
-def who_is_there(port: int, timeout: float = 2.0) -> Optional[dict]:
-    """Ask whatever is on the port whether it is a Bench Studio.
-
-    A studio answers /api/health with its own name. Anything else -- a
-    different application, a stale socket, a firewall -- gives a connection
-    error or a body that is not ours, and the answer is None. That
-    distinction is the whole safety of this module: nothing is stopped that
-    has not identified itself.
-    """
-
+def _ask(port: int, path: str, timeout: float) -> Optional[dict]:
     try:
         with urllib.request.urlopen(
-                "http://127.0.0.1:{}/api/health".format(port),
+                "http://127.0.0.1:{}{}".format(port, path),
                 timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, TimeoutError):
         return None
-    return body if isinstance(body, dict) and body.get("studio") else None
+    return body if isinstance(body, dict) else None
+
+
+def who_is_there(port: int, timeout: float = 2.0) -> Optional[dict]:
+    """Ask whatever is on the port whether it is a Bench Studio.
+
+    Two questions, because the server that most needs displacing is the one
+    too old to answer the first. /api/health was added in the same change as
+    this module, so a studio started before it answers 404 and identifies
+    itself as nothing at all -- and the launcher would then politely refuse
+    to touch the very process it exists to replace. Measured on a live pair:
+    the old one on 8600 gave 404, the new one on 8601 gave its build.
+
+    /api/studies is the second question. It has been in this studio since
+    long before any of this and returns an object with a "studies" key.
+    Nothing else on a developer's machine answers that on localhost, and it
+    is the only way a version check can reach a version that predates it.
+
+    Anything that answers neither -- a different application, a stale
+    socket, a firewall -- is None, and None is never stopped. That is the
+    whole safety of this module.
+    """
+
+    modern = _ask(port, "/api/health", timeout)
+    if modern and modern.get("studio"):
+        return modern
+
+    older = _ask(port, "/api/studies", timeout)
+    if older is not None and "studies" in older:
+        return {"studio": True, "build": "older than this launcher"}
+    return None
 
 
 def stop(pid: int) -> bool:
