@@ -229,6 +229,21 @@ body { overflow: hidden;
                animation: cut-spin 0.9s linear infinite; }
 @keyframes cut-spin { to { transform: rotate(360deg); } }
 
+/* Asset loads announce themselves: a translucent card top-centre of the
+   viewport with the same turning ring, counted so overlapping loads keep
+   one card up until the last of them lands. */
+#loading-toast { position: fixed; top: 14px; left: 50%;
+                 transform: translateX(-50%); display: flex; gap: var(--s2);
+                 align-items: center; padding: 6px 14px;
+                 background: var(--scrim); border: 1px solid var(--line);
+                 border-radius: var(--radius); backdrop-filter: blur(6px);
+                 color: var(--ink); font-size: 12px; z-index: 30;
+                 pointer-events: none; }
+#loading-toast.hidden { display: none; }
+#loading-spin { width: 12px; height: 12px; border-radius: 50%;
+                border: 2px solid var(--line); border-top-color: var(--accent);
+                animation: cut-spin 0.9s linear infinite; flex: none; }
+
 /* Live reads as a state, not a control: the word and a red beacon while
    it is following Grasshopper, the word alone and dimmed when it is not.
    The beacon breathes so a still screenshot and a live window are told

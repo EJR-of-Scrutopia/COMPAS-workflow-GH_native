@@ -2677,3 +2677,41 @@ def test_a_scene_keeps_the_prop_sizes_and_the_floors_lay_angle():
     assert "material.map.rotation = state.ground.rotation || 0;" in js
     # The picker thumbnails stay squared up: the lay angle is the floor's.
     assert "material.map.rotation = 0;" in js
+
+
+def test_asset_loads_announce_themselves_on_the_glass():
+    """Param: "lets have it say its loading in translucent pop up message
+    with a loading animation". One counted toast covers the four asset
+    loaders -- skin material, floor material, sky, props -- so overlapping
+    loads keep a single card up until the last of them lands."""
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="loading-toast"' in page and 'id="loading-spin"' in page
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "beginLoading")
+    assert "loadingHeld += 1" in body
+    assert 'classList.remove("hidden")' in body
+    # The four wired loaders, each with a fitting label.
+    assert 'beginLoading("Loading sky " + name)' in js
+    assert 'beginLoading("Preparing sky " + name + " at full quality")' in js
+    assert 'beginLoading("Loading " + (entry.label || "material"))' in js
+    assert 'beginLoading("Loading floor " + (entry.label || key))' in js
+    assert 'beginLoading("Loading " + entries.length + " props")' in js
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#loading-toast {" in css and "var(--scrim)" in css.split("#loading-toast {")[1][:400]
+
+
+def test_the_visible_sky_is_served_at_source_resolution():
+    """Param: "some say 24k others 16k most i downloaded at 8k and they
+    are all so blurry... i would like them at maximum quality please".
+    The lighting file stays small by design; the BACKDROP the eye looks
+    at is now derived at the GPU texture ceiling, clamped by each sky's
+    own source width, under a versioned name so stale 2048-wide
+    derivations cannot shadow the new builds."""
+
+    import hdri_preview
+    assert hdri_preview.BACKGROUND_WIDTH == 16384
+    assert hdri_preview.LIGHTING_WIDTH == 1024, "lighting stays prefilter-sized"
+    app_source = (STATIC.parent / "app.py").read_text(encoding="utf-8")
+    assert '".bg-full.png"' in app_source
+    assert '".bg.png"' not in app_source

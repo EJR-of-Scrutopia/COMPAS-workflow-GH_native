@@ -558,15 +558,40 @@ async function refreshHdriList(selectName) {
   return files;
 }
 
+// ---------- the loading toast ----------
+// Every asset fetch says so on the glass: a translucent card with a
+// turning ring (Param: "lets have it say its loading in translucent pop
+// up message with a loading animation"). Counted, not toggled, so
+// overlapping loads keep one card up until the last of them lands; the
+// label is last-writer-wins, which is the load the user just asked for.
+let loadingHeld = 0;
+function beginLoading(label) {
+  loadingHeld += 1;
+  const toast = document.getElementById("loading-toast");
+  if (toast) {
+    document.getElementById("loading-toast-text").textContent = label;
+    toast.classList.remove("hidden");
+  }
+  let done = false;
+  return () => {
+    if (done) return;               // a catch and a finally may both call it
+    done = true;
+    loadingHeld = Math.max(0, loadingHeld - 1);
+    if (!loadingHeld && toast) toast.classList.add("hidden");
+  };
+}
+
 // The sharp visible sky, separate from the one that lights the scene.
 // Two cheap textures doing one job each beat one expensive texture doing
 // both badly: 2048 of 8-bit sRGB is 16 MB and looks right behind a vault,
 // where 8192 of half-float is 256 MB and is then thrown away by the blur.
 async function loadHdriBackdrop(name) {
   const wanted = name;
+  const done = beginLoading("Preparing sky " + name + " at full quality");
   try {
     const texture = await new THREE.TextureLoader().loadAsync(
       "/api/hdri/" + encodeURIComponent(name) + "/background");
+    done();
     // A slower sky that lost the race must not replace a faster one that
     // won it: the user may have changed their mind while this was in flight.
     if (state.hdriName !== wanted) { texture.dispose(); return; }
@@ -577,6 +602,8 @@ async function loadHdriBackdrop(name) {
     applyHdriBackdrop();
   } catch (error) {
     logStudio("the sharp sky for " + name + " did not arrive: " + error.message);
+  } finally {
+    done();
   }
 }
 
@@ -589,6 +616,9 @@ function backdropTexture() {
 async function loadHdri(name) {
   const status = document.getElementById("hdri-status");
   status.textContent = "loading " + name;
+  // The first ask for a big sky is a real wait: the server is deriving
+  // the full-resolution backdrop from a 100-300 MB source, once.
+  const done = beginLoading("Loading sky " + name);
   try {
     // The DERIVED lighting file, not the original. 1024 by 512 is what
     // three.js asks for in as many words, and the difference is not small:
@@ -642,6 +672,8 @@ async function loadHdri(name) {
     status.textContent = "";
     showBanner("Could not load HDRI " + name + ": " + error.message, "error");
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
+  } finally {
+    done();
   }
 }
 
@@ -753,6 +785,7 @@ async function loadGroundMaterial(key) {
   }
   const entry = groundLibraryEntry(key);
   if (!entry) return;
+  const done = beginLoading("Loading floor " + (entry.label || key));
   try {
     const set = await loadLibraryMaterial(entry, {
       px: VIEWPORT_PX,
@@ -773,6 +806,8 @@ async function loadGroundMaterial(key) {
   } catch (error) {
     logStudio("floor " + key + " would not load: " + error.message);
     return;
+  } finally {
+    done();
   }
   rebuildGround();
 }
@@ -1024,12 +1059,17 @@ async function loadPropLibrary() {
   if (!entries.length) return;
   state.propLibrary = entries;
   state.propCredits = payload.library || null;
-  for (const entry of entries) {
-    try {
-      propTemplates.set(entry.key, await loadPropTemplate(entry));
-    } catch (error) {
-      logStudio("prop " + entry.key + " would not load: " + error.message);
+  const done = beginLoading("Loading " + entries.length + " props");
+  try {
+    for (const entry of entries) {
+      try {
+        propTemplates.set(entry.key, await loadPropTemplate(entry));
+      } catch (error) {
+        logStudio("prop " + entry.key + " would not load: " + error.message);
+      }
     }
+  } finally {
+    done();
   }
   buildPropTiles();
   // The type select is still the source of truth for what Place will place,
@@ -2462,6 +2502,7 @@ async function ensureLibraryMaterial(key) {
   if (libraryLoads.has(key)) return libraryLoads.get(key);
   const entry = libraryEntry(key);
   if (!entry) return null;
+  const done = beginLoading("Loading " + (entry.label || "material"));
   const loading = loadLibraryMaterial(entry, {
     px: VIEWPORT_PX,
     // The most the hardware offers rather than a number chosen to be safe.
@@ -2482,7 +2523,7 @@ async function ensureLibraryMaterial(key) {
   }).catch((error) => {
     logStudio("material " + key + " would not load: " + error.message);
     return null;
-  }).finally(() => libraryLoads.delete(key));
+  }).finally(() => { libraryLoads.delete(key); done(); });
   libraryLoads.set(key, loading);
   return loading;
 }
