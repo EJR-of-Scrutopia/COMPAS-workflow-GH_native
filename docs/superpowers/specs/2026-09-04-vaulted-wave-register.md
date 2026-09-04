@@ -58,6 +58,35 @@ list." Work autonomously, commit per fix, never push.
   (b9cdc90, ec3caec), recording motion + orbit + the Animation output
   folder, and the orbit holding still through the formwork act.
 
+## Done on Param's walk of the wave (2026-09-04 evening, b8c115d + 4e56a71)
+
+His rulings, in his words: "not do stretch it was the wrong idea. we
+should keep it always uniform. but we need it to cover each face without
+repeating"; "the texture scale on the skin always needs to be the same
+between objects"; "a match wood grain option... use the direction of the
+voussoir for that, so that each leg has the right direction"; "the
+randomise isnt working on the ground floor at all"; "the floor scale is
+at its smallest, which is not even near enough".
+
+- stretchUVs -> sheetUVs: ONE sheet for the whole vault, sized by the
+  largest voussoir footprint, every piece at the same uniform scale
+  sampling its own hashed window. Verified live: 1501 pieces, all UVs in
+  the sheet, 1501 distinct windows.
+- Match grain checkbox: v runs uphill per piece (world Z projected into
+  the piece plane); per-piece turns collapse to 0/180, seed parity turns
+  the whole deal 90 degrees for cross-grained pictures. Verified by eye
+  on a leg close-up, on and off.
+- Floor Randomise now deals a rotation about the disc centre as well as
+  the slide (a slid periodic pattern is invisible by definition). Lay
+  angle persists in scenes, stays out of the thumbnails. Live: one click
+  took rotation 0 -> 4.078 rad.
+- Floor Scale X/Y floor lowered 25% -> 5% (repeat 80 -> 4 on the default
+  disc).
+- Scene saves now carry prop scale (restore already read it) and the
+  floor lay angle.
+- 685 tests green; sheet contract proved by four mutations, the scene
+  pin by two.
+
 ## PEOPLE: the licence wall, and Param's one-click list
 
 Photoreal people exist under NO CC0 licence anywhere (verified across
