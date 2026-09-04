@@ -35,11 +35,16 @@ PREVIEW_WIDTH = 256
 #
 # BACKGROUND_WIDTH is the sky the eye looks at rather than the light it
 # casts, so it is tone-mapped to an ordinary 8-bit PNG. A background does not
-# need float: it is behind the tone mapper anyway, and 2048 across an
-# equirect is about 340 pixels over a sixty degree view, which is as much as
-# a vault studio's backdrop is ever asked for.
+# need float: it is behind the tone mapper anyway. It DOES need its pixels:
+# 2048 across an equirect was about 340 pixels over a sixty degree view, and
+# Param's 8k skies came out as soup ("they are all so blurry... i would like
+# them at maximum quality please"). The width is now the common GPU texture
+# ceiling; the samplers clamp to the source, so an 8k sky serves at its own
+# native 8192 and only a 24k monster is trimmed to what a texture unit can
+# hold. First derivation of a big sky costs real time in this stdlib-only
+# decoder and is then cached beside the skies for good.
 LIGHTING_WIDTH = 1024
-BACKGROUND_WIDTH = 2048
+BACKGROUND_WIDTH = 16384
 
 # Reinhard leaves a value in 0..1 and the gamma is the expensive half, so it
 # is a table rather than six million calls to pow. 4096 steps is finer than

@@ -1314,15 +1314,18 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.get("/api/hdri/{name}/background")
     def hdri_background(name: str):
-        """The sky the eye LOOKS at: 2048 across, tone-mapped, eight bits.
+        """The sky the eye LOOKS at: source resolution (GPU-capped),
+        tone-mapped, eight bits.
 
         A background does not need float. It sits behind the tone mapper
         anyway, and separating the two jobs is what lets the lighting file
-        be small enough to prefilter cheaply.
+        be small enough to prefilter cheaply. The suffix is versioned:
+        the old 2048-wide derivations sit beside the skies looking newer
+        than their sources, and only a fresh name gets past that check.
         """
 
-        return _derived_sky(name, ".bg.png", hdri_preview.build_background,
-                            "image/png")
+        return _derived_sky(name, ".bg-full.png",
+                            hdri_preview.build_background, "image/png")
 
     @app.get("/api/hdri/{name}")
     def hdri_file(name: str):

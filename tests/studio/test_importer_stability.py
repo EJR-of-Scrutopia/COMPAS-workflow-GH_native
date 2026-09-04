@@ -1199,7 +1199,9 @@ def test_the_sky_thumbnail_route_builds_once(tmp_path, monkeypatch):
     background = client.get("/api/hdri/sky.hdr/background")
     assert background.status_code == 200
     assert background.headers["content-type"] == "image/png"
-    assert (skies / ".thumbnails" / "sky.hdr.bg.png").is_file()
+    # The versioned suffix: renamed when the backdrop went full-resolution,
+    # so stale 2048-wide derivations cannot shadow the new builds.
+    assert (skies / ".thumbnails" / "sky.hdr.bg-full.png").is_file()
 
     # And each is kept, on the same rule as the thumbnail.
     light_stamp = (skies / ".thumbnails" / "sky.hdr.light.hdr").stat().st_mtime_ns
