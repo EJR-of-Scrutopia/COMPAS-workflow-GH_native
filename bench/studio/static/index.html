@@ -25,6 +25,19 @@
   <div id="legend-bar"></div>
   <div id="legend-labels"><span id="legend-min"></span><span id="legend-zero"></span><span id="legend-max"></span></div>
 </div>
+<!-- One button per panel section, on the viewport beside the panel.
+     Param: "at the top right of the viewport besides the menu we should
+     have a translucentish button one for each section... when a button is
+     clicked that information is all that is shown." The panel keeps a
+     permanent header (theme, build stamp) and footer (views, restart);
+     the middle is whichever section's tab is lit. -->
+<nav id="tab-rail">
+  <button data-section="import-section" type="button">Import</button>
+  <button data-section="study-section" type="button">Skin</button>
+  <button data-section="analysis-section" type="button">Analysis</button>
+  <button data-section="animation-section" type="button">Animation</button>
+  <button data-section="scene-section" type="button">Scene</button>
+</nav>
 <aside id="panel">
   <div id="panel-top">
     <button id="theme-toggle" type="button" title="Light or dark">Light</button>
@@ -211,10 +224,14 @@
     <select id="prop-type" class="hidden"></select>
 
     <span class="row-heading">Scenes</span>
+    <!-- No viewport-clearing button here any more. Two buttons named Clear
+         sat a row apart and the scene one emptied the whole viewport --
+         vault, ground, the lot. Param: "no just have it remove the props
+         please." The props Clear is the one Clear; clearScene() remains a
+         function for study switching, not a button. -->
     <div id="scene-row">
       <button id="scene-save" title="Save the viewport, the floor, the light and everything placed">Save</button>
       <button id="scene-open">Scenes</button>
-      <button id="clear-scene" class="danger" title="Empty the viewport and deselect">Clear</button>
       <span id="scene-count"></span>
     </div>
     <div id="scene-list" class="hidden"></div>

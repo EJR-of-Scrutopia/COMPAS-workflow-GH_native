@@ -99,14 +99,28 @@ body { overflow: hidden;
          backdrop-filter: blur(18px) saturate(115%);
          -webkit-backdrop-filter: blur(18px) saturate(115%);
          border-left: 1px solid var(--line); }
-#panel summary { font-size: var(--t-2); text-transform: uppercase;
-                 letter-spacing: 0.08em; color: var(--ink-3);
-                 margin: var(--s6) 0 var(--s2); cursor: pointer;
-                 list-style: none; user-select: none; }
-#panel summary:hover { color: var(--ink-2); }
-#panel summary::before { content: "\25B8\00A0"; }
-#panel details[open] > summary::before { content: "\25BE\00A0"; }
-#panel details:first-child > summary { margin-top: 0; }
+/* Section summaries are hidden: the tab rail carries every section's
+   name, and exactly one section is on show at a time. The details/summary
+   structure stays in the markup -- the machinery that finds sections by
+   id and the self-checks that read the page do not care how a section is
+   revealed. */
+#panel summary { display: none; }
+#panel details { margin-top: var(--s3); }
+
+/* The tab rail: one translucentish button per section, on the viewport
+   beside the panel. The lit tab is the section the panel is showing. */
+#tab-rail { position: fixed; top: var(--s3);
+  right: calc(var(--panel-w) + var(--s3)); z-index: 6;
+  display: flex; flex-direction: column; gap: var(--s1); }
+#tab-rail button { min-width: 96px; height: var(--h-small);
+  padding: 0 var(--s3); text-align: right;
+  background: var(--panel-veil); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font: inherit; font-size: var(--t-2); cursor: pointer; }
+#tab-rail button:hover { border-color: var(--line-lit); color: var(--ink); }
+#tab-rail button.active { background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
 #panel label { display: block; margin: var(--s2) 0; color: var(--ink-2); }
 #panel input[type="range"] { width: 100%; }
 /* One control height for everything the panel offers, which is the single
@@ -615,9 +629,9 @@ body { overflow: hidden;
    below shows through the gap its negative margin opens. */
 #mode-row { box-shadow: 0 -8px 0 var(--panel); }
 
-/* Three buttons on one row, and none of them wraps. "Save scene" broke
-   across two lines inside a 32px control and pushed the row to 48. */
-#scene-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+/* Two buttons on one row, and neither wraps. "Save scene" broke across
+   two lines inside a 32px control and pushed the row to 48. */
+#scene-row { display: grid; grid-template-columns: 1fr 1fr auto;
   gap: var(--s1); align-items: center; }
 #scene-row button { width: auto; margin: 0; padding: 0 var(--s2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -703,7 +717,8 @@ body { overflow: hidden;
    the interface" needs an answer that is a fact, and a version that does
    not move after an edit says the page is cached rather than unchanged. */
 #panel-top { display: flex; align-items: center; gap: var(--s2);
-  margin-bottom: var(--s2); }
+  margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3) var(--s2);
+  border-bottom: 1px solid var(--line); }
 #panel #theme-toggle { width: auto; height: var(--h-small);
   padding: 0 var(--s2); font-size: var(--t-2); }
 #build-stamp { margin-left: auto; color: var(--ink-3);

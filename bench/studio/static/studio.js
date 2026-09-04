@@ -2312,6 +2312,44 @@ const GROUP_SUMMARIES = {
 
 setGroupSummaries(GROUP_SUMMARIES);
 
+// ---------- the tab rail ----------
+// One section on show at a time, chosen from the buttons on the viewport.
+// The panel keeps its permanent header (theme, build stamp) and footer
+// (views, restart); the middle is whichever tab is lit. The choice is a
+// per-browser convenience, so localStorage, with Skin as the first-run
+// home: it is where the daily work starts once a vault folder is set.
+function activateTab(sectionId) {
+  let known = false;
+  for (const button of document.querySelectorAll("#tab-rail button")) {
+    if (button.dataset.section === sectionId) known = true;
+  }
+  if (!known) sectionId = "study-section";
+  for (const button of document.querySelectorAll("#tab-rail button")) {
+    const active = button.dataset.section === sectionId;
+    button.classList.toggle("active", active);
+    const section = document.getElementById(button.dataset.section);
+    if (!section) continue;
+    section.classList.toggle("hidden", !active);
+    if (active) section.open = true;
+  }
+  try {
+    localStorage.setItem("vaulted-tab", sectionId);
+  } catch (error) {
+    /* a private window is not a reason to refuse a tab */
+  }
+}
+
+{
+  for (const button of document.querySelectorAll("#tab-rail button")) {
+    button.addEventListener("click", () => activateTab(button.dataset.section));
+  }
+  let remembered = null;
+  try {
+    remembered = localStorage.getItem("vaulted-tab");
+  } catch (error) { remembered = null; }
+  activateTab(remembered || "study-section");
+}
+
 // ---------- light or dark ----------
 // Nine variables, because the panel's colours all come from the token block
 // now. Before the Spectrum pass this would have been thirty hexes found by
@@ -4519,7 +4557,9 @@ function clearScene() {
   const row = document.getElementById("source-row");
   if (row) row.classList.add("hidden");
 }
-document.getElementById("clear-scene").addEventListener("click", clearScene);
+// clearScene has no button any more: two buttons named Clear sat a row
+// apart, and this one emptied the whole viewport when Param wanted props
+// gone. It remains the study-switching primitive above.
 
 // LIVE: poll the studies list and reload the moment the loaded study's
 // files change on disk, which is exactly what a Grasshopper Live push
