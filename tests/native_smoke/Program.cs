@@ -21253,14 +21253,35 @@ internal static class Program
             // and a count assertion standing in front of the span
             // assertion would answer for it, which would leave rule 2.4's
             // own claim untested by anything that could fail on it alone.
+            double closerMin = closers.Min(cell => cell.U1 - cell.U0);
+            double closerMax = closers.Max(cell => cell.U1 - cell.U0);
+
+            // RULE 2.4'S LOWER BOUND, THE ABSOLUTE ONE, ASSERTED BEFORE THE
+            // RELATIVE ONE. Param's bar is "not tiny pieces", and the bound
+            // the rule names is Min Piece's own fraction of Size, which the
+            // three-argument Courses overload leaves at a third. It stands
+            // in FRONT of the neighbours' range because it is the bound that
+            // does not move with the fixture: a closer cut to a quarter of
+            // Size fails here first and says so in metres, rather than
+            // failing as a statistic about somebody else's course.
+            double minimumPiece = size / 3.0;
+            int undersized = (int)made.GetType()
+                .GetProperty("CloserUndersized")!.GetValue(made)!;
+            if (closerMin < minimumPiece - 1.0e-9 || undersized != 0)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: rule 2.4 puts no closer stone under Min " +
+                    $"Piece's own bound, {minimumPiece:F4} m at S {size}; " +
+                    $"the shortest is {closerMin:F4} m and the engine " +
+                    $"counted {undersized} stone(s) under the bound.");
+            }
+
             double[] neighbourSpans = cells
                 .Where(cell => !cell.Closer && !cell.Cap)
                 .Select(cell => cell.U1 - cell.U0)
                 .ToArray();
             double neighbourMin = neighbourSpans.Min();
             double neighbourMax = neighbourSpans.Max();
-            double closerMin = closers.Min(cell => cell.U1 - cell.U0);
-            double closerMax = closers.Max(cell => cell.U1 - cell.U0);
             if (closerMin < neighbourMin - 1.0e-9 ||
                 closerMax > neighbourMax + 1.0e-9)
             {

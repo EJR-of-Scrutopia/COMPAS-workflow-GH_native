@@ -351,6 +351,18 @@ internal sealed record SkinPatternResult(
     /// delete, on the same discipline BandEscapedRefused keeps.</summary>
     public int CloserRefused { get; init; }
 
+    /// <summary>Closer stones whose along-seam span came out UNDER Min
+    /// Piece's own bound (rule 2.4's lower bound). CloserBand's doc comment
+    /// proves the pitch itself cannot fall under that bound on any admissible
+    /// Min Piece; what can is a guide curve shorter than the bound
+    /// altogether, which a split's newborn component reaches as its length
+    /// goes to nothing, or a merge with no neighbour to grow into. Counted
+    /// rather than refused, because a small stone is one the author can see
+    /// and re-cut while a refusal here would put back the hole the band
+    /// exists to close. Zero on every fixture with a refused interval.
+    /// </summary>
+    public int CloserUndersized { get; init; }
+
     /// <summary>How many BISECTED band components had their joints remapped
     /// from the proportional arc of rule 1.8.1 to the nearest point in plan,
     /// because the proportional map folded a cell there and the nearest-point
@@ -3456,6 +3468,7 @@ internal static class SkinPatterns
         // skin changes species, not that it has a hole.
         int closerCells = 0;
         int closerRefused = 0;
+        int closerUndersized = 0;
         int seamBandsRemapped = 0;
         foreach ((int refusedCourse, double low, double high) in
                  resolved.Refused)
@@ -3472,7 +3485,8 @@ internal static class SkinPatterns
                          ref mergedShortKept,
                          ref mergedStillShort,
                          ref weldCollapsed,
-                         ref closerRefused))
+                         ref closerRefused,
+                         ref closerUndersized))
             {
                 closerCells++;
                 keyed.Add((cell.Course, order, cell.U0, cell));
@@ -3846,6 +3860,7 @@ internal static class SkinPatterns
             ClosedSeams = transitionBands,
             CloserCells = closerCells,
             CloserRefused = closerRefused,
+            CloserUndersized = closerUndersized,
             SeamBandsRemapped = seamBandsRemapped
         };
     }
@@ -5535,11 +5550,36 @@ internal static class SkinPatterns
     /// stone, and check 2 measures what fraction of the refused interval's
     /// plan area is covered.
     ///
-    /// SIMILAR SIZE (rule 2.4). The spans are the pattern's own pitch and
-    /// they pass through the same MergeShortPieces the courses use, so a
-    /// remainder at the end of a guide merges into its neighbour rather than
-    /// shipping a sliver, and the closer's span statistics sit inside the
-    /// adjacent courses' own range.
+    /// SIMILAR SIZE (rule 2.4), AND WHY THE LOWER BOUND NEEDS NO CLAMP. The
+    /// spans are the pattern's own pitch and they pass through the same
+    /// MergeShortPieces the courses use, so a remainder at the end of a
+    /// guide merges into its neighbour rather than shipping a sliver, and
+    /// the closer's span statistics sit inside the adjacent courses' own
+    /// range. A review round asked for an explicit clamp, pieces chosen so
+    /// that L / pieces is never under the minimum piece; the clamp is DEAD
+    /// CODE on every admissible setting and the proof is short enough to
+    /// write down rather than to add. Let f be the clamped Min Piece
+    /// fraction, which rule 6.4 holds inside [0, 0.5], let m = f S be the
+    /// minimum and let x = L / S.
+    ///
+    ///   - Where round(x) >= 1 the pitch is L / round(x), and round(x) is at
+    ///     most x + 1/2, so the pitch is at least S x / (x + 1/2). That is
+    ///     increasing in x and round(x) >= 1 forces x >= 1/2, so the pitch
+    ///     is at least S / 2, which is at least m because f is at most 1/2.
+    ///   - Where round(x) = 0 the guide takes ONE piece of its whole length,
+    ///     so the pitch is under m exactly when the GUIDE ITSELF is, and no
+    ///     choice of pieces can rescue that.
+    ///
+    /// So the only way a closer stone is cut under the minimum is a guide
+    /// curve shorter than the minimum, or a merge that had no neighbour to
+    /// grow into. Both are real, both are reachable at a split where the
+    /// newborn component's own length goes to nothing at the critical level,
+    /// and neither is silent: every stone whose span comes out under the
+    /// bound is COUNTED, into CloserUndersized, and the count is pinned at
+    /// zero on every fixture with a refused interval. A counter is the right
+    /// answer here rather than a refusal, because a stone that exists and is
+    /// small is a stone the author can see and re-cut, while a refusal at
+    /// this point would put back the hole the whole band exists to close.
     /// </summary>
     private static List<(int Order, SkinCell Cell)> CloserBand(
         IReadOnlyList<SkinLevelCurve> lows,
@@ -5552,7 +5592,8 @@ internal static class SkinPatterns
         ref int mergedShortKept,
         ref int mergedStillShort,
         ref int weldCollapsed,
-        ref int refused)
+        ref int refused,
+        ref int undersized)
     {
         var closers = new List<(int Order, SkinCell Cell)>();
         if (lows.Count == 0 || highs.Count == 0)
@@ -5672,6 +5713,14 @@ internal static class SkinPatterns
                     refused++;
                     continue;
                 }
+                // RULE 2.4'S LOWER BOUND, counted at the one place a stone
+                // becomes real. The doc comment above proves the pitch
+                // itself cannot fall under the minimum; what can is a guide
+                // shorter than the minimum altogether, or a merge with no
+                // neighbour to grow into. Counted here so a sliver ships
+                // named rather than unseen.
+                if (u1 - u0 < minimumPiece - 1.0e-9)
+                    undersized++;
                 // SECTIONS are the cell's own two runs, both read in the
                 // same direction, which is route (a) of rule 5.2.3: the
                 // guide's run and the other family's run, the second turned
