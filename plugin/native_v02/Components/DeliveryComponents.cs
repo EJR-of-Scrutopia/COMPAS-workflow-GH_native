@@ -243,7 +243,18 @@ public sealed class ExportComponent : NativeComponentBase
     // it again, over and over. Nothing but this component leaving the
     // document cancels this, so a superseded build finishes and its result is
     // discarded instead.
-    private readonly CancellationTokenSource _lifetime = new();
+    //
+    // NOT READONLY, for the reason the uploader above it is not: a delete
+    // ends the lifetime, and an undo of that delete hands Grasshopper's SAME
+    // component instance back to the document. A cancelled token stays
+    // cancelled, so one source for the object's whole life made every
+    // thrust-mesh request for the rest of the session refuse before it
+    // started, and the only trace was a Warning reading "thrustMesh: A task
+    // was canceled." on a component that looked healthy, with every form
+    // document written or pushed from then on carrying "thrustMesh": null.
+    // Replaced on the way back in by EnsureLifetime, exactly as the uploader
+    // is rebuilt.
+    private CancellationTokenSource _lifetime = new();
 
     public ExportComponent()
         : base(
@@ -262,16 +273,20 @@ public sealed class ExportComponent : NativeComponentBase
         new("f2a6c8e4-1b5d-49a3-b7e0-3c9f5d8a2617");
 
     /// <summary>
-    /// An ordinary delete disposes the uploader (below), and an undo, a
-    /// paste or a move into a cluster hands the very same instance back to
-    /// a document. A disposed uploader accepts nothing, so without this
-    /// Live would be dead for the rest of the session with nothing said
-    /// anywhere. Built here, and lazily again before an enqueue, for a
-    /// document that never announces the object at all.
+    /// An ordinary delete disposes the uploader and ends the lifetime
+    /// (below), and an undo, a paste or a move into a cluster hands the very
+    /// same instance back to a document. A disposed uploader accepts nothing
+    /// and a cancelled lifetime refuses every thrust-mesh request before it
+    /// starts, so without this Live would be dead for the rest of the session
+    /// and every form document would carry a null mesh, with nothing said
+    /// anywhere. Both are rebuilt here, and lazily again before a build is
+    /// captured, for a document that never announces the object at all.
     /// </summary>
     public override void AddedToDocument(GH_Document document)
     {
         base.AddedToDocument(document);
+        // Which revives the lifetime as well: an undone delete gives the
+        // same instance back with both of them spent.
         EnsureUploader();
     }
 
@@ -311,17 +326,56 @@ public sealed class ExportComponent : NativeComponentBase
     }
 
     /// <summary>
+    /// A LIFETIME THAT HAS BEEN ENDED IS REPLACED, which is what makes a
+    /// deleted and then undone component work again.
+    ///
+    /// Grasshopper hands the same instance back after an undone delete, and
+    /// the source that was cancelled on the way out cannot be un-cancelled.
+    /// Called on the way in and again before a build is captured, for a
+    /// document that never announces the object at all, and on the UI/solve
+    /// thread only, like everything else that touches these fields.
+    ///
+    /// The old source is DISPOSED here rather than in
+    /// <see cref="RemovedFromDocument"/>: a request in flight when the
+    /// component left still holds that token, and it has had until the
+    /// component came back to notice.
+    /// </summary>
+    private void EnsureLifetime()
+    {
+        if (!_lifetime.IsCancellationRequested)
+            return;
+        CancellationTokenSource dead = _lifetime;
+        _lifetime = new CancellationTokenSource();
+        try
+        {
+            dead.Dispose();
+        }
+        catch (Exception)
+        {
+            // Disposing a cancelled source runs nothing of ours; a throw
+            // here is somebody else's registration and must not cost the
+            // component its new lifetime.
+        }
+    }
+
+    /// <summary>
     /// Whether the lifetime token has been cancelled, which is the only
     /// thing that can cancel a thrust-mesh request.
     /// </summary>
     internal bool LifetimeEnded => _lifetime.IsCancellationRequested;
 
     /// <summary>
-    /// The live uploader, built on first use and rebuilt after a disposal.
-    /// Called on the UI/solve thread only.
+    /// The live uploader, built on first use and rebuilt after a disposal,
+    /// AND THE LIFETIME BESIDE IT, replaced when it has been ended. The two
+    /// are revived together because they are killed together: a delete
+    /// disposes the one and cancels the other, and an undo hands the same
+    /// instance back needing both. Called on the UI/solve thread only, and
+    /// called by SolveInstance before the lifetime's token is read into a
+    /// build, so no build is ever captured against a spent one.
     /// </summary>
     private LiveUploader EnsureUploader()
     {
+        EnsureLifetime();
         if (_uploader is null || _uploader.IsDisposed)
         {
             _uploader = new LiveUploader(
@@ -634,6 +688,21 @@ public sealed class ExportComponent : NativeComponentBase
                     _lastWritten = outcome.Written;
                     wroteThisSolve = outcome.Written.Count > 0;
                 }
+                else
+                {
+                    // A WRITE THAT BUILT NOTHING IS AN ERROR, and it is said
+                    // here because it is said nowhere else: the build's own
+                    // failure text reaches the Status line through the Live
+                    // branch alone, so a write with Live off used to fail in
+                    // complete silence. Nothing is put on disk in this case,
+                    // and the list of what was written is emptied with it, so
+                    // the component cannot report the previous solve's files
+                    // as this solve's.
+                    _lastWritten = Array.Empty<string>();
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Error,
+                        WriteBuiltNothing(uploader.Current.Text));
+                }
             }
             else
             {
@@ -763,6 +832,18 @@ public sealed class ExportComponent : NativeComponentBase
     private static Func<Func<string, bool>, Task<LiveUploader.Built>> BuildFor(
         ExportBuildInputs inputs) =>
         wantMesh => BuildDocumentsAsync(inputs, wantMesh);
+
+    /// <summary>
+    /// What a write says when the build it asked for produced nothing. Its
+    /// own method so the sentence can be read by a check that cannot run a
+    /// Grasshopper solution, and so that the outcome the uploader recorded is
+    /// carried into it rather than swallowed: a write is the one path where
+    /// the author is entitled to know exactly what failed, because the files
+    /// he pressed a button for are not on disk.
+    /// </summary>
+    internal static string WriteBuiltNothing(string outcome) =>
+        "Export: Write built NOTHING and no file was written. " +
+        "The documents on disk, if any, are an older solve's. " + outcome;
 
     /// <summary>
     /// The one worker dispatch Export makes, and the only reason this
