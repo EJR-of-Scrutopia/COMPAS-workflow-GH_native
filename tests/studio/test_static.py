@@ -2715,3 +2715,46 @@ def test_the_visible_sky_is_served_at_source_resolution():
     app_source = (STATIC.parent / "app.py").read_text(encoding="utf-8")
     assert '".bg-full.png"' in app_source
     assert '".bg.png"' not in app_source
+
+
+def test_the_shelf_is_the_asset_browser_and_stays_open():
+    """Param: "a little tile at the bottom where if you click it, it
+    expands... 4 columns a row, more space to breathe, scroll around it,
+    give it categories to click through" -- and for materials "a button
+    in this expandable tile where it says assign to skin or assign to
+    ground". The panel pickers open the shelf now; the props grid lives
+    in it; a prop click carries but never closes it."""
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="shelf-body"' in page and 'id="shelf-tabs"' in page
+    for kind in ("props", "materials", "skies"):
+        assert 'data-shelf="' + kind + '"' in page
+    assert 'id="shelf-assign-skin"' in page and 'id="shelf-assign-ground"' in page
+    # The sky dials live in the drawer, beside the pictures they tune.
+    assert page.index('id="hdri-projection"') > page.index('id="shelf-sky-settings"')
+    assert 'id="prop-library"' not in page, "the old inline prop popover is gone"
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "function openShelf(kind)" in js
+    assert "if (openInstead) { openInstead(); return; }" in js, (
+        "the asset pickers open the shelf instead of the inline grids"
+    )
+    assert 'assignShelfMaterial("render-skin")' in js
+    assert 'assignShelfMaterial("ground-preset")' in js
+    grid = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "repeat(4, 1fr)" in grid.split("#shelf-body .tile-grid {")[1][:200]
+
+
+def test_picking_survives_the_frame_it_was_born_in():
+    """Raycast trusts matrixWorld as stored, and an object created this
+    frame has not rendered yet: the gumball raycast against a ring still
+    sitting at the origin, and returned null -- measured live before the
+    updateMatrixWorld calls went in. The outline must also never catch
+    the pointer: a line raycast has a one-metre default threshold."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "propGumball.updateMatrixWorld(true);" in js
+    assert "propsGroup.updateMatrixWorld(true);" in js
+    assert "propOutline.raycast = () => {};" in js
+    # The slim look hides a fat invisible grab twin, Rhino's own trick.
+    assert 'grabRing.userData.handle = "rotate";' in js
+    assert 'grabGrip.userData.handle = "scale";' in js

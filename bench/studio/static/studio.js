@@ -1160,10 +1160,12 @@ function buildPropTiles() {
       const heading = document.createElement("span");
       heading.className = "tile-family";
       heading.textContent = group;
+      heading.dataset.group = group;
       holder.appendChild(heading);
     }
     const tile = previewTile(entry.key, entry.label || entry.key,
       (canvasEl) => renderObjectPreview(template, canvasEl));
+    tile.dataset.group = group;
     // Scale in words, which is Blender's own advice and the only method in
     // the whole survey that does not put a stock human being in the picture.
     tile.title = (entry.label || entry.key)
@@ -1178,9 +1180,10 @@ function buildPropTiles() {
       // i click that it gets attached to my cursor and then i move the
       // cursor to the place i like click again and the prop stays." So the
       // model is carrying, not arming: the prop exists from this moment,
-      // follows the cursor, and the next click puts it down.
+      // follows the cursor, and the next click puts it down. The SHELF
+      // STAYS OPEN: closing itself after every click was the old picker's
+      // worst habit.
       carryNewProp(entry.key);
-      document.getElementById("prop-library").classList.add("hidden");
     });
     holder.appendChild(tile);
   }
@@ -1316,7 +1319,19 @@ function setPropGumball(record) {
   grip.renderOrder = 3;
   grip.position.set(radius * 1.28, 0, 0);
   grip.userData.handle = "scale";
-  propGumball.add(ring, grip);
+  // The LOOK is slim; the GRAB is generous. A two-centimetre tube needs
+  // pixel aim, so each visible handle hides a fat invisible twin that
+  // does the actual catching -- the same trick under Rhino's own gumball.
+  const grabRing = new THREE.Mesh(
+    new THREE.TorusGeometry(radius, Math.max(0.1, radius * 0.14), 8, 48),
+    new THREE.MeshBasicMaterial({ visible: false }));
+  grabRing.userData.handle = "rotate";
+  const grabGrip = new THREE.Mesh(
+    new THREE.BoxGeometry(radius * 0.45, radius * 0.45, radius * 0.45),
+    new THREE.MeshBasicMaterial({ visible: false }));
+  grabGrip.position.copy(grip.position);
+  grabGrip.userData.handle = "scale";
+  propGumball.add(ring, grip, grabRing, grabGrip);
   propGumball.position.set(record.x, record.y, 0.02);
   propGumball.rotation.z = record.rotation || 0;
   propsGroup.add(propGumball);
@@ -1332,6 +1347,10 @@ function refreshPropGumball() {
 
 function gumballHandleAt(event) {
   if (!propGumball) return null;
+  // Raycast trusts matrixWorld as stored, and a gumball built THIS frame
+  // has not been through a render yet: update it, or the ray tests a
+  // ring still sitting at the origin.
+  propGumball.updateMatrixWorld(true);
   const rect = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -1390,6 +1409,9 @@ function propRecordAt(event) {
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
     -((event.clientY - rect.top) / rect.height) * 2 + 1);
   propRaycaster.setFromCamera(ndc, camera);
+  // Matrices first: a prop placed this frame has not rendered yet, and
+  // raycast trusts matrixWorld as stored.
+  propsGroup.updateMatrixWorld(true);
   // Every hit is tried, not only the first: the nearest hit can be a
   // helper or another prop's stray leaf card, and returning null for it
   // reads as a selection that just did not work.
@@ -2788,7 +2810,7 @@ async function refreshMaterialLibrary() {
 // trigger carries what is currently chosen: a small round preview and the
 // name. This is the dropdown Param asked for, without giving up the
 // picture that made the tiles worth having.
-function wirePicker(triggerId, holderId, selectId, paint) {
+function wirePicker(triggerId, holderId, selectId, paint, openInstead) {
   const trigger = document.getElementById(triggerId);
   const holder = document.getElementById(holderId);
   const select = document.getElementById(selectId);
@@ -2799,6 +2821,10 @@ function wirePicker(triggerId, holderId, selectId, paint) {
   // tiles is furniture.
   const search = document.getElementById(holderId.replace("-tiles", "-search"));
   trigger.addEventListener("click", () => {
+    // An asset picker opens the shelf; the inline grid never shows again
+    // but keeps being painted, because the trigger's swatch borrows its
+    // tiles.
+    if (openInstead) { openInstead(); return; }
     const opening = holder.classList.contains("hidden");
     holder.classList.toggle("hidden", !opening);
     trigger.classList.toggle("open", opening);
@@ -2836,17 +2862,207 @@ function borrowTileImage(swatch, holderId, value) {
 }
 
 function wireAllPickers() {
-  for (const [trigger, holder, select] of [
+  // The asset pickers open the SHELF now: the inline grids stay built
+  // and hidden purely so the trigger swatches have tiles to borrow.
+  for (const [trigger, holder, select, openInstead] of [
     ["material-picker", "material-tiles", "material-select"],
-    ["skin-picker", "skin-tiles", "render-skin"],
-    ["ground-picker", "ground-tiles", "ground-preset"],
+    ["skin-picker", "skin-tiles", "render-skin", () => openShelf("materials")],
+    ["ground-picker", "ground-tiles", "ground-preset", () => openShelf("materials")],
     ["weather-picker", "weather-tiles", "weather-preset"],
-    ["hdri-picker", "hdri-tiles", "hdri-select"],
+    ["hdri-picker", "hdri-tiles", "hdri-select", () => openShelf("skies")],
   ]) {
     wirePicker(trigger, holder, select,
-      (swatch, value) => borrowTileImage(swatch, holder, value));
+      (swatch, value) => borrowTileImage(swatch, holder, value), openInstead);
   }
 }
+
+// ---------- the shelf ----------
+// The bottom asset drawer (Param: "a little tile at the bottom where if
+// you click it, it expands... 4 columns a row, more space to breathe,
+// scroll around it, give it categories"). Three kinds share one body:
+// props place on click and the drawer STAYS OPEN (its predecessor's
+// worst habit was closing itself); materials select on click and assign
+// by button, because one picture can dress either the vault or the
+// floor; skies load on click and keep their projection dials beside
+// them. The selects underneath remain the source of truth throughout --
+// the shelf only ever sets a select and dispatches change.
+let shelfKind = null;
+let shelfCategory = "all";
+let shelfMaterialKey = null;
+
+function openShelf(kind) {
+  shelfKind = kind;
+  shelfCategory = "all";
+  shelfMaterialKey = null;
+  document.getElementById("shelf-body").classList.remove("hidden");
+  for (const button of document.querySelectorAll("#shelf-tabs button")) {
+    button.classList.toggle("active", button.dataset.shelf === kind);
+  }
+  renderShelf();
+}
+
+function closeShelf() {
+  shelfKind = null;
+  document.getElementById("shelf-body").classList.add("hidden");
+  for (const button of document.querySelectorAll("#shelf-tabs button")) {
+    button.classList.remove("active");
+  }
+}
+
+function shelfChips(holder, names, chosen, pick) {
+  holder.innerHTML = "";
+  for (const name of names) {
+    const chip = document.createElement("button");
+    chip.textContent = name;
+    chip.classList.toggle("active", name === chosen);
+    chip.addEventListener("click", () => pick(name));
+    holder.appendChild(chip);
+  }
+}
+
+function renderShelf() {
+  const cats = document.getElementById("shelf-cats");
+  const grid = document.getElementById("shelf-grid");
+  const propHolder = document.getElementById("prop-tiles");
+  document.getElementById("shelf-sky-settings").classList
+    .toggle("hidden", shelfKind !== "skies");
+  document.getElementById("shelf-assign-skin").classList
+    .toggle("hidden", shelfKind !== "materials");
+  document.getElementById("shelf-assign-ground").classList
+    .toggle("hidden", shelfKind !== "materials");
+  propHolder.classList.toggle("hidden", shelfKind !== "props");
+  grid.classList.toggle("hidden", shelfKind === "props");
+  grid.classList.toggle("wide", shelfKind === "skies");
+  document.getElementById("prop-credit").textContent = "";
+  if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
+  if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
+  if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); }
+}
+
+function renderShelfProps(cats, holder) {
+  const groups = [...new Set(state.propLibrary.map(
+    (entry) => entry.group || "other"))].sort();
+  shelfChips(cats, ["all", ...groups], shelfCategory, (name) => {
+    shelfCategory = name;
+    renderShelf();
+  });
+  for (const child of holder.children) {
+    const group = child.dataset.group || "other";
+    child.classList.toggle("hidden",
+      shelfCategory !== "all" && group !== shelfCategory);
+  }
+}
+
+function renderShelfMaterials(cats, grid) {
+  // ONE browser over BOTH libraries, merged by key: the folders are
+  // curated copies of the same QS stack, so "brick/paver-dark" is the
+  // same picture wherever it lives, and which library holds it only
+  // decides which Assign button lights up.
+  const merged = new Map();
+  for (const entry of state.materialLibrary || []) {
+    merged.set(entry.key, { entry, skin: true, ground: false });
+  }
+  for (const entry of state.groundLibrary || []) {
+    const seen = merged.get(entry.key);
+    if (seen) seen.ground = true;
+    else merged.set(entry.key, { entry, skin: false, ground: true });
+  }
+  const rows = [...merged.values()].sort((a, b) =>
+    a.entry.family.localeCompare(b.entry.family)
+    || a.entry.label.localeCompare(b.entry.label));
+  const families = [...new Set(rows.map((row) => row.entry.family))];
+  shelfChips(cats, ["all", ...families], shelfCategory, (name) => {
+    shelfCategory = name;
+    renderShelf();
+  });
+  grid.innerHTML = "";
+  let family = null;
+  for (const row of rows) {
+    if (shelfCategory !== "all" && row.entry.family !== shelfCategory) continue;
+    if (row.entry.family !== family) {
+      family = row.entry.family;
+      const heading = document.createElement("span");
+      heading.className = "tile-family";
+      heading.textContent = family;
+      grid.appendChild(heading);
+    }
+    const tile = imageTile(row.entry.key, row.entry.label,
+      tileUrl(row.entry, row.skin ? undefined : GROUND_BASE));
+    tile.title = row.entry.label
+      + (row.entry.tileMetres
+        ? "  " + Math.round(row.entry.tileMetres[0] * 1000) + " x "
+          + Math.round(row.entry.tileMetres[1] * 1000) + " mm"
+        : "")
+      + (row.skin && row.ground ? "  (skin + ground)"
+        : row.skin ? "  (skin)" : "  (ground)");
+    tile.addEventListener("click", () => {
+      shelfMaterialKey = row.entry.key;
+      paintTileSelection(grid, row.entry.key);
+      document.getElementById("shelf-assign-skin").disabled = !row.skin;
+      document.getElementById("shelf-assign-ground").disabled = !row.ground;
+    });
+    grid.appendChild(tile);
+  }
+  const current = shelfMaterialKey || state.appearance.skin;
+  paintTileSelection(grid, current);
+  const chosen = merged.get(current);
+  document.getElementById("shelf-assign-skin").disabled = !(chosen && chosen.skin);
+  document.getElementById("shelf-assign-ground").disabled = !(chosen && chosen.ground);
+  if (chosen) shelfMaterialKey = current;
+}
+
+function renderShelfSkies(grid) {
+  grid.innerHTML = "";
+  const select = document.getElementById("hdri-select");
+  const names = [...select.options].map((o) => o.value).filter(Boolean);
+  for (const name of names) {
+    const tile = document.createElement("button");
+    tile.className = "tile";
+    tile.dataset.value = name;
+    tile.title = name;
+    const image = document.createElement("img");
+    image.loading = "lazy";
+    image.src = "/api/hdri/" + encodeURIComponent(name) + "/thumbnail";
+    image.alt = "";
+    tile.appendChild(image);
+    const label = document.createElement("span");
+    label.textContent = name.replace(/\.hdr$/i, "").replace(/_(\d+k)$/i, "");
+    tile.appendChild(label);
+    tile.addEventListener("click", () => {
+      if (select.value !== name) {
+        select.value = name;
+        select.dispatchEvent(new Event("change"));
+      }
+      paintTileSelection(grid, name);
+    });
+    grid.appendChild(tile);
+  }
+  paintTileSelection(grid, select.value);
+}
+
+function assignShelfMaterial(selectId) {
+  if (!shelfMaterialKey) return;
+  const select = document.getElementById(selectId);
+  if (![...select.options].some((o) => o.value === shelfMaterialKey)) {
+    logStudio(shelfMaterialKey + " is not in that library's folder");
+    return;
+  }
+  if (select.value === shelfMaterialKey) return;
+  select.value = shelfMaterialKey;
+  select.dispatchEvent(new Event("change"));
+}
+
+document.getElementById("shelf-close").addEventListener("click", closeShelf);
+for (const button of document.querySelectorAll("#shelf-tabs button")) {
+  button.addEventListener("click", () => {
+    if (shelfKind === button.dataset.shelf) closeShelf();
+    else openShelf(button.dataset.shelf);
+  });
+}
+document.getElementById("shelf-assign-skin").addEventListener("click",
+  () => assignShelfMaterial("render-skin"));
+document.getElementById("shelf-assign-ground").addEventListener("click",
+  () => assignShelfMaterial("ground-preset"));
 
 // ---------- preview balls ----------
 // A material is a look, so the panel shows the look, not a rectangle of
@@ -5522,8 +5738,7 @@ function cancelCarry() {
 }
 
 document.getElementById("prop-browse").addEventListener("click", () => {
-  const library = document.getElementById("prop-library");
-  library.classList.toggle("hidden");
+  openShelf("props");
 });
 
 document.getElementById("prop-edit").addEventListener("click", (e) => {
@@ -5659,6 +5874,10 @@ window.addEventListener("keydown", (event) => {
   // never had anywhere to go back to.
   if (event.key === "Escape" && state.carrying) {
     cancelCarry();
+    return;
+  }
+  if (event.key === "Escape" && shelfKind) {
+    closeShelf();
     return;
   }
   const tag = document.activeElement ? document.activeElement.tagName : "";

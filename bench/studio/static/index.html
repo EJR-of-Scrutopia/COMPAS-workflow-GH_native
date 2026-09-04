@@ -22,6 +22,39 @@
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
 <div id="loading-toast" class="hidden"><span id="loading-spin"></span><span id="loading-toast-text">Loading</span></div>
+<!-- The shelf: the bottom asset drawer (the pattern Blender's asset shelf
+     and Quixel Bridge settled on). Collapsed it is three quiet pills;
+     expanded, a four-column grid with category chips and its own scroll,
+     so choosing an asset stops being a squint into the side panel. -->
+<div id="shelf">
+  <div id="shelf-body" class="hidden">
+    <div id="shelf-head">
+      <div id="shelf-cats"></div>
+      <div id="shelf-actions">
+        <button id="shelf-assign-skin" class="hidden" title="Wear this material on the vault">Assign to skin</button>
+        <button id="shelf-assign-ground" class="hidden" title="Lay this material on the floor">Assign to ground</button>
+      </div>
+      <button id="shelf-close" title="Collapse">&#10005;</button>
+    </div>
+    <div id="shelf-sky-settings" class="hidden">
+      <label class="named"><span>Projection</span> <select id="hdri-projection">
+        <option value="projected" selected>Projected</option>
+        <option value="infinite">Infinite</option>
+      </select></label>
+      <label id="hdri-scale-row">Scale <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60"></label>
+      <label id="hdri-height-row">Height <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2"></label>
+      <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
+    </div>
+    <div id="prop-tiles" class="tile-grid hidden"></div>
+    <div id="shelf-grid" class="tile-grid hidden"></div>
+    <div id="prop-credit"></div>
+  </div>
+  <div id="shelf-tabs">
+    <button data-shelf="props" title="Browse and place props">Props</button>
+    <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
+    <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
+  </div>
+</div>
 <div id="legend" class="hidden">
   <div id="legend-title"></div>
   <div id="legend-bar"></div>
@@ -191,13 +224,8 @@
     <div id="hdri-tiles" class="tile-grid hidden"></div>
       <label class="hidden">HDRI <select id="hdri-select"></select></label>
       <div id="hdri-status"></div>
-      <label class="named"><span>Projection</span> <select id="hdri-projection">
-        <option value="projected" selected>Projected</option>
-        <option value="infinite">Infinite</option>
-      </select></label>
-      <label id="hdri-scale-row">Scale <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60"></label>
-      <label id="hdri-height-row">Height <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2"></label>
-      <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
+      <!-- Projection, scale, height and rotation moved to the shelf's
+           Skies drawer: they belong beside the pictures they tune. -->
     </div>
     <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
 
@@ -236,10 +264,7 @@
       <button id="prop-edit" title="Move, rotate and scale the placed props: click one to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
       <button id="props-clear" class="danger" title="Remove every placed prop">Clear</button>
     </div>
-    <div id="prop-library" class="hidden">
-      <div id="prop-tiles" class="tile-grid"></div>
-      <div id="prop-credit"></div>
-    </div>
+    <!-- The prop grid lives in the shelf now: see #shelf at body level. -->
     <select id="prop-type" class="hidden"></select>
 
     <span class="row-heading">Scenes</span>

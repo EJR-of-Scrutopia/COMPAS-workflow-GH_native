@@ -789,3 +789,75 @@ body { overflow: hidden;
 /* Clearance = the foot's full height (compact button + its two paddings),
    so the two sticky bars meet with no gap for content to show through. */
 #mode-row { bottom: calc(var(--h-small) + var(--s2) + var(--s3)); }
+
+/* ---------- the shelf ----------
+   The bottom asset drawer, the pattern Blender's asset shelf and Quixel
+   Bridge settled on: collapsed, three quiet pills; expanded, a
+   four-column grid with category chips and its own scroll, so choosing
+   an asset stops being a squint into a 260 px panel. Param: "a little
+   tile at the bottom where if you click it, it expands... 4 columns a
+   row in size, more space to breathe, scroll around it, give it
+   categories to click through". */
+#shelf { position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 14px; z-index: 25; display: flex; flex-direction: column;
+  align-items: center; gap: 6px; width: min(880px, calc(100vw - 380px)); }
+#shelf-tabs { display: flex; gap: 6px; }
+#shelf-tabs button { width: auto; margin: 0; padding: 5px 16px;
+  font-size: 12px; color: var(--ink-2); background: var(--scrim);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  backdrop-filter: blur(6px); }
+#shelf-tabs button:hover { color: var(--ink); border-color: var(--ink-3); }
+#shelf-tabs button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+#shelf-body { width: 100%; background: var(--scrim);
+  backdrop-filter: blur(10px); border: 1px solid var(--line);
+  border-radius: var(--radius); overflow: hidden; }
+#shelf-body.hidden { display: none; }
+#shelf-head { display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); }
+#shelf-cats { display: flex; gap: 4px; flex: 1 1 auto; flex-wrap: wrap; }
+#shelf-cats button { width: auto; margin: 0; padding: 3px 10px;
+  font-size: 11px; color: var(--ink-2); background: transparent;
+  border: 1px solid var(--line); border-radius: 3px;
+  text-transform: capitalize; }
+#shelf-cats button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+#shelf-actions { display: flex; gap: 6px; }
+#shelf-actions button { width: auto; margin: 0; font-size: 11px;
+  padding: 4px 10px; }
+#shelf-close { width: auto; margin: 0; padding: 2px 8px;
+  color: var(--ink-3); background: transparent; border: none;
+  font-size: 13px; }
+#shelf-close:hover { color: var(--ink); }
+#shelf-sky-settings { display: grid; grid-template-columns: 1fr 1fr;
+  gap: 2px 18px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+#shelf-sky-settings.hidden { display: none; }
+#shelf-body .tile-grid { display: grid;
+  grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px;
+  max-height: 42vh; overflow-y: auto; }
+#shelf-body .tile-grid.hidden { display: none; }
+#shelf-body .tile-grid.wide { grid-template-columns: repeat(3, 1fr); }
+#shelf-body .tile-family { grid-column: 1 / -1; color: var(--ink-3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 4px 0 0; }
+#shelf-body .tile { display: flex; flex-direction: column; gap: 4px;
+  width: auto; margin: 0; padding: 0; background: transparent;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; color: var(--ink-2); font-size: 11px; }
+#shelf-body .tile img, #shelf-body .tile canvas { width: 100%;
+  aspect-ratio: 1; object-fit: cover; display: block; }
+#shelf-body .wide .tile img { aspect-ratio: 2; }
+#shelf-body .tile span { padding: 0 6px 6px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; text-align: left; }
+#shelf-body .tile:hover { border-color: var(--ink-3); color: var(--ink); }
+#shelf-body .tile.active { border-color: var(--accent); color: var(--ink); }
+#shelf-body #prop-credit { padding: 4px 12px 8px; color: var(--ink-3);
+  font-size: 11px; }
+/* Outside the panel, so the panel's control styling does not reach them:
+   the shelf states its own font and cursor. */
+#shelf button { font: inherit; font-size: var(--t-2); cursor: pointer; }
+#shelf-cats button, #shelf-actions button { font-size: var(--t-meta); }
+#shelf-actions button { background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+#shelf-actions button:hover:not(:disabled) { border-color: var(--line-lit); }
+#shelf-actions button:disabled { color: var(--ink-3); cursor: default; }
