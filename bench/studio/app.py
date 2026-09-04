@@ -31,6 +31,7 @@ import frames
 import generators
 import geometry
 import hdri_preview
+import materials as material_library
 import staging
 import tessellation
 
@@ -64,6 +65,19 @@ MAX_THUMBNAIL_BYTES = 400 * 1024
 THUMBNAIL_PREFIX = "data:image/jpeg;base64,"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"
 
+# The material library is Param's, and it does not live in this repository:
+# it is the stack he curated inside QS Intelligence, 158 materials deep.
+# There is therefore no sensible default, and None is the honest value until
+# he points at it. Everything downstream treats None as an empty library
+# rather than as an error, so a studio with no material folder chosen still
+# runs on its built-in presets.
+MATERIALS_DIR = None
+
+# What the studio knows about materials it does not own. The library is read
+# and never written, so a tile size typed into the panel has to live
+# somewhere else, and it lives here, keyed by "family/name".
+MATERIALS_SIDECAR = Path(__file__).resolve().parent / "materials.json"
+
 
 def _contained(directory: Path, name: str) -> bool:
     """True when directory/name resolves inside directory. Catches ..,
@@ -71,6 +85,22 @@ def _contained(directory: Path, name: str) -> bool:
     Path joins by replacing the base entirely."""
     try:
         return (directory / name).resolve().parent == directory.resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def _within(directory: Path, path: Path) -> bool:
+    """True when path lies anywhere beneath directory, at any depth.
+
+    _contained is the stricter test and asks for a DIRECT child, which is
+    right for a flat folder of skies or props. A material library is a tree,
+    root/family/material/colour.jpg, so the same test there would refuse
+    every legitimate file. This is the tree version, and it resolves both
+    sides first so a junction or a .. cannot smuggle a path out.
+    """
+
+    try:
+        return directory.resolve() in path.resolve().parents
     except (OSError, ValueError):
         return False
 
@@ -185,15 +215,23 @@ def _slug_owner(slug: str, name: str) -> Optional[str]:
 # the browser are the same machine here, so the SERVER opens the native
 # Windows folder dialog on the user's own desktop and reads the answer.
 FOLDER_DIALOG = (
-    "import tkinter, tkinter.filedialog as dialog\n"
+    "import sys, tkinter, tkinter.filedialog as dialog\n"
     "root = tkinter.Tk()\n"
     "root.withdraw()\n"
     "root.attributes('-topmost', True)\n"
-    "print(dialog.askdirectory(title='Choose the folder your vault JSONs are in') or '')\n"
+    "print(dialog.askdirectory(title=sys.argv[1]) or '')\n"
 )
 
+FOLDER_TITLES = {
+    "upload_folder": "Choose the folder your vault JSONs are in",
+    "material_folder": "Choose your material library folder",
+    "hdri_folder": "Choose your HDRI folder",
+    "props_folder": "Choose your prop library folder",
+}
 
-def ask_for_folder(timeout: float = 300.0):
+
+def ask_for_folder(timeout: float = 300.0,
+                   title: str = FOLDER_TITLES["upload_folder"]):
     """The chosen folder, or None if the dialog was cancelled or closed.
 
     In a subprocess, not in this process: a Tk main loop owns the thread it
@@ -203,7 +241,7 @@ def ask_for_folder(timeout: float = 300.0):
 
     try:
         finished = subprocess.run(
-            [sys.executable, "-c", FOLDER_DIALOG],
+            [sys.executable, "-c", FOLDER_DIALOG, title],
             capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise HTTPException(
@@ -212,16 +250,45 @@ def ask_for_folder(timeout: float = 300.0):
     return chosen or None
 
 
-def remember_folder(directory: Path) -> None:
-    """Persist the chosen folder. A failure here is not a reason to refuse
-    the change: the studio still reads that folder for this run, it simply
-    will not remember it next time, and saying so is better than refusing
-    a choice the user has already made."""
+def read_settings() -> dict:
+    """Everything the studio remembers between runs, or an empty dict.
+
+    Unreadable is the same as absent on purpose. A settings file that has
+    been half written or hand-edited into nonsense must not stop the studio
+    starting; it should quietly cost the user their remembered folders and
+    nothing more.
+    """
 
     try:
-        bundle.write_json_atomically(SETTINGS_PATH, {"upload_folder": str(directory)})
+        stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def remember_setting(key: str, value) -> None:
+    """Persist one setting, keeping the others.
+
+    Read, modify, write. The first version of this wrote a fresh object with
+    one key in it, which was correct while there was only one setting and
+    would have silently forgotten the vault folder the moment somebody chose
+    a sky folder.
+
+    A failure here is not a reason to refuse the change: the studio still
+    reads that folder for this run, it simply will not remember it next
+    time, and saying so is better than refusing a choice already made.
+    """
+
+    stored = read_settings()
+    stored[key] = value
+    try:
+        bundle.write_json_atomically(SETTINGS_PATH, stored)
     except OSError as error:
-        print("could not remember the folder choice: {}".format(error))
+        print("could not remember {}: {}".format(key, error))
+
+
+def remember_folder(directory: Path, key: str = "upload_folder") -> None:
+    remember_setting(key, str(directory))
 
 
 def apply_saved_folder():
@@ -245,6 +312,48 @@ def apply_saved_folder():
         return None
     bundle.UPLOAD_DIR = directory
     return directory
+
+
+def apply_saved_folders() -> dict:
+    """Point every library at its remembered folder, where there is one.
+
+    Called by serve.py at startup and NEVER by create_app, for the same
+    reason apply_saved_folder is not: the tests point these roots at
+    temporary folders before they build the app, and a settings file applied
+    inside create_app would silently overwrite that and send every test at
+    Param's real libraries.
+    """
+
+    global MATERIALS_DIR, HDRI_DIR, PROPS_DIR
+
+    applied = {}
+    chosen = apply_saved_folder()
+    if chosen:
+        applied["upload_folder"] = chosen
+    stored = read_settings()
+    for key, setter in (("material_folder", "MATERIALS_DIR"),
+                        ("hdri_folder", "HDRI_DIR"),
+                        ("props_folder", "PROPS_DIR")):
+        raw = stored.get(key)
+        if not raw:
+            continue
+        directory = Path(raw)
+        if not directory.is_dir():
+            print("the remembered {} {} is gone".format(key, raw))
+            continue
+        globals()[setter] = directory
+        applied[key] = directory
+    return applied
+
+
+def read_material_sidecar() -> dict:
+    """The studio's own notes about materials in a library it does not own."""
+
+    try:
+        stored = json.loads(MATERIALS_SIDECAR.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stored if isinstance(stored, dict) else {}
 
 
 def create_app(runner=None, cra_runner=None) -> FastAPI:
@@ -759,6 +868,154 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 removed.append(path.name)
         return {"deleted": scene_id, "removed": removed}
 
+    def _library_row(kind: str):
+        """Where a library reads from, whether it is there, and how much is
+        in it. The same three facts for all four folders, so one client
+        handler can paint any of them."""
+
+        if kind == "materials":
+            directory, counter = MATERIALS_DIR, (
+                lambda d: len(material_library.scan(d)))
+        elif kind == "hdri":
+            directory, counter = HDRI_DIR, (
+                lambda d: len([p for p in d.glob("*.hdr") if p.is_file()]))
+        else:
+            directory, counter = PROPS_DIR, (
+                lambda d: len([p for p in d.glob("*.glb") if p.is_file()]))
+        present = bool(directory) and directory.is_dir()
+        return {
+            "path": str(directory) if directory else "",
+            "exists": present,
+            "count": counter(directory) if present else 0,
+        }
+
+    def _set_library_folder(kind: str, body: dict, setting: str, name: str):
+        """Read this library from somewhere else from now on."""
+
+        raw = str(body.get("path") or "").strip().strip('"')
+        if not raw:
+            raise HTTPException(400, "a folder path is required")
+        directory = Path(raw)
+        if not directory.is_dir():
+            raise HTTPException(
+                400, "{} is not a folder on this machine".format(raw))
+        globals()[name] = directory
+        remember_folder(directory, setting)
+        return _library_row(kind)
+
+    # These three sit ABOVE /api/props/{name} and /api/hdri/{name} on
+    # purpose. FastAPI matches routes in declaration order, so a path
+    # parameter declared first would swallow the literal word "folder" and
+    # answer a folder request with "no prop file folder".
+
+    @app.get("/api/materials/folder")
+    def material_folder():
+        return _library_row("materials")
+
+    @app.post("/api/materials/folder")
+    def set_material_folder(body: dict):
+        return _set_library_folder(
+            "materials", body, "material_folder", "MATERIALS_DIR")
+
+    @app.post("/api/materials/folder/browse")
+    def browse_material_folder():
+        return {"path": ask_for_folder(
+            title=FOLDER_TITLES["material_folder"])}
+
+    @app.get("/api/hdri/folder")
+    def hdri_folder():
+        return _library_row("hdri")
+
+    @app.post("/api/hdri/folder")
+    def set_hdri_folder(body: dict):
+        return _set_library_folder("hdri", body, "hdri_folder", "HDRI_DIR")
+
+    @app.post("/api/hdri/folder/browse")
+    def browse_hdri_folder():
+        return {"path": ask_for_folder(title=FOLDER_TITLES["hdri_folder"])}
+
+    @app.get("/api/props/folder")
+    def props_folder():
+        return _library_row("props")
+
+    @app.post("/api/props/folder")
+    def set_props_folder(body: dict):
+        return _set_library_folder("props", body, "props_folder", "PROPS_DIR")
+
+    @app.post("/api/props/folder/browse")
+    def browse_props_folder():
+        return {"path": ask_for_folder(title=FOLDER_TITLES["props_folder"])}
+
+    @app.get("/api/materials")
+    def material_index():
+        """Every material in the chosen library, with its family and the
+        maps it actually has.
+
+        No image is opened. The index resolves paths and stops, which is the
+        rule that makes the QS picker quick on a library that lives in
+        OneDrive, and the reason a viewport can ask for a 256 pixel tile
+        without a 4096 pixel master ever being touched.
+        """
+
+        found = material_library.apply_sidecar(
+            material_library.scan(MATERIALS_DIR), read_material_sidecar())
+        families = sorted({entry["family"] for entry in found})
+        row = _library_row("materials")
+        return {"root": row["path"], "exists": row["exists"],
+                "families": families, "materials": found}
+
+    @app.get("/api/materials/{family}/{name}/{kind}")
+    def material_map(family: str, name: str, kind: str, px: int = 0):
+        """One map of one material, at or below the size asked for.
+
+        px is a ceiling and not a demand: the tier below it is served when
+        one exists, and the master when none does, because nothing in this
+        library was ever upscaled and this route will not start.
+        """
+
+        if not MATERIALS_DIR:
+            raise HTTPException(404, "no material library folder is chosen")
+        for part in (family, name, kind):
+            if "/" in part or "\\" in part or ".." in part or ":" in part:
+                raise HTTPException(400, "bad material name")
+        path = material_library.resolve(
+            MATERIALS_DIR, family, name, kind, px or None)
+        if not path or not _within(MATERIALS_DIR, path):
+            raise HTTPException(
+                404, "no {} map for {}/{}".format(kind, family, name))
+        return FileResponse(path)
+
+    @app.post("/api/materials/{family}/{name}/tile")
+    def set_material_tile(family: str, name: str, body: dict):
+        """Record how big, in metres, the unit in this picture really is.
+
+        Written to the studio's own sidecar and never into the library,
+        which belongs to QS Intelligence and is read only. A null clears the
+        override and lets the library's own figure, if it has one, stand
+        again.
+        """
+
+        key = "{}/{}".format(family, name)
+        stored = read_material_sidecar()
+        tiles = stored.setdefault("tileMetres", {})
+        raw = body.get("tileMetres")
+        if raw is None:
+            tiles.pop(key, None)
+        else:
+            try:
+                pair = [float(raw[0]), float(raw[1])]
+            except (TypeError, ValueError, IndexError):
+                raise HTTPException(400, "tileMetres must be two numbers")
+            if pair[0] <= 0 or pair[1] <= 0:
+                raise HTTPException(400, "a tile has a positive size")
+            tiles[key] = pair
+        try:
+            bundle.write_json_atomically(MATERIALS_SIDECAR, stored)
+        except OSError as error:
+            raise HTTPException(
+                500, "could not write the material notes ({})".format(error))
+        return {"key": key, "tileMetres": tiles.get(key)}
+
     @app.get("/api/props")
     def prop_library():
         """The prop manifest, or an empty library.
@@ -769,20 +1026,41 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         by nobody.
         """
 
-        manifest = PROPS_DIR / "props.json"
-        if not manifest.is_file():
+        if not PROPS_DIR or not PROPS_DIR.is_dir():
             return {"props": [], "library": None}
-        try:
-            document = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise HTTPException(
-                400, "the prop manifest is damaged ({})".format(error))
+        manifest = PROPS_DIR / "props.json"
+        document = {}
+        if manifest.is_file():
+            try:
+                document = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise HTTPException(
+                    400, "the prop manifest is damaged ({})".format(error))
         props = []
+        described = set()
         for entry in document.get("props") or []:
             name = str(entry.get("file") or "")
             if not name or not (PROPS_DIR / name).is_file():
                 continue
+            described.add(name)
             props.append(entry)
+        # A .glb the manifest does not mention is still offered. The manifest
+        # used to be the authority on what exists, which was right while the
+        # props shipped with the studio; now that the folder is Param's, a
+        # model he drops into it should appear without his having to write
+        # about it first. What the manifest still carries is what a file
+        # cannot: the credit, and the real-world height where the model was
+        # not authored in metres.
+        for path in sorted(PROPS_DIR.glob("*.glb")):
+            if path.name in described:
+                continue
+            props.append({
+                "key": path.stem,
+                "label": path.stem.replace("-", " ").replace("_", " ").capitalize(),
+                "file": path.name,
+                "group": "site",
+                "undescribed": True,
+            })
         return {"props": props, "library": document.get("library")}
 
     @app.get("/api/props/{name}")

@@ -21,14 +21,13 @@ ensure_venv(__file__)
 def main() -> int:
     import uvicorn
 
-    from app import apply_saved_folder, create_app
+    from app import apply_saved_folders, create_app
 
-    # The folder the user last chose, applied before the app is built. Here
+    # The folders the user last chose, applied before the app is built. Here
     # rather than inside create_app, which the tests call with their own
-    # temporary folder already monkeypatched into place.
-    chosen = apply_saved_folder()
-    if chosen is not None:
-        print("Reading vaults from {}".format(chosen))
+    # temporary folders already monkeypatched into place.
+    for key, chosen in sorted(apply_saved_folders().items()):
+        print("{}: {}".format(key.replace("_", " "), chosen))
     print("Bench Studio at http://127.0.0.1:8600")
     uvicorn.run(create_app(), host="127.0.0.1", port=8600, log_level="info")
     return 0
