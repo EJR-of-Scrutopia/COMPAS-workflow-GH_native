@@ -90,11 +90,12 @@
     </div>
     <input id="skin-search" type="search" class="hidden" placeholder="Search materials">
     <div id="skin-tiles" class="tile-grid hidden"></div>
+    <!-- The three procedural presets (white presentation, basalt, ply) are
+         gone on Param's word: the library is the skin catalogue now, and
+         "None (material)" is the one built-in -- the structural material's
+         own plain look. -->
     <select id="render-skin" class="hidden">
       <option value="none" selected>None (material)</option>
-      <option value="white-presentation">White presentation</option>
-      <option value="basalt-dark">Basalt dark</option>
-      <option value="timber-ply">Timber ply</option>
     </select>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
     <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
@@ -197,14 +198,17 @@
     <label>Contrast <input id="contrast" type="range" min="-0.5" max="0.5" step="0.02" value="0"></label>
 
     <span class="row-heading">Ground</span>
+    <div id="ground-folder-row" class="folder-line">
+      <button id="ground-folder-choose" title="Pick your ground material folder">Ground folder</button>
+      <span id="ground-folder-path" title="">no folder chosen</span>
+    </div>
     <button id="ground-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Surface</span><span class="chevron"></span></button>
     <input id="ground-search" type="search" class="hidden" placeholder="Search surfaces">
     <div id="ground-tiles" class="tile-grid hidden"></div>
+    <!-- Only the neutral studio floor remains built in; every real surface
+         comes from the ground library folder. -->
     <label class="hidden">Surface <select id="ground-preset">
       <option value="dark-studio" selected>Dark studio</option>
-      <option value="concrete-slab">Concrete slab</option>
-      <option value="patio-pavers">Patio pavers</option>
-      <option value="tiles">Tiles</option>
     </select></label>
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
 

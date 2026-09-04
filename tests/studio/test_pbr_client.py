@@ -179,7 +179,9 @@ def test_tiles_are_pictures_from_the_backend_not_renders():
 
     source = pbr()
     assert "export const TILE_PX = 256;" in source
-    assert "export function tileUrl(entry)" in source
+    assert "export function tileUrl(entry, base = SKIN_BASE)" in source
+    # Two library roots, one loader: the ground reads its own routes.
+    assert 'export const GROUND_BASE = "/api/ground-materials";' in source
     studio_source = studio()
     assert 'image.loading = "lazy";' in studio_source
-    assert "imageTile(entry.key, entry.label, tileUrl(entry))" in studio_source
+    assert "imageTile(entry.key, entry.label, tileUrl(entry, base))" in studio_source

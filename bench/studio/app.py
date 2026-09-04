@@ -82,9 +82,18 @@ HDRI_DIR = Path(__file__).resolve().parent / "hdri"
 # runs on its built-in presets.
 MATERIALS_DIR = None
 
+# The ground has its own library root. Param: "the materials for the skin
+# dont need ground materials, or timber stacking etc... we create 2 folders
+# one for materials for skin and one for the materials for ground to make
+# it simple." Same folder shape, same reader, different root.
+GROUND_MATERIALS_DIR = None
+
 # What the studio knows about materials it does not own. The library is read
 # and never written, so a tile size typed into the panel has to live
-# somewhere else, and it lives here, keyed by "family/name".
+# somewhere else, and it lives here, keyed by "family/name". SHARED by both
+# library roots on purpose: they are curated copies of the same QS stack,
+# so "brick/paver-dark" names the same picture in either folder and its
+# real-world tile size is one fact, not two.
 MATERIALS_SIDECAR = Path(__file__).resolve().parent / "materials.json"
 
 
@@ -233,7 +242,8 @@ FOLDER_DIALOG = (
 
 FOLDER_TITLES = {
     "upload_folder": "Choose the folder your vault JSONs are in",
-    "material_folder": "Choose your material library folder",
+    "material_folder": "Choose your skin material folder",
+    "ground_folder": "Choose your ground material folder",
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
 }
@@ -333,7 +343,7 @@ def apply_saved_folders() -> dict:
     Param's real libraries.
     """
 
-    global MATERIALS_DIR, HDRI_DIR, PROPS_DIR
+    global MATERIALS_DIR, GROUND_MATERIALS_DIR, HDRI_DIR, PROPS_DIR
 
     applied = {}
     chosen = apply_saved_folder()
@@ -341,6 +351,7 @@ def apply_saved_folders() -> dict:
         applied["upload_folder"] = chosen
     stored = read_settings()
     for key, setter in (("material_folder", "MATERIALS_DIR"),
+                        ("ground_folder", "GROUND_MATERIALS_DIR"),
                         ("hdri_folder", "HDRI_DIR"),
                         ("props_folder", "PROPS_DIR")):
         raw = stored.get(key)
@@ -1019,6 +1030,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if kind == "materials":
             directory, counter = MATERIALS_DIR, (
                 lambda d: len(material_library.scan(d)))
+        elif kind == "ground-materials":
+            directory, counter = GROUND_MATERIALS_DIR, (
+                lambda d: len(material_library.scan(d)))
         elif kind == "hdri":
             directory, counter = HDRI_DIR, (
                 lambda d: len([p for p in d.glob("*.hdr") if p.is_file()]))
@@ -1065,6 +1079,20 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         return {"path": ask_for_folder(
             title=FOLDER_TITLES["material_folder"])}
 
+    @app.get("/api/ground-materials/folder")
+    def ground_material_folder():
+        return _library_row("ground-materials")
+
+    @app.post("/api/ground-materials/folder")
+    def set_ground_material_folder(body: dict):
+        return _set_library_folder(
+            "ground-materials", body, "ground_folder", "GROUND_MATERIALS_DIR")
+
+    @app.post("/api/ground-materials/folder/browse")
+    def browse_ground_material_folder():
+        return {"path": ask_for_folder(
+            title=FOLDER_TITLES["ground_folder"])}
+
     @app.get("/api/hdri/folder")
     def hdri_folder():
         return _library_row("hdri")
@@ -1089,8 +1117,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def browse_props_folder():
         return {"path": ask_for_folder(title=FOLDER_TITLES["props_folder"])}
 
-    @app.get("/api/materials")
-    def material_index():
+    def _material_index(root, kind: str):
         """Every material in the chosen library, with its family and the
         maps it actually has.
 
@@ -1101,14 +1128,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         """
 
         found = material_library.apply_sidecar(
-            material_library.scan(MATERIALS_DIR), read_material_sidecar())
+            material_library.scan(root), read_material_sidecar())
         families = sorted({entry["family"] for entry in found})
-        row = _library_row("materials")
+        row = _library_row(kind)
         return {"root": row["path"], "exists": row["exists"],
                 "families": families, "materials": found}
 
-    @app.get("/api/materials/{family}/{name}/{kind}")
-    def material_map(family: str, name: str, kind: str, px: int = 0):
+    def _material_map(root, family: str, name: str, kind: str, px: int):
         """One map of one material, at or below the size asked for.
 
         px is a ceiling and not a demand: the tier below it is served when
@@ -1116,17 +1142,32 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         library was ever upscaled and this route will not start.
         """
 
-        if not MATERIALS_DIR:
+        if not root:
             raise HTTPException(404, "no material library folder is chosen")
         for part in (family, name, kind):
             if "/" in part or "\\" in part or ".." in part or ":" in part:
                 raise HTTPException(400, "bad material name")
-        path = material_library.resolve(
-            MATERIALS_DIR, family, name, kind, px or None)
-        if not path or not _within(MATERIALS_DIR, path):
+        path = material_library.resolve(root, family, name, kind, px or None)
+        if not path or not _within(root, path):
             raise HTTPException(
                 404, "no {} map for {}/{}".format(kind, family, name))
         return FileResponse(path)
+
+    @app.get("/api/materials")
+    def material_index():
+        return _material_index(MATERIALS_DIR, "materials")
+
+    @app.get("/api/ground-materials")
+    def ground_material_index():
+        return _material_index(GROUND_MATERIALS_DIR, "ground-materials")
+
+    @app.get("/api/materials/{family}/{name}/{kind}")
+    def material_map(family: str, name: str, kind: str, px: int = 0):
+        return _material_map(MATERIALS_DIR, family, name, kind, px)
+
+    @app.get("/api/ground-materials/{family}/{name}/{kind}")
+    def ground_material_map(family: str, name: str, kind: str, px: int = 0):
+        return _material_map(GROUND_MATERIALS_DIR, family, name, kind, px)
 
     @app.post("/api/materials/{family}/{name}/tile")
     def set_material_tile(family: str, name: str, body: dict):

@@ -45,17 +45,23 @@ const SLOTS = {
 // before the shader ever sees the vector it was meant to be.
 const COLOUR_DATA = new Set(["colour"]);
 
-export function mapUrl(family, name, kind, px) {
-  const base = "/api/materials/" + encodeURIComponent(family)
+// Two library roots serve the same folder shape: the vault's skin library
+// at /api/materials and the ground's at /api/ground-materials. The base is
+// a parameter so one loader serves both.
+export const SKIN_BASE = "/api/materials";
+export const GROUND_BASE = "/api/ground-materials";
+
+export function mapUrl(family, name, kind, px, base = SKIN_BASE) {
+  const url = base + "/" + encodeURIComponent(family)
     + "/" + encodeURIComponent(name) + "/" + encodeURIComponent(kind);
-  return px ? base + "?px=" + px : base;
+  return px ? url + "?px=" + px : url;
 }
 
 // The picture a tile shows: the flat colour crop, at the smallest tier.
 // Served as an ordinary image and drawn by the browser, so a library of a
 // hundred and fifty materials costs no video memory at all.
-export function tileUrl(entry) {
-  return mapUrl(entry.family, entry.name, "colour", TILE_PX);
+export function tileUrl(entry, base = SKIN_BASE) {
+  return mapUrl(entry.family, entry.name, "colour", TILE_PX, base);
 }
 
 function loadTexture(loader, url, kind, anisotropy) {
@@ -98,10 +104,20 @@ export async function loadLibraryMaterial(entry, options) {
   const anisotropy = settings.anisotropy || 8;
   const loader = settings.loader || new THREE.TextureLoader();
 
+  const base = settings.base || SKIN_BASE;
   const kinds = (entry.maps || []).filter((kind) => SLOTS[kind]);
+  // Only the colour is load-bearing. A material whose relief or roughness
+  // map fails arrives flatter, not absent: failing the WHOLE set over one
+  // secondary map was how a clicked material silently kept the default
+  // look while the tile claimed it was worn.
   const loaded = await Promise.all(kinds.map((kind) =>
-    loadTexture(loader, mapUrl(entry.family, entry.name, kind, px),
-      kind, anisotropy)));
+    loadTexture(loader, mapUrl(entry.family, entry.name, kind, px, base),
+      kind, anisotropy).catch((error) => {
+        if (kind === "colour") throw error;
+        console.warn("map failed, carrying on without it:",
+          entry.family + "/" + entry.name + "/" + kind, error);
+        return null;
+      })));
 
   const material = new THREE.MeshPhysicalMaterial({
     // White, so the picture is the colour. A tint multiplies this, which is
@@ -119,6 +135,7 @@ export async function loadLibraryMaterial(entry, options) {
 
   const textures = [];
   kinds.forEach((kind, index) => {
+    if (!loaded[index]) return;
     material[SLOTS[kind]] = loaded[index];
     textures.push(loaded[index]);
   });

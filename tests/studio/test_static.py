@@ -2164,9 +2164,14 @@ def test_the_ground_presets_swap_one_discs_material():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'id="ground-preset"' in html
-    for value in ("dark-studio", "concrete-slab", "patio-pavers", "tiles"):
-        assert '<option value="{}"'.format(value) in html
-        assert '"{}"'.format(value) in js
+    # One built-in floor. The procedural slab/paver/tile stand-ins went when
+    # the ground gained its own curated library folder (Param, 2026-09-04).
+    assert '<option value="dark-studio"' in html
+    for value in ("concrete-slab", "patio-pavers", "tiles"):
+        assert '<option value="{}"'.format(value) not in html
+    assert '"/api/ground-materials"' in js, (
+        "the ground grid reads its own library, not the skin one"
+    )
     assert 'groundPreset: "dark-studio"' in js
     # One disc, materials cached for the session. Re-pinned 2026-09-04:
     # the disc is now built by rebuildGround, which buildScene and both
@@ -2387,8 +2392,10 @@ def test_appearance_overrides_are_render_only_and_persist():
     assert "render only: the analysis is unchanged" in js
     assert "function discloseAppearance(" in js
     assert '"bench-studio-appearance:"' in js
+    # The three procedural skins are gone (Param, 2026-09-04): the library
+    # is the skin catalogue, and "none" is the one built-in.
     for skin in ("white-presentation", "basalt-dark", "timber-ply"):
-        assert '"{}"'.format(skin) in js
+        assert '"{}"'.format(skin) not in js
     # The skin never reaches the server: no fetch uses the skin value.
     body = _function_body(js, "appearanceMaterialBase")
     assert "SKINS" in body

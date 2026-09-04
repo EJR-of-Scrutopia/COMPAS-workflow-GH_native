@@ -22,7 +22,7 @@ import {
 } from "/static/fields.js";
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
-  repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX,
+  repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX, GROUND_BASE,
 } from "/static/pbr.js";
 
 // ---------- diagnosis ----------
@@ -172,8 +172,10 @@ const state = {
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
-  materialLibrary: [],   // the index from /api/materials, or empty
+  materialLibrary: [],   // the SKIN index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
+  groundLibrary: [],     // the GROUND index from /api/ground-materials
+  groundRoot: "",        // its folder, for the panel
 };
 
 const canvas = document.getElementById("view");
@@ -690,36 +692,12 @@ function groundJointTexture(cols, rows, staggered, baseTone) {
   return texture;
 }
 
+// One built-in floor: the neutral studio ground. The procedural slab,
+// paver and tile stand-ins are gone on Param's word -- every real surface
+// comes from the ground library folder now, and a scene saved with one of
+// the old presets falls back to dark-studio via the guard below.
 const GROUNDS = {
   "dark-studio": () => new THREE.MeshPhysicalMaterial({ color: 0x22242a, roughness: 0.95 }),
-  "concrete-slab": () => new THREE.MeshPhysicalMaterial({
-    color: 0x8f9094,
-    map: noiseTexture(512, 200, 10),
-    roughness: 0.93,
-    roughnessMap: noiseTexture(512, 215, 30),
-  }),
-  "patio-pavers": () => {
-    const material = new THREE.MeshPhysicalMaterial({
-      color: 0xb0a698, map: groundJointTexture(4, 4, true, 172), roughness: 0.9,
-      bumpScale: 0.35,
-    });
-    material.bumpMap = material.map;
-    // 4 x 4 pavers of 1.2 x 0.9 m in one image. The repeat is not set here:
-    // it follows the disc, so the pavers stay 1.2 x 0.9 m whatever the
-    // Ground size slider says (rebuildGround, and groundRepeat in fields.js).
-    material.userData.groundTileMetres = [4 * 1.2, 4 * 0.9];
-    return material;
-  },
-  "tiles": () => {
-    const material = new THREE.MeshPhysicalMaterial({
-      color: 0x9aa0a4, map: groundJointTexture(8, 8, false, 168), roughness: 0.55,
-      bumpScale: 0.2,
-    });
-    material.bumpMap = material.map;
-    // 8 x 8 square tiles of 0.6 m in one image.
-    material.userData.groundTileMetres = [8 * 0.6, 8 * 0.6];
-    return material;
-  },
 };
 
 const groundMaterialCache = {};
@@ -750,7 +728,7 @@ async function loadGroundMaterial(key) {
     rebuildGround();
     return;
   }
-  const entry = libraryEntry(key);
+  const entry = groundLibraryEntry(key);
   if (!entry) return;
   try {
     const set = await loadLibraryMaterial(entry, {
@@ -758,6 +736,7 @@ async function loadGroundMaterial(key) {
       anisotropy: renderer.capabilities.getMaxAnisotropy(),
       relief: state.relief,
       occlusion: state.occlusion,
+      base: GROUND_BASE,
     });
     // A floor is seen from one side, so it costs nothing to say so, and
     // single-sided geometry is half the fragment work.
@@ -2398,6 +2377,12 @@ function libraryEntry(key) {
   return state.materialLibrary.find((entry) => entry.key === key) || null;
 }
 
+// The ground has its own curated library (Param: two folders, one for the
+// skin and one for the ground), so its lookups go to its own list.
+function groundLibraryEntry(key) {
+  return state.groundLibrary.find((entry) => entry.key === key) || null;
+}
+
 function isLibraryKey(key) {
   return typeof key === "string" && key.includes("/");
 }
@@ -2484,18 +2469,29 @@ async function refreshMaterialLibrary() {
       select.value = "none";
     }
   }
+  // The ground reads its OWN library, from its own folder. One shared list
+  // was how gravel ended up offered as a vault skin and board-marked
+  // concrete as a floor.
+  try {
+    const groundPayload = await fetchJson("/api/ground-materials");
+    state.groundLibrary = groundPayload.materials || [];
+    state.groundRoot = groundPayload.root || "";
+  } catch (error) {
+    state.groundLibrary = [];
+    state.groundRoot = "";
+  }
   const ground = document.getElementById("ground-preset");
   for (const option of Array.from(ground.options)) {
     if (isLibraryKey(option.value)) option.remove();
   }
-  for (const entry of state.materialLibrary) {
+  for (const entry of state.groundLibrary) {
     const option = document.createElement("option");
     option.value = entry.key;
     option.textContent = entry.label;
     ground.appendChild(option);
   }
   if (isLibraryKey(state.groundPreset)) {
-    if (libraryEntry(state.groundPreset)) {
+    if (groundLibraryEntry(state.groundPreset)) {
       ground.value = state.groundPreset;
       await loadGroundMaterial(state.groundPreset);
     } else {
@@ -2507,9 +2503,7 @@ async function refreshMaterialLibrary() {
   buildSkinTiles();
   buildGroundTiles();
   logStudio("material library: " + state.materialLibrary.length
-    + " materials in " + (state.materialLibrary.length
-      ? new Set(state.materialLibrary.map((e) => e.family)).size : 0)
-    + " families");
+    + " skin materials, " + state.groundLibrary.length + " ground materials");
 }
 
 // ---------- pickers ----------
@@ -2915,10 +2909,12 @@ function chooseSkin(value) {
 // the ground it stands on. The built-in presets come first and are rendered
 // on the preview object, because there are a handful of them and they have
 // no picture of their own; the library follows as pictures, in families.
-function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin) {
+function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin,
+                          list, base) {
   const holder = document.getElementById(holderId);
   const select = document.getElementById(selectId);
   if (!holder || !select) return;
+  const entries = list || state.materialLibrary;
   const query = ((document.getElementById(searchId) || {}).value || "")
     .trim().toLowerCase();
   holder.innerHTML = "";
@@ -2944,7 +2940,7 @@ function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin) {
   // near-identical bricks is the difference between adjusting a choice and
   // making a new one.
   let family = null;
-  for (const entry of state.materialLibrary) {
+  for (const entry of entries) {
     if (query && !(entry.key + " " + entry.label).toLowerCase().includes(query)) continue;
     if (entry.family !== family) {
       family = entry.family;
@@ -2953,7 +2949,7 @@ function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin) {
       heading.textContent = family;
       holder.appendChild(heading);
     }
-    const tile = imageTile(entry.key, entry.label, tileUrl(entry));
+    const tile = imageTile(entry.key, entry.label, tileUrl(entry, base));
     // The size is what an architect wants to know about a picture of a
     // brick, and it is the number that decides how it lays on.
     if (entry.tileMetres) {
@@ -2982,9 +2978,11 @@ function buildSkinTiles() {
 function buildGroundTiles() {
   // A floor previewed on a floor: the plane is tilted away from the camera
   // so the joint spacing reads, which a sphere cannot show, and the size of
-  // the pieces is the whole reason for choosing paving over concrete.
+  // the pieces is the whole reason for choosing paving over concrete. The
+  // ground grid draws from its OWN library and its own routes.
   buildLibraryGrid("ground-tiles", "ground-preset", "ground-search",
-    (value, canvasEl) => renderGroundPreview(value, canvasEl));
+    (value, canvasEl) => renderGroundPreview(value, canvasEl),
+    state.groundLibrary, GROUND_BASE);
 }
 
 function paintMaterialSwatches() {
@@ -4753,6 +4751,20 @@ document.getElementById("material-folder-choose").addEventListener("click", asyn
   await showMaterialFolder();
 });
 
+// The ground's own folder, on the generic machinery. Its afterwards
+// disposes the GROUND set, not the skin cache: loadGroundMaterial bypasses
+// libraryCache entirely.
+document.getElementById("ground-folder-choose").addEventListener("click", () =>
+  chooseLibraryFolder("ground-materials", "ground-folder-path", "materials",
+    async () => {
+      if (groundLibrarySet) {
+        disposeLibraryMaterial(groundLibrarySet);
+        groundLibrarySet = null;
+      }
+      await refreshMaterialLibrary();
+      rebuildGround();
+    }));
+
 // Relief and occlusion are properties of the MATERIAL, not of a piece, so
 // they are written straight onto the loaded sets: no texture is re-uploaded
 // and no piece mesh is rebuilt, which is why they can move live.
@@ -5478,27 +5490,14 @@ function pieceTint(key) {
   return (offset[0] % 1) * 0.06 - 0.03;
 }
 
-// Task 5: render skins. "none" is not a factory: it means "show the
-// registry material", which appearanceMaterialBase reads straight from
-// materials[]. The three real skins are lazily built and cached like
-// groundMaterial caches GROUNDS, since each is a MeshPhysicalMaterial with
-// its own procedural map and should not be rebuilt on every piece.
+// Render skins. "none" is not a factory: it means "show the registry
+// material", which appearanceMaterialBase reads straight from materials[].
+// The three procedural skins (white presentation, basalt, ply) are gone on
+// Param's word: the library is the skin catalogue now. A remembered or
+// scene-saved legacy key simply finds no factory here and falls through to
+// the registry look.
 const SKINS = {
   none: null,
-  "white-presentation": () => new THREE.MeshPhysicalMaterial({
-    color: 0xf4f4f0, side: THREE.DoubleSide,
-    map: noiseTexture(256, 245, 8),
-    roughness: 0.55, metalness: 0.0,
-  }),
-  "basalt-dark": () => new THREE.MeshPhysicalMaterial({
-    color: 0x2e3236, side: THREE.DoubleSide,
-    roughness: 0.85, metalness: 0.0,
-  }),
-  "timber-ply": () => new THREE.MeshPhysicalMaterial({
-    color: 0xc9a86a, side: THREE.DoubleSide,
-    map: grainTexture(512),
-    roughness: 0.7, metalness: 0.0,
-  }),
 };
 
 const skinMaterialCache = {};
@@ -6497,6 +6496,7 @@ showMaterialFolder();
 refreshHdriList(null).catch(() => {});
 showLibraryFolder("hdri", "hdri-folder-path", "skies");
 showLibraryFolder("props", "props-folder-path", "models");
+showLibraryFolder("ground-materials", "ground-folder-path", "materials");
 boot();
 requestAnimationFrame(frame);
 
