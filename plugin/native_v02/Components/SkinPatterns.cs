@@ -4390,11 +4390,26 @@ internal static class SkinPatterns
     /// the two siblings cannot drift apart about which face answers for a
     /// point, which is a thing the weld depends on.
     ///
-    /// ANSWER-PRESERVING, and proved so rather than argued: NormalAt and
-    /// LevelAt were dumped at round-trip precision over all 8870 cell
-    /// corners of Param's own crown arch and a 484-point grid well off it,
-    /// before and after the extraction, and the two dumps hash to the same
-    /// SHA256, 86F5A147FAF6AEE691973C4DC4F56501314483C18A6E0479CB53F203D92FE45D.
+    /// ANSWER-PRESERVING ON EVERY NET THAT HAS A FACE, and proved so rather
+    /// than argued: NormalAt and LevelAt were dumped at round-trip
+    /// precision over all 8870 cell corners of Param's own crown arch and a
+    /// 484-point grid well off it, before and after the extraction, and the
+    /// two dumps hash to the same SHA256,
+    /// 86F5A147FAF6AEE691973C4DC4F56501314483C18A6E0479CB53F203D92FE45D.
+    ///
+    /// ONE ANSWER DID CHANGE, DELIBERATELY, and the claim above says
+    /// nothing about it because no net in that dump has an empty face list.
+    /// <see cref="LevelAt"/> on a net with NO FACES used to reach
+    /// net.Faces[0] and THROW an ArgumentOutOfRangeException; the guard
+    /// this helper carries turns that into a finite 0.0, which is what
+    /// <see cref="NormalAt"/> already did with its own (0, 0, 1). That was
+    /// the whole point of extracting the guard rather than the loop alone,
+    /// and it is asserted in tests/native_smoke check "Skin normal field",
+    /// beside the NormalAt assertion it was made to match: a bare net is
+    /// built with no faces, LevelAt is asked at (0.2, 0.2, 0) and must
+    /// answer 0.0. Naming it here because a docstring that says a
+    /// refactoring changes no answer, when it changes one, is worse than
+    /// no docstring.
     /// </summary>
     private static int FaceFor(SkinNet net, double[] at)
     {

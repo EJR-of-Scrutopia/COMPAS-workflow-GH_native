@@ -26068,8 +26068,8 @@ internal static class Program
     /// name, nickname and position exactly, so a definition saved before
     /// this task keeps every wire on the port it left and simply finds no
     /// data on ports 5 and 6, which read their defaults (Th = 0, no
-    /// thickening; Offset true). An insertion instead of an
-    /// append, or a rename anywhere earlier, would move every port after
+    /// thickening; Extrude 0, the offset surface). An insertion instead of
+    /// an append, or a rename anywhere earlier, would move every port after
     /// it and fail here rather than only in Grasshopper.
     ///
     /// CORRECTION, measured 2026-09-03. This check's own task claimed the
