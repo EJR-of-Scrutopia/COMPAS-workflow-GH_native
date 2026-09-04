@@ -74,11 +74,36 @@ internal sealed record SkinNet(
     /// property being read, because an instance property initialiser cannot
     /// see `this`; it is idempotent and returns the same list unchanged when
     /// every face is already a triangle.</summary>
-    public IReadOnlyList<double> Levels { get; } =
-        SkinPatterns.RimDistanceField(
+    /// <summary>The field AND the seed identity together, out of ONE
+    /// marching pass (spec 2026-09-04 rule 1.1). They are one answer and not
+    /// two: the group that reached a vertex is settled by the same pop that
+    /// freezes its distance, so computing them apart would mean marching
+    /// twice and, worse, would let a tie break one way for the distance and
+    /// the other way for the identity. A private field and not a second
+    /// property initialiser, because an initialiser cannot read another
+    /// property and the pair has to come out of one call.</summary>
+    private readonly (IReadOnlyList<double> Values, IReadOnlyList<int> Seeds)
+        _field = SkinPatterns.RimDistanceFieldWithSeeds(
             Vertices,
             SkinPatterns.Triangulate(Vertices, Faces),
             Rim);
+
+    public IReadOnlyList<double> Levels => _field.Values;
+
+    /// <summary>WHICH SEED GROUP REACHED THIS VERTEX FIRST (spec 2026-09-04
+    /// rule 1.1): the index of the connected component of the anchor set
+    /// whose front froze this vertex, -1 where the vertex was never reached
+    /// and -1 everywhere under the Z fallback, where there is no marching
+    /// and so no identity to carry. Seed groups are the connected components
+    /// of the RIM through the net's own edges, computed once here beside the
+    /// field.
+    ///
+    /// An edge whose two ends carry DIFFERENT groups crosses the seam, and
+    /// the chained dual of those edges is the seam curve
+    /// (<see cref="SkinPatterns.SeamCurves"/>). That is the whole of rule
+    /// 1.1 inside the marching: one array carried beside the distances,
+    /// written wherever a distance is written.</summary>
+    public IReadOnlyList<int> SeedGroups => _field.Seeds;
 
     /// <summary>The AREA-WEIGHTED UNIT NORMAL at every vertex (spec
     /// 2026-09-03, skin-offset-surface, rule 1), ORIENTED so that a
@@ -185,7 +210,16 @@ internal sealed record SkinCell(
     bool Cap = false,
     int SetoutCorners = 0,
     IReadOnlyList<IReadOnlyList<double[]>>? Sections = null,
-    IReadOnlyList<IReadOnlyList<double[]>>? Chains = null);
+    IReadOnlyList<IReadOnlyList<double[]>>? Chains = null,
+    /// <summary>Is this a CLOSER stone, one of the cells that cover a
+    /// refused interval (spec 2026-09-04 rules 2.1 to 2.4)? It rides beside
+    /// Cap for the same reason Cap does: a closer is an ordinary cell
+    /// everywhere downstream, at an ordinary course, and the flag exists so
+    /// that a check can measure the closer's own statistics against the
+    /// courses around it rather than guessing which cells they are from
+    /// their geometry. Appended LAST with a default, so every existing
+    /// construction site keeps its positions.</summary>
+    bool Closer = false);
 
 /// <summary>One generated pattern. The cells sorted by course then by
 /// rule 7.1's seam-outward order, the band count, the readable diagnostics
@@ -284,7 +318,41 @@ internal sealed record SkinPatternResult(
     IReadOnlyList<double[][]> BedCurves,
     int WeldCollapsedDropped = 0,
     int ThreeSidedCells = 0,
-    int BandEscapedRefused = 0);
+    int BandEscapedRefused = 0)
+{
+    /// <summary>THE SEAM CURVES of spec 2026-09-04 rule 1.1: the meeting
+    /// lines of the net's seed groups, as polylines, empty on a net with one
+    /// anchor group and empty under the Z fallback. They are carried here
+    /// because the closer band is cut against them and because diagnostics
+    /// names them, and an INIT PROPERTY rather than a positional parameter
+    /// for the reason SkinNet's own RimDropped gives: every existing
+    /// construction site is positional, and a positional append would move
+    /// each of them for nothing.</summary>
+    public IReadOnlyList<double[][]> SeamCurves { get; init; } =
+        Array.Empty<double[][]>();
+
+    /// <summary>How many refused intervals the CLOSER BAND covered, and how
+    /// many stones it laid in them (spec 2026-09-04 rules 2.1 to 2.5). Read
+    /// together with TransitionBands, which after this wave counts seams
+    /// CLOSED rather than bands abandoned.</summary>
+    public int ClosedSeams { get; init; }
+
+    public int CloserCells { get; init; }
+
+    /// <summary>Closer stones REFUSED at emission because their head joint
+    /// would have run further than the refused interval is thick: the
+    /// pair-of-pants case, where one guide curve runs past several curves of
+    /// the other family. Counted rather than emitted for the plan filter to
+    /// delete, on the same discipline BandEscapedRefused keeps.</summary>
+    public int CloserRefused { get; init; }
+
+    /// <summary>How many BISECTED band components had their joints remapped
+    /// from the proportional arc of rule 1.8.1 to the nearest point in plan,
+    /// because the proportional map folded a cell there and the nearest-point
+    /// map does not. Zero on every net whose seam-side sub-bands are already
+    /// sound, which is every fixture but the two-hump barrel.</summary>
+    public int SeamBandsRemapped { get; init; }
+}
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -569,15 +637,45 @@ internal static class SkinPatterns
     public static IReadOnlyList<double> RimDistanceField(
         IReadOnlyList<double[]> vertices,
         IReadOnlyList<int[]> faces,
-        IReadOnlyList<int> rim)
+        IReadOnlyList<int> rim) =>
+        RimDistanceFieldWithSeeds(vertices, faces, rim).Values;
+
+    /// <summary>
+    /// The same marching, handing back the SEED IDENTITY beside the
+    /// distances (spec 2026-09-04 rule 1.1): for every vertex, the index of
+    /// the connected component of the rim whose front reached it first, or
+    /// -1 where nothing reached it and -1 everywhere under the Z fallback.
+    ///
+    /// It is two lines inside the loop and no second pass. A vertex frozen
+    /// by an edge relaxation inherits the identity of the frozen end that
+    /// offered the winning value; a vertex frozen by the triangle update
+    /// inherits the identity of the SMALLER of the two known corners, which
+    /// is the front the characteristic actually came from, and which is the
+    /// corner the update itself calls A after its own swap. A vertex whose
+    /// value never improves keeps positive infinity and identity -1.
+    ///
+    /// WHERE THE GROUPS COME FROM. The rim is partitioned into connected
+    /// components through the net's own edges, so two springings of an arch
+    /// are two groups and one continuous rim ring is one. Under one group
+    /// there is no seam at all, which is right: a front that started
+    /// everywhere on one curve never meets another front.
+    /// </summary>
+    public static (IReadOnlyList<double> Values, IReadOnlyList<int> Seeds)
+        RimDistanceFieldWithSeeds(
+            IReadOnlyList<double[]> vertices,
+            IReadOnlyList<int[]> faces,
+            IReadOnlyList<int> rim)
     {
         int count = vertices.Count;
         var levels = new double[count];
+        var seeds = new int[count];
+        for (int at = 0; at < count; at++)
+            seeds[at] = -1;
         if (rim.Count == 0)
         {
             for (int at = 0; at < count; at++)
                 levels[at] = vertices[at][2];
-            return levels;
+            return (levels, seeds);
         }
         for (int at = 0; at < count; at++)
             levels[at] = double.PositiveInfinity;
@@ -601,11 +699,13 @@ internal static class SkinPatterns
         // A vertex whose value improves is added again; the stale entry is
         // skipped when it pops, because the vertex is frozen by then.
         var heap = new SortedSet<(double Value, int Vertex)>();
+        IReadOnlyList<int> groups = SeedGroupsOf(vertices.Count, faces, rim);
         foreach (int seed in rim)
         {
             if (seed < 0 || seed >= count || levels[seed] == 0.0)
                 continue;
             levels[seed] = 0.0;
+            seeds[seed] = groups[seed];
             heap.Add((0.0, seed));
         }
         while (heap.Count > 0)
@@ -631,21 +731,30 @@ internal static class SkinPatterns
                     int a = triangle[(corner + 1) % 3];
                     int b = triangle[(corner + 2) % 3];
                     double offer;
+                    // The group the offer CAME FROM, carried with it (rule
+                    // 1.1). Under the triangle update the characteristic
+                    // comes from the smaller of the two known corners, which
+                    // is the corner that update itself names A; under an
+                    // edge relaxation it is simply the frozen end.
+                    int from;
                     if (frozen[a] && frozen[b])
                     {
                         offer = TriangleUpdate(
                             vertices[c], vertices[a], vertices[b],
                             levels[a], levels[b]);
+                        from = levels[b] < levels[a] ? seeds[b] : seeds[a];
                     }
                     else if (frozen[a])
                     {
                         offer = levels[a] +
                             Distance(vertices[a], vertices[c]);
+                        from = seeds[a];
                     }
                     else if (frozen[b])
                     {
                         offer = levels[b] +
                             Distance(vertices[b], vertices[c]);
+                        from = seeds[b];
                     }
                     else
                     {
@@ -656,12 +765,229 @@ internal static class SkinPatterns
                     if (offer < levels[c] - 1.0e-12)
                     {
                         levels[c] = offer;
+                        seeds[c] = from;
                         heap.Add((offer, c));
                     }
                 }
             }
         }
-        return levels;
+        return (levels, seeds);
+    }
+
+    /// <summary>
+    /// The ANCHOR SET's connected components, one index per vertex and -1
+    /// for a vertex the rim does not hold (spec 2026-09-04 rule 1.1). Two
+    /// rim vertices belong to the same group when the net carries an EDGE
+    /// between them, so an arch's two springings are two groups and a dome's
+    /// single rim ring is one. Groups are numbered in the order their lowest
+    /// vertex index appears, which is a property of the mesh's own numbering
+    /// and not of any traversal, so the seam does not move when the same net
+    /// arrives with its faces in a different order.
+    /// </summary>
+    private static IReadOnlyList<int> SeedGroupsOf(
+        int vertexCount,
+        IReadOnlyList<int[]> faces,
+        IReadOnlyList<int> rim)
+    {
+        var groups = new int[vertexCount];
+        for (int at = 0; at < vertexCount; at++)
+            groups[at] = -1;
+        var onRim = new bool[vertexCount];
+        foreach (int seed in rim)
+        {
+            if (seed >= 0 && seed < vertexCount)
+                onRim[seed] = true;
+        }
+        var neighbours = new List<int>?[vertexCount];
+        foreach (int[] face in faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                if (a < 0 || b < 0 || a >= vertexCount || b >= vertexCount)
+                    continue;
+                if (!onRim[a] || !onRim[b])
+                    continue;
+                (neighbours[a] ??= new List<int>()).Add(b);
+                (neighbours[b] ??= new List<int>()).Add(a);
+            }
+        }
+        int next = 0;
+        for (int start = 0; start < vertexCount; start++)
+        {
+            if (!onRim[start] || groups[start] >= 0)
+                continue;
+            int group = next++;
+            var waiting = new Stack<int>();
+            waiting.Push(start);
+            groups[start] = group;
+            while (waiting.Count > 0)
+            {
+                int current = waiting.Pop();
+                List<int>? links = neighbours[current];
+                if (links is null)
+                    continue;
+                foreach (int link in links)
+                {
+                    if (groups[link] >= 0)
+                        continue;
+                    groups[link] = group;
+                    waiting.Push(link);
+                }
+            }
+        }
+        return groups;
+    }
+
+    /// <summary>
+    /// THE SEAM CURVES (spec 2026-09-04 rule 1.1): the meeting line of two
+    /// seed groups' fronts, recovered as polylines.
+    ///
+    /// THE RULE. An edge whose two ends were reached from DIFFERENT groups
+    /// crosses the seam. The seam is the chained DUAL of those edges: the
+    /// crossing point of such an edge is its MIDPOINT, each face joins the
+    /// crossings on its own boundary in pairs, and the chains those links
+    /// make are the seam polylines. It is deliberately the same shape of
+    /// arithmetic as <see cref="Trace"/>, which cuts the same faces on a
+    /// scalar rather than on an identity, so a reader who knows one knows
+    /// the other and the two cannot drift apart.
+    ///
+    /// WHY THE MIDPOINT and not the point where the two fronts arithmetically
+    /// meet. The identity is a LABEL and not a value: it has no interpolant
+    /// along the edge to solve, and the dual of a labelled edge is its
+    /// midpoint. Nothing downstream measures the seam finer than the mesh:
+    /// the closer band uses it to say which side of the meeting line a face
+    /// belongs to and how far along the line it sits, both of which are
+    /// mesh-scale questions, and check 1 measures the curve against the
+    /// merge locus to within one mean edge length for exactly that reason.
+    ///
+    /// EMPTY where the net has fewer than two seed groups, and empty under
+    /// the Z fallback, where SeedGroups is -1 everywhere: a surface anchored
+    /// on one continuous rim has no meeting line, and saying so with an
+    /// empty list is the honest answer rather than drawing a curve where no
+    /// two fronts ever met.
+    /// </summary>
+    public static IReadOnlyList<double[][]> SeamCurves(SkinNet net)
+    {
+        IReadOnlyList<int> groups = net.SeedGroups;
+        var distinct = new HashSet<int>();
+        foreach (int group in groups)
+        {
+            if (group >= 0)
+                distinct.Add(group);
+        }
+        if (distinct.Count < 2)
+            return Array.Empty<double[][]>();
+
+        var crossingByEdge = new Dictionary<(int, int), int>();
+        var crossingPoints = new List<double[]>();
+        var linksByCrossing = new Dictionary<int, List<int>>();
+
+        bool Crosses(int a, int b) =>
+            groups[a] >= 0 && groups[b] >= 0 && groups[a] != groups[b] &&
+            double.IsFinite(net.Levels[a]) && double.IsFinite(net.Levels[b]);
+
+        int CrossingOf(int a, int b)
+        {
+            (int, int) key = a < b ? (a, b) : (b, a);
+            if (crossingByEdge.TryGetValue(key, out int index))
+                return index;
+            crossingByEdge[key] = crossingPoints.Count;
+            crossingPoints.Add(
+                Lerp(net.Vertices[key.Item1], net.Vertices[key.Item2], 0.5));
+            return crossingPoints.Count - 1;
+        }
+
+        void Link(int from, int to)
+        {
+            if (!linksByCrossing.TryGetValue(from, out List<int>? list))
+                linksByCrossing[from] = list = new List<int>();
+            if (!list.Contains(to))
+                list.Add(to);
+        }
+
+        foreach (int[] face in net.Faces)
+        {
+            var hits = new List<int>();
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                if (Crosses(a, b))
+                    hits.Add(CrossingOf(a, b));
+            }
+            // Two corners of a triangle share a group and the third does
+            // not, so the count is 0 or 2; a triple point, where all three
+            // corners were reached from three different groups, gives 3 and
+            // the first pair is joined, which leaves the third crossing a
+            // chain end rather than inventing a junction the walk cannot
+            // read.
+            for (int pair = 0; pair + 1 < hits.Count; pair += 2)
+            {
+                Link(hits[pair], hits[pair + 1]);
+                Link(hits[pair + 1], hits[pair]);
+            }
+        }
+
+        var visited = new HashSet<int>();
+        var curves = new List<double[][]>();
+
+        List<double[]> Walk(int start)
+        {
+            var chain = new List<double[]>();
+            int previous = -1;
+            int current = start;
+            while (true)
+            {
+                visited.Add(current);
+                chain.Add(crossingPoints[current]);
+                int next = -1;
+                if (linksByCrossing.TryGetValue(
+                        current, out List<int>? links))
+                {
+                    foreach (int link in links)
+                    {
+                        if (link != previous && !visited.Contains(link))
+                        {
+                            next = link;
+                            break;
+                        }
+                    }
+                }
+                if (next < 0)
+                    return chain;
+                previous = current;
+                current = next;
+            }
+        }
+
+        // Open chains first, from their degree-one ends, so a chain is
+        // walked end to end; whatever remains connected is a loop. The same
+        // two passes Trace makes, for the same reason.
+        for (int index = 0; index < crossingPoints.Count; index++)
+        {
+            if (visited.Contains(index))
+                continue;
+            int degree = linksByCrossing.TryGetValue(
+                index, out List<int>? links)
+                ? links.Count
+                : 0;
+            if (degree == 1)
+                curves.Add(Walk(index).ToArray());
+        }
+        for (int index = 0; index < crossingPoints.Count; index++)
+        {
+            if (visited.Contains(index))
+                continue;
+            if (!linksByCrossing.ContainsKey(index))
+            {
+                visited.Add(index);
+                continue;
+            }
+            curves.Add(Walk(index).ToArray());
+        }
+        return curves.Where(curve => curve.Length >= 2).ToList();
     }
 
     /// <summary>
@@ -2474,7 +2800,12 @@ internal static class SkinPatterns
         IReadOnlyList<double> Levels,
         IReadOnlyList<IReadOnlyList<SkinLevelCurve>> Traced,
         IReadOnlyList<SkinBandInterval> Tileable,
-        IReadOnlyList<(double Low, double High)> Refused,
+        // THE COURSE TRAVELS WITH THE REFUSAL (spec 2026-09-04 rule 2.1).
+        // The closer's stones are emitted at the band's OWN course index, so
+        // that staging and export see ordinary cells; before this wave the
+        // refusal recorded only its two levels and the course had to be
+        // guessed back out of them.
+        IReadOnlyList<(int Course, double Low, double High)> Refused,
         int ExtraLevels,
         int Passes,
         bool CapReached);
@@ -2529,7 +2860,7 @@ internal static class SkinPatterns
         const int MaxExtraLevels = 128;
         var pending = new List<SkinBandInterval>(bands);
         var tileable = new List<SkinBandInterval>();
-        var refused = new List<(double Low, double High)>();
+        var refused = new List<(int Course, double Low, double High)>();
         IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
             Array.Empty<IReadOnlyList<SkinLevelCurve>>();
         int extra = 0;
@@ -2559,7 +2890,7 @@ internal static class SkinPatterns
                 if (band.Depth >= MaxDepth || extra + 2 > MaxExtraLevels)
                 {
                     capReached |= extra + 2 > MaxExtraLevels;
-                    refused.Add((band.Low, band.High));
+                    refused.Add((band.Course, band.Low, band.High));
                     continue;
                 }
                 int before = levels.Count;
@@ -2941,6 +3272,11 @@ internal static class SkinPatterns
         if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("courses", net);
 
+        // THE SEAM CURVES (spec 2026-09-04 rule 1.1), found once per pattern
+        // off the net's own seed identity: they are what the closer band is
+        // cut along and what diagnostics names.
+        IReadOnlyList<double[][]> seams = SeamCurves(net);
+
         int bands = BandCount(dMin, dMax, courseHeight);
         double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
 
@@ -3053,8 +3389,37 @@ internal static class SkinPatterns
         int weldCollapsed = 0;
         var capGirths = new List<double>();
         var capWedges = new List<int>();
-        foreach ((double low, double high) in resolved.Refused)
+        // THE CLOSER BAND (spec 2026-09-04 rules 2.1 to 2.5). Every refused
+        // interval is COVERED rather than left as a hole: the stones are
+        // ordinary SkinCells at the band's own course, so staging, the sort,
+        // the plan filter and the export see nothing new. TransitionBands
+        // counts seams CLOSED after this wave, which is why the count and
+        // the intervals are still recorded: the author is told where the
+        // skin changes species, not that it has a hole.
+        int closerCells = 0;
+        int closerRefused = 0;
+        int seamBandsRemapped = 0;
+        foreach ((int refusedCourse, double low, double high) in
+                 resolved.Refused)
+        {
             AddTransition(transitions, low, high);
+            foreach ((int order, SkinCell cell) in CloserBand(
+                         resolved.Traced[levelIndex[low]],
+                         resolved.Traced[levelIndex[high]],
+                         refusedCourse,
+                         size,
+                         minimumPiece,
+                         high - low,
+                         ref mergedPieces,
+                         ref mergedShortKept,
+                         ref mergedStillShort,
+                         ref weldCollapsed,
+                         ref closerRefused))
+            {
+                closerCells++;
+                keyed.Add((cell.Course, order, cell.U0, cell));
+            }
+        }
         int transitionBands = resolved.Refused.Count;
         foreach (SkinBandInterval band in resolved.Tileable)
         {
@@ -3272,18 +3637,70 @@ internal static class SkinPatterns
                     spans, minimumPiece,
                     ref mergedPieces, ref mergedShortKept,
                     ref mergedStillShort);
+                // THE SEAM'S OWN SUB-BANDS, RESCUED (spec 2026-09-04 rule
+                // 2.5). A band the bisection produced sits beside a topology
+                // change, and there the proportional arc map of rule 1.8.1
+                // folds: the level curve on the seam's side makes a long
+                // detour into the meeting region while the curve a quarter
+                // band away does not, so equal fractions of arc land in
+                // different places in plan. MEASURED on the two-hump barrel
+                // at S 0.6 and CH 0.5, whose ridge dips to 0.9 at x = 3: the
+                // sub-bands [0.5, 0.75] and [0.75, 0.875], both products of
+                // the bisection the seam at 0.9 forced, gave four cells the
+                // plan filter dropped, two self-crossing and two
+                // overlapping, every one at the dip.
+                //
+                // THE RULE IS NARROW AND IT IS NARROW ON PURPOSE. The
+                // nearest-point map is taken ONLY where the proportional one
+                // actually folds, ONLY inside a bisected band, and then for
+                // the WHOLE component at once so its cells go on tiling
+                // their curves without a seam between two maps; and it is
+                // kept only where it removes every fold. Every band away
+                // from a seam, and every bisected band whose cells are
+                // already sound, is untouched and bit-identical, which is
+                // what keeps rule 1.8.4's deferred question deferred rather
+                // than half-answered here.
+                var laid = new List<SkinCell>();
+                bool folded = false;
                 foreach ((double u0, double u1, bool clipped) in spans)
                 {
                     SkinCell cell = BandCell(
                         band.Course, lowerCurve, mid, upperCurve,
                         u0, u1, clipped);
+                    laid.Add(cell);
+                    folded |= cell.Outline.Count >= 3 &&
+                        (PlanSelfCrosses(cell.Outline) ||
+                         PlanVertexOnEdge(cell.Outline));
+                }
+                if (folded && band.Depth > 0)
+                {
+                    var rebuilt = new List<SkinCell>();
+                    bool stillFolded = false;
+                    foreach ((double u0, double u1, bool clipped) in spans)
+                    {
+                        SkinCell cell = BandCell(
+                            band.Course, lowerCurve, mid, upperCurve,
+                            u0, u1, clipped, true);
+                        rebuilt.Add(cell);
+                        stillFolded |= cell.Outline.Count >= 3 &&
+                            (PlanSelfCrosses(cell.Outline) ||
+                             PlanVertexOnEdge(cell.Outline));
+                    }
+                    if (!stillFolded)
+                    {
+                        laid = rebuilt;
+                        seamBandsRemapped++;
+                    }
+                }
+                foreach (SkinCell cell in laid)
+                {
                     if (cell.Outline.Count < 3)
                     {
                         // R-006: welded below three distinct corners.
                         weldCollapsed++;
                         continue;
                     }
-                    keyed.Add((band.Course, component, u0, cell));
+                    keyed.Add((band.Course, component, cell.U0, cell));
                 }
             }
         }
@@ -3335,10 +3752,11 @@ internal static class SkinPatterns
                 degenerateDropped, overlapDropped,
                 TransitionLine(
                     "courses", transitionBands, transitions,
-                    FieldKindOf(net)),
+                    FieldKindOf(net), closerCells),
                 capLine,
                 weldCollapsed,
-                PlanCoverage(net, cells)),
+                PlanCoverage(net, cells),
+                seams),
             transitionBands,
             transitions,
             degenerateDropped,
@@ -3364,7 +3782,14 @@ internal static class SkinPatterns
             mergedStillShort,
             Array.Empty<double[][]>(),
             Array.Empty<double[][]>(),
-            weldCollapsed);
+            weldCollapsed)
+        {
+            SeamCurves = seams,
+            ClosedSeams = transitionBands,
+            CloserCells = closerCells,
+            CloserRefused = closerRefused,
+            SeamBandsRemapped = seamBandsRemapped
+        };
     }
 
     // ---- pattern 2: force aligned (spec section 3) ----------------------
@@ -4985,6 +5410,235 @@ internal static class SkinPatterns
         return kept;
     }
 
+    // ---- the closer band (spec 2026-09-04 section 2) --------------------
+
+    /// <summary>
+    /// THE CLOSER BAND: the stones that cover a refused interval, cut ALONG
+    /// the seam (spec 2026-09-04 rules 2.1 to 2.4).
+    ///
+    /// WHAT IT IS FOR. Where the level curves change count the
+    /// correspondence fails, ResolveBands refuses the interval and the skin
+    /// has a hole at those heights. Param's ruling of record is that the
+    /// answer is a CLOSER, not the hole: the interval is covered by direct
+    /// tessellation, with no correspondence asked for and none needed,
+    /// because the closer is its own species and is built from the SURFACE
+    /// rather than from either course family. That is what lets one
+    /// mechanism serve courses, honeycomb and force-aligned alike.
+    ///
+    /// THE CONSTRUCTION. The refused interval is bounded by two traced
+    /// families, one at Low and one at High, and at a merge one family
+    /// carries more components than the other. The family with MORE
+    /// components is the GUIDE, because its curves are the ones that run
+    /// the whole length of the band on their own side of the meeting line;
+    /// ties go to the LOW family so the answer does not depend on which way
+    /// the topology change is read. Each guide curve is divided at the
+    /// pattern's own pitch, P = L / max(1, round(L / S)), by the engine's
+    /// own CourseSpans, and each span becomes one stone: the guide's own
+    /// run from u0 to u1, and the run back along the NEAREST curve of the
+    /// other family between the two points nearest IN PLAN to the span's
+    /// ends.
+    ///
+    /// SO THE STONES RUN WITH THE SEAM. A guide curve at a merge lies
+    /// alongside the seam and not across it, so cutting the guide at pitch
+    /// cuts the band by sections PERPENDICULAR to the seam, the stones are
+    /// elongated ALONG it and the head joints run across it, which is how
+    /// groin masonry is coursed and is what Param's "following the tangent
+    /// curvature of the mesh" asks for.
+    ///
+    /// WHY THE NEAREST POINT IN PLAN AND NOT THE PROPORTIONAL ARC that
+    /// BandCell uses. A proportional map is a statement that the two curves
+    /// correspond, and the whole reason this interval was refused is that
+    /// they do not: at a merge one family has two components and the other
+    /// one, so there is no ratio of lengths that means anything. The
+    /// nearest point in plan always means something, and it is the map that
+    /// puts a closer stone's corner ON the curve the neighbouring course's
+    /// corner already lies on, which is rule 2.3's bond.
+    ///
+    /// WHY THE BOUNDARY AND NOT A POLYGON UNION. Rule 2.2 words the
+    /// construction as clipping every straddling FACE to the two levels and
+    /// unioning the pieces. The traced curves at Low and at High ARE that
+    /// clip's boundary, computed by the tracer's own crossing arithmetic and
+    /// already in hand; taking them directly avoids re-deriving a boundary
+    /// out of a union of clipped triangles, which on this arithmetic means
+    /// two faces computing the same shared crossing from opposite ends and
+    /// disagreeing in the last bits, and a hairline gap in a ring is a cell
+    /// the studio refuses. Corners that lie exactly on the traced curves are
+    /// also the only way the standing 1e-6 corner weld can fuse a closer to
+    /// both families, which is the requirement the construction exists for.
+    /// The price is stated and measured rather than hidden: where the band
+    /// pinches out at a seam end the two families' own ends bound the last
+    /// stone, and check 2 measures what fraction of the refused interval's
+    /// plan area is covered.
+    ///
+    /// SIMILAR SIZE (rule 2.4). The spans are the pattern's own pitch and
+    /// they pass through the same MergeShortPieces the courses use, so a
+    /// remainder at the end of a guide merges into its neighbour rather than
+    /// shipping a sliver, and the closer's span statistics sit inside the
+    /// adjacent courses' own range.
+    /// </summary>
+    private static List<(int Order, SkinCell Cell)> CloserBand(
+        IReadOnlyList<SkinLevelCurve> lows,
+        IReadOnlyList<SkinLevelCurve> highs,
+        int course,
+        double size,
+        double minimumPiece,
+        double thickness,
+        ref int mergedPieces,
+        ref int mergedShortKept,
+        ref int mergedStillShort,
+        ref int weldCollapsed,
+        ref int refused)
+    {
+        var closers = new List<(int Order, SkinCell Cell)>();
+        if (lows.Count == 0 || highs.Count == 0)
+            return closers;
+        // THE HEAD-JOINT BOUND (the same discipline the force-aligned
+        // pattern's band-escape refusal keeps). A closer stone's head joint
+        // closes the refused interval and nothing else, so it is at most as
+        // long as the interval is thick, and a joint longer than one piece
+        // is not a joint at all but a chord across the surface. Measured on
+        // the two-hump barrel, whose refused slab is a PAIR OF PANTS: the
+        // front strip runs the whole vault while the two loops above it ring
+        // one hump each, so a stone taken over the middle dip would reach
+        // from the strip to a loop three metres away. Refused at emission
+        // rather than emitted for the plan filter to delete, so the count
+        // says a stone was not laid instead of the drop count saying one was
+        // laid badly.
+        double maximumJoint = Math.Max(size, 4.0 * thickness);
+        bool guideIsLow = lows.Count >= highs.Count;
+        IReadOnlyList<SkinLevelCurve> guides = guideIsLow ? lows : highs;
+        IReadOnlyList<SkinLevelCurve> others = guideIsLow ? highs : lows;
+        for (int at = 0; at < guides.Count; at++)
+        {
+            SkinLevelCurve guide = guides[at];
+            if (!(guide.Length > 1.0e-9))
+                continue;
+            int pieces = Math.Max(1, (int)Math.Round(guide.Length / size));
+            double pitch = guide.Length / pieces;
+            var spans = new List<(double U0, double U1, bool Clipped)>();
+            foreach ((double u0, double u1) in
+                     CourseSpans(guide, pieces, pitch, 0.0))
+            {
+                spans.Add((u0, u1, u1 - u0 < pitch - 1.0e-9));
+            }
+            spans = MergeShortPieces(
+                spans, minimumPiece,
+                ref mergedPieces, ref mergedShortKept, ref mergedStillShort);
+            foreach ((double u0, double u1, bool clipped) in spans)
+            {
+                List<double[]> along = Run(guide, u0, u1);
+                // THE OTHER FAMILY'S CURVE IS CHOSEN PER STONE and not per
+                // guide, because at a pair-of-pants merge one guide runs
+                // past several of them: on the two-hump barrel the front
+                // strip runs the whole vault while the loops above it ring
+                // one hump each, and a curve chosen once for the whole guide
+                // would tie every stone to whichever hump happened to score
+                // nearest.
+                SkinLevelCurve? other = NearestCurveToPoint(
+                    PointAt(guide, (u0 + u1) / 2.0), others);
+                if (other is null || !(other.Length > 1.0e-9))
+                {
+                    refused++;
+                    continue;
+                }
+                double a0 = NearestArcInPlan(other, along[0]) - other.Seam;
+                double a1 = NearestArcInPlan(other, along[^1]) - other.Seam;
+                if (other.Closed)
+                {
+                    // A closed curve's arc origin is a branch cut, and a
+                    // stone whose two ends fall either side of it would
+                    // otherwise be told to run the LONG way round. The short
+                    // way is the one that means anything here: the stone is
+                    // a pitch long and the curve is many pitches round.
+                    double half = other.Length / 2.0;
+                    while (a1 - a0 > half)
+                        a1 -= other.Length;
+                    while (a0 - a1 > half)
+                        a1 += other.Length;
+                }
+                List<double[]> back = a1 >= a0
+                    ? Run(other, a0, a1)
+                    : Run(other, a1, a0);
+                if (a1 >= a0)
+                    back.Reverse();
+                if (Distance(along[0], back[^1]) > maximumJoint ||
+                    Distance(along[^1], back[0]) > maximumJoint)
+                {
+                    refused++;
+                    continue;
+                }
+                var outline = new List<double[]>(along);
+                outline.AddRange(back);
+                List<double[]> ring = Dedupe(outline);
+                if (ring.Count < 3)
+                {
+                    // R-006: welded below three distinct corners, so there
+                    // is no plan left to keep.
+                    weldCollapsed++;
+                    continue;
+                }
+                if (PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+                {
+                    // A stone that folds in plan is REFUSED here rather than
+                    // handed to the plan filter to delete, which is the
+                    // discipline the force-aligned pattern's band-escape
+                    // refusal already keeps: a refusal says a stone was not
+                    // laid, while a drop says one was laid badly, and rule
+                    // 2.5 asks the seam to stop producing drops. It happens
+                    // where the other family's curve turns back on itself
+                    // inside one span, the two-hump barrel's loop tips at
+                    // the middle dip being the measured case.
+                    refused++;
+                    continue;
+                }
+                // SECTIONS are the cell's own two runs, both read in the
+                // same direction, which is route (a) of rule 5.2.3: the
+                // guide's run and the other family's run, the second turned
+                // back the way the first goes so a loft between them does
+                // not twist.
+                var upper = new List<double[]>(back);
+                upper.Reverse();
+                closers.Add((at, new SkinCell(
+                    course, ring, clipped, u0, u1, false,
+                    Sections: new[]
+                    {
+                        (IReadOnlyList<double[]>)along, upper
+                    },
+                    Closer: true)));
+            }
+        }
+        return closers;
+    }
+
+    /// <summary>Which candidate curve lies NEAREST this one in plan, by the
+    /// engine's own PlanProximity and with none of MatchBelow's
+    /// classification: at a refused interval the two families disagree in
+    /// KIND and in COUNT by definition, which is exactly what MatchBelow
+    /// refuses to answer for, and the closer needs an answer rather than a
+    /// refusal. Ties keep the first candidate, which is deterministic
+    /// because Trace's component order is.</summary>
+    private static SkinLevelCurve? NearestCurveToPoint(
+        double[] point,
+        IReadOnlyList<SkinLevelCurve> candidates)
+    {
+        SkinLevelCurve? best = null;
+        double bestScore = double.PositiveInfinity;
+        foreach (SkinLevelCurve candidate in candidates)
+        {
+            if (candidate.Points.Count == 0)
+                continue;
+            double score = double.PositiveInfinity;
+            foreach (double[] at in candidate.Points)
+                score = Math.Min(score, Distance(point, at));
+            if (score < bestScore - 1.0e-12)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
     /// <summary>
     /// Spec section 5's cell: the lower boundary curve's sampled run
     /// between the two joints, the straight joint edge up, the upper
@@ -4993,6 +5647,57 @@ internal static class SkinPatterns
     /// each boundary curve, normalised arc length from the matching
     /// seams.
     /// </summary>
+    /// <summary>
+    /// A joint's landing on ONE boundary curve. By PROPORTIONAL ARC in the
+    /// ordinary case, which is rule 1.8.1 and is what every band away from a
+    /// seam uses; by NEAREST POINT IN PLAN inside a band the bisection
+    /// produced, which is spec 2026-09-04's own reading of rule 2.3 carried
+    /// one band outward from the closer.
+    ///
+    /// WHY THE SEAM'S OWN SUB-BANDS GET THE OTHER MAP. A proportional map
+    /// says the two curves correspond along their length, and beside a
+    /// topology change they do not: the level curve on the seam's own side
+    /// makes a long detour into the meeting region while the curve a
+    /// quarter-band away does not, so equal fractions of arc land at
+    /// different places in plan and the cell between them folds. MEASURED on
+    /// the two-hump barrel at S 0.6 and CH 0.5, whose ridge dips to 0.9 at
+    /// x = 3: the sub-bands [0.5, 0.75] and [0.75, 0.875], both products of
+    /// the bisection the seam at 0.9 forced, gave four cells the plan filter
+    /// dropped, two self-crossing and two overlapping, every one of them at
+    /// the dip. Bands the bisection never touched are untouched by this,
+    /// which is why the rule is written on Depth and not on the pattern.
+    /// </summary>
+    private static List<double[]> BoundaryRun(
+        SkinLevelCurve boundary,
+        SkinLevelCurve mid,
+        double u0,
+        double u1,
+        bool byNearestPoint)
+    {
+        if (!byNearestPoint)
+        {
+            double ratio = boundary.Length / mid.Length;
+            return Run(boundary, u0 * ratio, u1 * ratio);
+        }
+        double a0 = NearestArcInPlan(boundary, PointAt(mid, u0)) -
+            boundary.Seam;
+        double a1 = NearestArcInPlan(boundary, PointAt(mid, u1)) -
+            boundary.Seam;
+        if (boundary.Closed)
+        {
+            double half = boundary.Length / 2.0;
+            while (a1 - a0 > half)
+                a1 -= boundary.Length;
+            while (a0 - a1 > half)
+                a1 += boundary.Length;
+        }
+        if (a1 >= a0)
+            return Run(boundary, a0, a1);
+        List<double[]> backwards = Run(boundary, a1, a0);
+        backwards.Reverse();
+        return backwards;
+    }
+
     private static SkinCell BandCell(
         int course,
         SkinLevelCurve lowerCurve,
@@ -5000,14 +5705,13 @@ internal static class SkinPatterns
         SkinLevelCurve upperCurve,
         double u0,
         double u1,
-        bool clipped)
+        bool clipped,
+        bool byNearestPoint = false)
     {
-        double lowerRatio = lowerCurve.Length / mid.Length;
-        double upperRatio = upperCurve.Length / mid.Length;
-        List<double[]> lower = Run(
-            lowerCurve, u0 * lowerRatio, u1 * lowerRatio);
-        List<double[]> upper = Run(
-            upperCurve, u0 * upperRatio, u1 * upperRatio);
+        List<double[]> lower = BoundaryRun(
+            lowerCurve, mid, u0, u1, byNearestPoint);
+        List<double[]> upper = BoundaryRun(
+            upperCurve, mid, u0, u1, byNearestPoint);
         var outline = new List<double[]>(lower);
         List<double[]> back = new List<double[]>(upper);
         back.Reverse();
@@ -5083,11 +5787,27 @@ internal static class SkinPatterns
         string name,
         int skipped,
         IReadOnlyList<(double Low, double High)> transitions,
-        string fieldKind)
+        string fieldKind,
+        int closerCells = -1)
     {
         if (skipped == 0 || transitions.Count == 0)
             return null;
         string where = TransitionWhere(transitions, fieldKind);
+        if (closerCells >= 0)
+        {
+            // RULE 2.5's REMARK. Before the closer band this line said a
+            // band had been SKIPPED and the component raised it as a
+            // Warning, because a refused interval was a hole. It is not one
+            // any more: the interval is covered by the closer's own stones,
+            // and what the author needs to know is that the skin changes
+            // species there, not that it is missing.
+            return
+                $"{skipped} seam" + (skipped == 1 ? " was" : "s were") +
+                $" CLOSED with {closerCells} stone" +
+                (closerCells == 1 ? string.Empty : "s") + $" {where} " +
+                "(the level curves do not correspond across it, so the " +
+                $"{name} bond gives way to a closer band cut along the seam)";
+        }
         // "do not correspond" rather than "splits": the refusal is decided
         // on the matching, so it fires for a curve that splits, one that
         // dies, and two that swap places at an unchanged count, and the
@@ -5123,7 +5843,8 @@ internal static class SkinPatterns
         string? transitions = null,
         string? caps = null,
         int weldCollapsedDropped = 0,
-        double planCoverage = double.NaN)
+        double planCoverage = double.NaN,
+        IReadOnlyList<double[][]>? seamCurves = null)
     {
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
@@ -5171,6 +5892,22 @@ internal static class SkinPatterns
                 " per cent of the net's own plan area (the surviving " +
                 "cells are disjoint in plan, so the remainder is " +
                 "uncovered shell and not overlap)");
+        }
+        if (seamCurves is not null && seamCurves.Count > 0)
+        {
+            // RULE 1.1's own line. The seam is DATA after this wave, so the
+            // author is told how many meeting lines the net has and how long
+            // they run; the polylines themselves ride on the result's
+            // SeamCurves for anything that wants to draw them.
+            double girth = 0.0;
+            foreach (double[][] seam in seamCurves)
+            {
+                for (int at = 0; at + 1 < seam.Length; at++)
+                    girth += Distance(seam[at], seam[at + 1]);
+            }
+            lines.Add(
+                $"Seam curves: {seamCurves.Count} (the meeting lines of the " +
+                "net's anchor groups, total length " + F(girth) + " m)");
         }
         if (transitions is not null)
             lines.Add(transitions);

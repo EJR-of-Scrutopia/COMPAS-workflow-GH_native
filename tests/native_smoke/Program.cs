@@ -20910,16 +20910,47 @@ internal static class Program
                 "sub-band at depth six straddling the true split at " +
                 $"z 0.9; got {Reading<int>(built, "TransitionBands")}.");
         }
-        const string CoursesLine =
-            "Transition bands skipped: 1 (level curves do not correspond " +
-            "between z=0.898 and z=0.906; courses cannot bond across it)";
+        // CHECK 7 OF THE 2026-09-04 SEAM SPEC: TransitionBands RE-MEASURED,
+        // not relaxed. The COUNT is unchanged and still 1, and the interval
+        // is still named to the same three decimals by the same
+        // TransitionWhere: what has moved is what the count MEANS. Before
+        // the closer band a refused interval was a HOLE, the line said a
+        // band had been SKIPPED and the component raised it as a Warning.
+        // The interval is now COVERED by the closer's own stones, so the
+        // same count reports seams CLOSED, the line names how many stones
+        // closed them, and the component raises it as a Remark. The count
+        // is deliberately NOT renamed away from TransitionBands: it is the
+        // same number, of the same intervals, found by the same
+        // correspondence test, and a reader who knows where the skin
+        // changes species needs exactly that number.
+        //
+        // THE FIFTEEN is this net's own measurement and not a target. Its
+        // refused residual runs z 0.898 to 0.906 and its two bounding
+        // families are two loops below and one loop above, so the guide
+        // family is the LOWER one and each of its two curves is cut at the
+        // pattern's own pitch, P = L / max(1, round(L / 0.6)).
+        static string ClosedLine(int stones, string where) =>
+            $"1 seam was CLOSED with {stones} stones {where} (the level " +
+            "curves do not correspond across it, so the courses bond gives " +
+            "way to a closer band cut along the seam)";
+        string CoursesLine = ClosedLine(
+            15, "between z=0.898 and z=0.906");
         string diagnostics = Reading<string>(built, "Diagnostics");
         if (!diagnostics.Contains(CoursesLine, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The diagnostics must NAME the refused residual and the " +
-                $"heights it sits between: '{CoursesLine}'; got " +
-                $"'{diagnostics}'.");
+                "The diagnostics must say the refused residual was CLOSED, " +
+                "with how many stones closed it and the heights it sits " +
+                $"between: '{CoursesLine}'; got '{diagnostics}'.");
+        }
+        if (Reading<int>(built, "CloserCells") != 15 ||
+            Reading<int>(built, "ClosedSeams") != 1)
+        {
+            throw new InvalidOperationException(
+                "The record carries the same two numbers the line reads " +
+                "from, so a component can size a Remark without parsing " +
+                $"text: got {Reading<int>(built, "ClosedSeams")} seams and " +
+                $"{Reading<int>(built, "CloserCells")} stones.");
         }
         // Splitting is a PRECONDITION (rule 8.1), so band 1 now carries
         // cells everywhere but the CH/64 sliver around the true split:
@@ -21184,19 +21215,32 @@ internal static class Program
         // column, and the short-lived base chart this net's split gives
         // (two levels before the transition) now builds courses 0 and 1
         // it used to skip whole, which is where the new overlaps sit.
+        //
+        // RE-MEASURED for the 2026-09-04 seam wave, and the direction of
+        // travel is the point of rule 2.5: the courses engine's drops on
+        // this fixture go from (2, 2) to (0, 0). Both mechanisms are named.
+        // The two SELF-CROSSING cells sat in the sub-band [0.5, 0.75] and
+        // the two OVERLAPPING ones in [0.75, 0.875], every one of them at
+        // the middle dip at x = 3, which is this net's seam; both sub-bands
+        // exist only because the seam forced the bisection, and their cells
+        // folded because the proportional arc map of rule 1.8.1 puts equal
+        // fractions of two very differently detoured curves in different
+        // places in plan. Those components are now remapped by nearest point
+        // in plan, and the refused residual itself is COVERED by 22 closer
+        // stones rather than left as a hole.
         (int CoursesBuilt, int HexagonsBuilt) upright =
             RefusesTheMiddleBand(
-                "two-hump barrel", SkinTwoHumpBarrelNet(), CoursesLine,
-                (2, 2), (0, 10));
+                "two-hump barrel", SkinTwoHumpBarrelNet(),
+                ClosedLine(22, "between z=0.898 and z=0.906"),
+                (0, 0), (0, 10));
         // The split-and-death HONEYCOMB's drops are RE-MEASURED for task
         // 23 (0 self-crossing, 49 overlapping), replacing (18, 15): rule
         // 4.2.2's per-row lattice moved every column and every one of
         // this net's charts is now covered end to end (the earlier
         // "skip a chart under three rows" guard used to drop whichever
         // courses a short-lived chart alone carried).
-        const string SplitAndDeathCoursesLine =
-            "Transition bands skipped: 1 (level curves do not correspond " +
-            "between z=0.594 and z=0.602; courses cannot bond across it)";
+        string SplitAndDeathCoursesLine =
+            ClosedLine(18, "between z=0.594 and z=0.602");
         RefusesTheMiddleBand(
             "split-and-death", SkinSplitAndDeathNet(),
             SplitAndDeathCoursesLine, (0, 0), (0, 49));
@@ -21259,8 +21303,19 @@ internal static class Program
             RefusesTheMiddleBand(
                 "two-hump barrel rotated 37 degrees",
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
-                CoursesLine,
-                (4, 2),
+                ClosedLine(22, "between z=0.898 and z=0.906"),
+                // RE-MEASURED for the 2026-09-04 seam wave, from (4, 2) to
+                // (2, 0), and the two that remain are NOT at the seam. Both
+                // were located: they sit in COURSE 3, the top band, at a
+                // hump APEX, where the level curve at z 1.999998 collapses
+                // onto the apex vertex and the cell's upper run is that one
+                // point written five times over. The two SEAM-located
+                // self-crossers of course 1 and both overlaps are gone, by
+                // the remap and the closer named on the upright fixture
+                // above; the apex pair is a different defect, on a different
+                // course, and is pinned here rather than quietly folded into
+                // a claim about seams.
+                (2, 0),
                 (2, 10));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
