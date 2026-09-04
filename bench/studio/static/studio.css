@@ -719,3 +719,15 @@ body { overflow: hidden;
 #stale-server code { padding: 1px 5px; border-radius: 3px;
   background: rgba(0, 0, 0, 0.28); font-family: ui-monospace, monospace; }
 #build-stamp.stale { color: #ff8f7a; font-weight: 600; }
+
+/* The very bottom, under the three views, where a thing you press once in a
+   session belongs. It shares the mode row's sticky footer so it is always
+   reachable without scrolling a panel that is several screens long. */
+#panel-foot { position: sticky; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: var(--s2);
+  margin: 0 calc(-1 * var(--s3));
+  padding: 0 var(--s3) var(--s3); background: var(--panel-veil); }
+#panel #restart-studio { width: auto; height: var(--h-small);
+  padding: 0 var(--s2); font-size: var(--t-2); color: var(--ink-2); }
+#restart-status { color: var(--ink-3); font-size: var(--t-meta); }
+#mode-row { bottom: 44px; }

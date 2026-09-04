@@ -4687,6 +4687,59 @@ function applySurfaceControls() {
     Math.round(state.occlusion * 100);
 }
 
+// Restarting, without a terminal. The page does not reload when the socket
+// answers again -- it reloads when the BUILD it is told has changed, which
+// is the difference between "the server is up" and "the server is the one I
+// asked for". A restart that came back on the old build would put us
+// straight back in the fault this button exists to end.
+document.getElementById("restart-studio").addEventListener("click", async () => {
+  const button = document.getElementById("restart-studio");
+  const status = document.getElementById("restart-status");
+  // Asked BEFORE the restart, because both halves of "did it come back"
+  // are answers to questions about the old process.
+  let before = { build: "", pid: null };
+  try {
+    before = await (await fetch("/api/health", { cache: "no-store" })).json();
+  } catch (error) {
+    /* no answer now means no comparison later; the timeout will say so */
+  }
+  button.disabled = true;
+  status.textContent = "restarting...";
+  try {
+    await fetch("/api/restart", { method: "POST" });
+  } catch (error) {
+    // The connection dropping IS the restart, on a server that got as far
+    // as replacing itself before answering. Carry on and wait for it.
+  }
+  const deadline = Date.now() + 40000;
+  while (Date.now() < deadline) {
+    await new Promise((wake) => setTimeout(wake, 500));
+    let health = null;
+    try {
+      health = await (await fetch("/api/health", { cache: "no-store" })).json();
+    } catch (error) {
+      status.textContent = "waiting for the server...";
+      continue;
+    }
+    // A different PROCESS is what a restart produces. A different build is
+    // what an EDIT produces, and a restart with nothing changed on disk
+    // gives the first and not the second: waiting only for the build left
+    // the page saying "waiting for the new build" through a restart that
+    // had already happened.
+    const replaced = health
+      && ((health.pid && health.pid !== before.pid)
+        || (health.build && health.build !== before.build));
+    if (replaced) {
+      status.textContent = "reloading";
+      location.reload();
+      return;
+    }
+    status.textContent = "the old server is still answering...";
+  }
+  button.disabled = false;
+  status.textContent = "it did not come back; start it from the shortcut";
+});
+
 document.getElementById("material-relief").addEventListener("input", (e) => {
   state.relief = +e.target.value;
   applySurfaceControls();

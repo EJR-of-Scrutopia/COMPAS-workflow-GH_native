@@ -14,8 +14,10 @@ import json
 import re
 import shutil
 import subprocess
+import os
 import sys
 import threading
+import time
 import urllib.parse
 import uuid
 from datetime import datetime, timezone
@@ -346,6 +348,51 @@ def apply_saved_folders() -> dict:
         applied[key] = directory
     return applied
 
+
+RESTART_DELAY = 0.5
+
+
+def schedule_restart(delay: float = RESTART_DELAY) -> None:
+    """Start a fresh studio, which will stop this one.
+
+    One named function rather than a thread built inline, because anything
+    that acts after a delay cannot be made safe by replacing what it will
+    eventually call: the replacement is gone by the time it calls it. A test
+    that patched os.execv and then finished had exactly that thread wake up
+    afterwards and exec the pytest process mid-run.
+
+    SPAWN, NOT EXEC. os.execv looked right and is wrong here: Windows has no
+    exec, so the C runtime spawns and exits, and it does not carry the
+    argument list across. Pressed for real, the studio came back as a bare
+    Python REPL because the child had been given no script. execv also does
+    no quoting, and this studio lives at "...\\Ananke Eidos Studio\\VS
+    code\\...", which is two spaces from being three arguments.
+
+    The new process does not race this one for the port. It runs the same
+    launcher, and the launcher asks whatever is on the port whether it is a
+    Bench Studio and stops it. So this process is not exited here: it is
+    stopped, by name, by its own replacement.
+    """
+
+    command = [sys.executable] + sys.argv
+    working = os.getcwd()
+
+    def go():
+        time.sleep(delay)
+        try:
+            # A console of its own, because that is what the shortcut gives
+            # and where the studio's log has always been read. The old
+            # window goes when the old process does.
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            subprocess.Popen(command, cwd=working, close_fds=True,
+                             creationflags=flags)
+        except OSError as error:
+            # A failed spawn leaves this process running and healthy, which
+            # is the right way to fail: the studio the user is looking at
+            # goes on working.
+            print("could not restart: {}".format(error))
+
+    threading.Thread(target=go, daemon=True).start()
 
 def static_version() -> str:
     """A short hash of every static file's size and modification time.
@@ -752,6 +799,32 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             except ValueError:
                 problems.append({"raw": line})
         return {"problems": problems}
+
+    @app.get("/api/health")
+    def health():
+        """Who is on this port, and which build.
+
+        Two callers. portcheck asks before it stops anything, so that the
+        launcher never ends a process that has not identified itself as one
+        of ours. And the page polls it after a restart, so it reloads when
+        the BUILD has changed rather than when the socket happens to answer.
+        """
+
+        return {"studio": True, "build": static_version(),
+                "pid": os.getpid()}
+
+    @app.post("/api/restart")
+    def restart():
+        """Replace this process with a fresh one, same arguments.
+
+        The response is sent first and the replacement happens a beat later,
+        so the browser gets an answer to act on rather than a dropped
+        connection. How the replacement is done, and why it is one named
+        function rather than a thread built here, is in schedule_restart.
+        """
+
+        schedule_restart()
+        return {"restarting": True, "build": static_version()}
 
     @app.get("/api/folder")
     def folder():
