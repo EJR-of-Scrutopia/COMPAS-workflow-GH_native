@@ -21233,6 +21233,71 @@ internal static class Program
             expectedSpanExcursion: 0.0078,
             coverageExemption: 0.6112);
 
+        // ---- CHECK 1(d). THE SEAM IS DATA ON EVERY PATTERN, AND THE CLOSER
+        // IS NOT. Rule 2.1 says "in every pattern" and the closer is wired
+        // into the COURSES engine alone; a review round found the honeycomb
+        // and the force-aligned results handing back an EMPTY seam list on
+        // this net, which made a reader unable to tell a pattern without the
+        // closer from a net without a seam. The seam is a property of the NET
+        // and not of the tessellation, so all three patterns must carry the
+        // same curves and name them in D. What the other two must NOT claim
+        // is a closed seam: their ClosedSeams and CloserCells stay at zero,
+        // and rule 2.1's own deferral in the spec is what says why.
+        foreach ((string named, MethodInfo made) in new[]
+                 {
+                     ("hexagonal",
+                      RequirePublicStatic(patterns, "Hexagonal")),
+                     ("force aligned",
+                      RequirePublicStatic(
+                          patterns, "ForceAligned",
+                          netType, typeof(double), typeof(double)))
+                 })
+        {
+            object other = made.Invoke(
+                null, new object[] { crown, 0.10, 0.30 })!;
+            double[][][] carried = ((IEnumerable)other.GetType()
+                    .GetProperty("SeamCurves")!.GetValue(other)!)
+                .Cast<double[][]>()
+                .ToArray();
+            double carriedLength = 0.0;
+            foreach (double[][] seam in carried)
+            {
+                for (int at = 0; at + 1 < seam.Length; at++)
+                    carriedLength += Distance3(seam[at], seam[at + 1]);
+            }
+            if (carried.Length != seams.Length ||
+                Math.Abs(carriedLength - seamLength) > 1.0e-6)
+            {
+                throw new InvalidOperationException(
+                    $"The {named} pattern must carry the SAME seam curves " +
+                    "the net has, because the seam belongs to the net and " +
+                    $"not to the tessellation: {seams.Length} of total " +
+                    $"length {seamLength:F3} m; it carries {carried.Length} " +
+                    $"of {carriedLength:F3} m.");
+            }
+            string otherDiagnostics = (string)other.GetType()
+                .GetProperty("Diagnostics")!.GetValue(other)!;
+            if (!otherDiagnostics.Contains(
+                    "Seam curves: 1", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"And it must NAME them in D, as the courses engine " +
+                    $"does; got '{otherDiagnostics}'.");
+            }
+            int otherSeams = (int)other.GetType()
+                .GetProperty("ClosedSeams")!.GetValue(other)!;
+            int otherStones = (int)other.GetType()
+                .GetProperty("CloserCells")!.GetValue(other)!;
+            if (otherSeams != 0 || otherStones != 0)
+            {
+                throw new InvalidOperationException(
+                    $"The closer band is NOT wired into the {named} " +
+                    "pattern, which is rule 2.1's own recorded deferral, so " +
+                    "this result must claim no closed seam and no closer " +
+                    $"stone; it claims {otherSeams} and {otherStones}.");
+            }
+        }
+
         // ---- CHECK 7(b). THE TWO READINGS OF ONE SEAM, WITH NO STONE LAID.
         // A refusal the closer did not cover is still a HOLE, and both the
         // engine's diagnostics line and the component's runtime message must

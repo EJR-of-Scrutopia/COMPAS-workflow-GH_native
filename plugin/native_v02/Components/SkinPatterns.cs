@@ -4446,6 +4446,7 @@ internal static class SkinPatterns
         string? oddLine = oddLines.Count > 0
             ? string.Join("\n", oddLines)
             : null;
+        IReadOnlyList<double[][]> seams = SeamCurves(net);
         return new SkinPatternResult(
             valid,
             bands,
@@ -4484,7 +4485,8 @@ internal static class SkinPatterns
                 "pattern is the one that refuses such a band)",
                 oddLine,
                 weldCollapsed,
-                PlanCoverage(net, valid)),
+                PlanCoverage(net, valid),
+                seams),
             0,
             Array.Empty<(double Low, double High)>(),
             degenerateDropped,
@@ -4521,7 +4523,19 @@ internal static class SkinPatterns
             // drops alone reports a fraction of the truth: on Param's own
             // crown arch that is 6 of 77 against the 71 of 142 the pattern
             // actually failed to deliver.
-            bandEscaped);
+            bandEscaped)
+        {
+            // THE SEAM IS DATA ON EVERY PATTERN (spec 2026-09-04 rule 1.1),
+            // even where the CLOSER is not built. A review round found this
+            // result carrying an empty seam list on a net that demonstrably
+            // has a seam, which made rule 2.1's "in every pattern" read as
+            // done where it is not. The seam curves are a property of the
+            // NET, not of the tessellation, so every pattern carries them and
+            // the diagnostics of every pattern names them. What this pattern
+            // still does not have is the closer band itself: see the
+            // deferral recorded against rule 2.1 in the spec.
+            SeamCurves = seams
+        };
     }
 
     /// <summary>The accepted streamlines and the traced beds this pattern
@@ -6656,6 +6670,7 @@ internal static class SkinPatterns
               "(row counts change at rows " +
               string.Join(", ", countChangeRowsSorted) + ")"
             : null;
+        IReadOnlyList<double[][]> seams = SeamCurves(net);
         return new SkinPatternResult(
             cells,
             bands,
@@ -6671,7 +6686,8 @@ internal static class SkinPatterns
                     FieldKindOf(net)),
                 oddLine,
                 weldCollapsed,
-                PlanCoverage(net, cells)),
+                PlanCoverage(net, cells),
+                seams),
             skippedRows.Count,
             transitions,
             degenerateDropped,
@@ -6697,6 +6713,18 @@ internal static class SkinPatterns
             0,
             Array.Empty<double[][]>(),
             Array.Empty<double[][]>(),
-            weldCollapsed);
+            weldCollapsed)
+        {
+            // THE SEAM IS DATA HERE TOO, for the reason given at the
+            // force-aligned return: it is a property of the net and not of
+            // the tessellation, and a review round found the honeycomb
+            // handing back an empty seam list on a net that has one. The
+            // closer band is still not wired into this pattern, whose
+            // refusals are its own per-chart skippedRows against whole
+            // CH-wide gaps rather than the courses' CH/64 residual; that gap
+            // is a DEFERRAL recorded against rule 2.1 in the spec and not a
+            // silence.
+            SeamCurves = seams
+        };
     }
 }

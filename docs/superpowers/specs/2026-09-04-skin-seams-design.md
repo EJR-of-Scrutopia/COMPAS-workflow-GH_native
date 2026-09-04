@@ -27,6 +27,21 @@ species, built from the SURFACE, not from either course family, so one mechanism
 honeycomb and force-aligned alike. They are emitted at the band's own course index, so staging
 and export see ordinary cells.
 
+RULE 2.1's DEFERRAL, written in on 2026-09-04 after the first round of review and binding until
+it is lifted. "In every pattern" is NOT built. The closer is wired into the COURSES engine alone.
+The honeycomb owns a different refusal, its own per-chart ChainCorresponds and skippedRows against
+whole CH-wide level gaps rather than the courses' CH/64 residual, and it calls TransitionLine with
+no closer count; the force-aligned pattern refuses nothing at all, tiles every band and says so,
+its gate left open on the ruling that the closer would make it moot. Wiring either one means first
+gating its own refusal and then re-pinning its cell counts across the harness, and neither has a
+measured basis yet. The prize is LARGEST on the honeycomb, whose refused intervals are a whole
+course high rather than CH/64. What the two patterns do carry, from this date, is the SEAM DATA of
+rule 1.1: the seam curves are a property of the net and not of the tessellation, so every pattern
+result carries them and every pattern's diagnostics names them, and a reader can no longer mistake
+an empty seam list for a net without a seam. Until this deferral is lifted, rule 2.1 is DONE ON
+THE COURSES ENGINE and open elsewhere, and nothing in this document should be read as saying
+otherwise.
+
 RULE 2.2. HOW. Take every face whose field values straddle [band.Low, band.High]; clip each to
 the two level values (the tracer's own crossing arithmetic, reused); group the clipped polygons
 into connected components; each component is one STRIP along the seam. Cut each strip by section
