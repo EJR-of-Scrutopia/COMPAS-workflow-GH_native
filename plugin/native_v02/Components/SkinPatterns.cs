@@ -4631,9 +4631,13 @@ internal static class SkinPatterns
     /// the POINT alone and two cells sharing such a corner still get the
     /// same three doubles back.
     ///
+    /// A FACE WITH NO PLAN AREA answers the renormalised MEAN of its three
+    /// vertex normals (spec 2026-09-04 section 6), which on a vertical face
+    /// is a horizontal direction and is the whole point of the ruling.
+    ///
     /// (0, 0, 1) survives only where there is no usable face to read at
-    /// all: a net with no faces, a face with no plan area, or an
-    /// interpolated vector shorter than 1e-12.
+    /// all: a net with no faces, an interpolated vector shorter than
+    /// 1e-12, or a degenerate face whose own three normals cancel.
     /// </summary>
     public static double[] NormalAt(SkinNet net, double[] at)
     {
@@ -4666,11 +4670,40 @@ internal static class SkinPatterns
         double twice =
             ((b[0] - a[0]) * (c[1] - a[1])) -
             ((c[0] - a[0]) * (b[1] - a[1]));
-        // The same 1e-15 LevelAt refuses to divide by on the SAME triangle
-        // (see above): a plan-degenerate face carries no barycentric
-        // coordinates, and one tolerance for one geometric fact.
+        // A PLAN-DEGENERATE FACE ANSWERS WITH THE MEAN OF ITS OWN THREE
+        // VERTEX NORMALS (spec 2026-09-04, section 6). The tolerance is the
+        // same 1e-15 LevelAt refuses to divide by on the SAME triangle: one
+        // tolerance for one geometric fact, and a face of twice-plan-area
+        // 1e-16 would otherwise multiply a point's offsets by 1e16 and
+        // answer with noise.
+        //
+        // WHAT CHANGED, AND WHY IT IS A RULING AND NOT A TOLERANCE. Until
+        // 2026-09-04 this branch answered (0, 0, 1), a VERTICAL direction
+        // on a face standing EXACTLY VERTICAL, which is the one place the
+        // offset most needs a horizontal one: the offset there degraded
+        // silently to the extrusion it exists to replace. The mean is what
+        // LevelAt's own degenerate convention already does with the same
+        // triangle (it answers with the mean of its three values), so this
+        // is the sibling's rule and not a new one. Param ruled on it after
+        // it was parked as paragraph 8 of the 2026-09-03 erratum.
+        //
+        // (0, 0, 1) survives only for a net with no usable face at all: no
+        // faces, or a mean that cancels to nothing.
         if (Math.Abs(twice) <= 1.0e-15)
-            return new[] { 0.0, 0.0, 1.0 };
+        {
+            double mx = 0.0, my = 0.0, mz = 0.0;
+            foreach (int corner in triangle)
+            {
+                double[] normal = net.Normals[corner];
+                mx += normal[0];
+                my += normal[1];
+                mz += normal[2];
+            }
+            double mean = Math.Sqrt((mx * mx) + (my * my) + (mz * mz));
+            return mean > 1.0e-12
+                ? new[] { mx / mean, my / mean, mz / mean }
+                : new[] { 0.0, 0.0, 1.0 };
+        }
         double wb =
             (((at[0] - a[0]) * (c[1] - a[1])) -
              ((c[0] - a[0]) * (at[1] - a[1]))) / twice;

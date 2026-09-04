@@ -104,9 +104,11 @@ internal static class Program
                 // its wires by name, not by slot. Spec 2026-09-02
                 // (skin-thickness-input) appends Thickness and a second
                 // port at slots 5 and 6. Spec 2026-09-03
-                // (skin-offset-surface) rule 5 RENAMES that second port
-                // from 'Along Normal' to 'Offset', keeping its index so no
-                // archived wire moves.
+                // (skin-offset-surface) rule 5 renamed that second port
+                // from 'Along Normal' to 'Offset', and spec 2026-09-04
+                // (skin-offset-extrude-slider) section 2 renames it again
+                // to 'Extrude' and retypes it from a Boolean to a Number.
+                // The INDEX never moves, so no archived wire moves.
                 //
                 // CORRECTION, measured 2026-09-03. That task claimed the
                 // append "raises no warning at all". It is FALSE and the
@@ -115,7 +117,7 @@ internal static class Program
                 // against the seven registered is a reported change
                 // whatever the names do. What the append buys is the
                 // WORDING, not silence: the message names 'Thickness'
-                // and 'Offset' as appended and closes with existing wires
+                // and 'Extrude' as appended and closes with existing wires
                 // keeping their ports, instead of sending the author to
                 // check every wire. That is the shipped, correct behaviour
                 // and it is pinned as such in ValidateParameterMismatch;
@@ -124,7 +126,7 @@ internal static class Program
                     new[]
                     {
                         "Result", "Pattern", "Size", "Course Height",
-                        "Min Piece", "Thickness", "Offset"
+                        "Min Piece", "Thickness", "Extrude"
                     },
                     new[] { "Cells", "Surface" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
@@ -1281,18 +1283,43 @@ internal static class Program
 
         try
         {
+            ValidateSkinExtrudeClamp(plugin);
+            Console.WriteLine(
+                "PASS  Skin Extrude clamp (spec 2026-09-04 section 2): " +
+                "1.4 clamps to 1 and -0.2 to 0, a NaN and both infinities " +
+                "fall back to the port default of 0, each with a REMARK " +
+                "naming the clamped value; and 0, 0.5 and 1 pass through " +
+                "untouched and in silence, so the message means something " +
+                "when it comes.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin Extrude clamp: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinThicknessPorts(plugin);
             Console.WriteLine(
                 "PASS  Skin thickness ports (spec 2026-09-02, renamed by " +
-                "2026-09-03): Th and Offset are a PURE APPEND at inputs 5 " +
-                "and 6, both Optional, every earlier port's name and " +
-                "nickname unmoved; port 6 is 'Offset' ('OF') at the SAME " +
-                "INDEX 'Along Normal' held, so no archived wire moves; it " +
-                "DEFAULTS TRUE, read off its own persistent data; Th's " +
-                "description says SIGNED and ONE-SIDED and never the " +
-                "middle; and Offset's says the normal is taken AT THAT " +
-                "POINT, that cells stay welded, and that false extrudes " +
-                "by (0, 0, Th).");
+                "2026-09-03 and again by 2026-09-04): Th and Extrude are a " +
+                "PURE APPEND at inputs 5 and 6, both Optional, every " +
+                "earlier port's name and nickname unmoved; port 6 is now " +
+                "'Extrude' ('EX'), a NUMBER so a slider drops on it, at " +
+                "the SAME INDEX 'Along Normal' and then 'Offset' held, so " +
+                "no archived wire moves; it DEFAULTS 0, read off its own " +
+                "persistent data; Th's description says SIGNED and " +
+                "ONE-SIDED and never the middle; Extrude's names both ends " +
+                "in a sentence each, the normal taken AT THAT POINT and " +
+                "the cells welded at 0, the CELL'S OWN normal and GAPS " +
+                "OPEN at 1, and the clamp, and carries no word of the dead " +
+                "world-Z branch. AND THE BOOLEAN CAST IS MEASURED THROUGH " +
+                "THE PORT ITSELF, not assumed: a real GH_Boolean pushed " +
+                "into this param arrives as a GH_Number reading 0 for " +
+                "False and 1 for True, so Param's archived toggle at False " +
+                "lands on the new default untouched and his canvas loses " +
+                "no wire.");
         }
         catch (Exception exception)
         {
@@ -1304,22 +1331,27 @@ internal static class Program
         {
             ValidateSkinThicknessOffset(plugin);
             Console.WriteLine(
-                "PASS  Skin thickness offset (spec 2026-09-03, checks 3, " +
-                "4 and 5): Offset FALSE is the constant (0, 0, Th) at " +
-                "every point of the net and adds it to every corner of an " +
-                "outline, sign for sign, so the extrude branch is " +
-                "reproduced without regression; Offset TRUE on the dome's " +
-                "45 degree flank carries a real horizontal component of " +
-                "length exactly |Th|, which an engine reading the flag " +
-                "and extruding anyway cannot; a negative Th MIRRORS a " +
-                "positive one about the solved surface point for point, " +
-                "in both branches, and the corner moves the FULL Th " +
-                "rather than half of it, so the solved surface is a face " +
-                "and never the middle of the stone; and Th = 0, negative " +
-                "zero included, asks for NO thickening at all while any " +
-                "nonzero value however small asks for one, a NaN or an " +
-                "infinity asking for none either, since NaN compares equal " +
-                "to nothing and a bare inequality would carry it in.");
+                "PASS  Skin thickness offset (spec 2026-09-04 checks 3 and " +
+                "4; spec 2026-09-03 checks 3 and 5): NO OFFSET ANYWHERE ON " +
+                "THE DOME'S 45 DEGREE FLANK IS WORLD Z, at Th positive, " +
+                "negative and large and at four stops of the slider, which " +
+                "is what stands where the deleted extrude-branch pin " +
+                "stood; the blend is RENORMALISED, so a corner moves " +
+                "exactly |Th| at 0, 0.25, 0.5, 0.75 and 1, which an " +
+                "interpolation of the two translations rather than the two " +
+                "directions gets right at both ends and wrong between " +
+                "them; the top ring is CONGRUENT to the bottom at Extrude " +
+                "1, pairwise distance for pairwise distance to 1e-9, and " +
+                "measurably NOT congruent at 0 on the same curved cell; a " +
+                "negative Th MIRRORS a positive one about the solved " +
+                "surface point for point at every stop, and the corner " +
+                "moves the FULL Th rather than half of it, so the solved " +
+                "surface is a face and never the middle of the stone; and " +
+                "Th = 0, negative zero included, asks for NO thickening at " +
+                "all while any nonzero value however small asks for one, a " +
+                "NaN or an infinity asking for none either, since NaN " +
+                "compares equal to nothing and a bare inequality would " +
+                "carry it in.");
         }
         catch (Exception exception)
         {
@@ -1358,6 +1390,30 @@ internal static class Program
 
         try
         {
+            ValidateSkinTopByBottomRoute(plugin);
+            Console.WriteLine(
+                "PASS  Skin TOP BY ITS BOTTOM'S ROUTE (spec 2026-09-04 " +
+                "section 5, check 8): TopTakesLoft is the ONE predicate " +
+                "both faces read the route off, and it answers two-or-more " +
+                "sections on every cell of the force-aligned barrel; a " +
+                "loft-route cell hands back ONE MOVED RAIL PER SECTION, " +
+                "point for point, every point moved exactly |Th| at " +
+                "Extrude 0, 0.5 and 1, where a fan-route cell hands back " +
+                "no rails at all and fans as it always did; and every " +
+                "section point that IS an outline corner moves to the " +
+                "outline's own moved corner BIT FOR BIT, so the lofted top " +
+                "stands on the wall quads rather than over them. The fan " +
+                "over a lofted bottom is the triangulated crust in Param's " +
+                "screenshot and it is gone.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin top by bottom's route: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinFieldOrientation(plugin);
             Console.WriteLine(
                 "PASS  Skin field ORIENTATION (spec 2026-09-04 section 4, " +
@@ -1383,15 +1439,19 @@ internal static class Program
         {
             ValidateSkinOffsetWeld(plugin);
             Console.WriteLine(
-                "PASS  Skin offset WELD (spec 2026-09-03, check 1, the " +
-                "check the whole change exists for): on the curved dome, " +
-                "every pair of cells that shares an outline corner AND " +
-                "whose own Newell normals differ by more than 0.1 rad " +
-                "offsets that corner to the same point to 1e-12. The " +
-                "pairs are refused unless they genuinely disagree, so a " +
-                "per-cell offset cannot pass this, and the separation the " +
-                "DELETED per-cell offset would have opened is printed " +
-                "beside it.");
+                "PASS  Skin offset WELD and SPLIT (spec 2026-09-03 check " +
+                "1; spec 2026-09-04 rule 3.3, check 2): on the curved " +
+                "dome, every pair of cells that shares an outline corner " +
+                "AND whose own Newell normals differ by more than 0.1 rad " +
+                "offsets that corner to the same point to 1e-12 AT EXTRUDE " +
+                "0, and the split GROWS STRICTLY at every quarter of the " +
+                "slider from there, which is the design and not a defect: " +
+                "the weld lives at 0 alone, and the gaps at 1 are the " +
+                "extrusion. The pairs are refused unless they genuinely " +
+                "disagree, so an engine that offset at every t fails the " +
+                "growth and one that extruded at every t fails the weld; " +
+                "the separation the DELETED per-cell Newell offset would " +
+                "have opened is printed beside both.");
         }
         catch (Exception exception)
         {
@@ -1410,12 +1470,12 @@ internal static class Program
                 "and WallQuadDegenerate refuses it, the same edge offset " +
                 "along a horizontal normal gives a proper rectangle, and " +
                 "an ordinary rectangle is not condemned. Counted over four " +
-                "fixtures the OFFSET branch never annihilates MORE walls " +
-                "than the extrusion, which is a one-way guard and not a " +
-                "demonstration: on every one of them the count is ZERO " +
-                "both ways, so check 2's own claim, a cell refused under " +
-                "OFF and built under ON, is DEFERRED below rather than " +
-                "claimed here. The counts printed above are a LOWER BOUND " +
+                "fixtures at BOTH ENDS OF THE SLIDER the count is ZERO " +
+                "everywhere, so check 2's own claim, a cell refused at one " +
+                "end and built at the other, is DEFERRED below rather than " +
+                "claimed here; the old one-way guard is deleted with the " +
+                "world-Z branch whose asymmetry was its whole argument. " +
+                "The counts printed above are a LOWER BOUND " +
                 "on the thickener's refusals: no Brep runs in this " +
                 "process, so the rest is Param's Rhino-side number.");
         }
@@ -1431,13 +1491,14 @@ internal static class Program
             ValidateSkinThickenReach(plugin);
             Console.WriteLine(
                 "PASS  Skin thickened solid, THE REACHABLE HALF ONLY: " +
-                "ThickenCellSurface takes the face, the outline, the NET, " +
-                "Th and the flag in the order " +
-                "scripts/rhino_skin_surface.py " +
+                "ThickenCellSurface takes the face, the outline, the " +
+                "cell's SECTIONS, the NET, Th and the Extrude slider in " +
+                "the order scripts/rhino_skin_surface.py " +
                 "binds, refuses an outline under three corners with a " +
-                "null before the face is touched, and DEREFERENCES its " +
-                "face on a valid outline, which is what tells the " +
-                "shipped body from a body replaced by 'return face;'. " +
+                "null before any Brep call, and on a valid outline goes " +
+                "on into one and throws where the native core will not " +
+                "load, which is what tells the shipped body from a body " +
+                "replaced by 'return face;'. " +
                 "NOT PROVED HERE and not provable here: that the result " +
                 "is watertight, that it is oriented outward, or that two " +
                 "neighbours' walls coincide. RhinoCommon's native core " +
@@ -2244,7 +2305,7 @@ internal static class Program
                 + "still closes check-every-wire; Frame's pure append names "
                 + "'Anchor Lines' and closes with existing wires keeping "
                 + "their ports instead, and SKIN's own five-to-seven append "
-                + "names 'Thickness' and 'Offset' the same way, which "
+                + "names 'Thickness' and 'Extrude' the same way, which "
                 + "withdraws the thickness task's claim that its two new "
                 + "inputs raise no warning at all: they raise one, and it is "
                 + "the right one. SideMoved, which Export's Live hold reads, "
@@ -6630,7 +6691,7 @@ internal static class Program
         string[] skinRegistered =
         {
             "Result", "Pattern", "Size", "Course Height", "Min Piece",
-            "Thickness", "Offset"
+            "Thickness", "Extrude"
         };
         string? skinAppended = Ask(
             skinArchived,
@@ -6642,7 +6703,7 @@ internal static class Program
                 "5 inputs and 2 outputs archived", StringComparison.Ordinal) ||
             !skinText.Contains("7 and 2 registered", StringComparison.Ordinal) ||
             !skinText.Contains("'Thickness'", StringComparison.Ordinal) ||
-            !skinText.Contains("'Offset'", StringComparison.Ordinal) ||
+            !skinText.Contains("'Extrude'", StringComparison.Ordinal) ||
             !skinText.Contains("were appended", StringComparison.Ordinal) ||
             !skinText.Contains(
                 "existing wires kept their ports", StringComparison.Ordinal) ||
@@ -6651,7 +6712,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "Skin's five inputs against the seven it registers since "
                 + "the thickness task IS reported, and the report must "
-                + "name both counts, name 'Thickness' and 'Offset' "
+                + "name both counts, name 'Thickness' and 'Extrude' "
                 + "as appended, say existing wires kept their ports, and "
                 + "never send the author to check every wire. The task "
                 + "that added those ports claimed no warning is raised at "
@@ -25306,6 +25367,256 @@ internal static class Program
     }
 
     /// <summary>
+    /// SPEC 2026-09-04 SECTION 5, AND CHECK 8 OF ITS SECTION 8: THE TOP
+    /// FACE IS BUILT BY ITS OWN BOTTOM'S ROUTE.
+    ///
+    /// WHAT WAS WRONG. Under the offset the top face was built as a FAN
+    /// whatever the bottom was, so a LOFT-route cell got a triangulated
+    /// crust over a lofted floor. That is the crust in Param's screenshot,
+    /// and it is the leading suspect for his 148 refusals: a fan's straight
+    /// chords and a loft's rails do not share a boundary, so the two cannot
+    /// join at the 1e-6 the join is asked for, and that would refuse EVERY
+    /// cell of the loft route rather than a scattering, which fits 148 of
+    /// 262 far better than any vertical edge does.
+    ///
+    /// WHAT IS MEASURED HERE, since Brep face counts need Rhino and this
+    /// process has no native core. The ROUTE ITSELF, off the two statics
+    /// the builder reads it through. TopTakesLoft is the one predicate both
+    /// faces read (CellSurface calls it too), so a top and a bottom cannot
+    /// disagree about the route without this going red. MovedSections is
+    /// the top's own rails: it returns one rail per section, each of the
+    /// section's own length, or null where the cell is not a loft at all
+    /// and the fan is right.
+    ///
+    /// AND THE RAILS MEET THE WALLS, which is the whole reason the route
+    /// matters: every point a section shares with the OUTLINE moves to the
+    /// same place the outline moves it, bit for bit, so the top's boundary
+    /// stands exactly on the wall quads built off that outline. A rail that
+    /// computed its own cell normal, rather than taking the one the outline
+    /// used, fails here and nowhere else.
+    /// </summary>
+    private static void ValidateSkinTopByBottomRoute(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo takesLoft = RequireStatic(skinType, "TopTakesLoft");
+        MethodInfo movedSections = RequireStatic(skinType, "MovedSections");
+        MethodInfo cellNormalMethod = RequireStatic(skinType, "CellNormal");
+        MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned",
+            netType, typeof(double), typeof(double), typeof(double));
+
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(),
+            SkinBarrelArchForces());
+        object generated = forceAligned.Invoke(
+            null, new object[] { net, 0.6, 0.5, 1.0 / 3.0 })!;
+
+        const double Th = 0.29;
+        int lofted = 0;
+        int fanned = 0;
+        int railsCounted = 0;
+        int sharedCorners = 0;
+        IList cellObjects = (IList)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        foreach (object? boxed in cellObjects)
+        {
+            object cell = boxed!;
+            object? sections = cell.GetType()
+                .GetProperty("Sections")!.GetValue(cell);
+            var outline = new List<double[]>();
+            foreach (object? item in (IEnumerable)cell.GetType()
+                         .GetProperty("Outline")!.GetValue(cell)!)
+            {
+                outline.Add((double[])item!);
+            }
+            bool loft = (bool)takesLoft.Invoke(
+                null, new object?[] { sections })!;
+            // THE PREDICATE IS THE SPEC'S OWN GATE, recomputed here so that
+            // a defect in the engine's reading and a defect in this check
+            // cannot cancel: two or more sections lofts, anything else fans.
+            int sectionCount =
+                sections is null ? 0 : ((IList)sections).Count;
+            if (loft != sectionCount >= 2)
+            {
+                throw new InvalidOperationException(
+                    "TopTakesLoft is the ONE predicate the bottom face and " +
+                    "the top face read the route off, and it is two or " +
+                    $"more sections: this cell carries {sectionCount} and " +
+                    $"the predicate answered {loft}.");
+            }
+
+            double[] cellNormal = (double[])cellNormalMethod.Invoke(
+                null, new object?[] { net, outline })!;
+            foreach (double extrude in new[] { 0.0, 0.5, 1.0 })
+            {
+                object? moved = movedSections.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        net, sections, cellNormal, Th, extrude
+                    });
+                if (!loft)
+                {
+                    if (moved is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "A cell whose BOTTOM is a fan has no rails to " +
+                            "loft, so MovedSections answers null and the " +
+                            "top fans over the moved outline; it answered " +
+                            "with rails at Extrude " + extrude + ".");
+                    }
+                    continue;
+                }
+                if (moved is null)
+                {
+                    throw new InvalidOperationException(
+                        "A cell whose BOTTOM is a LOFT must loft its top " +
+                        $"from its own moved rails (spec section 5); at " +
+                        $"Extrude {extrude} MovedSections answered null, " +
+                        "so the top falls back to a FAN and the " +
+                        "triangulated crust is back.");
+                }
+                var rails = (IList)moved;
+                var sectionList = (IList)sections!;
+                if (rails.Count != sectionList.Count)
+                {
+                    throw new InvalidOperationException(
+                        "The top carries ONE RAIL PER SECTION, so its loft " +
+                        "has the bottom's own structure: " +
+                        $"{sectionList.Count} sections gave {rails.Count} " +
+                        "rails.");
+                }
+                for (int at = 0; at < rails.Count; at++)
+                {
+                    var section =
+                        ((IList)sectionList[at]!).Cast<double[]>().ToArray();
+                    var rail =
+                        ((IList)rails[at]!).Cast<double[]>().ToArray();
+                    if (rail.Length != section.Length)
+                    {
+                        throw new InvalidOperationException(
+                            $"Rail {at} carries its own section's points, " +
+                            $"one for one: {section.Length} points gave " +
+                            $"{rail.Length}.");
+                    }
+                    if (extrude == 0.0)
+                        railsCounted++;
+                    for (int point = 0; point < rail.Length; point++)
+                    {
+                        double span = Math.Sqrt(
+                            Math.Pow(rail[point][0] - section[point][0], 2) +
+                            Math.Pow(rail[point][1] - section[point][1], 2) +
+                            Math.Pow(rail[point][2] - section[point][2], 2));
+                        if (Math.Abs(span - Th) > 1.0e-12)
+                        {
+                            throw new InvalidOperationException(
+                                "Every point of every rail moves by |Th| " +
+                                $"like every outline corner: rail {at} " +
+                                $"point {point} moved {span} at Extrude " +
+                                $"{extrude}, where |Th| is {Th}.");
+                        }
+                    }
+                }
+            }
+
+            if (!loft)
+            {
+                fanned++;
+                continue;
+            }
+            lofted++;
+
+            // ---- THE RAILS MEET THE WALLS. Every point a section shares
+            // with the OUTLINE must move to the same place the outline's
+            // own move sends it, or the top's boundary stands off the wall
+            // quads built on that outline and the join is refused.
+            var movedOutline = new List<double[]>();
+            foreach (object? item in (IEnumerable)outlineMethod.Invoke(
+                         null, new object?[] { net, outline, Th, 0.0 })!)
+            {
+                movedOutline.Add((double[])item!);
+            }
+            var movedRails = (IList)movedSections.Invoke(
+                null,
+                new object?[]
+                {
+                    net, sections, cellNormal, Th, 0.0
+                })!;
+            var sectionsList = (IList)sections!;
+            for (int at = 0; at < movedRails.Count; at++)
+            {
+                var section =
+                    ((IList)sectionsList[at]!).Cast<double[]>().ToArray();
+                var rail =
+                    ((IList)movedRails[at]!).Cast<double[]>().ToArray();
+                for (int point = 0; point < section.Length; point++)
+                {
+                    for (int corner = 0; corner < outline.Count; corner++)
+                    {
+                        if (section[point][0] != outline[corner][0] ||
+                            section[point][1] != outline[corner][1] ||
+                            section[point][2] != outline[corner][2])
+                        {
+                            continue;
+                        }
+                        sharedCorners++;
+                        for (int axis = 0; axis < 3; axis++)
+                        {
+                            if (rail[point][axis] !=
+                                movedOutline[corner][axis])
+                            {
+                                throw new InvalidOperationException(
+                                    "A point the SECTION shares with the " +
+                                    "OUTLINE must move to the same place " +
+                                    "both ways, or the lofted top stands " +
+                                    "off the wall quads built on that " +
+                                    $"outline: rail {at} point {point} " +
+                                    $"axis {axis} went to " +
+                                    $"{rail[point][axis]} where the " +
+                                    "outline sent the same corner to " +
+                                    $"{movedOutline[corner][axis]}. The " +
+                                    "rails must take the cell normal the " +
+                                    "outline used and not one of their " +
+                                    "own.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (lofted == 0 || fanned == 0)
+        {
+            throw new InvalidOperationException(
+                "Both arms of the route must be measured on real cells, or " +
+                "this check passes on nothing: the force-aligned barrel " +
+                $"gave {lofted} loft-route cells and {fanned} fan-route " +
+                "cells.");
+        }
+        if (sharedCorners == 0)
+        {
+            throw new InvalidOperationException(
+                "No section point on any cell coincides with an outline " +
+                "corner, so the claim that the lofted top meets the walls " +
+                "was measured on nothing.");
+        }
+        Console.WriteLine(
+            $"      Skin top by bottom's route (section 5): {lofted} " +
+            $"loft-route cells and {fanned} fan-route cells on the " +
+            $"force-aligned barrel; the loft cells hand back {railsCounted} " +
+            "moved rails, one per section and point for point, every point " +
+            $"moved exactly {Th} m at Extrude 0, 0.5 and 1, and the " +
+            $"{sharedCorners} section points that ARE outline corners move " +
+            "to the outline's own moved corner bit for bit, so the top " +
+            "stands on the walls.");
+    }
+
+    /// <summary>
     /// Check 12.7(c), which is the operative half of Param's ruling of
     /// 2026-09-01 and therefore a check and not a nicety. He made the
     /// seam-outward ruling believing it fed the studio's build sequence; he
@@ -25464,6 +25775,85 @@ internal static class Program
     }
 
     /// <summary>
+    /// SPEC 2026-09-04 SECTION 2's CLAMP: Extrude runs 0 to 1 and a value
+    /// outside is clamped with a REMARK NAMING THE CLAMP, so an author who
+    /// drove a slider past its own end reads what the component actually
+    /// used rather than watching the geometry not move.
+    ///
+    /// A NON-FINITE VALUE falls back to the port default of 0, and it is
+    /// clamped rather than let through: NaN compares equal to nothing, so a
+    /// guard written the other way round would carry it into the blend,
+    /// where every direction becomes NaN and every cell is lost with no
+    /// reason given. That is exactly the defect Th's own finite guard
+    /// exists for, and it is written the same way here.
+    /// </summary>
+    private static void ValidateSkinExtrudeClamp(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo clamp = RequireStatic(skinType, "ClampExtrude");
+
+        double Clamped(double asked, out bool flagged, out string message)
+        {
+            object?[] arguments = { asked, null, null };
+            double answer = (double)clamp.Invoke(null, arguments)!;
+            flagged = (bool)arguments[1]!;
+            message = (string)arguments[2]!;
+            return answer;
+        }
+
+        foreach ((double asked, double wanted) in
+                 new[]
+                 {
+                     (1.4, 1.0), (-0.2, 0.0), (double.NaN, 0.0),
+                     (double.PositiveInfinity, 0.0),
+                     (double.NegativeInfinity, 0.0)
+                 })
+        {
+            double got = Clamped(asked, out bool flagged, out string message);
+            if (got != wanted)
+            {
+                throw new InvalidOperationException(
+                    $"Extrude {asked} clamps to {wanted} (spec 2026-09-04 " +
+                    $"section 2); it gave {got}.");
+            }
+            if (!flagged)
+            {
+                throw new InvalidOperationException(
+                    $"A clamped Extrude raises a REMARK; {asked} was " +
+                    "clamped in silence, and an author cannot see a number " +
+                    "the component quietly changed. A NaN is here because " +
+                    "it compares equal to nothing, so a guard written the " +
+                    "other way round carries it into the blend and loses " +
+                    "every cell with no reason given.");
+            }
+            if (!message.Contains(
+                    wanted.ToString("F3", CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Remark NAMES the clamped value, so the author " +
+                    $"reads what the component is using; it said " +
+                    $"'{message}'.");
+            }
+        }
+
+        // AND A VALUE INSIDE THE RANGE IS LEFT ALONE AND SAYS NOTHING. A
+        // clamp that fired on every solve would train the author to ignore
+        // the message, which is worse than no message at all.
+        foreach (double asked in new[] { 0.0, 0.5, 1.0 })
+        {
+            double got = Clamped(asked, out bool flagged, out string message);
+            if (got != asked || flagged || message.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Extrude {asked} is inside 0 to 1 and must pass " +
+                    $"through untouched and in silence; it gave {got}, " +
+                    $"flagged {flagged}, saying '{message}'.");
+            }
+        }
+    }
+
+    /// <summary>
     /// Spec 2026-09-02 (skin-thickness-input): Th and the port beside it
     /// are a PURE APPEND after Min Piece. Every earlier port keeps its own
     /// name, nickname and position exactly, so a definition saved before
@@ -25481,15 +25871,26 @@ internal static class Program
     /// behaviour and it is pinned in ValidateParameterMismatch; the
     /// silence claim is withdrawn.
     ///
-    /// RENAMED 2026-09-03 (skin-offset-surface, rule 5). Port 6 was "Along
-    /// Normal" ("N") and defaulted FALSE. It named the direction of an
-    /// EXTRUSION, when what was asked for was the choice between an OFFSET
-    /// SURFACE and an extrusion. It is now "Offset" ("OF") and defaults
-    /// TRUE. THE INDEX DOES NOT MOVE, which is the whole reason a rename
-    /// is safe here: no archived wire changes port. The DEFAULT is
-    /// asserted below because the flip is the visible half of the ruling,
-    /// a component dropped fresh gets the offset surface, and a default
-    /// left at false would ship the old behaviour under the new name.
+    /// RENAMED TWICE. Port 6 was "Along Normal" ("N"), a Boolean defaulting
+    /// FALSE, and named the direction of an EXTRUSION. Spec 2026-09-03 made
+    /// it "Offset" ("OF"), a Boolean defaulting TRUE, and named the choice
+    /// between an offset surface and an extrusion. Spec 2026-09-04 makes it
+    /// "Extrude" ("EX"), a NUMBER from 0 to 1 defaulting 0, because the
+    /// choice was really a range: "I want to take this a step further and
+    /// do a slider 0-1.00 ... That means we can remove the button and put
+    /// in this slider."
+    ///
+    /// THE INDEX DOES NOT MOVE, which is the whole reason a rename is safe
+    /// here: no archived wire changes port. THE DEFAULT IS 0, the offset
+    /// surface and the finished shell, and it is read off the port's own
+    /// persistent data rather than trusted.
+    ///
+    /// AND THE BOOLEAN CAST IS MEASURED, not assumed, because Param's
+    /// canvas carries a toggle wired to this very port. A GH_Boolean is
+    /// pushed through THIS component's port 6 and the number that comes
+    /// out the other side is read: False must read 0 and True must read 1,
+    /// or his archived toggle at False lands somewhere other than the new
+    /// default and the wire is a casualty of this change.
     /// </summary>
     private static void ValidateSkinThicknessPorts(Assembly plugin)
     {
@@ -25508,7 +25909,7 @@ internal static class Program
             ("Course Height", "CH"),
             ("Min Piece", "MP"),
             ("Thickness", "Th"),
-            ("Offset", "OF")
+            ("Extrude", "EX")
         };
         if (inputs.Count != expected.Length)
         {
@@ -25532,23 +25933,23 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"Input {at} must be '{expected[at].Name}' " +
                     $"('{expected[at].NickName}'); got '{name}' " +
-                    $"('{nick}'). Th and Offset must be a PURE APPEND at " +
-                    "5 and 6, so every earlier port keeps its own name, " +
-                    "nickname and position, and Offset keeps the INDEX " +
+                    $"('{nick}'). Th and Extrude must be a PURE APPEND " +
+                    "at 5 and 6, so every earlier port keeps its own name, " +
+                    "nickname and position, and Extrude keeps the INDEX " +
                     "'Along Normal' held rather than moving.");
             }
         }
 
         object thPort = inputs[5]!;
-        object offsetPort = inputs[6]!;
+        object extrudePort = inputs[6]!;
         bool ThOptional() => (bool)thPort.GetType()
             .GetProperty("Optional")!.GetValue(thPort)!;
-        bool OffsetOptional() => (bool)offsetPort.GetType()
-            .GetProperty("Optional")!.GetValue(offsetPort)!;
-        if (!ThOptional() || !OffsetOptional())
+        bool ExtrudeOptional() => (bool)extrudePort.GetType()
+            .GetProperty("Optional")!.GetValue(extrudePort)!;
+        if (!ThOptional() || !ExtrudeOptional())
         {
             throw new InvalidOperationException(
-                "Th and Offset must both be Optional, like every " +
+                "Th and Extrude must both be Optional, like every " +
                 "port after Result: a definition saved before this task " +
                 "supplies neither, and an unwired required input would " +
                 "refuse to solve at all.");
@@ -25579,59 +25980,168 @@ internal static class Program
                 "not. Got: " + thText);
         }
 
-        string offsetText = (string)offsetPort.GetType()
-            .GetProperty("Description")!.GetValue(offsetPort)!;
-        // Rule 5's two branches, each in its own words. "AT THAT POINT" is
-        // the load-bearing half of the true branch: a description that
-        // said only "along the normal" would read exactly as the deleted
-        // Along Normal did, and the whole change is that the normal
-        // belongs to the point rather than to the cell.
+        // ---- THE PORT IS A NUMBER NOW, not a Boolean. The type is what
+        // makes a slider droppable on it at all, and it is what makes the
+        // Boolean cast below a cast rather than an identity.
+        string extrudeTypeName = extrudePort.GetType().FullName ?? string.Empty;
+        if (extrudeTypeName != "Grasshopper.Kernel.Parameters.Param_Number")
+        {
+            throw new InvalidOperationException(
+                "Extrude is a NUMBER port (spec 2026-09-04 section 2), so " +
+                "an author can drop a slider on it; it is registered as " +
+                $"{extrudeTypeName}.");
+        }
+
+        string extrudeText = (string)extrudePort.GetType()
+            .GetProperty("Description")!.GetValue(extrudePort)!;
+        // The spec asks for both ends in one sentence each and the GAP
+        // behaviour named at 1. "AT THAT POINT" is the load-bearing half of
+        // the 0 end: a description that said only "along the normal" would
+        // read exactly as the deleted Along Normal did, and the change of
+        // 2026-09-03 was that the normal belongs to the point.
         foreach ((string fragment, string why) in new[]
                  {
                      ("AT THAT POINT",
-                         "the true branch's normal belongs to the POINT " +
-                         "and not to the cell, which is the whole change"),
+                         "the 0 end's normal belongs to the POINT and not " +
+                         "to the cell, which is what keeps the skin welded"),
                      ("welded",
-                         "the true branch's consequence is that cells " +
-                         "sharing a corner stay welded"),
-                     ("(0, 0, Th)",
-                         "the false branch names the vertical extrusion " +
-                         "it actually performs")
+                         "the 0 end's consequence is that cells sharing a " +
+                         "corner stay welded"),
+                     ("OWN normal",
+                         "the 1 end extrudes each cell along the CELL'S " +
+                         "own normal, which is what makes the block a " +
+                         "rigid translation of its cell"),
+                     ("GAPS OPEN",
+                         "the 1 end's gaps are what an author must read " +
+                         "before he slides there, and they are the design " +
+                         "rather than a defect"),
+                     ("clamped",
+                         "a value outside 0 to 1 is clamped, and the port " +
+                         "says so where the author is looking")
                  })
         {
-            if (!offsetText.Contains(fragment, StringComparison.Ordinal))
+            if (!extrudeText.Contains(fragment, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Offset's description must carry '{fragment}', " +
-                    $"because {why}. Got: " + offsetText);
+                    $"Extrude's description must carry '{fragment}', " +
+                    $"because {why}. Got: " + extrudeText);
             }
         }
-        // THE DEFAULT FLIPPED, and it is read off the port's own
-        // persistent data rather than trusted: a component dropped fresh
-        // must build the offset surface. Left at false the old behaviour
-        // would ship under the new name and nothing else here would
-        // notice.
-        object persistent = offsetPort.GetType()
-            .GetProperty("PersistentData")!.GetValue(offsetPort)!;
-        var defaults = new List<bool>();
+        // AND IT MAY NOT DESCRIBE THE DEAD WORLD-Z BRANCH. The (0, 0, Th)
+        // extrusion is deleted (spec 2026-09-04 section 1), and a port
+        // still describing it would send an author looking for a mode the
+        // engine no longer has.
+        foreach (string dead in new[] { "(0, 0, Th)", "world Z", "vertical" })
+        {
+            if (extrudeText.Contains(dead, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The world-Z branch is DELETED, so no port may still " +
+                    $"describe it; Extrude's description carries '{dead}'. " +
+                    "Got: " + extrudeText);
+            }
+        }
+        // THE DEFAULT IS 0, the offset surface and the finished shell,
+        // read off the port's own persistent data rather than trusted. A
+        // default of 1 would ship the gapping extrusion to every component
+        // dropped fresh.
+        object persistent = extrudePort.GetType()
+            .GetProperty("PersistentData")!.GetValue(extrudePort)!;
+        var defaults = new List<double>();
         foreach (object? item in (IEnumerable)persistent.GetType()
                      .GetMethod("AllData")!
                      .Invoke(persistent, new object[] { true })!)
         {
             if (item is null)
                 continue;
-            defaults.Add((bool)item.GetType()
+            defaults.Add((double)item.GetType()
                 .GetProperty("Value")!.GetValue(item)!);
         }
-        if (defaults.Count != 1 || !defaults[0])
+        if (defaults.Count != 1 || defaults[0] != 0.0)
         {
             throw new InvalidOperationException(
-                "Offset must default to TRUE (rule 5): a component " +
-                "dropped fresh gets the offset surface, and Param flips " +
-                "his one archived toggle by hand. The port carries " +
+                "Extrude must default to 0 (spec 2026-09-04 section 2): " +
+                "the offset surface, the finished shell. The port carries " +
                 $"{defaults.Count} default value(s)" +
                 (defaults.Count == 1 ? $", and it is {defaults[0]}" : "") +
                 ".");
+        }
+
+        // ---- CHECK 6 OF SECTION 8: THE BOOLEAN CAST, MEASURED THROUGH
+        // THIS PORT AND NOT ASSUMED. Param's canvas carries a toggle wired
+        // to index 6, and whether that wire survives this change is a
+        // question about Grasshopper's own casting rules rather than about
+        // this engine. So a real GH_Boolean is pushed into a fresh
+        // instance of this very param type, through AddVolatileData, the
+        // door a wire's data comes in by, and the goo that comes back out
+        // is read.
+        Type paramType = extrudePort.GetType();
+        Type ghBoolean = paramType.Assembly.GetType(
+            "Grasshopper.Kernel.Types.GH_Boolean")
+            ?? throw new InvalidOperationException(
+                "Grasshopper.Kernel.Types.GH_Boolean is not in the " +
+                "assembly the Skin ports are built from, so the cast " +
+                "cannot be measured at all.");
+        Type ghPath = paramType.Assembly.GetType(
+            "Grasshopper.Kernel.Data.GH_Path")!;
+        foreach ((bool given, double wanted) in
+                 new[] { (false, 0.0), (true, 1.0) })
+        {
+            object port = Activator.CreateInstance(paramType)!;
+            object path = Activator.CreateInstance(ghPath, new object[] { 0 })!;
+            object boolean =
+                Activator.CreateInstance(ghBoolean, new object[] { given })!;
+            MethodInfo add = paramType.GetMethod(
+                "AddVolatileData",
+                new[] { ghPath, typeof(int), typeof(object) })
+                ?? throw new InvalidOperationException(
+                    "IGH_Param.AddVolatileData(GH_Path, int, object) is " +
+                    "the door a wire's data comes through; it is not on " +
+                    "this port.");
+            bool accepted =
+                (bool)add.Invoke(port, new object?[] { path, 0, boolean })!;
+            object volatileData =
+                paramType.GetProperty("VolatileData")!.GetValue(port)!;
+            var read = new List<object>();
+            foreach (object? item in (IEnumerable)volatileData.GetType()
+                         .GetMethod("AllData")!
+                         .Invoke(volatileData, new object[] { true })!)
+            {
+                if (item is not null)
+                    read.Add(item);
+            }
+            if (!accepted || read.Count != 1)
+            {
+                throw new InvalidOperationException(
+                    $"A GH_Boolean({given}) supplied to the Extrude port " +
+                    $"was {(accepted ? "accepted" : "REFUSED")} and left " +
+                    $"{read.Count} item(s) of volatile data. THE CANVAS " +
+                    "CASUALTY: Param's canvas carries a toggle wired to " +
+                    "this very index, and a Boolean that will not go " +
+                    "through a Number port means that one wire must be " +
+                    "replaced by hand.");
+            }
+            object goo = read[0];
+            if (goo.GetType().Name != "GH_Number")
+            {
+                throw new InvalidOperationException(
+                    $"A GH_Boolean({given}) through the Extrude port must " +
+                    "arrive as a GH_Number; it arrived as " +
+                    $"{goo.GetType().Name}, so nothing here measured a " +
+                    "cast at all.");
+            }
+            double value =
+                (double)goo.GetType().GetProperty("Value")!.GetValue(goo)!;
+            if (value != wanted)
+            {
+                throw new InvalidOperationException(
+                    $"A GH_Boolean({given}) reads {value} through the " +
+                    $"Extrude port, where {wanted} is what the new " +
+                    "semantics need: False is the offset surface at 0 and " +
+                    "True the extrusion at 1, so Param's archived toggle " +
+                    "sitting at False lands on the new default without " +
+                    "his touching it.");
+            }
         }
     }
 
@@ -25647,10 +26157,19 @@ internal static class Program
     /// scripts/rhino_skin_surface.py, run inside Rhino, the way
     /// CellSurface's own Brep behaviour already is.
     ///
-    /// THREE of the spec's six checks live here: section 4 check 4 (no
-    /// regression in the extrude branch), check 3 (the sign mirrors) and
-    /// check 5 (Th = 0 never reaches the thickener at all). Checks 1, 2 and
-    /// 6 have fixtures of their own and their own functions below.
+    /// CHECK 4 OF THE OLD SPEC IS DEAD. It pinned the extrude branch's
+    /// (0, 0, Th) translation as a regression guard, and spec 2026-09-04
+    /// section 1 DELETES that branch: both ends of the slider are on the
+    /// surface normal and nothing in the engine may offset by a direction
+    /// the surface does not own. The pin is deleted with the branch, under
+    /// an erratum note in the old spec, and what stands in its place is the
+    /// assertion that no offset anywhere on this dome is world-Z any more.
+    ///
+    /// WHAT LIVES HERE NOW: the old spec's check 3 (the sign mirrors) and
+    /// check 5 (Th = 0 never reaches the thickener at all), and the new
+    /// spec's checks 3 (congruence at 1, non-congruence at 0) and 4 (the
+    /// renormalisation, |top - p| = |Th| at every stop). Checks 1, 2, 5, 6,
+    /// 7 and 8 have fixtures of their own and their own functions.
     /// </summary>
     private static void ValidateSkinThicknessOffset(Assembly plugin)
     {
@@ -25660,6 +26179,7 @@ internal static class Program
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
         MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
         MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
+        MethodInfo cellNormalMethod = RequireStatic(skinType, "CellNormal");
         MethodInfo thickeningMethod = RequireStatic(skinType, "Thickening");
         MethodInfo classify = RequireStatic(skinType, "ClassifyCellSurface");
 
@@ -25668,19 +26188,27 @@ internal static class Program
             netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),
             Array.Empty<(int, int, double)>());
 
-        double[] Offset(double[] point, double thickness, bool offsetSurface) =>
+        double[] CellNormal(double[][] outline) =>
+            (double[])cellNormalMethod.Invoke(
+                null, new object?[] { net, outline })!;
+        double[] Offset(
+            double[] point, double[] cellNormal, double thickness,
+            double extrude) =>
             (double[])offsetMethod.Invoke(
                 null,
-                new object?[] { net, point, thickness, offsetSurface })!;
+                new object?[]
+                {
+                    net, point, cellNormal, thickness, extrude
+                })!;
         double[][] Moved(
-            double[][] outline, double thickness, bool offsetSurface)
+            double[][] outline, double thickness, double extrude)
         {
             var read = new List<double[]>();
             foreach (object? item in (IEnumerable)outlineMethod.Invoke(
                          null,
                          new object?[]
                          {
-                             net, outline, thickness, offsetSurface
+                             net, outline, thickness, extrude
                          })!)
             {
                 read.Add((double[])item!);
@@ -25691,102 +26219,133 @@ internal static class Program
             (bool)thickeningMethod.Invoke(
                 null, new object[] { thickness })!;
 
-        // ---- CHECK 4, NO REGRESSION IN THE EXTRUDE BRANCH. Offset false
-        // is the constant vector (0, 0, Th) at EVERY point of the net
-        // without exception, exactly what shipped before this task, so the
-        // change is additive for anyone who wants the old solid. The
-        // points are spread over the dome deliberately: rim, mid-slope and
-        // crown, where the surface normal is nothing like world Z.
+        // ---- NO OFFSET ANYWHERE IS WORLD Z ANY MORE, which is what
+        // stands where the deleted check 4 stood. The points are spread
+        // over the dome deliberately: rim, mid-slope and crown. The crown
+        // is left out of the horizontal assertion because the dome's
+        // summit genuinely IS vertical there and a horizontal component
+        // would be a defect rather than a proof; the rim and mid-slope run
+        // at 45 degrees and owe one.
+        double[][] ring =
+        {
+            new[] { 2.0, 0.0, 0.0 }, new[] { 1.4142, 1.4142, 0.0 },
+            new[] { 0.7071, 0.7071, 1.0 }, new[] { 1.0, 0.0, 1.0 }
+        };
+        double[] ringNormal = CellNormal(ring);
         double[][] spread =
         {
             new[] { 2.0, 0.0, 0.0 },
             new[] { 0.7, 0.7, 1.0 },
-            new[] { 0.0, 0.0, 2.0 },
             new[] { -1.4, 1.4, 0.0 }
         };
         foreach (double[] point in spread)
         {
             foreach (double thickness in new[] { 0.4, -0.4, 3.0 })
             {
-                double[] extruded = Offset(point, thickness, false);
-                if (extruded[0] != 0.0 || extruded[1] != 0.0 ||
-                    extruded[2] != thickness)
+                foreach (double extrude in new[] { 0.0, 0.25, 0.5, 1.0 })
                 {
-                    throw new InvalidOperationException(
-                        "Offset FALSE must translate by exactly (0, 0, " +
-                        "Th) at every point, bit for bit, which is the " +
-                        "extrude branch reproduced without regression: at " +
-                        $"({point[0]}, {point[1]}, {point[2]}) and Th " +
-                        $"{thickness} it gave ({extruded[0]}, " +
-                        $"{extruded[1]}, {extruded[2]}).");
+                    double[] moved =
+                        Offset(point, ringNormal, thickness, extrude);
+                    double flat = Math.Sqrt(
+                        (moved[0] * moved[0]) + (moved[1] * moved[1]));
+                    if (!(flat > 1.0e-6))
+                    {
+                        throw new InvalidOperationException(
+                            "THE WORLD-Z BRANCH IS DELETED (spec " +
+                            "2026-09-04 section 1): both ends of the " +
+                            "slider are on the surface normal, and this " +
+                            "dome's flank runs at 45 degrees, so every " +
+                            "offset on it owes a horizontal component. At " +
+                            $"({point[0]}, {point[1]}, {point[2]}), Th " +
+                            $"{thickness} and Extrude {extrude} it gave " +
+                            $"({moved[0]}, {moved[1]}, {moved[2]}), which " +
+                            "is the (0, 0, Th) translation that no longer " +
+                            "exists.");
+                    }
                 }
             }
         }
 
-        // The same claim on a whole outline, since that is what the
-        // thickener actually moves: every corner gains the same three
-        // doubles, so a shared corner stays shared in the extrude branch
-        // too, by construction and not by tolerance.
-        double[][] ring =
+        // ---- CHECK 4 OF SECTION 8: THE RENORMALISATION. The corner moves
+        // the FULL |Th| at EVERY stop of the slider and not only at its two
+        // ends. A straight interpolation of the two TRANSLATIONS, which is
+        // the obvious wrong way to write rule 3.1, thins the stone in the
+        // middle of the slider by the half-angle's cosine and leaves both
+        // ends right, so it can only be caught here.
+        foreach (double extrude in new[] { 0.0, 0.25, 0.5, 0.75, 1.0 })
         {
-            new[] { 2.0, 0.0, 0.0 }, new[] { 1.4142, 1.4142, 0.0 },
-            new[] { 0.7071, 0.7071, 1.0 }, new[] { 1.0, 0.0, 1.0 }
-        };
-        double[][] extrudedRing = Moved(ring, 0.29, false);
-        for (int at = 0; at < ring.Length; at++)
-        {
-            if (extrudedRing[at][0] != ring[at][0] ||
-                extrudedRing[at][1] != ring[at][1] ||
-                extrudedRing[at][2] != ring[at][2] + 0.29)
+            double[][] top = Moved(ring, 0.37, extrude);
+            for (int at = 0; at < ring.Length; at++)
             {
-                throw new InvalidOperationException(
-                    "OffsetOutline in the extrude branch must add (0, 0, " +
-                    $"Th) to every corner: corner {at} went to " +
-                    $"({extrudedRing[at][0]}, {extrudedRing[at][1]}, " +
-                    $"{extrudedRing[at][2]}) from ({ring[at][0]}, " +
-                    $"{ring[at][1]}, {ring[at][2]}) at Th 0.29.");
+                double span = Math.Sqrt(
+                    Math.Pow(top[at][0] - ring[at][0], 2) +
+                    Math.Pow(top[at][1] - ring[at][1], 2) +
+                    Math.Pow(top[at][2] - ring[at][2], 2));
+                if (Math.Abs(span - 0.37) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        "THE BLEND IS RENORMALISED, so the thickness is " +
+                        "exactly |Th| at every stop of the slider (rule " +
+                        $"3.1): at Extrude {extrude} corner {at} moved " +
+                        $"{span} where |Th| is 0.37. An interpolation of " +
+                        "the two TRANSLATIONS rather than of the two " +
+                        "DIRECTIONS gives exactly this, right at both " +
+                        "ends and thin in the middle, which is a silent " +
+                        "structural change dressed as a display setting.");
+                }
             }
         }
 
-        // ---- THE TOGGLE MUST DO SOMETHING. The dome's slope is 45
-        // degrees everywhere, so the offset branch owes a horizontal
-        // component the extrude branch cannot have. Without this the whole
-        // check would pass on an engine that read the flag and extruded
-        // anyway, which is the mutation that survived the previous task's
-        // fixtures until a sloped one was added.
-        double[] slopePoint = { 1.4142, 0.0, 0.6 };
-        double[] onNormal = Offset(slopePoint, 0.5, true);
-        double[] vertical = Offset(slopePoint, 0.5, false);
-        double horizontal = Math.Sqrt(
-            (onNormal[0] * onNormal[0]) + (onNormal[1] * onNormal[1]));
-        if (horizontal <= 1.0e-6)
+        // ---- CHECK 3 OF SECTION 8: CONGRUENCE AT 1, AND NOT AT 0. At
+        // Extrude 1 every corner of one cell moves by the same vector
+        // Th * N, so the top ring is a rigid translation of the bottom and
+        // its pairwise corner distances are the bottom's exactly. At 0 they
+        // are NOT, on a curved cell, because each corner takes its own
+        // direction: that half is what says the congruence is a property
+        // of the slider's end and not of the fixture.
+        double[][] atOne = Moved(ring, 0.37, 1.0);
+        double[][] atZero = Moved(ring, 0.37, 0.0);
+        double worstAtZero = 0.0;
+        for (int a = 0; a < ring.Length; a++)
         {
-            throw new InvalidOperationException(
-                "Offset TRUE on the dome's 45 degree flank must carry a " +
-                "HORIZONTAL component, the surface normal there being " +
-                "nothing like world Z; it gave " +
-                $"({onNormal[0]}, {onNormal[1]}, {onNormal[2]}) against " +
-                $"the extrude branch's ({vertical[0]}, {vertical[1]}, " +
-                $"{vertical[2]}), so the flag is being read and ignored.");
+            for (int b = a + 1; b < ring.Length; b++)
+            {
+                double Distance(double[][] set) => Math.Sqrt(
+                    Math.Pow(set[a][0] - set[b][0], 2) +
+                    Math.Pow(set[a][1] - set[b][1], 2) +
+                    Math.Pow(set[a][2] - set[b][2], 2));
+                double bottom = Distance(ring);
+                double drift = Math.Abs(Distance(atOne) - bottom);
+                if (drift > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "CONGRUENCE AT EXTRUDE 1 (rule 3.4): every corner " +
+                        "of one cell moves by the SAME vector Th * N, so " +
+                        "the top ring is congruent to the bottom. Corners " +
+                        $"{a} and {b} are {bottom} apart on the bottom " +
+                        $"and {Distance(atOne)} apart on the top.");
+                }
+                worstAtZero = Math.Max(
+                    worstAtZero, Math.Abs(Distance(atZero) - bottom));
+            }
         }
-        double onLength = Math.Sqrt(
-            (onNormal[0] * onNormal[0]) + (onNormal[1] * onNormal[1]) +
-            (onNormal[2] * onNormal[2]));
-        if (Math.Abs(onLength - 0.5) > 1.0e-9)
+        if (!(worstAtZero > 1.0e-6))
         {
             throw new InvalidOperationException(
-                "The offset carries the FULL Th along a UNIT normal, so " +
-                $"its length is |Th| = 0.5; got {onLength}. A normal left " +
-                "unnormalised, or a half-thickness taken from the " +
-                "studio's centred blocks, is what this notices.");
+                "AND NOT CONGRUENT AT EXTRUDE 0 on a CURVED cell (rule " +
+                "3.4), or the congruence above is a property of the " +
+                "fixture and not of the slider: the worst pairwise " +
+                $"distance moved by {worstAtZero} at 0, where an offset " +
+                "surface on a dome must genuinely change the ring's size.");
         }
 
-        // ---- CHECK 3, THE SIGN. A negative Thickness mirrors a positive
-        // one about the solved surface, point for point, in BOTH branches:
-        // the two moved outlines average back to the outline itself. Rule
-        // 4 is signed and one-sided, so this is also the statement that
-        // the surface solved for is a FACE of the skin and not its middle.
-        foreach (bool offsetSurface in new[] { false, true })
+        // ---- CHECK 3 OF THE OLD SPEC, THE SIGN. A negative Thickness
+        // mirrors a positive one about the solved surface, point for
+        // point, at every stop: the two moved outlines average back to the
+        // outline itself. Rule 4 of the old spec is signed and one-sided,
+        // so this is also the statement that the surface solved for is a
+        // FACE of the skin and not its middle.
+        foreach (double offsetSurface in new[] { 0.0, 0.5, 1.0 })
         {
             double[][] up = Moved(ring, 0.37, offsetSurface);
             double[][] down = Moved(ring, -0.37, offsetSurface);
@@ -26249,12 +26808,18 @@ internal static class Program
         // tolerance for one geometric fact, and 1e-18 here against 1e-15
         // there was two.
         //
+        // WHAT IT ANSWERS INSTEAD CHANGED ON 2026-09-04 (spec section 6):
+        // the renormalised MEAN of the face's own three vertex normals, not
+        // (0, 0, 1). On a face standing vertical that mean is HORIZONTAL,
+        // which is the direction the offset most needs there and the one
+        // the old answer could not give.
+        //
         // The fixture is a near-VERTICAL triangle, twice-plan-area exactly
-        // 1e-16 and a real 3D area, whose own normal is (0, -1, 1e-16): so
-        // an engine that interpolated it would answer with that and the
-        // difference is visible. The sample sits INSIDE it in plan, at
-        // barycentric (0.1, 0.4, 0.5), where the weights are ordinary
-        // numbers, so this measures the TOLERANCE and not a cancellation.
+        // 1e-16 and a real 3D area. Its three vertices belong to that one
+        // face, so each carries its unit cross, and the mean is that cross:
+        // hand-computed here as (0, -1, 1e-16) normalised. The sample sits
+        // INSIDE it in plan, where a barycentric reading would give ordinary
+        // weights, so this measures the TOLERANCE and not a cancellation.
         double[][] sliverVertices =
         {
             new[] { 0.0, 0.0, 0.0 },
@@ -26265,18 +26830,113 @@ internal static class Program
             netType, edgeType, sliverVertices, new[] { new[] { 0, 1, 2 } },
             Array.Empty<int>(), Array.Empty<(int, int, double)>());
         double[] onSliver = Normal(sliver, new[] { 0.4, 5.0e-17, 0.0 });
-        if (onSliver[0] != 0.0 || onSliver[1] != 0.0 || onSliver[2] != 1.0)
+        double[] sliverWanted = Unit(new[] { 0.0, -1.0, 1.0e-16 });
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (Math.Abs(onSliver[axis] - sliverWanted[axis]) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "A face whose PLAN area is 1e-16, below the 1e-15 " +
+                    "LevelAt refuses to divide by on the same triangle, " +
+                    "carries no usable barycentric coordinates and " +
+                    "answers with the MEAN of its own three vertex " +
+                    "normals (spec 2026-09-04 section 6), which here is " +
+                    $"({sliverWanted[0]}, {sliverWanted[1]}, " +
+                    $"{sliverWanted[2]}). It gave ({onSliver[0]}, " +
+                    $"{onSliver[1]}, {onSliver[2]}). A (0, 0, 1) is the " +
+                    "answer this ruling replaced, and dividing a point's " +
+                    "offsets by 1e-16 is the answer the guard prevents.");
+            }
+        }
+        if (Math.Abs(onSliver[2]) > 1.0e-9)
         {
             throw new InvalidOperationException(
-                "A face whose PLAN area is 1e-16, below the 1e-15 LevelAt " +
-                "refuses to divide by on the same triangle, carries no " +
-                "usable barycentric coordinates and takes the (0, 0, 1) " +
-                "fallback rather than dividing a point's offsets by it: " +
-                $"got ({onSliver[0]}, {onSliver[1]}, {onSliver[2]}), which " +
-                "is this face's own normal interpolated, so the guard is " +
-                "at 1e-18 and the two siblings disagree about the same " +
-                "geometry.");
+                "AND THE ANSWER ON A VERTICAL FACE IS HORIZONTAL, which is " +
+                "the whole of why the ruling was taken: the offset there " +
+                "degraded to the extrusion it exists to replace. Got Z " +
+                $"{onSliver[2]}.");
         }
+
+        // ---- CHECK 7 OF SECTION 8, ON THE FIXTURE THE RULING WAS TAKEN
+        // FOR. The walled vault stands on two EXACTLY vertical walls, each
+        // extruded along x, so every face on them has zero plan area and
+        // every one of them answered (0, 0, 1) until 2026-09-04. Under the
+        // amendment they answer the mean of their own three vertex normals,
+        // which on a wall at y = +2 points along y and not up: the direction
+        // the surface owns.
+        //
+        // The samples sit ON the walls in plan. The plan-containment test
+        // cannot claim a zero-area triangle at all, so each falls to the
+        // nearest-face branch, and the nearest plan centroid on a wall is
+        // that wall's own face. Both walls are sampled, because the two
+        // point OPPOSITE ways and a check on one alone would pass on an
+        // engine that answered a constant.
+        //
+        // THE ANSWER IS NOT EXACTLY HORIZONTAL, and that is right rather
+        // than a slack tolerance. The mean is of VERTEX normals, and a
+        // vertex at the head of the wall belongs to the springing face of
+        // the arch as well, so it leans in by the arch's share of its area.
+        // Measured, the answer is about (0, -0.984, 0.176) at the y = -2
+        // wall. What the ruling buys is that the answer is dominated by
+        // the direction the SURFACE owns and points OUT of the wall, where
+        // before it was (0, 0, 1) exactly: straight up a face the offset
+        // was meant to stand out from.
+        (double[][] walledVertices, int[][] walledFaces) =
+            SkinWalledVaultNet();
+        object walled = SkinNetWith(
+            netType, edgeType, walledVertices, walledFaces,
+            SkinWalledVaultRim(), Array.Empty<(int, int, double)>());
+        int wallSamples = 0;
+        double worstWallVertical = 0.0;
+        double leastWallOutward = double.PositiveInfinity;
+        foreach ((double y, double sign) in
+                 new[] { (2.0, 1.0), (-2.0, -1.0) })
+        {
+            foreach (double x in new[] { 1.0, 3.0, 5.0 })
+            {
+                double[] answer = Normal(walled, new[] { x, y, 0.5 });
+                wallSamples++;
+                worstWallVertical =
+                    Math.Max(worstWallVertical, Math.Abs(answer[2]));
+                leastWallOutward =
+                    Math.Min(leastWallOutward, answer[1] * sign);
+                if (Math.Abs(answer[2]) > 0.5)
+                {
+                    throw new InvalidOperationException(
+                        "THE VERTICAL FACE ANSWERS WITH ITS OWN MEAN " +
+                        "(spec 2026-09-04 section 6, check 7), so its " +
+                        "answer is dominated by the horizontal direction " +
+                        "the surface owns. On the walled vault's exactly " +
+                        $"vertical wall at y = {y}, the point ({x}, {y}, " +
+                        $"0.5) came back ({answer[0]}, {answer[1]}, " +
+                        $"{answer[2]}). Until this ruling every such point " +
+                        "read (0, 0, 1) and the offset drove the block " +
+                        "straight up a wall it was meant to stand out " +
+                        "from.");
+                }
+                if (answer[1] * sign <= 0.9)
+                {
+                    throw new InvalidOperationException(
+                        "AND IT POINTS OUT OF THE WALL, not merely " +
+                        $"sideways: at y = {y} the outward direction is y " +
+                        $"{sign:+0;-0} and the answer was ({answer[0]}, " +
+                        $"{answer[1]}, {answer[2]}). This vault's own " +
+                        "winding is INWARD, so an engine that skipped rule " +
+                        "4's flip answers with exactly the negative of " +
+                        "this at both walls and would pass a test that " +
+                        "only asked for horizontality.");
+                }
+            }
+        }
+        Console.WriteLine(
+            $"      Skin vertical-face normal (section 6): {wallSamples} " +
+            "points on the walled vault's two exactly vertical walls, " +
+            "every one answering the MEAN of its face's three vertex " +
+            "normals, pointing OUT of its own wall by at least " +
+            $"{leastWallOutward:F6} and leaning off horizontal by no more " +
+            $"than {worstWallVertical:F6} (the head vertices are shared " +
+            "with the arch); before the ruling every one of them read " +
+            "(0, 0, 1) exactly.");
 
         // ---- CONTINUITY, MEASURED rather than argued, on the dome, whose
         // faces genuinely disagree about their own normals. Walking a line
@@ -26439,8 +27099,8 @@ internal static class Program
         // -0.70590) the other, which is not a sign flip at all and would
         // have made this check assert a difference the winding did not
         // cause. Holding corner 0 keeps both triangles of the fan and
-        // negates each of them exactly, so the two fields are one field
-        // BIT FOR BIT rather than to a tolerance.
+        // negates each of them exactly, so what is left between the two
+        // fields is summation order alone, measured below.
         var reversedFaces = new int[domeFaces.Length][];
         for (int at = 0; at < domeFaces.Length; at++)
         {
@@ -26532,7 +27192,7 @@ internal static class Program
             new[] { 2.0, 0.0, 0.0 }, new[] { 1.4142, 1.4142, 0.0 },
             new[] { 0.7071, 0.7071, 1.0 }, new[] { 1.0, 0.0, 1.0 }
         };
-        double[][] Moved(object net, bool extrude)
+        double[][] Moved(object net, double extrude)
         {
             var got = new List<double[]>();
             foreach (object? item in (IEnumerable)outlineMethod.Invoke(
@@ -26543,7 +27203,7 @@ internal static class Program
             }
             return got.ToArray();
         }
-        foreach (bool extrude in new[] { true })
+        foreach (double extrude in new[] { 0.0, 0.5, 1.0 })
         {
             double[][] fromUp = Moved(up, extrude);
             double[][] fromDown = Moved(down, extrude);
@@ -26664,12 +27324,12 @@ internal static class Program
         object generated = courses.Invoke(null, new object[] { net, 0.9, 0.6 })!;
         var built = SkinCells(generated);
 
-        double[][] Moved(double[][] outline, double thickness)
+        double[][] Moved(double[][] outline, double thickness, double extrude)
         {
             var read = new List<double[]>();
             foreach (object? item in (IEnumerable)outlineMethod.Invoke(
                          null,
-                         new object?[] { net, outline, thickness, true })!)
+                         new object?[] { net, outline, thickness, extrude })!)
             {
                 read.Add((double[])item!);
             }
@@ -26700,6 +27360,7 @@ internal static class Program
         double worstWeld = 0.0;
         double worstOldSplit = 0.0;
         double bestDisagreement = 0.0;
+        double worstSplitAtOne = 0.0;
         for (int i = 0; i < built.Length; i++)
         {
             for (int j = i + 1; j < built.Length; j++)
@@ -26719,8 +27380,8 @@ internal static class Program
                     continue;
                 bestDisagreement = Math.Max(
                     bestDisagreement, 1.0 - Math.Abs(agreement));
-                double[][] leftMoved = Moved(left, WeldThickness);
-                double[][] rightMoved = Moved(right, WeldThickness);
+                double[][] leftMoved = Moved(left, WeldThickness, 0.0);
+                double[][] rightMoved = Moved(right, WeldThickness, 0.0);
                 for (int a = 0; a < left.Length; a++)
                 {
                     for (int b = 0; b < right.Length; b++)
@@ -26737,6 +27398,52 @@ internal static class Program
                             Math.Pow(leftMoved[a][1] - rightMoved[b][1], 2) +
                             Math.Pow(leftMoved[a][2] - rightMoved[b][2], 2));
                         worstWeld = Math.Max(worstWeld, gap);
+                        // ---- CHECK 2 OF SECTION 8: THE SPLIT GROWS WITH
+                        // t, at this same shared corner. At 0 the direction
+                        // is the point's own and the two cells agree; as
+                        // the cell's own normal enters, two cells whose
+                        // normals differ pull the corner apart, and the gap
+                        // must grow at every stop or the slider is not
+                        // doing what its own port says. STRICTLY, so an
+                        // engine that read the slider and offset anyway
+                        // fails here: it would hold every one of these gaps
+                        // at zero.
+                        double previousGap = gap;
+                        for (int stop = 1; stop <= 4; stop++)
+                        {
+                            double t = stop / 4.0;
+                            double[][] leftAt = Moved(left, WeldThickness, t);
+                            double[][] rightAt =
+                                Moved(right, WeldThickness, t);
+                            double gapAt = Math.Sqrt(
+                                Math.Pow(leftAt[a][0] - rightAt[b][0], 2) +
+                                Math.Pow(leftAt[a][1] - rightAt[b][1], 2) +
+                                Math.Pow(leftAt[a][2] - rightAt[b][2], 2));
+                            if (!(gapAt > previousGap))
+                            {
+                                throw new InvalidOperationException(
+                                    "THE SPLIT MUST GROW WITH EXTRUDE " +
+                                    "(spec 2026-09-04 rule 3.3, check 2). " +
+                                    "At the shared corner (" +
+                                    $"{left[a][0]}, {left[a][1]}, " +
+                                    $"{left[a][2]}) of two cells whose own " +
+                                    "normals differ by " +
+                                    $"{Math.Acos(Math.Abs(agreement)):F4} " +
+                                    $"rad, the gap was {previousGap} at " +
+                                    $"Extrude {t - 0.25} and {gapAt} at " +
+                                    $"{t}. The weld survives at 0 ONLY: at " +
+                                    "any t above 0 the cell's own normal " +
+                                    "enters and neighbours split, and " +
+                                    "those gaps ARE the extrusion the " +
+                                    "slider slides towards.");
+                            }
+                            previousGap = gapAt;
+                            if (stop == 4)
+                            {
+                                worstSplitAtOne =
+                                    Math.Max(worstSplitAtOne, gapAt);
+                            }
+                        }
                         // What the DELETED per-cell offset would have done
                         // with the same corner and the same Th.
                         double oldSplit = WeldThickness * Math.Sqrt(
@@ -26786,10 +27493,12 @@ internal static class Program
         Console.WriteLine(
             $"      Skin offset weld: {pairsTested} shared corners across " +
             "cell pairs whose own Newell normals disagree by up to " +
-            $"{bestDisagreement:F4} in cosine; every one of them offsets " +
-            $"to within {worstWeld:E3} m, where the DELETED per-cell " +
-            $"offset would have split them by up to {worstOldSplit:F4} m " +
-            $"at Th {WeldThickness}.");
+            $"{bestDisagreement:F4} in cosine; at EXTRUDE 0 every one of " +
+            $"them offsets to within {worstWeld:E3} m, and the split grows " +
+            "strictly at every quarter of the slider, reaching " +
+            $"{worstSplitAtOne:F4} m at Extrude 1, where the DELETED " +
+            $"per-cell Newell offset would have split them by up to " +
+            $"{worstOldSplit:F4} m at Th {WeldThickness}.");
     }
 
     /// <summary>
@@ -26809,24 +27518,35 @@ internal static class Program
     /// ordinary rectangle. Those three are asserted on hand-written
     /// corners and they are the real content of this slot.
     ///
-    /// TWO, A ONE-WAY GUARD: the offset branch may never annihilate MORE
-    /// walls than the extrusion, on any fixture here. It is a guard and
-    /// not a demonstration; on these fixtures both counts are zero, so it
-    /// passes without firing.
+    /// TWO, THE COUNTS, taken at every stop of the slider rather than
+    /// under two branches. AMENDED 2026-09-04: the world-Z branch is
+    /// DELETED, so "extrude against offset" is no longer a comparison this
+    /// engine can make at all. What replaced it is Extrude 0 against
+    /// Extrude 1, both of them on the surface normal.
+    ///
+    /// THE ONE-WAY GUARD IS DELETED WITH THE BRANCH IT GUARDED, and the
+    /// deletion is recorded rather than left silent. Its whole argument
+    /// was that "a vertical offset is parallel to every vertical edge at
+    /// once, where a surface normal is parallel only to an edge that
+    /// happens to run along it". Both ends of the slider are now surface
+    /// normals, so neither has that asymmetry and neither is owed the
+    /// guard. Restating it as "0 never annihilates more than 1" would be a
+    /// claim nothing argues for, and this file has shipped a check that
+    /// cannot fail before.
     ///
     /// WHAT IT DOES NOT ENFORCE, AND WHY THE CLAIM IS DEFERRED BELOW.
-    /// Spec section 4 check 2 asks for a cell REFUSED under Offset OFF and
-    /// BUILT under Offset ON. Measured 2026-09-03 and again 2026-09-04,
-    /// that cell does not exist on ANY fixture in this suite, Param's own
-    /// net included, nor on a vault built to stand on exactly vertical
-    /// walls: the count is ZERO under both branches everywhere. The
-    /// annihilation is an EXACT collinearity, a merely steep edge leaves a
-    /// sliver with real area that Rhino builds at the 1e-9 the call is
-    /// made with, and an exactly vertical outline edge cannot arise on a
-    /// height-field net except on a plan-degenerate wall. So the claim is
-    /// written and run as a Deferred assertion, which is what this file
-    /// does with a claim it cannot demonstrate, rather than being dressed
-    /// as a PASS.
+    /// Spec 2026-09-03 section 4 check 2 asked for a cell REFUSED in one
+    /// mode and BUILT in the other. Measured 2026-09-03, 2026-09-04 and
+    /// again after the slider landed, that cell does not exist on ANY
+    /// fixture in this suite, Param's own net included, nor on a vault
+    /// built to stand on exactly vertical walls: the count is ZERO at
+    /// every slider stop everywhere. The annihilation is an EXACT
+    /// collinearity, a merely steep edge leaves a sliver with real area
+    /// that Rhino builds at the 1e-9 the call is made with, and an exactly
+    /// vertical outline edge cannot arise on a height-field net except on
+    /// a plan-degenerate wall. So the claim is written and run as a
+    /// Deferred assertion, which is what this file does with a claim it
+    /// cannot demonstrate, rather than being dressed as a PASS.
     ///
     /// WHAT CANNOT BE MEASURED HERE AT ALL. RhinoCommon's native core does
     /// not initialise outside Rhino, so no Brep is built in this process
@@ -26917,7 +27637,7 @@ internal static class Program
             (int Course, double[][] Outline, bool Clipped, double U0,
                 double U1, bool Cap)[] cells,
             object net,
-            bool offsetSurface)
+            double extrude)
         {
             int refused = 0;
             double least = double.PositiveInfinity;
@@ -26932,7 +27652,7 @@ internal static class Program
                              null,
                              new object?[]
                              {
-                                 net, outline, Th, offsetSurface
+                                 net, outline, Th, extrude
                              })!)
                 {
                     moved.Add((double[])item!);
@@ -26989,35 +27709,23 @@ internal static class Program
                 "said about their walls.");
         }
         (int walledExtrude, double walledExtrudeLeast, double walledEdge) =
-            DeadWalls(walledCells, walled, false);
+            DeadWalls(walledCells, walled, 1.0);
         (int walledOffset, double walledOffsetLeast, _) =
-            DeadWalls(walledCells, walled, true);
+            DeadWalls(walledCells, walled, 0.0);
         Console.WriteLine(
             $"      Skin walled vault at Th {Th:F2}: " +
             $"{walledCells.Length} course cells, {walledExtrude} with an " +
-            "ANNIHILATED wall under EXTRUDE (least wall area " +
-            $"{walledExtrudeLeast:E3}) and {walledOffset} under OFFSET " +
+            "ANNIHILATED wall at EXTRUDE 1 (least wall area " +
+            $"{walledExtrudeLeast:E3}) and {walledOffset} at EXTRUDE 0 " +
             $"(least {walledOffsetLeast:E3}); shortest outline edge " +
             $"{walledEdge:E3} m.");
         // MEASURED 2026-09-03, AGAIN 2026-09-04, AND IT IS A FINDING, not
-        // a pass. The OFFSET branch does not improve this fixture either,
-        // because a vertical wall has NO PLAN AREA: rule 2's amended
-        // off-mesh branch answers from the nearest face, that face is the
-        // vertical one itself, and a face with no plan area carries no
-        // barycentric coordinates, so the (0, 0, 1) fallback still stands
-        // there and the offset branch is identical to the extrude branch
-        // exactly where it was meant to help. Recorded rather than
-        // asserted away. What IS asserted is the one-way guard.
-        if (walledOffset > walledExtrude)
-        {
-            throw new InvalidOperationException(
-                "THE ONE-WAY GUARD. On the walled vault the EXTRUDE branch " +
-                $"annihilates {walledExtrude} cells' walls and the OFFSET " +
-                $"branch {walledOffset}; the offset may never annihilate " +
-                "more. This is a guard, not the demonstration spec section " +
-                "4 check 2 asks for; that claim is deferred at the foot of " +
-                "this method.");
-        }
+        // a pass. Neither end of the slider annihilates a wall here. The
+        // walled vault was built to be the one fixture that could, its
+        // head joints running within 1e-5 rad of vertical, and a sliver
+        // quad of about 6e-7 is what they actually leave. Recorded rather
+        // than asserted away; the claim itself is deferred at the foot of
+        // this method.
 
         // ---- THE FORCE-ALIGNED FIXTURE, which is the one Param asked the
         // question about, at his own Thickness of 0.29.
@@ -27029,9 +27737,9 @@ internal static class Program
             null, new object[] { barrel, 0.6, 0.5, 1.0 / 3.0 })!;
         var alignedCells = SkinCells(aligned);
         (int alignedExtrude, double alignedExtrudeLeast, double alignedEdge) =
-            DeadWalls(alignedCells, barrel, false);
+            DeadWalls(alignedCells, barrel, 1.0);
         (int alignedOffset, double alignedOffsetLeast, _) =
-            DeadWalls(alignedCells, barrel, true);
+            DeadWalls(alignedCells, barrel, 0.0);
 
         // ---- PARAM'S OWN NET, which is where the 148 of 262 was
         // measured, under BOTH patterns: the courses run he compared and
@@ -27062,17 +27770,17 @@ internal static class Program
             var paramCellList = SkinCells(paramBuilt);
             paramCells = paramCellList.Length;
             (paramExtrude, paramExtrudeLeast, paramEdge) =
-                DeadWalls(paramCellList, paramNet, false);
+                DeadWalls(paramCellList, paramNet, 1.0);
             (paramOffset, paramOffsetLeast, _) =
-                DeadWalls(paramCellList, paramNet, true);
+                DeadWalls(paramCellList, paramNet, 0.0);
             object paramAligned = forceAligned.Invoke(
                 null, new object[] { paramNet, 0.17, 0.375, 1.0 / 3.0 })!;
             var paramAlignedList = SkinCells(paramAligned);
             paramAlignedCells = paramAlignedList.Length;
             (paramAlignedExtrude, paramAlignedExtrudeLeast, paramAlignedEdge) =
-                DeadWalls(paramAlignedList, paramNet, false);
+                DeadWalls(paramAlignedList, paramNet, 1.0);
             (paramAlignedOffset, paramAlignedOffsetLeast, _) =
-                DeadWalls(paramAlignedList, paramNet, true);
+                DeadWalls(paramAlignedList, paramNet, 0.0);
         }
 
         // THE MEASUREMENT PARAM ASKED FOR, and its honest reading. These
@@ -27092,58 +27800,43 @@ internal static class Program
             Th.ToString("F2", CultureInfo.InvariantCulture) +
             " (a LOWER BOUND on refusals, not the whole of them, since no " +
             "Brep runs here): force-aligned barrel " +
-            $"{alignedCells.Length} cells, {alignedExtrude} EXTRUDE (least " +
-            $"wall area {alignedExtrudeLeast:E3}) and {alignedOffset} " +
-            $"OFFSET (least {alignedOffsetLeast:E3}); Param's own net " +
-            $"courses S 0.17 CH 0.375 {paramCells} cells, {paramExtrude} " +
-            $"EXTRUDE (least {paramExtrudeLeast:E3}) and {paramOffset} " +
-            $"OFFSET (least {paramOffsetLeast:E3}); Param's own net " +
-            $"FORCE-ALIGNED {paramAlignedCells} cells, " +
-            $"{paramAlignedExtrude} EXTRUDE (least " +
-            $"{paramAlignedExtrudeLeast:E3}) and {paramAlignedOffset} " +
-            $"OFFSET (least {paramAlignedOffsetLeast:E3}). SHORTEST " +
-            $"OUTLINE EDGE: barrel {alignedEdge:E3} m, Param courses " +
-            $"{paramEdge:E3} m, Param force-aligned " +
-            $"{paramAlignedEdge:E3} m.");
+            $"{alignedCells.Length} cells, {alignedExtrude} at EXTRUDE 1 " +
+            $"(least wall area {alignedExtrudeLeast:E3}) and " +
+            $"{alignedOffset} at EXTRUDE 0 (least " +
+            $"{alignedOffsetLeast:E3}); Param's own net courses S 0.17 CH " +
+            $"0.375 {paramCells} cells, {paramExtrude} at 1 (least " +
+            $"{paramExtrudeLeast:E3}) and {paramOffset} at 0 (least " +
+            $"{paramOffsetLeast:E3}); Param's own net FORCE-ALIGNED " +
+            $"{paramAlignedCells} cells, {paramAlignedExtrude} at 1 (least " +
+            $"{paramAlignedExtrudeLeast:E3}) and {paramAlignedOffset} at 0 " +
+            $"(least {paramAlignedOffsetLeast:E3}). SHORTEST OUTLINE EDGE: " +
+            $"barrel {alignedEdge:E3} m, Param courses {paramEdge:E3} m, " +
+            $"Param force-aligned {paramAlignedEdge:E3} m.");
 
-        if (alignedOffset > alignedExtrude || paramOffset > paramExtrude ||
-            paramAlignedOffset > paramAlignedExtrude)
-        {
-            throw new InvalidOperationException(
-                "The OFFSET branch must never annihilate MORE wall quads " +
-                "than the extrude branch: an outline edge is annihilated " +
-                "when it runs parallel to its own offset, and a vertical " +
-                "offset is parallel to every vertical edge at once, where " +
-                "a surface normal is parallel only to an edge that " +
-                "happens to run along it. Barrel " +
-                $"{alignedExtrude} extrude against {alignedOffset} offset; " +
-                $"Param's courses {paramExtrude} against {paramOffset}; " +
-                $"Param's force-aligned {paramAlignedExtrude} against " +
-                $"{paramAlignedOffset}.");
-        }
-
-        // ---- SPEC SECTION 4 CHECK 2 ITSELF, WRITTEN AND RUN AND NOT
-        // ENFORCED. The spec asks for a cell refused under Offset OFF and
-        // BUILT under Offset ON, counted both ways. Across the four
-        // fixtures this file can reach, including the vault built to stand
-        // on exactly vertical walls, the offset branch saves NOT ONE cell
-        // from the annihilated-wall refusal, because there is not one to
-        // save: the count is zero under both branches everywhere.
+        // ---- THE OLD CHECK 2 ITSELF, WRITTEN AND RUN AND NOT ENFORCED,
+        // restated for the slider. It asked for a cell refused in one mode
+        // and BUILT in the other, counted both ways; the two modes are now
+        // the two ends of the slider, because the world-Z branch it was
+        // written against is deleted. Across the four fixtures this file
+        // can reach, including the vault built to stand on exactly
+        // vertical walls, NOT ONE cell is saved from the annihilated-wall
+        // refusal by moving the slider, because there is not one to save:
+        // the count is zero at both ends everywhere.
         //
         // It is deferred rather than deleted because the mechanism is real
         // geometry, asserted three ways on hand-written corners at the top
-        // of this method. What is not real is the spec's estimate of its
-        // REACH, and only Rhino can settle that; the deferral stands until
-        // a fixture or a Rhino run produces the cell.
-        int savedByOffset =
+        // of this method. What is not real is the old spec's estimate of
+        // its REACH, and only Rhino can settle that; the deferral stands
+        // until a fixture or a Rhino run produces the cell.
+        int savedBySliding =
             (walledExtrude - walledOffset) +
             (alignedExtrude - alignedOffset) +
             (paramExtrude - paramOffset) +
             (paramAlignedExtrude - paramAlignedOffset);
         Deferred(
-            "The vertical edge (spec 2026-09-03 section 4 check 2): some " +
-            "cell somewhere is REFUSED under Offset OFF for an annihilated " +
-            "wall and BUILT under Offset ON",
+            "The vertical edge (spec 2026-09-03 section 4 check 2, restated " +
+            "for the slider): some cell somewhere is REFUSED at one end of " +
+            "Extrude for an annihilated wall and BUILT at the other",
             "scripts/rhino_skin_surface.py 12.5(i), run inside Rhino, which " +
             "is the only place a cell's refusal can be counted at all; no " +
             "fixture in this process produces an exactly vertical outline " +
@@ -27152,23 +27845,23 @@ internal static class Program
             "collinearity rather than a near one",
             () =>
             {
-                if (savedByOffset <= 0)
+                if (savedBySliding <= 0)
                 {
                     throw new InvalidOperationException(
-                        "ZERO cells on ANY fixture are saved by the offset " +
-                        "branch from the annihilated-wall refusal: walled " +
-                        $"vault {walledExtrude} extrude against " +
-                        $"{walledOffset} offset, force-aligned barrel " +
-                        $"{alignedExtrude} against {alignedOffset}, Param's " +
-                        $"own net in courses {paramExtrude} against " +
-                        $"{paramOffset} and force-aligned " +
+                        "ZERO cells on ANY fixture are saved from the " +
+                        "annihilated-wall refusal by moving the slider: " +
+                        $"walled vault {walledExtrude} at Extrude 1 " +
+                        $"against {walledOffset} at 0, force-aligned " +
+                        $"barrel {alignedExtrude} against {alignedOffset}, " +
+                        $"Param's own net in courses {paramExtrude} " +
+                        $"against {paramOffset} and force-aligned " +
                         $"{paramAlignedExtrude} against {paramAlignedOffset}. " +
-                        "So spec section 1 point 3's claim that an unknown " +
-                        "share of his 148 refusals are vertical outline " +
-                        "edges annihilated by a vertical offset is REFUTED " +
-                        "ON EVERY FIXTURE AVAILABLE, and the 148 remain " +
-                        "attributed to the loft-route thickening, which " +
-                        "only Rhino can settle.");
+                        "So spec 2026-09-03 section 1 point 3's claim that " +
+                        "an unknown share of his 148 refusals are vertical " +
+                        "outline edges annihilated by a vertical offset is " +
+                        "REFUTED ON EVERY FIXTURE AVAILABLE, and the 148 " +
+                        "remain attributed to the loft-route thickening, " +
+                        "which only Rhino can settle.");
                 }
             });
     }
@@ -27191,12 +27884,23 @@ internal static class Program
     /// CONSUMES its face rather than handing it back. Measured
     /// 2026-09-03: replacing ThickenCellSurface's whole body with
     /// "return face;" left the entire harness green, because nothing
-    /// anywhere reached the method. Passing a null face is enough to tell
-    /// the two apart without a native core: the real body dereferences it
-    /// at DuplicateBrep and throws, while any body that returns the face
-    /// or a constant hands back null quietly. The under-three-corner
-    /// guard is measured the same way, since it returns BEFORE the face is
-    /// touched.
+    /// anywhere reached the method. Invoking it on a valid outline is
+    /// enough to tell the two apart without a native core: the real body
+    /// reaches RhinoCommon and the native core REFUSES TO LOAD, throwing
+    /// DllNotFoundException, while any body that returns the face or a
+    /// constant hands back null quietly. The under-three-corner guard is
+    /// measured the same way, since it returns BEFORE any Brep call.
+    ///
+    /// THE GRIP WEAKENED ON 2026-09-04 AND THE WEAKENING IS RECORDED. Until
+    /// the slider landed, a null face reached DuplicateBrep on the extrude
+    /// branch's very first line and threw a NullReferenceException, so this
+    /// slot could say the method CONSUMES ITS FACE. That branch is deleted
+    /// (spec 2026-09-04 section 1), and the surviving route builds its top
+    /// before it ever touches the face, so the first thing that happens is
+    /// a native-core call. What is still proved is that the method reaches
+    /// Rhino at all, which is what catches a body replaced by a constant;
+    /// what is NOT proved any more is that the face reaches the join. That
+    /// half is scripts/rhino_skin_surface.py's, with the rest of the Brep.
     ///
     /// The signature itself is pinned because the Rhino script reaches
     /// this method by reflection, and a silently reordered or retyped
@@ -27222,23 +27926,30 @@ internal static class Program
                 $"{thicken.ReturnType.FullName}.");
         }
         ParameterInfo[] taken = thicken.GetParameters();
-        // The NET joined this list on 2026-09-03: the offset branch reads
-        // the surface normal at each outline point off the net's own
+        // The NET joined this list on 2026-09-03: the offset reads the
+        // surface normal at each outline point off the net's own
         // vertex-normal field, so the method cannot be driven without one.
+        // THE SECTIONS joined it on 2026-09-04, because the top face now
+        // takes its own bottom's route (spec section 5) and a loft-route
+        // cell lofts its top from its own moved rails; and the last
+        // parameter turned from the Offset Boolean into the Extrude
+        // NUMBER, which is the slider.
         string[] wanted =
         {
             "Rhino.Geometry.Brep",
             "System.Collections.Generic.IReadOnlyList`1[[System.Double[]",
+            "System.Collections.Generic.IReadOnlyList`1[[System.Collections",
             "Ananke.COMPAS.Native.Components.SkinNet",
             "System.Double",
-            "System.Boolean"
+            "System.Double"
         };
         if (taken.Length != wanted.Length)
         {
             throw new InvalidOperationException(
-                "ThickenCellSurface takes the face, the outline, the net, " +
-                $"Th and the Offset flag, in that order: {wanted.Length} " +
-                $"parameters. It takes {taken.Length}.");
+                "ThickenCellSurface takes the face, the outline, the " +
+                "cell's SECTIONS, the net, Th and the Extrude slider, in " +
+                $"that order: {wanted.Length} parameters. It takes " +
+                $"{taken.Length}.");
         }
         for (int at = 0; at < wanted.Length; at++)
         {
@@ -27262,7 +27973,7 @@ internal static class Program
             new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }
         };
         object? refused = thicken.Invoke(
-            null, new object?[] { null, twoCorners, net, 0.2, false });
+            null, new object?[] { null, twoCorners, null, net, 0.2, 0.0 });
         if (refused is not null)
         {
             throw new InvalidOperationException(
@@ -27271,12 +27982,14 @@ internal static class Program
                 "touched at all; something came back instead.");
         }
 
-        // A VALID outline and a null face. The shipped body duplicates
-        // the face immediately after computing the offset, so it throws.
-        // A body that returned the face, or any constant, would hand back
-        // null without complaint: that is exactly the mutation this
-        // assertion exists to catch, and it is the only structural grip
-        // on the Brep half available without the native core.
+        // A VALID outline. The shipped body builds its top face before it
+        // ever touches the bottom, and the first thing it does there is
+        // ask RhinoCommon for a Brep, whose native core will not load in
+        // this process: it throws. A body that returned the face, or any
+        // constant, would hand back null without complaint. That is
+        // exactly the mutation this assertion exists to catch, and it is
+        // the only structural grip on the Brep half available without the
+        // native core.
         var threeCorners = new List<double[]>
         {
             new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
@@ -27286,26 +27999,29 @@ internal static class Program
         try
         {
             object? handedBack = thicken.Invoke(
-                null, new object?[] { null, threeCorners, net, 0.2, false });
+                null,
+                new object?[] { null, threeCorners, null, net, 0.2, 0.0 });
             throw new InvalidOperationException(
                 "ThickenCellSurface returned " +
                 (handedBack is null ? "null" : handedBack.GetType().Name) +
-                " for a valid outline and a NULL face. The shipped body " +
-                "duplicates that face and would have thrown, so the " +
-                "method is not consuming its face at all: a body " +
-                "replaced by 'return face;' behaves exactly like this " +
-                "and no other check in this file would notice.");
+                " for a valid outline. The shipped body reaches " +
+                "RhinoCommon and would have thrown, so the method is not " +
+                "attempting to build anything at all: a body replaced by " +
+                "'return face;' behaves exactly like this and no other " +
+                "check in this file would notice.");
         }
         catch (TargetInvocationException invocation)
         {
             thrown = invocation.InnerException;
         }
-        if (thrown is not NullReferenceException)
+        if (thrown is not DllNotFoundException &&
+            thrown is not TypeInitializationException)
         {
             throw new InvalidOperationException(
-                "A null face must reach DuplicateBrep and throw a " +
-                "NullReferenceException, which is what shows the face is " +
-                "used; got " +
+                "A valid outline must carry the method into a Brep call, " +
+                "where RhinoCommon's native core refuses to load and " +
+                "throws; that is what shows the thickener is really " +
+                "trying to build a solid. Got " +
                 (thrown?.GetType().Name ?? "nothing") + ".");
         }
     }
@@ -27387,27 +28103,25 @@ internal static class Program
 
         string? Face(int failed, int first) =>
             (string?)faceLine.Invoke(null, new object[] { failed, first });
-        string? Thick(int failed, int first, double th, bool offsetSurface) =>
+        string? Thick(int failed, int first, double th, double extrude) =>
             (string?)thickenLine.Invoke(
-                null, new object[] { failed, first, th, offsetSurface });
+                null, new object[] { failed, first, th, extrude });
 
         if (Face(0, -1) is not null ||
-            Thick(0, -1, 0.29, false) is not null ||
-            Thick(0, -1, 0.29, true) is not null)
+            Thick(0, -1, 0.29, 0.0) is not null ||
+            Thick(0, -1, 0.29, 1.0) is not null)
         {
             throw new InvalidOperationException(
                 "Neither warning is raised when nothing failed; one of " +
                 "them returned a sentence at a count of zero.");
         }
         string faceText = Face(148, 3)!;
-        // Offset FALSE, the EXTRUDE branch, is the mode Param's own 148 of
-        // 262 run was in: the port that now says Offset used to say Along
-        // Normal and defaulted OFF, and off was the vertical (0, 0, Th)
-        // extrusion. It is no longer the default (spec 2026-09-03 rule 5
-        // flips it to true), so this is now the message an author sees only
-        // after deliberately asking for the simpler solid.
-        string thickText = Thick(148, 3, 0.29, false)!;
-        string thickTextOn = Thick(148, 3, 0.29, true)!;
+        // Two positions of the slider, because the sentence NAMES the
+        // position the count was taken at. The advice does not change with
+        // it, and that is the point of the 2026-09-04 rewrite: sliding the
+        // slider is not a remedy for a refusal.
+        string thickText = Thick(148, 3, 0.29, 0.0)!;
+        string thickTextOn = Thick(148, 3, 0.29, 1.0)!;
         if (faceText == thickText)
         {
             throw new InvalidOperationException(
@@ -27431,32 +28145,30 @@ internal static class Program
                      (thickText, "STILL EXPORTED",
                          "a cell whose thickening failed is not lost: it " +
                          "is exported and drawn as the un-thickened face"),
-                     (thickText, "Offset ON",
-                         "with Offset OFF the whole cell is extruded by " +
-                         "(0, 0, Th), which is the mode that degenerates " +
-                         "the wall quad of a vertical outline edge, so ON " +
-                         "is what the author is told to try"),
-                     (thickText, "costs nothing",
-                         "THE REMEDY MUST NAME ITS COST, and under the " +
-                         "renamed port there is none to name: an offset " +
-                         "surface keeps neighbours welded, where the " +
-                         "deleted per-cell offset traded the weld for the " +
-                         "thickness. A reviewer's objection to the old " +
-                         "wording was that it never said what turning the " +
-                         "toggle on would break"),
-                     (thickText, "welded",
-                         "and the sentence says WHY it costs nothing, " +
-                         "rather than asserting it"),
-                     (thickText, "(0, 0, Th)",
-                         "the off-mode sentence names the offset that " +
-                         "caused the refusal rather than leaving the " +
-                         "author to guess at it"),
-                     (thickTextOn, "already on",
-                         "with Offset ON the message must not advise " +
-                         "turning ON what is on"),
-                     (thickTextOn, "smaller Thickness is the remedy",
-                         "with Offset ON a smaller Thickness is all that " +
-                         "is left to try")
+                     (thickText, "only one",
+                         "a smaller Thickness is the ONLY remedy this " +
+                         "component has, now that both the toggle and its " +
+                         "two directions are gone"),
+                     (thickText, "Extrude was 0.00",
+                         "the sentence names the slider's own position, so " +
+                         "the author reads which end the count was taken " +
+                         "at"),
+                     (thickTextOn, "Extrude was 1.00",
+                         "and it names it at the other end too, which is " +
+                         "what makes the parameter earn its place"),
+                     (thickText, "OPENS THE JOINTS",
+                         "the message must say what sliding towards 1 " +
+                         "actually does, because an author reading a " +
+                         "refusal will reach for any lever on the " +
+                         "component"),
+                     (thickText, "not known to rescue",
+                         "and it must not imply the slider fixes the " +
+                         "loft-route failures, which stay unattributed " +
+                         "until the Rhino script runs"),
+                     (thickTextOn, "inside Rhino",
+                         "where these cells go is a question only a run " +
+                         "inside Rhino can settle, and the message says so " +
+                         "rather than guessing")
                  })
         {
             if (!text.Contains(fragment, StringComparison.Ordinal))
@@ -27465,40 +28177,40 @@ internal static class Program
                     $"{what}; '{fragment}' is missing from '{text}'.");
             }
         }
-        // THE REMEDY MUST MATCH THE MODE IN FORCE. The first draft advised
-        // "A smaller Thickness, or Along Normal off, is the remedy"
-        // whatever the mode, on a toggle that then defaulted to off, so on
-        // a default canvas it named a toggle already off. Off is also the
-        // branch whose vertical (0, 0, Th) extrusion degenerates the wall
-        // quad of a vertical outline edge, so the old advice pointed AWAY
-        // from the likelier cause on a steep force-aligned arch. Nothing
-        // in this message may send an author back to the extrusion to fix
-        // a refusal the extrusion caused.
+        // NOTHING IN THIS MESSAGE MAY OFFER THE SLIDER AS A REMEDY, and
+        // nothing may still describe the dead toggle. The first draft
+        // advised "or Along Normal off", the second "Offset ON, which
+        // costs nothing"; both directions went with the branch, and the
+        // slider that replaced them opens joints BY DESIGN rather than
+        // rescuing anything. A wording that sent an author towards 1 to
+        // fix a refusal would trade a solid he can build for gaps he did
+        // not ask for.
         foreach (string text in new[] { thickText, thickTextOn })
         {
-            if (text.Contains("Offset off, is the remedy",
-                    StringComparison.Ordinal) ||
-                text.Contains("Offset OFF is the remedy",
-                    StringComparison.Ordinal))
+            foreach (string forbidden in new[]
+                     {
+                         "Offset ON", "Offset off", "Along Normal",
+                         "(0, 0, Th)", "costs nothing", "world Z",
+                         "Extrude is the remedy", "so is Extrude"
+                     })
             {
-                throw new InvalidOperationException(
-                    "No wording of this warning may advise turning Offset " +
-                    "OFF: off is the extrude branch, and its vertical " +
-                    "offset is what refuses a cell with a vertical " +
-                    $"outline edge; got '{text}'.");
+                if (text.Contains(forbidden, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "This warning may neither describe the deleted " +
+                        "toggle and its world-Z branch nor offer the " +
+                        "slider as a remedy: Extrude near 1 opens the " +
+                        "joints by design and is not known to rescue a " +
+                        $"cell that will not close. It carries " +
+                        $"'{forbidden}': '{text}'.");
+                }
             }
         }
-        if (thickTextOn.Contains("Offset ON", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "With Offset already ON the warning must not tell " +
-                $"the author to turn it ON; got '{thickTextOn}'.");
-        }
         // No assertion here that the two sentences DIFFER. It would read
-        // well and it would never be able to fail: the two checks above
-        // require "Offset ON" to be present in one and absent from
-        // the other, which forces them apart already. A check that cannot
-        // go red is not a check, and this file has shipped one before.
+        // well and it would never be able to fail: the two fragments above
+        // require "Extrude was 0.00" in one and "Extrude was 1.00" in the
+        // other, which forces them apart already. A check that cannot go
+        // red is not a check, and this file has shipped one before.
         if (faceText.Contains("STILL EXPORTED", StringComparison.Ordinal) ||
             thickText.Contains(
                 "would not close into a FACE", StringComparison.Ordinal))
@@ -27545,24 +28257,27 @@ internal static class Program
                     null,
                     new object?[]
                     {
-                        null, cell.Outline, barrel, ParamThickness, false
+                        null, cell.Outline, null, barrel, ParamThickness,
+                        0.0
                     });
             }
             catch (TargetInvocationException invocation)
-                when (invocation.InnerException is NullReferenceException)
+                when (invocation.InnerException is DllNotFoundException ||
+                      invocation.InnerException is TypeInitializationException)
             {
-                // The guard passed and the face was dereferenced. Whether
-                // the join would then close needs the native core.
+                // The guard passed and the method went on into a Brep
+                // call, where the native core refuses to load. Whether the
+                // join would then close needs Rhino.
                 guardPassed++;
                 continue;
             }
             if (answer is not null)
             {
                 throw new InvalidOperationException(
-                    "With a null face ThickenCellSurface either refuses " +
-                    "on its own outline guard and returns null, or " +
-                    "dereferences the face and throws; it returned " +
-                    $"{answer.GetType().Name}.");
+                    "ThickenCellSurface either refuses on its own outline " +
+                    "guard and returns null, or goes on into a Brep call " +
+                    "and throws where the native core will not load; it " +
+                    $"returned {answer.GetType().Name}.");
             }
             guardRefused++;
         }
@@ -28715,9 +29430,19 @@ internal static class Program
                 "one-sidedness claim below to be measured on anything.");
         }
 
+        // AT EXTRUDE 0, which is where the one-sidedness claim belongs: the
+        // direction is then the field's own answer at the point and
+        // nothing else, so what this measures is the FIELD and not a blend
+        // with some cell's mean. The cell normal handed in is therefore
+        // ignored by the arithmetic at t = 0, and a vertical placeholder
+        // is passed to say so.
         double[] Offset(double[] point) =>
             (double[])offsetMethod.Invoke(
-                null, new object?[] { net, point, 0.10, true })!;
+                null,
+                new object?[]
+                {
+                    net, point, new[] { 0.0, 0.0, 1.0 }, 0.10, 0.0
+                })!;
 
         // A corner that lands OFF THE NET IN PLAN is counted, because the
         // count is a real finding about this engine and not an artefact of

@@ -168,35 +168,45 @@ public sealed class SkinComponent : NativeComponentBase
                 "The offset is SIGNED and ONE-SIDED: a positive Th builds " +
                 "outward along the surface normal and a negative one " +
                 "inward, so the solved surface is the intrados or the " +
-                "extrados of the skin and never its middle. Offset chooses " +
+                "extrados of the skin and never its middle. Extrude slides " +
                 "between an offset surface, where every outline point " +
-                "moves along the normal AT THAT POINT, and a plain " +
-                "vertical extrusion.",
+                "moves along the normal AT THAT POINT, and a per-cell " +
+                "extrusion along the cell's own normal. BOTH ENDS ARE ON " +
+                "THE SURFACE NORMAL.",
             GH_ParamAccess.item,
             0.0);
-        // Spec 2026-09-03 (skin-offset-surface), rule 5. The port KEEPS ITS
-        // INDEX so no archived wire moves; only the name, nickname, default
-        // and description change. It used to be "Along Normal" and it named
-        // the direction of an EXTRUSION, whole cell translated either by
-        // (0, 0, Th) or along that one cell's own Newell normal. Both are
-        // extrusions, and the second gapped and clashed where the surface
-        // turned. What was asked for was the choice between an OFFSET
-        // SURFACE and an extrusion, which is what this port now offers.
-        parameters.AddBooleanParameter(
-            "Offset",
-            "OF",
-            "True, the default, builds an OFFSET SURFACE: every outline " +
-                "point moves along the surface normal AT THAT POINT, so " +
-                "cells that share a corner move it to the same place and " +
-                "stay welded, and the skin keeps its connectivity. The " +
-                "normal is a property of the POINT and not of the cell, " +
-                "which is why neighbours cannot gap and cannot clash. " +
-                "False EXTRUDES instead: the whole cell is translated by " +
-                "(0, 0, Th), which leaves gaps where cells meet and copies " +
-                "a vertical outline edge onto itself, but is a simpler " +
-                "solid. Ignored while Th is 0.",
+        // Spec 2026-09-04 (skin-offset-extrude-slider), section 2. The port
+        // KEEPS ITS INDEX so no archived wire moves; the name, nickname,
+        // type, default and description all change. It was "Along Normal"
+        // and then "Offset", and both named a CHOICE where what Param asked
+        // for is a slider: "I want to take this a step further and do a
+        // slider 0-1.00 where I can slide between if the outer surface goes
+        // from offset ... to extruded ... That means we can remove the
+        // button and put in this slider."
+        //
+        // A BOOLEAN WIRED HERE STILL READS. Grasshopper casts a GH_Boolean
+        // to a GH_Number, False to 0 and True to 1, so his archived toggle
+        // sitting at False lands on the new default without his touching
+        // it. Measured through this very port in the smoke harness rather
+        // than assumed.
+        parameters.AddNumberParameter(
+            "Extrude",
+            "EX",
+            "Slide the outer skin from OFFSET to EXTRUDE, both of them on " +
+                "the surface normal. At 0, the default, the skin is a true " +
+                "OFFSET SURFACE: every outline point moves along the " +
+                "surface normal AT THAT POINT, so cells that share a " +
+                "corner move it to the same place, stay welded, and the " +
+                "assembly is one continuous thickened shell. At 1 each " +
+                "cell is EXTRUDED along its OWN normal, a rigid " +
+                "translation whose outer face is congruent to its inner " +
+                "one, and GAPS OPEN at the joints in proportion to " +
+                "curvature times thickness, because neighbouring cells' " +
+                "normals disagree. In between, the joint bevel slides from " +
+                "radial and shared to parallel and open. Outside 0 to 1 " +
+                "the value is clamped. Ignored while Th is 0.",
             GH_ParamAccess.item,
-            true);
+            0.0);
         parameters[5].Optional = true;
         parameters[6].Optional = true;
     }
@@ -259,13 +269,13 @@ public sealed class SkinComponent : NativeComponentBase
                 out double courseHeight,
                 out double minPiece,
                 out double thickness,
-                out bool offsetSurface))
+                out double extrude))
         {
             return;
         }
         SolveNative(
             data, result!, pattern, size, courseHeight, minPiece,
-            thickness, offsetSurface);
+            thickness, extrude);
     }
 
     private void SolveNative(
@@ -276,7 +286,7 @@ public sealed class SkinComponent : NativeComponentBase
         double courseHeight,
         double minPiece,
         double thickness,
-        bool offsetSurface)
+        double extrude)
     {
         try
         {
@@ -402,7 +412,8 @@ public sealed class SkinComponent : NativeComponentBase
                 Brep? solid =
                     face is not null && thickening
                         ? ThickenCellSurface(
-                            face, cell.Outline, net, thickness, offsetSurface)
+                            face, cell.Outline, cell.Sections, net,
+                            thickness, extrude)
                         : null;
                 CellSurfaceSlot slot = ClassifyCellSurface(
                     face is not null, thickening, solid is not null);
@@ -436,7 +447,7 @@ public sealed class SkinComponent : NativeComponentBase
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, faceLine);
             string? thickenLine = ThickenFailureLine(
                 thickenFailed, firstThickenFailedCourse, thickness,
-                offsetSurface);
+                extrude);
             if (thickenLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, thickenLine);
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
@@ -621,50 +632,42 @@ public sealed class SkinComponent : NativeComponentBase
     /// the defect: it told the author his cells had no surface when the
     /// engine had built every one of them.
     ///
-    /// THE REMEDY IS WORDED AGAINST THE MODE ACTUALLY IN FORCE, which is
-    /// why <paramref name="offsetSurface"/> is a parameter of a sentence
-    /// that otherwise needs only counts. The first draft advised "a
-    /// smaller Thickness, or Along Normal off" unconditionally, on a
-    /// toggle that defaulted to off, so on a default canvas it told the
-    /// author to switch off a toggle already off.
+    /// THE REMEDY IS A SMALLER THICKNESS, AND THAT IS THE WHOLE OF IT.
+    /// Rewritten 2026-09-04 for the slider (spec section 7 item 3). Every
+    /// earlier draft of this sentence was written against a TOGGLE and
+    /// advised moving it: the first said "or Along Normal off", on a
+    /// toggle that defaulted off, so on a default canvas it told the
+    /// author to switch off a switch already off; the second said "Offset
+    /// ON, which costs nothing", an argument about the cost of a branch
+    /// that no longer exists. Both directions went with the toggle.
     ///
-    /// The second draft, written against that same toggle, advised turning
-    /// Along Normal ON, and a reviewer's objection to it was that it never
-    /// named the COST: under the old semantics ON meant each cell moved
-    /// along its OWN normal, so neighbours gapped, and a remedy that trades
-    /// a hole for a solid ought to say so. Under the port renamed by spec
-    /// 2026-09-03 (skin-offset-surface) THAT COST IS GONE. Offset ON is an
-    /// offset surface, not a per-cell extrusion: every outline point moves
-    /// along the normal at that point, so cells that share a corner keep
-    /// sharing it and the skin stays welded. Recommending it costs the
-    /// author nothing, which is why the cost is not named here: there is
-    /// none to name.
+    /// WHAT MAY NOT BE SAID HERE, and it is the point of the rewrite. THE
+    /// SLIDER IS NOT A REMEDY FOR A REFUSAL. Extrude near 1 opens the
+    /// joints BY DESIGN, in proportion to curvature times thickness, and
+    /// nothing measured anywhere says it rescues a cell that will not
+    /// close. The loft-route failures remain UNATTRIBUTED: only
+    /// scripts/rhino_skin_surface.py can count a cell's refusal at all,
+    /// and it has not been run. Advising an author to slide towards the
+    /// extrusion would trade a solid he can build for gaps he did not ask
+    /// for, on a hunch this engine has never measured.
     ///
-    /// Why Offset OFF is the likelier cause of a refusal. A side wall is
-    /// built from the quad (a, b, b + offset, a + offset) per outline edge
-    /// (<see cref="ThickenCellSurface"/>), and OFF offsets vertically at
-    /// (0, 0, Th): where the edge a to b itself runs vertical, all four
-    /// corners lie on one vertical line, Brep.CreateFromCornerPoints has no
-    /// quad to make, and the cell is refused. A steep springing with
-    /// near-vertical head joints refuses cells for that reason alone and
-    /// not for any fault of their thickness.
+    /// <paramref name="extrude"/> is a parameter because the sentence
+    /// NAMES the slider's position, so the author reads which end of the
+    /// range the count was taken at. It does not change the advice.
     /// </summary>
     internal static string? ThickenFailureLine(
-        int failed, int firstCourse, double thickness, bool offsetSurface)
+        int failed, int firstCourse, double thickness, double extrude)
     {
         if (failed <= 0)
             return null;
-        string remedy = offsetSurface
-            ? " A smaller Thickness is the remedy. Offset is already on, " +
-              "so every outline point already moves along the surface " +
-              "normal at that point and the cells are already welded."
-            : " A smaller Thickness is the remedy, and so is Offset ON, " +
-              "which costs nothing: an offset surface moves every outline " +
-              "point along the normal AT THAT POINT, so neighbouring " +
-              "cells stay welded rather than gapping. With Offset off the " +
-              "whole cell is extruded by (0, 0, Th) instead, so an " +
-              "outline edge that runs vertical is copied onto itself and " +
-              "leaves no side wall to build.";
+        string remedy =
+            " A smaller Thickness is the remedy, and it is the only one " +
+            "this component has to offer. Extrude was " +
+            extrude.ToString("F2", CultureInfo.InvariantCulture) +
+            "; sliding it towards 1 OPENS THE JOINTS by design, in " +
+            "proportion to curvature times thickness, and is not known to " +
+            "rescue a cell that will not close. Where these cells go " +
+            "instead is a question only a run inside Rhino can settle.";
         return
             $"{failed} face" + (failed == 1 ? "" : "s") +
             " would not close into a SOLID at Thickness " +
@@ -842,25 +845,8 @@ public sealed class SkinComponent : NativeComponentBase
     /// </summary>
     private static Brep? CellSurface(SkinCell cell, SkinNet net)
     {
-        if (cell.Sections is not null && cell.Sections.Count >= 2)
-        {
-            var sections = new List<Curve>(cell.Sections.Count);
-            foreach (IReadOnlyList<double[]> section in cell.Sections)
-            {
-                if (section.Count < 2)
-                    return null;
-                sections.Add(OpenOutlineCurve(section));
-            }
-            Brep[] lofted = Brep.CreateFromLoft(
-                sections,
-                Point3d.Unset,
-                Point3d.Unset,
-                LoftType.Straight,
-                false);
-            return lofted is { Length: 1 } && lofted[0].IsValid
-                ? lofted[0]
-                : null;
-        }
+        if (TopTakesLoft(cell.Sections))
+            return LoftSections(cell.Sections!);
         double[]? inside = SkinPatterns.PlanInteriorPoint(cell.Outline);
         if (inside is null)
             return null;
@@ -910,24 +896,95 @@ public sealed class SkinComponent : NativeComponentBase
     // decide the side by itself.
 
     /// <summary>
-    /// THE OFFSET AT ONE POINT (spec 2026-09-03, skin-offset-surface, rules
-    /// 2 and 4), pulled out of <see cref="ThickenCellSurface"/> so it is
-    /// testable without a Brep: the translation ONE outline point is copied
-    /// by, in the SAME units and SAME sign convention Th itself carries.
+    /// THE CELL'S OWN NORMAL, N (spec 2026-09-04, section 3, rule 3.2): the
+    /// renormalised MEAN of the cell's own corners' FIELD normals.
     ///
-    /// Offset FALSE is (0, 0, Th) for every point without exception, which
-    /// is the extrusion the port's false branch names: every cell moves by
-    /// the same vector, so a wall shared by two cells stays coincident, and
-    /// an outline edge that runs vertical is copied onto itself.
+    /// It derives from the same oriented field the corners themselves read,
+    /// which is the whole reason it is a mean of field normals rather than
+    /// the Newell normal of the outline. A Newell sum follows the outline's
+    /// WINDING, and a winding is not consistent from cell to cell on a
+    /// vault whose contours are open strips: the deleted CellNormalUnit
+    /// thickened half a shell outward and the other half inward at one
+    /// positive Th for exactly that reason. A mean of field normals cannot,
+    /// because the field is one-sided over the whole net (rule 4). So
+    /// Extrude 1 cannot disagree with Extrude 0 about which side is out.
     ///
-    /// Offset TRUE reads the direction off the NET at that point, through
-    /// <see cref="SkinPatterns.NormalAt"/>, and off nothing else. It takes
-    /// the point and not the cell, and that is the load-bearing part of the
-    /// design rather than a convenience: two cells that share a corner hand
-    /// this method the same three doubles and get the same three back, so
-    /// the corner moves to one place and the skin stays welded. A signature
-    /// that could see the calling cell would let a future edit weight the
-    /// answer by it and break the weld silently.
+    /// DEGENERATE, and the ladder is the spec's own. Where the mean is
+    /// shorter than 1e-12, the corners' normals have cancelled and the cell
+    /// has no mean direction: the Newell normal of the outline is taken
+    /// instead, turned to agree with the field's global up (which rule 4
+    /// makes non-negative Z), and where that is degenerate too the answer
+    /// is (0, 0, 1), an arbitrary but FINITE direction.
+    /// </summary>
+    internal static double[] CellNormal(
+        SkinNet net, IReadOnlyList<double[]> outline)
+    {
+        double x = 0.0, y = 0.0, z = 0.0;
+        foreach (double[] corner in outline)
+        {
+            double[] normal = SkinPatterns.NormalAt(net, corner);
+            x += normal[0];
+            y += normal[1];
+            z += normal[2];
+        }
+        double length = Math.Sqrt((x * x) + (y * y) + (z * z));
+        if (length > 1.0e-12)
+            return new[] { x / length, y / length, z / length };
+
+        double nx = 0.0, ny = 0.0, nz = 0.0;
+        for (int at = 0; at < outline.Count; at++)
+        {
+            double[] a = outline[at];
+            double[] b = outline[(at + 1) % outline.Count];
+            nx += (a[1] - b[1]) * (a[2] + b[2]);
+            ny += (a[2] - b[2]) * (a[0] + b[0]);
+            nz += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        double newell = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
+        if (!(newell > 1.0e-12))
+            return new[] { 0.0, 0.0, 1.0 };
+        double sign = nz < 0.0 ? -1.0 : 1.0;
+        return new[]
+        {
+            sign * nx / newell, sign * ny / newell, sign * nz / newell
+        };
+    }
+
+    /// <summary>
+    /// THE OFFSET AT ONE POINT (spec 2026-09-03 rules 2 and 4, amended by
+    /// spec 2026-09-04 rule 3.1), pulled out of
+    /// <see cref="ThickenCellSurface"/> so it is testable without a Brep:
+    /// the translation ONE outline point is copied by, in the SAME units
+    /// and SAME sign convention Th itself carries.
+    ///
+    /// THE SLIDER BLENDS TWO DIRECTIONS, BOTH OF THEM ON THE SURFACE
+    /// NORMAL. At Extrude 0 the direction is n(p), the field normal AT THE
+    /// POINT, read through <see cref="SkinPatterns.NormalAt"/> and off
+    /// nothing else, which is the offset surface. At Extrude 1 it is N, the
+    /// CELL'S own normal, one vector for the whole cell, which makes the
+    /// block a rigid translation of its cell and opens the joints. In
+    /// between:
+    ///
+    ///     direction(p, t) = unit( (1 - t) n(p) + t N )
+    ///     top(p, t)       = p + Th direction(p, t)
+    ///
+    /// THE BLEND IS RENORMALISED, so the thickness is exactly |Th| at every
+    /// t and not only at the two ends. A straight interpolation of the two
+    /// TRANSLATIONS would thin the stone in the middle of the slider by up
+    /// to the half-angle's cosine, which is a silent structural change
+    /// dressed as a display setting.
+    ///
+    /// WHERE THE BLEND DEGENERATES, n(p) and N opposed and the sum shorter
+    /// than 1e-12, the answer falls back to n(p): the point's own normal is
+    /// the one of the two that is defined without reference to the cell,
+    /// and it is the end of the slider the default sits at.
+    ///
+    /// THE WELD LIVES AT t = 0 AND ONLY THERE, and that is the design. At
+    /// t = 0 the direction is a function of the POINT alone, so two cells
+    /// that share a corner hand this method the same three doubles and get
+    /// the same three back. At any t above 0 the cell's own normal enters
+    /// and neighbours may split; the gaps ARE the extrusion the slider is
+    /// sliding towards.
     ///
     /// SIGNED AND ONE-SIDED, which is Param's ruling of 2026-09-03: the
     /// full Th goes one way, never half each side, so the solved surface is
@@ -938,42 +995,74 @@ public sealed class SkinComponent : NativeComponentBase
     /// the solved surface to be a face he can build to.
     /// </summary>
     internal static double[] ThicknessOffset(
-        SkinNet net, double[] point, double thickness, bool offsetSurface)
+        SkinNet net,
+        double[] point,
+        double[] cellNormal,
+        double thickness,
+        double extrude)
     {
-        if (!offsetSurface)
-            return new[] { 0.0, 0.0, thickness };
         double[] normal = SkinPatterns.NormalAt(net, point);
+        double x = ((1.0 - extrude) * normal[0]) + (extrude * cellNormal[0]);
+        double y = ((1.0 - extrude) * normal[1]) + (extrude * cellNormal[1]);
+        double z = ((1.0 - extrude) * normal[2]) + (extrude * cellNormal[2]);
+        double length = Math.Sqrt((x * x) + (y * y) + (z * z));
+        if (!(length > 1.0e-12))
+        {
+            return new[]
+            {
+                normal[0] * thickness,
+                normal[1] * thickness,
+                normal[2] * thickness
+            };
+        }
         return new[]
         {
-            normal[0] * thickness,
-            normal[1] * thickness,
-            normal[2] * thickness
+            x / length * thickness,
+            y / length * thickness,
+            z / length * thickness
         };
     }
 
     /// <summary>
-    /// One outline moved: corner by corner, each along its OWN offset
-    /// (<see cref="ThicknessOffset"/>). This is the whole of the change the
-    /// spec asks for, and it is a static of plain double[] so the harness
-    /// can weigh two neighbouring cells' answers against one another
-    /// without a Brep anywhere.
+    /// One outline moved: corner by corner, each along its OWN blended
+    /// direction (<see cref="ThicknessOffset"/>), under the ONE cell normal
+    /// <see cref="CellNormal"/> reads off the whole outline. A static of
+    /// plain double[] so the harness can weigh two neighbouring cells'
+    /// answers against one another without a Brep anywhere.
     /// </summary>
     internal static IReadOnlyList<double[]> OffsetOutline(
         SkinNet net,
         IReadOnlyList<double[]> outline,
         double thickness,
-        bool offsetSurface)
+        double extrude) =>
+        OffsetPoints(
+            net, outline, CellNormal(net, outline), thickness, extrude);
+
+    /// <summary>
+    /// A LIST OF POINTS MOVED UNDER ONE CELL'S NORMAL. The cell normal is
+    /// handed in rather than read off the points, because a cell's SECTION
+    /// RAILS must move under the same N its own outline moved under (spec
+    /// 2026-09-04 section 5): a rail that computed its own would be a
+    /// different cell as far as the arithmetic is concerned, and the top
+    /// face would stand off the walls that meet it.
+    /// </summary>
+    internal static IReadOnlyList<double[]> OffsetPoints(
+        SkinNet net,
+        IReadOnlyList<double[]> points,
+        double[] cellNormal,
+        double thickness,
+        double extrude)
     {
-        var moved = new List<double[]>(outline.Count);
-        foreach (double[] corner in outline)
+        var moved = new List<double[]>(points.Count);
+        foreach (double[] point in points)
         {
-            double[] offset =
-                ThicknessOffset(net, corner, thickness, offsetSurface);
+            double[] offset = ThicknessOffset(
+                net, point, cellNormal, thickness, extrude);
             moved.Add(new[]
             {
-                corner[0] + offset[0],
-                corner[1] + offset[1],
-                corner[2] + offset[2]
+                point[0] + offset[0],
+                point[1] + offset[1],
+                point[2] + offset[2]
             });
         }
         return moved;
@@ -1068,26 +1157,28 @@ public sealed class SkinComponent : NativeComponentBase
     /// which route built the face (loft, fan or cap), so this one method
     /// serves every cell shape without a case on Sections.
     ///
-    /// TWO ROUTES, and the port decides which (spec 2026-09-03,
-    /// skin-offset-surface, rule 5).
+    /// THE TOP FACE TAKES THE SAME ROUTE ITS OWN BOTTOM TOOK (spec
+    /// 2026-09-04, section 5). This is the correction the slider wave
+    /// carries. Under the offset the top used to be built as a FAN even
+    /// where the bottom is a LOFT, so a lofted cell was capped by a
+    /// triangulated crust that does not share the bottom's boundary: that
+    /// is the crust in Param's screenshot and the leading suspect for the
+    /// 148 refusals, since a fan's chords and a loft's rails cannot join at
+    /// the 1e-6 the join is asked for. Now a loft-route cell lofts its top
+    /// from its own SECTION RAILS moved corner by corner, and only a
+    /// fan-route cell fans. The route is read off Sections by the one
+    /// predicate <see cref="CellSurface"/> reads it off
+    /// (<see cref="TopTakesLoft"/>), so no new case is invented and the two
+    /// cannot drift apart.
     ///
-    /// EXTRUDE, Offset false, is unchanged from what shipped: one
-    /// translation vector (0, 0, Th) for the whole cell, so the face is
-    /// duplicated and transformed, which is the cheapest and simplest
-    /// solid and is reproduced here bit for bit for anyone who wants it.
+    /// EVERY POINT MOVES BY ITS OWN BLENDED DIRECTION (rule 3.1), under the
+    /// ONE cell normal <see cref="CellNormal"/> reads off this cell's
+    /// outline. The rails are moved under that same N and not under one of
+    /// their own, or the top would stand off the walls that meet it.
     ///
-    /// OFFSET SURFACE, Offset true and the default, moves every outline
-    /// point along the normal AT THAT POINT, so there is no single
-    /// translation and the top cannot be a transformed copy of the bottom.
-    /// It is built instead as the deterministic fan of routes (d) and (e)
-    /// of rule 5.2.3 over the MOVED outline, from the cell's own lifted
-    /// plan interior point moved by ITS own offset. The fan is what
-    /// CellSurface already builds for a cell with no sections, its edges
-    /// are the straight chords the side walls are built on, and its apex
-    /// is a function of the cell's own plan alone, so two runs of the same
-    /// cell give the same solid. Where the apex cannot be found (a cell
-    /// whose plan has no interior point, or one lying off the net) the
-    /// cell is refused rather than thickened wrongly.
+    /// Where the fan's apex cannot be found (a cell whose plan has no
+    /// interior point, or one lying off the net) the cell is refused
+    /// rather than thickened wrongly.
     ///
     /// Th = 0 is refused entry here at all: <c>SolveNative</c> calls this
     /// method only when <see cref="Thickening"/> is true, which is the fast
@@ -1104,30 +1195,24 @@ public sealed class SkinComponent : NativeComponentBase
     private static Brep? ThickenCellSurface(
         Brep face,
         IReadOnlyList<double[]> outline,
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
         SkinNet net,
         double thickness,
-        bool offsetSurface)
+        double extrude)
     {
         if (outline.Count < 3)
             return null;
+        double[] cellNormal = CellNormal(net, outline);
         IReadOnlyList<double[]> moved =
-            OffsetOutline(net, outline, thickness, offsetSurface);
+            OffsetPoints(net, outline, cellNormal, thickness, extrude);
 
-        Brep? top;
-        if (!offsetSurface)
-        {
-            double[] offset =
-                ThicknessOffset(net, outline[0], thickness, false);
-            top = face.DuplicateBrep();
-            top.Transform(Transform.Translation(
-                new Vector3d(offset[0], offset[1], offset[2])));
-        }
-        else
-        {
-            top = OffsetTopFace(net, outline, moved, thickness);
-            if (top is null)
-                return null;
-        }
+        IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
+            MovedSections(net, sections, cellNormal, thickness, extrude);
+        Brep? top = movedSections is not null
+            ? LoftSections(movedSections)
+            : OffsetTopFace(net, outline, moved, cellNormal, thickness, extrude);
+        if (top is null)
+            return null;
         // The top is the same ring seen from the other side, so a solid
         // join sees a consistent shell rather than two faces both facing
         // the same way; SolidOrientation below is the belt to this braces.
@@ -1161,11 +1246,91 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
-    /// The offset route's TOP FACE: the deterministic fan of rule 5.2.3(d)
-    /// and (e) over the moved outline, from the cell's own plan interior
-    /// point lifted onto the net and then moved by that point's own offset.
-    /// Null where the cell has no plan interior point, where that point
-    /// lies off the net, or where the fan will not join.
+    /// IS THIS CELL A LOFT? The ONE predicate the bottom face and the top
+    /// face both read the route off (spec 2026-09-04, section 5). It is
+    /// exactly <see cref="CellSurface"/>'s own gate lifted out rather than
+    /// a second reading of Sections: a cell with two or more sections, each
+    /// of two or more points, lofts, and everything else fans. Two readings
+    /// of one route is how the top came to be a fan over a lofted bottom in
+    /// the first place.
+    ///
+    /// A section under two points is refused rather than fanned, which is
+    /// what CellSurface does with it too: the cell has a route it cannot
+    /// take and is left to the caller's null.
+    /// </summary>
+    internal static bool TopTakesLoft(
+        IReadOnlyList<IReadOnlyList<double[]>>? sections) =>
+        sections is not null && sections.Count >= 2;
+
+    /// <summary>
+    /// A CELL'S SECTION RAILS, MOVED, or null where the cell is not a loft
+    /// at all. Every point of every rail moves by its own blended direction
+    /// under the ONE cell normal handed in, so the moved rails are the top
+    /// face's own boundary and meet the moved outline the walls stand on.
+    ///
+    /// Internal and returning plain double[] so the harness can count the
+    /// rails and their points without a Brep: check 8 of the spec asserts
+    /// the top of a loft cell carries the LOFT STRUCTURE and not a fan, and
+    /// Brep face counts need Rhino.
+    /// </summary>
+    internal static IReadOnlyList<IReadOnlyList<double[]>>? MovedSections(
+        SkinNet net,
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
+        double[] cellNormal,
+        double thickness,
+        double extrude)
+    {
+        if (!TopTakesLoft(sections))
+            return null;
+        var moved = new List<IReadOnlyList<double[]>>(sections!.Count);
+        foreach (IReadOnlyList<double[]> section in sections)
+        {
+            if (section.Count < 2)
+                return null;
+            moved.Add(
+                OffsetPoints(net, section, cellNormal, thickness, extrude));
+        }
+        return moved;
+    }
+
+    /// <summary>
+    /// A STRAIGHT UNCLOSED LOFT OF SECTIONS, which is route 5.2.3(a) to
+    /// (c). Shared by the bottom face and by the top face so that the two
+    /// are built by one arithmetic and cannot differ in structure.
+    /// </summary>
+    private static Brep? LoftSections(
+        IReadOnlyList<IReadOnlyList<double[]>> sections)
+    {
+        var curves = new List<Curve>(sections.Count);
+        foreach (IReadOnlyList<double[]> section in sections)
+        {
+            if (section.Count < 2)
+                return null;
+            curves.Add(OpenOutlineCurve(section));
+        }
+        Brep[] lofted = Brep.CreateFromLoft(
+            curves,
+            Point3d.Unset,
+            Point3d.Unset,
+            LoftType.Straight,
+            false);
+        return lofted is { Length: 1 } && lofted[0].IsValid
+            ? lofted[0]
+            : null;
+    }
+
+    /// <summary>
+    /// The fan-route cell's TOP FACE: the deterministic fan of rule
+    /// 5.2.3(d) and (e) over the moved outline, from the cell's own plan
+    /// interior point lifted onto the net and then moved by that point's
+    /// own blended direction. Null where the cell has no plan interior
+    /// point, where that point lies off the net, or where the fan will not
+    /// join.
+    ///
+    /// IT IS NO LONGER THE ONLY TOP. Under spec 2026-09-04 section 5 this
+    /// route serves a cell whose BOTTOM is a fan, and a loft-route cell
+    /// lofts its top from its own moved rails instead. The fan over a
+    /// lofted bottom was the triangulated crust in Param's screenshot.
     ///
     /// The MOVED outline is handed in rather than recomputed. Its caller
     /// has already built it, for the side walls, and rebuilding it here
@@ -1178,7 +1343,9 @@ public sealed class SkinComponent : NativeComponentBase
         SkinNet net,
         IReadOnlyList<double[]> outline,
         IReadOnlyList<double[]> moved,
-        double thickness)
+        double[] cellNormal,
+        double thickness,
+        double extrude)
     {
         double[]? inside = SkinPatterns.PlanInteriorPoint(outline);
         if (inside is null)
@@ -1186,7 +1353,8 @@ public sealed class SkinComponent : NativeComponentBase
         double[]? apex = SkinPatterns.LiftPlanPoint(net, inside[0], inside[1]);
         if (apex is null)
             return null;
-        double[] apexOffset = ThicknessOffset(net, apex, thickness, true);
+        double[] apexOffset =
+            ThicknessOffset(net, apex, cellNormal, thickness, extrude);
         var top = new Point3d(
             apex[0] + apexOffset[0],
             apex[1] + apexOffset[1],
@@ -1218,6 +1386,37 @@ public sealed class SkinComponent : NativeComponentBase
     /// message is returned rather than raised, so the one arithmetic serves
     /// both the component's Warning and check 12.6(e).
     /// </summary>
+    /// <summary>
+    /// THE SLIDER'S OWN BOUNDS (spec 2026-09-04 section 2), as a static so
+    /// the harness can drive them without a canvas. Anything above 1
+    /// clamps to 1, anything below 0 clamps to 0, and a value that is not
+    /// finite falls back to the port default of 0.
+    ///
+    /// The message is returned rather than raised, so one arithmetic
+    /// serves both the component's message and the harness's check. It is
+    /// a REMARK and not a Warning, unlike Min Piece's: a slider driven
+    /// past its own end is an author reaching for the end of the range and
+    /// getting it, where a Min Piece outside 0 to 0.5 is a number he has
+    /// probably mistyped.
+    /// </summary>
+    internal static double ClampExtrude(
+        double asked, out bool clamped, out string remark)
+    {
+        double answer =
+            !double.IsFinite(asked)
+                ? 0.0
+                : Math.Min(Math.Max(asked, 0.0), 1.0);
+        clamped = !double.IsFinite(asked) || asked < 0.0 || asked > 1.0;
+        remark = clamped
+            ? "Extrude runs 0 (offset surface) to 1 (per-cell extrusion); " +
+              "using " +
+              answer.ToString("F3", CultureInfo.InvariantCulture) +
+              ". Both ends are on the surface normal, so there is nothing " +
+              "beyond either of them to reach for."
+            : string.Empty;
+        return answer;
+    }
+
     internal static double ClampMinPiece(
         double asked, out bool clamped, out string warning)
     {
@@ -1258,7 +1457,7 @@ public sealed class SkinComponent : NativeComponentBase
         out double courseHeight,
         out double minPiece,
         out double thickness,
-        out bool offsetSurface,
+        out double extrude,
         bool report = true)
     {
         result = null;
@@ -1267,14 +1466,14 @@ public sealed class SkinComponent : NativeComponentBase
         courseHeight = DefaultCourseHeight;
         minPiece = 1.0 / 3.0;
         thickness = 0.0;
-        offsetSurface = true;
+        extrude = 0.0;
         ResultGoo? resultGoo = null;
         int patternInput = 0;
         double sizeInput = DefaultSize;
         double courseHeightInput = DefaultCourseHeight;
         double minPieceInput = 1.0 / 3.0;
         double thicknessInput = 0.0;
-        bool offsetSurfaceInput = true;
+        double extrudeInput = 0.0;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -1285,11 +1484,18 @@ public sealed class SkinComponent : NativeComponentBase
         data.GetData(3, ref courseHeightInput);
         data.GetData(4, ref minPieceInput);
         data.GetData(5, ref thicknessInput);
-        data.GetData(6, ref offsetSurfaceInput);
+        data.GetData(6, ref extrudeInput);
         minPieceInput = ClampMinPiece(
             minPieceInput, out bool minPieceClamped, out string minPieceWarning);
         if (minPieceClamped && report)
             AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, minPieceWarning);
+        // Spec 2026-09-04 section 2: EX runs 0 to 1 and a value outside is
+        // clamped with a REMARK naming the clamp, so an author who drove a
+        // slider past its own end reads what the component actually used.
+        extrudeInput = ClampExtrude(
+            extrudeInput, out bool extrudeClamped, out string extrudeRemark);
+        if (extrudeClamped && report)
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, extrudeRemark);
         // Th keeps its own sign always (it is a direction, not a
         // magnitude), so only non-finite is refused, floored to 0 -- no
         // thickening -- rather than to the port default, which IS 0.
@@ -1345,7 +1551,7 @@ public sealed class SkinComponent : NativeComponentBase
         courseHeight = courseHeightInput;
         minPiece = minPieceInput;
         thickness = thicknessInput;
-        offsetSurface = offsetSurfaceInput;
+        extrude = extrudeInput;
         return true;
     }
 
