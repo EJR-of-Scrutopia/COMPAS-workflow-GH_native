@@ -1,31 +1,61 @@
-# Bench Studio launcher for this worktree. Starts the studio hidden with
-# a rotating log file, waits until the new process itself answers on the
-# port, then opens the browser.
+# Bench Studio launcher for this worktree. Starts the studio with no
+# console of its own, waits until this run's own log says the server has
+# bound, then opens the browser.
 #
 # There is deliberately no "already running, just open the browser" fast
 # path here. The old launcher had one, and it is why the shortcut kept
-# showing a stale studio: a stale server answers the port check perfectly
+# showing a stale studio: a stale server answers a port check perfectly
 # well, so the fast path guaranteed the newest build could never be
-# reached by double-clicking. The server now takes the port back from any
+# reached by double-clicking. The server takes the port back from any
 # previous Bench Studio by itself (bench/studio/portcheck.py asks the
 # holder to identify itself before stopping it), so the right launcher
 # policy is: always start, let the server displace its predecessor.
 #
-# Hiding mechanism carried over from the previous launcher, where it was
-# confirmed empirically on this machine (Windows 11, Windows Terminal as
-# default): -WindowStyle Hidden genuinely produces no window when started
-# from a script (the Task Scheduler gotcha does not apply here), and the
-# stdout/stderr redirects still capture the child's output.
+# pythonw, not python, and the reason is a corpse that was found still
+# warm: Start-Process with output redirects ignores -WindowStyle Hidden
+# (that flag only applies on the ShellExecute path) and attaches the
+# child to THIS console. Close the launcher's terminal -- by hand, or by
+# it closing itself when the script ends -- and Windows kills the server
+# with it. Measured live: the page and the library list loaded in the
+# seconds the server was alive, then every thumbnail request hit a dead
+# port and rendered as a broken image. pythonw is the GUI-subsystem
+# interpreter: it has no console to inherit, so no terminal's fate is
+# its fate, and the stdout/stderr redirects still capture its logs.
+#
+# -Quiet is for the silent shortcut (launcher/launch-quiet.vbs): nothing
+# is printed anywhere, and a failure shows a message box instead of
+# waiting on a Read-Host no one can see.
+
+param(
+    [switch]$Quiet
+)
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
-$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    Write-Host "No Python environment at $venvPython."
-    Write-Host "This launcher belongs to the development worktree and expects its .venv to exist."
-    Read-Host "Press Enter to close"
+function Fail([string]$message) {
+    if ($Quiet) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][System.Windows.Forms.MessageBox]::Show(
+            $message, "Bench Studio",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning)
+    } else {
+        Write-Host $message
+        Read-Host "Press Enter to close"
+    }
     exit 1
+}
+
+$venvPython = Join-Path $repoRoot ".venv\Scripts\pythonw.exe"
+if (-not (Test-Path $venvPython)) {
+    # Fall back to the console interpreter rather than refusing to start;
+    # it only costs the console-independence pythonw exists for.
+    $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+}
+if (-not (Test-Path $venvPython)) {
+    Fail ("No Python environment at $venvPython.`n" +
+        "This launcher belongs to the development worktree and expects its .venv to exist.")
 }
 
 $port = 8600
@@ -56,7 +86,9 @@ if ($existingLogs.Count -ge 10) {
 }
 
 $servePy = Join-Path $repoRoot "bench\studio\serve.py"
-Write-Host "Starting Bench Studio on port $port (hidden; logging to $logFile)..."
+if (-not $Quiet) {
+    Write-Host "Starting Bench Studio on port $port (logging to $logFile)..."
+}
 $serverProcess = Start-Process -FilePath $venvPython -ArgumentList "`"$servePy`"" `
     -WorkingDirectory $repoRoot -WindowStyle Hidden `
     -RedirectStandardOutput $logFile -RedirectStandardError $errFile -PassThru
@@ -64,12 +96,11 @@ Set-Content -LiteralPath $pidFile -Value $serverProcess.Id
 
 # Wait for THIS run's own log to say the server has bound. Not "the port
 # answers" (during a handover the OLD studio still answers until the new
-# one stops it), and not a pid match against $serverProcess (on Windows a
-# venv's python.exe is a stub that runs the real interpreter as a child,
-# so the pid that binds the port is never the pid Start-Process returned;
-# measured here: stub 56296 waiting, server 62352 on the port). The log
-# file is stamped per run, so its "Uvicorn running" line can only mean
-# this launch succeeded. uvicorn logs to stderr, hence $errFile.
+# one stops it), and not a pid match against $serverProcess (a venv's
+# python.exe is a stub that runs the real interpreter as a child, so the
+# pid that binds the port is never the pid Start-Process returned). The
+# log file is stamped per run, so its "Uvicorn running" line can only
+# mean this launch succeeded. uvicorn logs to stderr, hence $errFile.
 $deadline = (Get-Date).AddSeconds(40)
 $up = $false
 while ((Get-Date) -lt $deadline) {
@@ -87,16 +118,15 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $up) {
-    Write-Host "Bench Studio did not come up on port $port within 40 seconds."
-    Write-Host "The log says why: $logFile"
+    $report = "Bench Studio did not come up on port $port within 40 seconds.`n" +
+        "The log says why: $logFile"
     foreach ($f in @($logFile, $errFile)) {
         if ((Test-Path $f) -and (Get-Item $f).Length -gt 0) {
-            Write-Host "--- last lines of $(Split-Path -Leaf $f) ---"
-            Get-Content -LiteralPath $f -Tail 15
+            $tail = (Get-Content -LiteralPath $f -Tail 12) -join "`n"
+            $report += "`n--- last lines of $(Split-Path -Leaf $f) ---`n$tail"
         }
     }
-    Read-Host "Press Enter to close"
-    exit 1
+    Fail $report
 }
 
 # server.pid must hold the process that OWNS the port, or stop.ps1 kills
@@ -110,4 +140,6 @@ foreach ($line in (netstat -ano -p TCP | Select-String "LISTENING")) {
 if ($listenerPid) { Set-Content -LiteralPath $pidFile -Value $listenerPid }
 
 Start-Process "http://127.0.0.1:$port"
-Write-Host "Bench Studio is up on http://127.0.0.1:$port (server PID $listenerPid). Log: $logFile"
+if (-not $Quiet) {
+    Write-Host "Bench Studio is up on http://127.0.0.1:$port (server PID $listenerPid). Log: $logFile"
+}

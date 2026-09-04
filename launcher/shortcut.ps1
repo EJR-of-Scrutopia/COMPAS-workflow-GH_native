@@ -1,15 +1,18 @@
-# Creates (or repoints) the desktop shortcut to "Launch Bench Studio.cmd"
-# in THIS worktree. Run it after moving the studio between checkouts and
-# the shortcut follows.
+# Creates (or repoints) the desktop shortcut to the SILENT launcher in
+# THIS worktree: wscript runs launch-quiet.vbs, which runs launch.ps1
+# with no window. Double-click "Launch Bench Studio.cmd" instead when
+# the boot needs watching. Run this after moving the studio between
+# checkouts and the shortcut follows.
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$target = Join-Path $repoRoot "Launch Bench Studio.cmd"
+$quiet = Join-Path $repoRoot "launcher\launch-quiet.vbs"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktop "Bench Studio.lnk"
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $target
+$shortcut.TargetPath = "C:\Windows\System32\wscript.exe"
+$shortcut.Arguments = '"' + $quiet + '"'
 $shortcut.WorkingDirectory = $repoRoot
 $shortcut.IconLocation = "shell32.dll,220"
 $shortcut.Description = "Launch Bench Studio"
