@@ -915,21 +915,52 @@ def run_thickness_checks():
     # asserted to be REAL, above the 1e-6 the join is asked at, because a
     # slider read and ignored would leave it at zero and pass the weld half
     # alone.
+    #
+    # AND THE PAIR MUST GENUINELY DISAGREE ABOUT ITS OWN NORMAL, which is
+    # the approving review of 2026-09-04, finding 4. This took the FIRST
+    # corner-sharing pair it met and asserted a real gap at Extrude 1 off
+    # it. Two cells whose own normals happen to agree, which is every pair
+    # across a flat patch and every pair on a coarse ring, move a shared
+    # corner to the same place at EVERY stop of the slider: that is the
+    # arithmetic behaving, not a defect, and the assertion would have
+    # reddened on a fixture rather than on the engine. The filter is the
+    # one tests/native_smoke's own weld check uses (its ValidateSkinOffsetWeld,
+    # the |cos| > cos(0.1) skip): a tenth of a radian is a real difference,
+    # half a degree is not. Only if NO disagreeing pair exists anywhere does
+    # this fail, and then it fails for what it is, a fixture that cannot
+    # carry the claim.
+    def disagreement(left_cell, right_cell):
+        """One minus |cos| between the two cells' own normals, off the
+        ENGINE's CellNormal, so the pair is chosen by the same arithmetic
+        the gap is then measured with."""
+        a = cell_normal(_property(left_cell, "Outline"))
+        b = cell_normal(_property(right_cell, "Outline"))
+        return 1.0 - abs(sum(a[k] * b[k] for k in range(3)))
+
     shared = None
+    agreeing_pairs = 0
     for i in range(len(cells)):
         left = [tuple(p) for p in _property(cells[i], "Outline")]
         for j in range(i + 1, len(cells)):
             right = set(tuple(p) for p in _property(cells[j], "Outline"))
             common = [p for p in left if p in right]
-            if common:
-                shared = (cells[i], cells[j], common[0])
-                break
+            if not common:
+                continue
+            if disagreement(cells[i], cells[j]) <= 1.0 - math.cos(0.1):
+                agreeing_pairs += 1
+                continue
+            shared = (cells[i], cells[j], common[0])
+            break
         if shared is not None:
             break
     if shared is None:
         reports.append(
             "FAIL (12.5(h), NEW): no two cells of the fixture share an "
-            "outline corner, so the weld claim was measured on nothing")
+            "outline corner AND disagree about their own normals by more "
+            "than a tenth of a radian (%d corner-sharing pairs were found "
+            "and every one of them agreed), so the split at Extrude 1 "
+            "could only have been measured on a pair the engine is right "
+            "to weld at both ends" % (agreeing_pairs,))
     else:
         left_cell, right_cell, corner = shared
         thickness = 0.2
@@ -987,11 +1018,13 @@ def run_thickness_checks():
                 reports.append(
                     "PASS (12.5(h), NEW, UNVERIFIED BY ITS AUTHOR, shared "
                     "corner, Extrude %.2f): two cells sharing the corner "
-                    "(%.6f, %.6f, %.6f) at Th 0.2 move it %.12f m apart, "
-                    "and each solid carries a vertex at the corner and at "
-                    "its own moved corner. At 0 that gap is the WELD and "
-                    "at 1 it is the joint opening by design."
-                    % (extrude, corner[0], corner[1], corner[2], gap))
+                    "(%.6f, %.6f, %.6f), whose own normals disagree by "
+                    "%.4f in cosine, at Th 0.2 move it %.12f m apart, and "
+                    "each solid carries a vertex at the corner and at its "
+                    "own moved corner. At 0 that gap is the WELD and at 1 "
+                    "it is the joint opening by design."
+                    % (extrude, corner[0], corner[1], corner[2],
+                       disagreement(left_cell, right_cell), gap))
 
     # ---- 12.5(i), NEW 2026-09-03, PER SLIDER STOP since 2026-09-04: THE
     # COUNT PARAM ASKED FOR, and the only place it can honestly be taken.
