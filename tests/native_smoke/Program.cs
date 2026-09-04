@@ -25762,6 +25762,44 @@ internal static class Program
                 "fan-route cell on the canvas.");
         }
 
+        // ---- AND A HEALTHY LOFT CELL IS NOT REFUSED, which is the third
+        // leg of the trio and the ONLY one that can redden if TopRefused
+        // ever decays into TopTakesLoft alone. The other two answer the
+        // same either way: the crippled pair says LOFT on the count, and
+        // the null pair says not-a-loft on the count, so a predicate that
+        // reads the count and nothing else passes both. Two sections of
+        // two points each, so the route says LOFT and MovedSections hands
+        // the rails back, and the honest answer is NO refusal.
+        var healthy = new IReadOnlyList<double[]>[]
+        {
+            new[] { new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 } },
+            new[] { new[] { 0.0, 1.0, 0.0 }, new[] { 1.0, 1.0, 0.0 } }
+        };
+        object? healthyRails = movedSections.Invoke(
+            null,
+            new object?[]
+            {
+                barrelNet, healthy, new[] { 0.0, 0.0, 1.0 }, Th, 0.0
+            });
+        if (healthyRails is null)
+        {
+            throw new InvalidOperationException(
+                "The healthy leg of the refusal trio must carry REAL " +
+                "rails or it proves nothing at all: two sections of two " +
+                "points each, and MovedSections handed back null.");
+        }
+        if ((bool)topRefused.Invoke(
+                null, new object?[] { healthy, healthyRails })!)
+        {
+            throw new InvalidOperationException(
+                "A loft-route cell whose rails DID loft must NOT be " +
+                "refused: two sections of two points each, rails handed " +
+                "back, and the engine refused the cell anyway. That is " +
+                "every loft cell on the canvas thrown away by a guard " +
+                "meant for the crippled few, and it is what TopRefused " +
+                "reading its route predicate alone would do.");
+        }
+
         Console.WriteLine(
             $"      Skin top by bottom's route (section 5): {barrel.Lofted} " +
             $"loft-route cells and {barrel.Fanned} fan-route cells on the " +
