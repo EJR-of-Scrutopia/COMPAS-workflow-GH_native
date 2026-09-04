@@ -78,7 +78,33 @@ def test_pbr_helpers_and_column_loader_exist():
     for name in ("noiseTexture", "grainTexture", "columnGeometryFrom", "loadColumns"):
         assert name in js, "studio.js lost {}".format(name)
     assert "MeshPhysicalMaterial" in js
-    assert "ACESFilmicToneMapping" in js
+    assert "NeutralToneMapping" in js
+
+
+def test_the_renderer_uses_the_settings_r185_did_not_deprecate():
+    """r185 deprecated one of these and made the other dishonest.
+
+    PCFSoftShadowMap is downgraded to PCFShadowMap with a console warning,
+    so asking for it buys nothing. ACESFilmicToneMapping opens its shader
+    with `color *= toneMappingExposure / 0.6` and then applies a film-print
+    curve that shifts saturated hues, which a material studio cannot use.
+    Both must stay gone, and the exposure gain that compensates for ACES's
+    hidden 1/0.6 must stay applied or the studio darkens by two thirds of a
+    stop.
+    """
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # The constants as USED, not as named. The comments beside those lines
+    # explain what was wrong with the old settings and must go on saying so,
+    # which a bare substring test would forbid.
+    assert "THREE.PCFSoftShadowMap" not in js
+    assert "THREE.ACESFilmicToneMapping" not in js
+    assert "THREE.PCFShadowMap" in js
+    assert "THREE.NeutralToneMapping" in js
+    assert "const EXPOSURE_GAIN = 1 / 0.6;" in js
+    assert js.count("EXPOSURE_GAIN") >= 4, (
+        "the gain is declared once and applied at every exposure site: "
+        "the viewport grade, the preview rig and the weather swatch"
+    )
 
 
 def test_the_timeline_is_a_pure_function_of_time():

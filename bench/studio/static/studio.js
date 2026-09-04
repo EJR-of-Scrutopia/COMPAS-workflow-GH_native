@@ -173,9 +173,25 @@ const scrubber = document.getElementById("timeline-scrubber");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+// PCFSoftShadowMap is deprecated in r185 and silently downgraded to this
+// with a console warning: PCF was rewritten to a hardware-comparison
+// five-tap Vogel disk jittered by interleaved gradient noise, so softness
+// now comes from light.shadow.radius rather than from the constant.
+renderer.shadowMap.type = THREE.PCFShadowMap;
+// Neutral, not ACESFilmic. ACES multiplies exposure by 1/0.6 inside its own
+// shader without saying so, then applies a film-print curve that lifts
+// midtone saturation and hue-shifts strong colours. A studio whose job is
+// to show what a material looks like cannot use an operator that lies about
+// albedo. Neutral is the Khronos 3D Commerce curve: a straight pass-through
+// below a peak of 0.76, rolling off only the highlights above it.
+renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+// Every exposure number in this file was tuned by eye against ACES, and so
+// carries ACES's hidden 1/0.6 inside it. Neutral applies no such gain, so
+// the factor is put back here once rather than rewritten into a dozen
+// presets whose numbers would then mean nothing to anybody reading them.
+const EXPOSURE_GAIN = 1 / 0.6;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
@@ -203,7 +219,7 @@ const gradePass = new ShaderPass(BrightnessContrastShader);
 composer.addPass(gradePass);
 
 function applyGrade() {
-  renderer.toneMappingExposure = state.exposureBase * state.brightness;
+  renderer.toneMappingExposure = state.exposureBase * state.brightness * EXPOSURE_GAIN;
   gradePass.uniforms.brightness.value = 0;
   gradePass.uniforms.contrast.value = state.contrast;
 }
@@ -814,6 +830,16 @@ function disposeProp(object) {
   });
 }
 
+// Set when a restore met a prop whose model had not arrived yet. The prop
+// library loads over the network and can finish AFTER the first restore,
+// so without this a cold boot silently drops every library prop a study
+// was saved with, and the loss looks like the study never had them.
+let propsAwaitingLibrary = false;
+
+function knownPropType(type) {
+  return propTemplates.has(type) || !!PROP_BUILDERS[type];
+}
+
 function restoreProps() {
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
@@ -825,8 +851,15 @@ function restoreProps() {
     layout = [];
   }
   if (!Array.isArray(layout)) layout = [];
+  propsAwaitingLibrary = false;
   for (const entry of layout) {
-    if (!PROP_BUILDERS[entry.type]) continue;
+    if (!knownPropType(entry.type)) {
+      // Either the library is still in flight, or this prop is gone from
+      // it. Either way the entry stays in the saved layout untouched, so a
+      // library that arrives late can put it back.
+      propsAwaitingLibrary = true;
+      continue;
+    }
     placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
   }
 }
@@ -872,6 +905,9 @@ async function loadPropLibrary() {
   }
   if (select.options.length) select.value = select.options[0].value;
   logStudio("prop library: " + select.options.length + " models");
+  // A cold boot restores a study's props before this finishes, so anything
+  // it had to skip gets a second chance now that the models are here.
+  if (propsAwaitingLibrary) restoreProps();
 }
 
 async function loadPropTemplate(entry) {
@@ -977,16 +1013,38 @@ function placeProp(type, x, y, rotation, save) {
   return record;
 }
 
-function setPropEmissive(record, on) {
-  record.object.traverse((child) => {
-    if (child.isMesh) child.material.emissive.set(on ? 0x2a4a66 : 0x000000);
-  });
+// A library prop is a clone that SHARES its template's materials, so
+// writing emissive on one lit every copy of that model in the scene. An
+// outline owns nothing: it is one helper object that follows whichever prop
+// is selected and is thrown away when the selection moves on.
+let propOutline = null;
+
+function clearPropOutline() {
+  if (!propOutline) return;
+  propsGroup.remove(propOutline);
+  propOutline.geometry.dispose();
+  propOutline.material.dispose();
+  propOutline = null;
+}
+
+function setPropOutline(record) {
+  clearPropOutline();
+  if (!record) return;
+  propOutline = new THREE.BoxHelper(record.object, 0x93a6bb);
+  propOutline.material.depthTest = false;
+  propOutline.renderOrder = 2;
+  propsGroup.add(propOutline);
+}
+
+// The outline is a box around where the prop WAS, so a carried prop has to
+// drag it along. Cheap: BoxHelper.update recomputes from the object.
+function refreshPropOutline() {
+  if (propOutline) propOutline.update();
 }
 
 function selectProp(record) {
-  if (state.selectedProp) setPropEmissive(state.selectedProp, false);
   state.selectedProp = record;
-  if (record) setPropEmissive(record, true);
+  setPropOutline(record);
 }
 
 function armProp(type) {
@@ -1503,12 +1561,12 @@ async function applyScene(record) {
   if (typeof cut.thickness === "number") {
     state.thickness = cut.thickness; control("thickness-input").value = cut.thickness;
   }
-  if (typeof cut.jointGap === "number") {
-    state.jointGap = cut.jointGap; control("joint-gap").value = cut.jointGap;
-  }
-  if (typeof cut.taper === "number") {
-    state.taper = cut.taper; control("taper").value = cut.taper;
-  }
+  // The joint-gap and taper sliders are gone from the panel: the gap is
+  // pinned at 0.001 and the taper at 0. A scene saved while they existed
+  // still carries the numbers, so the state is restored and nothing is
+  // written to a control that is no longer on the page.
+  if (typeof cut.jointGap === "number") state.jointGap = cut.jointGap;
+  if (typeof cut.taper === "number") state.taper = cut.taper;
   state.source = cut.source || null;
   if (scene_.ground) {
     if (scene_.ground.preset) {
@@ -1543,6 +1601,7 @@ async function applyScene(record) {
     state.props = [];
     state.selectedProp = null;
     for (const entry of scene_.props) {
+      if (!knownPropType(entry.type)) continue;
       placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
     }
   }
@@ -2210,8 +2269,10 @@ function buildPreviewRig() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(PREVIEW_SIZE, PREVIEW_SIZE, false);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    // The same operator as the viewport, or a swatch would promise a
+    // colour the scene does not keep.
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.toneMappingExposure = 1.05 * EXPOSURE_GAIN;
     const previewScene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 20);
     // Z-up like the studio, so a prop preview stands the way it stands in
@@ -2396,7 +2457,7 @@ function renderWeatherPreview(preset, canvasEl) {
   previewSky.visible = true;
   previewRig.ball.visible = false;
   const exposure = previewRig.renderer.toneMappingExposure;
-  previewRig.renderer.toneMappingExposure = settings.exposure * 1.9;
+  previewRig.renderer.toneMappingExposure = settings.exposure * 1.9 * EXPOSURE_GAIN;
   // Looking at the horizon, slightly above it, which is where the weather
   // of a sky actually reads.
   previewRig.camera.position.set(0, 0, 0.2);
@@ -4445,6 +4506,7 @@ canvas.addEventListener("pointermove", (event) => {
   carried.x = hit.x;
   carried.y = hit.y;
   carried.object.position.set(hit.x, hit.y, 0);
+  refreshPropOutline();
 });
 function endPropDrag(event) {
   if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
