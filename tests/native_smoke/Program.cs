@@ -26696,18 +26696,24 @@ internal static class Program
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
         MethodInfo vertexNormals =
             RequirePublicStatic(patterns, "VertexNormals");
+        MethodInfo orientedNormals =
+            RequirePublicStatic(patterns, "OrientedVertexNormals");
+        MethodInfo crossSum = RequirePublicStatic(patterns, "GlobalCrossSum");
         MethodInfo normalAt = RequirePublicStatic(patterns, "NormalAt");
 
-        double[][] Field(double[][] vertices, int[][] faces)
+        double[][] Read(MethodInfo of, double[][] vertices, int[][] faces)
         {
             var read = new List<double[]>();
-            foreach (object? item in (IEnumerable)vertexNormals.Invoke(
+            foreach (object? item in (IEnumerable)of.Invoke(
                          null, new object[] { vertices, faces })!)
             {
                 read.Add((double[])item!);
             }
             return read.ToArray();
         }
+
+        double[][] Field(double[][] vertices, int[][] faces) =>
+            Read(vertexNormals, vertices, faces);
 
         double[][] leaning =
         {
@@ -26717,6 +26723,29 @@ internal static class Program
             new[] { 0.0, 0.0, -3.0 }
         };
         int[][] twoTriangles = { new[] { 0, 1, 2 }, new[] { 0, 2, 3 } };
+
+        // THE FIXTURE IS WOUND UP, ASSERTED BEFORE ANYTHING IS READ OFF IT
+        // (the approving review of 2026-09-04, finding 2). Every
+        // hand-computed normal below is written for this winding, and the
+        // cached-field comparison at the foot compares the net's ORIENTED
+        // field against a fixture rule 4's flip does not touch. A later
+        // edit that reversed the winding would turn every one of those
+        // claims into its own negative, silently; it is caught here and
+        // named instead.
+        var leaningSum = (double[])crossSum.Invoke(
+            null, new object[] { leaning, twoTriangles })!;
+        if (!(leaningSum[2] > 0.0))
+        {
+            throw new InvalidOperationException(
+                "The leaning fixture must be wound UP, so that rule 4's " +
+                "global flip does not fire on it and the hand-computed " +
+                "normals below are the field the engine owes: its " +
+                "area-weighted cross-sum Z measured " +
+                $"{leaningSum[2]}, which is not positive. Reverse the " +
+                "fixture and every expectation in this check becomes its " +
+                "own negative without one line of it saying so.");
+        }
+
         double[][] field = Field(leaning, twoTriangles);
         if (field.Length != leaning.Length)
         {
@@ -26829,26 +26858,43 @@ internal static class Program
         }
 
         // ---- THE FIELD IS CACHED ON THE NET, beside the level field and
-        // with the same lifetime, and it is the same arithmetic: a net
-        // built on these vertices and faces carries exactly this field.
+        // with the same lifetime, and it is the ORIENTED field of rule 4,
+        // not the raw one: a net built on these vertices and faces carries
+        // exactly what OrientedVertexNormals gives over the same
+        // triangulation.
+        //
+        // AGAINST THE ORIENTED FIELD SINCE 2026-09-04, on the approving
+        // review's second finding. This compared SkinNet.Normals against
+        // the UNFLIPPED VertexNormals and passed only because this fixture
+        // happens to be wound UP, where rule 4's flip does not fire and the
+        // two fields are the same doubles. On a fixture wound the other way
+        // it would have asserted the opposite of what the engine owes.
+        //
+        // AND THE FIXTURE CANNOT SILENTLY ROTATE UNDER IT: the up-wound
+        // guard at the head of this check is what holds that, so that a
+        // reversed fixture is named rather than quietly turning this
+        // comparison into a different claim.
+        double[][] oriented = Read(orientedNormals, leaning, twoTriangles);
         object leaningNet = SkinNetWith(
             netType, edgeType, leaning, twoTriangles, Array.Empty<int>(),
             Array.Empty<(int, int, double)>());
         IList cached = (IList)netType.GetProperty("Normals")!
             .GetValue(leaningNet)!;
-        for (int vertex = 0; vertex < field.Length; vertex++)
+        for (int vertex = 0; vertex < oriented.Length; vertex++)
         {
             var carried = (double[])cached[vertex]!;
             for (int axis = 0; axis < 3; axis++)
             {
-                if (carried[axis] != field[vertex][axis])
+                if (carried[axis] != oriented[vertex][axis])
                 {
                     throw new InvalidOperationException(
-                        "SkinNet.Normals must be VertexNormals over the " +
-                        "net's own triangulated faces, bit for bit, or " +
-                        "the field the offset reads is not the field this " +
-                        $"check measured: vertex {vertex} axis {axis} " +
-                        $"carried {carried[axis]} against {field[vertex][axis]}.");
+                        "SkinNet.Normals must be ORIENTEDVertexNormals " +
+                        "over the net's own triangulated faces, bit for " +
+                        "bit (rule 4), or the field the offset reads is " +
+                        "not the field this check measured and +Th is not " +
+                        $"out: vertex {vertex} axis {axis} carried " +
+                        $"{carried[axis]} against " +
+                        $"{oriented[vertex][axis]}.");
                 }
             }
         }
