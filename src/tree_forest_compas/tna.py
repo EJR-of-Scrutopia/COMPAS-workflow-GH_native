@@ -2905,6 +2905,22 @@ def solve_tna_problem(
     compression_count = sum(1 for force_value in edge_forces.values() if force_value < 0)
     tension_count = sum(1 for force_value in edge_forces.values() if force_value > 0)
 
+    # Rule 2.5's mode, as a word and as the number that word travels by.
+    # One chain decides both, so no reader can be told two different
+    # things about the same solve.
+    if not selfweight_active:
+        selfweight_mode_name = "none"
+        selfweight_mode_code = 0.0
+    elif refine_selfweight:
+        selfweight_mode_name = "refined on the solved geometry"
+        selfweight_mode_code = 2.0
+    elif frozen_selfweight:
+        selfweight_mode_name = "frozen at the plan geometry"
+        selfweight_mode_code = 1.0
+    else:
+        selfweight_mode_name = "live inside the library"
+        selfweight_mode_code = 3.0
+
     diagnostics = dict(problem.diagnostics)
     diagnostics.update(
         {
@@ -2932,27 +2948,16 @@ def solve_tna_problem(
             # Rule 2.5. The old "natural_selfweight_frozen" read out as
             # "Natural selfweight frozen 0" on a canvas whose selfweight
             # was live, which is the guard reporting itself OFF in words
-            # that sounded like a safety measure engaged. These say what
-            # mode the weight was evaluated in and how it settled.
-            "selfweight_mode": (
-                "none"
-                if not selfweight_active
-                else (
-                    "refined on the solved geometry"
-                    if refine_selfweight
-                    else (
-                        "frozen at the plan geometry"
-                        if frozen_selfweight
-                        else "live inside the library"
-                    )
-                )
-            ),
-            "selfweight_refined": refine_selfweight,
-            "selfweight_rounds_run": selfweight_rounds_run,
-            "selfweight_total_load_by_round": selfweight_totals,
-            "selfweight_final_drift": selfweight_drift,
-            "selfweight_converged": selfweight_converged,
-            "selfweight_fenced": selfweight_fenced,
+            # that sounded like a safety measure engaged. This says what
+            # mode the weight was evaluated in.
+            "selfweight_mode": selfweight_mode_name,
+            # The numeric twin, the pattern horizontal_mode_is_auto uses
+            # below. The canvas renderer
+            # (ananke_equilibrium.gh.solvers._diagnostic_contracts) drops
+            # every string, and the native component's metric dictionary
+            # carries doubles only, so the word alone never reaches
+            # either. Both are cut from one chain and cannot disagree.
+            "selfweight_mode_code": selfweight_mode_code,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
             "horizontal_method": method,
@@ -2990,6 +2995,26 @@ def solve_tna_problem(
             "tension_edge_count": tension_count,
         }
     )
+    if refine_selfweight:
+        # Rule 2.5's numbers all describe the refinement LOOP, and they
+        # are here only when the loop turned. The canvas renders every
+        # numeric diagnostic, so shipping them on a solve that never
+        # refined put "Selfweight converged 1.0" and "Selfweight rounds
+        # run 1.0" beside a loop that never ran: the same defect as the
+        # "Natural selfweight frozen 0" this rule retired, five lines
+        # wide. Absence is the honest reading, and the chin
+        # (TnaSolveComponent.SelfweightSummary) already reads a missing
+        # selfweight_refined as absence rather than as zero rounds.
+        diagnostics.update(
+            {
+                "selfweight_refined": True,
+                "selfweight_rounds_run": selfweight_rounds_run,
+                "selfweight_total_load_by_round": selfweight_totals,
+                "selfweight_final_drift": selfweight_drift,
+                "selfweight_converged": selfweight_converged,
+                "selfweight_fenced": selfweight_fenced,
+            }
+        )
     diagnostics.update(algebraic_diagnostics)
 
     session_metadata = dict(problem.metadata)
