@@ -400,7 +400,7 @@ def test_play_lives_on_the_shelf_and_starts_where_you_stand():
     assert 'document.getElementById("play-button").textContent' not in js
     assert js.count("paintPlayButtons(") >= 8
 
-    capture = _js_function(js, "function captureOrbitBase()")
+    capture = _js_function(js, "function captureOrbitBase(atT)")
     assert "const centre = controls.target.clone();" in capture
     apply_block = _js_function(js, "function applyTimeline(t)")
     assert "base.centre || state.centre" in apply_block
@@ -435,7 +435,21 @@ def test_the_take_neither_reaims_nor_inherits_the_drags_glide():
         body = _js_function(js, owner)
         assert "settleControls();" in body
         assert body.index("settleControls();") < body.index(
-            "captureOrbitBase();"), owner + " must settle before capturing"
+            "captureOrbitBase("), owner + " must settle before capturing"
+
+    # The bearing is captured FOR the clock the take starts on. Captured
+    # at a finished take's end and played from zero, the camera leapt
+    # backwards by the previous take's whole rotation (Param: "its
+    # decided where the start of the animation is").
+    capture = _js_function(js, "function captureOrbitBase(atT)")
+    assert 'typeof atT === "number" ? atT : state.timeline.t' in capture
+    assert "Math.max(0, reference - openingSeconds())" in capture
+    play = _js_function(js, "function startPlaying(fromTheTop)")
+    assert "captureOrbitBase(fromT);" in play
+    assert "? 0 : state.timeline.t;" in play
+    record = _js_function(js, "async function recordAnimation()")
+    assert "captureOrbitBase(0);" in record, (
+        "a recording runs from frame zero; its bearing must too")
 
     drag_end = js[js.index('controls.addEventListener("end"'):]
     drag_end = drag_end[:drag_end.index("\n});")]

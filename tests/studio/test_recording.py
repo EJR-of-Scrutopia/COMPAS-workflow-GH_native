@@ -41,7 +41,7 @@ def test_recording_arms_what_play_arms():
         "without the timeline show mode, applyShowMode rewrites every "
         "recorded frame back to the finished vault"
     )
-    assert "captureOrbitBase()" in body, (
+    assert "captureOrbitBase(0)" in body, (
         "without an orbit base, applyTimeline never moves the camera"
     )
     # And the viewer's own mode comes back afterwards.
@@ -59,7 +59,7 @@ def test_the_orbit_waits_out_the_opening_act():
     )
     capture_body = js[js.index("function captureOrbitBase"):]
     capture_body = capture_body[:capture_body.index("\n}")]
-    assert "Math.max(0, state.timeline.t - openingSeconds())" in capture_body, (
+    assert "Math.max(0, reference - openingSeconds())" in capture_body, (
         "both writers of the angle must clamp the same clock, or a "
         "mid-take capture jumps the camera by the opening act's length"
     )

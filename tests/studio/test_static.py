@@ -876,10 +876,17 @@ def test_transport_is_pause_and_restart_only():
     restart_body = js[restart_start:js.index("\n});", restart_start)]
     assert "startPlaying(true)" in restart_body
     start_body = _function_body(js, "startPlaying")
-    assert "applyTimeline(0)" in start_body
+    # The clock decision precedes the capture, and the timeline is only
+    # re-applied when the clock actually moves: the unconditional
+    # applyTimeline(0) was half of the decided-start bug.
+    assert "? 0 : state.timeline.t;" in start_body
+    assert "if (fromT !== state.timeline.t) applyTimeline(fromT)" in start_body
     assert "playing = true" in start_body
     assert 'state.showMode = "timeline"' in start_body
-    assert "captureOrbitBase()" in start_body
+    # With the clock it starts on: bare captureOrbitBase() here was the
+    # decided-start bug (bearing captured at a finished take's end,
+    # played from zero, camera leaping the previous take's rotation).
+    assert "captureOrbitBase(fromT)" in start_body
 
 
 def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
@@ -2553,7 +2560,7 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
     assert "camera.position.clone().sub(centre)" in capture
     assert "Math.atan2(offset.y, offset.x)" in capture
     assert ("- state.timeline.orbitSpeed * "
-            "Math.max(0, state.timeline.t - openingSeconds())") in capture, (
+            "Math.max(0, reference - openingSeconds())") in capture, (
         "the bearing must have the current rotation taken out of it, on the "
         "same clamped clock applyTimeline adds back (the orbit waits out "
         "the opening act, so the capture must subtract the same wait)"

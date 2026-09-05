@@ -7640,8 +7640,16 @@ function settleControls() {
   controls.enableDamping = damped;
 }
 
-function captureOrbitBase() {
+function captureOrbitBase(atT) {
   if (!state.timeline) return;
+  // The bearing is captured FOR a clock. The subtraction below must use
+  // the t the take will actually RUN from, not whatever the clock reads
+  // at capture: captured at the end of a finished take and played from
+  // zero, the add-back was nothing while the subtraction was a whole
+  // take's turn, and the camera leapt backwards by exactly the previous
+  // take's rotation -- Param: "its decided where the start of the
+  // animation is, its not based off where the current viewport is".
+  const reference = typeof atT === "number" ? atT : state.timeline.t;
   // The orbit turns about what the CAMERA is aimed at, not the bundle's
   // centre: lookAt(state.centre) on the first played frame re-aimed a
   // panned or off-centre view, which read as a jump and a lens change
@@ -7659,7 +7667,7 @@ function captureOrbitBase() {
     // The same clamped clock applyTimeline adds back, or a capture taken
     // mid-take jumps the camera by exactly the opening act's length.
     azimuth: Math.atan2(offset.y, offset.x)
-      - state.timeline.orbitSpeed * Math.max(0, state.timeline.t - openingSeconds()),
+      - state.timeline.orbitSpeed * Math.max(0, reference - openingSeconds()),
   };
 }
 
@@ -7713,7 +7721,9 @@ async function recordAnimation() {
   state.showMode = "timeline";
   paintShowButtons();
   settleControls();
-  captureOrbitBase();
+  // A recording always runs from frame zero, so its bearing is captured
+  // for t = 0 -- whatever the clock read when Record was pressed.
+  captureOrbitBase(0);
   // The chosen frame rides into the take: ratio, FOV and the grade are
   // all camera truths the recording must keep.
   const frame = recordingFrame();
@@ -7884,8 +7894,11 @@ function startPlaying(fromTheTop) {
   state.showMode = "timeline";
   paintShowButtons();
   settleControls();
-  captureOrbitBase();
-  if (fromTheTop || state.timeline.t >= timelineDuration()) applyTimeline(0);
+  // Decide WHERE the clock starts before capturing the bearing for it.
+  const fromT = (fromTheTop || state.timeline.t >= timelineDuration())
+    ? 0 : state.timeline.t;
+  captureOrbitBase(fromT);
+  if (fromT !== state.timeline.t) applyTimeline(fromT);
   state.timeline.playing = true;
   paintPlayButtons("Pause");
 }
