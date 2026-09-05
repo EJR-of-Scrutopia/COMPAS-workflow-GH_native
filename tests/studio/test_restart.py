@@ -277,3 +277,63 @@ def test_the_restart_spawn_opens_no_console():
     body = inspect.getsource(studio_app.schedule_restart)
     assert "CREATE_NO_WINDOW" in body
     assert "CREATE_NEW_CONSOLE" not in body
+
+
+def test_stop_answers_before_it_goes(client, monkeypatch):
+    """Same contract as the restart: the reply must reach the browser, so
+    the exit is scheduled rather than done in the route, and the whole
+    scheduling is replaced here for the same reason test_restart_answers_
+    before_it_goes replaces schedule_restart -- a delayed thread cannot be
+    made safe by patching what it will eventually call."""
+
+    scheduled = []
+    monkeypatch.setattr(studio_app, "schedule_stop",
+                        lambda *args, **kwargs: scheduled.append(True))
+    body = client.post("/api/stop").json()
+    assert body["stopping"] is True
+    assert isinstance(body["pid"], int)
+    assert scheduled == [True], "the route must go through the one function"
+
+
+def test_the_stop_is_one_replaceable_function():
+    """And it ends the PROCESS, not a thread: sys.exit in a worker thread
+    ends only that thread, and uvicorn's graceful path is out of reach
+    because uvicorn.run keeps the Server object to itself."""
+
+    import inspect
+
+    source = (STUDIO / "app.py").read_text(encoding="utf-8")
+    assert "def schedule_stop(delay: float = STOP_DELAY) -> None:" in source
+    route = source[source.index('@app.post("/api/stop")'):]
+    route = route[:route.index("\n    @app.")]
+    assert "schedule_stop()" in route
+    assert "threading.Thread" not in route, (
+        "the route must not build its own thread; that is what made the "
+        "restart impossible to fake in one piece"
+    )
+    body = inspect.getsource(studio_app.schedule_stop)
+    assert "os._exit(0)" in body
+    # The CALL, not the name: the docstring explains why sys.exit is wrong
+    # here and must go on being allowed to say so.
+    assert "sys.exit(" not in body
+
+
+def test_the_stop_button_counts_a_proxy_answer_as_quiet():
+    """Through the tailnet proxy a dead server still gets the page a reply:
+    a 502 from the proxy itself. A stop button that waited for the
+    connection to DROP would sit at "still answering..." forever when used
+    from the very devices it exists for."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = js[js.index('getElementById("stop-studio").addEventListener'):]
+    body = body[:body.index("\n});")]
+    assert '"/api/stop", { method: "POST" }' in body
+    assert "confirm(" in body, (
+        "stopping every open page on every device deserves a question first"
+    )
+    assert "!health.ok" in body, (
+        "a not-ok health answer is the proxy speaking for a dead server "
+        "and must count as stopped"
+    )
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="stop-studio"' in html

@@ -453,6 +453,41 @@ def schedule_restart(delay: float = RESTART_DELAY) -> None:
 
     threading.Thread(target=go, daemon=True).start()
 
+
+STOP_DELAY = 0.5
+
+
+def schedule_stop(delay: float = STOP_DELAY) -> None:
+    """End this process, a beat after the reply has gone out.
+
+    One named, replaceable function for the same reason as schedule_restart
+    above: a delayed thread cannot be made safe by patching what it will
+    eventually call, so tests replace this function whole.
+
+    os._exit and not sys.exit, because sys.exit in a worker thread ends only
+    that thread, and uvicorn.run keeps its Server object to itself so the
+    graceful path cannot be reached from here. Abruptness is safe: every
+    write this server makes is atomic already, and the pidfile the desktop
+    stop script reads tolerates a process that is simply gone.
+    """
+
+    def go():
+        time.sleep(delay)
+        os._exit(0)
+
+    threading.Thread(target=go, daemon=True).start()
+
+
+# The routes whose non-JSON answers are heavy immutable-ish freight (prop
+# models, sky derivations, material maps), and the patience a remote device
+# is allowed with them: kept for an hour without asking, refreshed in the
+# background for a week after. The trailing slashes matter: "/api/hdri" the
+# LIST must stay fresh while "/api/hdri/..." the FILES may be kept.
+HEAVY_ASSET_PREFIXES = ("/api/props/", "/api/hdri/", "/api/materials/",
+                        "/api/ground-materials/")
+HEAVY_ASSET_CACHE = "public, max-age=3600, stale-while-revalidate=604800"
+
+
 def static_version() -> str:
     """A short hash of every static file's size and modification time.
 
@@ -884,6 +919,20 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
         schedule_restart()
         return {"restarting": True, "build": static_version()}
+
+    @app.post("/api/stop")
+    def stop():
+        """Stop the server, from a page that may be an ocean away.
+
+        The desktop has a shortcut to end the process; a laptop or phone on
+        the tailnet has only this route. The reply is sent first and the
+        exit follows a beat later, exactly as /api/restart does, so the
+        page gets to say "stopped" from an answer rather than infer it
+        from a dropped connection.
+        """
+
+        schedule_stop()
+        return {"stopping": True, "pid": os.getpid()}
 
     @app.get("/api/folder")
     def folder():
@@ -1616,15 +1665,39 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.middleware("http")
     async def no_stale_static(request: Request, call_next):
-        """The studio is a local tool under daily edit, and a browser that
-        keeps yesterday's studio.css is a bug report about a fix that has
-        already shipped. It has happened twice: a panel that looked
-        unchanged because only the stylesheet was stale. Nothing here is
-        worth caching, so nothing is.
+        """Freshness where the studio is edited, patience where it is heavy.
+
+        The app's own files stay uncacheable: the studio is a local tool
+        under daily edit, and a browser that keeps yesterday's studio.css is
+        a bug report about a fix that has already shipped (it has happened
+        twice: a panel that looked unchanged because only the stylesheet was
+        stale). Two carve-outs exist for the tailnet, where the page loads
+        over a phone link rather than a loopback:
+
+        - The vendored three.js modules change only when three is upgraded,
+          so they may be KEPT but must be re-ASKED-about: no-cache means a
+          304 a few bytes long instead of megabytes re-sent on every reload,
+          and an upgrade is still seen the moment it lands.
+        - The heavy assets (prop models, sky derivations, material maps) are
+          hundreds of megabytes a device should pay for once. They are
+          served for an hour without asking and revalidated in the
+          background for a week after, so a re-ingested prop is at most an
+          hour stale while a remote reload stays instant. Only non-JSON
+          answers qualify: the folder rows and library indexes that share
+          these prefixes are mutable state and stay uncached.
         """
 
         response = await call_next(request)
-        if request.url.path.startswith("/static") or request.url.path == "/":
+        path = request.url.path
+        heavy = (request.method == "GET" and response.status_code == 200
+                 and path.startswith(HEAVY_ASSET_PREFIXES)
+                 and not response.headers.get(
+                     "content-type", "").startswith("application/json"))
+        if heavy:
+            response.headers["Cache-Control"] = HEAVY_ASSET_CACHE
+        elif path.startswith("/static/vendor/"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif path.startswith("/static") or path == "/":
             response.headers["Cache-Control"] = "no-store, max-age=0"
         return response
 

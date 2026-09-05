@@ -5796,6 +5796,47 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
   status.textContent = "it did not come back; start it from the shortcut";
 });
 
+// Stopping, from anywhere. The desktop can end the server from a shortcut;
+// a laptop or a phone on the tailnet can only ask the server itself, so the
+// button exists on the page. Success is the health check going QUIET, the
+// mirror image of the restart above -- with one twist: through the tailnet
+// proxy a dead server still gets the page a reply, a 502 from the proxy
+// itself, so "not ok" has to count as quiet alongside "no connection".
+document.getElementById("stop-studio").addEventListener("click", async () => {
+  if (!window.confirm("Stop the studio server? Every open page loses it "
+      + "until the server is started again.")) return;
+  const button = document.getElementById("stop-studio");
+  const status = document.getElementById("restart-status");
+  button.disabled = true;
+  status.textContent = "stopping...";
+  try {
+    const asked = await fetch("/api/stop", { method: "POST" });
+    if (asked.status === 404) {
+      button.disabled = false;
+      status.textContent = "this server is older than the button; "
+        + "stop it from the desktop";
+      return;
+    }
+  } catch (error) {
+    // The connection dropping IS the stop, on a server that got as far as
+    // exiting before answering. Carry on and confirm the quiet below.
+  }
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await new Promise((wake) => setTimeout(wake, 500));
+    try {
+      const health = await fetch("/api/health", { cache: "no-store" });
+      if (!health.ok) throw new Error("the proxy answered for a dead server");
+      status.textContent = "the server is still answering...";
+    } catch (error) {
+      status.textContent = "stopped";
+      return;
+    }
+  }
+  button.disabled = false;
+  status.textContent = "it would not stop; end it from the desktop";
+});
+
 document.getElementById("material-relief").addEventListener("input", (e) => {
   state.relief = +e.target.value;
   applySurfaceControls();
