@@ -497,3 +497,22 @@ His asks: "if i stop the server we need a ztart server too"; footer
   studio back on a fresh pid -> the page reloaded ITSELF onto the new
   build. Footer screenshot shows the rows pinned to the panel's floor.
   714 tests green, 4 new pins mutation-proved (4/4 kills).
+
+## 2026-09-05 -- TOUCH-DEVICE PERFORMANCE (his report: slow materials,
+## silver props on the iPad; "not a huge priority... would be nice")
+
+- CAUSE CHAIN: VIEWPORT_PX 0 = MASTER tier, five maps per material
+  change; iPad decodes+uploads seconds' worth and iOS sheds texture
+  uploads under GPU memory pressure -- silver/untextured props are that
+  shedding, "mesh being wrong" likely the same pressure or a context
+  loss. DPR 2 = 3200x2400 canvas doubled the shading cost besides.
+- SHIPPED (e2a1a85): pbr.js CONSTRAINED_DEVICE (maxTouchPoints > 1;
+  iPadOS masquerades as a Mac) -> VIEWPORT_PX 1024 on touch, master on
+  desktop; renderer DPR capped at 1.5 on touch; webglcontextlost files
+  a diagnostics report; every report carries device numbers (touch,
+  dpr, maxTextureSize, UA). Desktop path byte-identical in behaviour.
+- QUEUED (needs his on-device evidence, now instrumented): if silver
+  props persist on the iPad, read bench/studio/diagnostics.log for
+  context-loss rows and the device block; candidate next steps are a
+  constrained-device prop texture tier (ingest already bakes 1024) and
+  capping the environment/backdrop sizes on touch.
