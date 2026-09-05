@@ -685,27 +685,65 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "syncNetShadow(bars)" in act
 
 
-def test_the_principal_lines_are_blackish_metal_bars():
-    """Param: "a more metalic colour maybe more of a blackish metal and
-    have it more rectangular in shape than circular? Thickness only
-    40mm". A square box of 2 x wireRadius a side (the 0.02 default IS
-    his 40 mm), worn in the registry's near-black bar metal by wires
-    and joints alike, and the forces lens hands back the BAR colour,
-    not steel silver, when it drops."""
+def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
+    """His correction of the first attempt: "those arent the principle
+    lines. they are one per leg. they run up the middle and its the row
+    that the columns connect to. the rest of the wires can return to how
+    they were. I dont want it to be competely black either just darker
+    silver but give it a nice metal texture, we have some textures in
+    our library now."
+
+    So: the net is silver tubes again; the principal lines are a
+    SEPARATE instanced mesh of rectangular bars over the rows the column
+    tips thread, walked on down to each leg's springing, wearing the
+    library's polished dark steel (a darker-silver registry fallback
+    until it arrives), following the net's strike, clearance and shadow
+    rules, and stepping aside for the forces lens."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
+    # The net itself is back to how it was.
     net = _js_function(js, "function netInstances(edgeCount, vertexCount)")
-    assert ("new THREE.BoxGeometry(\n"
-            "    2 * state.wireRadius, 1, 2 * state.wireRadius)") in net
-    assert "CylinderGeometry" not in net
-    assert net.count("materials.bar.clone()") == 2, (
-        "wires AND joints wear the bar metal")
-    assert ("bar: new THREE.MeshPhysicalMaterial({\n"
-            "    color: 0x24262a, roughness: 0.38, metalness: 1.0") in js
-    assert "wireRadius: 0.02," in js, "the default section is his 40 mm"
+    assert "CylinderGeometry" in net
+    assert net.count("materials.steel.clone()") == 2
+    assert "BoxGeometry" not in net
     wire_lens = _js_function(js, "function applyWireForces()")
-    assert "materials.bar.color" in wire_lens
-    assert "materials.steel.color" not in wire_lens
+    assert "materials.steel.color" in wire_lens
+
+    # The walk: tips per column TREE, nearest net vertex each, threaded
+    # by shortest path, then down to the leg's own springing.
+    walk = _js_function(js, "function principalEdges()")
+    assert "state.columnMembers" in walk
+    assert "member.from[2] >= member.to[2]" in walk, (
+        "tips are the HIGH degree-one ends; the feet stay on the ground")
+    assert "bundle.supports" in walk
+    assert "dijkstra" in walk
+
+    # The dressing: rectangular bars over the wires' own segments, the
+    # library skin once it arrives, darker silver until then.
+    assert 'const PRINCIPAL_SKIN = "metal/steel-polished-dark";' in js
+    bars = _js_function(js, "function buildPrincipalBars()")
+    assert "new THREE.BoxGeometry(section, 1, section)" in bars
+    assert "Math.max(0.044, 2.2 * state.wireRadius)" in bars, (
+        "the bars stay just over the wires' diameter at any slider size")
+    assert "materials.bar.clone()" in bars
+    assert "ensureLibraryMaterial(PRINCIPAL_SKIN)" in bars
+    assert "state.objects.principal !== mesh) return;" in bars, (
+        "a texture landing late must not dress a mesh already replaced")
+    assert ("bar: new THREE.MeshPhysicalMaterial({\n"
+            "    color: 0x787d86, roughness: 0.35, metalness: 1.0") in js, (
+        "darker silver, not black -- his correction")
+
+    # The behaviour hooks: strike fade, rest clearance, forces-lens
+    # yield, and disposal with the rest of the net.
+    scene_time = _js_function(js, "function applySceneAtTime(t)")
+    assert '["principal", clearance.wires]' in scene_time
+    show_mode = _js_function(js, "function applyShowMode()")
+    assert "netOn && !state.layers.forces" in show_mode
+    dispose = _js_function(js, "function disposeWiresAndNodes()")
+    assert '"principal"' in dispose
+    reload = _js_function(js, "async function reloadColumns(names)")
+    assert "state.columnMembers = [];" in reload
+    assert "buildPrincipalBars();" in reload
 
 
 def test_a_scene_outranks_the_device_appearance_memory():

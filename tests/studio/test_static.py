@@ -1997,7 +1997,10 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     assert "netClearance()" in act_body
     # The strike's own drop is additive with the clearance, so the net still
     # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
-    assert "clearance[key] - 1.5 * strikeU" in scene_body
+    # Re-pinned 2026-09-06: the loop destructures [key, clear] pairs since
+    # the principal bars joined it riding the wires' clearance.
+    assert "clear - 1.5 * strikeU" in scene_body
+    assert '["wires", clearance.wires]' in scene_body
 
 
 def test_the_panel_reorganises_into_six_sections():

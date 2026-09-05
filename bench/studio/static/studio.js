@@ -1694,11 +1694,11 @@ const materials = {
   steel: new THREE.MeshPhysicalMaterial({
     color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
   }),
-  // The principal lines' own metal (Param: "a more metalic colour maybe
-  // more of a blackish metal"): near-black, still fully metallic so the
-  // sky reads in it, a touch rougher than the silver steel.
+  // The principal lines' metal while the library's polished dark steel
+  // loads (and forever if it cannot): darker silver, not black -- his
+  // correction after the whole net briefly went near-black.
   bar: new THREE.MeshPhysicalMaterial({
-    color: 0x24262a, roughness: 0.38, metalness: 1.0, envMapIntensity: 1.2,
+    color: 0x787d86, roughness: 0.35, metalness: 1.0, envMapIntensity: 1.2,
   }),
   falsework: new THREE.MeshPhysicalMaterial({
     color: 0x3a3f45, side: THREE.DoubleSide,
@@ -1729,16 +1729,10 @@ function meshGeometry(meshData) {
 // the raise shows nothing. Flat LineSegments, which the act used to draw,
 // read as another medium entirely: no thickness, no material, no nodes.
 function netInstances(edgeCount, vertexCount) {
-  // A rectangular bar, not a tube (Param: "more rectangular in shape
-  // than circular... Thickness only 40mm"): a square section of twice
-  // wireRadius a side, so the default 0.02 gives exactly his 40 mm and
-  // the Wire size slider keeps its meaning. Square rather than a flat
-  // strap because writeInstancedSegments orients by direction alone --
-  // an oblong section would roll arbitrarily edge to edge.
-  const bar = new THREE.BoxGeometry(
-    2 * state.wireRadius, 1, 2 * state.wireRadius);
-  bar.translate(0, 0.5, 0);
-  const wireMaterial = materials.bar.clone();
+  const cylinder = new THREE.CylinderGeometry(
+    state.wireRadius, state.wireRadius, 1, 8, 1, true);
+  cylinder.translate(0, 0.5, 0);
+  const wireMaterial = materials.steel.clone();
   // Task 6 fix: InstancedMesh.setColorAt writes the instanceColor buffer,
   // but per-instance colour only reaches the fragment shader when the
   // material also opts into the vertex-colour path. vertexColors stays
@@ -1746,15 +1740,13 @@ function netInstances(edgeCount, vertexCount) {
   // so the plain steel look is unchanged until applyWireForces tints it.
   wireMaterial.vertexColors = true;
   wireMaterial.transparent = true;
-  const wires = new THREE.InstancedMesh(bar, wireMaterial, edgeCount);
+  const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edgeCount);
   const white = new THREE.Color(0xffffff);
   for (let i = 0; i < edgeCount; i++) wires.setColorAt(i, white);
   // setColorAt is what allocates instanceColor, so a net with no edges at
   // all leaves it null.
   if (wires.instanceColor) wires.instanceColor.needsUpdate = true;
-  // The joints wear the bars' metal: silver spheres on near-black bars
-  // would pop bright at every crossing.
-  const nodeMaterial = materials.bar.clone();
+  const nodeMaterial = materials.steel.clone();
   nodeMaterial.transparent = true;
   const nodes = new THREE.InstancedMesh(
     new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
@@ -1773,6 +1765,167 @@ function netInstances(edgeCount, vertexCount) {
 // quiet the moment it fades or hides.
 function syncNetShadow(object) {
   object.castShadow = object.visible && object.material.opacity > 0.6;
+}
+
+// ---------- the principal lines ----------
+// One per leg (Param): "they run up the middle and its the row that the
+// columns connect to". Each exported column TREE is one leg; its branch
+// tips touch the net, and the row of net edges threading those touch
+// points -- walked on down to the leg's own springing -- is that leg's
+// principal line. Dressed as rectangular bars in a darker steel over the
+// ordinary silver net; the library's polished dark steel once it
+// arrives, a plain darker silver until then.
+const PRINCIPAL_SKIN = "metal/steel-polished-dark";
+
+function principalEdges() {
+  const members = state.columnMembers || [];
+  const bundle = state.bundle;
+  if (!bundle || !members.length) return [];
+  const vertices = bundle.analysis_mesh.vertices;
+  const edges = bundle.analysis_mesh.edges;
+
+  // The column trees, by shared endpoints: one tree is one leg.
+  const keyOf = (p) => p.map((c) => Math.round(c * 1000)).join(",");
+  const parent = new Map();
+  const find = (k) => {
+    let root = k;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(k, root);
+    return root;
+  };
+  const degree = new Map();
+  for (const member of members) {
+    for (const p of [member.from, member.to]) {
+      const k = keyOf(p);
+      if (!parent.has(k)) parent.set(k, k);
+      degree.set(k, (degree.get(k) || 0) + 1);
+    }
+    parent.set(find(keyOf(member.from)), find(keyOf(member.to)));
+  }
+  // Tips: degree-one endpoints at the HIGH end of their member; the
+  // degree-one LOW ends are the feet on the ground.
+  const tipsByTree = new Map();
+  for (const member of members) {
+    const high = member.from[2] >= member.to[2] ? member.from : member.to;
+    if ((degree.get(keyOf(high)) || 0) !== 1) continue;
+    const tree = find(keyOf(high));
+    if (!tipsByTree.has(tree)) tipsByTree.set(tree, []);
+    tipsByTree.get(tree).push(high);
+  }
+
+  // Each tip lands on its nearest net vertex, within a metre.
+  const nearestVertex = (p) => {
+    let best = -1, bestDistance = 1;
+    for (let i = 0; i < vertices.length; i++) {
+      const v = vertices[i];
+      const d = Math.hypot(v[0] - p[0], v[1] - p[1], v[2] - p[2]);
+      if (d < bestDistance) { bestDistance = d; best = i; }
+    }
+    return best;
+  };
+
+  // The net as a weighted graph, built once.
+  const adjacency = new Map();
+  edges.forEach(([a, b], index) => {
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push([b, index]);
+    adjacency.get(b).push([a, index]);
+  });
+  const span = (a, b) => {
+    const va = vertices[a], vb = vertices[b];
+    return Math.hypot(va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]);
+  };
+  const dijkstra = (from) => {
+    const dist = new Map([[from, 0]]);
+    const via = new Map();
+    const done = new Set();
+    for (;;) {
+      let node = null, best = Infinity;
+      for (const [k, d] of dist) {
+        if (!done.has(k) && d < best) { best = d; node = k; }
+      }
+      if (node === null) return { dist, via };
+      done.add(node);
+      for (const [next, edge] of adjacency.get(node) || []) {
+        const d = best + span(node, next);
+        if (d < (dist.has(next) ? dist.get(next) : Infinity)) {
+          dist.set(next, d);
+          via.set(next, [node, edge]);
+        }
+      }
+    }
+  };
+  const backtrack = (via, from, to, into) => {
+    let at = to;
+    while (at !== from && via.has(at)) {
+      const [previous, edge] = via.get(at);
+      into.add(edge);
+      at = previous;
+    }
+  };
+
+  const supports = new Set(bundle.supports || []);
+  const principal = new Set();
+  for (const tips of tipsByTree.values()) {
+    const nodes = [...new Set(tips.map(nearestVertex).filter((i) => i >= 0))];
+    if (!nodes.length) continue;
+    nodes.sort((a, b) => vertices[a][2] - vertices[b][2]);
+    // Consecutive touch points, threaded along the net...
+    for (let i = 1; i < nodes.length; i++) {
+      const { via } = dijkstra(nodes[i - 1]);
+      backtrack(via, nodes[i - 1], nodes[i], principal);
+    }
+    // ...and the walk on down from the lowest to this leg's springing.
+    if (supports.size) {
+      const { dist, via } = dijkstra(nodes[0]);
+      let target = null, best = Infinity;
+      for (const support of supports) {
+        const d = dist.has(support) ? dist.get(support) : Infinity;
+        if (d < best) { best = d; target = support; }
+      }
+      if (target !== null) backtrack(via, nodes[0], target, principal);
+    }
+  }
+  return [...principal].map((index) => edges[index]);
+}
+
+function buildPrincipalBars() {
+  const previous = state.objects.principal;
+  if (previous) {
+    scene.remove(previous);
+    previous.geometry.dispose();
+    if (!previous.userData.libraryMaterial) previous.material.dispose();
+    state.objects.principal = null;
+  }
+  if (!state.bundle) return;
+  const pairs = principalEdges();
+  if (!pairs.length) return;
+  // A square section just over the wires' own diameter, so the tube
+  // inside a principal bar never surfaces through its faces -- and it
+  // keeps that margin if the Wire size slider grows the net.
+  const section = Math.max(0.044, 2.2 * state.wireRadius);
+  const geometry = new THREE.BoxGeometry(section, 1, section);
+  geometry.translate(0, 0.5, 0);
+  const mesh = new THREE.InstancedMesh(
+    geometry, materials.bar.clone(), pairs.length);
+  mesh.material.transparent = true;
+  writeInstancedSegments(mesh, pairs, state.bundle.analysis_mesh.vertices);
+  mesh.castShadow = false;
+  state.objects.principal = mesh;
+  scene.add(mesh);
+  // The library texture, asynchronously and only if this build is still
+  // the one on screen when it lands.
+  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {
+    if (!set || state.objects.principal !== mesh) return;
+    const worn = set.material.clone();
+    worn.transparent = true;
+    mesh.material.dispose();
+    mesh.material = worn;
+    mesh.userData.libraryMaterial = true;
+    syncNetShadow(mesh);
+  });
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 }
 
 // Scratch instances: the two writers below run per edge per frame for the
@@ -1865,7 +2018,7 @@ function buildWiresAndNodes(bundle) {
 }
 
 function disposeWiresAndNodes() {
-  for (const key of ["wires", "nodes"]) {
+  for (const key of ["wires", "nodes", "principal"]) {
     const object = state.objects[key];
     if (object) {
       scene.remove(object);
@@ -1933,6 +2086,11 @@ async function loadColumns(names) {
       if (typeof columnDocument.radius === "number" && columnDocument.radius > 0) {
         state.columnRadius = columnDocument.radius;
       }
+      // The raw members feed the principal-line walk: their tree tips
+      // are where the columns meet the net.
+      if (Array.isArray(columnDocument.members)) {
+        state.columnMembers.push(...columnDocument.members);
+      }
       const geometry = columnGeometryFrom(columnDocument);
       const mesh = new THREE.Mesh(geometry, materials.steel);
       mesh.castShadow = mesh.receiveShadow = true;
@@ -1964,10 +2122,14 @@ async function reloadColumns(names) {
   }
   const previousRadius = state.columnRadius;
   state.columnRadius = null;
+  state.columnMembers = [];
   if (names.length) {
     state.objects.columns = await loadColumns(names);
     scene.add(state.objects.columns);
   }
+  // The principal lines are DEFINED by where these columns touch the
+  // net, so they are rebuilt whenever the columns are.
+  buildPrincipalBars();
   // boot() learns which columns file belongs to the study only AFTER the
   // first study load, so the act's members are first built on the fallback
   // radius. A radius that arrives or changes rebuilds them at the width the
@@ -2011,6 +2173,7 @@ function buildScene(bundle, preserve) {
   state.objects.nodes = nodes;
   scene.add(wires); scene.add(nodes);
   applyWireForces();
+  buildPrincipalBars();
 
   rebuildGround();
 
@@ -4514,7 +4677,7 @@ function applyWireForces() {
     wires.instanceMatrix.needsUpdate = true;
     wires.instanceColor.needsUpdate = true;
     if (wires.userData.baseMaterial) wires.material = wires.userData.baseMaterial;
-    wires.material.color.copy(materials.bar.color);
+    wires.material.color.copy(materials.steel.color);
     return;
   }
   const forces = state.bundle.member_forces;
@@ -7916,7 +8079,11 @@ function applySceneAtTime(t) {
   // shell at any clearance computed from wireRadius. Each object clears by
   // its own radius.
   const clearance = netClearance();
-  for (const key of ["wires", "nodes"]) {
+  for (const [key, clear] of [["wires", clearance.wires],
+                              ["nodes", clearance.nodes],
+                              // The principal bars ride the wires' own
+                              // clearance: they dress the same segments.
+                              ["principal", clearance.wires]]) {
     const object = state.objects[key];
     if (!object) continue;
     // Hidden for the whole formwork act: the act's own net IS the net,
@@ -7924,7 +8091,7 @@ function applySceneAtTime(t) {
     // the ground at the solved plan, which is two nets and both wrong.
     object.visible = strikeU < 1 && !duringFormworkAct(t);
     object.material.opacity = 1 - strikeU;
-    object.position.z = clearance[key] - 1.5 * strikeU;
+    object.position.z = clear - 1.5 * strikeU;
     syncNetShadow(object);
   }
   applyFormworkAct(t, strikeU);
@@ -7996,6 +8163,15 @@ function applyShowMode() {
   const clearance = netClearance();
   state.objects.wires.position.z = state.showMode === "both" ? clearance.wires : 0;
   state.objects.nodes.position.z = state.showMode === "both" ? clearance.nodes : 0;
+  const principal = state.objects.principal;
+  if (principal) {
+    // Net dressing: the bars follow the net, and they step aside while
+    // the forces lens is painting data on those same segments.
+    principal.visible = netOn && !state.layers.forces;
+    principal.material.opacity = 1;
+    principal.position.z = state.showMode === "both" ? clearance.wires : 0;
+    syncNetShadow(principal);
+  }
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
