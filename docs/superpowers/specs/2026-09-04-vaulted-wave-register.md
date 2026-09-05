@@ -705,3 +705,30 @@ drop-out persists ("worked fine on other hdri").
   forces off -> mode restored to both; caption rendered; zero
   threshold rows; HUD blurred card. 724 green; 2/2 mutation kills;
   the round-one pins updated to round two.
+
+## 2026-09-05 -- FORCE COLOURS AND THE FLAT-COLOUR PULSE (post-crash)
+
+His reports: "surely i should be seeing the force colours on the
+wires?"; "with integrity pulse on and animation running i cant see
+what is being done"; ruling: "we should remove textures and let it
+run with the colours".
+
+- WIRES: colours were applied and invisible -- linear force/max pressed
+  ~all instances to the pale zero (measured 0.82/0.81/0.79 across the
+  board). forceMagnitude() is now the p95 of |member forces| (shared by
+  lens and legend, title admits "extremes clamped"); applyWireForces
+  swaps to an unlit vertexColors MeshBasic (toneMapped false) while up,
+  stashing/restoring the steel via wires.userData.
+  Live: 696/1200 wires distinctly blue, 0 red (funicular = correct).
+- PULSE: emissive-over-texture (0.4 of a near-black tint) was
+  arithmetic for invisible. applyPulseColours: per-piece flat lit
+  verdict colour from courseVerdict(userData.course) -- good 0x3f9e57 /
+  bad 0xc24936 / none 0x8f8f8f -- via six SHARED materials (steady +
+  breathing front per verdict, guarded from recolourSegments' disposal
+  by userData.sharedLens); the front course breathes during play; pulse
+  joined EXCLUSIVE_LAYERS; toggling at rest paints statically and
+  recolourSegments restores skins on the way down. Pieces now carry
+  userData.course. Live after a real staged run (5 stages): all 134
+  segments exactly #3f9e57.
+- Struck-now reader pins repointed to courseVerdict (the reading moved,
+  the invariant did not). 724 green; 3/3 mutation kills.
