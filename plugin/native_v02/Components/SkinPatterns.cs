@@ -195,6 +195,201 @@ internal sealed record SkinNet(
     public int RimDropped { get; init; }
 
     public int EdgesDropped { get; init; }
+
+    /// <summary>
+    /// THE PLAN GRID over this net's triangulated faces (speed diagnosis
+    /// 2026-09-05, cut 1), built lazily on first use and once per net.
+    /// FaceUnder and LiftPlanPoint are asked once per cell corner and again
+    /// for every section-rail point, and each answered with a linear scan
+    /// of every face: O(corners x faces), measured at 60 to 75 per cent of
+    /// the skin path's pure time. The grid changes WHERE those scans look
+    /// and nothing about what they test; <see cref="SkinPlanGrid"/>'s own
+    /// comment carries the answer-identity argument.
+    ///
+    /// A plain lazily assigned field and NO LOCK, deliberately: a
+    /// Grasshopper component's solve is single-threaded per instance, so
+    /// the field is only ever raced if some later caller reads one net
+    /// from two threads, and that race builds the same grid twice and
+    /// keeps either, both correct. A `with` copy (the blend) carries a
+    /// built grid across, which is right because the grid reads Vertices
+    /// and Faces alone and the copy shares both.
+    /// </summary>
+    internal SkinPlanGrid PlanGrid =>
+        _planGrid ??= SkinPlanGrid.Build(Vertices, Faces);
+
+    private SkinPlanGrid? _planGrid;
+}
+
+/// <summary>
+/// A UNIFORM PLAN GRID over a net's triangle bounding boxes (speed
+/// diagnosis 2026-09-05, cut 1): every face index is filed under each grid
+/// square its plan bounding box overlaps, ascending, and a query hands
+/// back the square under a point. It exists to replace the per-query
+/// linear scans in FaceUnder and LiftPlanPoint; it must never change an
+/// ANSWER, only how many faces the same tests are run against.
+///
+/// WHY NO ANSWER CAN MOVE, stated as three facts the code below keeps.
+/// (a) COMPLETENESS: a face whose plan bounding box contains the point
+/// overlaps the grid square containing the point, so it was filed there:
+/// the coordinate-to-column mapping is one monotone expression used for
+/// filing and querying alike, clamped to the same edges, so the point's
+/// column lies between the box's two columns. (b) ORDER: within a square
+/// the indices are ascending, because filing walks the faces 0..N-1 in
+/// order, and both callers keep their own containment tests and return
+/// the FIRST face that passes, which is therefore the lowest-indexed
+/// passing face, exactly the linear scan's tie rule. (c) OFF THE GRID: a
+/// point outside the grid's extent is outside every face's bounding box,
+/// where the scan's own prefilter answered "no face" too.
+///
+/// A net carrying any NON-FINITE face coordinate does not grid at all:
+/// every query answers the full ascending face list, which IS the linear
+/// scan, so the pathological case is served by the old behaviour rather
+/// than by an argument about NaN arithmetic.
+/// </summary>
+internal sealed class SkinPlanGrid
+{
+    private static readonly int[] None = Array.Empty<int>();
+
+    /// <summary>Face indices per square, ascending within each square;
+    /// null squares are empty. Null as a whole when the grid is degenerate
+    /// and <see cref="_all"/> answers instead.</summary>
+    private readonly List<int>?[]? _squares;
+
+    /// <summary>The whole ascending face list, for the degenerate net the
+    /// grid refuses to index (a non-finite coordinate anywhere).</summary>
+    private readonly int[]? _all;
+
+    private readonly int _columns;
+    private readonly int _rows;
+    private readonly double _minX;
+    private readonly double _minY;
+    private readonly double _maxX;
+    private readonly double _maxY;
+
+    private SkinPlanGrid(
+        List<int>?[]? squares,
+        int[]? all,
+        int columns,
+        int rows,
+        double minX,
+        double minY,
+        double maxX,
+        double maxY)
+    {
+        _squares = squares;
+        _all = all;
+        _columns = columns;
+        _rows = rows;
+        _minX = minX;
+        _minY = minY;
+        _maxX = maxX;
+        _maxY = maxY;
+    }
+
+    public static SkinPlanGrid Build(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces)
+    {
+        int count = faces.Count;
+        if (count == 0)
+            return new SkinPlanGrid(null, None, 0, 0, 0.0, 0.0, 0.0, 0.0);
+        double minX = double.PositiveInfinity;
+        double minY = double.PositiveInfinity;
+        double maxX = double.NegativeInfinity;
+        double maxY = double.NegativeInfinity;
+        foreach (int[] face in faces)
+        {
+            foreach (int corner in face)
+            {
+                double[] at = vertices[corner];
+                minX = Math.Min(minX, at[0]);
+                maxX = Math.Max(maxX, at[0]);
+                minY = Math.Min(minY, at[1]);
+                maxY = Math.Max(maxY, at[1]);
+            }
+        }
+        if (!double.IsFinite(minX) || !double.IsFinite(maxX) ||
+            !double.IsFinite(minY) || !double.IsFinite(maxY))
+        {
+            // The degenerate net: hand every query the linear scan's own
+            // candidate list rather than reasoning about NaN squares.
+            var all = new int[count];
+            for (int face = 0; face < count; face++)
+                all[face] = face;
+            return new SkinPlanGrid(null, all, 0, 0, 0.0, 0.0, 0.0, 0.0);
+        }
+        // About one face per square: sqrt(N) columns by sqrt(N) rows keeps
+        // build O(N) and a query O(1) for meshes of roughly uniform
+        // triangle size, which a thrust net is.
+        int side = Math.Max(1, (int)Math.Sqrt(count));
+        var squares = new List<int>?[side * side];
+        var grid = new SkinPlanGrid(
+            squares, null, side, side, minX, minY, maxX, maxY);
+        for (int face = 0; face < count; face++)
+        {
+            int[] corners = faces[face];
+            double faceMinX = double.PositiveInfinity;
+            double faceMinY = double.PositiveInfinity;
+            double faceMaxX = double.NegativeInfinity;
+            double faceMaxY = double.NegativeInfinity;
+            foreach (int corner in corners)
+            {
+                double[] at = vertices[corner];
+                faceMinX = Math.Min(faceMinX, at[0]);
+                faceMaxX = Math.Max(faceMaxX, at[0]);
+                faceMinY = Math.Min(faceMinY, at[1]);
+                faceMaxY = Math.Max(faceMaxY, at[1]);
+            }
+            int c0 = grid.ColumnOf(faceMinX);
+            int c1 = grid.ColumnOf(faceMaxX);
+            int r0 = grid.RowOf(faceMinY);
+            int r1 = grid.RowOf(faceMaxY);
+            for (int row = r0; row <= r1; row++)
+            {
+                for (int column = c0; column <= c1; column++)
+                {
+                    int at = (row * side) + column;
+                    (squares[at] ??= new List<int>()).Add(face);
+                }
+            }
+        }
+        return grid;
+    }
+
+    /// <summary>The face indices whose plan bounding boxes can contain the
+    /// point, ascending. A superset of the truth, never a subset: callers
+    /// re-test every candidate with the same predicates the linear scan
+    /// used, so extra candidates cost time and change nothing.</summary>
+    public IReadOnlyList<int> Candidates(double x, double y)
+    {
+        if (_all is not null)
+            return _all;
+        if (x < _minX || x > _maxX || y < _minY || y > _maxY)
+            return None;
+        return _squares![(RowOf(y) * _columns) + ColumnOf(x)]
+            ?? (IReadOnlyList<int>)None;
+    }
+
+    /// <summary>Monotone in x, shared by filing and querying, clamped to
+    /// the grid's own edges; completeness above rests on exactly these
+    /// three properties.</summary>
+    private int ColumnOf(double x)
+    {
+        double width = _maxX - _minX;
+        if (!(width > 0.0))
+            return 0;
+        int column = (int)(((x - _minX) / width) * _columns);
+        return column < 0 ? 0 : column >= _columns ? _columns - 1 : column;
+    }
+
+    private int RowOf(double y)
+    {
+        double height = _maxY - _minY;
+        if (!(height > 0.0))
+            return 0;
+        int row = (int)(((y - _minY) / height) * _rows);
+        return row < 0 ? 0 : row >= _rows ? _rows - 1 : row;
+    }
 }
 
 /// <summary>
@@ -2754,11 +2949,23 @@ internal static class SkinPatterns
 
     /// <summary>A plan point lifted onto the surface: the net face
     /// containing it in plan, evaluated at that point on the face's own
-    /// plane. Null where no face contains it.</summary>
+    /// plane. Null where no face contains it.
+    ///
+    /// The candidates come off the net's plan grid (speed diagnosis
+    /// 2026-09-05, cut 1), ascending, a superset of the faces whose plan
+    /// bounding box can contain the point; the containment test and the
+    /// degenerate-area skip below are unchanged and the first face that
+    /// passes both answers, so the answer is the lowest-indexed usable
+    /// containing face, exactly the linear scan's. A point no face's
+    /// bounding box can contain gets an empty candidate list and the same
+    /// null the scan gave. <see cref="SkinPlanGrid"/> carries the
+    /// completeness argument.</summary>
     public static double[]? LiftPlanPoint(SkinNet net, double x, double y)
     {
-        foreach (int[] triangle in net.Faces)
+        IReadOnlyList<int> candidates = net.PlanGrid.Candidates(x, y);
+        for (int scan = 0; scan < candidates.Count; scan++)
         {
+            int[] triangle = net.Faces[candidates[scan]];
             double[] a = net.Vertices[triangle[0]];
             double[] b = net.Vertices[triangle[1]];
             double[] c = net.Vertices[triangle[2]];
@@ -5557,11 +5764,26 @@ internal static class SkinPatterns
     /// triangle straddles the point's height on exactly none or two of its
     /// edges (a horizontal edge straddles nothing under a strict test) and
     /// both toggles cancel. Every point the prefilter skips is a point
-    /// PlanContains would have answered false for.</summary>
+    /// PlanContains would have answered false for.
+    ///
+    /// THE CANDIDATES COME OFF THE NET'S PLAN GRID (speed diagnosis
+    /// 2026-09-05, cut 1) instead of walking every face. The grid hands
+    /// back, IN ASCENDING FACE INDEX, a superset of the faces whose plan
+    /// bounding box can contain the point; the prefilter and PlanContains
+    /// below are UNCHANGED and still run on every candidate, and the first
+    /// face that passes is returned, so the answer is the lowest-indexed
+    /// containing face, which is the linear scan's own answer tie for tie.
+    /// <see cref="SkinPlanGrid"/> carries the completeness argument;
+    /// answer-identity was also measured exhaustively, every cell corner
+    /// and rail point on two fixtures, indexed against a verbatim copy of
+    /// the old scan, zero disagreements (speed report 2026-09-05).</summary>
     private static int FaceUnder(SkinNet net, double[] at)
     {
-        for (int face = 0; face < net.Faces.Count; face++)
+        IReadOnlyList<int> candidates =
+            net.PlanGrid.Candidates(at[0], at[1]);
+        for (int scan = 0; scan < candidates.Count; scan++)
         {
+            int face = candidates[scan];
             int[] triangle = net.Faces[face];
             double[] pa = net.Vertices[triangle[0]];
             double[] pb = net.Vertices[triangle[1]];
