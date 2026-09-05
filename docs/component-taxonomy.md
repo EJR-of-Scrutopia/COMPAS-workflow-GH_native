@@ -47,6 +47,7 @@ carry those types, on both sides of every wire.
 | `01 Model` | **Supports** | Pattern `PAT`, Anchor Points `A`, Snap Tolerance `Tol` (optional) | Anchored Pattern `SUP` | Snap explicit structural anchors to a registered Pattern; intermediate boundary vertices stay free for relaxation. Carries the Pattern's principal runs through unchanged and derives none. |
 | `01 Model` | **Loads** | Anchored Pattern `SUP`, Vector `V`, Node IDs `ID` (optional), Factor `F`, Thickness `T` (optional, empty reads as 1.0), Density `D` (optional, empty reads as 1.0) | Problem `PRB` | Weigh the pattern by its own SELF-WEIGHT and load explicit nodes BESIDE it, both at once, producing the Problem both solvers take. Rule 2.4 of the 2026-09-04 selfweight design adopts RhinoVault's model whole: the self-weight is tributary area x `T` x `D`, and node loads no longer replace it but ride with it, additive, which is their `pz + pzext` split. With no Node IDs the Vector is the weight's direction AND its scale, which is what keeps a definition saved before these two ports weighing exactly what it did; with Node IDs the Vector is the point load, so the weight stands on `T` and `D` alone and acts straight down, and leaving both ports EMPTY is point loads alone with no weight at all. A `T` or a `D` of nought is how a canvas asks for no self-weight, and the node loads still stand. The TNA solve evaluates the weight on the built surface's own tributary areas, refining as the shape rises; FD approximates it on plan areas. The chin says which of the three it built, and the diagnostics report the two totals separately. Previews magnitude-scaled load arrows at the nodes the Vector acts on. |
 | `02 Solve` | **TNA Relax** | Problem `PRB`, Force Density `q`, Boundary Sag `Sag %`, Floating Anchors `FA` (optional, flattened) | Relaxed `RLX` | Relax the Problem's plan Pattern, match unsupported-boundary sag, and build an inspectable unbalanced topological force dual. |
+| `02 Solve` | **TNA Horizontal** | Relaxed `RLX`, Move `M` | Relaxed `RLX` | Move the relaxed Pattern's PLAN toward horizontal equilibrium before the solve reads it. TNA has two families of unknowns, the force densities and the plan geometry, and the solves adjust only the first: they project onto the self-stress space of the plan AS DRAWN. A plan with fan corners, free nodes whose every edge leaves into a wedge narrower than a half-plane, admits no compression-only self-stress at all, so no iteration count and no slider passes the reciprocity gate; RhinoVault passes the same forms because its preparation moves plan vertices. `Move` is that movement, 0 to 100 per cent, positional and per-vertex: 0 returns the drawing untouched and bit-identical, 100 is the plan the Pattern's own force densities want, and every value between is a plan that much of the way there. Supports and floating anchors are never written at any Move; principal-line nodes are WATCHED rather than pinned and the chin says how many of them the movement took with it. Wiring it is the whole opt-in and unwiring it is the undo. The preview draws the drawn plan in grey under the moved plan. |
 | `02 Solve` | **TNA Solve** | Relaxed `RLX`, Height `H` (optional), Iterations `I` (optional), Run `Run` | Result `RES`, Thrust Mesh `M`, Thrust Lines `L`, Supports `S` | Solve a Relaxed Pattern against the load case its Problem carries. Blank Height finds the natural equilibrium height; a number solves exactly to that crown height. Blank Iterations auto-converges the reciprocal diagrams: the worker keeps the best reciprocal state it finds and polishes past RhinoVault's five-degree gate within a bounded budget, stopping earlier at a tenth of a degree or on a genuine plateau; under five degrees reports as converged. Run false holds the solve. Returns the unified Result plus native geometry, and owns the shaded thrust-mesh preview. |
 | `02 Solve` | **TNA Solve Algebraic** | Relaxed `RLX`, Height `H` (optional), Run `Run` | Result `RES`, Thrust Mesh `M`, Thrust Lines `L`, Supports `S` | Sibling of TNA Solve using the algebraic horizontal method: a short classic warm-up projected onto the self-stress space, giving the classic solver's character with machine-precision reciprocity. No Iterations input; the direct solve has no iteration knob. Reports how many edges need tension when the pattern admits no compression-only self-stress (the iterative solver expresses the same fact as residual unbalanced thrust). |
 | `02 Solve` | **FD Solve** | Problem `PRB`, Force Density `q` (list, optional), Run `Run` | Result `RES`, Member Lines `L`, Supports `S` | Run whole-network COMPAS force-density form finding against the Problem's load case; returns the unified Result plus native geometry, and previews the solved network. Run false holds the solve. |
@@ -120,7 +121,7 @@ renumbered out of the way.
 | Tab | Holds | Packages | Capability | Extra | State |
 | --- | --- | --- | --- | --- | --- |
 | `01 Model` | Pattern, Supports, Loads | `compas` | always | none | **Built** |
-| `02 Solve` | TNA Relax, TNA Solve, TNA Solve Algebraic, FD Solve | `compas_fd`, `compas_tna` (`compas_ags` reserved) | `fd.solve`, `tna.solve` (`ags.solve` reserved) | `equilibrium` | **Built** |
+| `02 Solve` | TNA Relax, TNA Horizontal, TNA Solve, TNA Solve Algebraic, FD Solve | `compas_fd`, `compas_tna` (`compas_ags` reserved) | `fd.solve`, `tna.equilibrate`, `tna.solve` (`ags.solve` reserved) | `equilibrium` | **Built** |
 | `03 Mould` | Columns, Animate | none | always | none | **Built** |
 | `04 Read` | Deconstruct, Forces, Fit, Supports, Diagnose, Frame, Style, Display | none | always | none | **Built** |
 | `05 Deliver` | Export, Import Pieces, Skin | `compas_model`, `compas_ifc` | `model`, `ifc` | `model`, `ifc` | Export, Import Pieces and Skin **built**; `compas_model`/`compas_ifc` components pending |
@@ -174,8 +175,9 @@ semantics, not tabs.
 TNA is a method inside Form Finding, which is how COMPAS itself classifies it
 alongside `compas_fd`, `compas_dr` and `compas_ags`. Giving it a tab would
 break the alignment above and would separate it from the shared registration
-spine it depends on. `02 Solve` holds four components (`TNA Relax`,
-`TNA Solve`, `TNA Solve Algebraic`, `FD Solve`), and if it becomes crowded the answer is a
+spine it depends on. `02 Solve` holds five components (`TNA Relax`,
+`TNA Horizontal`, `TNA Solve`, `TNA Solve Algebraic`, `FD Solve`), and if it becomes
+crowded the answer is a
 naming prefix (`TNA ...`, `FD ...`, which the components already use) rather
 than a new tab that implies a new backend.
 
@@ -239,7 +241,8 @@ reason for the numbering:
 These are separate stages, not extra modes hidden inside the initial solvers.
 The compact RhinoVault-style authoring surface is now implemented as the
 shared spine itself: `Pattern -> Supports -> Loads -> TNA Relax ->
-TNA Solve`, with `FD Solve` branching off the same `Problem`. See
+TNA Solve`, with `TNA Horizontal` an optional station between the last two
+and `FD Solve` branching off the same `Problem`. See
 [`architecture/rhinovault-native-stages.md`](architecture/rhinovault-native-stages.md)
 for the exact implemented boundary and later design-by-statics work.
 
