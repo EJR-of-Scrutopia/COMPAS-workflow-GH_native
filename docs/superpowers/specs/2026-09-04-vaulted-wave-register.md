@@ -654,3 +654,35 @@ drop-out persists ("worked fine on other hdri").
   SCREENSHOT of the on-screen log names the failing stage. Candidate
   suspects once the stage is known: PMREM output on iOS, texture-unit
   eviction without contextlost, Brave iOS shields.
+
+## 2026-09-05 -- ANALYSIS PANEL REWORK (his walk, itemised)
+
+- Buttons replace checkboxes (#layer-toggles .layer-btn, .active).
+- EXCLUSIVE_LAYERS = stress/deflection/forces: the painting lenses go
+  up one at a time; setLayer puts the others down and repaints
+  (recolourSegments + applyWireForces + applyShowMode).
+- Dials under their buttons, visible only while on: deflection's
+  exaggeration NODE moves under its button (parked in a hidden row in
+  index.html so rebuilds never lose its value or handler); stress
+  gains Threshold (state.analysisSliders.stressThreshold; below
+  threshold*peak paints a flat bone tone DISTINCT from no-data grey);
+  loads/reactions gain Scale (arrowField lengthScale).
+- The key: #legend moves to mid-height beside the panel (top 50%);
+  wire forces paint it too ("member force, kN", same diverging bar,
+  paintForceLegend + forceMagnitude).
+- Vectors read through the shell: depthTest false + renderOrder 25 on
+  shafts and heads, loads and reactions both.
+- Force lens shows the net: applyShowMode netOn ||= forcesOn, and the
+  crown-seam lift extends to (forcesOn && shellOn).
+- overlays leaves LAYERS for #overlays-tuck at the section bottom.
+- Data sheet: contained translucent card (scrim + blur, max-height
+  72vh) top-left.
+- Integrity pulse explained to him (button tooltip added): per-course
+  staged-solve verdict glow -- green converged, red not, grey no
+  solver -- synced to the build animation.
+- Verified live: 6 buttons 0 checkboxes; forces click put deflection
+  down, showed the net, painted the kN key (screenshot: -13.8/0/13.8);
+  loads arrows renderOrder 25 through the shell with Scale seated
+  under the button. Stress/deflection buttons correctly disabled with
+  no staged run. 724 tests green; 4/4 mutation kills; six stale pins
+  updated to the new truths.
