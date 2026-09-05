@@ -2785,3 +2785,32 @@ def test_the_panel_faces_follow_silent_restores():
     # material-library boot restore, and the hdri list refresh -- plus
     # the shelf's sky click.
     assert js.count("repaintSettingControls();") >= 4
+
+
+def test_the_camera_menu_owns_the_lens_and_the_recording_keeps_it():
+    """Param: "we need a camera menu on the top right like we have the
+    panel buttons. this will show FOV, mm lens, move the brightness and
+    contrast there. Some preset screen ratios, this also needs to all be
+    picked up by the animation recording"."""
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'data-section="camera-section"' in page
+    assert 'id="camera-fov"' in page and 'id="camera-mm"' in page
+    assert 'id="camera-aspect-segments"' in page
+    for ratio in ("16:9", "4:3", "1:1", "4:5", "9:16"):
+        assert ">" + ratio + "<" in page
+    # Brightness and contrast live in the camera section now, once each.
+    camera_block = page[page.index('id="camera-section"'):
+                        page.index('id="scene-section"')]
+    assert 'id="brightness"' in camera_block and 'id="contrast"' in camera_block
+    assert page.count('id="brightness"') == 1
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # f = 12 / tan(fov/2): full-frame vertical equivalence.
+    lens = _function_body(js, "lensMillimetres")
+    assert "12 / Math.tan" in lens
+    # The recording renders at the chosen frame, not a hard-coded 1080p.
+    record = _function_body(js, "recordingFrame")
+    assert '"fill"' in record and "1920" in record
+    assert "const frame = recordingFrame();" in js
+    assert "renderer.setSize(frame.width, frame.height, false);" in js
+    assert "renderer.setSize(1920, 1080, false)" not in js

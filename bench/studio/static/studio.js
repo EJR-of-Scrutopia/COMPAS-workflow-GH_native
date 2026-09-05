@@ -107,6 +107,7 @@ const state = {
   // are untouched, so restoring the control is a control and a handler.
   formworkMode: "hidden",
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
+  cameraAspect: "fill",  // the Camera menu's frame: "fill" or a ratio as a string
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
@@ -1846,7 +1847,8 @@ function captureThumbnail(width = 240) {
 function collectScene() {
   const control = (id) => document.getElementById(id);
   return {
-    camera: { position: camera.position.toArray(), target: controls.target.toArray() },
+    camera: { position: camera.position.toArray(), target: controls.target.toArray(),
+      fov: camera.fov, frame: state.cameraAspect },
     showMode: state.showMode,
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
@@ -2059,6 +2061,14 @@ async function applyScene(record) {
   // so playing it keeps that framing. A study loaded fresh still starts on
   // the orbit, exactly as it always has.
   const view = scene_.camera;
+  if (view && typeof view.fov === "number") {
+    camera.fov = view.fov;
+    camera.updateProjectionMatrix();
+  }
+  if (view && typeof view.frame === "string") {
+    state.cameraAspect = view.frame;
+    applyCameraAspect();
+  }
   if (view && Array.isArray(view.position) && Array.isArray(view.target)) {
     camera.position.fromArray(view.position);
     controls.target.fromArray(view.target);
@@ -2875,6 +2885,76 @@ function wireAllPickers() {
   }
 }
 
+// ---------- the camera menu ----------
+// FOV with its lens equivalent, the frame ratio, and the grade -- the
+// things that belong to the LENS rather than the scene (Param: "a camera
+// menu on the top right... FOV, mm lens, move the brightness and
+// contrast there. Some preset screen ratios, this also needs to all be
+// picked up by the animation recording").
+
+// Full-frame vertical equivalence: three.js fov is the VERTICAL angle
+// and a 35mm frame is 24mm tall, so f = 12 / tan(fov/2). A 27 degree
+// vertical view reads 50mm, exactly as the photography tables have it.
+function lensMillimetres(fov) {
+  return Math.max(1, Math.round(12 / Math.tan((fov * Math.PI / 180) / 2)));
+}
+
+function syncCameraControls() {
+  const fov = Math.round(camera.fov);
+  document.getElementById("camera-fov").value = fov;
+  document.getElementById("camera-fov-value").textContent = fov;
+  document.getElementById("camera-mm").textContent = lensMillimetres(camera.fov);
+  document.getElementById("camera-aspect").value = state.cameraAspect;
+  paintSegmented("camera-aspect-segments", "camera-aspect");
+}
+
+// The letterbox is nothing but CSS on the canvas: resize() reads the
+// canvas's own box every frame and sets the renderer, the composer and
+// camera.aspect from it, so constraining the box constrains everything.
+function applyCameraAspect() {
+  if (state.cameraAspect === "fill") {
+    canvas.style.left = ""; canvas.style.top = "";
+    canvas.style.width = ""; canvas.style.height = "";
+    return;
+  }
+  const ratio = +state.cameraAspect;
+  const maxW = window.innerWidth, maxH = window.innerHeight;
+  let w = maxW, h = Math.round(maxW / ratio);
+  if (h > maxH) { h = maxH; w = Math.round(maxH * ratio); }
+  canvas.style.left = Math.round((maxW - w) / 2) + "px";
+  canvas.style.top = Math.round((maxH - h) / 2) + "px";
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+}
+
+// What the recorder renders at: the chosen frame, longest side 1920,
+// dimensions kept even for the encoder. Fill records the classic 1080p.
+function recordingFrame() {
+  if (state.cameraAspect === "fill") return { width: 1920, height: 1080 };
+  const ratio = +state.cameraAspect;
+  const even = (n) => Math.max(2, 2 * Math.round(n / 2));
+  return ratio >= 1
+    ? { width: 1920, height: even(1920 / ratio) }
+    : { width: even(1920 * ratio), height: 1920 };
+}
+
+document.getElementById("camera-fov").addEventListener("input", (e) => {
+  camera.fov = +e.target.value;
+  camera.updateProjectionMatrix();
+  document.getElementById("camera-fov-value").textContent = e.target.value;
+  document.getElementById("camera-mm").textContent = lensMillimetres(camera.fov);
+});
+document.getElementById("camera-fov").addEventListener("change", () => {
+  rememberSession();
+});
+document.getElementById("camera-aspect").addEventListener("change", (e) => {
+  state.cameraAspect = e.target.value;
+  applyCameraAspect();
+  paintSegmented("camera-aspect-segments", "camera-aspect");
+  rememberSession();
+});
+window.addEventListener("resize", applyCameraAspect);
+
 // The scene restore and the library boot write their controls SILENTLY
 // on purpose (dispatching change would fire six overlapping server
 // cuts), so what they wrote has to be repainted by hand. Everything in
@@ -2896,6 +2976,7 @@ function repaintSettingControls() {
   }
   syncGroundControls();
   syncAppearanceControls();
+  syncCameraControls();
 }
 
 // ---------- the shelf ----------
@@ -7030,7 +7111,8 @@ async function recordAnimation() {
   const fps = 60;
   const speed = state.timeline.speed;
   const total = Math.ceil(timelineDuration() / speed * fps);
-  status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
+  status.textContent = "recording " + total + " frames at " + recordingFrame().width + "x"
+    + recordingFrame().height + " (a few MB each on disk)";
   const wasPlaying = state.timeline.playing;
   // F2: a live day cycle must not keep advancing off frame()'s wall clock
   // while the recording also drives it off frameIndex -- two clocks racing
@@ -7048,9 +7130,12 @@ async function recordAnimation() {
   state.showMode = "timeline";
   paintShowButtons();
   captureOrbitBase();
-  renderer.setSize(1920, 1080, false);
-  composer.setSize(1920, 1080);
-  camera.aspect = 1920 / 1080;
+  // The chosen frame rides into the take: ratio, FOV and the grade are
+  // all camera truths the recording must keep.
+  const frame = recordingFrame();
+  renderer.setSize(frame.width, frame.height, false);
+  composer.setSize(frame.width, frame.height);
+  camera.aspect = frame.width / frame.height;
   camera.updateProjectionMatrix();
   state.recording = true;   // resize() must skip while this is set
   try {
@@ -7292,6 +7377,10 @@ guarded("the ground tiles", buildGroundTiles);
 guarded("the weather tiles", buildWeatherTiles);
 guarded("the pickers", wireAllPickers);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
+guarded("the camera frame segments", () => {
+  buildSegmented("camera-aspect-segments", "camera-aspect");
+  syncCameraControls();
+});
 guarded("the slider rows", () => upgradeSliders());
 guarded("the panel groups", buildGroups);
 // The libraries load in the background: the studio is usable before either
