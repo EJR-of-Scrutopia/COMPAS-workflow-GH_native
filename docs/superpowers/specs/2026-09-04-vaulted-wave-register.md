@@ -358,3 +358,10 @@ State of the pipeline, kept honest as it runs:
   up as one rubber stamp: every click plants the whole group, Escape
   releases the copy in hand. Verified live: 3 plants of a 2-prop stamp
   = exactly 9 props, camera controls returned.
+
+- LAYERS v3 (his walk again): the drawer is now a THUMBNAIL GRID of the
+  open layer's placed objects (same preview tiles as the prop library),
+  multi-select by clicking, Place copies stamps, Group to new layer
+  moves the selection where it stands. Layers are TABS on the drawer's
+  bottom edge: open tab receives new placements, eye hides, + adds,
+  double-click renames. All rules verified live.
