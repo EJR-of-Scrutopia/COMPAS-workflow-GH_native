@@ -365,3 +365,56 @@ State of the pipeline, kept honest as it runs:
   moves the selection where it stands. Layers are TABS on the drawer's
   bottom edge: open tab receives new placements, eye hides, + adds,
   double-click renames. All rules verified live.
+
+## 2026-09-05 -- THE REMOTE DOOR (tailnet access from any device)
+
+His brief: "accessible from anywhere ... through any of my tailscale
+devices"; then "A stop server button on the ui is needed too"; then
+"install it as an app [on the laptop] ... it starts the server here and
+then it opens up browser".
+
+- FRONT DOOR: Tailscale Serve on this desktop, tailnet-only HTTPS:
+  https://edwards-desktop.tailb66524.ts.net:8443/ -> 127.0.0.1:8600
+  https://edwards-desktop.tailb66524.ts.net:8443/start -> 127.0.0.1:8611
+  The app still binds loopback; nothing listens on LAN or internet. The
+  old root entry on 443 (dead 18789 proxy) was left untouched. Config
+  persists across reboots; disable with: tailscale serve --https=8443 off
+- THE WAKER (launcher/waker.py): loopback-only stdlib server on 8611,
+  run windowless by pythonw from the Startup folder ("Vaulted Waker.lnk").
+  GET /start (or /, Serve may strip the mount) with the studio down
+  spawns launch.ps1 -Quiet -NoBrowser (new switch) and returns a page
+  that polls /api/health and location.replace("/")s when a real studio
+  answers -- reply.ok AND health.studio, because the proxy answers 502
+  for a dead server. 30 s spawn cooldown so a burst of knocks is one
+  launch. Under pythonw one stderr write is fatal (serve.py's lesson):
+  log_message is overridden to silence.
+- STOP FROM THE PAGE: /api/stop mirrors /api/restart (reply first,
+  schedule_stop exits a beat later via os._exit -- uvicorn's graceful
+  path is unreachable and every write is atomic). The button sits beside
+  Restart; success is health going QUIET, where "not ok" counts as quiet
+  because through the proxy the connection never drops.
+- CACHE TIERS: the flat no-store split three ways. App files: no-store
+  (the stale-stylesheet fault stays closed). /static/vendor/: no-cache
+  (kept, 304 to confirm). Heavy assets (props/hdri/materials/
+  ground-materials prefixes, non-JSON answers only): public,
+  max-age=3600, stale-while-revalidate=604800 -- props ARE replaced in
+  place by ingests, so an hour of patience, not immutable.
+- DESKTOP: Stop Vaulted.lnk beside Vaulted.lnk (shortcut.ps1 makes
+  both now, and prints real paths instead of an undefined variable).
+- LAPTOP: launcher/remote-shortcut.ps1 + vaulted.ico shipped over SSH
+  to C:\Users\Param\Vaulted on edwards-laptop-1; desktop Vaulted.lnk
+  opens Brave --app= on /start (Edge absent there; installer probes
+  Edge/Brave/Chrome). Laptop fetch of /api/health over the tailnet:
+  200 with a valid ts.net certificate.
+- Verified live end to end through the proxy: restart onto the new
+  build, cache headers as designed, POST /api/stop -> quiet, GET /start
+  -> 200 waiting page -> studio back on a fresh pid; then the REAL
+  button in a CDP page: status settled on "stopped", knock revived it.
+  704 tests green; 11 new pins, all mutation-proved (one false-clean
+  caught and closed: the spawn pin now demands QUOTED tokens because
+  the docstring names the same switches).
+- Riders: scenes are per-browser localStorage, so devices see their own
+  scene lists (server-side sync is a future wave); touch was not
+  exercised -- the UI is pointer-events based and should mostly work on
+  iPad, but it was built for a mouse; a weak GPU may want a quality cap
+  for 16k backdrops and 200k canopies.
