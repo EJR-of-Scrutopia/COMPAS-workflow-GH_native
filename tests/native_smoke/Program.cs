@@ -1033,11 +1033,20 @@ internal static class Program
         {
             ValidateSkinCapSplit(plugin);
             Console.WriteLine(
-                "PASS  Skin cap split: an oversized keystone becomes a " +
-                "rosette of W wedges about a centre disc, the branch count " +
-                "unchanged, the disc first in its branch, W moving with " +
-                "Min Piece alone, and the elliptical dome's cap emitted " +
-                "whole and OVERSIZED, its girth printed above.");
+                "PASS  Skin one-polygon cap (spec 2026-09-05 round two, " +
+                "finding 3, replacing the rosette of rule 2.6): a " +
+                "qualifying cap of ANY girth is ONE cell, its outline the " +
+                "final traced loop simplified to its structural corners " +
+                "by arc-windowed turning and kept INSIDE the loop by the " +
+                "inscribed refinement, so it survives the plan filter it " +
+                "is not exempt from; the hemisphere at CH 1.2, the old " +
+                "split case, ships one 96-sided polygon (its crown loop " +
+                "is near-circular, no corner separates, and the loop " +
+                "keeps its own vertex structure) warned OVERSIZED at " +
+                "girth 6.803 m against the 1.8 maximum; sides ride where " +
+                "wedge counts rode; and the elliptical dome's cap is " +
+                "still one whole OVERSIZED stone, its girth printed " +
+                "above.");
         }
         catch (Exception exception)
         {
@@ -1293,7 +1302,12 @@ internal static class Program
                 "could not raise even a top face; the Brep half is " +
                 "scripts/rhino_skin_surface.py part four, slot==Solid for " +
                 "every cell at nonzero Th, awaiting its first run inside " +
-                "Rhino.");
+                "Rhino. FIX 5, the one-polygon cap, on this fixture: the " +
+                "crown ships as ONE 33-cornered cell, the six structural " +
+                "corners the arc-windowed turning finds at the lobes plus " +
+                "the inscribed refinement along the concave dips, which " +
+                "is what keeps the polygon inside its loop and alive " +
+                "through the plan filter it is not exempt from.");
         }
         catch (Exception exception)
         {
@@ -19976,8 +19990,13 @@ internal static class Program
         foreach ((double[][] vertices, int[][] faces, string label,
                   bool closed, string runs) fixture in new[]
                  {
+                     // RE-MEASURED 2026-09-05 for round two's
+                     // one-polygon cap: the crown branch read 2 runs while
+                     // it carried the rosette (the disc leading its
+                     // wedges); one polygon is one run, so the dome reads
+                     // one run per course everywhere.
                      (SkinDomeNet().Vertices, SkinDomeNet().Faces,
-                      "dome", true, "1,1,1,2"),
+                      "dome", true, "1,1,1,1"),
                      (SkinBarrelNet().Vertices, SkinBarrelNet().Faces,
                       "barrel", false, "2,2,2,2")
                  })
@@ -20027,9 +20046,9 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"On the {fixture.label} the runs per course are " +
                     $"{fixture.runs}, course by course from the bottom, " +
-                    "which is one run per traced component and, at the " +
-                    "dome's crown, the keystone leading its rosette (rule " +
-                    $"3.1 and rule 2.6.5); got {runShape}.");
+                    "which is one run per traced component, the crown's " +
+                    "one-polygon cap included (rule 3.1; round two " +
+                    $"finding 3); got {runShape}.");
             }
             foreach (IGrouping<int, (int Course, double[][] Outline,
                          bool Clipped, double U0, double U1, bool Cap)> branch in
@@ -20229,9 +20248,12 @@ internal static class Program
                      // same other-family curve, so their stones stand a
                      // whole vault apart in arc, and a gap between two
                      // stones the closer laid on purpose is not a refusal.
+                     // And the TOP course reads ONE run under round
+                     // two's one-polygon cap where the loop's tiling read
+                     // two.
                      ("Param's crown arch", crown, 0.10, 0.30,
                       "2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2," +
-                      "2,2,2,2,2,2,2,2,3,2", 1, 828, 30, 2)
+                      "2,2,2,2,2,2,2,2,3,1", 1, 828, 30, 2)
                  })
         {
             object built = courses.Invoke(
@@ -20979,20 +21001,19 @@ internal static class Program
                 // crown at L_top = (n - 1) CH = 1.5 is a genuine disc: all
                 // three of rule 2.2.1's tests pass and band n - 1 is
                 // replaced by cap cells rather than tiled as an ordinary
-                // ring (rule 2.4.1). Its girth, 16 (2 - 1.5) sin(pi / 8) =
-                // 3.0615 m, exceeds Mx = S / MP = 1.8 m at the default MP
-                // (task 22, rule 2.6), so the cap ITSELF is a split rosette
-                // of W = max(2, ceil(3.0615 / 1.8)) = 2 wedges about a
-                // centre disc, W + 1 = 3 cells, which the fixture this
-                // task's own ValidateSkinCapSplit measures directly. Here
-                // it is enough to pin that this course is exactly those
-                // cap cells and none other.
-                if (ring.Length != 3 || ring.Count(cell => cell.Cap) != 3)
+                // ring (rule 2.4.1). Under round two's finding 3 the cap
+                // is ONE polygonal cell whatever its girth (3.0615 m here,
+                // above the maximum and warned OVERSIZED), where rule 2.6
+                // used to split it into a 3-cell rosette. Here it is
+                // enough to pin that this course is exactly that one cap
+                // cell and none other.
+                if (ring.Length != 1 || ring.Count(cell => cell.Cap) != 1)
                 {
                     throw new InvalidOperationException(
                         $"Course {course} is band n - 1 on a dome whose " +
-                        "crown is a disc split into a rosette (rule 2.6); " +
-                        $"got {ring.Length} cells, {ring.Count(cell => cell.Cap)} " +
+                        "crown is ONE polygonal cap (round two finding " +
+                        $"3); got {ring.Length} cells, " +
+                        $"{ring.Count(cell => cell.Cap)} " +
                         "of them flagged Cap.");
                 }
                 continue;
@@ -21539,7 +21560,33 @@ internal static class Program
     }
 
     /// <summary>
-    /// The split cap (section 2.6), checks 12.2(f), 12.2(g) and 12.6(h).
+    /// THE ONE-POLYGON CAP (spec 2026-09-05 round two, finding 3),
+    /// replacing checks 12.2(f), 12.2(g) and 12.6(h), which pinned the
+    /// rosette rule 2.6 no longer builds. Param's ruling: "the central cap
+    /// ... can it just be a polygon please, the polygon sides will of
+    /// course be determined by the sides we have on the form." A
+    /// qualifying cap of ANY girth is therefore ONE cell whose outline is
+    /// the final traced loop simplified to its structural corners
+    /// (arc-windowed turning, non-max suppressed, window of order Min
+    /// Piece) and kept INSIDE the loop by the inscribed refinement, so it
+    /// survives KeepValidPlans, from which it is still not exempt.
+    ///
+    /// WHAT DIED WITH THE ROSETTE, recorded rather than silently dropped:
+    /// the W = max(2, ceil(G / Mx)) wedge count and its monotonicity in
+    /// MP; the centre disc, its girth bracket (rule 2.6.3's bisection is
+    /// deleted from the engine) and its lead over its own wedges at odd W
+    /// (rule 2.6.5's tie-break has nothing left to separate); and the
+    /// W + 1 cell count. The polygon IS the keystone now, Lead 0, one
+    /// stone at every girth. CapWedgeCounts carries the polygon's SIDE
+    /// count where W rode, so the record's shape holds for everything
+    /// that reflects on it.
+    ///
+    /// WHAT SURVIVES UNCHANGED: CapQualifies and every gate around it,
+    /// the cap-band identification, the cap leading its branch, rule
+    /// 2.3.2a's exclusion of cap girths from the piece statistics, and
+    /// rule 2.6.6's OVERSIZED warning, which now names ANY cap girth
+    /// above the maximum piece rather than only one the split could not
+    /// serve.
     /// </summary>
     private static void ValidateSkinCapSplit(Assembly plugin)
     {
@@ -21554,199 +21601,88 @@ internal static class Program
         object net = SkinNetWith(
             netType, edgeType, vertices, faces, rim, noForces);
 
-        // 12.2(f). At CH 1.2 the topmost boundary sits low enough on the
-        // hemisphere that the cap's girth G exceeds Mx = S / MP = 1.8 m at
-        // S 0.6 and MP 1/3.
-        object split = courses.Invoke(
+        // The hemisphere at CH 1.2, formerly the split case: the crown
+        // loop's girth, 6.803 m, stands far above Mx = S / MP = 1.8 m.
+        object built = courses.Invoke(
             null, new object[] { net, 0.6, 1.2, 1.0 / 3.0 })!;
-        var cells = SkinCells(split);
-        int courseCount = Reading<int>(split, "CourseCount");
+        var cells = SkinCells(built);
+        int courseCount = Reading<int>(built, "CourseCount");
         var capCells = cells.Where(cell => cell.Cap).ToArray();
-        IList wedgeCounts = (IList)split.GetType()
-            .GetProperty("CapWedgeCounts")!.GetValue(split)!;
-        IList girths = (IList)split.GetType()
-            .GetProperty("CapGirths")!.GetValue(split)!;
-        int wedges = (int)wedgeCounts[0]!;
+        IList sideCounts = (IList)built.GetType()
+            .GetProperty("CapWedgeCounts")!.GetValue(built)!;
+        IList girths = (IList)built.GetType()
+            .GetProperty("CapGirths")!.GetValue(built)!;
         double maximum = 0.6 / (1.0 / 3.0);
-        if (wedges < 2)
+        if (capCells.Length != 1)
         {
             throw new InvalidOperationException(
-                "A cap whose girth exceeds Mx = S / MP is SPLIT into " +
-                "W = max(2, ceil(G / Mx)) wedges about a smaller centre " +
-                $"disc (rules 2.6.1 and 2.6.2); got {wedges} wedges.");
+                "A qualifying cap of ANY girth is ONE polygonal cell " +
+                "(round two finding 3); the hemisphere at CH 1.2 produced " +
+                $"{capCells.Length} cap cells.");
         }
-        if (capCells.Length != wedges + 1)
+        if (capCells[0].Course != courseCount - 1)
         {
             throw new InvalidOperationException(
-                "A split cap is W + 1 cells, the ring's wedges and the " +
-                $"centre disc, all carrying the Cap flag; got " +
-                $"{capCells.Length} against {wedges + 1}.");
+                "The polygon replaces the TILING of band n - 1 and its " +
+                $"course is CourseCount - 1 = {courseCount - 1}; got " +
+                $"{capCells[0].Course}.");
         }
-        foreach (var cell in capCells)
-        {
-            if (cell.Course != courseCount - 1)
-            {
-                throw new InvalidOperationException(
-                    "All W + 1 pieces sit in branch n - 1, the course the " +
-                    "cap already had (rule 2.6.5): a rosette is laid in " +
-                    "ONE stage, and a split that invented a course would " +
-                    "silently multiply his analysis stages.");
-            }
-            double span = cell.U1 - cell.U0;
-            if (span > maximum + 1.0e-9)
-            {
-                throw new InvalidOperationException(
-                    $"Every piece of a split cap is at or under Mx = " +
-                    $"{maximum} m; one spans {span} m.");
-            }
-        }
-        double disc = (double)girths[0]!;
-        if (disc > maximum + 1.0e-9)
+        if (Math.Abs(capCells[0].U0 + capCells[0].U1) > 1.0e-9 ||
+            !(capCells[0].U1 - capCells[0].U0 > 0.0))
         {
             throw new InvalidOperationException(
-                "The centre disc's girth is at or under Mx, which is what " +
-                "rule 2.6.3's bracket invariant guarantees rather than the " +
-                $"shape of the surface; got {disc}.");
+                "A cap's span is its whole girth, U0 and U1 being " +
+                "-L / 2 and +L / 2 (rule 2.3.2); got " +
+                $"[{capCells[0].U0}, {capCells[0].U1}].");
         }
-        // AND FROM BELOW, which is the whole-branch review's finding 5.
-        // Every bar above is an upper bound, and the TRIVIAL answer meets
-        // all of them: a search that returned the top cut at once would
-        // give the smallest possible keystone and the deepest possible
-        // ring, and wedge span, disc girth and wedge count would each
-        // still hold. MEASURED 2026-09-03 by cutting rule 2.6.3's
-        // bisection loop from six steps to none, so hi stays at its
-        // initial value: the disc girth falls from 1.739 m to 2.96e-05 m,
-        // a keystone the size of a point at the very apex, and the suite
-        // stayed green. Rule 2.6.3 says the search is for a LARGE ALLOWED
-        // disc, so the disc is pinned near its own bound: six halvings of
-        // the bracket land it at 1.739 m against Mx 1.8, and the bar is
-        // three quarters of Mx, which is far under that and far over the
-        // trivial answer.
-        if (disc < maximum * 0.75)
+        if (girths.Count != 1 ||
+            Math.Abs((double)girths[0]! - 6.803) > 0.01)
         {
             throw new InvalidOperationException(
-                "Rule 2.6.3 is a search for a LARGE ALLOWED disc, not for " +
-                "any allowed disc: six bisection steps land the centre " +
-                $"disc's girth at 1.739 m against Mx {maximum} m, and the " +
-                $"bar is three quarters of it. Got {disc} m. A search " +
-                "that returned the top cut at once passes every upper " +
-                "bound in this check and reads 2.96e-05 m here.");
+                "The cap's REPORTED girth is the loop's own, 6.803 m on " +
+                "this hemisphere (the rosette's centre-disc girth went " +
+                "with the rosette); got " +
+                (girths.Count == 1
+                    ? $"{(double)girths[0]!:F3} m."
+                    : $"{girths.Count} girths."));
         }
-        var inBranch = cells
-            .Where(cell => cell.Course == courseCount - 1)
-            .ToArray();
-        // WHERE THE DISC ARRIVES, and why it is FIRST. Rule 2.6.5 is that
-        // the keystone wins any overlap against its own wedges under the
-        // first-emitted-wins filter, since it is the piece least worth
-        // dropping, and that the tie at ODD W, where the middle wedge is
-        // centred on the seam as the disc is, is broken "explicitly and in
-        // the disc's favour". Rule 7.1 gave that for nothing, on |mid|.
-        // Spec 2026-09-04 rule 3.1 walks the rosette in ascending SIGNED arc
-        // instead, where the disc and its wedges share course, cap flag,
-        // component rank and level, so the signed mid alone would decide it:
-        // at W = 3 and girth 1 the middle wedge's mid computes as -2.78e-17
-        // and it would lead the disc and take the overlap, which is rule
-        // 2.6.5 inverted. The engine's sort therefore carries a LEAD term,
-        // 0 for a centre disc and 1 for everything else, ranked after the
-        // level and before the arc, and this is its pin: the disc leads its
-        // own rosette at every W, odd or even.
-        //
-        // WHAT DOES NOT CARRY THIS. The level term does not: the disc and
-        // its wedges are emitted at ONE level, the cap band's own mid, so
-        // that term is a tie between them and orders only the cap against
-        // whatever a bisection nested inside it. Nor does the arrival order
-        // into the list, which put the wedges in first.
-        int discAt = Array.FindIndex(
-            inBranch,
-            cell => cell.Cap &&
-                Math.Abs((cell.U0 + cell.U1) / 2.0) <= 1.0e-9 &&
-                cell.U1 - cell.U0 > maximum * 0.5);
-        if (discAt != 0)
+        // SIDES RIDE WHERE WEDGE COUNTS RODE, and this loop is the
+        // FALLBACK case: near-circular, its 360 degrees spread evenly, no
+        // corner separates under the windowed threshold, so the polygon
+        // keeps the loop's own 96 trace vertices. That is the ruling's
+        // own dome case ("a dome's loop is near-circular and the polygon
+        // follows its vertex structure") and it is also the
+        // surface-fidelity floor: the simplification can never thin a
+        // cap below its structural set, so the fan's rim chords stay
+        // short.
+        int sides = (int)sideCounts[0]!;
+        if (sides != capCells[0].Outline.Length)
         {
             throw new InvalidOperationException(
-                "The centre disc LEADS its own rosette, at every W and not " +
-                "merely where the signed mid-spans happen to fall, so that " +
-                "the keystone wins any overlap against its own wedges " +
-                "(rule 2.6.5); at W = " + $"{wedges} it arrived at item " +
-                $"{discAt} of {inBranch.Length}.");
+                "CapWedgeCounts carries the polygon's SIDE count where W " +
+                $"rode; the record says {sides} and the emitted outline " +
+                $"carries {capCells[0].Outline.Length}.");
         }
-        // AND AT ODD W, WHICH IS THE CASE THE TIE-BREAK EXISTS FOR. At W = 4
-        // the disc leads on the arc alone, since no wedge is centred on the
-        // seam, so the pin above passes on this fixture whether the lead term
-        // is there or not. W = max(2, ceil(G / (S / MP))) moves with MP, so
-        // the same hemisphere is asked for an ODD W and the middle wedge that
-        // brings with it: the tie is MEASURED, its two spans centred on the
-        // seam to within the weld, and the disc is then asserted to lead it
-        // anyway. Rule 2.6.5's sentence is exactly this case.
-        int oddWedges = 0;
-        double oddMinPiece = 0.0;
-        for (int step = 1; step <= 19 && oddWedges == 0; step++)
-        {
-            double candidate = step * 0.05;
-            int count = WedgesAt(candidate);
-            if (count >= 3 && count % 2 == 1)
-            {
-                oddWedges = count;
-                oddMinPiece = candidate;
-            }
-        }
-        if (oddWedges == 0)
+        if (sides != 96)
         {
             throw new InvalidOperationException(
-                "No Min Piece between 0.05 and 0.95 splits this cap into an " +
-                "ODD number of wedges, so rule 2.6.5's tie between the disc " +
-                "and a middle wedge both centred on the seam would go " +
-                "untested; W = max(2, ceil(G / (S / MP))) must reach an odd " +
-                "value on some MP for this fixture to be the right one.");
+                "A near-circular crown loop keeps its own vertex " +
+                "structure (the fallback the findings require: never 3 " +
+                "points), which is 96 trace vertices on this hemisphere " +
+                $"at CH 1.2; got {sides}.");
         }
-        object oddSplit = courses.Invoke(
-            null, new object[] { net, 0.6, 1.2, oddMinPiece })!;
-        var oddCells = SkinCells(oddSplit);
-        int oddCourses = Reading<int>(oddSplit, "CourseCount");
-        double oddDiscGirth = (double)((IList)oddSplit.GetType()
-            .GetProperty("CapGirths")!.GetValue(oddSplit)!)[0]!;
-        var oddBranch = oddCells
-            .Where(cell => cell.Course == oddCourses - 1)
-            .ToArray();
-        int oddDiscAt = Array.FindIndex(
-            oddBranch,
-            cell => cell.Cap &&
-                Math.Abs(cell.U1 - cell.U0 - oddDiscGirth) <= 1.0e-9);
-        bool tied = oddBranch.Any(
-            cell => cell.Cap &&
-                Math.Abs(cell.U1 - cell.U0 - oddDiscGirth) > 1.0e-9 &&
-                Math.Abs((cell.U0 + cell.U1) / 2.0) <= 1.0e-6);
-        if (!tied)
+        if (Reading<int>(built, "CapsOversized") != 1)
         {
             throw new InvalidOperationException(
-                $"At MP {oddMinPiece} the cap splits into an odd W = " +
-                $"{oddWedges}, so ONE wedge straddles the seam and its " +
-                "mid-span ties the disc's 0 to within the 1e-6 m weld, " +
-                "which is the tie rule 2.6.5 breaks in the disc's favour; " +
-                "no wedge in branch n - 1 is centred there, so the case " +
-                "this pin exists for is not present after all.");
+                "A cap girth above the maximum piece is warned OVERSIZED " +
+                "(rule 2.6.6, reworded for the one-polygon cap): 6.803 m " +
+                "against 1.8 m is one such; CapsOversized reads " +
+                $"{Reading<int>(built, "CapsOversized")}.");
         }
-        if (oddDiscAt != 0)
-        {
-            throw new InvalidOperationException(
-                $"At MP {oddMinPiece} and an ODD W = {oddWedges} the middle " +
-                "wedge is centred on the seam exactly as the disc is, and " +
-                "the signed arc cannot separate them: rule 2.6.5 breaks " +
-                "that tie EXPLICITLY and in the disc's favour, so the disc " +
-                $"still leads its rosette; it arrived at item {oddDiscAt} " +
-                $"of {oddBranch.Length}.");
-        }
-        Console.WriteLine(
-            "      Skin cap split, rule 2.6.5's tie: at Min Piece " +
-            $"{oddMinPiece.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)} " +
-            $"the same hemisphere splits into an ODD W = {oddWedges}, a " +
-            "wedge is centred on the seam within the 1e-6 m weld exactly as " +
-            "the disc is, and the disc leads the branch all the same.");
-        // The piece-length statistics contain NONE of the W + 1 spans, which
-        // pins the amended rule 2.3.2a: a ring of wedges left in the list
-        // would carry check 12.3(d)'s ratio past its bar on any dome by
-        // itself.
-        string diagnostics = Reading<string>(split, "Diagnostics");
+        // The piece-length statistics contain neither the polygon's span,
+        // which pins the amended rule 2.3.2a exactly as it pinned the
+        // rosette's spans.
+        string diagnostics = Reading<string>(built, "Diagnostics");
         double longest = cells
             .Where(cell => !cell.Cap)
             .Max(cell => cell.U1 - cell.U0);
@@ -21755,47 +21691,30 @@ internal static class Program
                 StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The piece-length statistics exclude every Cap cell, the " +
-                "wedges of a split cap included (rule 2.3.2a); the " +
-                $"diagnostics report a maximum other than {longest}.");
+                "The piece-length statistics exclude every Cap cell " +
+                "(rule 2.3.2a); the diagnostics report a maximum other " +
+                $"than {longest}.");
         }
 
-        // 12.6(h): ONE PORT, BOTH ENDS. A smaller MP gives a LARGER maximum
-        // and FEWER wedges, and MP at the cap of 0.5 gives the most. That is
-        // the direct measurement that the maximum is the same number read
-        // from the other end and not a second constant hidden in the cap
-        // code.
-        int WedgesAt(double minPiece)
-        {
-            object built = courses.Invoke(
-                null, new object[] { net, 0.6, 1.2, minPiece })!;
-            IList counts = (IList)built.GetType()
-                .GetProperty("CapWedgeCounts")!.GetValue(built)!;
-            return counts.Count == 0 ? 0 : (int)counts[0]!;
-        }
-        if (!(WedgesAt(0.5) >= WedgesAt(1.0 / 3.0)) ||
-            !(WedgesAt(1.0 / 3.0) >= WedgesAt(0.2)))
+        // AND AT MP = 0 the maximum is unbounded, so NO cap is oversized
+        // and the polygon is the unsimplified loop (the window is Min
+        // Piece, and a zero window has no corners to find), which is the
+        // one coherent reading of the threshold turned off.
+        object unbounded = courses.Invoke(
+            null, new object[] { net, 0.6, 1.2, 0.0 })!;
+        if (Reading<int>(unbounded, "CapsOversized") != 0 ||
+            SkinCells(unbounded).Count(cell => cell.Cap) != 1)
         {
             throw new InvalidOperationException(
-                "The wedge count moves as ceil(G / (S / MP)) does: a " +
-                "smaller MP gives a larger maximum and fewer wedges, and " +
-                "MP at the cap of 0.5 gives the most (check 12.6(h)); got " +
-                $"{WedgesAt(0.5)}, {WedgesAt(1.0 / 3.0)}, {WedgesAt(0.2)}.");
-        }
-        if (WedgesAt(0.0) != 0)
-        {
-            throw new InvalidOperationException(
-                "At MP = 0 the minimum is 0 and Mx is unbounded, so " +
-                "merging and splitting go off TOGETHER, which is the only " +
-                "coherent reading of a single threshold turned off " +
-                "(rule 2.6.1).");
+                "At MP = 0 the maximum is unbounded so no cap is " +
+                "OVERSIZED, and the cap is still one polygon; got " +
+                $"{Reading<int>(unbounded, "CapsOversized")} oversized " +
+                $"and {SkinCells(unbounded).Count(cell => cell.Cap)} caps.");
         }
 
-        // 12.2(g): THE BASE CASE, on the elliptical dome and at the default
-        // MP. A dome whose plan is not a circle has a cut locus that is a
-        // SEGMENT rather than a point, so the girth at the top cut is
-        // bounded below by roughly twice the segment's length however fine
-        // CH is made, and rule 2.6.3 finds no qualifying inner level.
+        // 12.2(g): THE ELLIPTICAL DOME, whose pins survive the rework
+        // untouched: one cap, oversized, whole, because a refusal at the
+        // crown is a hole at the crown (rule 2.6.6).
         (double[][] ellipseVertices, int[][] ellipseFaces, int[] ellipseRim) =
             SkinEllipticalDomeNet();
         object ellipse = SkinNetWith(
@@ -21808,9 +21727,10 @@ internal static class Program
             ellipseCells.Count(cell => cell.Cap) != 1)
         {
             throw new InvalidOperationException(
-                "Where no qualifying inner level exists the cap is emitted " +
-                "WHOLE and OVERSIZED and not refused, because a refusal at " +
-                "the crown is a hole at the crown (rule 2.6.6); got " +
+                "The elliptical dome's cap is ONE stone, above the " +
+                "maximum and warned OVERSIZED rather than refused, " +
+                "because a refusal at the crown is a hole at the crown " +
+                "(rule 2.6.6); got " +
                 $"{Reading<int>(ellipseBuilt, "CapsOversized")} oversized " +
                 $"and {ellipseCells.Count(cell => cell.Cap)} caps.");
         }
@@ -23657,6 +23577,25 @@ internal static class Program
                 "And the CAP survives the plan filter it was measured " +
                 "dying in (finding 1c): the crown ships CLOSED with one " +
                 $"cap cell; got {capCount}.");
+        }
+
+        // ---- FIX 5. THE ONE-POLYGON CAP on the ruling's own form class:
+        // the asymmetric six-lobe's crown loop (girth 3.688 m, 181 trace
+        // vertices at 8b9a44a) ships as ONE cell whose outline carries
+        // the SIX structural corners the arc-windowed turning finds at
+        // the lobes plus the inscribed refinement's vertices along the
+        // concave dips, 33 corners in all: the refinement is what kept
+        // the polygon INSIDE the loop and alive through KeepValidPlans,
+        // where the bare six-corner hexagon measured its death by
+        // overlap (1 drop) on this very fixture.
+        var capCell = cells.Single(cell => cell.Cap);
+        if (capCell.Outline.Length != 33)
+        {
+            throw new InvalidOperationException(
+                "The six-lobe cap polygon carries its six structural " +
+                "corners plus the inscribed refinement along the dips, " +
+                $"33 in all (re-measure if a fix legitimately moved it); " +
+                $"got {capCell.Outline.Length}.");
         }
 
         // ---- FIX 4. INTERIOR SAG (finding 2a). Outline corners measure
@@ -26929,18 +26868,16 @@ internal static class Program
         // The sited dome carries the origin dome's courses: the mid-height
         // loop of band r has round(L / S) pieces for L = 16 (2 - h)
         // sin(pi / 8), so mids at 0.25, 0.75 and 1.25 give 18, 13 and 8
-        // pieces. Band 3's crown is a disc whose OWN girth, 3.0615 m,
-        // exceeds Mx = S / MP = 1.8 m at the default MP (task 22, rule
-        // 2.6), so its tiling is replaced not by the one cap cell of rule
-        // 2.4.1 but by a split rosette of W = max(2, ceil(3.0615 / 1.8)) =
-        // 2 wedges about a centre disc, W + 1 = 3 cells, so the total is
-        // 18 + 13 + 8 + 3 = 42.
-        if (sitedCells.Length != 42)
+        // pieces. Band 3's crown is ONE polygonal cap under round two's
+        // finding 3 (its girth 3.0615 m is above the maximum and warned
+        // OVERSIZED, where rule 2.6 used to cut a 3-cell rosette), so the
+        // total is 18 + 13 + 8 + 1 = 40.
+        if (sitedCells.Length != 40)
         {
             throw new InvalidOperationException(
                 "The sited dome carries the origin dome's courses and its " +
-                "crown split (rule 2.6): 18 + 13 + 8 + 3 = " +
-                $"42; got {sitedCells.Length}.");
+                "one-polygon crown cap (round two finding 3): 18 + 13 + " +
+                $"8 + 1 = 40; got {sitedCells.Length}.");
         }
         RequireDisjointSimplePlans(
             sitedCells.Select(cell => cell.Outline).ToArray(),
@@ -27915,12 +27852,13 @@ internal static class Program
                 $"rescue reached depth-0 bands; got {degenerate} and " +
                 $"{dropped}.");
         }
-        if (cells.Length != 100)
+        if (cells.Length != 95)
         {
             throw new InvalidOperationException(
-                "99 less 4 that the crown cap replaces with a 6-cell " +
-                "rosette (rule 2.6), with nothing dropped any more, " +
-                $"leaves 100; got {cells.Length}.");
+                "99 less 4 that the ONE-POLYGON crown cap replaces " +
+                "(round two finding 3; the 6-cell rosette went with rule " +
+                "2.6's split), with nothing dropped, leaves 95; got " +
+                $"{cells.Length}.");
         }
         string diagnostics = (string)built.GetType()
             .GetProperty("Diagnostics")!.GetValue(built)!;
@@ -27930,7 +27868,7 @@ internal static class Program
             !diagnostics.Contains(
                 "Plan-overlap cells dropped: 0",
                 StringComparison.Ordinal) ||
-            !diagnostics.Contains("Cells: 100", StringComparison.Ordinal))
+            !diagnostics.Contains("Cells: 95", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "A dropped cell is never silent: both counts are their " +
@@ -29658,6 +29596,9 @@ internal static class Program
                 int sections = SectionCount(cell);
                 if (cap && sections == 2)
                 {
+                    // A cap with two sections was a WEDGE of rule 2.6's
+                    // rosette; round two's one-polygon cap left no route
+                    // that builds one, and the arm below refuses it.
                     wedges++;
                     continue;
                 }
@@ -29705,8 +29646,16 @@ internal static class Program
                         .Cast<double[]>().ToArray();
                     double capLow = capRing.Min(point => point[2]);
                     double capHigh = capRing.Max(point => point[2]);
+                    // THE UPPER BOUND MOVED with round two's one-polygon
+                    // cap, from a tenth of a course to a whole one: the
+                    // polygon spans the ENTIRE crown, so its fan apex is
+                    // the summit, and the crown's rise above its own loop
+                    // is bounded by the cap band's own extent, one Course
+                    // Height (the field gradient never exceeds 1).
+                    // Measured on this hemisphere at CH 1.2: the apex
+                    // stands 0.205 m above the loop.
                     if (capApex[2] < capLow - 0.1 * courseHeight ||
-                        capApex[2] > capHigh + 0.1 * courseHeight)
+                        capApex[2] > capHigh + courseHeight)
                     {
                         throw new InvalidOperationException(
                             $"A CAP spans z {capLow:F4} to {capHigh:F4} " +
@@ -29714,10 +29663,9 @@ internal static class Program
                             "fan apex, lifted from its plan interior point " +
                             $"({capInside[0]:F4}, {capInside[1]:F4}), " +
                             $"stands at z {capApex[2]:F4}. The apex is " +
-                            "raised over the cap's OWN patch of surface, " +
-                            "so it lies within a tenth of a course of the " +
-                            "cap's own range; this one is somewhere else " +
-                            "on the net.");
+                            "the crown's own summit, so it lies within " +
+                            "one Course Height of the cap's own loop; " +
+                            "this one is somewhere else on the net.");
                     }
                     continue;
                 }
@@ -29751,18 +29699,17 @@ internal static class Program
                     $"it; at CH {courseHeight} no cell came back Cap with " +
                     "no sections at all, so that apex went unmeasured.");
             }
-            if (splits != wedges > 0)
+            // RE-MEASURED 2026-09-05 for round two's finding 3: the
+            // split arm is GONE with the rosette. Both settings of the
+            // hemisphere now ship the cap as ONE sectionless polygon, so
+            // a Cap cell carrying two sections is a wedge of a rosette
+            // nothing builds any more and reads as a regression.
+            if (wedges != 0)
             {
                 throw new InvalidOperationException(
-                    "The two cap arms are measured on two settings of the " +
-                    "SAME hemisphere and the fixture must actually reach " +
-                    $"both: at CH {courseHeight} rule 2.6 " +
-                    (splits ? "splits" : "does not split") +
-                    $" the crown cap, yet {wedges} cells came back Cap " +
-                    "with two sections. Without the split arm the wedge " +
-                    "route goes untested, which is how a check reading the " +
-                    "Cap flag where the rule speaks of the route stayed " +
-                    "green for so long.");
+                    "Round two's one-polygon cap left no route that " +
+                    $"builds a WEDGE, yet {wedges} cells came back Cap " +
+                    $"with two sections at CH {courseHeight}.");
             }
         }
         // THE BIJECTION, and not a union. This read "sections is 0 or 3"
@@ -33702,7 +33649,6 @@ internal static class Program
         IList girths = (IList)built.GetType()
             .GetProperty("CapGirths")!.GetValue(built)!;
         int oversized = Reading<int>(built, "CapsOversized");
-        double maximum = 0.6 / 0.5;
 
         if (wedgeCounts.Count != 2 || girths.Count != 2)
         {
@@ -33715,79 +33661,64 @@ internal static class Program
                 "apart at all and this check measures nothing.");
         }
 
-        // EACH CAP AGAINST ITS OWN GIRTH, which is the whole assertion:
-        // the girth reported for a cap and the wedge count reported
-        // beside it belong to the SAME component. A cap at or under the
-        // maximum is whole and carries no wedges; one over it is split
-        // and carries at least two. Reading a plan off the wrong
-        // component breaks exactly this pairing, in both directions at
-        // once.
+        // EACH CAP AGAINST ITS OWN GIRTH, which is still the whole
+        // assertion though the rosette is gone (round two finding 3):
+        // the girth reported for a cap belongs to the SAME component the
+        // plan was recorded for, and the oversized flag rides with the
+        // girth. The wide dome's cap (1.4696 m) is the ONE over the
+        // maximum, so exactly one cap is OVERSIZED; reading a plan off
+        // the wrong component moves that flag to the narrow dome, which
+        // is what finding 15's defect does.
         var read = new List<string>();
+        var girthValues = girths.Cast<double>().OrderBy(g => g).ToArray();
         for (int at = 0; at < girths.Count; at++)
         {
             double girth = (double)girths[at]!;
-            int wedges = (int)wedgeCounts[at]!;
-            read.Add($"{girth:F3} m / {wedges} wedges");
-            if (girth > maximum + 1.0e-9)
+            int sides = (int)wedgeCounts[at]!;
+            read.Add($"{girth:F3} m / {sides} sides");
+            if (sides < 3)
             {
                 throw new InvalidOperationException(
-                    $"Cap {at} is reported at a girth of {girth:F4} m " +
-                    $"against a maximum piece of {maximum} m. A cap over " +
-                    "the maximum is SPLIT and the girth reported is the " +
-                    "centre disc's, which is under it by construction " +
-                    "(rule 2.6.3); a girth over the maximum means a cap " +
-                    "that needed splitting was emitted whole, which is " +
-                    "what reading another component's plan does.");
-            }
-            if (wedges != 0 && wedges < 2)
-            {
-                throw new InvalidOperationException(
-                    $"Cap {at} carries {wedges} wedges. Rule 2.6.1 splits " +
-                    "into W = max(2, ceil(G / Mx)), so a split cap has at " +
-                    "least two.");
+                    $"Cap {at} is one polygon of at least three sides " +
+                    $"(round two finding 3); it reports {sides}.");
             }
         }
-        int split = wedgeCounts.Cast<int>().Count(count => count > 0);
-        if (split != 1)
+        if (Math.Abs(girthValues[0] - 1.0082) > 0.002 ||
+            Math.Abs(girthValues[1] - 1.4696) > 0.002)
         {
             throw new InvalidOperationException(
-                "At S 0.6 and MP 0.5 the maximum piece is 1.2 m and the " +
-                "two caps measure 1.0082 m and 1.4696 m, one either side " +
-                $"of it, so EXACTLY ONE of the two caps splits; " +
-                $"{split} did. A dome cut into a rosette it did not need is " +
-                "an invented seam rule 2.6's 'one stone where it can be " +
-                "one' forbids, and it is what borrowing the other " +
-                "component's plan produces.");
+                "The two caps report their OWN components' girths, " +
+                "1.0082 m for the narrow dome and 1.4696 m for the wide " +
+                "one; got " +
+                $"{girthValues[0]:F4} and {girthValues[1]:F4}.");
         }
-        if (oversized != 0)
+        if (oversized != 1)
         {
             throw new InvalidOperationException(
-                "Neither cap here is oversized: the one over the maximum " +
-                "splits and the one under it is whole, so CapsOversized " +
-                $"is 0. It reads {oversized}, which is rule 2.6.6 firing " +
-                "on a cap whose plan was found for a different component.");
+                "Exactly ONE cap here is oversized, the wide dome's " +
+                "1.4696 m against the 1.2 maximum (the narrow dome's " +
+                "1.0082 is under it), so CapsOversized is 1; it reads " +
+                $"{oversized}, which is the flag riding on the wrong " +
+                "component's plan.");
         }
 
-        // AND THE SPLIT ONE IS THE WIDE DOME. A pairing check alone could
-        // be satisfied by swapping both plans, so the split is located in
-        // plan as well: the wide dome stands 24 m east.
+        // AND EACH DOME CARRIES ITS ONE CAP, located in plan: the wide
+        // dome stands 24 m east.
         var capCells = cells.Where(cell => cell.Cap).ToArray();
         int east = capCells.Count(cell =>
             cell.Outline.Average(corner => corner[0]) > 12.0);
         int west = capCells.Length - east;
-        if (east < 3 || west != 1)
+        if (east != 1 || west != 1)
         {
             throw new InvalidOperationException(
-                "The WIDE dome, sited 24 m east, is the one that splits, " +
-                "so the cap cells east of x = 12 are a centre disc and at " +
-                "least two wedges while the narrow dome at the origin is " +
-                $"one whole cap. Got {east} east and {west} west out of " +
-                $"{capCells.Length} cap cells.");
+                "One polygonal cap per dome, the wide one east of x = 12 " +
+                $"and the narrow one at the origin; got {east} east and " +
+                $"{west} west out of {capCells.Length} cap cells.");
         }
 
         Console.WriteLine(
             "      Skin two-dome cap plans (finding 15): " +
-            string.Join("; ", read) + $", {east} cap cells east and " +
+            string.Join("; ", read) + $", {east} cap cell east and " +
             $"{west} west.");
     }
 

@@ -129,8 +129,9 @@ public sealed class SkinComponent : NativeComponentBase
                 + "is S / 3 and the maximum is S / MP = 3 S. A cell whose "
                 + "along-course span is at or under the minimum is merged "
                 + "into the shorter neighbour along its course, and a crown "
-                + "cap above the maximum becomes a ring of wedges about a "
-                + "smaller centre disc. Zero turns BOTH ends off, which is "
+                + "cap above the maximum is warned OVERSIZED (the cap is "
+                + "one polygonal stone whose sides follow the form). Zero "
+                + "turns BOTH ends off, which is "
                 + "the value for seeing the engine's raw output; a negative "
                 + "clamps to zero and anything above 0.5 clamps to 0.5, each "
                 + "with a warning naming the clamped value.",
@@ -360,21 +361,21 @@ public sealed class SkinComponent : NativeComponentBase
                     "no cells are laid there and the skin has a hole over " +
                     "that region.");
             }
-            // Rule 2.6.6: a crown cap over the maximum piece size that
-            // could not be split into a ring of wedges is emitted whole,
-            // and the girth against the maximum is named rather than
-            // left for the author to measure by eye.
+            // Rule 2.6.6, reworded for round two's one-polygon cap: the
+            // cap is ONE stone by ruling now, so a girth above the maximum
+            // piece size is a WARNING about the stone's size and never a
+            // reason to split it. The girth is named rather than left for
+            // the author to measure by eye.
             if (generated.CapsOversized > 0)
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
                     $"{generated.CapsOversized} crown cap" +
                     (generated.CapsOversized == 1 ? " is" : "s are") +
-                    " above the maximum piece size and could not be split " +
-                    "into a ring of wedges, so " +
-                    (generated.CapsOversized == 1 ? "it is" : "they are") +
-                    " emitted WHOLE: a stone you can see and measure beats " +
-                    "a hole you cannot fill. A smaller Course Height, or a " +
+                    " above the maximum piece size. The cap is ONE " +
+                    "polygonal stone by ruling, so it ships whole and " +
+                    "OVERSIZED: a stone you can see and measure beats a " +
+                    "hole you cannot fill. A smaller Course Height, or a " +
                     "larger Min Piece for bigger stones, is the remedy.");
             }
 
@@ -538,7 +539,7 @@ public sealed class SkinComponent : NativeComponentBase
                     ? " (girth " + string.Join(
                         ", ",
                         generated.CapGirths.Select(
-                            girth => $"{girth:F3} m")) + "; wedges " +
+                            girth => $"{girth:F3} m")) + "; sides " +
                       string.Join(", ", generated.CapWedgeCounts) + ")"
                     : string.Empty),
                 OddCellsLine(

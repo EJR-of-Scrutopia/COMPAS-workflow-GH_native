@@ -297,11 +297,12 @@ internal sealed record SkinCell(
 /// component's formatted string.
 ///
 /// The three cap members are read together and each is per CAP, not per
-/// cell: CapGirths carries the girth of each emitted cap, meaning the
-/// CENTRE DISC's girth where rule 2.6 split it and the whole cap's girth
-/// where it did not; CapWedgeCounts carries that cap's W, zero where it was
-/// not split; and CapsOversized counts the caps rule 2.6.6 emitted whole
-/// above the maximum.
+/// cell: CapGirths carries each emitted cap's own loop girth;
+/// CapWedgeCounts carries the polygon's SIDE count in the field where
+/// rule 2.6's wedge count W rode before round two's one-polygon cap
+/// (finding 3), keeping the record's shape for everything that reflects
+/// on it; and CapsOversized counts the caps whose girth stands above the
+/// maximum piece, warned rather than split.
 ///
 /// FLOWLINES and BEDCURVES are the force-aligned pattern's own ACCEPTED
 /// streamlines and its TRACED beds, kept on the record because check 12.3(b)
@@ -2165,20 +2166,9 @@ internal static class SkinPatterns
         return best;
     }
 
-    /// <summary>Which component of a traced level is the one lying under a
-    /// given curve, by the engine's own MatchBelow, so a cap's ring and disc
-    /// are taken from the same piece of surface the cap sits on.</summary>
-    private static int MatchBelowIndex(
-        SkinLevelCurve curve,
-        double level,
-        SkinBandResolution resolved,
-        IReadOnlyDictionary<double, int> levelIndex)
-    {
-        IReadOnlyList<SkinLevelCurve> candidates =
-            resolved.Traced[levelIndex[level]];
-        int matched = MatchBelow(curve, candidates);
-        return matched < 0 ? 0 : matched;
-    }
+    // MatchBelowIndex WAS HERE, the rosette branch's curve lookup by
+    // recorded plan level; it went with the rosette (round two, finding
+    // 3).
 
     /// <summary>
     /// How close two curves lie to one another in PLAN: the mean
@@ -3463,10 +3453,11 @@ internal static class SkinPatterns
         return true;
     }
 
-    /// <summary>What a qualifying cap becomes: whole, or a ring of W wedges
-    /// about a centre disc whose inner boundary is the traced level curve at
-    /// InnerLevel and whose ring's own mid is RingMid, or whole and
-    /// OVERSIZED where rule 2.6.6's base case fires.</summary>
+    /// <summary>What a qualifying cap becomes under round two's finding 3:
+    /// ONE polygonal stone, always. The record keeps its shape (Wedges,
+    /// InnerLevel and RingMid ride dead at 0 and NaN) so nothing that
+    /// reflects on it moves; Oversized marks a girth above the maximum
+    /// piece, which rule 2.6.6's warning still names.</summary>
     private sealed record SkinCapPlan(
         int ComponentAt,
         double Girth,
@@ -3475,71 +3466,153 @@ internal static class SkinPatterns
         double RingMid,
         bool Oversized);
 
+    // InnerCapLevel WAS HERE, rule 2.6.3's bisection for the centre
+    // disc's level. Round two's finding 3 makes every qualifying cap ONE
+    // polygon, so nothing asks for an inner level any more and the
+    // bisection went with its caller rather than being left to rot; its
+    // reasoning lives in the history at the round-one commits.
+
     /// <summary>
-    /// Rule 2.6.3. The inner boundary is a TRACED LEVEL CURVE, like every
-    /// other boundary in this engine, found by BISECTION on [level, top]
-    /// keeping a bracket whose UPPER end always satisfies the test.
+    /// THE ONE-POLYGON CAP'S OUTLINE (spec 2026-09-05 round two, finding
+    /// 3): the final traced loop simplified to its STRUCTURAL CORNERS by
+    /// ARC-WINDOWED TURNING, non-max suppressed.
     ///
-    /// hi starts at the top cut. Where the curve inside c at the top cut has
-    /// girth ABOVE Mx, no level qualifies at all and the base case fires
-    /// immediately. Otherwise lo starts at the cap's own level and each step
-    /// traces the midpoint: hi becomes m where the component of level m
-    /// lying inside c has girth at or under Mx, and lo becomes m where it
-    /// does not. Where MORE THAN ONE component of level m lies inside c the
-    /// crown holds two summits above m and the base case fires. SIX steps,
-    /// the depth of rule 8.2.3 and for the same reason.
+    /// WHY WINDOWED AND NOT PER-VERTEX, measured in the round-two
+    /// diagnosis: on the symmetric six-lobe's crown loop the raw turning
+    /// carries six clean corners of 66.6 degrees against a background
+    /// under 18, but on the asymmetric loop the trace wiggles and raw
+    /// turning is noise up to 146 degrees, so per-vertex thresholds fail
+    /// on noisy loops. The signed turn is therefore SUMMED over an arc
+    /// window of order Min Piece about each vertex, which cancels the
+    /// wiggle (its turns alternate in sign) and keeps the corners (their
+    /// turn is one-signed); a vertex is a corner where its windowed
+    /// magnitude beats the threshold and every vertex within half a
+    /// window of it.
     ///
-    /// The bracket invariant and not the shape of the surface is what
-    /// guarantees the disc is under the maximum. Girth need NOT fall
-    /// monotonically as the level rises, because a wiggly curve inside a
-    /// smooth one can be longer than it, so this is a search for a large
-    /// ALLOWED disc and not for a crossing, and taking hi at the end is
-    /// correct whatever the girth does in between.
+    /// THE FALLBACK IS THE LOOP ITSELF. A near-circular loop, the dome's
+    /// crown, distributes its 360 degrees evenly and no vertex separates
+    /// from the window average, so FEWER THAN FOUR corners come back and
+    /// the loop keeps its own trace vertices: the polygon follows the
+    /// form's own vertex structure, exactly the findings' ruling, and the
+    /// simplification can never thin a cap to a triangle, which is the
+    /// surface-fidelity hazard the diagnosis names (fan-rim chords grow
+    /// with every corner removed).
     /// </summary>
-    private static double InnerCapLevel(
-        SkinNet net,
-        SkinLevelCurve outer,
-        double level,
-        double top,
-        double maximum)
+    internal static List<double[]> CapPolygonOutline(
+        SkinLevelCurve loop,
+        double window)
     {
-        double? GirthInside(double at)
+        var points = loop.Points;
+        int count = points.Count;
+        if (count < 8 || !(loop.Length > 1.0e-9) || !(window > 0.0))
+            return Dedupe(new List<double[]>(points));
+        double length = loop.Length;
+        var turn = new double[count];
+        for (int at = 0; at < count; at++)
         {
-            List<SkinLevelCurve> curves = Trace(net, at);
-            double? only = null;
-            foreach (SkinLevelCurve curve in curves)
+            double[] before = points[(at - 1 + count) % count];
+            double[] here = points[at];
+            double[] after = points[(at + 1) % count];
+            double ax = here[0] - before[0];
+            double ay = here[1] - before[1];
+            double bx = after[0] - here[0];
+            double by = after[1] - here[1];
+            turn[at] = Math.Atan2(
+                (ax * by) - (ay * bx), (ax * bx) + (ay * by));
+        }
+        double half = Math.Min(window / 2.0, length / 4.0);
+        var windowed = new double[count];
+        for (int at = 0; at < count; at++)
+        {
+            double sum = 0.0;
+            for (int scan = 0; scan < count; scan++)
             {
-                if (curve.Points.Count == 0)
-                    continue;
-                if (!PlanContains(
-                        curve.Points[0][0], curve.Points[0][1],
-                        outer.Points))
-                {
-                    continue;
-                }
-                if (only is not null)
-                    return null;
-                only = curve.Length;
+                double apart = Math.Abs(
+                    loop.Cumulative[scan] - loop.Cumulative[at]);
+                apart = Math.Min(apart, length - apart);
+                if (apart <= half)
+                    sum += turn[scan];
             }
-            return only;
+            windowed[at] = sum;
         }
-        double? atTop = GirthInside(top);
-        if (atTop is null || atTop > maximum + 1.0e-9)
-            return double.NaN;
-        double lo = level;
-        double hi = top;
-        for (int step = 0; step < 6; step++)
+        const double Threshold = Math.PI / 4.0;
+        var corners = new List<int>();
+        for (int at = 0; at < count; at++)
         {
-            double middle = (lo + hi) / 2.0;
-            double? girth = GirthInside(middle);
-            if (girth is null)
-                return double.NaN;
-            if (girth <= maximum + 1.0e-9)
-                hi = middle;
-            else
-                lo = middle;
+            double magnitude = Math.Abs(windowed[at]);
+            if (magnitude < Threshold)
+                continue;
+            bool peak = true;
+            for (int scan = 0; scan < count && peak; scan++)
+            {
+                if (scan == at)
+                    continue;
+                double apart = Math.Abs(
+                    loop.Cumulative[scan] - loop.Cumulative[at]);
+                apart = Math.Min(apart, length - apart);
+                if (apart > half)
+                    continue;
+                double other = Math.Abs(windowed[scan]);
+                if (other > magnitude + 1.0e-12 ||
+                    (Math.Abs(other - magnitude) <= 1.0e-12 && scan < at))
+                {
+                    peak = false;
+                }
+            }
+            if (peak)
+                corners.Add(at);
         }
-        return hi;
+        if (corners.Count < 4)
+            return Dedupe(new List<double[]>(points));
+        // THE POLYGON STAYS WITHIN THE LOOP, which is the diagnosis's
+        // second measured hazard made a construction rule. The corners
+        // land on the lobes' own tips, and a chord between two tips CUTS
+        // ACROSS the concave dip between them, outside the loop and into
+        // the plan the course below legitimately owns: measured on both
+        // six-lobe fixtures, the simplified cap died in KeepValidPlans by
+        // exactly that overlap (1 drop each), the filter it must not be
+        // exempted from. So every chord is REFINED against its own arc:
+        // where any trace vertex of the arc lies on the loop-interior
+        // side of the chord, the worst one becomes a corner and the test
+        // recurses. A convex arc keeps its chord (the straight sides the
+        // form determines); a concave or noisy stretch keeps the trace,
+        // which is what an inscribed polygon of a lobed loop IS.
+        double area2 = 0.0;
+        for (int at = 0; at < count; at++)
+        {
+            double[] a = points[at];
+            double[] b = points[(at + 1) % count];
+            area2 += (a[0] * b[1]) - (b[0] * a[1]);
+        }
+        double interior = area2 >= 0.0 ? 1.0 : -1.0;
+        var refined = new List<int>(corners);
+        for (int edge = 0; edge < refined.Count; edge++)
+        {
+            int from = refined[edge];
+            int to = refined[(edge + 1) % refined.Count];
+            int span = ((to - from) % count + count) % count;
+            if (span <= 1)
+                continue;
+            double worst = 0.0;
+            int worstAt = -1;
+            for (int step = 1; step < span; step++)
+            {
+                int at = (from + step) % count;
+                double side = interior * PlanSide(
+                    points[from], points[to], points[at]);
+                if (side > worst + 1.0e-9)
+                {
+                    worst = side;
+                    worstAt = at;
+                }
+            }
+            if (worstAt >= 0)
+            {
+                refined.Insert(edge + 1, worstAt);
+                edge--;
+            }
+        }
+        return Dedupe(refined.Select(at => points[at]).ToList());
     }
 
     /// <summary>
@@ -3771,12 +3844,15 @@ internal static class SkinPatterns
         }
         SkinBandResolution resolved = ResolveBands(net, levels, intervals);
 
-        // THE CAP PASS. Both new levels enter the ONE ascending list and the
-        // whole list is traced again (rule 2.6.4(c)): the ring needs its own
-        // MID at (L_top + Li) / 2 as well as Li itself, so a split cap costs
-        // two levels beyond the ones its bisection has already spent, and
-        // inserting them re-propagates the seams above them exactly as rule
-        // 8.2.9 says a band split does.
+        // THE CAP PASS (spec 2026-09-05 round two, finding 3, Param's
+        // ruling): a qualifying cap is ONE polygonal stone whose sides
+        // follow the form, so the pass only QUALIFIES and RECORDS now.
+        // Rule 2.6's split, its two inserted levels and their re-trace are
+        // gone with the rosette: nothing splits any more, the emission
+        // below cuts the polygon off the final traced loop itself, and the
+        // girth is kept for diagnostics and for rule 2.6.6's oversized
+        // warning, which now marks ANY cap girth above the maximum piece
+        // rather than only one the split could not serve.
         var capPlans = new List<SkinCapPlan>();
         var capRefusals = new List<string>();
         int capsOversized = 0;
@@ -3787,11 +3863,18 @@ internal static class SkinPatterns
             .FirstOrDefault(band => band.Course == bands - 1);
         if (top is not null)
         {
-            var workingLevels = new List<double>(resolved.Levels);
+            int topLowAt = -1;
+            for (int scan = 0; scan < resolved.Levels.Count; scan++)
+            {
+                if (resolved.Levels[scan] == top.Low)
+                {
+                    topLowAt = scan;
+                    break;
+                }
+            }
             IReadOnlyList<SkinLevelCurve> topCurves =
-                resolved.Traced[workingLevels.IndexOf(top.Low)];
+                resolved.Traced[topLowAt];
             bool[] onBoundary = FacesOnBoundary(net);
-            bool inserted = false;
             for (int at = 0; at < topCurves.Count; at++)
             {
                 if (!CapQualifies(
@@ -3803,42 +3886,11 @@ internal static class SkinPatterns
                     continue;
                 }
                 double girth = topCurves[at].Length;
-                if (!(girth > maximumPiece + 1.0e-9))
-                {
-                    capPlans.Add(new SkinCapPlan(
-                        at, girth, 0, double.NaN, double.NaN, false));
-                    continue;
-                }
-                double inner = InnerCapLevel(
-                    net, topCurves[at], top.Low, top.High, maximumPiece);
-                if (double.IsNaN(inner))
-                {
+                bool oversized = girth > maximumPiece + 1.0e-9;
+                if (oversized)
                     capsOversized++;
-                    capPlans.Add(new SkinCapPlan(
-                        at, girth, 0, double.NaN, double.NaN, true));
-                    continue;
-                }
-                // W is the FEWEST wedges that put every one of them under
-                // the maximum, and not the pattern's own pitch: a keystone
-                // region is one stone where it can be one and as few stones
-                // as it can be where it cannot.
-                int wedges = Math.Max(
-                    2, (int)Math.Ceiling(girth / maximumPiece - 1.0e-9));
-                double ringMid = AddLevel(
-                    workingLevels, (top.Low + inner) / 2.0);
-                inner = AddLevel(workingLevels, inner);
-                inserted = true;
                 capPlans.Add(new SkinCapPlan(
-                    at, girth, wedges, inner, ringMid, false));
-            }
-            if (inserted)
-            {
-                workingLevels.Sort();
-                resolved = resolved with
-                {
-                    Levels = workingLevels,
-                    Traced = TraceAll(net, workingLevels)
-                };
+                    at, girth, 0, double.NaN, double.NaN, oversized));
             }
         }
 
@@ -4257,131 +4309,42 @@ internal static class SkinPatterns
                     : null;
                 if (plan is not null)
                 {
+                    // THE ONE-POLYGON CAP (spec 2026-09-05 round two,
+                    // finding 3), Param's ruling: "the central cap ... can
+                    // it just be a polygon please, the polygon sides will
+                    // of course be determined by the sides we have on the
+                    // form." The outline is the final traced loop
+                    // SIMPLIFIED TO ITS STRUCTURAL CORNERS by arc-windowed
+                    // turning (CapPolygonOutline carries the measured
+                    // reasoning); a loop with no separable corners, a
+                    // dome's near-circle, keeps its own trace vertices,
+                    // which is also what keeps the simplification off the
+                    // surface-fidelity knob: the corner set never thins to
+                    // a triangle, and a rim of enough corners keeps the
+                    // fan's sag in the millimetre class. The keystone
+                    // ordering keeps its slot: the polygon IS the
+                    // keystone, Lead 0, and the cap still leads its branch
+                    // and still answers to KeepValidPlans like every other
+                    // cell (the standing rule at the plan-filter comment).
                     SkinLevelCurve outer = lowers[lowerAt];
-                    if (plan.Wedges == 0)
+                    var loop = CapPolygonOutline(outer, minimumPiece);
+                    if (loop.Count >= 3)
                     {
-                        // Whole, and oversized where rule 2.6.6 fired.
-                        var loop = Dedupe(new List<double[]>(outer.Points));
-                        if (loop.Count >= 3)
-                        {
-                            capGirths.Add(outer.Length);
-                            capWedges.Add(0);
-                            keyed.Add((
-                                band.Course, rank, band.Mid, 1,
-                                new SkinCell(
-                                    band.Course, loop, false,
-                                    -outer.Length / 2.0,
-                                    outer.Length / 2.0, true)));
-                        }
-                        else
-                        {
-                            // R-006: welded below three distinct corners,
-                            // so there is no plan left to keep.
-                            weldCollapsed++;
-                        }
-                        continue;
-                    }
-                    // THE RING is the band [L_top, Li] tiled by the band
-                    // construction with the piece count FORCED to W and the
-                    // spans equal, taken about the outer curve's own seam so
-                    // that rule 7.1's seam-outward order applies to them
-                    // with no special case. A wedge is an ordinary BandCell
-                    // and inherits every guarantee and every defect that
-                    // construction carries, the proportional arc mapping of
-                    // rule 1.8.1 included, which rule 1.8.4 defers out of
-                    // this round.
-                    SkinLevelCurve ringMidCurve =
-                        resolved.Traced[levelIndex[plan.RingMid]]
-                            [MatchBelowIndex(outer, plan.RingMid, resolved,
-                                levelIndex)];
-                    SkinLevelCurve innerCurve =
-                        resolved.Traced[levelIndex[plan.InnerLevel]]
-                            [MatchBelowIndex(outer, plan.InnerLevel, resolved,
-                                levelIndex)];
-                    if (!Corresponds(
-                            new[] { ringMidCurve }, new[] { outer }) ||
-                        !Corresponds(
-                            new[] { ringMidCurve }, new[] { innerCurve }))
-                    {
-                        // The ring is a BAND and is tested like one. Where
-                        // it FAILS the split is abandoned and rule 2.6.6's
-                        // base case fires. The ring is NOT bisected
-                        // further: section 8's bisection exists to find a
-                        // level at which the topology is simple, and here
-                        // the level is already being chosen, by rule 2.6.3.
-                        capsOversized++;
-                        var whole = Dedupe(new List<double[]>(outer.Points));
-                        if (whole.Count >= 3)
-                        {
-                            capGirths.Add(outer.Length);
-                            capWedges.Add(0);
-                            keyed.Add((
-                                band.Course, rank, band.Mid, 1,
-                                new SkinCell(
-                                    band.Course, whole, false,
-                                    -outer.Length / 2.0,
-                                    outer.Length / 2.0, true)));
-                        }
-                        else
-                        {
-                            // R-006: welded below three distinct corners.
-                            weldCollapsed++;
-                        }
-                        continue;
-                    }
-                    // BandCell's u0/u1 are always MID-CURVE arc length, the
-                    // same convention ordinary tiling uses, and it is the
-                    // ring's own mid curve that is passed as "mid" here: the
-                    // wedge boundaries are cut on ringMidCurve, not on the
-                    // outer curve's own (generally longer) girth, and
-                    // BandCell's internal ratio then carries each boundary
-                    // out to outer and in to innerCurve proportionally
-                    // (rule 1.8.1). Using plan.Girth (the outer curve's own
-                    // length, recorded for the threshold test) here instead
-                    // double-applies that ratio and walks the outer curve
-                    // past its own seam, so the last wedge overlaps the
-                    // first: reproduced on the CH 1.2 hemisphere, W = 4,
-                    // dropped as an overlap by the plan-validity filter.
-                    double girth = ringMidCurve.Length;
-                    for (int w = 0; w < plan.Wedges; w++)
-                    {
-                        double u0 = -girth / 2.0 + w * girth / plan.Wedges;
-                        double u1 = u0 + girth / plan.Wedges;
-                        SkinCell wedge = BandCell(
-                            band.Course, outer, ringMidCurve, innerCurve,
-                            u0, u1, false);
-                        if (wedge.Outline.Count < 3)
-                        {
-                            // R-006: welded below three distinct corners.
-                            weldCollapsed++;
-                            continue;
-                        }
-                        keyed.Add((
-                            band.Course, rank, band.Mid, 1,
-                            wedge with { Cap = true }));
-                    }
-                    var disc = Dedupe(
-                        new List<double[]>(innerCurve.Points));
-                    if (disc.Count >= 3)
-                    {
-                        // LEAD 0: the keystone leads its own rosette, which
-                        // is rule 2.6.5's explicit tie-break restated as a
-                        // sort term rather than left to the arithmetic of
-                        // two spans both centred on the seam.
+                        capGirths.Add(outer.Length);
+                        capWedges.Add(loop.Count);
                         keyed.Add((
                             band.Course, rank, band.Mid, 0,
                             new SkinCell(
-                                band.Course, disc, false,
-                                -innerCurve.Length / 2.0,
-                                innerCurve.Length / 2.0, true)));
+                                band.Course, loop, false,
+                                -outer.Length / 2.0,
+                                outer.Length / 2.0, true)));
                     }
                     else
                     {
-                        // R-006: welded below three distinct corners.
+                        // R-006: welded below three distinct corners,
+                        // so there is no plan left to keep.
                         weldCollapsed++;
                     }
-                    capGirths.Add(innerCurve.Length);
-                    capWedges.Add(plan.Wedges);
                     continue;
                 }
 
