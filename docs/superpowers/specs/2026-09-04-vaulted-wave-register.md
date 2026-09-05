@@ -351,3 +351,10 @@ State of the pipeline, kept honest as it runs:
 - Verified live over CDP: FOV 24 -> 56 mm, 1:1 letterbox 849x849,
   layer hide/pick-block/duplicate/persist all measured. 692 tests
   green; five new pin tests, each proved by mutation.
+
+- LAYERS v2 (same day, on his walk): the drawer lists the placed
+  OBJECTS under their layer rows -- click a name to select it in the
+  viewport, tick boxes to gather, and the action button picks the set
+  up as one rubber stamp: every click plants the whole group, Escape
+  releases the copy in hand. Verified live: 3 plants of a 2-prop stamp
+  = exactly 9 props, camera controls returned.
