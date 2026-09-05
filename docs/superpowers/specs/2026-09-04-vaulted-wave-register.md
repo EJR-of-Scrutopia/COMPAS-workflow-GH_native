@@ -947,3 +947,31 @@ writer orients by direction alone, an oblong would roll arbitrarily --
 surface-aligned flat straps would need per-edge normals (possible
 follow-up). 5 mutation kills; live: BoxGeometry/#24262a/metalness 1/
 casting, joints matching.
+
+## 2026-09-06 -- THE PRINCIPAL LINES, PROPERLY (his correction)
+
+The bar wave above was WRONG about what "principle lines" meant: not
+the whole net -- "one per leg. they run up the middle and its the row
+that the columns connect to". Reverted the net to silver tubes;
+shipped the real thing:
+
+- principalEdges(): column members (stashed as state.columnMembers by
+  loadColumns) cluster into TREES by shared endpoints (one tree = one
+  leg); degree-one HIGH endpoints = tips; nearest net vertex per tip
+  (1 m tolerance); consecutive touch points threaded by dijkstra over
+  the net; walked down from the lowest to the leg's nearest springing
+  (bundle.supports). O(V^2) dijkstra, fine at net sizes.
+- buildPrincipalBars(): separate InstancedMesh, square section
+  max(0.044, 2.2 x wireRadius) so the tube inside never surfaces;
+  materials.bar fallback now DARKER SILVER 0x787d86 ("I dont want it
+  to be competely black") until ensureLibraryMaterial(
+  "metal/steel-polished-dark") lands (guarded against dressing a
+  replaced mesh). Rides the strike loop ([key, clearance] pairs now),
+  rest clearance, syncNetShadow, disposeWiresAndNodes, reloadColumns
+  rebuild; hides under the forces lens (netOn && !layers.forces).
+- Verified live (Column diagnosis): 28 bars, texture landed, net
+  silver cylinders again, lens yield both ways; close-up shows the
+  rectangular section against the round wires. 9 mutation kills;
+  suite 731 green. Crown-seam pin repointed to the destructured loop.
+- NOTE: the act's moving net does not draw principal dressing (the
+  machine animation stays uniform) -- flag if he wants it there too.
