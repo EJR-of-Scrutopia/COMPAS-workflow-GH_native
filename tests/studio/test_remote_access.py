@@ -558,7 +558,9 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     translucent box; the key stands mid-height beside the panel."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert 'const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];' in js
+    # The pulse paints the shell too, so it joined the family.
+    assert ('const EXCLUSIVE_LAYERS = '
+            '["stress", "deflection", "forces", "pulse"];') in js
     set_layer = _js_function(js, "function setLayer(name, on)")
     assert "state.layers[other] = false;" in set_layer
     # Round two of his walk: wire forces ARE the net's lens, so raising it
@@ -578,7 +580,29 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     # Round two removed the stress threshold on his word.
     recolour = _js_function(js, "function recolourSegments()")
     assert "threshold" not in recolour
-    assert '"member force, kN"' in js, "the key speaks for the wires too"
+    assert '"member force, kN (extremes clamped)"' in js, (
+        "the key speaks for the wires too, and admits its clamp")
+
+    # Colours you can SEE (his report: "surely i should be seeing the
+    # force colours?"): p95 normalisation spreads the body of the
+    # distribution across the ramp, and the lens wears an UNLIT material
+    # -- data, not scenography, the heatmaps' own exemption.
+    magnitude = _js_function(js, "function forceMagnitude()")
+    assert "0.95 *" in magnitude
+    wire_lens = _js_function(js, "function applyWireForces()")
+    assert "forceMaterial" in wire_lens
+    assert "toneMapped: false" in wire_lens
+    assert "baseMaterial" in wire_lens, "the steel comes back when the lens drops"
+
+    # The pulse is a flat verdict lens now (his ruling: "remove textures
+    # and let it run with the colours"): each piece wears ITS OWN course's
+    # verdict, the build front breathes, and the shared lens materials are
+    # never disposed by the per-piece cleanup.
+    pulse = _js_function(js, "function applyPulseColours(build)")
+    assert "courseVerdict(segment.userData.course)" in pulse
+    assert "family.front : family.steady" in pulse
+    recolour2 = _js_function(js, "function recolourSegments()")
+    assert "!previous.userData.sharedLens" in recolour2
     # And the pulse explains itself ON the panel, where the question was
     # asked twice; a tooltip was not the answer.
     build2 = _js_function(js, "function buildLayerToggles()")

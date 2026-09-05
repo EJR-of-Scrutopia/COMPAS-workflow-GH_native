@@ -4189,7 +4189,7 @@ const LAYERS = [
 // the shell and the force-coloured wires. Layered together they read as
 // mud (Param: "they overlap eachother, they can only be viewed
 // individually"), so choosing one puts the others down.
-const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
+const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces", "pulse"];
 
 // What each lens carries under its button when it is on. Values live in
 // state so a rebuild of the toggle list never resets a slider.
@@ -4401,13 +4401,12 @@ function setLayer(name, on) {
     }
   }
   buildLayerToggles();
-  if (name === "pulse" && !on && state.objects.shell) {
-    // The pulse is the only thing that writes emissive on segment
-    // materials; turning it off sweeps that back to zero rather than
-    // leaving the last frame's tint stuck on the shell.
-    for (const segment of state.objects.shell.children) {
-      segment.material.emissiveIntensity = 0;
-    }
+  // recolourSegments (called above for every exclusive lens) restores
+  // the built materials when the pulse goes down; raising it paints the
+  // verdicts at once, standing still until the build clock runs.
+  if (name === "pulse" && on) {
+    applyPulseColours(
+      state.timeline && state.timeline.playing ? state.timeline.t : null);
   }
   updateHud();
 }
@@ -4451,15 +4450,29 @@ function applyWireForces() {
     }
     wires.instanceMatrix.needsUpdate = true;
     wires.instanceColor.needsUpdate = true;
+    if (wires.userData.baseMaterial) wires.material = wires.userData.baseMaterial;
     wires.material.color.copy(materials.steel.color);
     return;
   }
   const forces = state.bundle.member_forces;
-  let magnitude = 1e-9;
-  for (const force of forces) magnitude = Math.max(magnitude, Math.abs(force));
+  // The 95th percentile, not the maximum: a handful of extreme members
+  // owned the linear scale and pressed every other wire into the pale
+  // zero end -- colours applied and invisible (measured live: instance
+  // colours all ~0.82/0.81/0.79). Normalising by p95 spreads the body of
+  // the distribution across the ramp; the extremes saturate, and the
+  // legend says so.
+  const magnitude = forceMagnitude() || 1e-9;
   const position = new THREE.Vector3(), quaternion = new THREE.Quaternion(), scale = new THREE.Vector3();
   const m = new THREE.Matrix4();
-  wires.material.color.set(0xffffff);   // tint through instance colour, not the material
+  // And an UNLIT material while the lens is on: the force field is data,
+  // not scenography, the same exemption the heatmaps claim. The steel
+  // material is stashed and restored when the lens goes down.
+  if (!wires.userData.baseMaterial) wires.userData.baseMaterial = wires.material;
+  if (!wires.userData.forceMaterial) {
+    wires.userData.forceMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff, vertexColors: true, toneMapped: false });
+  }
+  wires.material = wires.userData.forceMaterial;
   forces.forEach((force, i) => {
     base[i].decompose(position, quaternion, scale);
     const radiusScale = 1 + 2 * Math.abs(force) / magnitude;
@@ -4474,9 +4487,10 @@ function applyWireForces() {
 function forceMagnitude() {
   const forces = state.bundle && state.bundle.member_forces;
   if (!forces || !forces.length) return null;
-  let magnitude = 0;
-  for (const force of forces) magnitude = Math.max(magnitude, Math.abs(force));
-  return magnitude || null;
+  const sorted = forces.map((force) => Math.abs(force)).sort((a, b) => a - b);
+  const p95 = sorted[Math.min(sorted.length - 1,
+    Math.floor(0.95 * (sorted.length - 1)))];
+  return p95 || sorted[sorted.length - 1] || null;
 }
 
 // The key beside the panel, wire-forces edition: same diverging bar the
@@ -4493,7 +4507,8 @@ function paintForceLegend(magnitude) {
   }
   legend.classList.remove("hidden");
   legend.classList.remove("deflection");
-  document.getElementById("legend-title").textContent = "member force, kN";
+  document.getElementById("legend-title").textContent =
+    "member force, kN (extremes clamped)";
   document.getElementById("legend-min").textContent = (-magnitude / 1e3).toFixed(1);
   document.getElementById("legend-zero").textContent = "0";
   document.getElementById("legend-max").textContent = (magnitude / 1e3).toFixed(1);
@@ -4666,7 +4681,8 @@ function recolourSegments() {
     // shared registry entry, so freeing it is safe: without this, every
     // layer toggle and every exaggeration nudge leaked one material per
     // casting.
-    if (previous && previous !== segment.material) previous.dispose();
+    if (previous && previous !== segment.material
+        && !previous.userData.sharedLens) previous.dispose();
   }
   updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage);
 }
@@ -4815,29 +4831,61 @@ function currentStageIndex(build) {
   return Math.max(0, Math.min(stages.length - 1, coursesDone - 1));
 }
 
-function applyPulse(build) {
-  if (!state.layers.pulse || !state.bundle || !state.objects.shell) return;
-  const index = currentStageIndex(build);
-  if (index === null) return;
-  const stage = state.bundle.staging.stages[index];
-  // Green means the struck-now FEA solve converged, red means it did not.
-  // "unavailable" (brick, tile, stone: no ananke_fea preset, see
-  // staging.FEA_MATERIALS) is neither -- no solve was ever attempted, so it
-  // gets a neutral grey rather than the red that would say a solve was run
-  // and lost. The form finding already guarantees compression-only
-  // equilibrium by construction, so a separate rigid-block lens is not
-  // what this pulse is for either; see the Data panel for the CRA verdict
-  // where a study happens to carry one.
-  const struck = stage.struck_now;
-  const unavailable = !!(struck && struck.status === "unavailable");
-  const good = !!(struck && struck.converged);
-  const tint = unavailable ? 0x2a2a2a : good ? 0x1a3a1a : 0x3a1a1a;
-  const pulse = 0.5 + 0.5 * Math.sin(build * 4);
-  for (const segment of state.objects.shell.children) {
-    if (!segment.visible) continue;
-    segment.material.emissive = new THREE.Color(tint);
-    segment.material.emissiveIntensity = 0.4 * pulse;
+// The pulse's verdict palette. Green means the struck-now FEA solve for
+// that COURSE converged, red means it did not, grey means no solve was
+// ever attempted ("unavailable": brick, tile, stone carry no ananke_fea
+// preset). Two materials per verdict -- a steady one for placed courses
+// and a breathing one for the course being built -- shared across every
+// piece wearing that verdict, so the whole lens costs six materials.
+const PULSE_MATERIALS = (() => {
+  const shades = { good: 0x3f9e57, bad: 0xc24936, none: 0x8f8f8f };
+  const family = {};
+  for (const [verdict, shade] of Object.entries(shades)) {
+    family[verdict] = {
+      steady: new THREE.MeshPhysicalMaterial({
+        color: shade, roughness: 0.85, side: THREE.DoubleSide }),
+      front: new THREE.MeshPhysicalMaterial({
+        color: shade, roughness: 0.85, side: THREE.DoubleSide,
+        emissive: new THREE.Color(shade) }),
+    };
+    family[verdict].steady.userData.sharedLens = true;
+    family[verdict].front.userData.sharedLens = true;
   }
+  return family;
+})();
+
+function courseVerdict(courseIndex) {
+  const staging = state.bundle && state.bundle.staging;
+  const stage = staging && staging.stages && staging.stages[courseIndex];
+  const struck = stage && stage.struck_now;
+  if (!struck || struck.status === "unavailable") return "none";
+  return struck.converged ? "good" : "bad";
+}
+
+// His ruling, after the emissive-over-texture version proved invisible
+// ("we should remove textures and let it run with the colours"): while
+// the pulse lens is on, every piece drops its skin for a flat lit colour
+// carrying ITS OWN course's verdict, and the course the build front is
+// on breathes. At rest (no build clock) the colouring stands still.
+function applyPulseColours(build) {
+  if (!state.layers.pulse || !state.bundle || !state.objects.shell) return;
+  const front = build === null ? null : currentStageIndex(build);
+  for (const segment of state.objects.shell.children) {
+    const family = PULSE_MATERIALS[courseVerdict(segment.userData.course)];
+    const wanted = front !== null && segment.userData.course === front
+      ? family.front : family.steady;
+    if (segment.material !== wanted) segment.material = wanted;
+  }
+  if (front !== null) {
+    const breath = 0.25 + 0.2 * Math.sin(build * 4);
+    for (const family of Object.values(PULSE_MATERIALS)) {
+      family.front.emissiveIntensity = breath;
+    }
+  }
+}
+
+function applyPulse(build) {
+  applyPulseColours(build);
 }
 
 function updateHud() {
@@ -7285,6 +7333,7 @@ function buildPieceMeshes() {
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;
+    mesh.userData.course = piece.course;
     // The casting's own centroid height. Piece geometry is in absolute
     // world coordinates and the mesh sits at the origin, so the sprayed
     // growth needs this to scale a piece about itself rather than about

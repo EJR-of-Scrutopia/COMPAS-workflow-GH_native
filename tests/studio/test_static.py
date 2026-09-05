@@ -248,18 +248,18 @@ def test_the_pulse_does_not_tint_an_unavailable_material_red():
     # material with no ananke_fea preset pulsed the same red as a real
     # failed solve. Neither green (nothing converged) nor red (nothing
     # failed either) is honest; it must read as a third, neutral state.
+    # The reading lives in courseVerdict now (the pulse became a flat
+    # verdict-colour lens on Param's ruling), and the neutral state is its
+    # own material shade, distinct from both green and red.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyPulse(")
-    end = js.index("\n}", start)
-    body = js[start:end]
+    body = _function_body(js, "courseVerdict")
     assert 'struck.status === "unavailable"' in body
-    tint_start = body.index("const tint =")
-    tint_line = body[tint_start:body.index(";", tint_start)]
-    assert "unavailable ?" in tint_line
-    # The neutral tint must be its own colour, distinct from both the good
-    # (green) and not-good (red) tints already pinned elsewhere.
-    assert "0x2a2a2a" in tint_line
-    assert "0x1a3a1a" in tint_line and "0x3a1a1a" in tint_line
+    assert 'return "none";' in body
+    shades = js[js.index("const PULSE_MATERIALS"):]
+    shades = shades[:shades.index("};")]
+    assert "good: 0x3f9e57" in shades
+    assert "bad: 0xc24936" in shades
+    assert "none: 0x8f8f8f" in shades
 
 
 def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading():
@@ -275,7 +275,9 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # All three are pinned here together, in one test, so that fixing two
     # of them is not a thing that can pass.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    readers = ("updateHud", "applyPulse", "layerAvailability")
+    # applyPulse delegates to courseVerdict since the flat-colour rework;
+    # the reading moved, the invariant did not.
+    readers = ("updateHud", "courseVerdict", "layerAvailability")
     for name in readers:
         body = _function_body(js, name)
         reads_it = (
@@ -324,14 +326,15 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # is checked against all three readers, not only the one each fix was
     # sent to correct.
     hud_body = _function_body(js, "updateHud")
-    pulse_body = _function_body(js, "applyPulse")
+    # applyPulse delegates; the verdict reading lives in courseVerdict.
+    pulse_body = _function_body(js, "courseVerdict")
 
     # State 1: a converged stage exists, so there is a real per-node field
     # to colour with.
     assert "if (stage) return { on: true };" in availability
     assert "struck && struck.converged" in hud_body
     assert '"struck now: stands' in hud_body
-    assert "good ? 0x1a3a1a" in pulse_body
+    assert 'return struck.converged ? "good" : "bad";' in pulse_body
 
     # State 2: staging ran but the final stage has no per-node field,
     # either because the material has no preset or because the solve did
