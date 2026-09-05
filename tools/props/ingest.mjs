@@ -80,6 +80,85 @@ function boundsOf(document) {
   };
 }
 
+// Fill the RGB under transparent texels with the nearest leaf colour
+// (pull-push inpainting). Unreal's bake leaves BLACK there, and mipmaps
+// average those texels into every leaf: the canopy renders near-black at
+// any distance, greener only at the rims -- exactly the screenshot that
+// found this. Alpha is untouched; only hidden RGB changes.
+async function bleedBaseColour(buffer, longest) {
+  const meta = await sharp(buffer).metadata();
+  let image = sharp(buffer).ensureAlpha();
+  const biggest = Math.max(meta.width || 0, meta.height || 0);
+  if (biggest > longest) {
+    image = image.resize({ width: longest, height: longest, fit: "inside" });
+  }
+  const { data, info } = await image.raw()
+    .toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  const levels = [];
+  let cw = width, ch = height;
+  let cur = new Float32Array(cw * ch * 4);
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 4) {
+    const solid = data[i + 3] > 40 ? 1 : 0;
+    cur[p] = data[i] * solid;
+    cur[p + 1] = data[i + 1] * solid;
+    cur[p + 2] = data[i + 2] * solid;
+    cur[p + 3] = solid;
+  }
+  levels.push({ data: cur, w: cw, h: ch });
+  while (cw > 1 || ch > 1) {
+    const nw = Math.max(1, cw >> 1);
+    const nh = Math.max(1, ch >> 1);
+    const next = new Float32Array(nw * nh * 4);
+    for (let y = 0; y < nh; y++) {
+      for (let x = 0; x < nw; x++) {
+        let r = 0, g = 0, b = 0, weight = 0;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            const sx = Math.min(cw - 1, x * 2 + dx);
+            const sy = Math.min(ch - 1, y * 2 + dy);
+            const s = (sy * cw + sx) * 4;
+            r += cur[s]; g += cur[s + 1]; b += cur[s + 2];
+            weight += cur[s + 3];
+          }
+        }
+        const d = (y * nw + x) * 4;
+        next[d] = r; next[d + 1] = g; next[d + 2] = b; next[d + 3] = weight;
+      }
+    }
+    levels.push({ data: next, w: nw, h: nh });
+    cur = next; cw = nw; ch = nh;
+  }
+  for (let k = levels.length - 2; k >= 0; k--) {
+    const fine = levels[k];
+    const coarse = levels[k + 1];
+    for (let y = 0; y < fine.h; y++) {
+      for (let x = 0; x < fine.w; x++) {
+        const f = (y * fine.w + x) * 4;
+        if (fine.data[f + 3] > 0) continue;
+        const c = (Math.min(coarse.h - 1, y >> 1) * coarse.w
+          + Math.min(coarse.w - 1, x >> 1)) * 4;
+        const weight = coarse.data[c + 3] || 1;
+        fine.data[f] = coarse.data[c] / weight;
+        fine.data[f + 1] = coarse.data[c + 1] / weight;
+        fine.data[f + 2] = coarse.data[c + 2] / weight;
+        fine.data[f + 3] = 1;
+      }
+    }
+  }
+  const filled = Buffer.from(data);
+  const base = levels[0].data;
+  for (let i = 0, p = 0; i < filled.length; i += 4, p += 4) {
+    if (data[i + 3] > 40) continue;
+    filled[i] = Math.max(0, Math.min(255, Math.round(base[p])));
+    filled[i + 1] = Math.max(0, Math.min(255, Math.round(base[p + 1])));
+    filled[i + 2] = Math.max(0, Math.min(255, Math.round(base[p + 2])));
+  }
+  return sharp(filled, { raw: { width, height, channels: 4 } })
+    .png({ palette: true, colors: 256, dither: 0.5,
+      compressionLevel: 9, effort: 7 }).toBuffer();
+}
+
 async function shrinkTextures(document, longest) {
   // Which textures are pictures (base colour) and which are data: a leaf
   // mask lives in a base colour's alpha and palette-quantising it is
@@ -112,12 +191,10 @@ async function shrinkTextures(document, longest) {
       carriesAlpha = !!alpha && alpha.min < 250;
     }
     if (carriesAlpha) {
-      // The Unreal bake weighed ten megabytes on a 165-triangle seedling;
-      // 256 dithered colours read identically on foliage at a quarter of
-      // the bytes.
-      texture.setImage(new Uint8Array(
-        await base.png({ palette: true, colors: 256, dither: 0.5,
-          compressionLevel: 9, effort: 7 }).toBuffer()));
+      // Bleed first (mipmaps must never taste the black under the
+      // holes), then the palette: 256 dithered colours read identically
+      // on foliage at a quarter of the bytes.
+      texture.setImage(new Uint8Array(await bleedBaseColour(buffer, longest)));
       texture.setMimeType("image/png");
     } else {
       texture.setImage(new Uint8Array(
