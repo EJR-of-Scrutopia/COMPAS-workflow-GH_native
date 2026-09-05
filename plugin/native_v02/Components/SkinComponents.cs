@@ -1399,23 +1399,14 @@ public sealed class SkinComponent : NativeComponentBase
         double thickness,
         double extrude)
     {
-        if (outline.Count < 3)
-            return null;
-        // ONE READING OF THE FIELD PER CORNER. NormalAt walks the net's
-        // faces, and until 2026-09-04 every corner paid for two walks: one
-        // for the cell normal's mean and one for its own blend.
-        IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
-        double[] cellNormal = CellNormalFrom(outline, cornerNormals);
-        IReadOnlyList<double[]> moved = OffsetPointsFrom(
-            outline, cornerNormals, cellNormal, thickness, extrude);
-
-        IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
-            MovedSections(net, sections, cellNormal, thickness, extrude);
-        if (TopRefused(sections, movedSections))
-            return null;
-        Brep? top = movedSections is not null
-            ? LoftSections(movedSections)
-            : OffsetTopFace(net, outline, moved, cellNormal, thickness, extrude);
+        // ONE TOP BUILD FOR THE SOLID AND THE FALLBACK ALIKE. CellTopBuild
+        // is the top face's whole route; this method's only additions are
+        // the flip, the walls and the join, so the fallback
+        // CellTopFaceAtHeight ships cannot diverge from the top this
+        // solid closes under.
+        Brep? top = CellTopBuild(
+            outline, sections, net, thickness, extrude,
+            out IReadOnlyList<double[]> moved);
         if (top is null)
             return null;
         // The top is the same ring seen from the other side, so a solid
@@ -1461,19 +1452,47 @@ public sealed class SkinComponent : NativeComponentBase
     /// instead of sitting Th below them; null where even the top will not
     /// build, in which case the bottom face remains the last resort and
     /// the warning names the count shipping low.
+    ///
+    /// "Exactly the route" is structural and not a promise:
+    /// <see cref="CellTopBuild"/> is the one body both callers run, so
+    /// this fallback and the solid's own top cannot silently diverge.
     /// </summary>
     private static Brep? CellTopFaceAtHeight(
         IReadOnlyList<double[]> outline,
         IReadOnlyList<IReadOnlyList<double[]>>? sections,
         SkinNet net,
         double thickness,
-        double extrude)
+        double extrude) =>
+        CellTopBuild(outline, sections, net, thickness, extrude, out _);
+
+    /// <summary>
+    /// THE TOP FACE'S ONE ROUTE (spec 2026-09-04 section 5, "the top face
+    /// takes the same route its own bottom took"), shared verbatim by the
+    /// solid (<see cref="ThickenCellSurface"/>, which flips it into the
+    /// shell) and by fix 4's fallback (<see cref="CellTopFaceAtHeight"/>,
+    /// which ships it unflipped): moved section rails lofted for a
+    /// loft-route cell, the moved fan for a fan-route one, refused where
+    /// a loft will not loft (<see cref="TopRefused"/>). The MOVED outline
+    /// ring comes back with it because the solid's side walls stand on
+    /// the same offset corners the top was built over.
+    /// </summary>
+    private static Brep? CellTopBuild(
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
+        SkinNet net,
+        double thickness,
+        double extrude,
+        out IReadOnlyList<double[]> moved)
     {
+        moved = Array.Empty<double[]>();
         if (outline.Count < 3)
             return null;
+        // ONE READING OF THE FIELD PER CORNER. NormalAt walks the net's
+        // faces, and until 2026-09-04 every corner paid for two walks: one
+        // for the cell normal's mean and one for its own blend.
         IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
         double[] cellNormal = CellNormalFrom(outline, cornerNormals);
-        IReadOnlyList<double[]> moved = OffsetPointsFrom(
+        moved = OffsetPointsFrom(
             outline, cornerNormals, cellNormal, thickness, extrude);
         IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
             MovedSections(net, sections, cellNormal, thickness, extrude);
