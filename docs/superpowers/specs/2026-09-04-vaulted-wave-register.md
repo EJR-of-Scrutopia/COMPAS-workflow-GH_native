@@ -326,3 +326,28 @@ State of the pipeline, kept honest as it runs:
   add Black Alder, Hornbeam, Norway Maple (and any other species) to
   the UE 5.4 project Trees_Downloaded -- 5.4 delivery is classic static
   meshes, and the whole export+ingest pipeline is proven on them.
+
+## The daytime wave (2026-09-05, after the trees)
+
+- BLACK TREES, root-caused: the atlas was healthy; the RGB UNDER its
+  transparent texels was black and mipmaps averaged it into every leaf.
+  ingest.mjs inpaints hidden RGB (pull-push) before the palette encode.
+  forest_03 dropped (canopy lost to forced full-res decimation);
+  library 109.
+- STALE PANEL FACES: restores write selects without change events by
+  design; repaintSettingControls() (render-only) now runs after every
+  silent writer, and choosing a sky in the drawer switches the
+  environment to HDRI.
+- HALF-TURN CLOSE: admireSeconds spans pi, on his word.
+- CAMERA MENU: rail tab; FOV 15-100 with full-frame lens equivalent
+  (f = 12/tan(v/2)); brightness/contrast moved in; frame presets Fill,
+  16:9, 4:3, 1:1, 4:5, 9:16 letterboxed via canvas CSS (resize()
+  derives everything from the canvas box); the recording renders at the
+  chosen frame, longest side 1920. FOV+frame persist in scenes.
+- LAYERS DRAWER: rows of prop groups; active layer receives new props;
+  eye hides a set (and blocks picking); Duplicate stamps the group a
+  step away on a fresh layer; rename on double-click; layered layout
+  and scene persistence (old bare-array layouts still restore).
+- Verified live over CDP: FOV 24 -> 56 mm, 1:1 letterbox 849x849,
+  layer hide/pick-block/duplicate/persist all measured. 692 tests
+  green; five new pin tests, each proved by mutation.
