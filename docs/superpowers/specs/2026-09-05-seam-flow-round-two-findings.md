@@ -30,14 +30,23 @@ His words: "Still getting gaps and flat surface only on some, which arent raisin
 height to match."
 
 Observed: certain stones render as flat plates sitting below their neighbours' top surface,
-with steps and daylight beside them. Candidate mechanisms, to be measured not assumed: the
-sectionless-cell fan route drawing at level height instead of lofting to the thickened
-surface; the closer stones built from clipped faces but not carried through the same
-thickening route as ordinary cells (top face must be built by the bottom's own route, the
-standing rule from the offset work); or the loft-route nulls' fallback. The check that pins
-the fix: every emitted cell's top-face corner heights sit within tolerance of the thickened
-field surface at those plan points, asserted across the whole six-lobe fixture, proved red by
-re-flattening one route.
+with steps and daylight beside them.
+
+MEASURED 2026-09-05 (diagnosis in 2026-09-05-seam-flow-round-two-diagnosis.md, superseding the
+guesswork that stood here): outline-corner heights are NOT the defect. Every emitted cell's
+outline corners sit at 0.0000 m from the surface on every route, so a corner-height check
+would pass today and is vacuous; do not build it. The two real mechanisms:
+(a) MID-FACE CHORD SAG on the closer-loft route over absorbed multi-CH slabs: interiors sag to
+    35 mm off the surface against a 9 mm p90 for ordinary courses. The fan routes are
+    acquitted (0.7 to 2.4 mm measured).
+(b) THE UN-THICKENED-FACE FALLBACK on the Rhino side (SkinComponents.cs:417-467 and 574-604,
+    warned by ThickenFailureLine): cells whose thickening fails ship as a literal flat face at
+    the bottom height. Param's GH chin on the six-lobe should be checked for that warning to
+    confirm this owns his flattest stones.
+The checks that pin the fix: interior SAMPLE points (not corners) of every emitted top face
+sit within the ordinary-course sag envelope, asserted across the six-lobe fixture, red by
+re-coarsening the closer loft; and every cell ships in the Solid slot (slot==Solid asserted),
+red by forcing one thickening failure.
 
 ## Finding 3: the central cap becomes one polygon
 
