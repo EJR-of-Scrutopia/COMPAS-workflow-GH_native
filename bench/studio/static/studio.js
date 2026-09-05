@@ -1694,6 +1694,12 @@ const materials = {
   steel: new THREE.MeshPhysicalMaterial({
     color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
   }),
+  // The principal lines' own metal (Param: "a more metalic colour maybe
+  // more of a blackish metal"): near-black, still fully metallic so the
+  // sky reads in it, a touch rougher than the silver steel.
+  bar: new THREE.MeshPhysicalMaterial({
+    color: 0x24262a, roughness: 0.38, metalness: 1.0, envMapIntensity: 1.2,
+  }),
   falsework: new THREE.MeshPhysicalMaterial({
     color: 0x3a3f45, side: THREE.DoubleSide,
     roughness: 0.95, metalness: 0.0, transparent: true, opacity: 0.3,
@@ -1723,10 +1729,16 @@ function meshGeometry(meshData) {
 // the raise shows nothing. Flat LineSegments, which the act used to draw,
 // read as another medium entirely: no thickness, no material, no nodes.
 function netInstances(edgeCount, vertexCount) {
-  const cylinder = new THREE.CylinderGeometry(
-    state.wireRadius, state.wireRadius, 1, 8, 1, true);
-  cylinder.translate(0, 0.5, 0);
-  const wireMaterial = materials.steel.clone();
+  // A rectangular bar, not a tube (Param: "more rectangular in shape
+  // than circular... Thickness only 40mm"): a square section of twice
+  // wireRadius a side, so the default 0.02 gives exactly his 40 mm and
+  // the Wire size slider keeps its meaning. Square rather than a flat
+  // strap because writeInstancedSegments orients by direction alone --
+  // an oblong section would roll arbitrarily edge to edge.
+  const bar = new THREE.BoxGeometry(
+    2 * state.wireRadius, 1, 2 * state.wireRadius);
+  bar.translate(0, 0.5, 0);
+  const wireMaterial = materials.bar.clone();
   // Task 6 fix: InstancedMesh.setColorAt writes the instanceColor buffer,
   // but per-instance colour only reaches the fragment shader when the
   // material also opts into the vertex-colour path. vertexColors stays
@@ -1734,13 +1746,15 @@ function netInstances(edgeCount, vertexCount) {
   // so the plain steel look is unchanged until applyWireForces tints it.
   wireMaterial.vertexColors = true;
   wireMaterial.transparent = true;
-  const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edgeCount);
+  const wires = new THREE.InstancedMesh(bar, wireMaterial, edgeCount);
   const white = new THREE.Color(0xffffff);
   for (let i = 0; i < edgeCount; i++) wires.setColorAt(i, white);
   // setColorAt is what allocates instanceColor, so a net with no edges at
   // all leaves it null.
   if (wires.instanceColor) wires.instanceColor.needsUpdate = true;
-  const nodeMaterial = materials.steel.clone();
+  // The joints wear the bars' metal: silver spheres on near-black bars
+  // would pop bright at every crossing.
+  const nodeMaterial = materials.bar.clone();
   nodeMaterial.transparent = true;
   const nodes = new THREE.InstancedMesh(
     new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
@@ -4500,7 +4514,7 @@ function applyWireForces() {
     wires.instanceMatrix.needsUpdate = true;
     wires.instanceColor.needsUpdate = true;
     if (wires.userData.baseMaterial) wires.material = wires.userData.baseMaterial;
-    wires.material.color.copy(materials.steel.color);
+    wires.material.color.copy(materials.bar.color);
     return;
   }
   const forces = state.bundle.member_forces;

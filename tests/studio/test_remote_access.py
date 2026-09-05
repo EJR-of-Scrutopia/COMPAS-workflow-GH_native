@@ -685,6 +685,29 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "syncNetShadow(bars)" in act
 
 
+def test_the_principal_lines_are_blackish_metal_bars():
+    """Param: "a more metalic colour maybe more of a blackish metal and
+    have it more rectangular in shape than circular? Thickness only
+    40mm". A square box of 2 x wireRadius a side (the 0.02 default IS
+    his 40 mm), worn in the registry's near-black bar metal by wires
+    and joints alike, and the forces lens hands back the BAR colour,
+    not steel silver, when it drops."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    net = _js_function(js, "function netInstances(edgeCount, vertexCount)")
+    assert ("new THREE.BoxGeometry(\n"
+            "    2 * state.wireRadius, 1, 2 * state.wireRadius)") in net
+    assert "CylinderGeometry" not in net
+    assert net.count("materials.bar.clone()") == 2, (
+        "wires AND joints wear the bar metal")
+    assert ("bar: new THREE.MeshPhysicalMaterial({\n"
+            "    color: 0x24262a, roughness: 0.38, metalness: 1.0") in js
+    assert "wireRadius: 0.02," in js, "the default section is his 40 mm"
+    wire_lens = _js_function(js, "function applyWireForces()")
+    assert "materials.bar.color" in wire_lens
+    assert "materials.steel.color" not in wire_lens
+
+
 def test_a_scene_outranks_the_device_appearance_memory():
     """Param's report: restored on another device, a scene came back with
     the right sky but the wrong skin and floor. loadStudy restores the
