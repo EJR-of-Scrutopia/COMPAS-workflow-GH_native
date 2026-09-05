@@ -904,3 +904,33 @@ back to the default look.
   kills (incl. guard-form pin after an if(false) survivor); suite 730.
 - Scrap-scene orphan from the first probe deleted (scene-0b7fe404cacf);
   five real scenes stand.
+
+## 2026-09-06 -- SHADOWS, THE PULSE'S FUNERAL, AND THE THRUST LENS
+
+His walk: "the formwork doesnt project a shadow?"; "The integrity pulse
+i want removed too... no more green and flashing"; "add in your other
+suggestions for the analysis too. the thrust etc"; mid-turn: "turn the
+text overlay into text that just reads below the data button. have the
+data button show whether its active or not too".
+
+- syncNetShadow: castShadow follows visible && opacity > 0.6 at every
+  writer (applySceneAtTime strike fade, applyShowMode rest, the act's
+  net/nodes/members) -- solid net grounds itself, ghost-grid bug stays
+  dead. netInstances births non-casting; the writers decide.
+- PULSE REMOVED OUTRIGHT: LAYERS/EXCLUSIVE seats, PULSE_MATERIALS,
+  courseVerdict, applyPulse(Colours), caption, emissive sweep, the
+  sharedLens dispose guard. currentStageIndex survives (HUD).
+  test_static's three-readers pin is two again; its pulse tests became
+  a tombstone (machinery must stay gone).
+- SUPPORT THRUST lens in its slot: reaction REVERSED per springing,
+  bucketed <20/<35/>=35 deg in verdict colours, shared-magnitude
+  normalisation (arrowField gained magnitudeMaxShared), Scale slider,
+  on-panel caption. Availability = reactions present. On Column
+  diagnosis: two bucket groups, red fans at both springings -- the
+  narrative's 49-degree finding made visible.
+- HUD: out of the viewport, plain text under #data-button inside the
+  Analysis section (overlays checkbox still gates it); #data-button
+  wears .active while the sheet is open (data-close clears it).
+- 12 mutation kills; suite 730 green; live probe: 6 lens labels
+  correct, net casting at rest, thrust groups 2, hud parented, active
+  toggling true/false.
