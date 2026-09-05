@@ -2542,7 +2542,12 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     capture = _function_body(js, "captureOrbitBase")
-    assert "camera.position.clone().sub(state.centre)" in capture
+    # The framing is the shot ALL the way: the orbit turns about the
+    # camera's own target, not the bundle's centre -- lookAt(state.centre)
+    # on the first played frame re-aimed a panned view, which Param saw as
+    # a jump and a lens change at every press of Play.
+    assert "const centre = controls.target.clone();" in capture
+    assert "camera.position.clone().sub(centre)" in capture
     assert "Math.atan2(offset.y, offset.x)" in capture
     assert ("- state.timeline.orbitSpeed * "
             "Math.max(0, state.timeline.t - openingSeconds())") in capture, (

@@ -62,6 +62,7 @@
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
     <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
     <button data-shelf="scenes" title="Save, restore and delete whole scenes">Scenes</button>
+    <button id="shelf-play" title="Play the animation">Play</button>
   </div>
 </div>
 <div id="legend" class="hidden">
@@ -312,6 +313,10 @@
     <span id="restart-status"></span>
   </div>
 </aside>
+<!-- The panel's own handle: a slim tile on its mid-left edge. One press
+     slides the whole banner (and its tab rail) off to the right, the next
+     brings it back; the handle itself stays put on the screen edge. -->
+<button id="panel-collapse" title="Collapse the panel">&#8250;</button>
 <div id="data-panel" class="hidden"><button id="data-close">Close</button><div id="data-content"></div></div>
 <!-- Two checks that must not live in studio.js, because the fault they
      exist for is a studio.js the browser is serving from its own cache. The

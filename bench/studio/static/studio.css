@@ -932,3 +932,33 @@ body { overflow: hidden;
   #shelf { left: calc((100vw - var(--panel-w)) / 2);
            width: min(880px, calc(100vw - var(--panel-w) - 24px)); }
 }
+
+/* ---------- the panel's collapse handle ----------
+   Param: "a little tile arrow attached to the mid left side of the banner
+   that can be pressed to collapse the banner to the side and then pressed
+   again to open". The panel and its tab rail slide away together; the
+   handle stays on the screen edge and its arrow reverses. The handle is a
+   SIBLING of the panel, not a child: the panel's own overflow scroll
+   would clip anything hung outside its box. */
+#panel, #tab-rail { transition: transform 0.25s ease, opacity 0.25s ease; }
+body.panel-collapsed #panel { transform: translateX(100%); }
+body.panel-collapsed #tab-rail { opacity: 0; pointer-events: none; }
+#panel-collapse { position: fixed; top: 50%; right: var(--panel-w);
+  transform: translateY(-50%); z-index: 26;
+  width: 20px; height: 64px; padding: 0;
+  display: grid; place-items: center;
+  background: var(--panel-veil); color: var(--ink-2);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+  transition: right 0.25s ease; }
+#panel-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
+body.panel-collapsed #panel-collapse { right: 0; }
+/* The log ties its right edge to the panel's width; a collapsed panel
+   frees that band. */
+body.panel-collapsed #event-log { right: var(--s4); }
+
+/* Play sits beside the drawer tabs but is not one: a beat of space
+   says so. */
+#shelf-play { margin-left: 10px; }

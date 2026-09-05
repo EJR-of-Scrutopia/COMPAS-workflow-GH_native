@@ -350,6 +350,62 @@ def test_touch_devices_render_at_a_capped_density_and_losses_are_reported():
     assert "maxTouchPoints" in report
 
 
+def test_the_banner_folds_on_its_own_handle():
+    """Param: "a little tile arrow attached to the mid left side of the
+    banner that can be pressed to collapse the banner to the side and then
+    pressed again to open". One body class moves the panel, the tab rail,
+    the handle and the log together; the choice is remembered per
+    browser. The handle is a SIBLING of the panel -- the panel's overflow
+    scroll would clip a child hung outside its box."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="panel-collapse"' in html
+    assert html.index("</aside>") < html.index('id="panel-collapse"')
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'classList.toggle("panel-collapsed", collapsed)' in js
+    assert 'localStorage.getItem("panel-collapsed")' in js
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "body.panel-collapsed #panel { transform: translateX(100%); }" in css
+    assert "body.panel-collapsed #panel-collapse { right: 0; }" in css
+    assert "body.panel-collapsed #tab-rail" in css, (
+        "the rail must fold with the panel or its buttons float orphaned")
+
+
+def test_play_lives_on_the_shelf_and_starts_where_you_stand():
+    """Param: "add a play button next to the scene tile... it should start
+    exactly where play is started from". The shelf button delegates to the
+    one real play control so the logic lives once, both labels are painted
+    by one helper, and the orbit base turns about the CAMERA'S OWN target
+    -- lookAt(state.centre) on the first played frame re-aimed a panned
+    view, which read as a jump and a lens change."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    tabs = html[html.index('id="shelf-tabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'id="shelf-play"' in tabs, "Play sits beside the drawer tabs"
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    # Play is in the strip but is NOT a drawer tab: unscoped wiring would
+    # bind it to openShelf(undefined).
+    assert 'querySelectorAll("#shelf-tabs button")' not in js
+    assert js.count('querySelectorAll("#shelf-tabs button[data-shelf]")') == 3
+    assert 'document.getElementById("play-button").click()' in js
+    # Every label paint goes through the one helper, or the two buttons
+    # drift into telling different stories.
+    assert 'document.getElementById("play-button").textContent' not in js
+    assert js.count("paintPlayButtons(") >= 8
+
+    capture = _js_function(js, "function captureOrbitBase()")
+    assert "const centre = controls.target.clone();" in capture
+    apply_block = _js_function(js, "function applyTimeline(t)")
+    assert "base.centre || state.centre" in apply_block
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

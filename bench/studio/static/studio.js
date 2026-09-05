@@ -2236,7 +2236,7 @@ async function applyScene(record) {
       }
     }
     state.timeline.playing = false;
-    document.getElementById("play-button").textContent = "Play";
+    paintPlayButtons("Play");
     const t = Math.min(timelineDuration(),
       Math.max(0, +scene_.timeline.t || 0));
     applySceneAtTime(t);
@@ -3197,7 +3197,7 @@ function openShelf(kind) {
   shelfCategory = "all";
   shelfMaterialKey = null;
   document.getElementById("shelf-body").classList.remove("hidden");
-  for (const button of document.querySelectorAll("#shelf-tabs button")) {
+  for (const button of document.querySelectorAll("#shelf-tabs button[data-shelf]")) {
     button.classList.toggle("active", button.dataset.shelf === kind);
   }
   renderShelf();
@@ -3206,7 +3206,7 @@ function openShelf(kind) {
 function closeShelf() {
   shelfKind = null;
   document.getElementById("shelf-body").classList.add("hidden");
-  for (const button of document.querySelectorAll("#shelf-tabs button")) {
+  for (const button of document.querySelectorAll("#shelf-tabs button[data-shelf]")) {
     button.classList.remove("active");
   }
 }
@@ -3610,7 +3610,7 @@ function assignShelfMaterial(selectId) {
 }
 
 document.getElementById("shelf-close").addEventListener("click", closeShelf);
-for (const button of document.querySelectorAll("#shelf-tabs button")) {
+for (const button of document.querySelectorAll("#shelf-tabs button[data-shelf]")) {
   button.addEventListener("click", () => {
     if (shelfKind === button.dataset.shelf) closeShelf();
     else openShelf(button.dataset.shelf);
@@ -5996,6 +5996,30 @@ document.getElementById("start-studio").addEventListener("click", async () => {
   status.textContent = "the desktop did not answer; use the Vaulted shortcut";
 });
 
+// The banner folds away on its own handle (Param: "a little tile arrow
+// attached to the mid left side of the banner"). The state is a body
+// class so the panel, the tab rail, the handle and the log all move on
+// CSS alone, and it is remembered per browser: an iPad that collapsed
+// the panel to look at the vault gets it back collapsed.
+function applyPanelCollapsed(collapsed) {
+  document.body.classList.toggle("panel-collapsed", collapsed);
+  const handle = document.getElementById("panel-collapse");
+  handle.textContent = collapsed ? "‹" : "›";
+  handle.title = collapsed ? "Open the panel" : "Collapse the panel";
+}
+
+document.getElementById("panel-collapse").addEventListener("click", () => {
+  const collapsed = !document.body.classList.contains("panel-collapsed");
+  applyPanelCollapsed(collapsed);
+  try {
+    localStorage.setItem("panel-collapsed", collapsed ? "1" : "");
+  } catch (error) { /* a browser without storage still gets the fold */ }
+});
+
+try {
+  applyPanelCollapsed(localStorage.getItem("panel-collapsed") === "1");
+} catch (error) { /* open, the default */ }
+
 document.getElementById("material-relief").addEventListener("input", (e) => {
   state.relief = +e.target.value;
   applySurfaceControls();
@@ -6603,7 +6627,7 @@ function setShowMode(mode) {
   // it being built.
   if (state.timeline && state.timeline.playing) {
     state.timeline.playing = false;
-    document.getElementById("play-button").textContent = "Play";
+    paintPlayButtons("Play");
   }
   state.showMode = mode;
   paintShowButtons();
@@ -6804,8 +6828,7 @@ function rebuildTimeline(preserve) {
     // on that assignment happening here.
     applySceneAtTime(preserve.f * timelineDuration());
     state.timeline.playing = preserve.playing;
-    document.getElementById("play-button").textContent =
-      preserve.playing ? "Pause" : "Play";
+    paintPlayButtons(preserve.playing ? "Pause" : "Play");
     scrubber.value = Math.round(1000 * preserve.f);
   } else {
     applyTimeline(0);
@@ -7605,14 +7628,20 @@ function applyShowMode() {
 // where you left it. The current rotation is subtracted out so a capture
 // taken mid-take does not jump the camera a quarter turn.
 function captureOrbitBase() {
-  if (!state.timeline || !state.centre) return;
-  const offset = camera.position.clone().sub(state.centre);
+  if (!state.timeline) return;
+  // The orbit turns about what the CAMERA is aimed at, not the bundle's
+  // centre: lookAt(state.centre) on the first played frame re-aimed a
+  // panned or off-centre view, which read as a jump and a lens change
+  // (Param: "it should start exactly where play is started from").
+  const centre = controls.target.clone();
+  const offset = camera.position.clone().sub(centre);
   const radius = Math.hypot(offset.x, offset.y);
   state.timeline.orbitBase = {
+    centre,
     // Straight overhead there is no bearing to orbit on, so the distance
     // falls back to the true one and the take turns about that instead of
     // collapsing onto the axis.
-    radius: radius > 0.05 ? radius : camera.position.distanceTo(state.centre),
+    radius: radius > 0.05 ? radius : camera.position.distanceTo(centre),
     height: offset.z,
     // The same clamped clock applyTimeline adds back, or a capture taken
     // mid-take jumps the camera by exactly the opening act's length.
@@ -7625,7 +7654,7 @@ function applyTimeline(t) {
   applySceneAtTime(t);
   const base = state.timeline.orbitBase;
   if (base && state.timeline.autoSpin && !state.userDragging) {
-    const centre = state.centre;
+    const centre = base.centre || state.centre;
     // The camera holds its framing through the whole opening act -- the
     // formwork growing into its final form deserves a still witness, Param
     // ruled -- and starts its turn the instant build time begins.
@@ -7816,6 +7845,16 @@ controls.addEventListener("end", () => {
   if (state.timeline && state.timeline.playing) captureOrbitBase();
 });
 
+// The play control lives twice -- the Animation section and the shelf tab
+// strip (Param: "add a play button next to the scene tile") -- and one
+// painter keeps their labels telling the same story.
+function paintPlayButtons(text) {
+  for (const id of ["play-button", "shelf-play"]) {
+    const button = document.getElementById(id);
+    if (button) button.textContent = text;
+  }
+}
+
 function startPlaying(fromTheTop) {
   // Playing IS the animation view: it switches to it rather than asking
   // which mode the scene should be in first, and it takes its framing from
@@ -7825,17 +7864,20 @@ function startPlaying(fromTheTop) {
   captureOrbitBase();
   if (fromTheTop || state.timeline.t >= timelineDuration()) applyTimeline(0);
   state.timeline.playing = true;
-  document.getElementById("play-button").textContent = "Pause";
+  paintPlayButtons("Pause");
 }
 
 document.getElementById("play-button").addEventListener("click", () => {
   if (!state.timeline) return;
   if (state.timeline.playing) {
     state.timeline.playing = false;
-    document.getElementById("play-button").textContent = "Play";
+    paintPlayButtons("Play");
     return;
   }
   startPlaying(false);
+});
+document.getElementById("shelf-play").addEventListener("click", () => {
+  document.getElementById("play-button").click();
 });
 document.getElementById("restart-button").addEventListener("click", () => {
   if (!state.timeline) return;
@@ -7845,7 +7887,7 @@ document.getElementById("restart-button").addEventListener("click", () => {
 scrubber.addEventListener("input", () => {
   if (!state.timeline) return;
   state.timeline.playing = false;
-  document.getElementById("play-button").textContent = "Play";
+  paintPlayButtons("Play");
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
@@ -7875,7 +7917,7 @@ function frame(now) {
     applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));
     if (state.timeline.t >= timelineDuration()) {
       state.timeline.playing = false;
-      document.getElementById("play-button").textContent = "Play";
+      paintPlayButtons("Play");
     }
     // M6 fix: the HUD's stage/formwork lines track state.timeline.t, so
     // they must refresh while playing too -- but updateHud is string work
