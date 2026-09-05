@@ -874,34 +874,26 @@ body { overflow: hidden;
   border-radius: 3px; width: 18px; height: 18px; padding: 0;
   color: var(--ink-2); font-size: 11px; }
 #shelf-body .scene-delete:hover { background: var(--danger); color: #fff; }
-/* Layers in the shelf: rows, not tiles. The lit row is the ACTIVE layer
-   -- where newly placed props land. */
-#shelf-body .tile-grid.rows { display: flex; flex-direction: column;
-  gap: 4px; }
-#shelf-body .layer-row { display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; border: 1px solid var(--line);
-  border-radius: var(--radius); color: var(--ink-2); font-size: 12px; }
-#shelf-body .layer-row.active { border-color: var(--accent);
-  background: var(--accent-bg); color: var(--ink); }
-#shelf-body .layer-row .layer-name { flex: 1 1 auto; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#shelf-body .layer-row .layer-count { color: var(--ink-3);
-  font-size: 11px; }
-#shelf-body .layer-row button { width: auto; margin: 0; padding: 2px 10px;
-  font-size: 11px; background: var(--raised); color: var(--ink-2);
+/* The layer tabs: the drawer's bottom edge. The open tab is where new
+   props land; a struck-through tab is hidden in the viewport. */
+#layer-tabs { display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-top: 1px solid var(--line); }
+#layer-tabs.hidden { display: none; }
+#layer-tabs .layer-tab { width: auto; margin: 0; padding: 3px 12px;
+  font-size: 11px; background: transparent; color: var(--ink-2);
   border: 1px solid var(--line); border-radius: 3px; }
-#shelf-body .layer-row button:hover { border-color: var(--line-lit);
+#layer-tabs .layer-tab:hover { border-color: var(--line-lit);
   color: var(--ink); }
-#shelf-body .layer-row .layer-delete:hover { background: var(--danger);
-  color: #fff; }
-/* Object rows under each layer: the drawer is a list of what stands in
-   the scene. Tick to gather a group; click a name to select it. */
-#shelf-body .object-row { display: flex; align-items: center; gap: 8px;
-  margin-left: 18px; padding: 3px 10px; border: 1px solid transparent;
-  border-radius: 3px; color: var(--ink-2); font-size: 12px; }
-#shelf-body .object-row:hover { border-color: var(--line); color: var(--ink); }
-#shelf-body .object-row.selected { border-color: var(--accent);
-  background: var(--accent-bg); color: var(--ink); }
-#shelf-body .object-row .object-name { flex: 1 1 auto; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#shelf-body .object-row input[type="checkbox"] { margin: 0; }
+#layer-tabs .layer-tab.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
+#layer-tabs .layer-tab.off { text-decoration: line-through;
+  color: var(--ink-3); }
+#layer-tabs .layer-eye, #layer-tabs .layer-delete { width: auto;
+  margin: 0 0 0 auto; padding: 3px 10px; font-size: 11px;
+  background: var(--raised); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 3px; }
+#layer-tabs .layer-delete { margin-left: 4px; }
+#layer-tabs .layer-eye:hover { border-color: var(--line-lit);
+  color: var(--ink); }
+#layer-tabs .layer-delete:hover { background: var(--danger); color: #fff; }
+

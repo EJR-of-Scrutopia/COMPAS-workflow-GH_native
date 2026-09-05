@@ -2829,8 +2829,14 @@ def test_layers_group_props_and_survive_saves():
         "an invisible prop must not catch the pointer"
     )
     assert "adoptLayers(layout.layers);" in js and "adoptLayers(scene_.propLayers);" in js
-    body = _function_body(js, "duplicateLayer")
-    assert "record.x + 1.5" in body, "the copy lands a step away, not on top"
+    # Grouping moves the chosen objects to a fresh layer WHERE THEY
+    # STAND; the stamp is what places copies.
+    group = _function_body(js, "groupToNewLayer")
+    assert "record.layer = home.id;" in group
+    assert "+ 1.5" not in group, "grouping never moves a prop"
+    tabs = _function_body(js, "renderLayerTabs")
+    assert 'className = "layer-tab"' in tabs
+    assert 'id="layer-tabs"' in (STATIC / "index.html").read_text(encoding="utf-8")
     save = _function_body(js, "saveProps")
     assert "layers:" in save and "layer: p.layer || 1" in save
 

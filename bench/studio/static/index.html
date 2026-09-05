@@ -34,8 +34,8 @@
         <button id="shelf-assign-skin" class="hidden" title="Wear this material on the vault">Assign to skin</button>
         <button id="shelf-assign-ground" class="hidden" title="Lay this material on the floor">Assign to ground</button>
         <button id="scene-save" class="hidden" title="Save the viewport, the floor, the light and everything placed">Save scene</button>
-        <button id="layer-new" class="hidden" title="Start a fresh layer; new props land on it">New layer</button>
-        <button id="stamp-group" class="hidden" title="Pick up the ticked objects as one stamp: every click places a copy, Escape lets go" disabled>Group &amp; place copies</button>
+        <button id="stamp-group" class="hidden" title="Pick up the selected objects as one stamp: every click places a copy, Escape lets go" disabled>Place copies</button>
+        <button id="layer-group" class="hidden" title="Move the selected objects onto a fresh layer of their own" disabled>Group to new layer</button>
       </div>
       <button id="shelf-close" title="Collapse">&#10005;</button>
     </div>
@@ -52,6 +52,9 @@
     <div id="shelf-grid" class="tile-grid hidden"></div>
     <div id="scene-list" class="hidden"></div>
     <div id="prop-credit"></div>
+    <!-- The layer tabs: the drawer's bottom edge. The open tab is where
+         newly placed props land; the eye hides a whole layer. -->
+    <div id="layer-tabs" class="hidden"></div>
   </div>
   <div id="shelf-tabs">
     <button data-shelf="props" title="Browse and place props">Props</button>

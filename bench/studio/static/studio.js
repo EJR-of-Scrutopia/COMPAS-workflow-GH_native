@@ -3116,9 +3116,11 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("scene-save").classList
     .toggle("hidden", shelfKind !== "scenes");
-  document.getElementById("layer-new").classList
-    .toggle("hidden", shelfKind !== "layers");
   document.getElementById("stamp-group").classList
+    .toggle("hidden", shelfKind !== "layers");
+  document.getElementById("layer-group").classList
+    .toggle("hidden", shelfKind !== "layers");
+  document.getElementById("layer-tabs").classList
     .toggle("hidden", shelfKind !== "layers");
   document.getElementById("scene-list").classList
     .toggle("hidden", shelfKind !== "scenes");
@@ -3126,7 +3128,6 @@ function renderShelf() {
   grid.classList.toggle("hidden",
     shelfKind === "props" || shelfKind === "scenes");
   grid.classList.toggle("wide", shelfKind === "skies");
-  grid.classList.toggle("rows", shelfKind === "layers");
   document.getElementById("prop-credit").textContent = "";
   if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
   if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
@@ -3136,11 +3137,13 @@ function renderShelf() {
 }
 
 // ---------- the Layers drawer ----------
-// A list of what actually stands in the scene (Param: "have it more as
-// a list of placed objects so i click the objects from this layer tool,
-// it selects that object"). Layer rows carry the group controls; under
-// each, one row per placed prop: click the name to select it in the
-// viewport, tick the box to gather it into a stamp.
+// The same grid the props and materials wear (Param: "move it to the
+// props and materials display format with the elements being shown as
+// thumbnails and then i can select multiple or unselect them, duplicate
+// them, group them"): one tile per placed object on the OPEN layer,
+// click to select and unselect several. The layers themselves are tabs
+// along the drawer's bottom edge; the open tab is where newly placed
+// props land, and its eye hides the whole set.
 const gatheredProps = new Set();
 
 function propLabel(record) {
@@ -3149,12 +3152,12 @@ function propLabel(record) {
 }
 
 function paintStampButton() {
-  const button = document.getElementById("stamp-group");
   const count = [...gatheredProps]
     .filter((record) => state.props.includes(record)).length;
-  button.disabled = !count;
-  button.textContent = count
-    ? "Place copies of " + count : "Group & place copies";
+  const stamp = document.getElementById("stamp-group");
+  stamp.disabled = !count;
+  stamp.textContent = count ? "Place copies of " + count : "Place copies";
+  document.getElementById("layer-group").disabled = !count;
 }
 
 function renderShelfLayers(grid) {
@@ -3162,91 +3165,113 @@ function renderShelfLayers(grid) {
   for (const record of [...gatheredProps]) {
     if (!state.props.includes(record)) gatheredProps.delete(record);
   }
-  for (const layer of state.propLayers) {
-    const row = document.createElement("div");
-    row.className = "layer-row" + (layer.id === state.activeLayer ? " active" : "");
-    const name = document.createElement("span");
-    name.className = "layer-name";
-    name.textContent = layer.name;
-    name.title = "Click to make active; double-click to rename";
-    name.addEventListener("click", () => {
-      state.activeLayer = layer.id;
-      renderShelf();
-    });
-    name.addEventListener("dblclick", () => {
-      const fresh = window.prompt("Rename layer", layer.name);
-      if (fresh) { layer.name = fresh; saveProps(); renderShelf(); }
-    });
-    const count = document.createElement("span");
-    count.className = "layer-count";
-    const members = state.props.filter((r) => r.layer === layer.id);
-    count.textContent = members.length
-      + (members.length === 1 ? " prop" : " props");
-    const eye = document.createElement("button");
-    eye.textContent = layer.visible !== false ? "Shown" : "Hidden";
-    eye.title = "Show or hide every prop on this layer";
-    eye.addEventListener("click", () => {
-      layer.visible = layer.visible === false;
-      applyLayerVisibility();
-      saveProps();
-      renderShelf();
-    });
-    const dup = document.createElement("button");
-    dup.textContent = "Duplicate";
-    dup.title = "Place a copy of this whole layer a step away, on a new layer";
-    dup.addEventListener("click", () => duplicateLayer(layer.id));
-    const del = document.createElement("button");
-    del.className = "layer-delete";
-    del.textContent = "✕";
-    del.title = "Delete this layer and every prop on it";
-    del.addEventListener("click", () => deleteLayer(layer.id));
-    row.append(name, count, eye, dup, del);
-    grid.appendChild(row);
-    for (const record of members) {
-      const line = document.createElement("div");
-      line.className = "object-row"
-        + (record === state.selectedProp ? " selected" : "");
-      const tick = document.createElement("input");
-      tick.type = "checkbox";
-      tick.checked = gatheredProps.has(record);
-      tick.title = "Gather into the stamp";
-      tick.addEventListener("change", () => {
-        if (tick.checked) gatheredProps.add(record);
-        else gatheredProps.delete(record);
-        paintStampButton();
-      });
-      const label = document.createElement("span");
-      label.className = "object-name";
-      label.textContent = propLabel(record);
-      label.title = "Select this object in the viewport";
-      label.addEventListener("click", () => {
-        selectProp(record);
-        renderShelf();
-      });
-      line.append(tick, label);
-      grid.appendChild(line);
-    }
+  const members = state.props.filter((r) => r.layer === state.activeLayer);
+  if (!members.length) {
+    const empty = document.createElement("div");
+    empty.className = "tile-family";
+    empty.textContent = "nothing on this layer yet -- placed props land here";
+    grid.appendChild(empty);
   }
+  members.forEach((record, index) => {
+    const template = propTemplates.get(record.type);
+    const tile = previewTile(record.type + "#" + index, propLabel(record),
+      (canvasEl) => {
+        if (template) renderObjectPreview(template, canvasEl);
+      });
+    tile.classList.toggle("active", gatheredProps.has(record));
+    tile.title = propLabel(record)
+      + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
+      + " -- click to select or unselect";
+    tile.addEventListener("click", () => {
+      // A tile toggles membership of the working selection; the last one
+      // picked is also the viewport's selected object.
+      if (gatheredProps.has(record)) {
+        gatheredProps.delete(record);
+        if (state.selectedProp === record) selectProp(null);
+      } else {
+        gatheredProps.add(record);
+        selectProp(record);
+      }
+      tile.classList.toggle("active", gatheredProps.has(record));
+      paintStampButton();
+    });
+    grid.appendChild(tile);
+  });
+  renderLayerTabs();
   paintStampButton();
 }
 
-function duplicateLayer(id) {
-  const source = layerById(id);
-  if (!source) return;
-  const copy = newLayer(source.name + " copy");
-  copy.visible = true;
-  const members = state.props.filter((record) => record.layer === id);
-  for (const record of members) {
-    const twin = placeProp(record.type, record.x + 1.5, record.y + 1.5,
-      record.rotation, false, record.scale || 1);
-    twin.layer = copy.id;
+// The tab strip: one tab per layer, a + for a fresh one, and the open
+// tab's own eye and cross at the end of the row.
+function renderLayerTabs() {
+  const strip = document.getElementById("layer-tabs");
+  strip.innerHTML = "";
+  for (const layer of state.propLayers) {
+    const tab = document.createElement("button");
+    tab.className = "layer-tab"
+      + (layer.id === state.activeLayer ? " active" : "")
+      + (layer.visible === false ? " off" : "");
+    tab.textContent = layer.name;
+    tab.title = "Open this layer: newly placed props land on it. "
+      + "Double-click to rename.";
+    tab.addEventListener("click", () => {
+      state.activeLayer = layer.id;
+      gatheredProps.clear();
+      renderShelf();
+    });
+    tab.addEventListener("dblclick", () => {
+      const fresh = window.prompt("Rename layer", layer.name);
+      if (fresh) { layer.name = fresh; saveProps(); renderShelf(); }
+    });
+    strip.appendChild(tab);
   }
+  const add = document.createElement("button");
+  add.className = "layer-tab";
+  add.textContent = "+";
+  add.title = "New layer";
+  add.addEventListener("click", () => {
+    newLayer(null);
+    gatheredProps.clear();
+    saveProps();
+    renderShelf();
+  });
+  strip.appendChild(add);
+  const active = layerById(state.activeLayer);
+  const eye = document.createElement("button");
+  eye.className = "layer-eye";
+  eye.textContent = active && active.visible === false ? "Hidden" : "Shown";
+  eye.title = "Show or hide everything on the open layer";
+  eye.addEventListener("click", () => {
+    if (!active) return;
+    active.visible = active.visible === false;
+    applyLayerVisibility();
+    saveProps();
+    renderShelf();
+  });
+  const del = document.createElement("button");
+  del.className = "layer-delete";
+  del.textContent = "✕";
+  del.title = "Delete the open layer and every prop on it";
+  del.addEventListener("click", () => deleteLayer(state.activeLayer));
+  strip.append(eye, del);
+}
+
+// Group: the selected objects move house to a fresh layer of their own,
+// staying exactly where they stand.
+function groupToNewLayer() {
+  const chosen = [...gatheredProps]
+    .filter((record) => state.props.includes(record));
+  if (!chosen.length) return;
+  const home = newLayer(null);
+  for (const record of chosen) record.layer = home.id;
+  gatheredProps.clear();
   applyLayerVisibility();
   saveProps();
   renderShelf();
-  logStudio("duplicated " + source.name + ": " + members.length
-    + " props placed a step away on " + copy.name);
+  logStudio(chosen.length + " props grouped onto " + home.name);
 }
+
+document.getElementById("layer-group").addEventListener("click", groupToNewLayer);
 
 function deleteLayer(id) {
   const layer = layerById(id);
@@ -3274,12 +3299,6 @@ function deleteLayer(id) {
   saveProps();
   renderShelf();
 }
-
-document.getElementById("layer-new").addEventListener("click", () => {
-  newLayer(null);
-  saveProps();
-  renderShelf();
-});
 
 // ---------- the stamp ----------
 // Ticked objects become one rubber stamp (Param: "i grab 3 random
