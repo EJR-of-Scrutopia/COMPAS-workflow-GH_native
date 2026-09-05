@@ -853,3 +853,23 @@ devices at once.
   scenes, cut caches, the vault folder; browser-side per device =
   last study, appearance, panel fold, camera. Saved Scenes are the
   cross-device saved views today; preference sync stays queued.
+
+## 2026-09-05 -- SCENES vs THE WANDERING SKY (live incident, fixed)
+
+Two scenes ("scene 1", "Scene 1") were saved under evening_meadow_8k
+.hdr, which lives in Assets\HDRI's - high quality\HDR -- OUTSIDE the
+Vaulted hdri's folder the studio reads. Restore bannered loadHdri's
+raw 404 and left the old sky standing; everything else did apply
+(loadHdri and refreshHdriList both swallow), but the story was
+unreadable.
+
+- The sky was COPIED back into Vaulted hdri's (105 MB; the HDR master
+  copy untouched) -- both scenes restore whole again, verified live.
+- applyScene now reads the unstamped state.hdriName after loadHdri as
+  the verdict and banners in scene terms: sky named as gone, rest of
+  the scene restored under the standing sky. Verified live against a
+  scrap scene naming a sky nobody has (banner right, six props placed,
+  study loaded, scrap deleted). 2 mutation kills; suite 729 green.
+- NOTE for his curation: skies referenced by saved scenes must stay in
+  (or be copied into) the Vaulted hdri's folder; the scene file stores
+  only the NAME.
