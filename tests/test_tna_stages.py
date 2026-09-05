@@ -1858,15 +1858,67 @@ def test_the_watch_counts_the_principal_line_nodes_that_moved():
     assert still["type"] == "result", still
     metrics = still["result"]["diagnostic_metrics"]
     assert metrics["horizontal_watched_node_count"] == len(watched)
+    assert metrics["horizontal_watched_unresolved_count"] == 0
     assert metrics["horizontal_watched_moved_count"] == 0
 
     response = equilibrate(prepared, 100.0, watched, "watch-moved")
     assert response["type"] == "result", response
     metrics = response["result"]["diagnostic_metrics"]
     assert metrics["horizontal_watched_node_count"] == len(watched)
+    assert metrics["horizontal_watched_unresolved_count"] == 0
     # Every watched free node moved; neither watched support did, so the
     # count is the free ones alone rather than all of them.
     assert metrics["horizontal_watched_moved_count"] == len(interior)
+
+
+def test_a_watched_node_the_station_cannot_measure_is_counted_apart():
+    """A node nobody could look at is NOT a node that did not move.
+
+    Two ways a watched ID goes unmeasurable: it is outside the Pattern
+    altogether, which the adapter catches, or boundary updating dropped the
+    vertex it names, which only the backend can see. Either way it must
+    leave the watch fraction and be counted as unresolved, because a
+    denominator that swallows it reports a node the station never touched
+    as one the movement left where it was.
+    """
+    prepared, _, valleys = fan_cornered_pattern()
+    node_count = len(prepared["pattern"]["vertices"])
+    interior = [
+        node
+        for node in range(1, node_count)
+        if node not in valleys
+    ][:2]
+
+    # Out of range, caught at the adapter.
+    named = interior + [node_count + 50, -1]
+    response = equilibrate(prepared, 100.0, named, "watch-outside")
+    assert response["type"] == "result", response
+    metrics = response["result"]["diagnostic_metrics"]
+    assert metrics["horizontal_watched_node_count"] == len(interior)
+    assert metrics["horizontal_watched_unresolved_count"] == 2
+    assert "could not be measured" in response["result"]["report"]
+
+    # Unknown to the conditioned pattern, caught at the backend: the same
+    # accounting, one layer in, where a vertex boundary updating dropped
+    # looks exactly like a key that was never there.
+    disk_vertices, disk_faces, _, _, disk_valleys = lobed_disk()
+    problem = register_tna_pattern(
+        vertices=disk_vertices,
+        faces=disk_faces,
+        vertex_keys=tuple(range(len(disk_vertices))),
+    )
+    equilibration = tna_module.equilibrate_tna_problem(
+        problem,
+        support_mode="keys",
+        support_keys=disk_valleys,
+        move=100.0,
+        watched_keys=(disk_valleys[0], "no such node"),
+    )
+    assert equilibration.diagnostics["horizontal_watched_node_count"] == 1
+    assert (
+        equilibration.diagnostics["horizontal_watched_unresolved_count"] == 1
+    )
+    assert "could not be measured" in equilibration.report
 
 
 def test_a_move_outside_nought_to_a_hundred_is_refused_at_the_boundary():

@@ -2813,12 +2813,23 @@ def equilibrate_tna_problem(
         default=0.0,
     )
 
+    # A watched node the station cannot MEASURE is not a node that did not
+    # move. Boundary updating drops vertices, and a dropped vertex has no
+    # form key, so counting it in the denominator would report it as
+    # stationary when the truth is that nobody looked at it. Resolve the
+    # list first, report the resolved count, and say the remainder out loud.
     watched_source_keys = tuple(watched_keys or ())
+    resolved_watched = tuple(
+        source_key
+        for source_key in watched_source_keys
+        if conditioned.source_to_form.get(source_key) is not None
+    )
+    unresolved_watched_count = (
+        len(watched_source_keys) - len(resolved_watched)
+    )
     moved_watched = []
-    for source_key in watched_source_keys:
-        form_key = conditioned.source_to_form.get(source_key)
-        if form_key is None:
-            continue
+    for source_key in resolved_watched:
+        form_key = conditioned.source_to_form[source_key]
         if displacement.get(int(form_key), 0.0) > move_epsilon:
             moved_watched.append(source_key)
 
@@ -2864,7 +2875,8 @@ def equilibrate_tna_problem(
         "horizontal_moved_vertex_count": moved_vertex_count,
         "horizontal_held_node_count": len(held_form_keys),
         "horizontal_held_move_max": held_move_max,
-        "horizontal_watched_node_count": len(watched_source_keys),
+        "horizontal_watched_node_count": len(resolved_watched),
+        "horizontal_watched_unresolved_count": unresolved_watched_count,
         "horizontal_watched_moved_count": len(moved_watched),
         "horizontal_vertex_count": len(moved_xy),
         "horizontal_edge_count": len(conditioned.real_edges),
@@ -2896,8 +2908,13 @@ def equilibrate_tna_problem(
         len(held_form_keys),
         held_move_max,
         len(moved_watched),
-        len(watched_source_keys),
+        len(resolved_watched),
     )
+    if unresolved_watched_count > 0:
+        report += (
+            "\n{} watched node(s) are not part of the conditioned pattern "
+            "and could not be measured".format(unresolved_watched_count)
+        )
     if negative_before is not None and negative_after is not None:
         report += (
             "\nTension edges an exact self-stress needs: {} became "

@@ -675,10 +675,12 @@ public sealed class TnaHorizontalComponent :
             HorizontalMetrics(result.Prepared.WorkerMetadata);
         string lengthUnit =
             fallbackRelaxed!.Prepared?.Source?.Topology?.LengthUnit ?? "m";
-        (string chin, string? warning) =
+        (string chin, string? warning, string? remark) =
             HorizontalSummary(metrics, lengthUnit);
         if (warning is not null)
             AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, warning);
+        if (remark is not null)
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, remark);
         Message = chin;
 
         BuildPreview(fallbackRelaxed!.Prepared, result.Prepared);
@@ -764,9 +766,10 @@ public sealed class TnaHorizontalComponent :
     /// about them, and a tension count the algebraic projection could not
     /// measure is absent rather than reported as nought.
     /// </summary>
-    internal static (string Chin, string? Warning) HorizontalSummary(
-        IReadOnlyDictionary<string, double> metrics,
-        string lengthUnit)
+    internal static (string Chin, string? Warning, string? Remark)
+        HorizontalSummary(
+            IReadOnlyDictionary<string, double> metrics,
+            string lengthUnit)
     {
         string unit = string.IsNullOrWhiteSpace(lengthUnit)
             ? string.Empty
@@ -832,7 +835,29 @@ public sealed class TnaHorizontalComponent :
                 "half-plane cannot be balanced by any positive force " +
                 "density, at any plan the station is allowed to reach.";
         }
-        return (chin, warning);
+
+        // A watched node the station could not measure is SAID. Absorbing
+        // it into "did not move" is the one thing the watch must never do:
+        // the ruling asks how many principal-line nodes moved, and a node
+        // nobody looked at is not an answer to that question.
+        string? remark = null;
+        if (metrics.TryGetValue(
+                "horizontal_watched_unresolved_count",
+                out double unresolved) &&
+            unresolved >= 1.0)
+        {
+            remark =
+                $"{unresolved:F0} watched principal-line " +
+                (unresolved == 1.0 ? "node was" : "nodes were") +
+                " not part of the conditioned pattern and could not be " +
+                "measured; the moved count above is out of " +
+                (metrics.TryGetValue(
+                    "horizontal_watched_node_count", out double watchedTotal)
+                    ? $"{watchedTotal:F0}"
+                    : "the rest") +
+                ", not out of every node named.";
+        }
+        return (chin, warning, remark);
     }
 
     private static string Number(double value) =>

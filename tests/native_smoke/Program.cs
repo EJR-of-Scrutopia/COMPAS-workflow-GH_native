@@ -38162,7 +38162,7 @@ internal static class Program
                 null, new object[] { map })!;
         }
 
-        (string Chin, string? Warning) Summarise(
+        (string Chin, string? Warning, string? Remark) Summarise(
             IReadOnlyDictionary<string, double> metrics)
         {
             object result = summary.Invoke(
@@ -38172,7 +38172,8 @@ internal static class Program
             Type tuple = result.GetType();
             return (
                 (string)tuple.GetField("Item1")!.GetValue(result)!,
-                (string?)tuple.GetField("Item2")!.GetValue(result));
+                (string?)tuple.GetField("Item2")!.GetValue(result),
+                (string?)tuple.GetField("Item3")!.GetValue(result));
         }
 
         // The worker's own numbers reach this side as TEXT under the
@@ -38232,7 +38233,7 @@ internal static class Program
             ["horizontal_converged_after"] = 1.0,
             ["horizontal_gate_degrees"] = 5.0
         };
-        (string chin, string? warning) = Summarise(full);
+        (string chin, string? warning, string? remark) = Summarise(full);
         const string expected =
             "moved 1.7 m max, 0.152 mean; 30 tension edges and 25.5 "
             + "degrees became 0 and 0.0; 9 principal-line nodes moved";
@@ -38246,6 +38247,66 @@ internal static class Program
             throw new InvalidOperationException(
                 "a Move that passed the gate warns the canvas about "
                 + $"nothing; got '{warning}'.");
+        }
+        if (remark is not null)
+        {
+            throw new InvalidOperationException(
+                "a watch the station measured in full remarks about "
+                + $"nothing; got '{remark}'.");
+        }
+
+        // A watched node the station could NOT measure is said out loud.
+        // Absorbing it into "did not move" would report a node nobody
+        // looked at as a node that stayed put, which is the one thing the
+        // ruling's watch must never do.
+        var unmeasured = new Dictionary<string, double>(
+            full, StringComparer.Ordinal)
+        {
+            ["horizontal_watched_node_count"] = 11.0,
+            ["horizontal_watched_unresolved_count"] = 1.0
+        };
+        (string unmeasuredChin, _, string? unmeasuredRemark) =
+            Summarise(unmeasured);
+        if (unmeasuredRemark is null ||
+            !unmeasuredRemark.Contains(
+                "1 watched principal-line node was",
+                StringComparison.Ordinal) ||
+            !unmeasuredRemark.Contains(
+                "could not be measured", StringComparison.Ordinal) ||
+            !unmeasuredRemark.Contains("out of 11", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "an unmeasurable watched node must be named, with the "
+                + "denominator the moved count is really out of; got "
+                + $"'{unmeasuredRemark ?? "<none>"}'.");
+        }
+        if (unmeasuredChin != expected)
+        {
+            throw new InvalidOperationException(
+                "the remark is a remark, not a rewrite of the chin; got "
+                + $"'{unmeasuredChin}'.");
+        }
+        var unmeasuredPlural = new Dictionary<string, double>(
+            unmeasured, StringComparer.Ordinal)
+        {
+            ["horizontal_watched_unresolved_count"] = 3.0
+        };
+        if (!Summarise(unmeasuredPlural).Remark!.Contains(
+                "3 watched principal-line nodes were",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "three unmeasurable nodes are nodes, not a node; got "
+                + $"'{Summarise(unmeasuredPlural).Remark}'.");
+        }
+        if (Summarise(new Dictionary<string, double>(
+                full, StringComparer.Ordinal)
+            {
+                ["horizontal_watched_unresolved_count"] = 0.0
+            }).Remark is not null)
+        {
+            throw new InvalidOperationException(
+                "nought unmeasurable nodes is nothing to say.");
         }
 
         // One watched node moved, so the word is singular.
@@ -38274,7 +38335,7 @@ internal static class Program
             ["horizontal_watched_moved_count"] = 0.0,
             ["horizontal_converged_after"] = 1.0
         };
-        (string bareChin, string? bareWarning) = Summarise(bare);
+        (string bareChin, string? bareWarning, _) = Summarise(bare);
         if (bareChin !=
             "moved 1.7 m max, 0.152 mean; 25.5 degrees became 0.0")
         {
@@ -38293,7 +38354,7 @@ internal static class Program
             ["horizontal_angle_after"] = 18.75,
             ["horizontal_converged_after"] = 0.0
         };
-        (_, string? stalledWarning) = Summarise(stalled);
+        (_, string? stalledWarning, _) = Summarise(stalled);
         if (stalledWarning is null ||
             !stalledWarning.Contains("18.8", StringComparison.Ordinal) ||
             !stalledWarning.Contains("5.0", StringComparison.Ordinal) ||

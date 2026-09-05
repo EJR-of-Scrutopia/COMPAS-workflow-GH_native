@@ -427,11 +427,19 @@ def equilibrate_tna(
         raise AdapterError("Move must be a finite percentage.")
     if move < 0.0 or move > 100.0:
         raise AdapterError("Move must be a percentage between 0 and 100.")
-    watched = tuple(
-        int(value)
-        for value in (watched_node_ids or ())
-        if 0 <= int(value) < len(vertices)
-    )
+    # A watched ID this Pattern does not have is SAID, not dropped. Silently
+    # filtering it would shrink both halves of the watch fraction and leave
+    # the chin reporting a watch on fewer nodes than were named, with
+    # nothing anywhere admitting one went missing.
+    watched = []
+    watched_out_of_range = []
+    for value in watched_node_ids or ():
+        node_id = int(value)
+        if 0 <= node_id < len(vertices):
+            watched.append(node_id)
+        else:
+            watched_out_of_range.append(node_id)
+    watched = tuple(watched)
 
     module = import_backend(
         backend,
@@ -483,10 +491,23 @@ def equilibrate_tna(
             equilibration, ("moved_source_points",)
         ).items()
     }
+    diagnostics = dict(get_any(equilibration, ("diagnostics",), {}))
+    report = str(get_any(equilibration, ("report",), ""))
+    if watched_out_of_range:
+        diagnostics["horizontal_watched_unresolved_count"] = int(
+            diagnostics.get("horizontal_watched_unresolved_count", 0)
+        ) + len(watched_out_of_range)
+        report += (
+            "\n{} watched node ID(s) are outside this Pattern and could not "
+            "be measured: {}".format(
+                len(watched_out_of_range),
+                ", ".join(str(value) for value in watched_out_of_range),
+            )
+        )
     return {
         "moved_points": moved_points,
-        "diagnostics": dict(get_any(equilibration, ("diagnostics",), {})),
-        "report": str(get_any(equilibration, ("report",), "")),
+        "diagnostics": diagnostics,
+        "report": report,
         "support_node_ids": tuple(support_ids),
         "fixed_node_ids": fixed_ids,
         "watched_node_ids": watched,
