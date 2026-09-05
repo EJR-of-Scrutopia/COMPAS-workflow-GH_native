@@ -102,7 +102,26 @@ falls out of the frames, because the wire lengthens as the net rises and shorten
 into curvature. The plugin exports two facts only (mapping, radius-and-reeve); the studio owns
 the arithmetic.
 
-## 6. The continuous scene
+## 5a. The lifting order, his ruling of 2026-09-05 evening
+
+Verbatim: "the mechanism is the columns lifting the net, the pulleys tighten when net is
+raised correctly and ribs are also reeled in to form the final shape." Three phases, binding
+on the scene and on the diagnostics:
+
+1. THE COLUMNS LIFT. The push-up comes from the columns rising on their sliding ground
+   mechanism, carrying the net at the bars. The reels do not raise anything.
+2. THE PULLEYS TIGHTEN once the net is raised correctly: the edge reels take up the
+   anchor-line wires.
+3. THE RIBS ARE REELED IN to form the final shape: the node reels draw the ribs down into
+   curvature.
+
+CONSEQUENCE FOR DIAGNOSE: the Animate warning "N nodes sit ABOVE the bare surface ... a reel
+only pulls down ... it needs a mechanism this machine does not have" models a reels-only
+machine and is WRONG about this one: the column lift IS the push-up provider, and the frames
+already animate it (bars risen measured in the same chin). The warning must be re-modelled:
+push-up demand is served by column lift where a node's demand is reachable through the bars
+from a rising column, and the warning only names the nodes NO column can serve. Until that
+lands, the current warning over-reports and should be read against this section.
 
 One clock: the reel (the formwork frames, 0 to 100 on the machine's own timeline) runs first;
 the voussoir drop (the studio's own staging, from the skin document) follows on the same clock,
