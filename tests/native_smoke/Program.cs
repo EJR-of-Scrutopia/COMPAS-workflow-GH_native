@@ -1277,7 +1277,23 @@ internal static class Program
                 "CLOSED with its one cap cell where finding 1c measured " +
                 "it dying in the plan filter. The same rescue removes the " +
                 "L-shaped shell's long-standing re-entrant drops at CH " +
-                "0.5 and 0.3, re-pinned at zero in their own check.");
+                "0.5 and 0.3, re-pinned at zero in their own check. FIX 4, " +
+                "flat low stones: a closer on a slab of one Course Height or " +
+                "more takes the traced middle level as a THIRD SECTION, route " +
+                "(b) of rule 5.2.3, so its loft follows the surface instead " +
+                "of chording it: interior sampling (matched-parameter ruled " +
+                "points against the lifted net, the corner check being " +
+                "vacuous at 0.0000) reads the closers at 0.0074 m worst " +
+                "INSIDE the ordinary courses' own 0.0143 envelope, where " +
+                "the two-rail chord measured 0.0169 and 8b9a44a's fat slab " +
+                "35 mm. And the Rhino-side rescue is wired: a cell whose " +
+                "solid will not close ships its fallback face AT TOP HEIGHT " +
+                "by the same top route the solid takes, the warning saying " +
+                "plainly that it is NOT a solid and naming any cell that " +
+                "could not raise even a top face; the Brep half is " +
+                "scripts/rhino_skin_surface.py part four, slot==Solid for " +
+                "every cell at nonzero Th, awaiting its first run inside " +
+                "Rhino.");
         }
         catch (Exception exception)
         {
@@ -23642,6 +23658,101 @@ internal static class Program
                 "dying in (finding 1c): the crown ships CLOSED with one " +
                 $"cap cell; got {capCount}.");
         }
+
+        // ---- FIX 4. INTERIOR SAG (finding 2a). Outline corners measure
+        // 0.0000 m on every route and prove nothing; the findings doc
+        // forbids the corner check by name. The deviant is the MID-FACE
+        // of a cell whose loft chords across too much surface, so the
+        // check samples ruled-surface interiors, matched normalised
+        // parameters between consecutive rails, against the lifted net.
+        // The closing stones must sit INSIDE the ordinary courses' own
+        // sag envelope: without fix 4's intermediate rail they measured
+        // 0.0169 m against the courses' 0.0143 on this fixture (and 35
+        // mm on 8b9a44a's 1.91 CH slab); with the traced middle level as
+        // a third section, route (b) of rule 5.2.3, they read 0.0074.
+        MethodInfo liftPlanPoint = RequirePublicStatic(
+            patterns, "LiftPlanPoint");
+        double SectionSag(double[][][] sections)
+        {
+            double worst = 0.0;
+            for (int rail = 0; rail + 1 < sections.Length; rail++)
+            {
+                double[][] one = sections[rail];
+                double[][] two = sections[rail + 1];
+                for (double t = 0.125; t <= 0.876; t += 0.125)
+                {
+                    double[] onA = RunPointAt(one, t);
+                    double[] onB = RunPointAt(two, t);
+                    foreach (double s in new[] { 0.25, 0.5, 0.75 })
+                    {
+                        double x = onA[0] + ((onB[0] - onA[0]) * s);
+                        double y = onA[1] + ((onB[1] - onA[1]) * s);
+                        double z = onA[2] + ((onB[2] - onA[2]) * s);
+                        var lifted = (double[]?)liftPlanPoint.Invoke(
+                            null, new object[] { blendedNet, x, y });
+                        if (lifted is null)
+                            continue;
+                        worst = Math.Max(worst, lifted[2] - z);
+                    }
+                }
+            }
+            return worst;
+        }
+        double courseSag = cells
+            .Where(cell => !cell.Closer && !cell.Cap &&
+                cell.Sections is { Length: >= 2 })
+            .Max(cell => SectionSag(cell.Sections!));
+        double closerSag = closerCells
+            .Where(cell => cell.Sections is { Length: >= 2 })
+            .Max(cell => SectionSag(cell.Sections!));
+        if (closerSag > courseSag + 1.0e-3)
+        {
+            throw new InvalidOperationException(
+                "The closing stones' interiors sit INSIDE the ordinary " +
+                "courses' own sag envelope (finding 2a): the courses' " +
+                $"worst mid-face deficit is {courseSag:F4} m and the " +
+                $"closers' is {closerSag:F4} m, which is outside. Without " +
+                "fix 4's intermediate rail the closers measured 0.0169 " +
+                "against 0.0143.");
+        }
+        if (Math.Abs(courseSag - 0.0143) > 0.002 ||
+            Math.Abs(closerSag - 0.0074) > 0.002)
+        {
+            throw new InvalidOperationException(
+                "And both envelopes are pinned two-sidedly: courses " +
+                $"0.0143 m and closers 0.0074 m; got {courseSag:F4} and " +
+                $"{closerSag:F4}. If a fix legitimately moved these, " +
+                "re-measure and re-justify.");
+        }
+    }
+
+    /// <summary>The point at normalised arc parameter t along a sampled
+    /// run, linear between samples: the ruled loft joins EQUAL parameters
+    /// between consecutive rails, so only matched parameters lie on the
+    /// surface it builds.</summary>
+    private static double[] RunPointAt(double[][] run, double t)
+    {
+        double total = 0.0;
+        for (int at = 0; at + 1 < run.Length; at++)
+            total += Distance3(run[at], run[at + 1]);
+        double target = total * t;
+        double walked = 0.0;
+        for (int at = 0; at + 1 < run.Length; at++)
+        {
+            double step = Distance3(run[at], run[at + 1]);
+            if (walked + step >= target && step > 1.0e-15)
+            {
+                double s = (target - walked) / step;
+                return new[]
+                {
+                    run[at][0] + ((run[at + 1][0] - run[at][0]) * s),
+                    run[at][1] + ((run[at + 1][1] - run[at][1]) * s),
+                    run[at][2] + ((run[at + 1][2] - run[at][2]) * s)
+                };
+            }
+            walked += step;
+        }
+        return run[^1];
     }
 
     /// <summary>The slab's UNCOVERED plan area: every net face clipped to
@@ -33008,9 +33119,12 @@ internal static class Program
 
         string? Face(int failed, int first) =>
             (string?)faceLine.Invoke(null, new object[] { failed, first });
-        string? Thick(int failed, int first, double th, double extrude) =>
+        string? Thick(
+            int failed, int first, double th, double extrude,
+            int shippedLow = 0) =>
             (string?)thickenLine.Invoke(
-                null, new object[] { failed, first, th, extrude });
+                null,
+                new object[] { failed, first, th, extrude, shippedLow });
 
         if (Face(0, -1) is not null ||
             Thick(0, -1, 0.29, 0.0) is not null ||
@@ -33050,6 +33164,14 @@ internal static class Program
                      (thickText, "STILL EXPORTED",
                          "a cell whose thickening failed is not lost: it " +
                          "is exported and drawn as the un-thickened face"),
+                     (thickText, "AT TOP HEIGHT",
+                         "round two's fix 4: the fallback face ships AT " +
+                         "TOP HEIGHT so the cell reads in the coursing " +
+                         "instead of sitting Th below its neighbours, " +
+                         "which is Param's ruling verbatim"),
+                     (thickText, "NOT SOLIDS",
+                         "and the named warning still says plainly that " +
+                         "the rescued cells are not solids"),
                      (thickText, "only one",
                          "a smaller Thickness is the ONLY remedy this " +
                          "component has, now that both the toggle and its " +
@@ -33082,6 +33204,27 @@ internal static class Program
                     $"{what}; '{fragment}' is missing from '{text}'.");
             }
         }
+        // AND THE BOTTOM-HEIGHT COUNT IS NAMED ONLY WHERE IT IS NONZERO:
+        // a cell whose top face also failed ships at bottom height, the
+        // old behaviour, and the author is told how many rather than left
+        // to find them by eye.
+        string thickTextLow = Thick(148, 3, 0.29, 0.0, 5)!;
+        if (!thickTextLow.Contains(
+                "5 of them could not raise a top face",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Where some cells could not raise even a top face, the " +
+                "warning names the count shipping at bottom height; got " +
+                $"'{thickTextLow}'.");
+        }
+        if (thickText.Contains("could not raise", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And at zero the clause is absent rather than reading " +
+                "'0 of them'; got '" + thickText + "'.");
+        }
+
         // NOTHING IN THIS MESSAGE MAY OFFER THE SLIDER AS A REMEDY, and
         // nothing may still describe the dead toggle. The first draft
         // advised "or Along Normal off", the second "Offset ON, which

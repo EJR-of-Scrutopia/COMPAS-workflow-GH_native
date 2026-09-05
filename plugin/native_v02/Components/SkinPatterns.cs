@@ -4121,6 +4121,39 @@ internal static class SkinPatterns
         foreach ((int refusedCourse, double low, double high) in slabs)
         {
             AddTransition(transitions, low, high);
+            // FIX 4's INTERMEDIATE RAIL (spec 2026-09-05 round two,
+            // finding 2a): a closer spanning a full Course Height or more
+            // of field chords across the surface if its loft carries only
+            // the two boundary runs, and the chord sag is quadratic in
+            // the across width: 35 mm measured on the 1.91 CH slab, 17 mm
+            // on the 1.00 CH one, against the ordinary courses' 14 mm
+            // worst. The traced level nearest the slab's middle is
+            // already in the level list, so its curves become a THIRD
+            // section and the loft takes route (b) of rule 5.2.3, no new
+            // machinery, halving the chord and quartering the sag.
+            IReadOnlyList<SkinLevelCurve>? midRails = null;
+            if (high - low >= courseHeight - 1.0e-9)
+            {
+                double target = (low + high) / 2.0;
+                double bestLevel = double.NaN;
+                double bestDistance = double.PositiveInfinity;
+                foreach (double level in resolved.Levels)
+                {
+                    if (!(level > low + 1.0e-9) ||
+                        !(level < high - 1.0e-9))
+                    {
+                        continue;
+                    }
+                    double distance = Math.Abs(level - target);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestLevel = level;
+                    }
+                }
+                if (!double.IsNaN(bestLevel))
+                    midRails = resolved.Traced[levelIndex[bestLevel]];
+            }
             // RULE 3.2'S LAST SENTENCE: a closer stone sorts AT ITS
             // COMPONENT'S POSITION in the same scheme. The component it
             // belongs to is the GUIDE curve it was cut on, so the key is
@@ -4137,6 +4170,7 @@ internal static class SkinPatterns
                          high - low,
                          high - low >= courseHeight - 1.0e-9,
                          seams.Count > 0,
+                         midRails,
                          ref mergedPieces,
                          ref mergedShortKept,
                          ref mergedStillShort,
@@ -6360,6 +6394,7 @@ internal static class SkinPatterns
         double thickness,
         bool stagger,
         bool coverPinchOuts,
+        IReadOnlyList<SkinLevelCurve>? midRails,
         ref int mergedPieces,
         ref int mergedShortKept,
         ref int mergedStillShort,
@@ -6842,15 +6877,55 @@ internal static class SkinPatterns
             // same direction, which is route (a) of rule 5.2.3: the
             // guide's run and the other family's run, the second turned
             // back the way the first goes so a loft between them does
-            // not twist.
+            // not twist. And where the slab carries an intermediate rail
+            // (fix 4), the traced middle level's run rides between them
+            // and the loft is route (b)'s three sections: the outline is
+            // untouched, only the surface stops chording.
             var upper = new List<double[]>(back);
             upper.Reverse();
+            IReadOnlyList<double[]>? midRun = null;
+            if (midRails is not null && midRails.Count > 0)
+            {
+                SkinLevelCurve? midCurve = NearestCurveToPoint(
+                    PointAt(
+                        stone.Guide, (stone.U0 + stone.U1) / 2.0),
+                    midRails);
+                if (midCurve is not null && midCurve.Length > 1.0e-9)
+                {
+                    double m0 = NearestArcInPlan(midCurve, along[0]) -
+                        midCurve.Seam;
+                    double m1 = NearestArcInPlan(midCurve, along[^1]) -
+                        midCurve.Seam;
+                    if (midCurve.Closed)
+                    {
+                        double half = midCurve.Length / 2.0;
+                        while (m1 - m0 > half)
+                            m1 -= midCurve.Length;
+                        while (m0 - m1 > half)
+                            m1 += midCurve.Length;
+                    }
+                    if (Math.Abs(m1 - m0) > 1.0e-9)
+                    {
+                        List<double[]> rail = m1 >= m0
+                            ? Run(midCurve, m0, m1)
+                            : Run(midCurve, m1, m0);
+                        if (m1 < m0)
+                            rail.Reverse();
+                        midRun = rail;
+                    }
+                }
+            }
             closers.Add((stone.Guide, new SkinCell(
                 course, ring, stone.Clipped, stone.U0, stone.U1, false,
-                Sections: new[]
-                {
-                    (IReadOnlyList<double[]>)along, upper
-                },
+                Sections: midRun is null
+                    ? new[]
+                    {
+                        (IReadOnlyList<double[]>)along, upper
+                    }
+                    : new[]
+                    {
+                        (IReadOnlyList<double[]>)along, midRun, upper
+                    },
                 Closer: true)));
         }
         return closers;

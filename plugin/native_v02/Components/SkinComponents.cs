@@ -428,6 +428,7 @@ public sealed class SkinComponent : NativeComponentBase
             int firstFaceFailedCourse = -1;
             int thickenFailed = 0;
             int firstThickenFailedCourse = -1;
+            int thickenShippedLow = 0;
             bool thickening = Thickening(thickness);
             foreach (SkinCell cell in generated.Cells)
             {
@@ -442,12 +443,31 @@ public sealed class SkinComponent : NativeComponentBase
                             face, cell.Outline, cell.Sections, net,
                             thickness, extrude)
                         : null;
+                // FIX 4 (spec 2026-09-05 round two, finding 2b), Param's
+                // ruling verbatim: "the fix must rescue the cell, not
+                // advise on sliders: either close the solid robustly or,
+                // at minimum, ship the fallback face AT TOP HEIGHT so it
+                // reads in the coursing while a named warning still says
+                // it is not a solid." Where the solid would not close, the
+                // TOP face alone is built by the same route the solid's
+                // top takes and ships in the Face slot, so the cell stands
+                // at its neighbours' height instead of sunk Th below them,
+                // which is his 32 grey faces on the six-lobe. The bottom
+                // face remains the last resort where even the top will not
+                // build.
+                Brep? topAtHeight =
+                    face is not null && thickening && solid is null
+                        ? CellTopFaceAtHeight(
+                            cell.Outline, cell.Sections, net,
+                            thickness, extrude)
+                        : null;
                 CellSurfaceSlot slot = ClassifyCellSurface(
                     face is not null, thickening, solid is not null);
                 surfaceBranches[course].Add(slot switch
                 {
                     CellSurfaceSlot.Solid => solid,
-                    CellSurfaceSlot.Face => face,
+                    CellSurfaceSlot.Face =>
+                        thickening ? (topAtHeight ?? face) : face,
                     _ => null
                 });
                 if (slot == CellSurfaceSlot.Nothing)
@@ -459,6 +479,8 @@ public sealed class SkinComponent : NativeComponentBase
                 else if (slot == CellSurfaceSlot.Face && thickening)
                 {
                     thickenFailed++;
+                    if (topAtHeight is null)
+                        thickenShippedLow++;
                     if (firstThickenFailedCourse < 0)
                         firstThickenFailedCourse = course;
                 }
@@ -474,7 +496,7 @@ public sealed class SkinComponent : NativeComponentBase
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, faceLine);
             string? thickenLine = ThickenFailureLine(
                 thickenFailed, firstThickenFailedCourse, thickness,
-                extrude);
+                extrude, thickenShippedLow);
             if (thickenLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, thickenLine);
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
@@ -683,7 +705,8 @@ public sealed class SkinComponent : NativeComponentBase
     /// range the count was taken at. It does not change the advice.
     /// </summary>
     internal static string? ThickenFailureLine(
-        int failed, int firstCourse, double thickness, double extrude)
+        int failed, int firstCourse, double thickness, double extrude,
+        int shippedLow = 0)
     {
         if (failed <= 0)
             return null;
@@ -700,8 +723,13 @@ public sealed class SkinComponent : NativeComponentBase
             " would not close into a SOLID at Thickness " +
             thickness.ToString("F3", CultureInfo.InvariantCulture) +
             $", the first at course {firstCourse}. Those cells are STILL " +
-            "EXPORTED and are drawn as the un-thickened face, so the " +
-            "slot holds a surface and not a null." + remedy;
+            "EXPORTED and are drawn as the un-thickened face AT TOP " +
+            "HEIGHT, so they read in the coursing beside their closed " +
+            "neighbours, but they are NOT SOLIDS." +
+            (shippedLow > 0
+                ? $" {shippedLow} of them could not raise a top face " +
+                  "either and ship at bottom height."
+                : string.Empty) + remedy;
     }
 
     /// <summary>
@@ -1419,6 +1447,41 @@ public sealed class SkinComponent : NativeComponentBase
         if (solid.SolidOrientation == BrepSolidOrientation.Inward)
             solid.Flip();
         return solid.IsSolid ? solid : null;
+    }
+
+    /// <summary>
+    /// FIX 4's TOP-HEIGHT FALLBACK (spec 2026-09-05 round two, finding
+    /// 2b): the TOP face alone, built by exactly the route
+    /// <see cref="ThickenCellSurface"/> builds it inside the solid, moved
+    /// rails lofted for a loft-route cell and the moved fan for a
+    /// fan-route one, handed back unflipped as a standalone face. Where
+    /// the solid will not close this is what ships in the Face slot, so
+    /// the cell reads in the coursing at its neighbours' top height
+    /// instead of sitting Th below them; null where even the top will not
+    /// build, in which case the bottom face remains the last resort and
+    /// the warning names the count shipping low.
+    /// </summary>
+    private static Brep? CellTopFaceAtHeight(
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
+        SkinNet net,
+        double thickness,
+        double extrude)
+    {
+        if (outline.Count < 3)
+            return null;
+        IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
+        double[] cellNormal = CellNormalFrom(outline, cornerNormals);
+        IReadOnlyList<double[]> moved = OffsetPointsFrom(
+            outline, cornerNormals, cellNormal, thickness, extrude);
+        IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
+            MovedSections(net, sections, cellNormal, thickness, extrude);
+        if (TopRefused(sections, movedSections))
+            return null;
+        return movedSections is not null
+            ? LoftSections(movedSections)
+            : OffsetTopFace(
+                net, outline, moved, cellNormal, thickness, extrude);
     }
 
     /// <summary>

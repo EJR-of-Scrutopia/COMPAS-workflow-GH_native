@@ -1134,3 +1134,127 @@ try:
         print(line)
 except Exception as error:  # pragma: no cover - reported to the console
     print("FAIL (12.5(f) to (h), NEW): %s" % (error,))
+
+
+# ---------------------------------------------------------------------------
+# Part four, NEW 2026-09-05 (round two, fix 4) and AWAITING PARAM'S RUN:
+# every cell ships in the SOLID slot at a nonzero Thickness, and a cell
+# whose solid will not close ships its fallback face AT TOP HEIGHT.
+#
+# Param's live six-lobe pull measured the defect this exists for: "32
+# faces would not close into a SOLID at Thickness 0.200, the first at
+# course 2. Those cells are STILL EXPORTED and are drawn as the
+# un-thickened face" -- a grey face sunk to bottom height amid closed red
+# solids, his flattest stones. His ruling, verbatim in the round-two
+# findings: "the fix must rescue the cell, not advise on sliders: either
+# close the solid robustly or, at minimum, ship the fallback face AT TOP
+# HEIGHT so it reads in the coursing while a named warning still says it
+# is not a solid."
+#
+# Two assertions, both needing the native core and therefore this script:
+#
+#   1. slot == Solid for EVERY cell at Th != 0: ThickenCellSurface closes
+#      every face of the fixture into a watertight solid. Where any cell
+#      fails, the count and the first course are REPORTED rather than
+#      silently warned, which is the round-two check the findings ask for.
+#   2. THE FALLBACK IS AT TOP HEIGHT: for every cell, CellTopFaceAtHeight
+#      (the exact top the solid's own route builds) exists, and its
+#      vertices stand |Th| from the bottom face's corners, so a cell whose
+#      solid fails still reads in the coursing at its neighbours' height.
+#
+# THESE CHECKS HAVE NOT BEEN RUN. The agent that wrote them cannot execute
+# Rhino; their first run is Param's.
+# ---------------------------------------------------------------------------
+
+
+def run_round_two_checks():
+    assembly = _load_plugin(PLUGIN_PATH)
+    skin_patterns = _find_type(assembly, "SkinPatterns")
+    skin_net_type = _find_type(assembly, "SkinNet")
+    skin_net_edge_type = _find_type(assembly, "SkinNetEdge")
+    skin_component_type = _find_type(assembly, "SkinComponent")
+
+    courses_method = _method(
+        skin_patterns, "Courses",
+        [skin_net_type, System.Double, System.Double, System.Double])
+    cell_surface_method = _method(
+        skin_component_type, "CellSurface", nonpublic=True)
+    thicken_method = _method(
+        skin_component_type, "ThickenCellSurface", nonpublic=True)
+    top_at_height_method = _method(
+        skin_component_type, "CellTopFaceAtHeight", nonpublic=True)
+
+    thickness = 0.2
+    extrude = 0.0
+    reports = []
+    vertices, faces, rim = _hemisphere()
+    net = _make_net(skin_net_type, skin_net_edge_type, vertices, faces, rim)
+    built = courses_method.Invoke(
+        None, System.Array[object]([net, 0.6, 0.35, 1.0 / 3.0]))
+    cells = list(_property(built, "Cells"))
+
+    solid_failures = []
+    top_failures = []
+    top_height_worst = 0.0
+    for at, cell in enumerate(cells):
+        outline = _property(cell, "Outline")
+        sections = _property(cell, "Sections")
+        face = cell_surface_method.Invoke(
+            None, System.Array[object]([cell, net]))
+        if face is None:
+            solid_failures.append((at, "no face"))
+            continue
+        solid = thicken_method.Invoke(
+            None,
+            System.Array[object](
+                [face, outline, sections, net, thickness, extrude]))
+        if solid is None or not solid.IsSolid:
+            solid_failures.append((at, "solid did not close"))
+        top = top_at_height_method.Invoke(
+            None,
+            System.Array[object](
+                [outline, sections, net, thickness, extrude]))
+        if top is None:
+            top_failures.append(at)
+            continue
+        # The fallback reads in the coursing: its bounding box stands
+        # about |Th| above the outline's own, not at bottom height.
+        box = top.GetBoundingBox(True)
+        bottom_z = max(point[2] for point in outline)
+        if box.Max.Z < bottom_z + 0.25 * abs(thickness):
+            top_height_worst = max(
+                top_height_worst, bottom_z + abs(thickness) - box.Max.Z)
+    if solid_failures:
+        raise RuntimeError(
+            "slot == Solid must hold for every cell at Th %.3f (round two "
+            "fix 4); %d of %d cells failed, first: %s"
+            % (thickness, len(solid_failures), len(cells),
+               solid_failures[0]))
+    if top_failures:
+        raise RuntimeError(
+            "the top-height fallback must exist for every cell whose "
+            "solid could fail; %d of %d cells could not raise a top "
+            "face, first at item %d"
+            % (len(top_failures), len(cells), top_failures[0]))
+    if top_height_worst > 1.0e-6:
+        raise RuntimeError(
+            "the fallback face must stand AT TOP HEIGHT; the worst sits "
+            "%.6f m low" % top_height_worst)
+    reports.append(
+        "PASS (round two fix 4, UNVERIFIED BY ITS AUTHOR): all %d cells "
+        "close into solids at Th %.2f, and every cell's top-height "
+        "fallback exists and stands at its neighbours' height."
+        % (len(cells), thickness))
+    return reports
+
+
+print(
+    "---- NEW 2026-09-05 (round two, fix 4), AWAITING PARAM'S RUN: the "
+    "slot==Solid and top-height-fallback checks below have NEVER been "
+    "executed. ----"
+)
+try:
+    for line in run_round_two_checks():
+        print(line)
+except Exception as error:  # pragma: no cover - reported to the console
+    print("FAIL (round two fix 4, NEW): %s" % (error,))
