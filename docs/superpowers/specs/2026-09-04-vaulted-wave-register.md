@@ -267,3 +267,62 @@ test proved able to fail by mutation; full Windows paths in replies.
 
 KTX2/Basis, Draco, Frankot-Chellappa in JS, WebGPU switch, re-cutting
 the 58 small one-unit crops from 8K sources.
+
+## The overnight Unreal harvest (2026-09-05, Param asleep)
+
+State of the pipeline, kept honest as it runs:
+
+- WORKS: headless UnrealEditor-Cmd + Python + the engine glTF exporter,
+  driven per project (UE 5.4 at A:\unreal engine\UE_5.4 for
+  Trees_Downloaded, 5.7 for tree_assets; GLTFExporter plugin enabled in
+  both .uprojects). tools/props/ingest.mjs is the finishing line into
+  props-hd (skin strip, slot-aware texture re-encode, budgets,
+  manifest).
+- LANDED: all 17 European Beech (Megascans, Fab Standard License) --
+  seedlings 2.3 MB, saplings 3.7-7 MB, three forest canopies at
+  118k-164k triangles ~9-10 MB, verified live beside the vault. The six
+  BIGGEST beeches (Field_01, Forest_01-05) export at LOD0 only
+  (default_level_of_detail is ignored on direct asset export; min_lod
+  does not exist in 5.4 Python); the in-flight fix rebuilds LOD0 from
+  the authored LOD1 in memory via
+  EditorStaticMeshLibrary.set_lod_from_static_mesh, never saving.
+- WALL, named: the 5.7 Megaplant species (Black Alder, Hornbeam, Norway
+  Maple, Silver Birch, Hazel, Goat Willow...) are Nanite-ASSEMBLY
+  skeletal meshes -- geometry exists only as Nanite assembly of branch
+  parts, classic sections are empty ("-1 indices"), and BOTH glTF
+  export paths (asset and spawned-actor selection) crash the engine
+  natively on the first tree even with r.Nanite.AllowAssemblies=1.
+  Not extractable tonight.
+- THE UNLOCK for the morning: Fab serves engine-appropriate formats.
+  The same species packs added to the UE 5.4 project (Trees_Downloaded)
+  arrive as classic static meshes exactly like the beech pack did.
+  Param: launcher > Fab library > Add to project (5.4) for Black Alder,
+  Hornbeam, Norway Maple (and any others); then one export+ingest run.
+- MetaHumans (MHC_Hannah, Mason, Skotukeda x2 in tree_assets): parked;
+  characters are assembled skeletal + groom stacks, licence terms since
+  the 2025 MetaHuman change permit use outside Unreal, but a posed
+  static export needs an interactive session or a much longer harness.
+  The posed-people ask ("standing, pointing, chatting") is registered.
+
+## Overnight close (2026-09-05 ~02:30): where it ended
+
+- LIBRARY: 110 props. 89 Poly Haven CC0 + 15 European Beech + 6
+  Megascans statics (5 rock/terrain clusters, 1 broadleaf study tree),
+  Fab Standard License, credited in NOTICE.txt. Verified in a composed
+  live scene: beech canopy green behind the vault, rocks at the
+  springing.
+- BAKE HYGIENE learned the hard way (in ingest.mjs now): drop impostor
+  billboards (textureless magenta, drew a black mass over the canopy);
+  zero metallicFactor when no metallic texture came through.
+- RIDERS still open: (1) beech Field_01 and Forest_02 export only at
+  LOD0 (2-3.4M tris; all three LOD-selection APIs tried and defeated:
+  default_level_of_detail ignored, min_lod absent in 5.4 Python,
+  set_lod_from_static_mesh returns success without effect) -- next idea
+  is duplicate-asset + remove-LOD0 or an FBX round trip; (2) posed
+  MetaHuman people ("standing, pointing, chatting"); (3) eager prop
+  template loading at boot now parses ~230 MB -- consider lazy
+  templates.
+- MORNING ERRAND for Param (2 minutes): Epic launcher > Fab library >
+  add Black Alder, Hornbeam, Norway Maple (and any other species) to
+  the UE 5.4 project Trees_Downloaded -- 5.4 delivery is classic static
+  meshes, and the whole export+ingest pipeline is proven on them.
