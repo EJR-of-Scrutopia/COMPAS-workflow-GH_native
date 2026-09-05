@@ -1131,3 +1131,255 @@ def test_the_worker_zmax_seam_passes_a_zero_density_to_the_library(
     assert metrics["selfweight_rounds_run"] > 1
     assert len(densities) == metrics["selfweight_rounds_run"]
     assert densities == [0.0] * len(densities)
+
+
+# The canvas rule 2.4(b) is about: a square grid on four corner supports,
+# a self-weight over the whole surface, and one heavy point load at the
+# centre vertex. Everything below drives the WORKER SEAM rather than
+# solve_tna_problem directly, because the zeroing this retires lived in
+# the adapter (ananke_equilibrium.gh.solvers) and a check that never
+# crosses it could not see the defect at all.
+LOADED_VERTEX = 12
+NODAL_LOAD = -25.0
+
+
+def loads_case_grid_payload(load_case, zmax=3.0, size=5):
+    vertices, faces, edges, corners, _ = grid(size)
+    return {
+        "topology": {
+            "kind": "faced",
+            "vertices": vertices,
+            "edges": edges,
+            "faces": faces,
+            "source_vertex_ids": [
+                "grid-{}".format(index) for index in range(len(vertices))
+            ],
+            "length_unit": "m",
+        },
+        "supports": {"mode": "explicit", "node_ids": list(corners)},
+        "load_case": load_case,
+        "control": {
+            "height_control": {"mode": "zmax", "value": zmax},
+            "settings": {
+                "horizontal_alpha": 100.0,
+                "horizontal_iterations": 100,
+                "vertical_iterations": 1000,
+                "tolerance": 1.0e-3,
+            },
+        },
+    }
+
+
+def solve_loads_case(load_case, request_id, zmax=3.0):
+    response = dispatch(request(
+        "tna.solve",
+        loads_case_grid_payload(load_case, zmax=zmax),
+        request_id,
+    ))
+    assert response["type"] == "result", response
+    return response["result"]
+
+
+def effective_pz_by_vertex(result):
+    return {
+        int(record["topology_vertex_ids"][0]): float(record["vector"][2])
+        for record in result["mappings"]["loads"]
+        if record["topology_vertex_ids"]
+    }
+
+
+def test_selfweight_and_nodal_loads_ride_together_additively():
+    """Check 5 of the 2026-09-04 design, rule 2.4(b).
+
+    A canvas with BOTH a self-weight and nodal point loads wired gets
+    both. Until this rule the adapter set ``pz = 0.0`` the moment a
+    surface load appeared, so the point loads were silently thrown away
+    and a canvas could carry one kind of load or the other, never both.
+    """
+
+    solved = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 1.0,
+            "density": 1.0,
+            "node_ids": [LOADED_VERTEX],
+            "vectors": [(0.0, 0.0, NODAL_LOAD)],
+        },
+        "solve-both-wired",
+    )
+    metrics = solved["diagnostic_metrics"]
+
+    # THE TWO TOTALS, REPORTED SEPARATELY. The nodal half is exactly what
+    # was wired: not a fraction of it, not zero.
+    assert metrics["nodal_total_pz"] == pytest.approx(NODAL_LOAD, rel=1e-12)
+    # The self-weight half is a real weight, not a rounding error. The
+    # plan is 4 x 4 metres at a density of one, so a surface risen out of
+    # that plan can never weigh less than 16.
+    assert metrics["selfweight_total_pz"] <= -16.0
+    # And they are the whole of the load: the two totals add up to the
+    # one the equilibrium actually satisfies.
+    assert metrics["effective_total_pz"] == pytest.approx(
+        metrics["nodal_total_pz"] + metrics["selfweight_total_pz"],
+        rel=1e-12,
+    )
+    assert metrics["selfweight_mode"] == "refined on the solved geometry"
+
+    # ADDITIVE AT THE VERTEX, not merely in the total. The loaded vertex
+    # carries its own tributary share AND the point load; every other
+    # vertex carries its share alone, and on this fixture no share comes
+    # anywhere near the point load.
+    pz_by_vertex = effective_pz_by_vertex(solved)
+    assert pz_by_vertex[LOADED_VERTEX] < NODAL_LOAD
+    others = [
+        value
+        for vertex, value in pz_by_vertex.items()
+        if vertex != LOADED_VERTEX
+    ]
+    assert others
+    assert max(others) < 0.0
+    assert min(others) > 0.5 * NODAL_LOAD, (
+        "no unloaded vertex should carry anything like the point load: "
+        "{}".format(sorted(others))
+    )
+
+    # The self-weight alone, everything else equal, is the same solve
+    # without the point load: lighter in total, and with the loaded
+    # vertex carrying only its own share.
+    alone = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 1.0,
+            "density": 1.0,
+        },
+        "solve-selfweight-alone",
+    )
+    alone_metrics = alone["diagnostic_metrics"]
+    assert alone_metrics["nodal_total_pz"] == pytest.approx(0.0, abs=1e-12)
+    assert alone_metrics["effective_total_pz"] == pytest.approx(
+        alone_metrics["selfweight_total_pz"], rel=1e-12
+    )
+    assert (
+        metrics["effective_total_pz"] < alone_metrics["effective_total_pz"]
+    )
+    alone_pz = effective_pz_by_vertex(alone)
+    assert alone_pz[LOADED_VERTEX] > 0.5 * NODAL_LOAD
+
+
+def test_a_solve_with_no_selfweight_ships_neither_total():
+    """The other half of rule 2.4(b)'s diagnostics: a canvas with point
+    loads and no self-weight has ONE load, and effective_total_pz already
+    is it. Two more lines saying so, one of them a nought, is the defect
+    rule 2.5 spent a round retiring."""
+
+    solved = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "point",
+            "node_ids": [LOADED_VERTEX],
+            "vectors": [(0.0, 0.0, NODAL_LOAD)],
+        },
+        "solve-nodal-only",
+    )
+    metrics = solved["diagnostic_metrics"]
+    assert metrics["selfweight_mode"] == "none"
+    for key in (
+        "nodal_total_pz",
+        "selfweight_total_pz",
+        "selfweight_thickness",
+        "selfweight_area_density",
+    ):
+        assert key not in metrics, (
+            "a solve carrying no self-weight is being told about one: "
+            "{}".format(sorted(metrics))
+        )
+    assert metrics["effective_total_pz"] == pytest.approx(
+        NODAL_LOAD, rel=1e-12
+    )
+
+
+def test_a_surface_load_authored_before_thickness_and_density_keeps_its_weight():
+    """The backwards mapping, pinned.
+
+    Under the OLD model the surface load's whole density was the base
+    vector's signed Z: a wire of (0, 0, -4) meant four units of weight
+    per square metre, downward. Under rule 2.4(a) the density is the
+    THICKNESS times the DENSITY, and the base vector says which way. The
+    two meet because both new inputs default to 1.0, so the old wire is
+    the new wire with T = 1 and D = 1, and the same weight can be
+    authored afresh as a unit downward vector with T = 1 and D = 4.
+    """
+
+    old_wire = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "tributary_area",
+            "base_vector": (0.0, 0.0, -4.0),
+        },
+        "solve-old-wire",
+    )
+    # The same canvas reopened, with the two appended ports at the
+    # defaults an archived definition gives them.
+    defaulted = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "tributary_area",
+            "base_vector": (0.0, 0.0, -4.0),
+            "thickness": 1.0,
+            "density": 1.0,
+        },
+        "solve-old-wire-defaulted",
+    )
+    # And the weight re-authored under the new model: a unit downward
+    # vector, one unit thick, at a density of four.
+    new_wire = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 1.0,
+            "density": 4.0,
+        },
+        "solve-new-wire",
+    )
+
+    old_metrics = old_wire["diagnostic_metrics"]
+    for other in (defaulted, new_wire):
+        metrics = other["diagnostic_metrics"]
+        assert metrics["effective_total_pz"] == pytest.approx(
+            old_metrics["effective_total_pz"], rel=1e-12
+        )
+        assert metrics["vertical_scale"] == pytest.approx(
+            old_metrics["vertical_scale"], rel=1e-12
+        )
+        assert metrics["selfweight_area_density"] == pytest.approx(
+            -4.0, rel=1e-12
+        )
+        for old_vertex, vertex in zip(
+            old_wire["equilibrium"]["vertices"],
+            other["equilibrium"]["vertices"],
+        ):
+            assert vertex[2] == pytest.approx(old_vertex[2], abs=1e-12)
+
+    # The thickness is the other half of the pair, and it multiplies:
+    # half the thickness at the same density is half the weight, which is
+    # what a canvas asking for a 200 mm shell at 24 units expects.
+    halved = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 0.5,
+            "density": 4.0,
+        },
+        "solve-half-thickness",
+    )
+    assert halved["diagnostic_metrics"]["selfweight_thickness"] == 0.5
+    assert halved["diagnostic_metrics"][
+        "selfweight_total_load_by_round"
+    ][0] == pytest.approx(
+        0.5 * old_metrics["selfweight_total_load_by_round"][0], rel=1e-12
+    )

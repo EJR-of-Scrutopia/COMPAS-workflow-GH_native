@@ -424,6 +424,92 @@ def test_tna_solve_persists_reciprocal_graphs_and_stable_mappings():
     assert decode_frame(encode_frame(response)) == response
 
 
+def test_the_load_case_wire_carries_the_selfweight_thickness_and_density():
+    """Rule 2.4(a) of the 2026-09-04 design crosses the worker boundary.
+
+    The native Loads component sends the self-weight's thickness and
+    density as fields of their own; the decoder allowlists them by name,
+    so a field it does not know about is refused rather than ignored, and
+    a load case that carries neither is the load case every canvas sent
+    before they existed: thickness 1.0, density 1.0.
+    """
+
+    calls = []
+
+    def backend(**kwargs):
+        calls.append(kwargs)
+        return fake_tna_backend(**kwargs)
+
+    payload = tna_payload()
+    payload["load_case"] = {
+        "name": "dead",
+        "distribution": "self_weight",
+        "base_vector": [0, 0, -1],
+        "thickness": 0.2,
+        "density": 24.0,
+        "node_ids": [4],
+        "vectors": [[0, 0, -3.0]],
+    }
+    response = dispatch(
+        request("tna.solve", payload, "tna-selfweight"),
+        tna_backend=backend,
+    )
+
+    assert response["type"] == "result", response
+    assert calls
+    load_case = calls[0]["load_case"]
+    assert load_case.thickness == pytest.approx(0.2)
+    assert load_case.density == pytest.approx(24.0)
+    # Both halves of rule 2.4(b)'s load case survive the wire together.
+    assert load_case.base_vector == (0.0, 0.0, -1.0)
+    assert load_case.node_ids == (4,)
+    assert load_case.vectors == ((0.0, 0.0, -3.0),)
+
+    # Absent, and explicitly null, both read as one.
+    for value in ({}, {"thickness": None, "density": None}):
+        bare = tna_payload()
+        bare["load_case"] = dict(
+            {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": [0, 0, -1],
+            },
+            **value,
+        )
+        calls.clear()
+        assert dispatch(
+            request("tna.solve", bare, "tna-bare"),
+            tna_backend=backend,
+        )["type"] == "result"
+        assert calls[0]["load_case"].thickness == 1.0
+        assert calls[0]["load_case"].density == 1.0
+
+
+def test_the_load_case_wire_refuses_a_signed_selfweight_density():
+    """The density is a magnitude and the base vector is the direction.
+    A negative density would flip a vault's weight upward while every
+    arrow on the canvas still pointed down, so it is refused at the
+    boundary rather than solved."""
+
+    payload = tna_payload()
+    payload["load_case"] = {
+        "name": "dead",
+        "distribution": "self_weight",
+        "base_vector": [0, 0, -1],
+        "density": -24.0,
+    }
+    called = []
+
+    response = dispatch(
+        request("tna.solve", payload, "tna-signed-density"),
+        tna_backend=lambda **kwargs: called.append(kwargs),
+    )
+
+    assert response["type"] == "error", response
+    assert "density cannot be negative" in response["error"]["message"]
+    assert not called
+
+
 def test_tna_solve_rejects_line_topology_before_backend_call():
     payload = tna_payload()
     payload["topology"]["kind"] = "line"
