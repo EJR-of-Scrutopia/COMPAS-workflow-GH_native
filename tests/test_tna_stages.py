@@ -7,6 +7,7 @@ pytest.importorskip("compas_fd")
 
 from ananke_equilibrium.worker import dispatch
 from tree_forest_compas import tna as tna_module
+from tree_forest_compas.tna import HORIZONTAL_ACCEPT_DEGREES
 from tree_forest_compas.tna import prepare_tna_pattern
 from tree_forest_compas.tna import register_tna_pattern
 from tree_forest_compas.tna import solve_tna_problem
@@ -1561,3 +1562,278 @@ def test_a_self_balancing_load_still_solves_because_the_guard_asks_each_vertex()
     assert solved["diagnostic_metrics"]["effective_total_pz"] == pytest.approx(
         0.0, abs=1e-12
     )
+
+
+# ---------------------------------------------------------------------------
+# TNA Horizontal: the station between Relax and Solve.
+#
+# Its reason to exist is a plan with genuine FAN CORNERS, free nodes whose
+# every edge leaves into a wedge narrower than a half-plane. No positive
+# combination of those edge vectors can vanish, so no force density the solve
+# can choose balances that node, and the reciprocal stalls above RhinoVault's
+# five-degree gate however long it iterates. The lobed disk below carries
+# eighteen of them, six at forty-four degrees. It is the six-lobe disease in
+# miniature, and it is the pattern this component was built for.
+# ---------------------------------------------------------------------------
+
+
+def lobed_disk(lobes=6, amplitude=0.6, rings=4, spokes=24, radius=10.0):
+    """A polar disk whose rim swells into lobes: r = R (1 + a cos(n th)).
+
+    Supported at the six VALLEYS between the lobes, the free rim runs out
+    over each lobe and back, and the nodes at the lobe roots see the whole
+    pattern inside a wedge. The rim's sag relaxation cannot straighten a
+    lobe: the sag is measured from the support chord and an outward-swelling
+    arc satisfies it while still swelling outward.
+    """
+    from math import cos, pi, sin
+
+    vertices = [(0.0, 0.0, 0.0)]
+    ring_start = {}
+    for ring in range(1, rings + 1):
+        ring_start[ring] = len(vertices)
+        for j in range(spokes):
+            angle = 2.0 * pi * j / spokes
+            r = radius * (ring / rings) * (1.0 + amplitude * cos(lobes * angle))
+            vertices.append((r * cos(angle), r * sin(angle), 0.0))
+    faces = []
+    for j in range(spokes):
+        faces.append([0, ring_start[1] + j, ring_start[1] + (j + 1) % spokes])
+    for ring in range(1, rings):
+        a0, b0 = ring_start[ring], ring_start[ring + 1]
+        for j in range(spokes):
+            jn = (j + 1) % spokes
+            faces.append([a0 + j, b0 + j, b0 + jn, a0 + jn])
+    edges = []
+    seen = set()
+    for face in faces:
+        for index, u in enumerate(face):
+            v = face[(index + 1) % len(face)]
+            key = tuple(sorted((u, v)))
+            if key not in seen:
+                seen.add(key)
+                edges.append(list(key))
+    per = spokes // lobes
+    rim = [ring_start[rings] + j for j in range(spokes)]
+    crests = [rim[j] for j in range(spokes) if j % per == 0]
+    valleys = [rim[j] for j in range(spokes) if j % per == per // 2]
+    return vertices, faces, edges, crests, valleys
+
+
+def fan_cornered_pattern(fixed_node_ids=()):
+    """Prepare the lobed disk exactly as TNA Relax would."""
+    vertices, faces, edges, crests, valleys = lobed_disk()
+    response = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "lobe-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": valleys},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.10,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+                "fixed_node_ids": list(fixed_node_ids),
+            },
+        },
+        "prepare-lobed",
+    ))
+    assert response["type"] == "result", response
+    return response["result"], crests, valleys
+
+
+def equilibrate(prepared, move, watched=(), request_id="equilibrate"):
+    payload = {"prepared": prepared, "move": move}
+    if watched:
+        payload["watched_node_ids"] = list(watched)
+    return dispatch(request("tna.equilibrate", payload, request_id))
+
+
+def solve_prepared(prepared, request_id):
+    return dispatch(request(
+        "tna.solve",
+        {
+            "prepared": prepared,
+            "load_case": {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": (0.0, 0.0, -1.0),
+            },
+            "control": {
+                "height_control": {"mode": "zmax", "value": 4.0},
+                "settings": {
+                    "horizontal_alpha": 100.0,
+                    "horizontal_iterations": None,
+                    "vertical_iterations": 1000,
+                    "tolerance": 1.0e-3,
+                },
+            },
+        },
+        request_id,
+    ))
+
+
+def test_the_fan_cornered_plan_fails_held_and_passes_once_it_may_move():
+    """The station's whole reason to exist, measured at both ends.
+
+    HELD, the lobed plan stalls far above RhinoVault's five-degree gate and
+    its only exact self-stress needs edges in tension: no force density the
+    solve can choose balances a fan corner. Allowed to move, the same plan
+    passes the gate with no tension at all, and the SOLVE agrees, which is
+    the only verdict that matters to a canvas.
+    """
+    prepared, _, _ = fan_cornered_pattern()
+
+    held = equilibrate(prepared, 0.0, request_id="lobed-held")
+    assert held["type"] == "result", held
+    before = held["result"]["diagnostic_metrics"]
+    assert before["horizontal_angle_before"] > HORIZONTAL_ACCEPT_DEGREES
+    assert before["horizontal_negative_q_before"] > 0
+    assert before["horizontal_converged_before"] is False
+    # Move 0 changes nothing, so the after-numbers are the before-numbers.
+    assert (
+        before["horizontal_angle_after"] == before["horizontal_angle_before"]
+    )
+    assert before["horizontal_moved_vertex_count"] == 0
+
+    moved = equilibrate(prepared, 100.0, request_id="lobed-moved")
+    assert moved["type"] == "result", moved
+    after = moved["result"]["diagnostic_metrics"]
+    assert after["horizontal_angle_before"] == pytest.approx(
+        before["horizontal_angle_before"]
+    )
+    assert after["horizontal_negative_q_before"] == (
+        before["horizontal_negative_q_before"]
+    )
+    assert after["horizontal_angle_after"] <= HORIZONTAL_ACCEPT_DEGREES
+    assert after["horizontal_negative_q_after"] == 0
+    assert after["horizontal_converged_after"] is True
+    assert after["horizontal_moved_vertex_count"] > 0
+    assert after["horizontal_plan_move_max"] > 0.0
+
+    # The solve is the verdict the canvas reads: the held stage fails its
+    # own gate, the moved stage passes it.
+    held_solve = solve_prepared(prepared, "lobed-solve-held")
+    assert held_solve["type"] == "result", held_solve
+    held_metrics = held_solve["result"]["diagnostic_metrics"]
+    assert held_metrics["horizontal_converged"] is False
+    assert (
+        held_metrics["max_reciprocal_angle_deviation"]
+        > HORIZONTAL_ACCEPT_DEGREES
+    )
+    moved_solve = solve_prepared(moved["result"], "lobed-solve-moved")
+    assert moved_solve["type"] == "result", moved_solve
+    moved_metrics = moved_solve["result"]["diagnostic_metrics"]
+    assert moved_metrics["horizontal_converged"] is True
+    assert (
+        moved_metrics["max_reciprocal_angle_deviation"]
+        <= HORIZONTAL_ACCEPT_DEGREES
+    )
+
+
+def test_move_nought_returns_the_prepared_stage_bit_identical():
+    """Not "close enough": every field the stage carries comes back the same
+    object it went in as, byte for byte, because a station wired at Move 0
+    must be indistinguishable from no station at all."""
+    prepared, _, _ = fan_cornered_pattern()
+    response = equilibrate(prepared, 0.0, request_id="identity")
+    assert response["type"] == "result", response
+    moved = response["result"]
+
+    assert moved["pattern"] == prepared["pattern"]
+    for field in (
+        "kind",
+        "schema_version",
+        "topology",
+        "support_set",
+        "config",
+        "form_graph",
+        "force_graph",
+        "boundary_segments",
+        "diagnostics",
+        "mappings",
+    ):
+        assert moved[field] == prepared[field], field
+    # And what it is allowed to change, it changed.
+    assert moved["report"] != prepared["report"]
+    assert "horizontal_move" in moved["diagnostic_metrics"]
+
+
+def test_supports_and_floating_anchors_are_bit_immobile_at_every_move():
+    """Held is held. A support and a floating anchor are never written at
+    all, at any Move, so they come back identical rather than nearly still;
+    a hole rim rides through the station untouched."""
+    # The crown and four ring nodes stand in for an oculus rim: held in
+    # plan by Floating Anchors, never joining the support set.
+    anchors = [0, 25, 31, 37, 43]
+    prepared, crests, valleys = fan_cornered_pattern(fixed_node_ids=anchors)
+    assert prepared["pattern"]["fixed_node_ids"] == anchors
+    drawn = prepared["pattern"]["vertices"]
+    for move in (0.0, 1.0, 33.5, 100.0):
+        response = equilibrate(prepared, move, request_id="held-{}".format(move))
+        assert response["type"] == "result", response
+        moved = response["result"]["pattern"]["vertices"]
+        for node in valleys:
+            assert moved[node] == drawn[node], (move, "support", node)
+        for node in anchors:
+            assert moved[node] == drawn[node], (move, "floating anchor", node)
+        metrics = response["result"]["diagnostic_metrics"]
+        assert metrics["horizontal_held_move_max"] == 0.0
+    # The station really is moving something, so the immobility above is not
+    # the immobility of a component that does nothing.
+    assert (
+        equilibrate(prepared, 100.0, request_id="held-moves")["result"][
+            "diagnostic_metrics"
+        ]["horizontal_moved_vertex_count"]
+        > 0
+    )
+
+
+def test_the_watch_counts_the_principal_line_nodes_that_moved():
+    """Principal-line nodes are WATCHED, not pinned: the station reports how
+    many of them the movement took with it. A watched support cannot move,
+    so it is never counted; a watched free node is."""
+    prepared, crests, valleys = fan_cornered_pattern()
+    interior = [
+        node
+        for node in range(1, len(prepared["pattern"]["vertices"]))
+        if node not in valleys and node not in crests
+    ][:4]
+    watched = list(valleys[:2]) + interior
+
+    still = equilibrate(prepared, 0.0, watched, "watch-still")
+    assert still["type"] == "result", still
+    metrics = still["result"]["diagnostic_metrics"]
+    assert metrics["horizontal_watched_node_count"] == len(watched)
+    assert metrics["horizontal_watched_moved_count"] == 0
+
+    response = equilibrate(prepared, 100.0, watched, "watch-moved")
+    assert response["type"] == "result", response
+    metrics = response["result"]["diagnostic_metrics"]
+    assert metrics["horizontal_watched_node_count"] == len(watched)
+    # Every watched free node moved; neither watched support did, so the
+    # count is the free ones alone rather than all of them.
+    assert metrics["horizontal_watched_moved_count"] == len(interior)
+
+
+def test_a_move_outside_nought_to_a_hundred_is_refused_at_the_boundary():
+    """The component clamps and remarks; the worker refuses. A Move of 120
+    is not a Move of 100 that nobody was told about."""
+    prepared, _, _ = fan_cornered_pattern()
+    for move in (-0.001, 100.001, 1000.0):
+        response = equilibrate(prepared, move, request_id="clamp")
+        assert response["type"] == "error", (move, response)
+        # Refused AT THE BOUNDARY, by the codec, before a backend is asked
+        # to interpret it: the code says which guard fired.
+        assert response["error"]["code"] == "invalid_payload", (move, response)
+        assert "between 0 and 100" in response["error"]["message"]

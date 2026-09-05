@@ -577,3 +577,182 @@ def test_solver_stdout_cannot_corrupt_framed_worker_response(capsys):
     assert shutdown_response["id"] == "stop"
     assert read_frame(target) is None
     assert "backend progress" in capsys.readouterr().err
+
+
+def prepared_stage_payload():
+    """The smallest prepared stage the equilibrate codec will accept.
+
+    Handmade rather than solved, so the protocol pins below measure the
+    boundary alone and need no numerical backend.
+    """
+    return {
+        "schema_version": "0.1",
+        "kind": "tna_prepared",
+        "topology": {
+            "kind": "faced",
+            "vertices": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+            "edges": [[0, 1], [1, 2], [2, 3], [3, 0]],
+            "faces": [[0, 1, 2, 3]],
+            "source_vertex_ids": ["a", "b", "c", "d"],
+            "length_unit": "m",
+            "metadata": {},
+        },
+        "support_set": {"mode": "explicit", "node_ids": [0, 2]},
+        "config": {
+            "force_density": 1.0,
+            "relax": True,
+            "boundary_sag": 0.1,
+            "sag_iterations": 10,
+            "sag_tolerance": 0.01,
+            "fixed_node_ids": [],
+            "metadata": {},
+        },
+        "pattern": {
+            "kind": "faced",
+            "vertices": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+            "edges": [[0, 1], [1, 2], [2, 3], [3, 0]],
+            "faces": [[0, 1, 2, 3]],
+            "edge_force_densities": [1.0, 1.0, 1.0, 1.0],
+            "fixed_node_ids": [],
+        },
+        "form_graph": {
+            "vertices": [
+                {
+                    "id": index,
+                    "key": index,
+                    "point": [float(index), 0.0, 0.0],
+                    "source_vertex_ids": [name],
+                }
+                for index, name in enumerate("abcd")
+            ],
+            "edges": [],
+            "faces": [],
+        },
+        "force_graph": {"vertices": [], "edges": [], "faces": []},
+        "boundary_segments": [],
+        "diagnostics": [],
+        "diagnostic_metrics": {"boundary_support_count": 2},
+        "mappings": {"support_node_ids": [0, 2]},
+        "report": "prepared",
+        "metadata": {},
+        "provenance": {"worker": "test"},
+    }
+
+
+def fake_equilibrate(prepared, move, watched, **_kwargs):
+    from ananke_equilibrium.gh import ComponentResult
+    from ananke_equilibrium.gh import ComponentStatus
+
+    moved = {} if move == 0.0 else {1: (1.5, 0.25)}
+    return ComponentResult(
+        value={
+            "moved_points": moved,
+            "diagnostics": {
+                "horizontal_move": move,
+                "horizontal_watched_node_count": len(watched),
+            },
+            "report": "moved {}".format(move),
+        },
+        status=ComponentStatus("ok", "TNA Horizontal complete."),
+    )
+
+
+def test_tna_equilibrate_is_a_named_command_with_its_own_capability():
+    health = dispatch(request("system.health"))["result"]
+    assert "tna.equilibrate" in health["capabilities"]["commands"]
+    assert "tna.equilibrate" in health["capabilities"]
+    hello = dispatch(request("system.hello"))["result"]
+    assert "tna.equilibrate" in hello["commands"]
+
+
+def test_tna_equilibrate_moves_only_the_plan_and_stays_framed_json():
+    payload = {
+        "prepared": prepared_stage_payload(),
+        "move": 60.0,
+        "watched_node_ids": [1, 3],
+    }
+    response = dispatch(
+        request("tna.equilibrate", payload, "equilibrate-1"),
+        tna_equilibrate_solver=fake_equilibrate,
+    )
+
+    assert response["type"] == "result", response
+    assert response["id"] == "equilibrate-1"
+    moved = response["result"]
+    assert moved["kind"] == "tna_prepared"
+    # Only the plan moved, and z came off the incoming vertex rather than
+    # the station, which never touches a height.
+    assert moved["pattern"]["vertices"] == [
+        [0.0, 0.0, 0.0],
+        [1.5, 0.25, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ]
+    assert moved["pattern"]["edges"] == payload["prepared"]["pattern"]["edges"]
+    assert moved["topology"] == payload["prepared"]["topology"]
+    assert moved["force_graph"] == payload["prepared"]["force_graph"]
+    # The form graph follows the plan by its source vertex ID, so the RLX
+    # that leaves does not carry a drawing of the plan that arrived.
+    assert moved["form_graph"]["vertices"][1]["point"] == [1.5, 0.25, 0.0]
+    assert moved["form_graph"]["vertices"][0]["point"] == [0.0, 0.0, 0.0]
+    # The prepare stage's own metrics survive beside the station's.
+    metrics = moved["diagnostic_metrics"]
+    assert metrics["boundary_support_count"] == 2
+    assert metrics["horizontal_move"] == 60.0
+    assert metrics["horizontal_watched_node_count"] == 2
+    assert moved["report"] == "moved 60.0"
+    assert moved["provenance"]["horizontal_station"] == "tna.equilibrate"
+    assert moved["provenance"]["worker"] == "ananke-equilibrium-worker"
+
+    assert decode_frame(encode_frame(response)) == response
+
+
+def test_tna_equilibrate_pins_its_payload_fields_and_its_move_range():
+    prepared = prepared_stage_payload()
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return fake_equilibrate(*args, **kwargs)
+
+    unknown = dispatch(
+        request(
+            "tna.equilibrate",
+            {"prepared": prepared, "move": 10.0, "iterations": 500},
+            "unknown-field",
+        ),
+        tna_equilibrate_solver=spy,
+    )
+    assert unknown["type"] == "error", unknown
+    assert unknown["error"]["code"] == "invalid_payload"
+    assert "iterations" in unknown["error"]["message"]
+
+    missing = dispatch(
+        request("tna.equilibrate", {"move": 10.0}, "missing-prepared"),
+        tna_equilibrate_solver=spy,
+    )
+    assert missing["type"] == "error", missing
+    assert "prepared" in missing["error"]["message"]
+
+    for move in (-1.0, 100.5, float("inf")):
+        refused = dispatch(
+            request(
+                "tna.equilibrate",
+                {"prepared": prepared, "move": move},
+                "bad-move",
+            ),
+            tna_equilibrate_solver=spy,
+        )
+        assert refused["type"] == "error", (move, refused)
+        assert "between 0 and 100" in refused["error"]["message"]
+
+    assert not calls
+
+    # An absent Move is the default the ruling gives the component.
+    default = dispatch(
+        request("tna.equilibrate", {"prepared": prepared}, "default-move"),
+        tna_equilibrate_solver=spy,
+    )
+    assert default["type"] == "result", default
+    assert calls and calls[0][1] == 100.0
+    assert calls[0][2] == ()
