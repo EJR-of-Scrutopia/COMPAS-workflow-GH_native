@@ -783,8 +783,9 @@ body { overflow: hidden;
   display: flex; align-items: center; gap: var(--s2);
   margin: 0 calc(-1 * var(--s3));
   padding: var(--s2) var(--s3) var(--s3); background: var(--panel); }
-#panel #restart-studio { width: auto; height: var(--h-small); margin: 0;
-  padding: 0 var(--s2); font-size: var(--t-2); color: var(--ink-2); }
+#panel #restart-studio, #panel #stop-studio { width: auto;
+  height: var(--h-small); margin: 0; padding: 0 var(--s2);
+  font-size: var(--t-2); color: var(--ink-2); white-space: nowrap; }
 #restart-status { color: var(--ink-3); font-size: var(--t-meta); }
 /* Clearance = the foot's full height (compact button + its two paddings),
    so the two sticky bars meet with no gap for content to show through. */
