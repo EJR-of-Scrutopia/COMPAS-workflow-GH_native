@@ -830,3 +830,26 @@ drawn across the tiles.
   276/16, hud 735 vs shelf 757.
 - OBSERVED, unfixed and minor: a long event-log line can still cross
   the HUD card's right edge while both are visible (log fades).
+
+## 2026-09-05 -- THE VAULT FOLDER NEAR-MISS (live incident, fixed)
+
+23:06: settings.json's upload_folder was re-pointed at bench/studies
+via the Vault folder picker (the name invites it) -- that folder is
+the CUT CACHE (slug directories), not the flat Name-contract.json
+exports, so /api/studies honestly returned 0 and every device saw an
+empty studio and a white boot. NOT the plugin, NOT device-hopping:
+the folder setting is server-side and one wrong pick silences all
+devices at once.
+
+- Restored live via POST /api/folder -> the Grasshopper upload folder;
+  all three vaults returned without a restart.
+- Shipped: _folder_hint in the folder row -- a zero count now names
+  the near-miss ("this looks like the studio's own cache of cut
+  studies...", recognised by studio/ or fea-verification.json inside
+  the subdirs), or says no JSON here reads as a vault, or says what a
+  vault export IS; the client repeats the hint beside the count.
+  4 mutation kills; suite 728 green.
+- Device-memory split, for reference: server-side and shared = vaults,
+  scenes, cut caches, the vault folder; browser-side per device =
+  last study, appearance, panel fold, camera. Saved Scenes are the
+  cross-device saved views today; preference sync stays queued.
