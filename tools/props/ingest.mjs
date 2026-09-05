@@ -150,7 +150,8 @@ async function buildOne(io, file, config) {
   for (const rule of config.sizes || []) {
     if (new RegExp(rule.match, "i").test(name)) { size = rule.size; break; }
   }
-  const budget = (config.group === "planting" ? PLANTING : CLASS)[size];
+  const group = ((config.renames || {})[name] || {}).group || config.group;
+  const budget = (group === "planting" ? PLANTING : CLASS)[size];
 
   const document = await io.read(file);
   const before = triangleCount(document);
@@ -214,15 +215,19 @@ async function buildOne(io, file, config) {
     prune(), dedup(),
   );
   const packed = await io.writeBinary(document);
-  const key = keyFrom(name, config.keyPrefix);
+  // Megascans exports carry scan codes for names (uldubik_tier_0); the
+  // config's rename table restores the words a person would search for.
+  const renamed = (config.renames || {})[name];
+  const key = renamed ? renamed.key : keyFrom(name, config.keyPrefix);
   await writeFile(path.join(OUT, `${key}.glb`), packed);
   return {
     key,
-    label: config.labelPrefix
-      ? `${config.labelPrefix} ${labelFrom(name)}`.replace(/\s+/g, " ").trim()
-      : labelFrom(name),
+    label: renamed ? renamed.label
+      : config.labelPrefix
+        ? `${config.labelPrefix} ${labelFrom(name)}`.replace(/\s+/g, " ").trim()
+        : labelFrom(name),
     file: `${key}.glb`,
-    group: config.group,
+    group,
     sizeMetres: bounds ? [bounds.width, bounds.height, bounds.depth] : null,
     triangles: triangleCount(document),
     bytes: packed.byteLength,

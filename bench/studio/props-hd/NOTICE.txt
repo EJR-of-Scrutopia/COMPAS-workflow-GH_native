@@ -1,5 +1,7 @@
-Every model in this folder is from Poly Haven and is CC0 1.0.
-Poly Haven asks for no credit and this file is offered anyway.
+Models in this folder come from two libraries:
+  - Poly Haven, CC0 1.0 (no credit required; offered anyway)
+  - Quixel Megascans by Epic Games, via Fab, under the Fab Standard
+    License (free Epic account; usable with any compatible tool)
 
 anthurium_botany_01
   Anthurium
@@ -7,6 +9,42 @@ anthurium_botany_01
 bark_debris_01
   Bark debris
   https://polyhaven.com/a/bark_debris_01
+beech_european_beech_forest_05
+  European Beech Forest 05
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_06
+  European Beech Forest 06
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_07
+  European Beech Forest 07
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_08
+  European Beech Forest 08
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_sapling_01
+  European Beech Sapling 01
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_sapling_02
+  European Beech Sapling 02
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_sapling_03
+  European Beech Sapling 03
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_sapling_04
+  European Beech Sapling 04
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_seedling_01
+  European Beech Seedling 01
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_seedling_02
+  European Beech Seedling 02
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_seedling_03
+  European Beech Seedling 03
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_seedling_04
+  European Beech Seedling 04
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
 calathea_orbifolia_01
   Calathea
   https://polyhaven.com/a/calathea_orbifolia_01
@@ -55,6 +93,9 @@ grass_medium_01
 grass_medium_02
   Grass tufts
   https://polyhaven.com/a/grass_medium_02
+ms_tree_high_poly
+  Broadleaf study tree
+  https://www.fab.com/sellers/Quixel
 nettle_plant
   Nettles
   https://polyhaven.com/a/nettle_plant
@@ -187,6 +228,21 @@ moon_rock_07
 mountainside
   Mountainside
   https://polyhaven.com/a/mountainside
+ms_beach_boulder
+  Nordic beach boulder
+  https://www.fab.com/sellers/Quixel
+ms_desert_rock_cluster
+  Desert rock cluster
+  https://www.fab.com/sellers/Quixel
+ms_forest_cluster
+  Nordic forest cluster
+  https://www.fab.com/sellers/Quixel
+ms_forest_rocks_small
+  Nordic forest rocks
+  https://www.fab.com/sellers/Quixel
+ms_forest_terrain
+  Forest terrain patch
+  https://www.fab.com/sellers/Quixel
 namaqualand_boulder_02
   Boulder
   https://polyhaven.com/a/namaqualand_boulder_02

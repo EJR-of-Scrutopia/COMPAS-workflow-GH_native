@@ -34,6 +34,198 @@
       "source": "https://polyhaven.com/a/bark_debris_01"
     },
     {
+      "key": "beech_european_beech_forest_05",
+      "label": "European Beech Forest 05",
+      "file": "beech_european_beech_forest_05.glb",
+      "group": "planting",
+      "sizeMetres": [
+        11.747,
+        25.321,
+        9.402
+      ],
+      "triangles": 227768,
+      "bytes": 14301868,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_forest_06",
+      "label": "European Beech Forest 06",
+      "file": "beech_european_beech_forest_06.glb",
+      "group": "planting",
+      "sizeMetres": [
+        6.227,
+        15.278,
+        6.882
+      ],
+      "triangles": 163932,
+      "bytes": 10546864,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_forest_07",
+      "label": "European Beech Forest 07",
+      "file": "beech_european_beech_forest_07.glb",
+      "group": "planting",
+      "sizeMetres": [
+        7.017,
+        13.524,
+        7.844
+      ],
+      "triangles": 131865,
+      "bytes": 8964188,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_forest_08",
+      "label": "European Beech Forest 08",
+      "file": "beech_european_beech_forest_08.glb",
+      "group": "planting",
+      "sizeMetres": [
+        4.422,
+        7.597,
+        4.175
+      ],
+      "triangles": 118925,
+      "bytes": 8018632,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_sapling_01",
+      "label": "European Beech Sapling 01",
+      "file": "beech_european_beech_sapling_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        2.3,
+        3.165,
+        1.802
+      ],
+      "triangles": 38750,
+      "bytes": 3707616,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_sapling_02",
+      "label": "European Beech Sapling 02",
+      "file": "beech_european_beech_sapling_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        2.783,
+        2.988,
+        3.492
+      ],
+      "triangles": 128937,
+      "bytes": 7071320,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_sapling_03",
+      "label": "European Beech Sapling 03",
+      "file": "beech_european_beech_sapling_03.glb",
+      "group": "planting",
+      "sizeMetres": [
+        2.172,
+        2.597,
+        2.132
+      ],
+      "triangles": 149998,
+      "bytes": 6337372,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_sapling_04",
+      "label": "European Beech Sapling 04",
+      "file": "beech_european_beech_sapling_04.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.988,
+        2.064,
+        1.821
+      ],
+      "triangles": 92653,
+      "bytes": 4795940,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_seedling_01",
+      "label": "European Beech Seedling 01",
+      "file": "beech_european_beech_seedling_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.301,
+        1.034,
+        0.332
+      ],
+      "triangles": 808,
+      "bytes": 2295724,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_seedling_02",
+      "label": "European Beech Seedling 02",
+      "file": "beech_european_beech_seedling_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.929,
+        1.19,
+        1.184
+      ],
+      "triangles": 6313,
+      "bytes": 2464464,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_seedling_03",
+      "label": "European Beech Seedling 03",
+      "file": "beech_european_beech_seedling_03.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.426,
+        0.823,
+        0.405
+      ],
+      "triangles": 1234,
+      "bytes": 2303012,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_seedling_04",
+      "label": "European Beech Seedling 04",
+      "file": "beech_european_beech_seedling_04.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.214,
+        0.236,
+        0.211
+      ],
+      "triangles": 165,
+      "bytes": 2265632,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
       "key": "calathea_orbifolia_01",
       "label": "Calathea",
       "file": "calathea_orbifolia_01.glb",
@@ -288,6 +480,22 @@
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "ms_tree_high_poly",
+      "label": "Broadleaf study tree",
+      "file": "ms_tree_high_poly.glb",
+      "group": "planting",
+      "sizeMetres": [
+        18.117,
+        27.464,
+        17.25
+      ],
+      "triangles": 27689,
+      "bytes": 3781524,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
     },
     {
       "key": "nettle_plant",
@@ -992,6 +1200,86 @@
       "credit": "Mountainside by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/mountainside"
+    },
+    {
+      "key": "ms_beach_boulder",
+      "label": "Nordic beach boulder",
+      "file": "ms_beach_boulder.glb",
+      "group": "site",
+      "sizeMetres": [
+        5.011,
+        1.822,
+        2.46
+      ],
+      "triangles": 8284,
+      "bytes": 535408,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
+    },
+    {
+      "key": "ms_desert_rock_cluster",
+      "label": "Desert rock cluster",
+      "file": "ms_desert_rock_cluster.glb",
+      "group": "site",
+      "sizeMetres": [
+        3.031,
+        0.709,
+        2.421
+      ],
+      "triangles": 16759,
+      "bytes": 769728,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
+    },
+    {
+      "key": "ms_forest_cluster",
+      "label": "Nordic forest cluster",
+      "file": "ms_forest_cluster.glb",
+      "group": "site",
+      "sizeMetres": [
+        2.147,
+        1.103,
+        1.626
+      ],
+      "triangles": 14021,
+      "bytes": 788464,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
+    },
+    {
+      "key": "ms_forest_rocks_small",
+      "label": "Nordic forest rocks",
+      "file": "ms_forest_rocks_small.glb",
+      "group": "site",
+      "sizeMetres": [
+        1.937,
+        0.386,
+        1.658
+      ],
+      "triangles": 18304,
+      "bytes": 936364,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
+    },
+    {
+      "key": "ms_forest_terrain",
+      "label": "Forest terrain patch",
+      "file": "ms_forest_terrain.glb",
+      "group": "site",
+      "sizeMetres": [
+        1.655,
+        0.18,
+        2.526
+      ],
+      "triangles": 27619,
+      "bytes": 1114216,
+      "credit": "Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/sellers/Quixel"
     },
     {
       "key": "namaqualand_boulder_02",
