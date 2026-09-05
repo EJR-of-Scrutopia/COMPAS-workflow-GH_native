@@ -2552,11 +2552,14 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     capture = _function_body(js, "captureOrbitBase")
-    # The framing is the shot ALL the way: the orbit turns about the
-    # camera's own target, not the bundle's centre -- lookAt(state.centre)
-    # on the first played frame re-aimed a panned view, which Param saw as
-    # a jump and a lens change at every press of Play.
-    assert "const centre = controls.target.clone();" in capture
+    # The framing is the shot AND the vault is the subject: the circle
+    # belongs to the scene centre (so the turn keeps the vault framed all
+    # the way round), while the AIM is captured from the user's own
+    # target and eased onto the centre -- the first frame is the frame
+    # Play was pressed on, and nothing drifts out of shot mid-turn.
+    assert ("state.centre ? state.centre.clone() "
+            ": controls.target.clone()") in capture
+    assert "lookFrom: controls.target.clone()" in capture
     assert "camera.position.clone().sub(centre)" in capture
     assert "Math.atan2(offset.y, offset.x)" in capture
     assert ("- state.timeline.orbitSpeed * "
@@ -2567,6 +2570,9 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
     )
     body = _function_body(js, "applyTimeline")
     assert "base.radius" in body and "centre.z + base.height" in body
+    assert ".lerp(centre, eased)" in body, "the aim glides home, never snaps"
+    assert "controls.target.copy(aim)" in body, (
+        "a drag mid-take must take over from where the aim IS")
     assert "const base = state.timeline.orbitBase;" in body
     assert "if (base &&" in body, "no framing captured yet means hands off the camera"
     assert "orbitDistance" not in js, "the distance comes from the camera now"

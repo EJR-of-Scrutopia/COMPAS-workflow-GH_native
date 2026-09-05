@@ -660,6 +660,10 @@ async function loadHdriBackdrop(name) {
     if (state.hdriBackdrop) state.hdriBackdrop.dispose();
     state.hdriBackdrop = texture;
     applyHdriBackdrop();
+    // A named milestone: when a device goes dark with no error (the iPad
+    // has), the on-screen log says which stage still spoke.
+    logStudio("sky backdrop ready: " + name + " at "
+      + (texture.image ? texture.image.width : "?") + "px");
   } catch (error) {
     logStudio("the sharp sky for " + name + " did not arrive: " + error.message);
   } finally {
@@ -695,6 +699,10 @@ async function loadHdri(name) {
     texture.mapping = THREE.EquirectangularReflectionMapping;
     if (state.hdriTexture) state.hdriTexture.dispose();
     state.hdriTexture = texture;
+    // The other named milestone (see loadHdriBackdrop): if a device shows
+    // this line but the scene stands dark, the failure is downstream of
+    // the light's arrival -- in the prefilter or the upload.
+    logStudio("sky light ready: " + name);
     // And the sharp one, for the sky the eye actually looks at. It is an
     // ordinary tone-mapped PNG: a background sits behind the tone mapper
     // anyway and has no use for the dynamic range. Loaded in parallel and
@@ -7711,11 +7719,19 @@ function captureOrbitBase(atT) {
   // centre: lookAt(state.centre) on the first played frame re-aimed a
   // panned or off-centre view, which read as a jump and a lens change
   // (Param: "it should start exactly where play is started from").
-  const centre = controls.target.clone();
+  // The VAULT owns the circle: radius, height and bearing are measured
+  // about the scene centre, so the turn keeps the vault in the frame all
+  // the way round (Param: "keep the focus on that during its turntable
+  // motion"). The AIM starts wherever the user was looking -- lookFrom --
+  // and applyTimeline eases it onto the circle's centre, which is what
+  // makes the first frame exactly the frame Play was pressed on.
+  const centre = state.centre ? state.centre.clone() : controls.target.clone();
   const offset = camera.position.clone().sub(centre);
   const radius = Math.hypot(offset.x, offset.y);
   state.timeline.orbitBase = {
     centre,
+    lookFrom: controls.target.clone(),
+    aimFromT: reference,
     // Straight overhead there is no bearing to orbit on, so the distance
     // falls back to the true one and the take turns about that instead of
     // collapsing onto the axis.
@@ -7742,7 +7758,19 @@ function applyTimeline(t) {
       centre.x + base.radius * Math.cos(angle),
       centre.y + base.radius * Math.sin(angle),
       centre.z + base.height);
-    camera.lookAt(centre);
+    // The aim GLIDES from wherever the user was looking onto the
+    // circle's own centre -- by the time the turn begins the vault is
+    // framed, and it stays framed for the whole revolution. A capture
+    // taken mid-take (a drag's end) eases again from the new framing.
+    // Capped: an opening act can run a minute, and a pan that long reads
+    // as drift rather than intent. Six seconds is a deliberate camera
+    // move, and the vault is framed well before the turn begins.
+    const hold = Math.min(6, Math.max(0.8, openingSeconds() - base.aimFromT));
+    const u = Math.min(1, Math.max(0, (t - base.aimFromT) / hold));
+    const eased = u * u * (3 - 2 * u);
+    const aim = base.lookFrom ? base.lookFrom.clone().lerp(centre, eased) : centre;
+    camera.lookAt(aim);
+    controls.target.copy(aim);
   }
 }
 

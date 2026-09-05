@@ -150,7 +150,9 @@ body { overflow: hidden;
    resized panel cannot overlap it again -- the log used to paint its text
    underneath the panel itself. */
 #event-log { position: fixed; right: calc(var(--panel-w) + var(--s4));
-  bottom: 16px; font-size: 12px;
+  /* Above the shelf strip, not behind it: the newest lines used to land
+     under the bottom tiles (Param's screenshot, the iPad). */
+  bottom: 64px; font-size: 12px;
   font-family: ui-monospace, monospace; color: #fff; text-align: right;
   pointer-events: none; opacity: 1; transition: opacity 1.2s; z-index: 15;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8); }

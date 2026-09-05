@@ -401,7 +401,8 @@ def test_play_lives_on_the_shelf_and_starts_where_you_stand():
     assert js.count("paintPlayButtons(") >= 8
 
     capture = _js_function(js, "function captureOrbitBase(atT)")
-    assert "const centre = controls.target.clone();" in capture
+    assert "lookFrom: controls.target.clone()" in capture, (
+        "the aim starts where the user was looking")
     apply_block = _js_function(js, "function applyTimeline(t)")
     assert "base.centre || state.centre" in apply_block
 
@@ -444,6 +445,12 @@ def test_the_take_neither_reaims_nor_inherits_the_drags_glide():
     capture = _js_function(js, "function captureOrbitBase(atT)")
     assert 'typeof atT === "number" ? atT : state.timeline.t' in capture
     assert "Math.max(0, reference - openingSeconds())" in capture
+    # The final shape of the ruling: the VAULT owns the circle, the AIM
+    # starts where the user was looking and glides home -- no jump at
+    # Play, no drifting off the vault mid-turn.
+    assert ("state.centre ? state.centre.clone() "
+            ": controls.target.clone()") in capture
+    assert "lookFrom: controls.target.clone()" in capture
     play = _js_function(js, "function startPlaying(fromTheTop)")
     assert "captureOrbitBase(fromT);" in play
     assert "? 0 : state.timeline.t;" in play
