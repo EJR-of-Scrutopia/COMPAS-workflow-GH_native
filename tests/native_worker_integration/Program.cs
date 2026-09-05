@@ -1154,16 +1154,36 @@ internal static class Program
             hiddenCornerFallback.Validate().Count > 0,
             "Support contract accepted unimplemented corner detection.");
 
-        var falseSelfWeight = new LoadCaseDto
+        // Rule 2.4 of the 2026-09-04 design implemented the self-weight,
+        // so this case is no longer "unimplemented and refused". What it
+        // guards now is the shape: a self-weight IS its base vector, and
+        // one without a base vector has nothing to weigh the surface
+        // with. The valid case is asserted beside it, or this would pass
+        // just as well against a distribution nobody accepts at all.
+        var weightlessSelfWeight = new LoadCaseDto
         {
             TopologyHash = topology.TopologyHash,
             Name = "unsafe",
-            Distribution = "self_weight",
-            BaseVector = new Point3Dto(0.0, 0.0, -1.0)
+            Distribution = "self_weight"
         };
         Require(
-            falseSelfWeight.Validate().Count > 0,
-            "Load contract accepted unimplemented self weight.");
+            weightlessSelfWeight.Validate().Count > 0,
+            "Load contract accepted a self weight with no base vector.");
+
+        var selfWeightWithPointLoads = new LoadCaseDto
+        {
+            TopologyHash = topology.TopologyHash,
+            Name = "selfweight",
+            Distribution = "self_weight",
+            BaseVector = new Point3Dto(0.0, 0.0, -1.0),
+            NodeIds = new[] { 1 },
+            Vectors = new[] { new Point3Dto(0.0, 0.0, -25.0) },
+            Thickness = 0.2,
+            Density = 24.0
+        };
+        Require(
+            selfWeightWithPointLoads.Validate().Count == 0,
+            "Load contract refused a self weight carrying point loads.");
 
         var targetedUniform = new LoadCaseDto
         {

@@ -257,11 +257,19 @@ internal static class Program
                     "01 Model",
                     new[] { "PAT", "A", "Tol" },
                     new[] { "SUP" }),
+                // Loads is pinned because rule 2.4(a) of the 2026-09-04
+                // selfweight design APPENDS Thickness and Density at
+                // slots 4 and 5. An append is the safe shape: every
+                // archived wire keeps the port it left and only the two
+                // new ports come back empty, which is also the reading
+                // this component depends on (see its class comment). The
+                // four names before them must not move, which is what
+                // this list says.
                 ["Ananke.COMPAS.Native.Components.LoadsComponent"] = (
                     "Loads",
                     "Loads",
                     "01 Model",
-                    new[] { "SUP", "V", "ID", "F" },
+                    new[] { "SUP", "V", "ID", "F", "T", "D" },
                     new[] { "PRB" }),
                 ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = (
                     "TNA Relax",
@@ -598,6 +606,29 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Spine contracts: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSelfweightLoadCase(plugin);
+            Console.WriteLine(
+                "PASS  The self-weight load case (design 2026-09-04 rule " +
+                "2.4): a self_weight distribution is the one that may " +
+                "carry a base vector and node IDs at once, so a canvas " +
+                "gets the vault's own weight and its point loads " +
+                "together, while tributary_area still refuses targets; a " +
+                "signed density and a negative thickness are refused " +
+                "where the base vector already says which way the weight " +
+                "acts; an absent pair reads as 1.0, which is the weight " +
+                "an old canvas had; both numbers cross the worker " +
+                "boundary as 'thickness' and 'density' beside the nodal " +
+                "half; and the component's chin says when a self-weight " +
+                "is riding beside point loads.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"The self-weight load case: {DescribeException(exception)}");
         }
 
         try
@@ -37260,6 +37291,319 @@ internal static class Program
     /// half worth guarding: a formatter that defaulted its way to
     /// "settled in 1 round" would be the old defect wearing new words.
     /// </summary>
+    /// <summary>
+    /// Rule 2.4 of the 2026-09-04 selfweight design, on the native side:
+    /// the load case that carries a self-weight AND the point loads
+    /// riding beside it, and the two numbers that weight is made of.
+    ///
+    /// Three things are pinned here and each was a hole. The
+    /// distribution "self_weight" is the ONLY one that may carry a base
+    /// vector and node IDs at once, because it is the only one that
+    /// means two loads: "tributary_area" keeps refusing targets exactly
+    /// as it did, so nothing authored the old way changes meaning. The
+    /// density is a magnitude and a signed one is refused at the
+    /// contract, since the base vector already says which way the weight
+    /// acts and a negative density would silently invert a vault. And
+    /// the two numbers must cross the worker boundary under the names
+    /// the python decoder allowlists: it refuses a field it does not
+    /// know, so a rename on this side is a dead canvas, not a quiet
+    /// default.
+    /// </summary>
+    private static void ValidateSelfweightLoadCase(Assembly plugin)
+    {
+        Type loadCaseType = RequireContractType(plugin, "LoadCaseDto");
+        string hash = new string('0', 64);
+
+        string LoadCaseJson(string body) =>
+            "{\n  \"schemaVersion\": \"0.2\",\n" +
+            "  \"kind\": \"ananke.load_case\",\n" +
+            $"  \"topologyHash\": \"{hash}\",\n" +
+            "  \"name\": \"selfweight-smoke\",\n" +
+            body +
+            "\n}";
+
+        // The both-wired canvas: a self-weight over the whole pattern and
+        // one point load on node 3.
+        object both = DeserializeContract(
+            plugin,
+            loadCaseType,
+            LoadCaseJson(
+                "  \"distribution\": \"self_weight\",\n" +
+                "  \"baseVector\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.0},\n" +
+                "  \"nodeIds\": [3],\n" +
+                "  \"vectors\": [{\"x\": 0.0, \"y\": 0.0, \"z\": -25.0}],\n" +
+                "  \"thickness\": 0.2,\n" +
+                "  \"density\": 24.0"));
+        RequireNoValidationErrors(
+            both,
+            "A self_weight load case carrying a base vector and point loads");
+
+        // A self-weight IS its base vector. Without one there is nothing
+        // to weigh the surface with.
+        RequireValidationErrors(
+            DeserializeContract(
+                plugin,
+                loadCaseType,
+                LoadCaseJson(
+                    "  \"distribution\": \"self_weight\",\n" +
+                    "  \"thickness\": 0.2,\n" +
+                    "  \"density\": 24.0")),
+            "A self_weight load case with no base vector");
+
+        // Vectors with nothing to act on are point loads with no nodes.
+        RequireValidationErrors(
+            DeserializeContract(
+                plugin,
+                loadCaseType,
+                LoadCaseJson(
+                    "  \"distribution\": \"self_weight\",\n" +
+                    "  \"baseVector\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.0},\n" +
+                    "  \"vectors\": [{\"x\": 0.0, \"y\": 0.0, \"z\": -25.0}]")),
+            "A self_weight load case with vectors and no node IDs");
+
+        // The older distribution did not gain the new freedom. This is
+        // the half that keeps a definition still authoring
+        // "tributary_area" meaning what it always meant.
+        RequireValidationErrors(
+            DeserializeContract(
+                plugin,
+                loadCaseType,
+                LoadCaseJson(
+                    "  \"distribution\": \"tributary_area\",\n" +
+                    "  \"baseVector\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.0},\n" +
+                    "  \"nodeIds\": [3],\n" +
+                    "  \"vectors\": [{\"x\": 0.0, \"y\": 0.0, \"z\": -25.0}]")),
+            "A tributary_area load case carrying explicit node targets");
+
+        // The sign rule, both ways round, and a negative thickness with
+        // it: neither is a thing a vault can be made of.
+        foreach ((string field, string label) in new[]
+        {
+            ("  \"density\": -24.0", "a negative density"),
+            ("  \"thickness\": -0.2", "a negative thickness")
+        })
+        {
+            RequireValidationErrors(
+                DeserializeContract(
+                    plugin,
+                    loadCaseType,
+                    LoadCaseJson(
+                        "  \"distribution\": \"self_weight\",\n" +
+                        "  \"baseVector\": " +
+                        "{\"x\": 0.0, \"y\": 0.0, \"z\": -1.0},\n" +
+                        field)),
+                $"A self_weight load case with {label}");
+        }
+
+        // Absent, both read as one: the load case a definition saved
+        // before these two ports existed still sends, and the weight it
+        // has always had.
+        object bare = DeserializeContract(
+            plugin,
+            loadCaseType,
+            LoadCaseJson(
+                "  \"distribution\": \"tributary_area\",\n" +
+                "  \"baseVector\": {\"x\": 0.0, \"y\": 0.0, \"z\": -4.0}"));
+        RequireNoValidationErrors(bare, "A load case with no selfweight pair");
+        foreach (string property in new[] { "Thickness", "Density" })
+        {
+            object? value = loadCaseType.GetProperty(property)!.GetValue(bare);
+            if (value is not double number || number != 1.0)
+            {
+                throw new InvalidOperationException(
+                    $"an absent {property} must read as 1.0, which is the "
+                    + "weight an old canvas had; it read "
+                    + $"'{value ?? "<null>"}'.");
+            }
+        }
+
+        // THE WIRE. The python decoder allowlists load-case fields by
+        // name and refuses the rest, so these two keys are the contract.
+        Type payloads = RequireContractType(plugin, "WorkerPayloads");
+        MethodInfo toPayload = payloads
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(method =>
+                method.Name == "ToWorkerPayload" &&
+                method.GetParameters().Length == 1 &&
+                method.GetParameters()[0].ParameterType == loadCaseType);
+        var payload =
+            (IReadOnlyDictionary<string, object?>)toPayload.Invoke(
+                null, new[] { both })!;
+        foreach ((string key, double expected) in new[]
+        {
+            ("thickness", 0.2),
+            ("density", 24.0)
+        })
+        {
+            if (!payload.TryGetValue(key, out object? sent) ||
+                sent is not double number ||
+                Math.Abs(number - expected) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"the worker payload must carry '{key}' as {expected}; "
+                    + $"it carried '{sent ?? "<missing>"}'. The python "
+                    + "decoder refuses a field it does not know, so a "
+                    + "rename here is a refused solve.");
+            }
+        }
+        // And both halves of the load travel together, or the additive
+        // case never reaches the worker at all.
+        if (payload["base_vector"] is not double[] { Length: 3 } ||
+            payload["node_ids"] is not int[] { Length: 1 } ||
+            payload["vectors"] is not Array { Length: 1 })
+        {
+            throw new InvalidOperationException(
+                "a self_weight payload must carry the base vector AND the "
+                + "nodal loads beside it; it carried base_vector "
+                + $"'{payload["base_vector"] ?? "<missing>"}', node_ids "
+                + $"'{payload["node_ids"] ?? "<missing>"}'.");
+        }
+
+        Type loads = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.LoadsComponent")
+            ?? throw new InvalidOperationException(
+                "LoadsComponent was not found.");
+
+        // THE EMPTY PORTS, which the whole backwards rule rests on. A
+        // Thickness or Density carrying a persistent 1.0 reads as GIVEN
+        // on every canvas that ever existed, and every reopened
+        // point-load definition would silently start carrying a
+        // self-weight. Optional as well, or a blank port colours the
+        // component orange for saying nothing.
+        object instance = Activator.CreateInstance(loads)!;
+        try
+        {
+            object parameters =
+                loads.GetProperty("Params")!.GetValue(instance)!;
+            IList inputs = (IList)parameters.GetType()
+                .GetProperty("Input")!.GetValue(parameters)!;
+            foreach (int slot in new[] { 4, 5 })
+            {
+                object port = inputs[slot]!;
+                string name = (string)port.GetType()
+                    .GetProperty("Name")!.GetValue(port)!;
+                int stored = (int)port.GetType()
+                    .GetProperty("PersistentDataCount")!.GetValue(port)!;
+                bool optional = (bool)port.GetType()
+                    .GetProperty("Optional")!.GetValue(port)!;
+                if (stored != 0 || !optional)
+                {
+                    throw new InvalidOperationException(
+                        $"'{name}' must be OPTIONAL and hold no persistent "
+                        + "value: an empty port is how this component "
+                        + "tells a canvas that asked for a self-weight "
+                        + "from one that never heard of the port. It "
+                        + $"holds {stored} value(s), optional {optional}.");
+                }
+            }
+        }
+        finally
+        {
+            (instance as IDisposable)?.Dispose();
+        }
+
+        // WHAT THE COMPONENT BUILDS, which is where the backwards rule
+        // actually lives. Two of these four cases are definitions saved
+        // before the Thickness and Density ports existed, reopened: an
+        // append leaves their wires alone and leaves the two new ports
+        // EMPTY, and empty is the one thing they cannot counterfeit.
+        Type point3 = RequireContractType(plugin, "Point3Dto");
+        MethodInfo shape = loads.GetMethod(
+            "SelfweightShape",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.SelfweightShape was not found.");
+        object Vector(double z) =>
+            Activator.CreateInstance(point3, 0.0, 0.0, z)!;
+        double BaseZ(object result)
+        {
+            object? vector = result.GetType().GetField("Item2")!
+                .GetValue(result);
+            return vector is null
+                ? double.NaN
+                : (double)point3.GetProperty("Z")!.GetValue(vector)!;
+        }
+        bool SelfWeightOf(object result) =>
+            (bool)result.GetType().GetField("Item1")!.GetValue(result)!;
+
+        // An old surface definition: no node IDs, no Thickness, a Vector
+        // of (0, 0, -4) that WAS the density. The weight has to stay
+        // four, so the Vector is still the base vector.
+        object oldSurface = shape.Invoke(
+            null, new object[] { Vector(-4.0), 0, false, false })!;
+        if (!SelfWeightOf(oldSurface) || BaseZ(oldSurface) != -4.0)
+        {
+            throw new InvalidOperationException(
+                "a surface load with no Thickness or Density must keep the "
+                + "Vector as its base vector, or every definition saved "
+                + "before those ports silently changes weight; got "
+                + $"selfWeight {SelfWeightOf(oldSurface)}, base Z "
+                + $"{BaseZ(oldSurface)}.");
+        }
+
+        // An old POINT definition, reopened. It never had a self-weight
+        // and must not acquire one from two ports it never saw.
+        object oldPoint = shape.Invoke(
+            null, new object[] { Vector(-25.0), 3, false, false })!;
+        if (SelfWeightOf(oldPoint) || !double.IsNaN(BaseZ(oldPoint)))
+        {
+            throw new InvalidOperationException(
+                "point loads with neither Thickness nor Density given "
+                + "carry NO self-weight; a reopened point-load definition "
+                + "would otherwise gain a vault's weight nobody asked "
+                + $"for. Got selfWeight {SelfWeightOf(oldPoint)}.");
+        }
+
+        // And the case rule 2.4(b) exists for, reached from either port.
+        // The Vector is the point load here, so it cannot also scale the
+        // weight: the weight is T x D, straight down.
+        foreach ((bool thicknessGiven, bool densityGiven) in new[]
+        {
+            (true, false),
+            (false, true)
+        })
+        {
+            object bothWired = shape.Invoke(
+                null,
+                new object[] { Vector(-25.0), 3, thicknessGiven, densityGiven })!;
+            if (!SelfWeightOf(bothWired) || BaseZ(bothWired) != -1.0)
+            {
+                throw new InvalidOperationException(
+                    "a Thickness or a Density given beside Node IDs asks "
+                    + "for a self-weight, and it acts straight down at "
+                    + "unit scale rather than being multiplied by a point "
+                    + $"load; got selfWeight {SelfWeightOf(bothWired)}, "
+                    + $"base Z {BaseZ(bothWired)}.");
+            }
+        }
+
+        // The chin. A self-weight riding beside point loads has to say so
+        // on the component, or the canvas reads "1 node(s)" over a vault
+        // carrying its own whole weight.
+        MethodInfo summary = loads.GetMethod(
+            "LoadSummary",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.LoadSummary was not found.");
+        foreach ((int nodes, bool selfWeight, string expected) in new[]
+        {
+            (0, true, "self-weight"),
+            (3, true, "self-weight + 3 node(s)"),
+            (3, false, "3 node(s)")
+        })
+        {
+            var chin = (string?)summary.Invoke(
+                null, new object[] { nodes, selfWeight });
+            if (chin != expected)
+            {
+                throw new InvalidOperationException(
+                    $"the chin for {nodes} node(s) with selfWeight "
+                    + $"{selfWeight} should read '{expected}'; it read "
+                    + $"'{chin ?? "<none>"}'.");
+            }
+        }
+    }
+
     private static void ValidateSelfweightSummary(Assembly plugin)
     {
         Type component = plugin.GetType(
