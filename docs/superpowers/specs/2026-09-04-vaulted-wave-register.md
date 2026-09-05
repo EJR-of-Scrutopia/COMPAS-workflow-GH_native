@@ -418,3 +418,47 @@ then it opens up browser".
   exercised -- the UI is pointer-events based and should mostly work on
   iPad, but it was built for a mouse; a weak GPU may want a quality cap
   for 16k backdrops and 200k canopies.
+
+## 2026-09-05 -- THE iPAD BOOT DEATH (lazy prop library)
+
+His screenshot: tailnet page on the iPad, banner "The studio stopped
+setting itself up. Script error..", toast stuck at "cutting Concrete
+C30/37...", panel half-built.
+
+- DIAGNOSIS TRAIL: tip WebKit (Playwright webkit-2359) boots the studio
+  with ZERO errors; a 3-agent sweep found NO Safari-gated constructs in
+  the app's own scripts; the diagnostics log had no row from the iPad
+  (its report died with the tab); the bundle is only 17.8 MB. What
+  remained: the EAGER PROP BOOT -- all 109 GLBs, 241 MB, parsed while
+  the vault was still cutting. An iOS tab gets a fraction of a desktop's
+  memory; allocations start failing anywhere, module errors surface as
+  WebKit's muted "Script error.", and in-flight fetch bodies (the
+  report) are dropped.
+- LAZY LIBRARY: boot = manifest + .thumb.png snapshots (~3 MB total).
+  ensurePropTemplate(key) loads a model the first time something needs
+  its geometry (tile click, layout restore, scene apply -- each path
+  wired), deduped by a promise map whose failures STAY failed (a cleared
+  promise would be re-asked-for on every restoreProps re-run, forever).
+  Scene apply Promise.alls its cast before placing any.
+- SNAPSHOTS: tools/props/snap_thumbs.py (with tools/props/cdp.py)
+  renders 256px previews against the running desktop studio; files land
+  beside the GLBs, gitignored like them, served through /api/props/ with
+  the heavy cache tier and a proper image/png (the route called
+  everything glTF; sniffing hid it). Rerun after adding/re-ingesting
+  props; a prop without a snapshot falls back to a live geometry load
+  for its tile.
+- FOUND ON THE WAY: preview rig far plane is 20 (material ball); big
+  props (cliffs, 20 m beeches -- 16 of 109) framed from beyond it came
+  out empty squares; the frustum now follows the framing and goes back.
+- REPORTER: sendBeacon first (built for dying pages), fetch fallback;
+  context built in its own try (module-eval errors reach the reporter
+  before `state` exists); index.html banner also hears
+  unhandledrejection until window.__studioReady.
+- Verified live: fresh boot fetches 0 GLBs; opening the drawer fetches
+  109 thumbs; one tile click fetches exactly one GLB; __studioReady
+  true; thumbs over the tailnet are image/png with the heavy tier.
+  711 tests green; 8 new pins mutation-proved (two false-cleans caught:
+  a comment satisfying the .thumb.png pin, a docstring satisfying the
+  spawn-switch pin).
+- QUEUED (his word, 2026-09-05): plotly is installed and wanted for the
+  ANALYSIS side of the web app -- charts for the analysis panel.
