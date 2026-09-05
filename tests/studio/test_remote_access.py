@@ -573,8 +573,11 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
-    for key in ("loadsScale", "reactionsScale"):
+    for key in ("loadsScale", "reactionsScale", "forcesScale"):
         assert key in js
+    # The girth dial is a real slider row under the Wire forces button,
+    # not just a state key.
+    assert 'forces: { key: "forcesScale", label: "Size"' in js
     assert "stressThreshold" not in js
 
     # Round two removed the stress threshold on his word.
@@ -593,6 +596,16 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "forceMaterial" in wire_lens
     assert "toneMapped: false" in wire_lens
     assert "baseMaterial" in wire_lens, "the steel comes back when the lens drops"
+    # The black-lattice bug (his screenshot): vertexColors on a geometry
+    # with no colour attribute samples BLACK and multiplies every
+    # instance colour away. setColorAt alone is the whole mechanism.
+    assert "vertexColors" not in wire_lens, (
+        "the force material must not ask for a vertex colour attribute "
+        "the wire cylinders do not have")
+    assert "setColorAt" in wire_lens
+    # And the fattening is HIS dial now: girth 0 keeps the net uniform.
+    assert "state.analysisSliders.forcesScale" in wire_lens
+    assert "girth * Math.abs(force)" in wire_lens
 
     # The pulse is a flat verdict lens now (his ruling: "remove textures
     # and let it run with the colours"): each piece wears ITS OWN course's
@@ -622,9 +635,25 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     data = css[css.index("#data-panel {"):]
     data = data[:data.index("}")]
     assert "var(--scrim)" in data and "max-height" in data
+    # The key's home moved on his walk ("i dont like it sitting to the
+    # middle... to the left of the menus and then slides to the right
+    # when it gets retracted"): lower third beside the panel, riding the
+    # fold like the handle and the log do.
     legend = css[css.index("#legend {"):]
     legend = legend[:legend.index("}")]
-    assert "top: 50%" in legend
+    assert "top: 50%" not in legend, "mid-height belongs to the collapse handle"
+    assert "bottom:" in legend
+    assert "calc(var(--panel-w)" in legend
+    assert "transition: right" in legend
+    assert "body.panel-collapsed #legend { right: var(--s4); }" in css
+    # And the HUD card stays clear of the shelf tiles (his crop: the
+    # struck-now line drew itself across them): above the strip, width
+    # capped, long lines folding inside the card.
+    hud = css[css.index("#hud {"):]
+    hud = hud[:hud.index("}")]
+    assert "bottom: 64px" in hud
+    assert "max-width" in hud
+    assert "pre-wrap" in hud
 
 
 def test_the_data_sheet_leads_with_the_analysis():

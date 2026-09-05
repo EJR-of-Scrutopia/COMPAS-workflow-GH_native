@@ -185,7 +185,7 @@ const state = {
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
-  analysisSliders: { loadsScale: 1, reactionsScale: 1 },
+  analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1 },
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   pattern: "bonded-courses",
   size: 0.9,
@@ -4197,6 +4197,10 @@ const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces", "pulse"];
 // What each lens carries under its button when it is on. Values live in
 // state so a rebuild of the toggle list never resets a slider.
 const LAYER_SLIDERS = {
+  forces: { key: "forcesScale", label: "Size",
+            min: 0, max: 3, step: 0.1,
+            title: "How much a wire thickens with its force; 0 keeps "
+              + "them uniform and lets the colour do the talking" },
   loads: { key: "loadsScale", label: "Scale",
            min: 0.2, max: 4, step: 0.1,
            title: "Arrow length multiplier" },
@@ -4365,7 +4369,10 @@ function buildLayerToggles() {
       slider.value = state.analysisSliders[spec.key];
       slider.addEventListener("change", () => {
         state.analysisSliders[spec.key] = +slider.value;
-        updateVectorLayers();
+        // Each slider redraws its own lens: the wire girth is not a
+        // vector field.
+        if (name === "forces") applyWireForces();
+        else updateVectorLayers();
       });
       row.appendChild(caption);
       row.appendChild(slider);
@@ -4472,13 +4479,21 @@ function applyWireForces() {
   // material is stashed and restored when the lens goes down.
   if (!wires.userData.baseMaterial) wires.userData.baseMaterial = wires.material;
   if (!wires.userData.forceMaterial) {
+    // No per-vertex colour flag here: these cylinders carry no such
+    // attribute, and an unbound attribute samples BLACK, multiplying
+    // every instance colour to black (Param's screenshot: a black
+    // lattice under a working legend). instanceColor rides any material
+    // on its own -- the silver rest state proves it.
     wires.userData.forceMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff, vertexColors: true, toneMapped: false });
+      color: 0xffffff, toneMapped: false });
   }
   wires.material = wires.userData.forceMaterial;
+  // How much a wire fattens with its force is his slider now; at 0 the
+  // net stays uniform and only the colour speaks.
+  const girth = state.analysisSliders.forcesScale;
   forces.forEach((force, i) => {
     base[i].decompose(position, quaternion, scale);
-    const radiusScale = 1 + 2 * Math.abs(force) / magnitude;
+    const radiusScale = 1 + 2 * girth * Math.abs(force) / magnitude;
     m.compose(position, quaternion, new THREE.Vector3(radiusScale, scale.y, radiusScale));
     wires.setMatrixAt(i, m);
     wires.setColorAt(i, STRESS_SCALE(force, magnitude));

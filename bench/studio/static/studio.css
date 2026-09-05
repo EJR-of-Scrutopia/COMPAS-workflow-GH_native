@@ -145,8 +145,14 @@ body { overflow: hidden;
 #props-row button.armed { outline: 2px solid var(--accent); }
 /* A card, not loose ink: white-on-gravel was unreadable (Param's crop).
    Same translucent family as the banner and the Data sheet. */
-#hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
-       line-height: 1.5; white-space: pre; pointer-events: none;
+/* Above the shelf strip and width-capped: the struck-now line can run
+   long (the stone message) and used to draw itself straight across the
+   bottom tiles (Param: "the text overlay is crossing over the tiles").
+   pre-wrap keeps the report's line structure while letting a long line
+   fold inside the card. */
+#hud { position: fixed; left: 16px; bottom: 64px; font-size: 13px;
+       max-width: min(56vw, 700px);
+       line-height: 1.5; white-space: pre-wrap; pointer-events: none;
        padding: var(--s2) var(--s3);
        background: var(--scrim);
        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
@@ -253,14 +259,19 @@ body { overflow: hidden;
    bottom: 16px, so turning a heatmap on covered the last lines of the HUD
    -- and the HUD gained the struck-now line in this branch, which is the
    line a heatmap is most likely to be read against. */
-/* The key stands mid-height beside the panel (Param: "on the right, to
-   the left of the menus"), where the eye finds it next to the controls
-   that turned it on. */
+/* The key stands in the lower third beside the panel (Param: "to the
+   left of the menus and then slides to the right when it gets
+   retracted... i dont like it sitting to the middle"): mid-height
+   belongs to the collapse handle, the top band to the tab rail, and the
+   bottom corner to the event log -- the lower third is the clear lane.
+   When the panel folds away the key follows the same 0.25s slide the
+   handle and the log take. */
 #legend {
-  position: absolute;
+  position: fixed;
   right: calc(var(--panel-w) + var(--s4));
-  top: 50%;
-  transform: translateY(-50%);
+  bottom: 26vh;
+  transition: right 0.25s ease;
+  z-index: 15;
   padding: 8px 12px;
   min-width: 180px;
   background: var(--scrim);
@@ -269,6 +280,7 @@ body { overflow: hidden;
   font-size: 12px;
   line-height: 1.5;
 }
+body.panel-collapsed #legend { right: var(--s4); }
 #legend.hidden { display: none; }
 #legend-bar {
   height: 10px;
