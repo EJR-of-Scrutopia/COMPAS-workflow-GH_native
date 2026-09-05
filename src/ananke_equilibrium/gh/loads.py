@@ -85,6 +85,8 @@ def build_load_case(
     distribution: str = "point",
     name: str = "equilibrium",
     factor: float = 1.0,
+    thickness: float = 1.0,
+    density: float = 1.0,
     coordinate_system: str = "world",
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> Any:
@@ -93,6 +95,11 @@ def build_load_case(
     One vector broadcasts to every target.  ``uniform_nodes``,
     ``tributary_area`` and ``self_weight`` may be target-free; the solver
     resolves those distributions against the supplied topology.
+
+    ``thickness`` and ``density`` are RhinoVault's selfweight pair (rule
+    2.4(a) of the 2026-09-04 design): a surface load weighs tributary area
+    times thickness times density, and both default to 1.0 so that a call
+    written before they existed keeps the weight its base vector gave it.
     """
 
     clean_points = tuple(
@@ -185,6 +192,8 @@ def build_load_case(
         vectors=factored_vectors,
         records=records,
         base_vector=factored_vectors[0] if not target_count else None,
+        thickness=finite_float(thickness, "Load thickness"),
+        density=finite_float(density, "Load density"),
         factor=clean_factor,
         coordinate_system=str(coordinate_system or "world"),
         metadata=dict(metadata or {}),

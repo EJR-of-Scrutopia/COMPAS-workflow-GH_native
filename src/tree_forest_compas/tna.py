@@ -2169,6 +2169,7 @@ def solve_tna_problem(
     zmax: Optional[float] = None,
     q_scale: float = -1.0,
     density: float = 0.0,
+    thickness: float = 1.0,
     horizontal_alpha: float = 100.0,
     horizontal_kmax: Optional[int] = 100,
     horizontal_method: str = "iterative",
@@ -2198,10 +2199,14 @@ def solve_tna_problem(
     ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
     into world coordinates using its recorded ``analysis_plane`` metadata.
 
-    Selfweight through ``density`` follows RhinoVault's loading model,
-    tributary area times thickness times density, but it is evaluated
-    here rather than inside the library: the weight is written into the
-    nodal ``pz`` and HELD CONSTANT through each library call. Under a
+    Selfweight through ``density`` and ``thickness`` follows RhinoVault's
+    loading model, tributary area times thickness times density, but it is
+    evaluated here rather than inside the library: the weight is written
+    into the nodal ``pz`` and HELD CONSTANT through each library call.
+    ``pz`` and the selfweight are ADDITIVE, their ``pz + pzext`` split: a
+    caller may register point loads and a selfweight at once, and the
+    diagnostics then report ``nodal_total_pz`` and ``selfweight_total_pz``
+    separately. Under a
     target height the held weight is then re-evaluated on the geometry
     the solve produced and the solve repeated, until the total load stops
     moving (``SELFWEIGHT_REFINEMENT_TOLERANCE``) or the round cap fences
@@ -2235,6 +2240,9 @@ def solve_tna_problem(
     density = float(density)
     if not isfinite(density):
         raise TNAInputError("density must be finite.")
+    thickness = float(thickness)
+    if not isfinite(thickness) or thickness < 0.0:
+        raise TNAInputError("thickness must be finite and zero or greater.")
     # Non-zero density is RhinoVault's loading model, area x thickness t x
     # density, and under this wrapper's signed analysis-Z convention a
     # downward surface load is a NEGATIVE density, mirroring negative
@@ -2247,6 +2255,11 @@ def solve_tna_problem(
     form.dual = None
     form.vertices_attribute("is_support", False)
     form.vertices_attribute("is_fixed", False)
+    # Rule 2.4(a): RhinoVault's "t" vertex attribute, which their
+    # LoadUpdater multiplies the tributary area by. One scalar written
+    # onto every vertex now; per-vertex thickness (their
+    # distribute_thickness) arrives on this same attribute later.
+    form.vertices_attribute("t", thickness)
 
     selected_supports = _resolve_supports(
         problem, form, support_mode, support_keys
@@ -2555,9 +2568,16 @@ def solve_tna_problem(
             ],
             dtype=float,
         )
-        thickness = _np_array(
+        # A vertex whose "t" was never set reads as 1.0; one set to 0.0
+        # reads as ZERO. `or 1.0` said the opposite of that, and a
+        # thickness of nought is exactly how a caller asks for no weight.
+        thicknesses = _np_array(
             [
-                [float(form.vertex_attribute(key, "t") or 1.0)]
+                [
+                    1.0
+                    if form.vertex_attribute(key, "t") is None
+                    else float(form.vertex_attribute(key, "t"))
+                ]
                 for key in vertex_order
             ],
             dtype=float,
@@ -2570,7 +2590,7 @@ def solve_tna_problem(
         LoadUpdater(
             form,
             point_loads,
-            thickness=thickness,
+            thickness=thicknesses,
             density=density,
         )(effective, current_xyz)
         for index, key in enumerate(vertex_order):
@@ -2885,6 +2905,16 @@ def solve_tna_problem(
         sum(vector[index] for vector in effective_form_loads.values())
         for index in range(3)
     )
+    # Rule 2.4(b)'s two totals. The nodal half is the point loads exactly
+    # as the caller registered them, captured before any selfweight was
+    # written on top of them; the selfweight half is what the tributary
+    # evaluation added. They sum to effective_total_pz by construction,
+    # which is the property that makes them worth reporting separately:
+    # a canvas carrying both can see which one is which.
+    nodal_total_pz = sum(
+        values[2] for values in base_point_loads.values()
+    )
+    selfweight_total_pz = load_sum[2] - nodal_total_pz
     global_force_error = tuple(
         load_sum[index] + reaction_sum[index] for index in range(3)
     )
@@ -2995,6 +3025,23 @@ def solve_tna_problem(
             "tension_edge_count": tension_count,
         }
     )
+    if selfweight_active:
+        # Rule 2.4(b): the diagnostics say the two totals separately, and
+        # only where the split means something. A solve with no
+        # selfweight has one load and effective_total_pz already is it;
+        # shipping "Selfweight total pz 0.0" beside it would be another
+        # line about a thing that never happened.
+        diagnostics.update(
+            {
+                "nodal_total_pz": nodal_total_pz,
+                "selfweight_total_pz": selfweight_total_pz,
+                "selfweight_thickness": thickness,
+                # SIGNED area density, which is what this solver was
+                # handed and used: the load case's own density is a
+                # magnitude and its base vector carries the direction.
+                "selfweight_area_density": density,
+            }
+        )
     if refine_selfweight:
         # Rule 2.5's numbers all describe the refinement LOOP, and they
         # are here only when the loop turned. The canvas renders every
@@ -3030,6 +3077,7 @@ def solve_tna_problem(
         "zmax": zmax if mode == "zmax" else None,
         "q_scale": q_scale if mode == "q" else None,
         "density": density,
+        "thickness": thickness,
         "horizontal_alpha": float(horizontal_alpha),
         "horizontal_method": method,
         "horizontal_kmax": (
@@ -3083,6 +3131,7 @@ def solve_tna_pattern(
     zmax: Optional[float] = None,
     q_scale: float = -1.0,
     density: float = 0.0,
+    thickness: float = 1.0,
     horizontal_alpha: float = 100.0,
     horizontal_kmax: Optional[int] = 100,
     vertical_kmax: int = 100,
@@ -3110,6 +3159,7 @@ def solve_tna_pattern(
         zmax=zmax,
         q_scale=q_scale,
         density=density,
+        thickness=thickness,
         horizontal_alpha=horizontal_alpha,
         horizontal_kmax=horizontal_kmax,
         vertical_kmax=vertical_kmax,

@@ -273,6 +273,17 @@ def _object(value: Any, label: str) -> Dict[str, Any]:
     return dict(value)
 
 
+def _default_if_none(value: Any, default: Any) -> Any:
+    """The default for an absent OR explicitly null field.
+
+    ``data.get(key, default)`` alone answers only the first, and a caller
+    that serialises its optional numbers as JSON null would hand the
+    contract a None to validate. Written out rather than done with ``or``
+    because a legitimate 0.0 must survive.
+    """
+    return default if value is None else value
+
+
 def _fields(
     value: Any,
     label: str,
@@ -375,6 +386,12 @@ def decode_load_case(value: Any, topology: TopologyBundle) -> LoadCase:
             "vectors",
             "records",
             "base_vector",
+            # Rule 2.4(a) of the 2026-09-04 selfweight design. Absent, or
+            # explicitly null from a caller that carries no self-weight
+            # model, both read as 1.0, which is the load case the native
+            # Loads component sent before these two crossed the boundary.
+            "thickness",
+            "density",
             "factor",
             "coordinate_system",
             "metadata",
@@ -389,6 +406,8 @@ def decode_load_case(value: Any, topology: TopologyBundle) -> LoadCase:
         vectors=tuple(data.get("vectors", ())),
         records=tuple(data.get("records", ())),
         base_vector=data.get("base_vector"),
+        thickness=_default_if_none(data.get("thickness"), 1.0),
+        density=_default_if_none(data.get("density"), 1.0),
         factor=data.get("factor", 1.0),
         coordinate_system=data.get("coordinate_system", "world"),
         metadata=_object(data.get("metadata", {}), "load_case.metadata"),

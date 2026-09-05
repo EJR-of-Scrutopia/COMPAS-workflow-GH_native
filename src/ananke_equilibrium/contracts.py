@@ -269,6 +269,14 @@ class LoadCase(TopologyBoundContract):
     vectors: Tuple[Point3, ...] = ()
     records: Tuple[Mapping[str, Any], ...] = ()
     base_vector: Optional[Point3] = None
+    # RhinoVault's own loading model, adopted by rule 2.4(a) of the
+    # 2026-09-04 selfweight design: the surface weight is tributary area
+    # times THICKNESS times DENSITY, and both are things of their own
+    # rather than a magnitude smuggled inside the base vector's Z. Both
+    # default to 1.0, which is why a load case authored before they
+    # existed keeps exactly the weight it had: area x base_vector.z.
+    thickness: float = 1.0
+    density: float = 1.0
     factor: float = 1.0
     coordinate_system: str = "world"
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -313,6 +321,19 @@ class LoadCase(TopologyBoundContract):
         )
         if not vectors and base_vector is None:
             raise ContractError("A load case requires at least one vector.")
+        thickness = _finite_float(self.thickness, "Load thickness")
+        if thickness < 0.0:
+            raise ContractError("Load thickness cannot be negative.")
+        # The DENSITY carries no sign: the base vector's Z says which way
+        # the weight acts, exactly as it did before rule 2.4(a) split the
+        # two apart. A negative density here would flip a vault's weight
+        # upward while the arrows on the canvas still pointed down.
+        density = _finite_float(self.density, "Load density")
+        if density < 0.0:
+            raise ContractError(
+                "Load density cannot be negative; the base vector's Z "
+                "carries the direction."
+            )
         factor = _finite_float(self.factor, "Load factor")
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "distribution", distribution)
@@ -321,6 +342,8 @@ class LoadCase(TopologyBoundContract):
         object.__setattr__(self, "vectors", vectors)
         object.__setattr__(self, "records", tuple(dict(item) for item in self.records))
         object.__setattr__(self, "base_vector", base_vector)
+        object.__setattr__(self, "thickness", thickness)
+        object.__setattr__(self, "density", density)
         object.__setattr__(self, "factor", factor)
         object.__setattr__(
             self,

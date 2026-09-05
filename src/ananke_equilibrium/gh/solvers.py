@@ -137,7 +137,20 @@ def _load_records(
     *,
     vertices_override: Any = None,
     faces_override: Any = None,
+    nodal_only: bool = False,
 ) -> tuple[tuple[int, tuple[float, float, float]], ...]:
+    """Resolve one load case to (node, vector) records.
+
+    Rule 2.4(b) of the 2026-09-04 selfweight design: a surface load's
+    base vector is the SELF-WEIGHT, spread over every vertex by tributary
+    area times thickness times density, and any explicit node IDs ride
+    BESIDE it as ordinary point loads rather than replacing it. That is
+    RhinoVault's own ``pz + pzext`` split.
+
+    ``nodal_only`` asks for the point-load half alone, which is what the
+    TNA path needs: there the self-weight is evaluated on the SOLVED
+    surface inside the worker rather than on these plan areas.
+    """
     _, vertices, _, faces = _topology_data(topology)
     if vertices_override is not None:
         vertices = tuple(vertices_override)
@@ -155,22 +168,46 @@ def _load_records(
 
     if points:
         node_ids = tuple(_nearest(vertices, point)[0] for point in points)
-    if not node_ids and distribution in (
-        "uniform_nodes",
-        "tributary_area",
-        "self_weight",
-    ):
+    surface = distribution in ("tributary_area", "self_weight")
+    # The self-weight half. A surface case with no base vector keeps the
+    # older reading, where the explicit vectors themselves are the area
+    # density at their own nodes, so nothing authored that way moves.
+    surface_nodes: tuple[int, ...] = ()
+    surface_vectors: tuple[Any, ...] = ()
+    if surface and base_vector is not None and not nodal_only:
+        if not faces:
+            raise AdapterError(
+                "Tributary-area loading needs registered faces to measure "
+                "plan areas. Use uniform_nodes for a pure edge network."
+            )
+        weight = float(
+            get_any(load_case, ("thickness",), 1.0)
+        ) * float(get_any(load_case, ("density",), 1.0))
+        areas = _plan_tributary_areas(vertices, faces)
+        surface_nodes = tuple(range(len(vertices)))
+        surface_vectors = tuple(
+            tuple(
+                float(component) * areas[node] * weight
+                for component in base_vector
+            )
+            for node in surface_nodes
+        )
+    if not node_ids and distribution == "uniform_nodes":
         node_ids = tuple(range(len(vertices)))
         if base_vector is not None:
             vectors = (base_vector,)
-    if not vectors:
+    if not vectors and not surface_vectors:
+        if nodal_only:
+            return ()
         raise AdapterError("The load case contains no load vectors.")
-    if len(vectors) == 1:
+    if not node_ids:
+        vectors = ()
+    elif len(vectors) == 1:
         vectors = vectors * len(node_ids)
     if len(vectors) != len(node_ids):
         raise AdapterError("Load vectors do not align with resolved load nodes.")
 
-    if distribution in ("tributary_area", "self_weight"):
+    if surface and base_vector is None and not nodal_only:
         if not faces:
             raise AdapterError(
                 "Tributary-area loading needs registered faces to measure "
@@ -181,6 +218,9 @@ def _load_records(
             tuple(float(component) * areas[int(node)] for component in vector)
             for node, vector in zip(node_ids, vectors)
         )
+
+    node_ids = tuple(surface_nodes) + tuple(node_ids)
+    vectors = tuple(surface_vectors) + tuple(vectors)
 
     accumulated: dict[int, list[float]] = {}
     for node, vector in zip(node_ids, vectors):
@@ -521,18 +561,24 @@ def _tna_pz(
     *,
     vertices_override: Any = None,
     faces_override: Any = None,
+    nodal_only: bool = False,
 ) -> Any:
     records = _load_records(
         topology,
         load_case,
         vertices_override=vertices_override,
         faces_override=faces_override,
+        nodal_only=nodal_only,
     )
     if any(abs(vector[0]) > 1e-12 or abs(vector[1]) > 1e-12 for _, vector in records):
         raise AdapterError(
             "TNA v0.1 accepts loads along analysis-plane Z only. Use FD for a "
             "general spatial load vector."
         )
+    if not records:
+        # No nodal load at all, said as the scalar zero the solver reads
+        # rather than as an empty mapping it would have to interpret.
+        return 0.0
     values = {node: float(vector[2]) for node, vector in records}
     vertex_count = (
         len(tuple(vertices_override))
@@ -646,11 +692,14 @@ def solve_tna(
         get_any(load_case, ("distribution",), "point")
     ).lower()
     if distribution in ("tributary_area", "self_weight"):
-        # RhinoVault's loading model: the vertical solve recomputes each
-        # vertex load from its CURRENT three-dimensional tributary area
-        # every iteration, so the funicular shape follows the built
-        # surface, not the plan mesh. The base vector's signed Z becomes
-        # the (negative, downward) area density.
+        # RhinoVault's loading model, adopted whole by rule 2.4 of the
+        # 2026-09-04 design: the self-weight is tributary area times
+        # THICKNESS times DENSITY, evaluated on the surface the solve
+        # produces rather than on the plan mesh. The base vector's signed
+        # Z says which way that weight acts and, for a load case authored
+        # before thickness and density existed, still carries its
+        # magnitude: both default to 1.0, so base_vector.z x 1 x 1 is the
+        # density that canvas always sent.
         base_vector = get_any(load_case, ("base_vector",), None)
         if base_vector is None:
             raise AdapterError("Surface loading requires one base vector.")
@@ -662,14 +711,31 @@ def solve_tna(
                 "TNA v0.1 accepts loads along analysis-plane Z only. Use FD "
                 "for a general spatial load vector."
             )
-        load_density = float(base_vector[2])
-        if abs(load_density) <= 1e-12:
+        surface_thickness = float(get_any(load_case, ("thickness",), 1.0))
+        load_density = float(base_vector[2]) * float(
+            get_any(load_case, ("density",), 1.0)
+        )
+        if abs(load_density * surface_thickness) <= 1e-12:
             raise AdapterError(
-                "Surface loading requires a non-zero vertical vector."
+                "Surface loading requires a non-zero vertical vector, "
+                "thickness and density."
             )
-        pz = 0.0
+        # RULE 2.4(b). The nodal point loads used to be ZEROED here
+        # whenever a surface load was wired, so a canvas could carry the
+        # self-weight or its point loads but never both. They now ride
+        # BESIDE the self-weight, additive, exactly RhinoVault's pz +
+        # pzext split. Nodal only: the surface half is not a plan-area
+        # load here, it is evaluated on the solved geometry in the worker.
+        pz = _tna_pz(
+            source_topology,
+            load_case,
+            vertices_override=vertices if prepared is not None else None,
+            faces_override=faces if prepared is not None else None,
+            nodal_only=True,
+        )
     else:
         load_density = 0.0
+        surface_thickness = 1.0
         pz = _tna_pz(
             source_topology,
             load_case,
@@ -788,6 +854,9 @@ def solve_tna(
                     else -1.0
                 ),
                 "density": load_density,
+                # Rule 2.4(a): RhinoVault's per-vertex "t". One scalar for
+                # now, and the seam a per-vertex thickness arrives on.
+                "thickness": surface_thickness,
                 "horizontal_alpha": float(
                     get_any(config, ("horizontal_alpha", "alpha"), 100.0)
                 ) if config is not None else 100.0,
