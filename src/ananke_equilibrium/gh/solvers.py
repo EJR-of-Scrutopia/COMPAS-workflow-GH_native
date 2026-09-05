@@ -608,6 +608,29 @@ def _tna_pz(
     return values
 
 
+def _pz_carries_no_load(pz: Any) -> bool:
+    """True when a resolved ``pz`` carries no load at any vertex.
+
+    ``_tna_pz`` answers a SCALAR for a uniform load and a MAPPING of the
+    loaded vertices otherwise, so the truth of the container says nothing
+    at all about the load: a case listing one node whose vector is zero
+    comes back as ``{12: 0.0}``, which is a truthy mapping carrying
+    nothing. Guarding on ``if not pz`` therefore let exactly the wire it
+    was written for through to the library, where it comes back as
+    ``RuntimeError: Factor is exactly singular`` behind a wall of
+    ``dgstrf info 1``.
+
+    The magnitude is asked VERTEX BY VERTEX rather than as a total,
+    because a total is a different question with a different answer: a
+    self-balancing pair, +10 at one vertex and -10 at another, sums to
+    zero and yet solves today (measured: a result, effective total 0.0,
+    vertical scale 15895381.96). Refusing it would be a new refusal of a
+    canvas that works, so the test is whether anything is carried at all.
+    """
+    values = pz.values() if isinstance(pz, dict) else (pz,)
+    return all(abs(float(value)) <= 1e-12 for value in values)
+
+
 def _faced_analysis_contracts(
     source_topology: Any,
     supports: Any,
@@ -765,13 +788,14 @@ def solve_tna(
         # diagnostics for a weight nobody asked for.
         if abs(load_density * surface_thickness) <= 1e-12:
             load_density = 0.0
-            if not pz:
+            if _pz_carries_no_load(pz):
                 raise AdapterError(
                     "A Thickness or a Density of zero asks for no "
                     "self-weight, and this load case carries no node "
-                    "loads either, so there is nothing to solve. Give a "
-                    "non-zero thickness and density, or wire the node "
-                    "loads the solve should carry."
+                    "loads either (every load vector on it is zero), so "
+                    "there is nothing to solve. Give a non-zero "
+                    "thickness and density, or wire the node loads the "
+                    "solve should carry."
                 )
     else:
         load_density = 0.0
@@ -782,6 +806,19 @@ def solve_tna(
             vertices_override=vertices if prepared is not None else None,
             faces_override=faces if prepared is not None else None,
         )
+        # The same refusal on the nodal-only side, where the same
+        # bare-library failure was reachable and older: node IDs whose
+        # vectors are all zero, or a target-free case that resolves to no
+        # record at all, reach the library and come back as
+        # "Factor is exactly singular". Rule 2.3 of the 2026-09-04 design
+        # is that the canvas never sees that sentence.
+        if _pz_carries_no_load(pz):
+            raise AdapterError(
+                "This load case resolves to no load at all: every load "
+                "vector on it is zero, or none of them reaches a node, "
+                "so there is nothing for the vertical solve to carry. "
+                "Wire the node loads the solve should carry."
+            )
     result_topology = source_topology
     result_supports = supports
     result_load_case = load_case
