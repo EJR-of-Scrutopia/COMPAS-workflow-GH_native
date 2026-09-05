@@ -2219,6 +2219,16 @@ async function applyScene(record) {
     // sun is restored after it, below.
     await refreshHdriList(hdri.name);
     await loadHdri(hdri.name);
+    // loadHdri swallows its own failures (and banners the raw cause), so
+    // the one sign the sky did not land is the name not being stamped.
+    // Say what it means for the SCENE: the sky file left the folder, and
+    // everything else still restored (Param's live case: a scene saved
+    // under evening_meadow after that file moved out of the sky folder).
+    if (state.hdriName !== hdri.name) {
+      showBanner('This scene\'s sky "' + hdri.name + '" is not in the sky '
+        + "folder any more; the rest of the scene is restored under the "
+        + "current sky.", "error");
+    }
   }
   applyEnvironment();
   regenerateEnvironment();

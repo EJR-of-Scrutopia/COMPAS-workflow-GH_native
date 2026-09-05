@@ -656,6 +656,22 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "pre-wrap" in hud
 
 
+def test_a_scene_missing_its_sky_says_so_and_restores_the_rest():
+    """Param's live case: a scene saved under a sky whose file later left
+    the sky folder. loadHdri swallows its own failure, so applyScene must
+    read the unstamped name as the verdict and tell the story in scene
+    terms -- everything else restored, the missing sky named."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    apply_start = js.index("async function applyScene(record)")
+    apply_body = js[apply_start:js.index("\n}", apply_start)]
+    verdict = apply_body.index("await loadHdri(hdri.name);")
+    after_load = apply_body[verdict:]
+    assert "if (state.hdriName !== hdri.name)" in after_load
+    assert "is not in the sky " in after_load
+    assert "the rest of the scene is restored" in after_load
+
+
 def test_the_folder_status_line_carries_the_reason():
     """The client repeats the server's zero-vault hint beside the count
     instead of leaving a bare "0 vaults in this folder" (the line Param
