@@ -686,3 +686,22 @@ drop-out persists ("worked fine on other hdri").
   under the button. Stress/deflection buttons correctly disabled with
   no staged run. 724 tests green; 4/4 mutation kills; six stale pins
   updated to the new truths.
+
+## 2026-09-05 -- ANALYSIS ROUND TWO (his second walk)
+
+- Stress threshold REMOVED (his call).
+- Wire forces = the net's lens for real now: on -> remembers the Show
+  mode and setShowMode("framework"); off, or displaced by another
+  exclusive lens -> restores the remembered mode. Round one's
+  netOn ||= forcesOn is reverted (wires behind an opaque shell were
+  invisible from most angles -- his screenshot).
+- Integrity pulse: a .layer-note caption on the panel under the button
+  ("While the build animation plays, each course glows green if its
+  staged solve stands, red if it failed, grey where no solver
+  exists.") -- twice asked; tooltips are not answers.
+- #hud is a translucent card (scrim + blur + border), hidden when
+  empty.
+- Verified live: forces on -> mode framework, wires on, shell off;
+  forces off -> mode restored to both; caption rendered; zero
+  threshold rows; HUD blurred card. 724 green; 2/2 mutation kills;
+  the round-one pins updated to round two.
