@@ -192,7 +192,18 @@ def _load_records(
             )
             for node in surface_nodes
         )
-    if not node_ids and distribution == "uniform_nodes":
+    if not node_ids and (
+        distribution == "uniform_nodes"
+        # THE TARGET-FREE SURFACE CASE, restored. A surface load with no
+        # base vector is the older reading, where the explicit vectors
+        # are themselves the area density at their own nodes, and with no
+        # targets it broadcasts over every vertex for the area-scaling arm
+        # below to rescale. Narrowing this arm to uniform_nodes turned
+        # that whole load case into NO LOAD AT ALL, silently: a unit quad
+        # under a 'tributary_area' vector of (0, 0, -1) gave four records
+        # of -0.25 and then gave none.
+        or (surface and base_vector is None and not nodal_only)
+    ):
         node_ids = tuple(range(len(vertices)))
         if base_vector is not None:
             vectors = (base_vector,)
@@ -200,7 +211,14 @@ def _load_records(
         if nodal_only:
             return ()
         raise AdapterError("The load case contains no load vectors.")
-    if not node_ids:
+    if not node_ids and surface and base_vector is not None:
+        # The base vector has already been read as the self-weight above,
+        # or deliberately withheld from it under nodal_only, and the copy
+        # a target-free contract keeps in ``vectors`` is the same vector
+        # again: it must not be counted a second time as a nodal load.
+        # Clearing unconditionally SWALLOWED a misaligned case instead of
+        # refusing it, so a point case with two vectors and no targets
+        # solved with no load where it used to raise.
         vectors = ()
     elif len(vectors) == 1:
         vectors = vectors * len(node_ids)
