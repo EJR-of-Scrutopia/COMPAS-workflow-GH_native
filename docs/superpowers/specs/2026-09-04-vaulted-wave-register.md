@@ -803,3 +803,30 @@ his structuring brief -- do not start it.
 - Sweep-calibration lesson, NOT a defect: stress/deflection/pulse
   buttons are rightly DISABLED on a bundle without staging; a sweep
   must load a staged study before judging the lenses.
+
+## 2026-09-05 -- THE BLACK LATTICE, THE KEY'S HOME, THE HUD'S LANE
+
+His screenshots (stone Column diagnosis): wires BLACK under a working
+legend; the key floating mid-air when the banner folds; the HUD line
+drawn across the tiles.
+
+- ROOT CAUSE of the black wires: the force material carried
+  vertexColors: true but the wire cylinders have no colour attribute --
+  an unbound attribute samples BLACK and multiplies instanceColor away.
+  This is why e4b0d76 "worked" by measurement (instanceColor written)
+  yet rendered black. Flag removed; instanceColor rides any material
+  (the silver rest state was the proof all along). Measured live:
+  1200/1200 instances blueward on stone.
+- Force-fattening became his dial: LAYER_SLIDERS.forces "Size" 0-3
+  (0 = uniform net, colour talks), redraws via applyWireForces.
+- #legend: fixed, lower third (bottom 26vh), left of the panel, rides
+  the fold (body.panel-collapsed -> right s4, 0.25s like the handle
+  and the log). Mid-height belongs to the collapse handle.
+- #hud: bottom 64px (above the strip), max-width min(56vw,700px),
+  pre-wrap so the long struck-now line folds inside the card.
+- 7 mutation kills (incl. a comment tripping the vertexColors-absent
+  pin -- reworded the comment, kept the code-form pin); suite 726
+  green; live probe measured colours, girth-0 uniformity, legend gaps
+  276/16, hud 735 vs shelf 757.
+- OBSERVED, unfixed and minor: a long event-log line can still cross
+  the HUD card's right edge while both are visible (log fades).
