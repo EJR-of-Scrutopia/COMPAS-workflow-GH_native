@@ -861,3 +861,16 @@ body { overflow: hidden;
   border: 1px solid var(--line); border-radius: var(--radius); }
 #shelf-actions button:hover:not(:disabled) { border-color: var(--line-lit); }
 #shelf-actions button:disabled { color: var(--ink-3); cursor: default; }
+/* Scenes in the shelf: the same drawer grid, 16:9 pictures of moments. */
+#shelf-body #scene-list { display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; padding: 12px; max-height: 42vh; overflow-y: auto; }
+#shelf-body #scene-list.hidden { display: none; }
+#shelf-body .scene-tile { width: 100%; margin: 0; padding: 0 0 6px;
+  background: transparent; border: 1px solid var(--line);
+  border-radius: var(--radius); color: var(--ink-2); font-size: 11px;
+  text-align: left; }
+#shelf-body .scene-tile:hover { border-color: var(--ink-3); color: var(--ink); }
+#shelf-body .scene-delete { background: var(--scrim); border: none;
+  border-radius: 3px; width: 18px; height: 18px; padding: 0;
+  color: var(--ink-2); font-size: 11px; }
+#shelf-body .scene-delete:hover { background: var(--danger); color: #fff; }

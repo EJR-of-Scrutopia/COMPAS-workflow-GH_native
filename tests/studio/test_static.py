@@ -2727,9 +2727,14 @@ def test_the_shelf_is_the_asset_browser_and_stays_open():
 
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="shelf-body"' in page and 'id="shelf-tabs"' in page
-    for kind in ("props", "materials", "skies"):
+    for kind in ("props", "materials", "skies", "scenes"):
         assert 'data-shelf="' + kind + '"' in page
     assert 'id="shelf-assign-skin"' in page and 'id="shelf-assign-ground"' in page
+    # Scenes moved off the panel wholesale: saving, restoring and deleting
+    # all live in the drawer (Param: "turn scenes into a tile and have the
+    # add scene and delete scene button in there too").
+    assert 'id="scene-row"' not in page and 'id="scene-open"' not in page
+    assert page.index('id="scene-save"') > page.index('id="shelf-actions"')
     # The sky dials live in the drawer, beside the pictures they tune.
     assert page.index('id="hdri-projection"') > page.index('id="shelf-sky-settings"')
     assert 'id="prop-library"' not in page, "the old inline prop popover is gone"

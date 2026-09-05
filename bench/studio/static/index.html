@@ -33,6 +33,7 @@
       <div id="shelf-actions">
         <button id="shelf-assign-skin" class="hidden" title="Wear this material on the vault">Assign to skin</button>
         <button id="shelf-assign-ground" class="hidden" title="Lay this material on the floor">Assign to ground</button>
+        <button id="scene-save" class="hidden" title="Save the viewport, the floor, the light and everything placed">Save scene</button>
       </div>
       <button id="shelf-close" title="Collapse">&#10005;</button>
     </div>
@@ -47,12 +48,14 @@
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
     <div id="shelf-grid" class="tile-grid hidden"></div>
+    <div id="scene-list" class="hidden"></div>
     <div id="prop-credit"></div>
   </div>
   <div id="shelf-tabs">
     <button data-shelf="props" title="Browse and place props">Props</button>
     <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
+    <button data-shelf="scenes" title="Save, restore and delete whole scenes">Scenes</button>
   </div>
 </div>
 <div id="legend" class="hidden">
@@ -273,12 +276,8 @@
          vault, ground, the lot. Param: "no just have it remove the props
          please." The props Clear is the one Clear; clearScene() remains a
          function for study switching, not a button. -->
-    <div id="scene-row">
-      <button id="scene-save" title="Save the viewport, the floor, the light and everything placed">Save</button>
-      <button id="scene-open">Scenes</button>
-      <span id="scene-count"></span>
-    </div>
-    <div id="scene-list" class="hidden"></div>
+    <!-- Scenes live in the shelf's Scenes drawer now: saving, restoring
+         and deleting all happen beside the pictures of the scenes. -->
   </details>
   <div id="mode-row">
     <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>

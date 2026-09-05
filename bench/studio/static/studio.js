@@ -2117,11 +2117,6 @@ async function refreshScenes() {
 
 function renderSceneList() {
   const list = document.getElementById("scene-list");
-  const count = document.getElementById("scene-count");
-  if (count) {
-    count.textContent = state.scenes.length
-      ? state.scenes.length + " saved" : "none saved";
-  }
   if (!list) return;
   list.innerHTML = "";
   if (!state.scenes.length) {
@@ -2220,16 +2215,11 @@ document.getElementById("scene-save").addEventListener("click", async () => {
     return;
   }
   logStudio("saved scene " + name);
-  document.getElementById("scene-list").classList.remove("hidden");
   await refreshScenes();
 });
 
-document.getElementById("scene-open").addEventListener("click", async () => {
-  const list = document.getElementById("scene-list");
-  const opening = list.classList.contains("hidden");
-  list.classList.toggle("hidden", !opening);
-  if (opening) await refreshScenes();
-});
+// The scene list opens from the shelf's Scenes tab now; refreshScenes is
+// called by renderShelf when that drawer shows.
 
 // ---------- the sun ----------
 // One instrument in place of three sliders and a colour picker. The site
@@ -2930,13 +2920,19 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("shelf-assign-ground").classList
     .toggle("hidden", shelfKind !== "materials");
+  document.getElementById("scene-save").classList
+    .toggle("hidden", shelfKind !== "scenes");
+  document.getElementById("scene-list").classList
+    .toggle("hidden", shelfKind !== "scenes");
   propHolder.classList.toggle("hidden", shelfKind !== "props");
-  grid.classList.toggle("hidden", shelfKind === "props");
+  grid.classList.toggle("hidden",
+    shelfKind === "props" || shelfKind === "scenes");
   grid.classList.toggle("wide", shelfKind === "skies");
   document.getElementById("prop-credit").textContent = "";
   if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
   if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
-  if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); }
+  if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); return; }
+  if (shelfKind === "scenes") { cats.innerHTML = ""; refreshScenes(); }
 }
 
 function renderShelfProps(cats, holder) {
