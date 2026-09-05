@@ -477,11 +477,22 @@ internal static class ParameterIdentity
     /// guids, OutputCount, the OutputId guids, and the InputParam and
     /// OutputParam chunks, whose items include Name.
     ///
-    /// An archive without that chunk, or without those counts, is one this
-    /// cannot speak about: nulls come back and the caller says nothing
-    /// rather than inventing a mismatch. A parameter chunk that is there
-    /// but carries no readable Name gives a null in its own slot, which
-    /// <see cref="Mismatch"/> skips.
+    /// THERE ARE TWO SHAPES, and only one of them was read here until
+    /// LoadsComponent was round-tripped through GH_Archive and the reading
+    /// came back empty. The ParameterData shape above is what the v0.1
+    /// SCRIPT components write. A NATIVE component's own writer,
+    /// GH_ComponentParamServer.Write, puts each port in an indexed
+    /// "param_input" or "param_output" chunk directly on the container and
+    /// writes no count item at all, so every component in this plugin was
+    /// reading nulls out of its own archive and no reopened canvas has ever
+    /// been told that a port moved. Both shapes are read now, ParameterData
+    /// first.
+    ///
+    /// An archive carrying neither shape is one this cannot speak about:
+    /// nulls come back and the caller says nothing rather than inventing a
+    /// mismatch. A parameter chunk that is there but carries no readable
+    /// Name gives a null in its own slot, which <see cref="Mismatch"/>
+    /// skips.
     /// </summary>
     internal static (string?[]? Inputs, string?[]? Outputs) ArchivedNames(
         GH_IReader? reader)
@@ -490,21 +501,43 @@ internal static class ParameterIdentity
             return (null, null);
         try
         {
-            if (!reader.ChunkExists("ParameterData"))
-                return (null, null);
-            GH_IReader? chunk = reader.FindChunk("ParameterData");
-            if (chunk is null)
-                return (null, null);
-            int inputs = 0;
-            int outputs = 0;
-            if (!chunk.TryGetInt32("InputCount", ref inputs) ||
-                !chunk.TryGetInt32("OutputCount", ref outputs))
+            if (reader.ChunkExists("ParameterData"))
             {
-                return (null, null);
+                GH_IReader? chunk = reader.FindChunk("ParameterData");
+                if (chunk is null)
+                    return (null, null);
+                int inputs = 0;
+                int outputs = 0;
+                if (!chunk.TryGetInt32("InputCount", ref inputs) ||
+                    !chunk.TryGetInt32("OutputCount", ref outputs))
+                {
+                    return (null, null);
+                }
+                return (
+                    ArchivedSide(chunk, "InputParam", inputs),
+                    ArchivedSide(chunk, "OutputParam", outputs));
             }
+            // THE SHAPE A NATIVE COMPONENT ACTUALLY WRITES, and the reason
+            // this whole reading was silent on every component in this
+            // plugin. GH_ComponentParamServer.Write puts each port in its
+            // own indexed "param_input" or "param_output" chunk directly on
+            // the container and writes NO count item at all; the
+            // ParameterData walk above is the v0.1 SCRIPT components'
+            // shape. Measured by round-tripping LoadsComponent through
+            // GH_Archive: the container held Description, InstanceGuid,
+            // Name and NickName, then Attributes and four "param_input"
+            // chunks, and no ParameterData anywhere. So every native
+            // component was reading nulls out of its own archive, and the
+            // moved-port Warning that a reshaped component owes a reopened
+            // canvas could never be raised.
+            bool native =
+                reader.ChunkExists("param_input", 0) ||
+                reader.ChunkExists("param_output", 0);
+            if (!native)
+                return (null, null);
             return (
-                ArchivedSide(chunk, "InputParam", inputs),
-                ArchivedSide(chunk, "OutputParam", outputs));
+                ArchivedIndexedSide(reader, "param_input"),
+                ArchivedIndexedSide(reader, "param_output"));
         }
         catch (Exception)
         {
@@ -513,6 +546,33 @@ internal static class ParameterIdentity
             // document read for.
             return (null, null);
         }
+    }
+
+    /// <summary>
+    /// The native side of the same reading, counted by walking the indexed
+    /// chunks rather than by an item, because the writer records no count.
+    /// An empty array is the honest answer for a side that carries no
+    /// ports at all (Display has no outputs), and it is not a null: a null
+    /// would silence the whole warning for that component.
+    /// </summary>
+    private static string?[] ArchivedIndexedSide(
+        GH_IReader container,
+        string chunkName)
+    {
+        var names = new List<string?>();
+        for (int index = 0; container.ChunkExists(chunkName, index); index++)
+        {
+            GH_IReader? parameter = container.FindChunk(chunkName, index);
+            if (parameter is null)
+            {
+                names.Add(null);
+                continue;
+            }
+            string value = string.Empty;
+            names.Add(
+                parameter.TryGetString("Name", ref value) ? value : null);
+        }
+        return names.ToArray();
     }
 
     private static string?[] ArchivedSide(
