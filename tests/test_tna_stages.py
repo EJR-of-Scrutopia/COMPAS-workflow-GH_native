@@ -473,8 +473,8 @@ def test_natural_height_with_surface_load_freezes_selfweight():
     # "Natural selfweight frozen 0" whenever the guard was OFF. The
     # diagnostic now says what mode the weight was evaluated in.
     assert metrics["selfweight_mode"] == "frozen at the plan geometry"
-    assert metrics["selfweight_refined"] is False
-    assert metrics["selfweight_rounds_run"] == 1
+    assert metrics["selfweight_mode_code"] == 1.0
+    assert "selfweight_refined" not in metrics
     # The frozen natural height is unit-relative but stays in the same
     # order of magnitude as the plan; the feedback loop blew far past it.
     assert 0.0 < metrics["zmax_solved"] < 60.0
@@ -483,6 +483,218 @@ def test_natural_height_with_surface_load_freezes_selfweight():
     # area, not the area of the risen surface.
     assert metrics["effective_total_pz"] < -100.0
     assert metrics["effective_total_pz"] > -500.0
+
+
+# The six keys that describe the refinement LOOP. They belong to a solve
+# that ran one, and to no other.
+SELFWEIGHT_LOOP_KEYS = (
+    "selfweight_refined",
+    "selfweight_rounds_run",
+    "selfweight_total_load_by_round",
+    "selfweight_final_drift",
+    "selfweight_converged",
+    "selfweight_fenced",
+)
+
+
+def rendered_canvas_diagnostics(metrics):
+    """What the canvas actually reads.
+
+    ananke_equilibrium.gh.solvers._diagnostic_contracts is the renderer a
+    Result's diagnostics list is built by, and it is the renderer that
+    minted "Natural selfweight frozen 0". Driving it, rather than reading
+    the metric dictionary alone, is the only way a check can speak about
+    what a canvas SEES: the renderer drops every string on the floor.
+    """
+
+    from ananke_equilibrium.gh.solvers import _diagnostic_contracts
+
+    return {
+        contract.code: (contract.message, contract.value)
+        for contract in _diagnostic_contracts(metrics)
+    }
+
+
+def test_a_solve_that_never_refined_puts_no_refinement_line_on_the_canvas():
+    """Round-1 review finding against rule 2.5.
+
+    A natural height freezes its weight at the plan and refines nothing.
+    Shipping the loop's numbers anyway put five lines on the canvas:
+    "Selfweight converged 1.0", "Selfweight fenced 0.0", "Selfweight final
+    drift 0.0", "Selfweight refined 0.0" and "Selfweight rounds run 1.0",
+    every one of them a guard reporting a state it never entered, in words
+    that read as an operation that happened. Meanwhile the one key that
+    says what the weight WAS, selfweight_mode, is a string, and the
+    renderer skips strings, so the canvas was told everything except the
+    answer. Absence for the loop, a number for the mode.
+    """
+
+    vertices, faces, edges, rim, _ = polar_disk()
+    free = {rim[j] for j in range(16) if j % 4 in (1, 2)}
+    supports = [key for key in rim if key not in free]
+    prepared = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "disk-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": supports},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.15,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+            },
+        },
+        "prepare-canvas-lines",
+    ))["result"]
+
+    solved_response = dispatch(request(
+        "tna.solve",
+        {
+            "prepared": prepared,
+            "load_case": {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": (0.0, 0.0, -1.0),
+            },
+            "control": {
+                "height_control": {"mode": "natural"},
+                "settings": {
+                    "horizontal_alpha": 100.0,
+                    "horizontal_iterations": None,
+                    "vertical_iterations": 1000,
+                    "tolerance": 1.0e-3,
+                },
+            },
+        },
+        "solve-canvas-lines",
+    ))
+    assert solved_response["type"] == "result", solved_response
+    metrics = solved_response["result"]["diagnostic_metrics"]
+
+    # The canvas first, because the canvas is where the defect was read.
+    rendered = rendered_canvas_diagnostics(metrics)
+    lines = [
+        "{} {}".format(message, value)
+        for code, (message, value) in rendered.items()
+        if code.startswith("selfweight")
+    ]
+    for key in SELFWEIGHT_LOOP_KEYS:
+        assert key not in rendered, (
+            "the canvas is being told about a refinement that never ran: "
+            "{}".format(lines)
+        )
+    # And it IS told the mode, which as a string it never was.
+    assert "Selfweight mode code 1.0" in lines, lines
+
+    # Then the wire, which is the stronger statement: the renderer drops
+    # tuples silently, so selfweight_total_load_by_round could ride the
+    # wire forever without ever showing up on a canvas.
+    present = [key for key in SELFWEIGHT_LOOP_KEYS if key in metrics]
+    assert present == [], (
+        "a solve that ran no refinement is still shipping the loop's "
+        "diagnostics: {}".format(
+            {key: metrics[key] for key in present}
+        )
+    )
+    assert metrics["selfweight_mode"] == "frozen at the plan geometry"
+    assert metrics["selfweight_mode_code"] == 1.0
+
+
+def test_the_selfweight_mode_code_is_the_twin_of_the_mode_it_names():
+    """The other half of the same finding.
+
+    selfweight_mode is a string, and both channels that carry a solve's
+    diagnostics to a reader take numbers only: the canvas renderer drops
+    strings outright, and the native component's metric dictionary is a
+    dictionary of doubles. So the mode travels as a code as well, cut from
+    the same chain, and this check walks every mode a solve can be in and
+    holds the two together. It also fixes the meaning of each number, so
+    that a reader of "Selfweight mode code 2.0" is reading refinement and
+    not something a later edit renumbered underneath them.
+    """
+
+    vertices, faces, corners = selfweight_meshgrid(5)
+
+    def solve(**overrides):
+        problem = register_tna_pattern(
+            vertices=vertices,
+            faces=faces,
+            vertex_keys=range(len(vertices)),
+        )
+        settings = dict(
+            support_mode="keys",
+            support_keys=corners,
+            pz=-1.0,
+            vertical_mode="zmax",
+            zmax=2.0,
+            density=0.0,
+            horizontal_kmax=100,
+            vertical_kmax=1000,
+            vertical_tolerance=1.0e-3,
+        )
+        settings.update(overrides)
+        return solve_tna_problem(problem, **settings).diagnostics
+
+    no_selfweight = solve()
+    frozen = solve(vertical_mode="natural", density=-1.0)
+    refined = solve(density=-1.0)
+    # The live mode is the one route by which a density still reaches the
+    # library, and it is only reachable through an explicit q scale. It
+    # needs the whole rim held: on four corner supports the live weight
+    # and the geometry chase each other into the NaN this design was
+    # written to retire, which is the point, and is measured elsewhere.
+    live = solve(
+        vertical_mode="q",
+        q_scale=-1.0,
+        density=-1.0,
+        support_mode="boundary",
+        support_keys=None,
+        pz=0.0,
+    )
+
+    assert no_selfweight["selfweight_mode"] == "none"
+    assert no_selfweight["selfweight_mode_code"] == 0.0
+    assert frozen["selfweight_mode"] == "frozen at the plan geometry"
+    assert frozen["selfweight_mode_code"] == 1.0
+    assert refined["selfweight_mode"] == "refined on the solved geometry"
+    assert refined["selfweight_mode_code"] == 2.0
+    assert live["selfweight_mode"] == "live inside the library"
+    assert live["selfweight_mode_code"] == 3.0
+
+    # The loop's numbers are present exactly where the loop turned, and
+    # the code says so on its own: a reader with numbers alone can tell a
+    # refined solve from the three that were not.
+    for diagnostics in (no_selfweight, frozen, live):
+        assert diagnostics["selfweight_mode_code"] != 2.0
+        for key in SELFWEIGHT_LOOP_KEYS:
+            assert key not in diagnostics, (
+                "{} arrived on a solve whose mode is {!r}".format(
+                    key, diagnostics["selfweight_mode"]
+                )
+            )
+    for key in SELFWEIGHT_LOOP_KEYS:
+        assert key in refined, key
+    assert refined["selfweight_refined"] is True
+
+    # Every code is rendered onto the canvas, which is the whole point of
+    # having one: the string never gets there.
+    for diagnostics in (no_selfweight, frozen, refined, live):
+        rendered = rendered_canvas_diagnostics(diagnostics)
+        assert "selfweight_mode_code" in rendered
+        assert rendered["selfweight_mode_code"][1] == (
+            diagnostics["selfweight_mode_code"]
+        )
+        assert "selfweight_mode" not in rendered
 
 
 def grid_with_hole(size=6):
