@@ -834,13 +834,45 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     len(raw), MAX_THUMBNAIL_BYTES))
         return raw
 
+    def _folder_hint(directory, count):
+        """Why a chosen folder shows zero vaults, in words.
+
+        The cut cache (bench/studies) is the natural wrong pick -- its very
+        NAME says studies -- and choosing it silenced the whole import with
+        a bare zero (Param, live: "something has happened and the import is
+        now not connecting?"). A near-miss deserves recognition, not a
+        count.
+        """
+
+        if count:
+            return None
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return "the folder cannot be read"
+        if any(entry.is_dir() and ((entry / "studio").is_dir()
+                                   or (entry / "fea-verification.json").is_file())
+               for entry in entries):
+            return ("this looks like the studio's own cache of cut studies, "
+                    "not the vault exports -- vaults are flat "
+                    "'Name-contract.json' files, like the Grasshopper "
+                    "upload folder")
+        if any(entry.is_file() and entry.suffix == ".json"
+               for entry in entries):
+            return ("none of the JSON files here read as vault exports -- "
+                    "a vault is 'Name-contract.json' or 'Name-form.json'")
+        return ("vault exports are 'Name-contract.json' or "
+                "'Name-form.json' files")
+
     def _folder_row():
         directory = bundle.UPLOAD_DIR
         present = directory.is_dir()
+        count = len(geometry.available_exports(directory)) if present else 0
         return {
             "path": str(directory),
             "exists": present,
-            "studies": len(geometry.available_exports(directory)) if present else 0,
+            "studies": count,
+            "hint": _folder_hint(directory, count) if present else None,
         }
 
     @app.post("/api/diagnostics", status_code=201)

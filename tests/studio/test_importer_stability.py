@@ -972,6 +972,47 @@ def test_the_folder_is_a_setting_and_the_list_follows_it(tmp_path, monkeypatch):
     assert client.post("/api/folder", json={"path": str(a_file)}).status_code == 400
 
 
+def test_a_zero_vault_folder_says_why(tmp_path, monkeypatch):
+    """Param, live: the Vault folder picker took bench/studies (its NAME
+    says studies) and the import fell silent behind a bare "0 vaults in
+    this folder". A zero now carries its reason, and the cut-cache
+    near-miss is recognised by shape: study directories holding a
+    studio/ cache or an fea-verification.json."""
+
+    client, uploads, _studies = make_client(tmp_path, monkeypatch)
+    app_module = studio()[0]
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
+    upload_pair(client, "Here")
+
+    # A folder full of cut-cache directories: the classic wrong pick.
+    cache = tmp_path / "studies"
+    (cache / "some-vault" / "studio").mkdir(parents=True)
+    row = client.post("/api/folder", json={"path": str(cache)}).json()
+    assert row["studies"] == 0
+    assert "cache of cut studies" in row["hint"]
+    assert "Name-contract.json" in row["hint"]
+
+    # JSON present, but nothing that reads as a vault export.
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "reading list.json").write_text("[1, 2]", encoding="utf-8")
+    row = client.post("/api/folder", json={"path": str(notes)}).json()
+    assert row["studies"] == 0
+    assert "read as vault exports" in row["hint"]
+
+    # An empty folder simply says what a vault export is.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    row = client.post("/api/folder", json={"path": str(bare)}).json()
+    assert row["studies"] == 0
+    assert row["hint"].startswith("vault exports are")
+
+    # And a folder with vaults in it carries no hint at all.
+    row = client.post("/api/folder", json={"path": str(uploads)}).json()
+    assert row["studies"] == 1
+    assert row["hint"] is None
+
+
 def test_the_saved_folder_is_applied_at_startup_not_at_app_build(tmp_path, monkeypatch):
     """apply_saved_folder is called by serve.py and never by create_app.
     Inside create_app it would overwrite the temporary folder every test

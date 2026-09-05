@@ -656,6 +656,15 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "pre-wrap" in hud
 
 
+def test_the_folder_status_line_carries_the_reason():
+    """The client repeats the server's zero-vault hint beside the count
+    instead of leaving a bare "0 vaults in this folder" (the line Param
+    met when the picker took the cut cache)."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'folder.hint ? " -- " + folder.hint : ""' in js
+
+
 def test_the_data_sheet_leads_with_the_analysis():
     """Param: "another tab heading which comes up first... actually helps
     us make sense of the data". Analysis opens first, Overview keeps the

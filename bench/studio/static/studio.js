@@ -5758,7 +5758,11 @@ document.getElementById("folder-choose").addEventListener("click", async () => {
   }
   const folder = await response.json();
   logStudio("reading vaults from " + folder.path);
-  status.textContent = folder.studies + " vaults in this folder";
+  // A zero with a reason: picking the studio's own cut cache (its name
+  // says "studies") silenced the import with a bare count once. The
+  // server recognises the near-miss and says what a vault export IS.
+  status.textContent = folder.studies + " vaults in this folder"
+    + (folder.hint ? " -- " + folder.hint : "");
   // The vault on screen came from the old folder and may not exist in the
   // new one, so the scene is emptied rather than left standing under a
   // list it no longer belongs to.
