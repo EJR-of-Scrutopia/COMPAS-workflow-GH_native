@@ -873,3 +873,12 @@ unreadable.
 - NOTE for his curation: skies referenced by saved scenes must stay in
   (or be copied into) the Vaulted hdri's folder; the scene file stores
   only the NAME.
+
+CORRECTION (same night, evidence from file dates): the sky never moved.
+The studio served from its BUILT-IN default bench/studio/hdri (which
+still holds evening_meadow_8k.hdr and its .thumbnails cache); the two
+scenes were saved 2026-09-04 16:08/20:49 from there; the curated
+Vaulted hdri's folder was assembled ~23:00 that evening (17 copies
+stamped 22:56-23:11) and the setting switched to it -- evening_meadow
+just was not among the 17 picked. Deliberate switch, small gap, now
+healed. Not related to the vault-folder mis-pick of 2026-09-05 23:06.
