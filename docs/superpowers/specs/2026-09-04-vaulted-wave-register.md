@@ -575,3 +575,33 @@ shows the columns too".
 - 719 tests green; 4 fresh mutation kills; three stale pins updated to
   the new truths (restart slice needed .addEventListener anchoring now
   that a delegate mentions the same id earlier in the file).
+
+## 2026-09-05 -- UNDO HISTORY, ONE GROUND SCALE, HONEST RANDOMISE
+
+His asks: "an undo button as a tile to the left of the other tiles...
+hdri undo, skin, ground textures, placements, movement of placements
+etc. so we are now building a small recorded history"; "instead of
+scale x and y for the ground lets just make that scale and keep it
+uniform"; "randomise... its random for every instance and repetition".
+
+- UNDO: #shelf-undo (a counterclockwise hook arrow), leftmost, disabled when empty, title
+  names the next undo. undoHistory of {label, undo} closures, cap 50.
+  undoableSelect() records hdri-select / environment-mode / render-skin
+  / ground-preset at their change events (drawer assigns dispatch the
+  same events, so one listener covers every road; empty-select first
+  choices are not recorded). dropCarriedProp pushes placements (undo =
+  removePropRecord) and moves (undo = old x/y); the gumball's end
+  pushes turns/scales; Delete pushes a re-placement closure (await
+  ensurePropTemplate first -- the library is lazy); stamp plants push
+  one entry per click removing the whole planted batch. undoReplaying
+  gates pushUndo so replays never record; loadStudy clears the history.
+  Live: disabled -> skin change arms it ("Undo the skin change") ->
+  undo restores boot value and disarms.
+- GROUND SCALE: one dial (id ground-scale) writes scaleX AND scaleY;
+  old scenes with unequal axes show X and unify on first touch. Live:
+  one input -> {x: 2, y: 2}.
+- RANDOMISE: the grain branch's global (seed & 1) 90-degree term is
+  gone -- it rotated the whole deal at once, which is exactly what he
+  reported. Windows and 0/180 flips were already per-piece hashes.
+- 722 tests green; 4/4 mutation kills (axis dropped, global turn
+  restored, replay gate removed, cross-study leak).
