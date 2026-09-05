@@ -166,8 +166,14 @@ body { overflow: hidden;
 #run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
 /* The panel token, so the data sheet follows the theme: it kept a fixed
    near-black ground under themed text, which light mode made unreadable. */
-#data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
-              overflow: auto; background: var(--panel); padding: var(--s4);
+/* A contained, translucent sheet at the top left (Param: "slightly
+   translucent like the banner... contained sized box"), not a full-height
+   column: it sizes to its content up to a ceiling and scrolls inside. */
+#data-panel { position: fixed; left: 16px; top: 16px; width: 420px;
+              max-height: 72vh;
+              overflow: auto; background: var(--scrim);
+              -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+              padding: var(--s4);
               border: 1px solid var(--line); border-radius: var(--radius); z-index: 20; }
 /* The data sheet's own Close: it sits outside #panel, where the blanket
    button rule cannot reach, and rendered as bare browser chrome. */
@@ -195,16 +201,32 @@ body { overflow: hidden;
 #panel #props-row button, #panel #props-row select,
 #panel #mode-row .mode, #panel #day-cycle-row button {
   width: auto; margin: 0; }
-#layer-toggles label { display: flex; gap: 8px; align-items: center; }
+#layer-toggles { display: flex; flex-direction: column; gap: var(--s1); }
+#layer-toggles .layer-btn { text-align: left; margin: 0; }
+#layer-toggles .layer-btn.active { background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
+/* A lens's own dial sits directly under its button, indented, and only
+   while the lens is on. */
+#layer-toggles .layer-slider { display: flex; gap: var(--s2);
+  align-items: center; margin: 0 0 var(--s1) var(--s3);
+  color: var(--ink-2); font-size: var(--t-2); }
+#layer-toggles .layer-slider input { flex: 1; width: auto; }
+#layer-toggles .layer-slider.hidden { display: none; }
+#overlays-tuck { display: flex; gap: var(--s2); align-items: center;
+  margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
 /* Bottom right, clear of the panel (derived from its width token), rather
    than bottom left on top of #hud. Both were anchored left: 16px;
    bottom: 16px, so turning a heatmap on covered the last lines of the HUD
    -- and the HUD gained the struck-now line in this branch, which is the
    line a heatmap is most likely to be read against. */
+/* The key stands mid-height beside the panel (Param: "on the right, to
+   the left of the menus"), where the eye finds it next to the controls
+   that turned it on. */
 #legend {
   position: absolute;
   right: calc(var(--panel-w) + var(--s4));
-  bottom: 16px;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 8px 12px;
   min-width: 180px;
   background: var(--scrim);

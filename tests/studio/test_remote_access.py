@@ -548,6 +548,55 @@ def test_touch_devices_get_a_sky_they_can_carry():
     assert '".bg-full.png"' in route, "no px still means the master"
 
 
+def test_the_analysis_lenses_are_buttons_one_at_a_time():
+    """Param's analysis walk: the checkboxes become buttons; the three
+    lenses that PAINT (two heatmaps, force wires) are exclusive; each
+    lens's dial sits under its button only while it is on; the stress lens
+    gains a threshold; the arrows gain scales and read through the shell;
+    the force lens brings the net with it and paints a kN key; overlays is
+    an annotation tucked at the bottom; the Data sheet is a contained
+    translucent box; the key stands mid-height beside the panel."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];' in js
+    set_layer = _js_function(js, "function setLayer(name, on)")
+    assert "state.layers[other] = false;" in set_layer
+    assert "applyShowMode();" in set_layer, "the force lens must reveal the net"
+
+    build = _js_function(js, "function buildLayerToggles()")
+    assert 'className = "layer-btn"' in build
+    assert "holder.appendChild(exaggerationRow)" in build, (
+        "the exaggeration slider seats under the Deflection button")
+    for key in ("stressThreshold", "loadsScale", "reactionsScale"):
+        assert key in js
+
+    recolour = _js_function(js, "function recolourSegments()")
+    assert "threshold * stressMagnitude" in recolour
+    assert "belowCut" in recolour
+
+    assert '"member force, kN"' in js, "the key speaks for the wires too"
+
+    arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1)")
+    assert "depthTest: false" in arrows
+    assert "depthTest = false" in arrows
+    assert "renderOrder = 25" in arrows
+
+    show = _js_function(js, "function applyShowMode()")
+    assert "|| forcesOn;" in show
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="overlays-tuck"' in html
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    data = css[css.index("#data-panel {"):]
+    data = data[:data.index("}")]
+    assert "var(--scrim)" in data and "max-height" in data
+    legend = css[css.index("#legend {"):]
+    legend = legend[:legend.index("}")]
+    assert "top: 50%" in legend
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

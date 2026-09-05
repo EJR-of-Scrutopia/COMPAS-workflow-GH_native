@@ -178,8 +178,13 @@
       <option value="top">Top</option>
       <option value="bottom">Bottom</option>
     </select></label>
-    <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
+    <!-- Parked here hidden; buildLayerToggles moves it under the
+         Deflection button when that layer is active, so the slider lives
+         with the thing it exaggerates. -->
+    <label id="exaggeration-row" class="hidden">Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
     <button id="data-button">Data</button>
+    <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
+    <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
   </details>
   <details id="animation-section" open>
     <summary>Animation</summary>

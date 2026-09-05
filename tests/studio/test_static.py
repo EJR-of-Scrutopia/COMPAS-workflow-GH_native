@@ -153,8 +153,13 @@ def test_the_layer_registry_has_the_agreed_names():
     start = js.index("const LAYERS = [") + len("const LAYERS = [")
     end = js.index("];", start)
     body = js[start:end]
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "forces"):
+    for name in ("stress", "deflection", "loads", "reactions", "pulse", "forces"):
         assert '"{}"'.format(name) in body, "LAYERS is missing {}".format(name)
+    # overlays is an ANNOTATION, not a lens: it left the button list for a
+    # tucked checkbox at the section's bottom (Param: "doesnt really belong
+    # to this list").
+    assert '"overlays"' not in body
+    assert 'setLayer("overlays", e.target.checked)' in js
     for name in ("shell", "wires"):
         assert '"{}"'.format(name) not in body, (
             "{} is not a layer; the Show select owns it, not a checkbox".format(name)
@@ -452,7 +457,7 @@ def test_load_arrows_draw_along_the_shipped_vector():
     # direction argument multiplied the vector by -1 twice over, so loads
     # rendered upward. Arrows must draw exactly along the shipped vector.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function arrowField(entries, colour, anchor)" in js
+    assert "function arrowField(entries, colour, anchor, lengthScale = 1)" in js
     start = js.index("function arrowField(")
     end = js.index("\n}", start)
     assert "direction" not in js[start:end]
@@ -808,7 +813,7 @@ def test_missing_coverage_reads_as_grey_not_white():
         "recolourSegments must not paint missing data as white; white sits "
         "inside the stress scale's own pale-zero region"
     )
-    assert "colour = value === null ? noData :" in body
+    assert "colour = value === null ? noData" in body
     assert "if (!colour) colour = noData;" in body
 
 
@@ -1931,8 +1936,11 @@ def test_three_buttons_replace_the_show_select():
     # Re-pinned 2026-09-04: the two locals became the one netClearance()
     # record that the finished net, Both mode and the formwork act all read.
     # Still two lifts, still one per object's own radius.
-    assert 'position.z = state.showMode === "both" ? clearance.wires' in body
-    assert 'position.z = state.showMode === "both" ? clearance.nodes' in body
+    # "both" grew a sibling: the force lens riding shell mode lifts too,
+    # for the same crown-seam reason.
+    assert "position.z = lifted ? clearance.wires" in body
+    assert '(forcesOn && shellOn)' in body
+    assert "position.z = lifted ? clearance.nodes" in body
 
 
 def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():

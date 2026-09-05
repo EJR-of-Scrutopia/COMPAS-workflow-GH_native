@@ -182,6 +182,7 @@ const state = {
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
+  analysisSliders: { stressThreshold: 0, loadsScale: 1, reactionsScale: 1 },
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   pattern: "bonded-courses",
   size: 0.9,
@@ -4178,12 +4179,31 @@ function applyCut(preserve) {
 const LAYERS = [
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
+  ["forces", "Wire forces"],
   ["loads", "Load vectors"],
   ["reactions", "Reaction vectors"],
-  ["overlays", "Text overlays"],
   ["pulse", "Integrity pulse"],
-  ["forces", "Wire forces"],
 ];
+
+// The three lenses that PAINT the same surface: two heatmaps recolouring
+// the shell and the force-coloured wires. Layered together they read as
+// mud (Param: "they overlap eachother, they can only be viewed
+// individually"), so choosing one puts the others down.
+const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
+
+// What each lens carries under its button when it is on. Values live in
+// state so a rebuild of the toggle list never resets a slider.
+const LAYER_SLIDERS = {
+  stress: { key: "stressThreshold", label: "Threshold",
+            min: 0, max: 0.9, step: 0.05,
+            title: "Grey out everything below this share of the peak, so the loaded regions stand alone" },
+  loads: { key: "loadsScale", label: "Scale",
+           min: 0.2, max: 4, step: 0.1,
+           title: "Arrow length multiplier" },
+  reactions: { key: "reactionsScale", label: "Scale",
+               min: 0.2, max: 4, step: 0.1,
+               title: "Arrow length multiplier" },
+};
 
 function finalStage() {
   const staging = state.bundle && state.bundle.staging;
@@ -4298,27 +4318,76 @@ function layerAvailability(name) {
 
 function buildLayerToggles() {
   const holder = document.getElementById("layer-toggles");
+  // The exaggeration slider is a PERMANENT node (its value and handler
+  // live in the page); park it back outside before the holder is wiped,
+  // then seat it under the Deflection button below.
+  const exaggerationRow = document.getElementById("exaggeration-row");
+  document.getElementById("analysis-section").appendChild(exaggerationRow);
+  exaggerationRow.classList.add("hidden");
   holder.innerHTML = "";
   for (const [name, label] of LAYERS) {
     const availability = layerAvailability(name);
-    const wrap = document.createElement("label");
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = !!state.layers[name];
-    box.disabled = !availability.on;
-    if (availability.why) wrap.title = availability.why;
-    box.addEventListener("change", () => setLayer(name, box.checked));
-    wrap.appendChild(box);
-    wrap.appendChild(document.createTextNode(label));
-    holder.appendChild(wrap);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "layer-btn" + (state.layers[name] ? " active" : "");
+    button.textContent = label;
+    button.disabled = !availability.on;
+    if (availability.why) button.title = availability.why;
+    else if (name === "pulse") {
+      button.title = "Glows each course by its staged solve: green "
+        + "converged, red did not, grey has no solver";
+    }
+    button.addEventListener("click", () => setLayer(name, !state.layers[name]));
+    holder.appendChild(button);
+    if (name === "deflection") {
+      holder.appendChild(exaggerationRow);
+      exaggerationRow.classList.toggle("hidden", !state.layers.deflection);
+      exaggerationRow.classList.add("layer-slider");
+    }
+    const spec = LAYER_SLIDERS[name];
+    if (spec) {
+      const row = document.createElement("label");
+      row.className = "layer-slider" + (state.layers[name] ? "" : " hidden");
+      if (spec.title) row.title = spec.title;
+      const caption = document.createElement("span");
+      caption.textContent = spec.label;
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = spec.min;
+      slider.max = spec.max;
+      slider.step = spec.step;
+      slider.value = state.analysisSliders[spec.key];
+      slider.addEventListener("change", () => {
+        state.analysisSliders[spec.key] = +slider.value;
+        if (name === "stress") recolourSegments();
+        else updateVectorLayers();
+      });
+      row.appendChild(caption);
+      row.appendChild(slider);
+      holder.appendChild(row);
+    }
   }
 }
 
 function setLayer(name, on) {
   state.layers[name] = on;
+  // One painting lens at a time: raising a heatmap or the force wires
+  // puts the other two down, and everything they touched repaints.
+  if (on && EXCLUSIVE_LAYERS.includes(name)) {
+    for (const other of EXCLUSIVE_LAYERS) {
+      if (other !== name) state.layers[other] = false;
+    }
+  }
   if (name === "loads" || name === "reactions") updateVectorLayers();
-  if (name === "stress" || name === "deflection") recolourSegments();
-  if (name === "forces") applyWireForces();
+  if (EXCLUSIVE_LAYERS.includes(name)) {
+    recolourSegments();
+    applyWireForces();
+    // Wire forces are wires: a lens that colours the net must bring the
+    // net on screen, whatever the Show mode (Param: "needs to actually
+    // show the wires").
+    applyShowMode();
+  }
+  buildLayerToggles();
   if (name === "pulse" && !on && state.objects.shell) {
     // The pulse is the only thing that writes emissive on segment
     // materials; turning it off sweeps that back to zero rather than
@@ -4360,6 +4429,7 @@ function applyWireForces() {
   if (!wires || !base) return;
   const availability = layerAvailability("forces");
   const active = !!(state.layers.forces && availability.on);
+  paintForceLegend(active ? forceMagnitude() : null);
   if (!active) {
     const white = new THREE.Color(0xffffff);
     for (let i = 0; i < base.length; i++) {
@@ -4386,6 +4456,34 @@ function applyWireForces() {
   });
   wires.instanceMatrix.needsUpdate = true;
   wires.instanceColor.needsUpdate = true;
+}
+
+function forceMagnitude() {
+  const forces = state.bundle && state.bundle.member_forces;
+  if (!forces || !forces.length) return null;
+  let magnitude = 0;
+  for (const force of forces) magnitude = Math.max(magnitude, Math.abs(force));
+  return magnitude || null;
+}
+
+// The key beside the panel, wire-forces edition: same diverging bar the
+// stress lens uses (compression blue, tension red), labelled in kN.
+function paintForceLegend(magnitude) {
+  const legend = document.getElementById("legend");
+  if (magnitude === null) {
+    // Only claim the legend back if no heatmap owns it; recolourSegments
+    // paints its own the moment one does.
+    if (!state.layers.stress && !state.layers.deflection) {
+      legend.classList.add("hidden");
+    }
+    return;
+  }
+  legend.classList.remove("hidden");
+  legend.classList.remove("deflection");
+  document.getElementById("legend-title").textContent = "member force, kN";
+  document.getElementById("legend-min").textContent = (-magnitude / 1e3).toFixed(1);
+  document.getElementById("legend-zero").textContent = "0";
+  document.getElementById("legend-max").textContent = (magnitude / 1e3).toFixed(1);
 }
 
 function stressValue(pair, surface, magnitude) {
@@ -4469,6 +4567,11 @@ function recolourSegments() {
   // hole in coverage. Grey is clearly outside every scale this function
   // paints (compression blue, zero pale beige, tension red).
   const noData = new THREE.Color(0x808080);
+  // Below the threshold the surface stands back in a flat bone tone --
+  // deliberately not the no-data grey, which means something else -- so
+  // the regions above it carry the whole story.
+  const belowCut = new THREE.Color(0xd8d5cd);
+  const threshold = state.analysisSliders.stressThreshold || 0;
   for (const segment of state.objects.shell.children) {
     const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
@@ -4487,7 +4590,10 @@ function recolourSegments() {
           // do have data, so null here means every one of them is missing,
           // not just one -- an honest "no data" reads as grey, not white.
           const value = sampleScalar(field, weights[i]);
-          colour = value === null ? noData : STRESS_SCALE(value, stressMagnitude);
+          colour = value === null ? noData
+            : threshold && Math.abs(value) < threshold * stressMagnitude
+              ? belowCut
+              : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
           colour = STRESS_SCALE(stressValue(null, surface, stressMagnitude), stressMagnitude);
@@ -4613,18 +4719,20 @@ function updateVectorLayers() {
   const bundle = state.bundle;
   if (state.layers.loads) {
     state.objects.loadArrows = arrowField(
-      Object.entries(bundle.loads), 0x66aaff, "tip");
+      Object.entries(bundle.loads), 0x66aaff, "tip",
+      state.analysisSliders.loadsScale);
     scene.add(state.objects.loadArrows);
   }
   if (state.layers.reactions && Object.keys(bundle.reactions).length) {
     // Real TNA reaction vectors from the contract, shipped in the bundle.
     state.objects.reactionArrows = arrowField(
-      Object.entries(bundle.reactions), 0x66dd77, "tail");
+      Object.entries(bundle.reactions), 0x66dd77, "tail",
+      state.analysisSliders.reactionsScale);
     scene.add(state.objects.reactionArrows);
   }
 }
 
-function arrowField(entries, colour, anchor) {
+function arrowField(entries, colour, anchor, lengthScale = 1) {
   // One LineSegments for every shaft plus one instanced cone set for heads:
   // two draw calls however many nodes there are. Arrows draw exactly along
   // the shipped vector: loads arrive pointing down, reactions as exported.
@@ -4641,7 +4749,7 @@ function arrowField(entries, colour, anchor) {
   entries.forEach(([id, vector], i) => {
     const at = vertices[+id];
     const v = new THREE.Vector3(vector[0], vector[1], vector[2]);
-    const length = 0.4 + 2.0 * (v.length() / magnitudeMax);
+    const length = (0.4 + 2.0 * (v.length() / magnitudeMax)) * lengthScale;
     const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, -1);
     const start = new THREE.Vector3(...at);
     const tipAnchored = anchor === "tip";
@@ -4660,10 +4768,17 @@ function arrowField(entries, colour, anchor) {
     m.compose(headAt, q, new THREE.Vector3(1, 1, 1));
     heads.setMatrixAt(i, m);
   });
+  // The arrows read THROUGH the shell: an anchor half-buried behind
+  // opaque pieces was Param's "hard to see them because the shell gets
+  // in the way". Depth-test off plus a late render order draws every
+  // shaft and head over whatever hides it.
+  heads.material.depthTest = false;
+  heads.renderOrder = 25;
   const lines = new THREE.LineSegments(
     new THREE.BufferGeometry().setAttribute(
       "position", new THREE.BufferAttribute(new Float32Array(positions), 3)),
-    new THREE.LineBasicMaterial({ color: colour }));
+    new THREE.LineBasicMaterial({ color: colour, depthTest: false }));
+  lines.renderOrder = 25;
   const group = new THREE.Group();
   group.add(lines); group.add(heads);
   return group;
@@ -6665,6 +6780,9 @@ window.addEventListener("keydown", (event) => {
 // over every casting's geometry. On the real export that is 233 of them per
 // event, which a drag fires dozens of.
 document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
+document.getElementById("overlays-box").addEventListener("change", (e) => {
+  setLayer("overlays", e.target.checked);
+});
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
 // The three ways of looking at the vault. Timeline is not among them on
 // purpose: playing is its own way of looking and switches to it by itself,
@@ -7614,7 +7732,11 @@ function applyShowMode() {
   if (!state.objects.shell || !state.objects.wires || !state.objects.nodes || !state.bundle) return;
   if (state.showMode === "timeline") return;
   const shellOn = state.showMode === "shell" || state.showMode === "both";
-  const netOn = state.showMode === "framework" || state.showMode === "both";
+  // The force lens colours the net, so the net comes with it whatever the
+  // Show mode says.
+  const forcesOn = !!(state.layers.forces && layerAvailability("forces").on);
+  const netOn = state.showMode === "framework" || state.showMode === "both"
+    || forcesOn;
   applyInflation(1);
   for (const segment of state.objects.shell.children) {
     segment.visible = shellOn;
@@ -7668,8 +7790,11 @@ function applyShowMode() {
   // shared clearance under-cleared whichever one was bigger, and growing
   // the Node size slider alone could push the white dots back through.
   const clearance = netClearance();
-  state.objects.wires.position.z = state.showMode === "both" ? clearance.wires : 0;
-  state.objects.nodes.position.z = state.showMode === "both" ? clearance.nodes : 0;
+  // Lifted clear whenever the shell is also on screen -- the classic
+  // crown-seam clearance, extended to the force lens riding shell mode.
+  const lifted = state.showMode === "both" || (forcesOn && shellOn);
+  state.objects.wires.position.z = lifted ? clearance.wires : 0;
+  state.objects.nodes.position.z = lifted ? clearance.nodes : 0;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
