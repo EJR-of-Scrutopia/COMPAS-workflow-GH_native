@@ -17,7 +17,6 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<div id="hud"></div>
 <div id="event-log"></div>
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
@@ -183,6 +182,9 @@
          with the thing it exaggerates. -->
     <label id="exaggeration-row" class="hidden">Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
     <button id="data-button">Data</button>
+    <!-- The old floating overlay card, reading in place under the Data
+         button now (Param: "text that just reads below the data button"). -->
+    <div id="hud"></div>
     <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
     <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
   </details>

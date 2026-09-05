@@ -185,7 +185,8 @@ const state = {
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
-  analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1 },
+  analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1,
+                     thrustScale: 1 },
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   pattern: "bonded-courses",
   size: 0.9,
@@ -1743,13 +1744,21 @@ function netInstances(edgeCount, vertexCount) {
   nodeMaterial.transparent = true;
   const nodes = new THREE.InstancedMesh(
     new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
-  // The thrust network is a diagram of the analysis, not a scene object.
-  // Once the vault closes, the wires sit hidden inside the shell, and
-  // shadow maps ignore both occlusion and opacity, so with castShadow on
-  // they projected a grid shadow of an invisible net through the finished
-  // vault onto the ground. Overlays cast nothing; castings and columns do.
+  // Born not casting: syncNetShadow at every visibility/opacity writer
+  // decides from live state, so a SOLID net grounds itself while a
+  // fading one goes quiet (see syncNetShadow's own comment).
   wires.castShadow = nodes.castShadow = false;
   return { wires, nodes };
+}
+
+// Shadow maps ignore opacity, so a net fading out on the strike used to
+// keep casting a full hard grid shadow -- the old fix was a blanket
+// castShadow false, which then left a SOLID net on screen with no shadow
+// at all (Param: "the formwork doesnt project a shadow?"). The flag now
+// follows the state at every writer: casting while present and solid,
+// quiet the moment it fades or hides.
+function syncNetShadow(object) {
+  object.castShadow = object.visible && object.material.opacity > 0.6;
 }
 
 // Scratch instances: the two writers below run per edge per frame for the
@@ -4214,14 +4223,14 @@ const LAYERS = [
   ["forces", "Wire forces"],
   ["loads", "Load vectors"],
   ["reactions", "Reaction vectors"],
-  ["pulse", "Integrity pulse"],
+  ["thrust", "Support thrust"],
 ];
 
 // The three lenses that PAINT the same surface: two heatmaps recolouring
 // the shell and the force-coloured wires. Layered together they read as
 // mud (Param: "they overlap eachother, they can only be viewed
 // individually"), so choosing one puts the others down.
-const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces", "pulse"];
+const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
 
 // What each lens carries under its button when it is on. Values live in
 // state so a rebuild of the toggle list never resets a slider.
@@ -4236,6 +4245,9 @@ const LAYER_SLIDERS = {
   reactions: { key: "reactionsScale", label: "Scale",
                min: 0.2, max: 4, step: 0.1,
                title: "Arrow length multiplier" },
+  thrust: { key: "thrustScale", label: "Scale",
+            min: 0.2, max: 4, step: 0.1,
+            title: "Arrow length multiplier" },
 };
 
 function finalStage() {
@@ -4254,8 +4266,8 @@ function finalStage() {
 // things -- no staged run exists at all, a staged run exists and this
 // material has no solver, or a staged run exists, was solved, and did not
 // converge -- three statements a reader must never see conflated.
-// updateHud and applyPulse were given the no-solver reading in commit
-// 022f9c5; layerAvailability, the sibling nobody re-read, was still
+// updateHud (and the since-removed pulse) were given the no-solver reading
+// in commit 022f9c5; layerAvailability, the sibling nobody re-read, was still
 // printing the first when it meant the second (commit 8444539). What was
 // still missing after both fixes is the state one over: a stage that DID
 // reach the runner and came back with converged false. That is not "no
@@ -4301,14 +4313,17 @@ const FRICTION_PROVENANCE = {
 function layerAvailability(name) {
   const stage = finalStage();
   const v = state.bundle && state.bundle.verification;
-  if (name === "pulse") {
-    return state.bundle && state.bundle.staging
-      ? { on: true } : { on: false, why: "run staged analysis first" };
+  if (name === "thrust") {
+    // The thrust arrows are the reactions read differently, so they need
+    // exactly what the reactions layer needs.
+    return state.bundle && Object.keys(state.bundle.reactions).length
+      ? { on: true }
+      : { on: false, why: "this contract shipped no reaction vectors" };
   }
   if (name === "stress" || name === "deflection") {
     if (stage) return { on: true };
     // stage is null and the question is why, in the same words updateHud
-    // and applyPulse already use for the same struck_now on the same
+    // already uses for the same struck_now on the same
     // screen. A staged run (staging.stages.length) settles two of the
     // three readings below before the "no staging at all" fallback is
     // even reachable, because both of them describe a run that already
@@ -4368,14 +4383,14 @@ function buildLayerToggles() {
     if (availability.why) button.title = availability.why;
     button.addEventListener("click", () => setLayer(name, !state.layers[name]));
     holder.appendChild(button);
-    if (name === "pulse") {
-      // Twice asked what this does; a tooltip was not the answer. The
-      // caption lives on the panel where the question is asked.
+    if (name === "thrust") {
+      // The pulse taught this panel that a lens explains itself where the
+      // question is asked, not in a tooltip.
       const note = document.createElement("div");
       note.className = "layer-note";
-      note.textContent = "While the build animation plays, each course "
-        + "glows green if its staged solve stands, red if it failed, "
-        + "grey where no solver exists.";
+      note.textContent = "The push each springing gives the ground, the "
+        + "reaction reversed: green stands near vertical, amber leans, "
+        + "red past 35 degrees is a push the abutment or a tie must hold.";
       holder.appendChild(note);
     }
     if (name === "deflection") {
@@ -4421,7 +4436,9 @@ function setLayer(name, on) {
   }
   const forcesWasOn = name !== "forces" && on
     && EXCLUSIVE_LAYERS.includes(name) && state.showModeBeforeForces;
-  if (name === "loads" || name === "reactions") updateVectorLayers();
+  if (name === "loads" || name === "reactions" || name === "thrust") {
+    updateVectorLayers();
+  }
   if (EXCLUSIVE_LAYERS.includes(name)) {
     recolourSegments();
     applyWireForces();
@@ -4440,13 +4457,6 @@ function setLayer(name, on) {
     }
   }
   buildLayerToggles();
-  // recolourSegments (called above for every exclusive lens) restores
-  // the built materials when the pulse goes down; raising it paints the
-  // verdicts at once, standing still until the build clock runs.
-  if (name === "pulse" && on) {
-    applyPulseColours(
-      state.timeline && state.timeline.playing ? state.timeline.t : null);
-  }
   updateHud();
 }
 
@@ -4727,9 +4737,9 @@ function recolourSegments() {
     // What is discarded here is always a per piece instance, never the
     // shared registry entry, so freeing it is safe: without this, every
     // layer toggle and every exaggeration nudge leaked one material per
-    // casting.
-    if (previous && previous !== segment.material
-        && !previous.userData.sharedLens) previous.dispose();
+    // casting. (The pulse's shared-lens materials, the one exception this
+    // guard once carried, left with the pulse.)
+    if (previous && previous !== segment.material) previous.dispose();
   }
   updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage);
 }
@@ -4780,7 +4790,7 @@ function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage)
 
 // ---------- vector layers ----------
 function updateVectorLayers() {
-  for (const key of ["loadArrows", "reactionArrows"]) {
+  for (const key of ["loadArrows", "reactionArrows", "thrustArrows"]) {
     if (state.objects[key]) { scene.remove(state.objects[key]); state.objects[key] = null; }
   }
   if (!state.bundle) return;
@@ -4798,16 +4808,50 @@ function updateVectorLayers() {
       state.analysisSliders.reactionsScale);
     scene.add(state.objects.reactionArrows);
   }
+  if (state.layers.thrust && Object.keys(bundle.reactions).length) {
+    // The push each springing gives the ground: the reaction REVERSED,
+    // bucketed by how far it leans from vertical -- the same 35-degree
+    // line the analysis narrative warns at. Green stands, amber leans,
+    // red is a push the abutment or a tie must hold. One arrowField per
+    // bucket (a field is one colour), all normalised against the one
+    // magnitude so lengths stay comparable across colours.
+    const buckets = { stands: [], leans: [], kicks: [] };
+    let magnitudeMax = 1e-9;
+    for (const [id, vector] of Object.entries(bundle.reactions)) {
+      magnitudeMax = Math.max(magnitudeMax,
+        Math.hypot(vector[0], vector[1], vector[2]));
+      const outward = Math.hypot(vector[0], vector[1]);
+      const degrees = Math.atan2(outward, Math.abs(vector[2])) * 180 / Math.PI;
+      const push = [-vector[0], -vector[1], -vector[2]];
+      (degrees >= 35 ? buckets.kicks
+        : degrees >= 20 ? buckets.leans : buckets.stands).push([id, push]);
+    }
+    const group = new THREE.Group();
+    for (const [rows, colour] of [[buckets.stands, 0x3f9e57],
+        [buckets.leans, 0xc99a2e], [buckets.kicks, 0xc24936]]) {
+      if (rows.length) {
+        group.add(arrowField(rows, colour, "tail",
+          state.analysisSliders.thrustScale, magnitudeMax));
+      }
+    }
+    state.objects.thrustArrows = group;
+    scene.add(group);
+  }
 }
 
-function arrowField(entries, colour, anchor, lengthScale = 1) {
+function arrowField(entries, colour, anchor, lengthScale = 1,
+                    magnitudeMaxShared = null) {
   // One LineSegments for every shaft plus one instanced cone set for heads:
   // two draw calls however many nodes there are. Arrows draw exactly along
   // the shipped vector: loads arrive pointing down, reactions as exported.
   // anchor 'tip' stands the shaft before the node so the head lands at the point of application; 'tail' leaves the node along the vector.
   const vertices = state.bundle.analysis_mesh.vertices;
-  let magnitudeMax = 1e-9;
-  for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
+  // A shared magnitude, when given, keeps arrow lengths comparable across
+  // sibling fields drawn in different colours (the thrust buckets).
+  let magnitudeMax = magnitudeMaxShared || 1e-9;
+  if (!magnitudeMaxShared) {
+    for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
+  }
   const positions = [];
   const cone = new THREE.ConeGeometry(0.06, 0.18, 8);
   const heads = new THREE.InstancedMesh(
@@ -4852,7 +4896,7 @@ function arrowField(entries, colour, anchor, lengthScale = 1) {
   return group;
 }
 
-// ---------- integrity pulse ----------
+// ---------- the build stage index ----------
 function currentStageIndex(build) {
   // Which build stage the timeline is inside: stages are courses, and a
   // course's segments occupy a contiguous run of the drop order. build is
@@ -4862,10 +4906,10 @@ function currentStageIndex(build) {
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
-  // placementStep, the one shared stagger: the HUD's stage line and the
-  // integrity pulse both hang off this number, and reading the picture
-  // at a different rate once had a finished sprayed vault quoting a
-  // stage still halfway down the drop order.
+  // placementStep, the one shared stagger: the HUD's stage line hangs off
+  // this number, and reading the picture at a different rate once had a
+  // finished sprayed vault quoting a stage still halfway down the drop
+  // order.
   const placed = Math.floor(build / placementStep());
   // Walked over the pieces, which are what actually drop, in the same order
   // the index and the picture use.
@@ -4878,62 +4922,10 @@ function currentStageIndex(build) {
   return Math.max(0, Math.min(stages.length - 1, coursesDone - 1));
 }
 
-// The pulse's verdict palette. Green means the struck-now FEA solve for
-// that COURSE converged, red means it did not, grey means no solve was
-// ever attempted ("unavailable": brick, tile, stone carry no ananke_fea
-// preset). Two materials per verdict -- a steady one for placed courses
-// and a breathing one for the course being built -- shared across every
-// piece wearing that verdict, so the whole lens costs six materials.
-const PULSE_MATERIALS = (() => {
-  const shades = { good: 0x3f9e57, bad: 0xc24936, none: 0x8f8f8f };
-  const family = {};
-  for (const [verdict, shade] of Object.entries(shades)) {
-    family[verdict] = {
-      steady: new THREE.MeshPhysicalMaterial({
-        color: shade, roughness: 0.85, side: THREE.DoubleSide }),
-      front: new THREE.MeshPhysicalMaterial({
-        color: shade, roughness: 0.85, side: THREE.DoubleSide,
-        emissive: new THREE.Color(shade) }),
-    };
-    family[verdict].steady.userData.sharedLens = true;
-    family[verdict].front.userData.sharedLens = true;
-  }
-  return family;
-})();
-
-function courseVerdict(courseIndex) {
-  const staging = state.bundle && state.bundle.staging;
-  const stage = staging && staging.stages && staging.stages[courseIndex];
-  const struck = stage && stage.struck_now;
-  if (!struck || struck.status === "unavailable") return "none";
-  return struck.converged ? "good" : "bad";
-}
-
-// His ruling, after the emissive-over-texture version proved invisible
-// ("we should remove textures and let it run with the colours"): while
-// the pulse lens is on, every piece drops its skin for a flat lit colour
-// carrying ITS OWN course's verdict, and the course the build front is
-// on breathes. At rest (no build clock) the colouring stands still.
-function applyPulseColours(build) {
-  if (!state.layers.pulse || !state.bundle || !state.objects.shell) return;
-  const front = build === null ? null : currentStageIndex(build);
-  for (const segment of state.objects.shell.children) {
-    const family = PULSE_MATERIALS[courseVerdict(segment.userData.course)];
-    const wanted = front !== null && segment.userData.course === front
-      ? family.front : family.steady;
-    if (segment.material !== wanted) segment.material = wanted;
-  }
-  if (front !== null) {
-    const breath = 0.25 + 0.2 * Math.sin(build * 4);
-    for (const family of Object.values(PULSE_MATERIALS)) {
-      family.front.emissiveIntensity = breath;
-    }
-  }
-}
-
-function applyPulse(build) {
-  applyPulseColours(build);
-}
+// The integrity pulse lived here until 2026-09-06 (Param: "no more green
+// and flashing etc. i dont think it adds enough value"). Its verdict per
+// course survives in the Data sheet's build story, where it reads better
+// as a sentence than it ever did as a glow.
 
 function updateHud() {
   const hud = document.getElementById("hud");
@@ -5302,8 +5294,8 @@ function renderDataPanel(v) {
     content.appendChild(interpolationLine);
   }
 
-  // The CRA verdict no longer pops up: it is gone from the badge, the HUD
-  // and the integrity pulse, since the form finding already guarantees
+  // The CRA verdict no longer pops up: it is gone from the badge and the
+  // HUD, since the form finding already guarantees
   // compression-only equilibrium by construction and no size the API
   // permits reaches the rigid-block budget in any case. The Data panel
   // keeps the honest record where a study happens to carry one, rendered
@@ -7021,9 +7013,14 @@ document.getElementById("data-button").addEventListener("click", () => {
   renderAnalysisTab();
   showDataTab("data-analysis");
   panel.classList.toggle("hidden");
+  // The button wears the sheet's state (his ask), like the Show trio.
+  document.getElementById("data-button").classList.toggle(
+    "active", !panel.classList.contains("hidden"));
 });
-document.getElementById("data-close").addEventListener("click", () =>
-  document.getElementById("data-panel").classList.add("hidden"));
+document.getElementById("data-close").addEventListener("click", () => {
+  document.getElementById("data-panel").classList.add("hidden");
+  document.getElementById("data-button").classList.remove("active");
+});
 document.getElementById("run-button").addEventListener("click", startRun);
 
 // M5 fix: reload with the material/pattern/size/thickness the run actually
@@ -7143,7 +7140,7 @@ function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
 // airborne at once. Three clocks read the drop order and all three have
 // to read it the same way: applySceneAtTime (what the picture does),
 // timelineDuration (the scrubber and the recorded frame count) and
-// currentStageIndex (the HUD's stage line and the integrity pulse).
+// currentStageIndex (the HUD's stage line).
 function placementStep() {
   return BUILD_TARGET_SECONDS / Math.max(1, placementCount());
 }
@@ -7316,9 +7313,9 @@ function pieceMaterial(key) {
   // key, which is deterministic, so any number of rebuilds and heatmap
   // toggles land on the same colour.
   //
-  // Each casting owns its instance so the pulse can write emissive per
-  // piece, and so the tint never leaks into the shared registry entry
-  // other code reads from.
+  // Each casting owns its instance so a lens can tint per piece (the
+  // heatmaps swap materials piecewise), and so nothing ever leaks into
+  // the shared registry entry other code reads from.
   const own = appearanceMaterialBase().clone();
   // Task 5: the tint/finish overrides are render-only and apply before the
   // per-piece HSL variation below, which is unchanged -- a tint override
@@ -7756,6 +7753,7 @@ function applyFormworkAct(t, strikeU) {
   const lift = netClearance();
   if (formworkObjects.net) {
     formworkObjects.net.visible = show.net;
+    syncNetShadow(formworkObjects.net);
     if (show.net) {
       writeInstancedSegments(formworkObjects.net, doc.edges, frame.vertices);
       formworkObjects.net.position.z = lift.wires;
@@ -7763,6 +7761,7 @@ function applyFormworkAct(t, strikeU) {
   }
   if (formworkObjects.nodes) {
     formworkObjects.nodes.visible = show.net;
+    syncNetShadow(formworkObjects.nodes);
     if (show.net) {
       writeInstancedPoints(formworkObjects.nodes, frame.vertices);
       formworkObjects.nodes.position.z = lift.nodes;
@@ -7781,13 +7780,14 @@ function applyFormworkAct(t, strikeU) {
       // takes in applySceneAtTime, because it is one machine leaving.
       bars.material.opacity = 1 - strikeU;
       bars.position.z = lift.wires - 1.5 * strikeU;
+      syncNetShadow(bars);
     }
   }
 }
 
 // Everything that depends on the build/strike clock but not on the camera:
-// inflation, segment drop/visibility, falsework, wires/nodes strike state,
-// and the integrity pulse. setLayer's wires/falsework toggle and
+// inflation, segment drop/visibility, falsework, and the wires/nodes
+// strike state. setLayer's wires/falsework toggle and
 // rebuildWiresAndNodes both need to recompute this scene state after the
 // objects they touch change, but neither one should be allowed to move the
 // camera -- only applyTimeline's own scrubber/play/record callers get to
@@ -7796,7 +7796,7 @@ function applyFormworkAct(t, strikeU) {
 function applySceneAtTime(t) {
   state.timeline.t = t;
   // Guarded like every sibling that touches these two (recolourSegments,
-  // applyPulse, setLayer). disposeShell sets state.objects.shell to null,
+  // setLayer). disposeShell sets state.objects.shell to null,
   // and this function is reachable from setLayer and rebuildWiresAndNodes,
   // neither of which is ordered after a rebuild; the falsework is built in
   // the same pass. An unguarded read throws out of frame() before the
@@ -7806,7 +7806,7 @@ function applySceneAtTime(t) {
   const inflate = inflationFactor(t);
   applyInflation(inflate);
   // The timeline opens with the net inflating into form; everything after
-  // it (drop, strike, pulse) runs on build time, which only starts once
+  // it (drop, strike) runs on build time, which only starts once
   // inflation is complete.
   const build = Math.max(0, t - openingSeconds());
   const sprayed = sprayedMaterial();
@@ -7911,15 +7911,9 @@ function applySceneAtTime(t) {
     object.visible = strikeU < 1 && !duringFormworkAct(t);
     object.material.opacity = 1 - strikeU;
     object.position.z = clearance[key] - 1.5 * strikeU;
+    syncNetShadow(object);
   }
-  // The pulse is a Timeline effect: build is the elapsed drop-order clock
-  // and has no meaning in Framework/Shell/Both, which show a fixed rest
-  // state with no build order to be partway through. Calling it
-  // unconditionally left the last frame's emissive tint stuck on the shell
-  // after switching Show mode away from Timeline; applyShowMode's own
-  // sweep, below, clears that residue on entry to the other three modes.
   applyFormworkAct(t, strikeU);
-  if (state.showMode === "timeline") applyPulse(build);
   applyShowMode();
 }
 
@@ -7943,12 +7937,6 @@ function applyShowMode() {
     segment.position.set(0, 0, 0);
     segment.rotation.set(0, 0, 0);
     segment.scale.set(1, 1, 1);
-    // applyPulse only runs in Timeline (see applySceneAtTime, above), so
-    // leaving here without sweeping this back would leave the last
-    // Timeline frame's tint stuck on the shell in Shell/Both. Same sweep
-    // setLayer("pulse", false) does when the pulse layer itself is turned
-    // off.
-    segment.material.emissiveIntensity = 0;
   }
   state.objects.wires.visible = netOn;
   state.objects.nodes.visible = netOn;
@@ -7960,6 +7948,8 @@ function applyShowMode() {
   // two properties this lens needs to restore to their built values.
   state.objects.wires.material.opacity = 1;
   state.objects.nodes.material.opacity = 1;
+  syncNetShadow(state.objects.wires);
+  syncNetShadow(state.objects.nodes);
   // Crown seam (2026-08-16-studio-finish task 4). Diagnosis, probed with
   // studio_probe.mjs against the real "Algebraic TNA method" export in Both
   // mode, camera close on the ridge: buildWiresAndNodes draws the net

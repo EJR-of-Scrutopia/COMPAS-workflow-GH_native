@@ -153,8 +153,12 @@ def test_the_layer_registry_has_the_agreed_names():
     start = js.index("const LAYERS = [") + len("const LAYERS = [")
     end = js.index("];", start)
     body = js[start:end]
-    for name in ("stress", "deflection", "loads", "reactions", "pulse", "forces"):
+    for name in ("stress", "deflection", "loads", "reactions", "thrust", "forces"):
         assert '"{}"'.format(name) in body, "LAYERS is missing {}".format(name)
+    # The integrity pulse left on his word (2026-09-06: "no more green and
+    # flashing etc. i dont think it adds enough value"); Support thrust
+    # took its slot.
+    assert '"pulse"' not in body
     # overlays is an ANNOTATION, not a lens: it left the button list for a
     # tucked checkbox at the section's bottom (Param: "doesnt really belong
     # to this list").
@@ -243,23 +247,18 @@ def test_the_hud_does_not_call_an_unavailable_material_a_convergence_failure():
     assert "no equilibrium found" not in unavailable_line
 
 
-def test_the_pulse_does_not_tint_an_unavailable_material_red():
-    # Fix round 1, the other half: applyPulse used only good/not-good, so a
-    # material with no ananke_fea preset pulsed the same red as a real
-    # failed solve. Neither green (nothing converged) nor red (nothing
-    # failed either) is honest; it must read as a third, neutral state.
-    # The reading lives in courseVerdict now (the pulse became a flat
-    # verdict-colour lens on Param's ruling), and the neutral state is its
-    # own material shade, distinct from both green and red.
+def test_the_pulse_is_gone_on_his_word():
+    # 2026-09-06, Param: "The integrity pulse i want removed too also. no
+    # more green and flashing etc. i dont think it adds enough value."
+    # The machinery must be truly gone, not dormant: no shared verdict
+    # materials, no per-course verdict reader, no per-frame applier. The
+    # per-course story it told survives in the Data sheet's build
+    # narrative, where it reads better as a sentence.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    body = _function_body(js, "courseVerdict")
-    assert 'struck.status === "unavailable"' in body
-    assert 'return "none";' in body
-    shades = js[js.index("const PULSE_MATERIALS"):]
-    shades = shades[:shades.index("};")]
-    assert "good: 0x3f9e57" in shades
-    assert "bad: 0xc24936" in shades
-    assert "none: 0x8f8f8f" in shades
+    assert "PULSE_MATERIALS" not in js
+    assert "courseVerdict" not in js
+    assert "applyPulse" not in js
+    assert "Integrity pulse" not in js
 
 
 def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading():
@@ -275,9 +274,9 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # All three are pinned here together, in one test, so that fixing two
     # of them is not a thing that can pass.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # applyPulse delegates to courseVerdict since the flat-colour rework;
-    # the reading moved, the invariant did not.
-    readers = ("updateHud", "courseVerdict", "layerAvailability")
+    # Two readers since the pulse (and its courseVerdict) left with it;
+    # the invariant stands over whoever reads the state.
+    readers = ("updateHud", "layerAvailability")
     for name in readers:
         body = _function_body(js, name)
         reads_it = (
@@ -326,15 +325,13 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # is checked against all three readers, not only the one each fix was
     # sent to correct.
     hud_body = _function_body(js, "updateHud")
-    # applyPulse delegates; the verdict reading lives in courseVerdict.
-    pulse_body = _function_body(js, "courseVerdict")
 
     # State 1: a converged stage exists, so there is a real per-node field
-    # to colour with.
+    # to colour with. (courseVerdict, the third reader, left with the
+    # pulse on 2026-09-06; the HUD carries the wording alone now.)
     assert "if (stage) return { on: true };" in availability
     assert "struck && struck.converged" in hud_body
     assert '"struck now: stands' in hud_body
-    assert 'return struck.converged ? "good" : "bad";' in pulse_body
 
     # State 2: staging ran but the final stage has no per-node field,
     # either because the material has no preset or because the solve did
@@ -460,7 +457,11 @@ def test_load_arrows_draw_along_the_shipped_vector():
     # direction argument multiplied the vector by -1 twice over, so loads
     # rendered upward. Arrows must draw exactly along the shipped vector.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function arrowField(entries, colour, anchor, lengthScale = 1)" in js
+    # The trailing magnitudeMaxShared keeps the thrust buckets' lengths
+    # comparable across their three colours; omitted, each field still
+    # normalises itself exactly as before.
+    assert ("function arrowField(entries, colour, anchor, lengthScale = 1,\n"
+            "                    magnitudeMaxShared = null)") in js
     start = js.index("function arrowField(")
     end = js.index("\n}", start)
     assert "direction" not in js[start:end]
@@ -915,12 +916,8 @@ def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
         assert class_name not in css
     assert "function craVerdict(" in js
     assert "function updateCraBadge(" not in js
-    pulse_start = js.index("function applyPulse(")
-    pulse_end = js.index("\n}", pulse_start)
-    assert "cra.stands" not in js[pulse_start:pulse_end], (
-        "the pulse must pulse on the FEA solve alone, as it did before the "
-        "CRA wave"
-    )
+    # (The pulse itself left entirely on 2026-09-06; its CRA independence
+    # no longer needs pinning because there is nothing left to depend.)
     hud_start = js.index("function updateHud(")
     hud_end = js.index("\n}", hud_start)
     assert "CRA:" not in js[hud_start:hud_end]

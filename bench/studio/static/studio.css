@@ -143,22 +143,13 @@ body { overflow: hidden;
 #panel input:focus-visible { outline: 2px solid var(--accent);
          outline-offset: 1px; }
 #props-row button.armed { outline: 2px solid var(--accent); }
-/* A card, not loose ink: white-on-gravel was unreadable (Param's crop).
-   Same translucent family as the banner and the Data sheet. */
-/* Above the shelf strip and width-capped: the struck-now line can run
-   long (the stone message) and used to draw itself straight across the
-   bottom tiles (Param: "the text overlay is crossing over the tiles").
-   pre-wrap keeps the report's line structure while letting a long line
-   fold inside the card. */
-#hud { position: fixed; left: 16px; bottom: 64px; font-size: 13px;
-       max-width: min(56vw, 700px);
-       line-height: 1.5; white-space: pre-wrap; pointer-events: none;
-       padding: var(--s2) var(--s3);
-       background: var(--scrim);
-       -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-       border: 1px solid var(--line); border-radius: var(--radius);
-       color: var(--ink); text-shadow: none; }
+/* In the panel now, reading straight under the Data button (Param: "turn
+   the text overlay into text that just reads below the data button") --
+   panel ink, no card, its long struck-now lines wrapping in place. */
+#hud { margin-top: var(--s2); font-size: var(--t-2); line-height: 1.5;
+       white-space: pre-wrap; color: var(--ink-2); }
 #hud:empty { display: none; }
+#data-button.active { background: var(--accent-bg); color: var(--ink); }
 /* F6: clear of the panel plus a margin, derived from the width token so a
    resized panel cannot overlap it again -- the log used to paint its text
    underneath the panel itself. */

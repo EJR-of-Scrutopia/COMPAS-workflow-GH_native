@@ -558,9 +558,9 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     translucent box; the key stands mid-height beside the panel."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    # The pulse paints the shell too, so it joined the family.
+    # Three since the pulse left (2026-09-06, his word).
     assert ('const EXCLUSIVE_LAYERS = '
-            '["stress", "deflection", "forces", "pulse"];') in js
+            '["stress", "deflection", "forces"];') in js
     set_layer = _js_function(js, "function setLayer(name, on)")
     assert "state.layers[other] = false;" in set_layer
     # Round two of his walk: wire forces ARE the net's lens, so raising it
@@ -573,7 +573,7 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
-    for key in ("loadsScale", "reactionsScale", "forcesScale"):
+    for key in ("loadsScale", "reactionsScale", "forcesScale", "thrustScale"):
         assert key in js
     # The girth dial is a real slider row under the Wire forces button,
     # not just a state key.
@@ -607,21 +607,27 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "state.analysisSliders.forcesScale" in wire_lens
     assert "girth * Math.abs(force)" in wire_lens
 
-    # The pulse is a flat verdict lens now (his ruling: "remove textures
-    # and let it run with the colours"): each piece wears ITS OWN course's
-    # verdict, the build front breathes, and the shared lens materials are
-    # never disposed by the per-piece cleanup.
-    pulse = _js_function(js, "function applyPulseColours(build)")
-    assert "courseVerdict(segment.userData.course)" in pulse
-    assert "family.front : family.steady" in pulse
-    recolour2 = _js_function(js, "function recolourSegments()")
-    assert "!previous.userData.sharedLens" in recolour2
-    # And the pulse explains itself ON the panel, where the question was
-    # asked twice; a tooltip was not the answer.
+    # The pulse left on his word (2026-09-06: "no more green and flashing
+    # etc"); Support thrust holds its slot: the reaction REVERSED,
+    # bucketed at 20 and 35 degrees from vertical -- the same line the
+    # narrative's abutment recommendation warns at -- all three colour
+    # buckets normalised against ONE magnitude so lengths stay comparable.
+    assert "applyPulseColours" not in js
+    assert "PULSE_MATERIALS" not in js
+    vectors = _js_function(js, "function updateVectorLayers()")
+    assert "state.layers.thrust" in vectors
+    assert "[-vector[0], -vector[1], -vector[2]]" in vectors
+    assert "degrees >= 35 ? buckets.kicks" in vectors
+    for shade in ("0x3f9e57", "0xc99a2e", "0xc24936"):
+        assert shade in vectors, "the thrust buckets wear the verdict colours"
+    assert "state.analysisSliders.thrustScale, magnitudeMax" in vectors
+    # And the lens explains itself ON the panel (the pulse taught this
+    # panel that much; a tooltip was not the answer).
     build2 = _js_function(js, "function buildLayerToggles()")
     assert '"layer-note"' in build2
+    assert 'name === "thrust"' in build2
 
-    arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1)")
+    arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1,")
     assert "depthTest: false" in arrows
     assert "depthTest = false" in arrows
     assert "renderOrder = 25" in arrows
@@ -646,14 +652,37 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "calc(var(--panel-w)" in legend
     assert "transition: right" in legend
     assert "body.panel-collapsed #legend { right: var(--s4); }" in css
-    # And the HUD card stays clear of the shelf tiles (his crop: the
-    # struck-now line drew itself across them): above the strip, width
-    # capped, long lines folding inside the card.
+    # The overlay text lives IN the panel now, reading under the Data
+    # button (his ask: "text that just reads below the data button"), and
+    # the Data button wears the sheet's open state.
     hud = css[css.index("#hud {"):]
     hud = hud[:hud.index("}")]
-    assert "bottom: 64px" in hud
-    assert "max-width" in hud
+    assert "position: fixed" not in hud, "the HUD is panel text, not a card"
     assert "pre-wrap" in hud
+    assert "#data-button.active" in css
+    html2 = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    button_at = html2.index('id="data-button"')
+    assert html2.index('id="hud"') > button_at
+    assert html2.index('id="hud"') < html2.index('id="overlays-tuck"')
+    js2 = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'classList.toggle(\n    "active", !panel.classList.contains("hidden"))' in js2
+    assert 'getElementById("data-button").classList.remove("active")' in js2
+
+    # The formwork grounds itself (his report: "the formwork doesnt
+    # project a shadow?"): the flag follows visibility and opacity at
+    # every writer, so a solid net casts and a fading one goes quiet --
+    # the old ghost-grid shadow stays fixed.
+    sync = _js_function(js2, "function syncNetShadow(object)")
+    assert "object.visible && object.material.opacity > 0.6" in sync
+    scene_time = _js_function(js2, "function applySceneAtTime(t)")
+    assert "syncNetShadow(object)" in scene_time
+    show_mode = _js_function(js2, "function applyShowMode()")
+    assert "syncNetShadow(state.objects.wires)" in show_mode
+    assert "syncNetShadow(state.objects.nodes)" in show_mode
+    act = _js_function(js2, "function applyFormworkAct(t, strikeU)")
+    assert "syncNetShadow(formworkObjects.net)" in act
+    assert "syncNetShadow(bars)" in act
 
 
 def test_a_scene_outranks_the_device_appearance_memory():
