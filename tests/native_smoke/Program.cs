@@ -2785,7 +2785,10 @@ internal static class Program
                 + "with no surface load and every natural height, gets "
                 + "neither line rather than 'settled in 1 round' for a "
                 + "loop that never ran. A missing selfweight_refined key "
-                + "reads as absent, not as a refinement of zero rounds.");
+                + "reads as absent, not as a refinement of zero rounds, "
+                + "which is the shape the worker now ships for an "
+                + "unrefined solve: the self-weight mode code, and none "
+                + "of the loop's keys, is no refinement.");
         }
         catch (Exception exception)
         {
@@ -37381,6 +37384,23 @@ internal static class Program
             throw new InvalidOperationException(
                 "metrics carrying no self-weight keys should produce no "
                 + $"line; got chin '{chin ?? "<none>"}' and warning "
+                + $"'{warning ?? "<none>"}'.");
+        }
+
+        // The shape the worker actually ships now for a solve that
+        // refined nothing: the self-weight MODE, as the numeric twin the
+        // canvas can read, and not one key of the loop. A mode of 1,
+        // frozen at the plan, is not a refinement of one round, and
+        // nothing here may infer one from it.
+        (chin, warning) = Run(
+            ("selfweight_mode_code", 1.0),
+            ("zmax_solved", 5.0));
+        if (chin is not null || warning is not null)
+        {
+            throw new InvalidOperationException(
+                "a self-weight mode is not a refinement: metrics carrying "
+                + "a mode code and none of the loop's keys should produce "
+                + $"no line; got chin '{chin ?? "<none>"}' and warning "
                 + $"'{warning ?? "<none>"}'.");
         }
     }
