@@ -462,3 +462,38 @@ C30/37...", panel half-built.
   spawn-switch pin).
 - QUEUED (his word, 2026-09-05): plotly is installed and wanted for the
   ANALYSIS side of the web app -- charts for the analysis panel.
+
+## 2026-09-05 -- START FROM THE PAGE, FOOTER ON THE FLOOR, DEVICE FIT
+
+His asks: "if i stop the server we need a ztart server too"; footer
+"always... on the bottom of the banner not on the bottom of the menus";
+"make the ui fit these different devices better".
+
+- START SERVER: hidden button beside Stop, revealed exactly when
+  "stopped" lands (Stop hides itself). Click knocks the waker TWICE --
+  same-origin /start (tailnet pages) and http://127.0.0.1:8611/start
+  no-cors (the desktop page, whose own origin is dead) -- reads neither
+  answer, then polls its own /api/health for a real studio (health.ok
+  AND health.studio; a proxy 502 or the waker page must not trigger it)
+  and location.reload()s onto the fresh build. Waker cooldown folds the
+  double knock into one launch. The offline pin now exempts
+  http://127.0.0.1 -- loopback is not the network.
+- FOOTER: #panel is a flex column (children flex-shrink 0), #mode-row
+  margin-top auto -- short sections drop the mode row + panel foot to
+  the banner's true bottom; overflow keeps the old sticky behaviour.
+- DEVICE FIT (first pass): @media (pointer: coarse) raises the footer
+  buttons to 32px and pads shelf/layer tabs; @media (max-width: 1000px)
+  centres the drawer in the space LEFT of the panel
+  (calc((100vw - var(--panel-w)) / 2)); every backdrop-filter carries
+  -webkit- for iOS. The fuller adaptive pass (portrait phones,
+  collapsible panel) is QUEUED on his direction.
+- HIS 14:18 iPad screenshot decoded: the vault RENDERED (lazy library
+  works there); the banner + broken material tiles came from my own
+  server restarts colliding with his attempt -- the page's log showed
+  "request refused 502: /api/studies", the proxy speaking for a server
+  that was mid-bounce. Not a client fault.
+- Verified live through the tailnet: stop -> "stopped", Stop hidden,
+  Start shown, server measured down; Start click -> waker spawned ->
+  studio back on a fresh pid -> the page reloaded ITSELF onto the new
+  build. Footer screenshot shows the rows pinned to the panel's floor.
+  714 tests green, 4 new pins mutation-proved (4/4 kills).
