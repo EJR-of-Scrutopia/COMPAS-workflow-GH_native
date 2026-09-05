@@ -463,6 +463,65 @@ def test_the_take_neither_reaims_nor_inherits_the_drags_glide():
     assert "if (!turntableOwns) controls.update();" in loop
 
 
+def test_the_ground_wears_one_scale():
+    """Param: "instead of scale x and y for the ground lets just make that
+    scale and keep it uniform". One dial writes both axes; a texture
+    stretched on one axis stops being a picture of its material."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="ground-scale"' in html
+    assert "ground-scale-x" not in html
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "state.ground.scaleX = +e.target.value;" in js
+    assert "state.ground.scaleY = +e.target.value;" in js
+
+
+def test_randomise_deals_every_piece_its_own_hand():
+    """Param: "its random for every instance and repetition". The old
+    seed-parity term rotated the WHOLE deal 90 degrees at once under
+    Match grain, which read as one rotation applied to everything."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "(seed & 1)" not in js
+    assert "? (uvQuarterTurn(seedKey) & 1) * 2" in js, (
+        "grain matched still flips 0/180 per piece; grain has no arrow "
+        "but does have a direction")
+
+
+def test_a_small_recorded_history_undoes_the_last_thing():
+    """Param: "we are now building a small recorded history" -- sky,
+    environment, skin, floor, placements, moves, adjustments, deletions,
+    stamp plants. One tile, leftmost; each entry puts one thing back; a
+    replayed undo must not record itself; another study empties it."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    tabs = html[html.index('id="shelf-tabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'id="shelf-undo"' in tabs
+    assert tabs.index('id="shelf-undo"') < tabs.index('data-shelf="props"'), (
+        "the undo tile stands to the LEFT of the other tiles")
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    push = _js_function(js, "function pushUndo(label, undo)")
+    assert "if (undoReplaying) return;" in push
+    for wired in ('undoableSelect("hdri-select"',
+                  'undoableSelect("environment-mode"',
+                  'undoableSelect("render-skin"',
+                  'undoableSelect("ground-preset"'):
+        assert wired in js, wired
+    assert 'pushUndo("placing the " + record.type' in js
+    assert 'pushUndo("the move"' in js
+    assert 'pushUndo("the adjustment"' in js
+    assert 'pushUndo("deleting the " + gone.type' in js
+    assert 'pushUndo("placing " + planted.length' in js
+    study = js[js.index("async function loadStudy(exportName)"):]
+    study = study[:400]
+    assert "clearUndoHistory();" in study, (
+        "yesterday's undos must not write into a different picture")
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

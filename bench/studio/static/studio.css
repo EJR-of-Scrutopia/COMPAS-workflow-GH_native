@@ -965,4 +965,5 @@ body.panel-collapsed #event-log { right: var(--s4); }
 #shelf-tabs .shelf-act { width: 34px; padding: 5px 0; text-align: center;
   font-size: 13px; line-height: 1.2; }
 #shelf-play { margin-left: 10px; }
+#shelf-undo { margin-right: 10px; }
 #shelf-record { color: #d05548; }

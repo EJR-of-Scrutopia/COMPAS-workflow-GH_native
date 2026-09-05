@@ -3468,6 +3468,11 @@ function moveStamp(hit) {
 
 function placeStampInstance(hit) {
   stampRig.placed += 1;
+  const planted = stampRig.records.slice();
+  pushUndo("placing " + planted.length + (planted.length === 1
+    ? " copy" : " copies"), () => {
+    for (const record of planted) removePropRecord(record);
+  });
   saveProps();
   spawnStampInstance(hit.x, hit.y);
 }
@@ -5344,6 +5349,9 @@ function populateStudySelect(studies, selection) {
 }
 
 async function loadStudy(exportName) {
+  // Another study is another scene: yesterday's undos would put things
+  // back into a picture that is no longer on screen.
+  clearUndoHistory();
   // An immediate load supersedes a pending settle timer: without this, a
   // size commit followed within the settle window by a material, pattern
   // or study change fires two full server cuts instead of one.
@@ -6300,8 +6308,10 @@ document.getElementById("ground-radius").addEventListener("input", (e) => {
   if (state.objects.ground) rebuildGround();
 });
 function syncGroundControls() {
-  const pairs = [["ground-scale-x", state.ground.scaleX, 100],
-                 ["ground-scale-y", state.ground.scaleY, 100],
+  // One Scale dial (Param: "lets just make that scale and keep it
+  // uniform"). Old scenes may still carry unequal axes; the dial shows X
+  // and the first touch unifies them.
+  const pairs = [["ground-scale", state.ground.scaleX, 100],
                  ["ground-relief", state.ground.relief, 10]];
   for (const [id, value, factor] of pairs) {
     const slider = document.getElementById(id);
@@ -6311,17 +6321,17 @@ function syncGroundControls() {
   }
 }
 
-// The floor texture's own dials. Scale is a multiplier over the
-// real-world repeat, per axis; relief is the floor's own depth, decoupled
-// from the vault's; the randomise button slides the whole pattern.
-for (const [id, key, factor] of [["ground-scale-x", "scaleX", 100],
-                                 ["ground-scale-y", "scaleY", 100]]) {
-  document.getElementById(id).addEventListener("input", (e) => {
-    state.ground[key] = +e.target.value;
-    document.getElementById(id + "-value").textContent = Math.round(+e.target.value * factor);
-    if (state.objects.ground) rebuildGround();
-  });
-}
+// The floor texture's own dials. Scale is ONE multiplier over the
+// real-world repeat, both axes together -- a texture stretched on one
+// axis stops being a picture of its material; relief is the floor's own
+// depth, decoupled from the vault's; the randomise button slides the
+// whole pattern.
+document.getElementById("ground-scale").addEventListener("input", (e) => {
+  state.ground.scaleX = +e.target.value;
+  state.ground.scaleY = +e.target.value;
+  document.getElementById("ground-scale-value").textContent = Math.round(+e.target.value * 100);
+  if (state.objects.ground) rebuildGround();
+});
 document.getElementById("ground-relief").addEventListener("input", (e) => {
   state.ground.relief = +e.target.value;
   document.getElementById("ground-relief-value").textContent = Math.round(state.ground.relief * 10);
@@ -6373,8 +6383,25 @@ function carryExistingProp(record) {
 
 function dropCarriedProp() {
   if (!state.carrying) return;
+  const { record, from } = state.carrying;
   state.carrying = null;
   controls.enabled = true;
+  if (!from) {
+    pushUndo("placing the " + record.type, () => removePropRecord(record));
+  } else if (Math.abs(record.x - from.x) > 0.001
+      || Math.abs(record.y - from.y) > 0.001) {
+    const before = { x: from.x, y: from.y };
+    pushUndo("the move", () => {
+      record.x = before.x;
+      record.y = before.y;
+      record.object.position.set(before.x, before.y, 0);
+      if (state.selectedProp === record) {
+        refreshPropOutline();
+        setPropGumball(record);
+      }
+      saveProps();
+    });
+  }
   // Outside edit mode the landed prop goes back to being furniture: no
   // outline lingers, and no key can quietly move it afterwards.
   if (!state.propEdit) selectProp(null);
@@ -6526,8 +6553,24 @@ function endPropDrag(event) {
   }
   if (state.gumball) {
     const record = state.gumball.record;
+    const before = { rotation: state.gumball.startRotation,
+                     scale: state.gumball.startScale };
     state.gumball = null;
     controls.enabled = true;
+    if (Math.abs((record.rotation || 0) - before.rotation) > 1e-6
+        || Math.abs((record.scale || 1) - before.scale) > 1e-6) {
+      pushUndo("the adjustment", () => {
+        record.rotation = before.rotation;
+        record.scale = before.scale;
+        record.object.rotation.z = before.rotation;
+        record.object.scale.setScalar(before.scale);
+        if (state.selectedProp === record) {
+          refreshPropOutline();
+          setPropGumball(record);
+        }
+        saveProps();
+      });
+    }
     // A scale drag changed the prop's size: rebuild the ring to fit.
     setPropGumball(record);
     saveProps();
@@ -6586,19 +6629,20 @@ window.addEventListener("keydown", (event) => {
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
     const record = state.selectedProp;
-    // Deleting a prop that is being CARRIED must also put the carry
-    // down, or the outline keeps following the cursor around a prop
-    // that no longer exists and the camera stays locked.
-    if (state.carrying && state.carrying.record === record) {
-      state.carrying = null;
-      state.propDrag = false;
-      controls.enabled = true;
-    }
-    disposeProp(record.object);
-    propsGroup.remove(record.object);
-    state.props = state.props.filter((p) => p !== record);
-    selectProp(null);
-    saveProps();
+    const gone = { type: record.type, x: record.x, y: record.y,
+                   rotation: record.rotation, scale: record.scale,
+                   layer: record.layer };
+    pushUndo("deleting the " + gone.type, async () => {
+      await ensurePropTemplate(gone.type);
+      const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
+        false, gone.scale);
+      again.layer = gone.layer;
+      again.object.visible = layerVisible(again.layer);
+      saveProps();
+    });
+    // removePropRecord also puts a carried corpse down, or the outline
+    // keeps following the cursor and the camera stays locked.
+    removePropRecord(record);
   }
 });
 // "change" (drag release), not "input": the file's own convention for every
@@ -7081,8 +7125,14 @@ function buildPieceMeshes() {
     // once -- the switch for pictures whose grain runs across the image
     // rather than down it. Without it, the hashed quarter-turn per piece
     // keeps the courses from reading as aligned copies.
+    // No GLOBAL component in either branch: pressing Randomise must deal
+    // every piece its own hand (Param: "its random for every instance"),
+    // and the old seed-parity term turned the whole deal 90 degrees at
+    // once, which read as one rotation applied to everything. Grain
+    // matched still only flips 0/180, because grain has no arrow but
+    // does have a direction.
     const turn = grain
-      ? ((uvQuarterTurn(seedKey) & 1) * 2 + (seed & 1)) & 3
+      ? (uvQuarterTurn(seedKey) & 1) * 2
       : uvQuarterTurn(seedKey);
     const window_ = segmentWindow(seedKey);
     const uvs = tile
@@ -7912,6 +7962,92 @@ document.getElementById("play-button").addEventListener("click", () => {
   }
   startPlaying(false);
 });
+// ---------- the undo history ----------
+// A small recorded history (Param's words) of the things a session does
+// to a scene: sky, environment, skin, floor, placements, moves, turns,
+// scales, deletions. Each entry is a closure that puts ONE thing back;
+// the button undoes the most recent. The history belongs to the scene it
+// happened in, so switching study empties it.
+const undoHistory = [];
+const UNDO_CAP = 50;
+let undoReplaying = false;
+
+function paintUndoButton() {
+  const button = document.getElementById("shelf-undo");
+  if (!button) return;
+  button.disabled = !undoHistory.length;
+  button.title = undoHistory.length
+    ? "Undo " + undoHistory[undoHistory.length - 1].label
+    : "Nothing to undo yet";
+}
+
+function pushUndo(label, undo) {
+  // Replaying an undo runs the same handlers that record history; gating
+  // here is what keeps undo from writing its own next entry.
+  if (undoReplaying) return;
+  undoHistory.push({ label, undo });
+  if (undoHistory.length > UNDO_CAP) undoHistory.shift();
+  paintUndoButton();
+}
+
+function clearUndoHistory() {
+  undoHistory.length = 0;
+  paintUndoButton();
+}
+
+async function undoLast() {
+  const entry = undoHistory.pop();
+  paintUndoButton();
+  if (!entry) return;
+  undoReplaying = true;
+  try {
+    await entry.undo();
+    logStudio("undid " + entry.label);
+  } catch (error) {
+    logStudio("could not undo " + entry.label + ": " + error.message);
+  } finally {
+    undoReplaying = false;
+  }
+}
+document.getElementById("shelf-undo").addEventListener("click", undoLast);
+
+// The selects carry the sky, the environment, the skin and the floor, and
+// every road to them -- panel picker or drawer assign -- ends in a change
+// event, so one listener per select records them all.
+function undoableSelect(id, label) {
+  const select = document.getElementById(id);
+  let previous = select.value;
+  select.addEventListener("change", () => {
+    const before = previous;
+    previous = select.value;
+    if (before === select.value) return;
+    // A first-ever choice (the select was still empty) has no before to
+    // return to.
+    if (!before) return;
+    pushUndo(label, () => {
+      select.value = before;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+}
+undoableSelect("hdri-select", "the sky change");
+undoableSelect("environment-mode", "the environment change");
+undoableSelect("render-skin", "the skin change");
+undoableSelect("ground-preset", "the floor change");
+
+function removePropRecord(record) {
+  if (state.carrying && state.carrying.record === record) {
+    state.carrying = null;
+    state.propDrag = false;
+    controls.enabled = true;
+  }
+  disposeProp(record.object);
+  propsGroup.remove(record.object);
+  state.props = state.props.filter((p) => p !== record);
+  if (state.selectedProp === record) selectProp(null);
+  saveProps();
+}
+
 document.getElementById("shelf-play").addEventListener("click", () => {
   document.getElementById("play-button").click();
 });

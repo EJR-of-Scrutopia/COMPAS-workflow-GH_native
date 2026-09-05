@@ -57,6 +57,7 @@
     <div id="layer-tabs" class="hidden"></div>
   </div>
   <div id="shelf-tabs">
+    <button id="shelf-undo" class="shelf-act" title="Nothing to undo yet" disabled>&#8630;</button>
     <button data-shelf="props" title="Browse and place props">Props</button>
     <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
@@ -276,8 +277,7 @@
       <option value="dark-studio" selected>Dark studio</option>
     </select></label>
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
-    <label>Scale X <input id="ground-scale-x" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-x-value">100</span>%</label>
-    <label>Scale Y <input id="ground-scale-y" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-y-value">100</span>%</label>
+    <label>Scale <input id="ground-scale" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-value">100</span>%</label>
     <label>Relief <input id="ground-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
     <button id="ground-randomise" title="Turn and slide the floor pattern to a fresh lay angle">Randomise floor</button>
 
