@@ -732,3 +732,36 @@ run with the colours".
   segments exactly #3f9e57.
 - Struck-now reader pins repointed to courseVerdict (the reading moved,
   the invariant did not). 724 green; 3/3 mutation kills.
+
+## 2026-09-05 -- THE DATA SHEET GROWS A BRAIN (his full brief)
+
+His walk: Overview tab for the current sheet; a NEW Analysis tab that
+"comes up first... actually helps us make sense of the data", stress
+amount + location + issue-or-not + fixing recommendations,
+material-aware (limits, thickness bands, load before failure); a
+Graphs tab "and this is where plotly comes in"; "narrative this
+information properly... says what it can and cant do".
+
+- NEW MODULE static/data_analysis.js, pure and node-tested
+  (test_data_analysis.py, fields.js pattern, file:// URI import on
+  Windows): MATERIAL_LIMITS (7 materials, indicative EC-style values,
+  each with a stated basis), describeLocation (height band + compass,
+  north = +y), computeAnalysisInput, utilisationBand
+  (good < 0.6 <= warn < 1 <= bad), buildRecommendations (tie/thicken/
+  funicular for tension, L/250 line, unconverged stages, beyond-proven
+  slenderness -> buckling caution, calm answer when calm),
+  buildAnalysisHtml (honesty block: no buckling/creep/seismic/wind,
+  indicative values, companion not sign-off), buildGraphSpecs (binned
+  histogram arithmetic in-module for testability).
+- REAL-SHAPE trap found live: struck_now.displacements is a DICT keyed
+  by node id (fixture corrected to match); peak_displacement used
+  directly. renderAnalysisTab hardened: a narrative fault
+  reportProblem()s and shows itself in place.
+- Tabs in #data-panel (Analysis active on open), plotly-basic 1.2 MB
+  vendored at static/vendor/ and lazy-injected on first Graphs open;
+  data_analysis.js joined app.py's versioned import remap.
+- Live on Column diagnosis with a real 5-stage run: narrative reads
+  "0.27 MPa comfortable, near the crown, to the north-west"; graphs
+  show the REAL story -- struck-early stages carry 5-6 MPa vs 0.27
+  finished, which is exactly what staged analysis exists to surface.
+- 726 tests green; 4 narrative-rule mutation kills + 1 wiring kill.
