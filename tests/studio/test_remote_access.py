@@ -627,6 +627,36 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "top: 50%" in legend
 
 
+def test_the_data_sheet_leads_with_the_analysis():
+    """Param: "another tab heading which comes up first... actually helps
+    us make sense of the data". Analysis opens first, Overview keeps the
+    raw sheet, Graphs loads the vendored plotting library only when
+    asked, and a narrative fault shows itself in place instead of taking
+    the Data button down."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    tabs = html[html.index('id="data-tabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert tabs.index("Analysis") < tabs.index("Overview") < tabs.index("Graphs")
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    button = js[js.index('getElementById("data-button").addEventListener'):]
+    button = button[:button.index("\n});")]
+    assert 'showDataTab("data-analysis");' in button
+    assert "renderAnalysisTab();" in button
+    assert '"/static/vendor/plotly-basic.min.js"' in js, (
+        "the plotting library is vendored and lazy, never a CDN")
+    render = _js_function(js, "function renderAnalysisTab()")
+    assert 'reportProblem("the analysis narrative failed' in render, (
+        "a narrative fault files a report and leaves the sheet standing")
+
+    app_py = (REPO / "bench" / "studio" / "app.py").read_text(encoding="utf-8")
+    assert '"data_analysis.js"' in app_py, (
+        "the module must join the versioned import remap or a stale copy "
+        "outlives every edit")
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

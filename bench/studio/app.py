@@ -1673,7 +1673,8 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         # map can remap a URL as well as a bare specifier, so they are
         # pointed at their versioned addresses here and studio.js goes on
         # importing them by the plain path it always did.
-        for module in ("panel.js", "pbr.js", "fields.js"):
+        for module in ("panel.js", "pbr.js", "fields.js",
+                       "data_analysis.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

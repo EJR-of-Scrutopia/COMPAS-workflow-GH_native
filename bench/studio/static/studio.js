@@ -26,6 +26,9 @@ import {
   repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX, GROUND_BASE,
   CONSTRAINED_DEVICE,
 } from "/static/pbr.js";
+import {
+  computeAnalysisInput, buildAnalysisHtml, buildGraphSpecs,
+} from "/static/data_analysis.js";
 
 // ---------- diagnosis ----------
 // When something goes wrong on screen it writes itself down, with enough
@@ -6867,9 +6870,108 @@ function setShowMode(mode) {
 for (const [id, mode] of SHOW_BUTTONS) {
   document.getElementById(id).addEventListener("click", () => setShowMode(mode));
 }
+// ---------- the tabbed data sheet ----------
+// Analysis leads; Overview is renderDataPanel's sheet unchanged; Graphs
+// loads the vendored plotting library the first time it is asked for.
+function showDataTab(id) {
+  for (const button of document.querySelectorAll("#data-tabs button")) {
+    button.classList.toggle("active", button.dataset.tab === id);
+  }
+  for (const pane of document.querySelectorAll("#data-panel .data-tab")) {
+    pane.classList.toggle("hidden", pane.id !== id);
+  }
+  if (id === "data-graphs") renderDataGraphs();
+}
+
+function analysisThemeTokens() {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    ink: style.getPropertyValue("--ink").trim() || "#e6e6e6",
+    ink2: style.getPropertyValue("--ink-2").trim() || "#a0a0a0",
+    line: style.getPropertyValue("--line").trim() || "#393939",
+    accent: style.getPropertyValue("--accent").trim() || "#4069fd",
+  };
+}
+
+function renderAnalysisTab() {
+  const holder = document.getElementById("data-analysis");
+  if (!state.bundle) {
+    holder.innerHTML = "<p>Load a study first.</p>";
+    return null;
+  }
+  // A narrative fault must never take the Data button down with it: the
+  // Overview sheet still has the raw numbers, so the failure is shown in
+  // place and reported, and the panel opens regardless.
+  try {
+    const input = computeAnalysisInput(state.bundle, finalStage());
+    holder.innerHTML = buildAnalysisHtml(input);
+    return input;
+  } catch (error) {
+    reportProblem("the analysis narrative failed: " + error.message, error);
+    holder.textContent = "The narrative could not be built ("
+      + error.message + "); the Overview tab still has the raw numbers.";
+    return null;
+  }
+}
+
+let plotlyArrival = null;
+
+function ensurePlotly() {
+  // The plotting library is 1.2 MB the boot never pays: injected from the
+  // vendor folder the first time the Graphs tab is opened, once.
+  if (window.Plotly) return Promise.resolve();
+  if (plotlyArrival) return plotlyArrival;
+  plotlyArrival = new Promise((arrive, refuse) => {
+    const script = document.createElement("script");
+    script.src = "/static/vendor/plotly-basic.min.js";
+    script.onload = arrive;
+    script.onerror = () => refuse(new Error("the plotting library did not load"));
+    document.head.appendChild(script);
+  });
+  return plotlyArrival;
+}
+
+async function renderDataGraphs() {
+  const holder = document.getElementById("data-graphs");
+  if (!state.bundle) {
+    holder.innerHTML = "<p>Load a study first.</p>";
+    return;
+  }
+  const input = computeAnalysisInput(state.bundle, finalStage());
+  const specs = buildGraphSpecs(input, analysisThemeTokens());
+  if (!specs.length) {
+    holder.innerHTML = "<p>Graphs read the staged analysis and the member "
+      + "forces, and this bundle has neither yet. Run the staged analysis "
+      + "and come back.</p>";
+    return;
+  }
+  const done = beginLoading("Preparing graphs");
+  try {
+    await ensurePlotly();
+    holder.innerHTML = "";
+    for (const spec of specs) {
+      const box = document.createElement("div");
+      box.id = spec.id;
+      holder.appendChild(box);
+      window.Plotly.newPlot(box, spec.data, spec.layout,
+        { displayModeBar: false, responsive: true });
+    }
+  } catch (error) {
+    holder.innerHTML = "<p>" + error.message + "</p>";
+  } finally {
+    done();
+  }
+}
+
+for (const button of document.querySelectorAll("#data-tabs button")) {
+  button.addEventListener("click", () => showDataTab(button.dataset.tab));
+}
+
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   renderDataPanel(state.bundle ? state.bundle.verification : null);
+  renderAnalysisTab();
+  showDataTab("data-analysis");
   panel.classList.toggle("hidden");
 });
 document.getElementById("data-close").addEventListener("click", () =>
