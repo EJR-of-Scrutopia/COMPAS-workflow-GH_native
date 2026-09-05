@@ -53,6 +53,14 @@ public sealed class SkinComponent : NativeComponentBase
     private protected override IReadOnlyList<ComponentValueListSpec>
         SuggestedValueLists => ValueLists;
 
+    /// <summary>The per-instance solve cache (speed diagnosis 2026-09-05,
+    /// cuts 2 and 3): the SkinNet across every slider move, and the
+    /// pattern with its bottom faces across Th and Gaps moves. One per
+    /// component instance, plain fields, no lock: Grasshopper solves a
+    /// component instance single-threaded, so the cache is exactly as
+    /// thread-aware as the component it serves.</summary>
+    private readonly SkinSolveCache _cache = new();
+
     public SkinComponent()
         : base(
             "Skin",
@@ -307,7 +315,10 @@ public sealed class SkinComponent : NativeComponentBase
     {
         try
         {
-            SkinNet? net = SkinPatterns.ReadNet(result);
+            // Cut 3: the net is keyed on the Result's identity alone and
+            // survives every S/CH/MP/Th/Gaps move; a hit is the same
+            // object ReadNet built, so nothing downstream can tell.
+            SkinNet? net = _cache.NetFor(result);
             if (net is null || net.Faces.Count == 0)
             {
                 // The parenthesis is only true of the FD path. A TNA
@@ -1930,5 +1941,119 @@ public sealed class SkinComponent : NativeComponentBase
             polylines.Add(new PolylineCurve(points));
         }
         return polylines;
+    }
+}
+
+/// <summary>
+/// THE SKIN COMPONENT'S SOLVE CACHE (speed diagnosis 2026-09-05, cuts 2
+/// and 3): what survives from one SolveInstance to the next, keyed so
+/// that it can never hand back an answer a fresh computation would not
+/// have produced.
+///
+/// THE RESULT IDENTITY KEY, which is the design question the diagnosis
+/// leaves open and this comment settles: REFERENCE EQUALITY FIRST, and
+/// where the reference has changed, the SHA-256 OF THE RESULT'S OWN
+/// CONTRACT BYTES (ContractJson.Serialize), never reference equality
+/// alone. Reference equality alone would treat a rebuilt-but-equal
+/// ResultDto -- which Grasshopper can hand this component whenever an
+/// upstream component re-emits or a definition reloads -- as a new
+/// Result and rebuild seconds of work for nothing; content equality
+/// alone would serialize a megabyte on every slider tick. The composite
+/// pays NOTHING on the common path (the same goo instance arrives on
+/// every tick of a drag), and one serialize-and-hash of each side only
+/// when the reference actually changed, ~26 ms on Param's own 1 MB
+/// contract against a rebuild measured in seconds. The stored digest is
+/// computed LAZILY on the first reference miss, so a canvas that never
+/// re-emits never pays it at all; on a content match the incoming
+/// reference is ADOPTED, so later solves compare references again.
+///
+/// THREAD-AWARENESS, to the extent the component is (the ruling asks for
+/// this stated rather than speculatively locked): Grasshopper solves a
+/// component instance on ONE thread, so these are plain fields and no
+/// lock, deliberately. A lock here would guard against a caller
+/// Grasshopper never creates.
+/// </summary>
+internal sealed class SkinSolveCache
+{
+    private ResultDto? _resultRef;
+    private string? _resultDigest;
+    private SkinNet? _net;
+
+    /// <summary>
+    /// CUT 3: the net for this Result, rebuilt ONLY when the Result's
+    /// identity changes. The net (triangulation, the d1 march, one d2
+    /// march per seed family, seed groups, vertex normals) depends on the
+    /// Result ALONE -- not on S, CH, MP, Th or Gaps (diagnosis section 2)
+    /// -- so before this cache every slider move paid ReadNet again,
+    /// 4 ms on Param's own net to 24 ms on the six-lobe fixture, for
+    /// stages whose inputs had not moved. Bit-identical by construction:
+    /// a hit hands back the SAME SkinNet object and no arithmetic reruns.
+    ///
+    /// A null ReadNet (an FD Result, or a TNA Result with no faces on
+    /// its form graph) is NOT cached: that path is a fast refusal and
+    /// caching it would add a state for nothing.
+    /// </summary>
+    public SkinNet? NetFor(ResultDto result)
+    {
+        if (_net is not null && SameResult(result))
+            return _net;
+        Invalidate();
+        SkinNet? net = SkinPatterns.ReadNet(result);
+        if (net is not null)
+        {
+            _resultRef = result;
+            _net = net;
+        }
+        return net;
+    }
+
+    private bool SameResult(ResultDto result)
+    {
+        if (_resultRef is null)
+            return false;
+        if (ReferenceEquals(result, _resultRef))
+            return true;
+        _resultDigest ??= TryDigest(_resultRef);
+        if (_resultDigest is null)
+            return false;
+        string? incoming = TryDigest(result);
+        if (incoming is null ||
+            !string.Equals(incoming, _resultDigest, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        // The same bytes under a new reference: adopt the reference, so
+        // the next solve compares references again instead of hashing.
+        _resultRef = result;
+        return true;
+    }
+
+    /// <summary>The contract-bytes digest, or null for a Result that will
+    /// not serialize. A hand-assembled or partially decoded ResultDto can
+    /// carry a default JsonElement (ValueKind.Undefined), which
+    /// System.Text.Json REFUSES to write; a cache must never turn that
+    /// into a new failure mode, so an unserializable Result simply has no
+    /// byte identity and every reference change on it is a MISS -- a
+    /// rebuild, which is always correct, never a stale answer.</summary>
+    private static string? TryDigest(ResultDto result)
+    {
+        try
+        {
+            return Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(
+                        ContractJson.Serialize(result))));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void Invalidate()
+    {
+        _resultRef = null;
+        _resultDigest = null;
+        _net = null;
     }
 }

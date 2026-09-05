@@ -842,6 +842,29 @@ internal static class Program
 
         try
         {
+            ValidateSkinSolveCache(plugin);
+            Console.WriteLine(
+                "PASS  Skin solve cache: the SkinNet is keyed on the " +
+                "RESULT'S IDENTITY, reference first and contract bytes " +
+                "second. The same Result object twice is the same net " +
+                "object back; a REBUILT-BUT-EQUAL Result (contract " +
+                "round-tripped, new reference, same bytes) still HITS and " +
+                "adopts the new reference, so reference equality alone is " +
+                "proven not to be the key; a Result whose geometry " +
+                "moved by one coordinate MISSES and rebuilds; and a " +
+                "Result that will NOT serialize (a default JsonElement, " +
+                "which System.Text.Json refuses to write) degrades to " +
+                "reference identity -- same object hits, new reference " +
+                "safely misses -- instead of failing the solve.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin solve cache: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinField(plugin);
             Console.WriteLine(
                 "PASS  Skin rim-distance field: a rimmed flat plate reads " +
@@ -18747,6 +18770,215 @@ internal static class Program
             }
         }
         return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// One minimal TNA ResultDto for the solve-cache check: the same
+    /// four-vertex one-quad fixture ValidateSkinNet reads a net off, with
+    /// the apex height PARAMETERISED so two calls can produce two Results
+    /// whose contract bytes differ by exactly one coordinate.
+    /// </summary>
+    private static object SkinSolveCacheResult(
+        Assembly plugin, double apexZ, bool serialisable = true)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType =
+            RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphFaceType = RequireContractType(plugin, "TnaGraphFaceDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type vertexMappingType =
+            RequireContractType(plugin, "TnaSourceVertexMappingDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(1, 1, apexZ), P(0, 1, 1)));
+
+        // The graph DTOs carry non-nullable JsonElement keys, and a
+        // DEFAULT JsonElement (ValueKind.Undefined) is a value
+        // System.Text.Json refuses to WRITE. The serialisable fixture
+        // gives every key a real element; the unserialisable one leaves
+        // them default on purpose, which is exactly the shape a
+        // hand-assembled Result can arrive in, so the cache's digest
+        // fallback is measured on the real failure mode.
+        JsonElement Key(int id) => JsonDocument
+            .Parse($"\"k{id}\"").RootElement.Clone();
+
+        object GraphVertex(int id)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            if (serialisable)
+                SetContractProperty(vertex, graphVertexType, "Key", Key(id));
+            return vertex;
+        }
+        object face = CreateInstance(graphFaceType);
+        SetContractProperty(face, graphFaceType, "Id", 0);
+        if (serialisable)
+            SetContractProperty(face, graphFaceType, "Key", Key(0));
+        SetContractProperty(
+            face, graphFaceType, "Vertices", new[] { 10, 11, 12, 13 });
+        object formGraph = CreateInstance(graphType);
+        SetContractProperty(formGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                GraphVertex(10), GraphVertex(11),
+                GraphVertex(12), GraphVertex(13)));
+        SetContractProperty(formGraph, graphType, "Faces",
+            Of(graphFaceType, face));
+
+        object Mapping(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(vertexMappingType);
+            SetContractProperty(
+                item, vertexMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, vertexMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            if (serialisable)
+            {
+                SetContractProperty(
+                    item, vertexMappingType, "SourceVertexId",
+                    Key(formId));
+            }
+            return item;
+        }
+        object mappings = CreateInstance(mappingsType);
+        SetContractProperty(mappings, mappingsType,
+            "SourceVertexToFormVertex",
+            Of(vertexMappingType,
+                Mapping(10, 0), Mapping(11, 1),
+                Mapping(12, 2), Mapping(13, 3)));
+
+        object result = CreateResultDto(
+            resultType, "tna", equilibrium,
+            CreateInstance(graphType), CreateInstance(graphType));
+        SetContractProperty(result, resultType, "FormGraph", formGraph);
+        SetContractProperty(result, resultType, "Mappings", mappings);
+        return result;
+    }
+
+    /// <summary>
+    /// THE SKIN SOLVE CACHE (speed diagnosis 2026-09-05, cut 3): the
+    /// SkinNet survives from one solve to the next, keyed on the RESULT'S
+    /// IDENTITY and on nothing else, because the net depends on the
+    /// Result alone (diagnosis section 2's dependency table).
+    ///
+    /// THE KEY IS THE POINT OF THIS CHECK. Reference equality alone was
+    /// ruled out: Grasshopper can hand a component a rebuilt-but-equal
+    /// ResultDto (an upstream re-emit, a definition reload), and a cache
+    /// keyed on the reference alone would silently rebuild seconds of
+    /// work. So the check round-trips the Result through ContractJson,
+    /// PROVES the round trip made a new object, and requires the cache to
+    /// HIT anyway -- the contract-bytes half of the key doing its job --
+    /// then moves one coordinate and requires a MISS, the invalidation
+    /// half doing its.
+    /// </summary>
+    private static void ValidateSkinSolveCache(Assembly plugin)
+    {
+        Type cacheType = RequireComponentType(plugin, "SkinSolveCache");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type json = RequireContractType(plugin, "ContractJson");
+        object cache = CreateInstance(cacheType);
+        MethodInfo netFor = cacheType.GetMethod("NetFor")
+            ?? throw new InvalidOperationException(
+                "SkinSolveCache.NetFor was not found.");
+
+        object result = SkinSolveCacheResult(plugin, 1.0);
+        object? first = netFor.Invoke(cache, new[] { result });
+        if (first is null)
+        {
+            throw new InvalidOperationException(
+                "NetFor on a TNA Result with faces must build a net; " +
+                "null came back.");
+        }
+        object? second = netFor.Invoke(cache, new[] { result });
+        if (!ReferenceEquals(first, second))
+        {
+            throw new InvalidOperationException(
+                "The SAME Result object solved twice must hand back the " +
+                "SAME SkinNet object: the net depends on the Result " +
+                "alone, and rebuilding it per solve is the cost cut 3 " +
+                "removes.");
+        }
+
+        MethodInfo serialize = json.GetMethod("Serialize")!
+            .MakeGenericMethod(resultType);
+        MethodInfo deserialize = json.GetMethod("Deserialize")!
+            .MakeGenericMethod(resultType);
+        string bytes = (string)serialize.Invoke(null, new[] { result })!;
+        object rebuilt = deserialize.Invoke(null, new object[] { bytes })!;
+        if (ReferenceEquals(rebuilt, result))
+        {
+            throw new InvalidOperationException(
+                "The contract round trip must produce a NEW object, or " +
+                "the rebuilt-but-equal half of this check is vacuous.");
+        }
+        object? third = netFor.Invoke(cache, new[] { rebuilt });
+        if (!ReferenceEquals(first, third))
+        {
+            throw new InvalidOperationException(
+                "A REBUILT-BUT-EQUAL Result (same contract bytes, new " +
+                "reference) must HIT the cache: reference equality alone " +
+                "is not the key, the contract bytes are.");
+        }
+        object? fourth = netFor.Invoke(cache, new[] { rebuilt });
+        if (!ReferenceEquals(first, fourth))
+        {
+            throw new InvalidOperationException(
+                "After a contract-bytes hit the new reference must be " +
+                "ADOPTED, so the next solve hits by reference again.");
+        }
+
+        object moved = SkinSolveCacheResult(plugin, 2.0);
+        object? fifth = netFor.Invoke(cache, new[] { moved });
+        if (fifth is null || ReferenceEquals(first, fifth))
+        {
+            throw new InvalidOperationException(
+                "A Result whose geometry MOVED by one coordinate must " +
+                "MISS and rebuild the net; handing back the old net here " +
+                "would be a stale answer wearing a cache's clothes.");
+        }
+
+        // THE DIGEST FALLBACK. A hand-assembled Result can carry a
+        // default JsonElement (ValueKind.Undefined), which
+        // System.Text.Json refuses to WRITE, so such a Result has no
+        // byte identity at all. The cache must degrade to reference
+        // identity there -- same reference still hits, an equal-but-new
+        // reference safely MISSES -- and must never let the serializer's
+        // refusal escape as a solve failure.
+        object bare = SkinSolveCacheResult(plugin, 1.0, serialisable: false);
+        object? sixth = netFor.Invoke(cache, new[] { bare });
+        object? seventh = netFor.Invoke(cache, new[] { bare });
+        if (sixth is null || !ReferenceEquals(sixth, seventh))
+        {
+            throw new InvalidOperationException(
+                "An UNSERIALISABLE Result must still cache by reference: " +
+                "the same object twice is the same net.");
+        }
+        object bareTwin = SkinSolveCacheResult(
+            plugin, 1.0, serialisable: false);
+        object? eighth = netFor.Invoke(cache, new[] { bareTwin });
+        if (eighth is null || ReferenceEquals(sixth, eighth))
+        {
+            throw new InvalidOperationException(
+                "An unserialisable Result under a NEW reference has no " +
+                "byte identity to compare, so it must MISS and rebuild " +
+                "-- always correct -- rather than throw or hand back the " +
+                "old net.");
+        }
     }
 
     /// <summary>
