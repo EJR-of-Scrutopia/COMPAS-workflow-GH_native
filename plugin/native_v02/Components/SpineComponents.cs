@@ -578,17 +578,33 @@ public sealed class SupportsComponent : NativePreviewComponentBase
 }
 
 /// <summary>
-/// Close the shared spine's setup: one load vector, bundled with the
-/// Anchored Pattern into the Problem both solvers take. Without node IDs
-/// the vector is a surface load: the worker weights it by each node's plan
-/// tributary area, so the funicular shape does not depend on how finely
-/// the pattern happens to be meshed (the same discretisation RhinoVault
-/// uses for selfweight). Explicit node IDs apply the vector directly as
-/// point loads. Radical simplicity is still the point: one vector,
-/// optional node ids, one factor.
+/// Close the shared spine's setup: the loads, bundled with the Anchored
+/// Pattern into the Problem both solvers take.
+///
+/// Rule 2.4 of the 2026-09-04 selfweight design makes this RhinoVault's
+/// own loading model. A SELF-WEIGHT weighs each node's tributary area
+/// times a THICKNESS times a DENSITY, and the TNA solve re-evaluates it
+/// on the surface it builds rather than on the plan. Explicit node IDs
+/// apply the Vector at those nodes as point loads, and rule 2.4(b) lets
+/// the two ride TOGETHER, additive, which is RhinoVault's pz + pzext
+/// split: a canvas can carry a vault's own weight and a lantern on its
+/// crown at once.
+///
+/// The two appended ports are OPTIONAL AND EMPTY rather than preset to
+/// 1.0, and that is deliberate. An empty port reads as 1.0 wherever a
+/// self-weight is active, which is the whole of the old model back
+/// again; and it is the one signal an archived definition cannot
+/// counterfeit, so a definition saved when this component had four
+/// inputs keeps exactly the loads it had: its surface load still takes
+/// its density from the Vector's Z, and its point loads still stand
+/// alone with no weight silently added underneath them.
 /// </summary>
 public sealed class LoadsComponent : NativePreviewComponentBase
 {
+    // The value an empty Thickness or Density port stands for, and the
+    // default the ports' own descriptions name.
+    private const double DefaultSelfweightInput = 1.0;
+
     private readonly List<Line> _previewArrows = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -596,9 +612,9 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         : base(
             "Loads",
             "Loads",
-            "Apply one load vector as a tributary-area surface load, or " +
-            "as point loads on explicit nodes, producing the Problem the " +
-            "solvers take.",
+            "Weigh the vault by its own self-weight, area times thickness " +
+            "times density, and add point loads on explicit nodes, " +
+            "producing the Problem the solvers take.",
             ComponentCategories.Model,
             "load_case")
     {
@@ -623,19 +639,20 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         parameters.AddVectorParameter(
             "Vector",
             "V",
-            "Load vector. Without Node IDs it is a surface load: the TNA " +
-            "solve applies it selfweight-style to the built surface's " +
-            "own tributary areas, updating as the shape rises (RhinoVault's " +
-            "loading model); FD approximates it on plan areas. With Node " +
-            "IDs it acts directly on each listed node.",
+            "Load vector. Without Node IDs it is the self-weight's " +
+            "direction, and its Z also scales the weight, which is how a " +
+            "definition saved before Thickness and Density keeps the " +
+            "weight it had: leave it at (0, 0, -1) and the self-weight is " +
+            "exactly area x Thickness x Density, downward. With Node IDs " +
+            "it acts directly on each listed node as a point load.",
             GH_ParamAccess.item,
             new Vector3d(0.0, 0.0, -1.0));
         parameters.AddIntegerParameter(
             "Node IDs",
             "ID",
-            "Explicit zero-based topology node IDs to load as point " +
-            "loads. Empty applies the Vector as an area-weighted surface " +
-            "load over the whole pattern.",
+            "Explicit zero-based topology node IDs to load with the " +
+            "Vector as point loads. Empty spreads the self-weight over " +
+            "the whole pattern and nothing else.",
             GH_ParamAccess.list);
         parameters.AddNumberParameter(
             "Factor",
@@ -643,9 +660,30 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             "Multiplier applied to the Vector.",
             GH_ParamAccess.item,
             1.0);
+        parameters.AddNumberParameter(
+            "Thickness",
+            "T",
+            "Self-weight thickness, RhinoVault's t. Empty reads as 1.0. " +
+            "With Node IDs wired, giving a Thickness or a Density is what " +
+            "asks for a self-weight BESIDE the point loads; leaving both " +
+            "empty is point loads alone, exactly as before this port " +
+            "existed.",
+            GH_ParamAccess.item);
+        parameters.AddNumberParameter(
+            "Density",
+            "D",
+            "Self-weight density per unit volume. Empty reads as 1.0. A " +
+            "magnitude, never signed: the Vector says which way the " +
+            "weight acts.",
+            GH_ParamAccess.item);
 
         parameters[2].DataMapping = GH_DataMapping.Flatten;
         parameters[2].Optional = true;
+        // Empty is a reading of its own on both of these (see the class
+        // comment), so neither carries persistent data and neither may
+        // colour the component orange for being blank.
+        parameters[4].Optional = true;
+        parameters[5].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -666,6 +704,8 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         var vector = new Vector3d(0.0, 0.0, -1.0);
         var nodeIds = new List<int>();
         double factor = 1.0;
+        double thickness = DefaultSelfweightInput;
+        double density = DefaultSelfweightInput;
         if (!data.GetData(0, ref supGoo) ||
             supGoo?.Value is not AnchoredPatternDto sup ||
             sup.Pattern?.Topology is not TopologyDto topology)
@@ -675,6 +715,11 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         data.GetData(1, ref vector);
         data.GetDataList(2, nodeIds);
         data.GetData(3, ref factor);
+        // An empty port reads as the default AND says nobody asked for a
+        // self-weight here, which is the difference that keeps an
+        // archived point-load definition solving what it solved before.
+        bool thicknessGiven = data.GetData(4, ref thickness);
+        bool densityGiven = data.GetData(5, ref density);
 
         try
         {
@@ -682,6 +727,17 @@ public sealed class LoadsComponent : NativePreviewComponentBase
                 throw new ArgumentException("Vector contains invalid coordinates.");
             if (!double.IsFinite(factor))
                 throw new ArgumentException("Factor must be finite.");
+            if (!double.IsFinite(thickness) || thickness < 0.0)
+            {
+                throw new ArgumentException(
+                    "Thickness must be finite and zero or greater.");
+            }
+            if (!double.IsFinite(density) || density < 0.0)
+            {
+                throw new ArgumentException(
+                    "Density must be finite and zero or greater; the " +
+                    "Vector says which way the weight acts.");
+            }
             if (nodeIds.Any(id => id < 0 || id >= topology.Vertices.Count))
             {
                 throw new ArgumentOutOfRangeException(
@@ -701,20 +757,27 @@ public sealed class LoadsComponent : NativePreviewComponentBase
                     "The factored load vector must remain finite.");
             }
 
-            bool surfaceLoad = nodeIds.Count == 0;
+            bool nodalLoads = nodeIds.Count > 0;
+            (bool selfWeight, Point3Dto? baseVector) = SelfweightShape(
+                factored,
+                nodeIds.Count,
+                thicknessGiven,
+                densityGiven);
             var loadCase = new LoadCaseDto
             {
                 TopologyHash = topology.TopologyHash,
                 Name = "load",
-                Distribution = surfaceLoad ? "tributary_area" : "point",
+                Distribution = selfWeight ? "self_weight" : "point",
                 Points = Array.Empty<Point3Dto>(),
-                NodeIds = surfaceLoad
-                    ? Array.Empty<int>()
-                    : nodeIds.ToArray(),
-                Vectors = surfaceLoad
-                    ? Array.Empty<Point3Dto>()
-                    : new[] { factored },
-                BaseVector = surfaceLoad ? factored : null,
+                NodeIds = nodalLoads
+                    ? nodeIds.ToArray()
+                    : Array.Empty<int>(),
+                Vectors = nodalLoads
+                    ? new[] { factored }
+                    : Array.Empty<Point3Dto>(),
+                BaseVector = baseVector,
+                Thickness = thickness,
+                Density = density,
                 Factor = 1.0,
                 CoordinateSystem = "world",
                 Provenance = new Dictionary<string, string>
@@ -731,9 +794,7 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             EnsureValid(problem);
 
             SetPreview(topology, nodeIds, factored);
-            Message = surfaceLoad
-                ? "surface load"
-                : $"{nodeIds.Count} node(s)";
+            Message = LoadSummary(nodeIds.Count, selfWeight);
             data.SetData(0, new ProblemGoo(problem));
         }
         catch (Exception error)
@@ -791,6 +852,57 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         foreach (int id in targets)
             _previewArrows.Add(new Line(points[id] - offset, points[id]));
         _clippingBox = TnaWorkflowPreview.Box(_previewArrows);
+    }
+
+    /// <summary>
+    /// Which of the two loads this component builds, and what the
+    /// self-weight's base vector is: rule 2.4 of the 2026-09-04 design in
+    /// one place, so it can be driven outside Grasshopper.
+    ///
+    /// Without Node IDs the Vector has no other job, so the self-weight
+    /// is the whole load case and the Vector stays its direction AND its
+    /// scale. That is not nostalgia: it is the only reading under which a
+    /// definition saved with a Vector of (0, 0, -4) and no Thickness port
+    /// keeps the weight it had.
+    ///
+    /// With Node IDs the Vector is the point load and cannot also be the
+    /// weight's scale, so the weight stands on Thickness and Density
+    /// alone and acts straight down, area x T x D, RhinoVault's own
+    /// quantity. And it rides at all only when this canvas ASKED for it,
+    /// which is a value on a port no archived definition can have filled
+    /// in; otherwise a reopened point-load definition would silently gain
+    /// a vault's worth of weight it never had.
+    /// </summary>
+    internal static (bool SelfWeight, Point3Dto? BaseVector) SelfweightShape(
+        Point3Dto factored,
+        int nodeCount,
+        bool thicknessGiven,
+        bool densityGiven)
+    {
+        bool nodalLoads = nodeCount > 0;
+        bool selfWeight = !nodalLoads || thicknessGiven || densityGiven;
+        if (!selfWeight)
+            return (false, null);
+        return (
+            true,
+            nodalLoads ? new Point3Dto(0.0, 0.0, -1.0) : factored);
+    }
+
+    /// <summary>
+    /// The chin, which is the only place an author is told which of the
+    /// two loads this component actually built. A self-weight riding
+    /// beside point loads has to SAY so: rule 2.4(b) made that
+    /// combination possible, and a chin reading "3 node(s)" over a
+    /// canvas that is also carrying the vault's whole weight would be
+    /// the old silence in a new place.
+    /// </summary>
+    internal static string LoadSummary(int nodeCount, bool selfWeight)
+    {
+        if (nodeCount <= 0)
+            return "self-weight";
+        return selfWeight
+            ? $"self-weight + {nodeCount} node(s)"
+            : $"{nodeCount} node(s)";
     }
 
     private static void EnsureValid(ContractDto contract)

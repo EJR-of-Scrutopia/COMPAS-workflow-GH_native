@@ -353,6 +353,23 @@ public sealed record LoadCaseDto : ContractDto
 
     public Point3Dto? BaseVector { get; init; }
 
+    /// <summary>
+    /// RhinoVault's selfweight pair, adopted by rule 2.4(a) of the
+    /// 2026-09-04 design: a self-weight weighs tributary area times
+    /// THICKNESS times DENSITY. Both default to 1.0, which is what a
+    /// definition saved before the Loads component grew the two ports
+    /// sends, and area x baseVector.z x 1 x 1 is the weight that
+    /// definition always had.
+    /// </summary>
+    public double Thickness { get; init; } = 1.0;
+
+    /// <summary>
+    /// The density is a MAGNITUDE. The base vector's Z carries the
+    /// direction, so a negative density here would flip a vault's weight
+    /// upward while every arrow on the canvas still pointed down.
+    /// </summary>
+    public double Density { get; init; } = 1.0;
+
     public double Factor { get; init; } = 1.0;
 
     public string CoordinateSystem { get; init; } = "world";
@@ -372,6 +389,14 @@ public sealed record LoadCaseDto : ContractDto
             "point",
             "uniform_nodes",
             "tributary_area",
+            // Rule 2.4 of the 2026-09-04 design. This is the shape the
+            // Loads component now authors for a surface load, and the
+            // only distribution that may carry a baseVector and nodeIds
+            // at once: the self-weight and the point loads that ride
+            // beside it, RhinoVault's pz + pzext split. "tributary_area"
+            // stays exactly as strict as it was, for anything that still
+            // authors one.
+            "self_weight",
             "custom"
         };
         if (!permitted.Contains(distribution, StringComparer.Ordinal))
@@ -435,6 +460,32 @@ public sealed record LoadCaseDto : ContractDto
                 errors.Add($"{distribution} requires baseVector, not vectors.");
             if (BaseVector is null)
                 errors.Add($"{distribution} requires one baseVector.");
+        }
+        else if (distribution is "self_weight")
+        {
+            // The self-weight itself is the base vector, over every
+            // node. Nodal targets are the OTHER half, the point loads
+            // riding beside it, so they are allowed here and nowhere
+            // else, and their vectors must still align with them.
+            if (BaseVector is null)
+                errors.Add("self_weight requires one baseVector.");
+            if (nodeCount == 0 && vectorCount > 0)
+            {
+                errors.Add(
+                    "self_weight vectors are the point loads beside the " +
+                    "weight and need the nodeIds they act on.");
+            }
+            if (nodeCount > 0 && vectorCount != 1 && vectorCount != nodeCount)
+                errors.Add("vectors must broadcast once or align with every target.");
+        }
+
+        if (!ContractRules.IsFinite(Thickness) || Thickness < 0.0)
+            errors.Add("thickness must be finite and zero or greater.");
+        if (!ContractRules.IsFinite(Density) || Density < 0.0)
+        {
+            errors.Add(
+                "density must be finite and zero or greater; the base " +
+                "vector's Z carries the direction.");
         }
 
         if (!ContractRules.IsFinite(Factor) || Factor != 1.0)

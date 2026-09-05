@@ -60,6 +60,12 @@ public static class WorkerPayloads
             ["node_ids"] = value.NodeIds.ToArray(),
             ["vectors"] = value.Vectors.Select(Point).ToArray(),
             ["base_vector"] = value.BaseVector is null ? null : Point(value.BaseVector),
+            // Rule 2.4(a): the selfweight's two numbers cross as fields
+            // of their own. The worker's decoder allowlists them by name,
+            // so a rename on this side is a refused payload rather than a
+            // silently ignored one.
+            ["thickness"] = value.Thickness,
+            ["density"] = value.Density,
             ["factor"] = value.Factor,
             ["coordinate_system"] = value.CoordinateSystem,
             ["metadata"] = StringMap(value.Provenance)
