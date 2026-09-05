@@ -118,7 +118,7 @@ internal static class Program
                 // (skin-offset-surface) rule 5 renamed that second port
                 // from 'Along Normal' to 'Offset', and spec 2026-09-04
                 // (skin-offset-extrude-slider) section 2 renames it again
-                // to 'Extrude' and retypes it from a Boolean to a Number.
+                // to 'Gaps' and retypes it from a Boolean to a Number.
                 // The INDEX never moves, so no archived wire moves.
                 //
                 // CORRECTION, measured 2026-09-03. That task claimed the
@@ -128,7 +128,7 @@ internal static class Program
                 // against the seven registered is a reported change
                 // whatever the names do. What the append buys is the
                 // WORDING, not silence: the message names 'Thickness'
-                // and 'Extrude' as appended and closes with existing wires
+                // and 'Gaps' as appended and closes with existing wires
                 // keeping their ports, instead of sending the author to
                 // check every wire. That is the shipped, correct behaviour
                 // and it is pinned as such in ValidateParameterMismatch;
@@ -137,7 +137,7 @@ internal static class Program
                     new[]
                     {
                         "Result", "Pattern", "Size", "Course Height",
-                        "Min Piece", "Thickness", "Extrude"
+                        "Min Piece", "Thickness", "Gaps"
                     },
                     new[] { "Cells", "Surface" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
@@ -1575,7 +1575,7 @@ internal static class Program
         {
             ValidateSkinExtrudeClamp(plugin);
             Console.WriteLine(
-                "PASS  Skin Extrude clamp (spec 2026-09-04 section 2): " +
+                "PASS  Skin Gaps clamp (spec 2026-09-04 section 2): " +
                 "1.4 clamps to 1 and -0.2 to 0, a NaN and both infinities " +
                 "fall back to the port default of 0, each with a REMARK " +
                 "naming the clamped value; and 0, 0.5 and 1 pass through " +
@@ -1590,7 +1590,7 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add(
-                $"Skin Extrude clamp: {DescribeException(exception)}");
+                $"Skin Gaps clamp: {DescribeException(exception)}");
         }
 
         try
@@ -1598,14 +1598,14 @@ internal static class Program
             ValidateSkinThicknessPorts(plugin);
             Console.WriteLine(
                 "PASS  Skin thickness ports (spec 2026-09-02, renamed by " +
-                "2026-09-03 and again by 2026-09-04): Th and Extrude are a " +
+                "2026-09-03 and again by 2026-09-04): Th and Gaps are a " +
                 "PURE APPEND at inputs 5 and 6, both Optional, every " +
                 "earlier port's name and nickname unmoved; port 6 is now " +
-                "'Extrude' ('EX'), a NUMBER so a slider drops on it, at " +
+                "'Gaps' ('Ga'), a NUMBER so a slider drops on it, at " +
                 "the SAME INDEX 'Along Normal' and then 'Offset' held, so " +
                 "no archived wire moves; it DEFAULTS 0, read off its own " +
                 "persistent data; Th's description says SIGNED and " +
-                "ONE-SIDED and never the middle; Extrude's names both ends " +
+                "ONE-SIDED and never the middle; Gaps' names both ends " +
                 "in a sentence each, the normal taken AT THAT POINT and " +
                 "the cells welded at 0, the CELL'S OWN normal and GAPS " +
                 "OPEN at 1, and the clamp, and carries no word of the dead " +
@@ -1635,7 +1635,7 @@ internal static class Program
                 "exactly |Th| at 0, 0.25, 0.5, 0.75 and 1, which an " +
                 "interpolation of the two translations rather than the two " +
                 "directions gets right at both ends and wrong between " +
-                "them; the top ring is CONGRUENT to the bottom at Extrude " +
+                "them; the top ring is CONGRUENT to the bottom at Gaps " +
                 "1, pairwise distance for pairwise distance to 1e-9, and " +
                 "measurably NOT congruent at 0 on the same curved cell; a " +
                 "negative Th MIRRORS a positive one about the solved " +
@@ -1695,7 +1695,7 @@ internal static class Program
                 "the other order and whose loft top went unproven until " +
                 "now; a loft-route cell hands back ONE MOVED RAIL PER " +
                 "SECTION, point for point, every point moved exactly |Th| " +
-                "at Extrude 0, 0.5 and 1, where a fan-route cell hands " +
+                "at Gaps 0, 0.5 and 1, where a fan-route cell hands " +
                 "back no rails at all and fans as it always did; every " +
                 "section point that IS an outline corner moves to the " +
                 "outline's own moved corner BIT FOR BIT at every one of " +
@@ -1792,7 +1792,7 @@ internal static class Program
             Console.WriteLine(
                 "PASS  Skin thickened solid, THE REACHABLE HALF ONLY: " +
                 "ThickenCellSurface takes the face, the outline, the " +
-                "cell's SECTIONS, the NET, Th and the Extrude slider in " +
+                "cell's SECTIONS, the NET, Th and the Gaps slider in " +
                 "the order scripts/rhino_skin_surface.py " +
                 "binds, refuses an outline under three corners with a " +
                 "null before any Brep call, and on a valid outline goes " +
@@ -2608,7 +2608,7 @@ internal static class Program
                 + "still closes check-every-wire; Frame's pure append names "
                 + "'Anchor Lines' and closes with existing wires keeping "
                 + "their ports instead, and SKIN's own five-to-seven append "
-                + "names 'Thickness' and 'Extrude' the same way, which "
+                + "names 'Thickness' and 'Gaps' the same way, which "
                 + "withdraws the thickness task's claim that its two new "
                 + "inputs raise no warning at all: they raise one, and it is "
                 + "the right one. SideMoved, which Export's Live hold reads, "
@@ -7177,7 +7177,7 @@ internal static class Program
         string[] skinRegistered =
         {
             "Result", "Pattern", "Size", "Course Height", "Min Piece",
-            "Thickness", "Extrude"
+            "Thickness", "Gaps"
         };
         string? skinAppended = Ask(
             skinArchived,
@@ -7189,7 +7189,7 @@ internal static class Program
                 "5 inputs and 2 outputs archived", StringComparison.Ordinal) ||
             !skinText.Contains("7 and 2 registered", StringComparison.Ordinal) ||
             !skinText.Contains("'Thickness'", StringComparison.Ordinal) ||
-            !skinText.Contains("'Extrude'", StringComparison.Ordinal) ||
+            !skinText.Contains("'Gaps'", StringComparison.Ordinal) ||
             !skinText.Contains("were appended", StringComparison.Ordinal) ||
             !skinText.Contains(
                 "existing wires kept their ports", StringComparison.Ordinal) ||
@@ -7198,7 +7198,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "Skin's five inputs against the seven it registers since "
                 + "the thickness task IS reported, and the report must "
-                + "name both counts, name 'Thickness' and 'Extrude' "
+                + "name both counts, name 'Thickness' and 'Gaps' "
                 + "as appended, say existing wires kept their ports, and "
                 + "never send the author to check every wire. The task "
                 + "that added those ports claimed no warning is raised at "
@@ -29283,7 +29283,7 @@ internal static class Program
     /// stands exactly on the wall quads built off that outline. A rail that
     /// computed its own cell normal, rather than taking the one the outline
     /// used, fails here and nowhere else -- but only since 2026-09-04, when
-    /// the comparison began running at Extrude 0.5 and 1 as well as 0. At 0
+    /// the comparison began running at Gaps 0.5 and 1 as well as 0. At 0
     /// alone the claim was FALSE: the direction there is n(p) and the cell
     /// normal never enters, so that break was applied and the whole suite
     /// stayed green.
@@ -29388,7 +29388,7 @@ internal static class Program
                                 "to loft, so MovedSections answers null and " +
                                 "the top fans over the moved outline; on " +
                                 $"the {fixture} it answered with rails at " +
-                                $"Extrude {extrude}.");
+                                $"Gaps {extrude}.");
                         }
                         continue;
                     }
@@ -29397,7 +29397,7 @@ internal static class Program
                         throw new InvalidOperationException(
                             "A cell whose BOTTOM is a LOFT must loft its " +
                             "top from its own moved rails (spec section " +
-                            $"5); on the {fixture} at Extrude {extrude} " +
+                            $"5); on the {fixture} at Gaps {extrude} " +
                             "MovedSections answered null, so the top falls " +
                             "back to a FAN and the triangulated crust is " +
                             "back.");
@@ -29443,7 +29443,7 @@ internal static class Program
                                     "Every point of every rail moves by " +
                                     "|Th| like every outline corner: on " +
                                     $"the {fixture} rail {at} point " +
-                                    $"{point} moved {span} at Extrude " +
+                                    $"{point} moved {span} at Gaps " +
                                     $"{extrude}, where |Th| is {Th}.");
                             }
                         }
@@ -29464,7 +29464,7 @@ internal static class Program
                 // refused.
                 //
                 // AT EVERY STOP OF THE SLIDER, and that is not decoration.
-                // Until 2026-09-04 this ran at Extrude 0 ALONE, where the
+                // Until 2026-09-04 this ran at Gaps 0 ALONE, where the
                 // direction is n(p) and the cell normal does not enter the
                 // arithmetic at all: a rail computing its OWN cell normal
                 // instead of taking the outline's could not have reddened
@@ -29522,7 +29522,7 @@ internal static class Program
                                         "place both ways, or the lofted " +
                                         "top stands off the wall quads " +
                                         "built on that outline: on the " +
-                                        $"{fixture} at Extrude {stop} rail " +
+                                        $"{fixture} at Gaps {stop} rail " +
                                         $"{at} point {point} axis {axis} " +
                                         $"went to {rail[point][axis]} " +
                                         "where the outline sent the same " +
@@ -29683,7 +29683,7 @@ internal static class Program
             "the COURSES dome, whose BandCell stores its sections in the " +
             $"other order; the loft cells hand back {barrel.Rails} and " +
             $"{dome.Rails} moved rails, one per section and point for " +
-            $"point, every point moved exactly {Th} m at Extrude 0, 0.5 " +
+            $"point, every point moved exactly {Th} m at Gaps 0, 0.5 " +
             $"and 1, and the {barrel.Shared} and {dome.Shared} section " +
             "points that ARE outline corners move to the outline's own " +
             "moved corner bit for bit, so the top stands on the walls on " +
@@ -29877,7 +29877,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// SPEC 2026-09-04 SECTION 2's CLAMP: Extrude runs 0 to 1 and a value
+    /// SPEC 2026-09-04 SECTION 2's CLAMP: Gaps runs 0 to 1 and a value
     /// outside is clamped with a REMARK NAMING THE CLAMP, so an author who
     /// drove a slider past its own end reads what the component actually
     /// used rather than watching the geometry not move.
@@ -29915,13 +29915,13 @@ internal static class Program
             if (got != wanted)
             {
                 throw new InvalidOperationException(
-                    $"Extrude {asked} clamps to {wanted} (spec 2026-09-04 " +
+                    $"Gaps {asked} clamps to {wanted} (spec 2026-09-04 " +
                     $"section 2); it gave {got}.");
             }
             if (!flagged)
             {
                 throw new InvalidOperationException(
-                    $"A clamped Extrude raises a REMARK; {asked} was " +
+                    $"A clamped Gaps raises a REMARK; {asked} was " +
                     "clamped in silence, and an author cannot see a number " +
                     "the component quietly changed. A NaN is here because " +
                     "it compares equal to nothing, so a guard written the " +
@@ -29948,7 +29948,7 @@ internal static class Program
             if (got != asked || flagged || message.Length != 0)
             {
                 throw new InvalidOperationException(
-                    $"Extrude {asked} is inside 0 to 1 and must pass " +
+                    $"Gaps {asked} is inside 0 to 1 and must pass " +
                     $"through untouched and in silence; it gave {got}, " +
                     $"flagged {flagged}, saying '{message}'.");
             }
@@ -30014,7 +30014,7 @@ internal static class Program
     /// name, nickname and position exactly, so a definition saved before
     /// this task keeps every wire on the port it left and simply finds no
     /// data on ports 5 and 6, which read their defaults (Th = 0, no
-    /// thickening; Extrude 0, the offset surface). An insertion instead of
+    /// thickening; Gaps 0, the offset surface). An insertion instead of
     /// an append, or a rename anywhere earlier, would move every port after
     /// it and fail here rather than only in Grasshopper.
     ///
@@ -30026,14 +30026,24 @@ internal static class Program
     /// behaviour and it is pinned in ValidateParameterMismatch; the
     /// silence claim is withdrawn.
     ///
-    /// RENAMED TWICE. Port 6 was "Along Normal" ("N"), a Boolean defaulting
-    /// FALSE, and named the direction of an EXTRUSION. Spec 2026-09-03 made
-    /// it "Offset" ("OF"), a Boolean defaulting TRUE, and named the choice
-    /// between an offset surface and an extrusion. Spec 2026-09-04 makes it
-    /// "Extrude" ("EX"), a NUMBER from 0 to 1 defaulting 0, because the
-    /// choice was really a range: "I want to take this a step further and
-    /// do a slider 0-1.00 ... That means we can remove the button and put
-    /// in this slider."
+    /// RENAMED THREE TIMES. Port 6 was "Along Normal" ("N"), a Boolean
+    /// defaulting FALSE, and named the direction of an EXTRUSION. Spec
+    /// 2026-09-03 made it "Offset" ("OF"), a Boolean defaulting TRUE, and
+    /// named the choice between an offset surface and an extrusion. Spec
+    /// 2026-09-04 made it "Extrude" ("EX"), a NUMBER from 0 to 1 defaulting
+    /// 0, because the choice was really a range: "I want to take this a step
+    /// further and do a slider 0-1.00 ... That means we can remove the
+    /// button and put in this slider."
+    ///
+    /// AND SPEC 2026-09-05 SECTION 4 MAKES IT "Gaps" ("Ga"), his words:
+    /// "extrude is a bit confusing to what it actually does". The type, the
+    /// range and the default do not move; the NICKNAME does, and
+    /// deliberately, because the canvas shows the nickname and leaving "EX"
+    /// there would leave the word he objected to in the one place he reads
+    /// it. The port text moves with the name: it says what the slider does
+    /// to the JOINTS at both ends rather than which of two constructions the
+    /// engine picks, and "EXTRUDE" joins the dead words no description may
+    /// carry.
     ///
     /// THE INDEX DOES NOT MOVE, which is the whole reason a rename is safe
     /// here: no archived wire changes port. THE DEFAULT IS 0, the offset
@@ -30064,7 +30074,7 @@ internal static class Program
             ("Course Height", "CH"),
             ("Min Piece", "MP"),
             ("Thickness", "Th"),
-            ("Extrude", "EX")
+            ("Gaps", "Ga")
         };
         if (inputs.Count != expected.Length)
         {
@@ -30088,9 +30098,9 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"Input {at} must be '{expected[at].Name}' " +
                     $"('{expected[at].NickName}'); got '{name}' " +
-                    $"('{nick}'). Th and Extrude must be a PURE APPEND " +
+                    $"('{nick}'). Th and Gaps must be a PURE APPEND " +
                     "at 5 and 6, so every earlier port keeps its own name, " +
-                    "nickname and position, and Extrude keeps the INDEX " +
+                    "nickname and position, and Gaps keeps the INDEX " +
                     "'Along Normal' held rather than moving.");
             }
         }
@@ -30104,7 +30114,7 @@ internal static class Program
         if (!ThOptional() || !ExtrudeOptional())
         {
             throw new InvalidOperationException(
-                "Th and Extrude must both be Optional, like every " +
+                "Th and Gaps must both be Optional, like every " +
                 "port after Result: a definition saved before this task " +
                 "supplies neither, and an unwired required input would " +
                 "refuse to solve at all.");
@@ -30142,7 +30152,7 @@ internal static class Program
         if (extrudeTypeName != "Grasshopper.Kernel.Parameters.Param_Number")
         {
             throw new InvalidOperationException(
-                "Extrude is a NUMBER port (spec 2026-09-04 section 2), so " +
+                "Gaps is a NUMBER port (spec 2026-09-04 section 2), so " +
                 "an author can drop a slider on it; it is registered as " +
                 $"{extrudeTypeName}.");
         }
@@ -30172,13 +30182,27 @@ internal static class Program
                          "rather than a defect"),
                      ("clamped",
                          "a value outside 0 to 1 is clamped, and the port " +
-                         "says so where the author is looking")
+                         "says so where the author is looking"),
+                     // SPEC 2026-09-05 SECTION 4's own two clauses. His
+                     // objection was that "extrude is a bit confusing to
+                     // what it actually does", so the port text is now
+                     // about the JOINTS at both ends and not about which
+                     // of two constructions the engine picks.
+                     ("SEALED",
+                         "the 0 end SEALS the joints into the offset " +
+                         "shell, which is what the slider does there and " +
+                         "is the half of the name that is not the name"),
+                     ("in proportion to curvature times thickness",
+                         "the 1 end opens them IN PROPORTION to curvature " +
+                         "times thickness, which is the size of the gap " +
+                         "an author is about to get and the reason the " +
+                         "port is called Gaps")
                  })
         {
             if (!extrudeText.Contains(fragment, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Extrude's description must carry '{fragment}', " +
+                    $"Gaps' description must carry '{fragment}', " +
                     $"because {why}. Got: " + extrudeText);
             }
         }
@@ -30186,13 +30210,18 @@ internal static class Program
         // extrusion is deleted (spec 2026-09-04 section 1), and a port
         // still describing it would send an author looking for a mode the
         // engine no longer has.
-        foreach (string dead in new[] { "(0, 0, Th)", "world Z", "vertical" })
+        // "EXTRUDE" JOINS THE DEAD LIST (spec 2026-09-05 section 4). The
+        // rename is not done while the port text still calls the thing by
+        // the name he objected to, and a description is where an author
+        // reads it.
+        foreach (string dead in
+                 new[] { "(0, 0, Th)", "world Z", "vertical", "EXTRUDE" })
         {
             if (extrudeText.Contains(dead, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     "The world-Z branch is DELETED, so no port may still " +
-                    $"describe it; Extrude's description carries '{dead}'. " +
+                    $"describe it; Gaps' description carries '{dead}'. " +
                     "Got: " + extrudeText);
             }
         }
@@ -30215,7 +30244,7 @@ internal static class Program
         if (defaults.Count != 1 || defaults[0] != 0.0)
         {
             throw new InvalidOperationException(
-                "Extrude must default to 0 (spec 2026-09-04 section 2): " +
+                "Gaps must default to 0 (spec 2026-09-04 section 2): " +
                 "the offset surface, the finished shell. The port carries " +
                 $"{defaults.Count} default value(s)" +
                 (defaults.Count == 1 ? $", and it is {defaults[0]}" : "") +
@@ -30268,7 +30297,7 @@ internal static class Program
             if (!accepted || read.Count != 1)
             {
                 throw new InvalidOperationException(
-                    $"A GH_Boolean({given}) supplied to the Extrude port " +
+                    $"A GH_Boolean({given}) supplied to the Gaps port " +
                     $"was {(accepted ? "accepted" : "REFUSED")} and left " +
                     $"{read.Count} item(s) of volatile data. THE CANVAS " +
                     "CASUALTY: Param's canvas carries a toggle wired to " +
@@ -30280,7 +30309,7 @@ internal static class Program
             if (goo.GetType().Name != "GH_Number")
             {
                 throw new InvalidOperationException(
-                    $"A GH_Boolean({given}) through the Extrude port must " +
+                    $"A GH_Boolean({given}) through the Gaps port must " +
                     "arrive as a GH_Number; it arrived as " +
                     $"{goo.GetType().Name}, so nothing here measured a " +
                     "cast at all.");
@@ -30291,7 +30320,7 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     $"A GH_Boolean({given}) reads {value} through the " +
-                    $"Extrude port, where {wanted} is what the new " +
+                    $"Gaps port, where {wanted} is what the new " +
                     "semantics need: False is the offset surface at 0 and " +
                     "True the extrusion at 1, so Param's archived toggle " +
                     "sitting at False lands on the new default without " +
@@ -30412,7 +30441,7 @@ internal static class Program
                             "dome's flank runs at 45 degrees, so every " +
                             "offset on it owes a horizontal component. At " +
                             $"({point[0]}, {point[1]}, {point[2]}), Th " +
-                            $"{thickness} and Extrude {extrude} it gave " +
+                            $"{thickness} and Gaps {extrude} it gave " +
                             $"({moved[0]}, {moved[1]}, {moved[2]}), which " +
                             "is the (0, 0, Th) translation that no longer " +
                             "exists.");
@@ -30441,7 +30470,7 @@ internal static class Program
                     throw new InvalidOperationException(
                         "THE BLEND IS RENORMALISED, so the thickness is " +
                         "exactly |Th| at every stop of the slider (rule " +
-                        $"3.1): at Extrude {extrude} corner {at} moved " +
+                        $"3.1): at Gaps {extrude} corner {at} moved " +
                         $"{span} where |Th| is 0.37. An interpolation of " +
                         "the two TRANSLATIONS rather than of the two " +
                         "DIRECTIONS gives exactly this, right at both " +
@@ -30452,7 +30481,7 @@ internal static class Program
         }
 
         // ---- CHECK 3 OF SECTION 8: CONGRUENCE AT 1, AND NOT AT 0. At
-        // Extrude 1 every corner of one cell moves by the same vector
+        // Gaps 1 every corner of one cell moves by the same vector
         // Th * N, so the top ring is a rigid translation of the bottom and
         // its pairwise corner distances are the bottom's exactly. At 0 they
         // are NOT, on a curved cell, because each corner takes its own
@@ -31466,7 +31495,7 @@ internal static class Program
                     {
                         throw new InvalidOperationException(
                             "IDENTICAL OFFSETS FROM BOTH WINDINGS (rule " +
-                            $"4, check 5) at Extrude {extrude}: corner " +
+                            $"4, check 5) at Gaps {extrude}: corner " +
                             $"{at} axis {axis} went to " +
                             $"{fromUp[at][axis]} off the net wound up and " +
                             $"{fromDown[at][axis]} off the same net wound " +
@@ -31481,7 +31510,7 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     "+Th means OUT AND UP on every net whatever its " +
-                    $"winding (rule 4) at Extrude {extrude}: corner 0 of " +
+                    $"winding (rule 4) at Gaps {extrude}: corner 0 of " +
                     $"the dome went to z {fromUp[0][2]} wound up and " +
                     $"{fromDown[0][2]} wound down, from {ring[0][2]}.");
             }
@@ -31680,7 +31709,7 @@ internal static class Program
                                     "normals differ by " +
                                     $"{Math.Acos(Math.Abs(agreement)):F4} " +
                                     $"rad, the gap was {previousGap} at " +
-                                    $"Extrude {t - 0.25} and {gapAt} at " +
+                                    $"Gaps {t - 0.25} and {gapAt} at " +
                                     $"{t}. The weld survives at 0 ONLY: at " +
                                     "any t above 0 the cell's own normal " +
                                     "enters and neighbours split, and " +
@@ -31746,7 +31775,7 @@ internal static class Program
             $"{bestDisagreement:F4} in cosine; at EXTRUDE 0 every one of " +
             $"them offsets to within {worstWeld:E3} m, and the split grows " +
             "strictly at every quarter of the slider, reaching " +
-            $"{worstSplitAtOne:F4} m at Extrude 1, where the DELETED " +
+            $"{worstSplitAtOne:F4} m at Gaps 1, where the DELETED " +
             $"per-cell Newell offset would have split them by up to " +
             $"{worstOldSplit:F4} m at Th {WeldThickness}.");
     }
@@ -31771,8 +31800,8 @@ internal static class Program
     /// TWO, THE COUNTS, taken at every stop of the slider rather than
     /// under two branches. AMENDED 2026-09-04: the world-Z branch is
     /// DELETED, so "extrude against offset" is no longer a comparison this
-    /// engine can make at all. What replaced it is Extrude 0 against
-    /// Extrude 1, both of them on the surface normal.
+    /// engine can make at all. What replaced it is Gaps 0 against
+    /// Gaps 1, both of them on the surface normal.
     ///
     /// THE ONE-WAY GUARD IS DELETED WITH THE BRANCH IT GUARDED, and the
     /// deletion is recorded rather than left silent. Its whole argument
@@ -32086,7 +32115,7 @@ internal static class Program
         Deferred(
             "The vertical edge (spec 2026-09-03 section 4 check 2, restated " +
             "for the slider): some cell somewhere is REFUSED at one end of " +
-            "Extrude for an annihilated wall and BUILT at the other",
+            "Gaps for an annihilated wall and BUILT at the other",
             "scripts/rhino_skin_surface.py 12.5(i), run inside Rhino, which " +
             "is the only place a cell's refusal can be counted at all; no " +
             "fixture in this process produces an exactly vertical outline " +
@@ -32100,7 +32129,7 @@ internal static class Program
                     throw new InvalidOperationException(
                         "ZERO cells on ANY fixture are saved from the " +
                         "annihilated-wall refusal by moving the slider: " +
-                        $"walled vault {walledExtrude} at Extrude 1 " +
+                        $"walled vault {walledExtrude} at Gaps 1 " +
                         $"against {walledOffset} at 0, force-aligned " +
                         $"barrel {alignedExtrude} against {alignedOffset}, " +
                         $"Param's own net in courses {paramExtrude} " +
@@ -32182,7 +32211,7 @@ internal static class Program
         // THE SECTIONS joined it on 2026-09-04, because the top face now
         // takes its own bottom's route (spec section 5) and a loft-route
         // cell lofts its top from its own moved rails; and the last
-        // parameter turned from the Offset Boolean into the Extrude
+        // parameter turned from the Offset Boolean into the Gaps
         // NUMBER, which is the slider.
         string[] wanted =
         {
@@ -32197,7 +32226,7 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "ThickenCellSurface takes the face, the outline, the " +
-                "cell's SECTIONS, the net, Th and the Extrude slider, in " +
+                "cell's SECTIONS, the net, Th and the Gaps slider, in " +
                 $"that order: {wanted.Length} parameters. It takes " +
                 $"{taken.Length}.");
         }
@@ -32399,11 +32428,11 @@ internal static class Program
                          "a smaller Thickness is the ONLY remedy this " +
                          "component has, now that both the toggle and its " +
                          "two directions are gone"),
-                     (thickText, "Extrude was 0.00",
+                     (thickText, "Gaps was 0.00",
                          "the sentence names the slider's own position, so " +
                          "the author reads which end the count was taken " +
                          "at"),
-                     (thickTextOn, "Extrude was 1.00",
+                     (thickTextOn, "Gaps was 1.00",
                          "and it names it at the other end too, which is " +
                          "what makes the parameter earn its place"),
                      (thickText, "OPENS THE JOINTS",
@@ -32441,7 +32470,7 @@ internal static class Program
                      {
                          "Offset ON", "Offset off", "Along Normal",
                          "(0, 0, Th)", "costs nothing", "world Z",
-                         "Extrude is the remedy", "so is Extrude"
+                         "Gaps is the remedy", "so is Gaps"
                      })
             {
                 if (text.Contains(forbidden, StringComparison.Ordinal))
@@ -32449,7 +32478,7 @@ internal static class Program
                     throw new InvalidOperationException(
                         "This warning may neither describe the deleted " +
                         "toggle and its world-Z branch nor offer the " +
-                        "slider as a remedy: Extrude near 1 opens the " +
+                        "slider as a remedy: Gaps near 1 opens the " +
                         "joints by design and is not known to rescue a " +
                         $"cell that will not close. It carries " +
                         $"'{forbidden}': '{text}'.");
@@ -32458,7 +32487,7 @@ internal static class Program
         }
         // No assertion here that the two sentences DIFFER. It would read
         // well and it would never be able to fail: the two fragments above
-        // require "Extrude was 0.00" in one and "Extrude was 1.00" in the
+        // require "Gaps was 0.00" in one and "Gaps was 1.00" in the
         // other, which forces them apart already. A check that cannot go
         // red is not a check, and this file has shipped one before.
         if (faceText.Contains("STILL EXPORTED", StringComparison.Ordinal) ||

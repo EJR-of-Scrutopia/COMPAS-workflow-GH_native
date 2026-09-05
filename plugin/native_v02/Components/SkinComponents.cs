@@ -168,7 +168,7 @@ public sealed class SkinComponent : NativeComponentBase
                 "The offset is SIGNED and ONE-SIDED: a positive Th builds " +
                 "outward along the surface normal and a negative one " +
                 "inward, so the solved surface is the intrados or the " +
-                "extrados of the skin and never its middle. Extrude slides " +
+                "extrados of the skin and never its middle. Gaps slides " +
                 "between an offset surface, where every outline point " +
                 "moves along the normal AT THAT POINT, and a per-cell " +
                 "extrusion along the cell's own normal. BOTH ENDS ARE ON " +
@@ -184,27 +184,39 @@ public sealed class SkinComponent : NativeComponentBase
         // from offset ... to extruded ... That means we can remove the
         // button and put in this slider."
         //
+        // RENAMED AGAIN, spec 2026-09-05 section 4, his words: "extrude is
+        // a bit confusing to what it actually does". It is "Gaps" now and
+        // the INDEX still does not move, so no archived wire moves either.
+        // THE NICKNAME MOVES WITH IT, from "EX" to "Ga", and that is a
+        // decision rather than an oversight: the canvas shows the NICKNAME,
+        // so leaving EX would leave the word he objected to in the one
+        // place he actually reads it, and the port would go on being called
+        // Extrude by everyone looking at the definition. The port text now
+        // says what the slider DOES rather than which of two constructions
+        // it picks: 0 seals the joints into the offset shell, 1 opens them
+        // in proportion to curvature times thickness.
+        //
         // A BOOLEAN WIRED HERE STILL READS. Grasshopper casts a GH_Boolean
         // to a GH_Number, False to 0 and True to 1, so his archived toggle
         // sitting at False lands on the new default without his touching
         // it. Measured through this very port in the smoke harness rather
         // than assumed.
         parameters.AddNumberParameter(
-            "Extrude",
-            "EX",
-            "Slide the outer skin from OFFSET to EXTRUDE, both of them on " +
-                "the surface normal. At 0, the default, the skin is a true " +
-                "OFFSET SURFACE: every outline point moves along the " +
-                "surface normal AT THAT POINT, so cells that share a " +
-                "corner move it to the same place, stay welded, and the " +
-                "assembly is one continuous thickened shell. At 1 each " +
-                "cell is EXTRUDED along its OWN normal, a rigid " +
+            "Gaps",
+            "Ga",
+            "Open the joints between the thickened cells. At 0, the " +
+                "default, the joints are SEALED into the offset shell: " +
+                "every outline point moves along the surface normal AT " +
+                "THAT POINT, so cells that share a corner move it to the " +
+                "same place, stay welded, and the assembly is one " +
+                "continuous thickened shell. At 1 the joints are fully " +
+                "OPEN: each cell is carried along its OWN normal, a rigid " +
                 "translation whose outer face is congruent to its inner " +
-                "one, and GAPS OPEN at the joints in proportion to " +
-                "curvature times thickness, because neighbouring cells' " +
-                "normals disagree. In between, the joint bevel slides from " +
-                "radial and shared to parallel and open. Outside 0 to 1 " +
-                "the value is clamped. Ignored while Th is 0.",
+                "one, and GAPS OPEN in proportion to curvature times " +
+                "thickness, because neighbouring cells' normals disagree. " +
+                "In between, the joint bevel slides from radial and shared " +
+                "to parallel and open. Outside 0 to 1 the value is " +
+                "clamped. Ignored while Th is 0.",
             GH_ParamAccess.item,
             0.0);
         parameters[5].Optional = true;
@@ -657,7 +669,7 @@ public sealed class SkinComponent : NativeComponentBase
     /// that no longer exists. Both directions went with the toggle.
     ///
     /// WHAT MAY NOT BE SAID HERE, and it is the point of the rewrite. THE
-    /// SLIDER IS NOT A REMEDY FOR A REFUSAL. Extrude near 1 opens the
+    /// SLIDER IS NOT A REMEDY FOR A REFUSAL. Gaps near 1 opens the
     /// joints BY DESIGN, in proportion to curvature times thickness, and
     /// nothing measured anywhere says it rescues a cell that will not
     /// close. The loft-route failures remain UNATTRIBUTED: only
@@ -677,7 +689,7 @@ public sealed class SkinComponent : NativeComponentBase
             return null;
         string remedy =
             " A smaller Thickness is the remedy, and it is the only one " +
-            "this component has to offer. Extrude was " +
+            "this component has to offer. Gaps was " +
             extrude.ToString("F2", CultureInfo.InvariantCulture) +
             "; sliding it towards 1 OPENS THE JOINTS by design, in " +
             "proportion to curvature times thickness, and is not known to " +
@@ -974,7 +986,7 @@ public sealed class SkinComponent : NativeComponentBase
     /// thickened half a shell outward and the other half inward at one
     /// positive Th for exactly that reason. A mean of field normals cannot,
     /// because the field is one-sided over the whole net (rule 4). So
-    /// Extrude 1 cannot disagree with Extrude 0 about which side is out.
+    /// Gaps 1 cannot disagree with Gaps 0 about which side is out.
     ///
     /// DEGENERATE, and the ladder is the spec's own. Where the mean is
     /// shorter than 1e-12, the corners' normals have cancelled and the cell
@@ -1055,9 +1067,9 @@ public sealed class SkinComponent : NativeComponentBase
     /// and SAME sign convention Th itself carries.
     ///
     /// THE SLIDER BLENDS TWO DIRECTIONS, BOTH OF THEM ON THE SURFACE
-    /// NORMAL. At Extrude 0 the direction is n(p), the field normal AT THE
+    /// NORMAL. At Gaps 0 the direction is n(p), the field normal AT THE
     /// POINT, read through <see cref="SkinPatterns.NormalAt"/> and off
-    /// nothing else, which is the offset surface. At Extrude 1 it is N, the
+    /// nothing else, which is the offset surface. At Gaps 1 it is N, the
     /// CELL'S own normal, one vector for the whole cell, which makes the
     /// block a rigid translation of its cell and opens the joints. In
     /// between:
@@ -1654,7 +1666,7 @@ public sealed class SkinComponent : NativeComponentBase
                 : Math.Min(Math.Max(asked, 0.0), 1.0);
         clamped = !double.IsFinite(asked) || asked < 0.0 || asked > 1.0;
         remark = clamped
-            ? "Extrude runs 0 (offset surface) to 1 (per-cell extrusion); " +
+            ? "Gaps runs 0 (joints sealed) to 1 (joints fully open); " +
               "using " +
               answer.ToString("F3", CultureInfo.InvariantCulture) +
               ". Both ends are on the surface normal, so there is nothing " +
