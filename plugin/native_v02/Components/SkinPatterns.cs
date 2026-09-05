@@ -4136,6 +4136,7 @@ internal static class SkinPatterns
                          minimumPiece,
                          high - low,
                          high - low >= courseHeight - 1.0e-9,
+                         seams.Count > 0,
                          ref mergedPieces,
                          ref mergedShortKept,
                          ref mergedStillShort,
@@ -6286,10 +6287,30 @@ internal static class SkinPatterns
     /// the studio refuses. Corners that lie exactly on the traced curves are
     /// also the only way the standing 1e-6 corner weld can fuse a closer to
     /// both families, which is the requirement the construction exists for.
-    /// The price is stated and measured rather than hidden: where the band
-    /// pinches out at a seam end the two families' own ends bound the last
-    /// stone, and check 2 measures what fraction of the refused interval's
-    /// plan area is covered.
+    ///
+    /// THE PINCH-OUT PRICE IS PAID NO LONGER (spec 2026-09-05 round two,
+    /// fix 2). Round one stated it and measured it: where a guide ends, on
+    /// the free boundary over an opening or short of the seam meeting
+    /// point, the region beyond its last head joint had no guide and got
+    /// no stone, and on the asymmetric six-lobe that was the DOMINANT hole
+    /// class, twelve stone-sized voids of 0.14 to 0.19 m2 at the openings
+    /// plus the small triangles at the seam tips, 96.56 per cent coverage
+    /// against a bar near 100. The residue is found on the OTHER family's
+    /// curves: every stone covers an arc of the other curve it ran back
+    /// along, and the maximal uncovered arcs between those covered
+    /// intervals are exactly the pinch-out regions. So the stones are
+    /// STAGED rather than emitted one by one, the coverage per other curve
+    /// is read off the staged set, and each residual gap is closed by the
+    /// construction the paragraph above already sketches, cut against the
+    /// two families' own ends: a gap SHORTER than Min Piece extends the
+    /// flanking stone's own back run across it, so no sliver is minted for
+    /// a residue a neighbour can absorb, and a gap of stone size becomes
+    /// an END-STONE, the other curve's uncovered run closed back to the
+    /// flanking guides' own end corners. An end-stone's joints obey the
+    /// same head-joint bound as every other stone here, which is what
+    /// keeps this pass off the plateau fixtures: on a plateau the other
+    /// family is metres away in plan and the joint refuses the chord.
+    /// Check 2's plan-area coverage is the acceptance instrument.
     ///
     /// SIMILAR SIZE (rule 2.4), AND WHY THE LOWER BOUND NEEDS NO CLAMP. The
     /// spans are the pattern's own pitch and they pass through the same
@@ -6330,6 +6351,7 @@ internal static class SkinPatterns
         double minimumPiece,
         double thickness,
         bool stagger,
+        bool coverPinchOuts,
         ref int mergedPieces,
         ref int mergedShortKept,
         ref int mergedStillShort,
@@ -6362,6 +6384,10 @@ internal static class SkinPatterns
         bool guideIsLow = lows.Count >= highs.Count;
         IReadOnlyList<SkinLevelCurve> guides = guideIsLow ? lows : highs;
         IReadOnlyList<SkinLevelCurve> others = guideIsLow ? highs : lows;
+        // The stones are STAGED first, the coverage read second and the
+        // rings cut last, which is what lets the pinch-out pass extend a
+        // flanking stone before anything is final.
+        var staged = new List<SkinCloserStone>();
         for (int at = 0; at < guides.Count; at++)
         {
             SkinLevelCurve guide = guides[at];
@@ -6457,67 +6483,459 @@ internal static class SkinPatterns
                     while (a0 - a1 > half)
                         a1 += other.Length;
                 }
-                List<double[]> back = a1 >= a0
-                    ? Run(other, a0, a1)
-                    : Run(other, a1, a0);
-                if (a1 >= a0)
-                    back.Reverse();
-                if (Distance(along[0], back[^1]) > maximumJoint ||
-                    Distance(along[^1], back[0]) > maximumJoint)
+                staged.Add(new SkinCloserStone
                 {
-                    refused++;
-                    continue;
-                }
-                var outline = new List<double[]>(along);
-                outline.AddRange(back);
-                List<double[]> ring = Dedupe(outline);
-                if (ring.Count < 3)
-                {
-                    // R-006: welded below three distinct corners, so there
-                    // is no plan left to keep.
-                    weldCollapsed++;
-                    continue;
-                }
-                if (PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
-                {
-                    // A stone that folds in plan is REFUSED here rather than
-                    // handed to the plan filter to delete, which is the
-                    // discipline the force-aligned pattern's band-escape
-                    // refusal already keeps: a refusal says a stone was not
-                    // laid, while a drop says one was laid badly, and rule
-                    // 2.5 asks the seam to stop producing drops. It happens
-                    // where the other family's curve turns back on itself
-                    // inside one span, the two-hump barrel's loop tips at
-                    // the middle dip being the measured case.
-                    refused++;
-                    continue;
-                }
-                // RULE 2.4'S LOWER BOUND, counted at the one place a stone
-                // becomes real. The doc comment above proves the pitch
-                // itself cannot fall under the minimum; what can is a guide
-                // shorter than the minimum altogether, or a merge with no
-                // neighbour to grow into. Counted here so a sliver ships
-                // named rather than unseen.
-                if (u1 - u0 < minimumPiece - 1.0e-9)
-                    undersized++;
-                // SECTIONS are the cell's own two runs, both read in the
-                // same direction, which is route (a) of rule 5.2.3: the
-                // guide's run and the other family's run, the second turned
-                // back the way the first goes so a loft between them does
-                // not twist.
-                var upper = new List<double[]>(back);
-                upper.Reverse();
-                closers.Add((guide, new SkinCell(
-                    course, ring, clipped, u0, u1, false,
-                    Sections: new[]
-                    {
-                        (IReadOnlyList<double[]>)along, upper
-                    },
-                    Closer: true)));
+                    Guide = guide,
+                    Other = other,
+                    U0 = u0,
+                    U1 = u1,
+                    Clipped = clipped,
+                    Along = along,
+                    A0 = a0,
+                    A1 = a1
+                });
             }
         }
 
+        // ---- FIX 2, THE PINCH-OUT COVERAGE (spec 2026-09-05 round two).
+        // The residual regions beyond each guide's last head joint are
+        // exactly the UNCOVERED ARCS of the other family's curves, so the
+        // coverage is read per other curve off the staged set and every
+        // maximal gap is closed: a gap under Min Piece EXTENDS the
+        // flanking stone's back run (no sliver is minted for a residue a
+        // neighbour can absorb), and a larger gap becomes an END-STONE cut
+        // against the two families' own ends. Raw arc space (0 to Length),
+        // wrapped intervals split, so open and closed curves share one
+        // arithmetic.
+        // AND IT RUNS AT A MEETING AND NOWHERE ELSE, the same gate the
+        // absorption keeps and for the same measured reason: on a plateau
+        // a gap stone that squeaks past the joint bound plasters plan the
+        // upper courses legitimately occupy, and the split-and-death net
+        // went from 0 plan-filter drops to 11 the moment gap stones were
+        // laid there. With the gate the three plateau fixtures are
+        // bit-identical to round one.
+        foreach (IGrouping<SkinLevelCurve, SkinCloserStone> onOther in
+                 coverPinchOuts
+                     ? staged.GroupBy(stone => stone.Other)
+                     : Enumerable.Empty<IGrouping<SkinLevelCurve, SkinCloserStone>>())
+        {
+            SkinLevelCurve other = onOther.Key;
+            double length = other.Length;
+            var pieces2 = new List<(
+                double Start,
+                double End,
+                (SkinCloserStone Stone, bool MaxEnd)? StartOwner,
+                (SkinCloserStone Stone, bool MaxEnd)? EndOwner)>();
+            foreach (SkinCloserStone stone in onOther)
+            {
+                double lo = Math.Min(stone.A0, stone.A1);
+                double hi = Math.Max(stone.A0, stone.A1);
+                double start = RawArcOn(other, lo);
+                double span = hi - lo;
+                (SkinCloserStone, bool)? lowOwner = (stone, false);
+                (SkinCloserStone, bool)? highOwner = (stone, true);
+                if (!other.Closed)
+                {
+                    // An open curve clamps rather than wraps, so the raw
+                    // interval is read off both ends directly.
+                    pieces2.Add((
+                        start, RawArcOn(other, hi), lowOwner, highOwner));
+                }
+                else if (start + span <= length + 1.0e-9)
+                {
+                    pieces2.Add((
+                        start, start + span, lowOwner, highOwner));
+                }
+                else
+                {
+                    // The covered arc wraps the branch cut: two pieces,
+                    // each keeping the REAL end's owner and leaving the
+                    // artificial cut end unowned.
+                    pieces2.Add((start, length, lowOwner, null));
+                    pieces2.Add((0.0, start + span - length, null, highOwner));
+                }
+            }
+            pieces2.Sort((left, right) => left.Start.CompareTo(right.Start));
+            var merged2 = new List<(
+                double Start,
+                double End,
+                (SkinCloserStone Stone, bool MaxEnd)? StartOwner,
+                (SkinCloserStone Stone, bool MaxEnd)? EndOwner)>();
+            foreach (var piece in pieces2)
+            {
+                if (merged2.Count > 0 &&
+                    piece.Start <= merged2[^1].End + 1.0e-6)
+                {
+                    var last = merged2[^1];
+                    if (piece.End > last.End)
+                        merged2[^1] = (
+                            last.Start, piece.End,
+                            last.StartOwner, piece.EndOwner);
+                    continue;
+                }
+                merged2.Add(piece);
+            }
+            if (merged2.Count == 0)
+                continue;
+            var gaps = new List<(
+                double Start,
+                double Length,
+                (SkinCloserStone Stone, bool MaxEnd)? LowFlank,
+                (SkinCloserStone Stone, bool MaxEnd)? HighFlank)>();
+            for (int at = 0; at + 1 < merged2.Count; at++)
+            {
+                double width = merged2[at + 1].Start - merged2[at].End;
+                if (width > 1.0e-6)
+                {
+                    gaps.Add((
+                        merged2[at].End, width,
+                        merged2[at].EndOwner, merged2[at + 1].StartOwner));
+                }
+            }
+            if (other.Closed)
+            {
+                // The wrap gap: from the last piece's end round the branch
+                // cut to the first piece's start.
+                double width =
+                    length - merged2[^1].End + merged2[0].Start;
+                if (width > 1.0e-6 &&
+                    !(merged2.Count == 1 &&
+                      merged2[0].Start <= 1.0e-6 &&
+                      merged2[0].End >= length - 1.0e-6))
+                {
+                    gaps.Add((
+                        merged2[^1].End, width,
+                        merged2[^1].EndOwner, merged2[0].StartOwner));
+                }
+            }
+            else
+            {
+                if (merged2[0].Start > 1.0e-6)
+                {
+                    gaps.Add((
+                        0.0, merged2[0].Start,
+                        null, merged2[0].StartOwner));
+                }
+                if (merged2[^1].End < length - 1.0e-6)
+                {
+                    gaps.Add((
+                        merged2[^1].End, length - merged2[^1].End,
+                        merged2[^1].EndOwner, null));
+                }
+            }
+            foreach (var gap in gaps)
+            {
+                if (gap.Length < minimumPiece)
+                {
+                    // A residue a neighbour can absorb is absorbed: the
+                    // flanking stones' back runs grow across the gap,
+                    // provided the longer head joints still obey the
+                    // bound. BOTH flanks take half each where both exist,
+                    // because a seam-tip triangle sits between TWO guides'
+                    // ends: one stone extended across the whole gap covers
+                    // the other curve's run but leaves the wedge beside
+                    // the far guide's end corner open (one-sided, the
+                    // symmetric six-lobe measured 2.05 per cent of its
+                    // slab uncovered; half-and-half, 1.52); the residue
+                    // that remains after both halves is the discretisation
+                    // wedge BELOW the two guide tips, each piece of it
+                    // under the sliver floor, where a stone cut for it
+                    // would itself be the tiny piece the acceptance
+                    // refuses.
+                    if (gap.LowFlank is not null &&
+                        gap.HighFlank is not null &&
+                        TryExtendCloser(
+                            other, gap.LowFlank, gap.Length / 2.0, true,
+                            maximumJoint, apply: false) &&
+                        TryExtendCloser(
+                            other, gap.HighFlank, gap.Length / 2.0, false,
+                            maximumJoint, apply: false))
+                    {
+                        TryExtendCloser(
+                            other, gap.LowFlank, gap.Length / 2.0, true,
+                            maximumJoint);
+                        TryExtendCloser(
+                            other, gap.HighFlank, gap.Length / 2.0, false,
+                            maximumJoint);
+                        continue;
+                    }
+                    if (TryExtendCloser(
+                            other, gap.LowFlank, gap.Length, true,
+                            maximumJoint) ||
+                        TryExtendCloser(
+                            other, gap.HighFlank, gap.Length, false,
+                            maximumJoint))
+                    {
+                        continue;
+                    }
+                }
+                // THE END-STONE: the other curve's uncovered run, closed
+                // back to the flanking guides' own end corners. Where
+                // neither flank exists there is nothing on the guide side
+                // to bond to and the gap is REFUSED under its own name
+                // rather than chorded across.
+                //
+                // AND IT IS CUT AT THE PATTERN'S OWN SCALE, not as one
+                // stone however long the gap: the crown arch's crotch gap
+                // runs 0.28 m against courses of 0.10, and one stone there
+                // is exactly the distinguishable-by-size stone Param's
+                // acceptance refuses. Ceiling division keeps every piece
+                // at or under Size and, because Min Piece is at most half
+                // of Size, never under the minimum. Interior joints land
+                // on the CHORD between the two attachment corners, which
+                // is the same edge the single stone would have carried,
+                // interpolated by arc fraction, so adjacent pieces share
+                // it and bond; where an attachment is missing the gap is
+                // one stone, since interior joints would have nothing to
+                // stand on.
+                double og0 = gap.Start - other.Seam;
+                double[]? attLow = gap.LowFlank is { } lowFlank
+                    ? CloserEndCorner(lowFlank.Stone, lowFlank.MaxEnd)
+                    : null;
+                double[]? attHigh = gap.HighFlank is { } highFlank
+                    ? CloserEndCorner(highFlank.Stone, highFlank.MaxEnd)
+                    : null;
+                if (attLow is null && attHigh is null)
+                {
+                    refused++;
+                    continue;
+                }
+                // THE WHOLE GAP ANSWERS TO THE JOINT BOUND BEFORE IT IS
+                // CUT. Splitting shortens the pieces' own joints, and on a
+                // plateau that let pieces of a gap slip past a bound the
+                // gap as one stone failed: measured on the split-and-death
+                // net, 0 plan-filter drops became 11 the moment the pieces
+                // were tested alone. The gap's own two END joints are the
+                // unsplit stone's joints, so they are tested first and the
+                // gap refused whole where they fail, exactly as one stone
+                // would have been.
+                if ((attLow is not null &&
+                     Distance(PointAt(other, gap.Start - other.Seam),
+                         attLow) > maximumJoint) ||
+                    (attHigh is not null &&
+                     Distance(
+                         PointAt(
+                             other,
+                             gap.Start - other.Seam + gap.Length),
+                         attHigh) > maximumJoint))
+                {
+                    refused++;
+                    continue;
+                }
+                int gapPieces = attLow is not null && attHigh is not null
+                    ? Math.Max(
+                        1,
+                        (int)Math.Ceiling(gap.Length / size - 1.0e-9))
+                    : 1;
+                double[] ChordAt(double fraction) =>
+                    attLow is null
+                        ? attHigh!
+                        : attHigh is null
+                            ? attLow
+                            : Lerp(attLow, attHigh, fraction);
+                for (int piece = 0; piece < gapPieces; piece++)
+                {
+                    double p0 = og0 + gap.Length * piece / gapPieces;
+                    double p1 = og0 + gap.Length * (piece + 1) / gapPieces;
+                    List<double[]> run = Run(other, p0, p1);
+                    double[] cornerLow = ChordAt((double)piece / gapPieces);
+                    double[] cornerHigh =
+                        ChordAt((double)(piece + 1) / gapPieces);
+                    if (Distance(run[0], cornerLow) > maximumJoint ||
+                        Distance(run[^1], cornerHigh) > maximumJoint)
+                    {
+                        refused++;
+                        continue;
+                    }
+                    var outline = new List<double[]>(run)
+                    {
+                        cornerHigh
+                    };
+                    if (Distance(cornerLow, cornerHigh) > 1.0e-9)
+                        outline.Add(cornerLow);
+                    List<double[]> ring = Dedupe(outline);
+                    if (ring.Count < 3)
+                    {
+                        // R-006: welded below three distinct corners.
+                        weldCollapsed++;
+                        continue;
+                    }
+                    if (PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+                    {
+                        refused++;
+                        continue;
+                    }
+                    if (p1 - p0 < minimumPiece - 1.0e-9)
+                        undersized++;
+                    // SECTIONLESS: an end-stone's guide side is one or two
+                    // corners, which is no rail a loft can be built from,
+                    // so it takes the deterministic fan of routes (d) and
+                    // (e), whose sag measured 0.7 to 2.4 mm on the lobed
+                    // fixtures.
+                    closers.Add((other, new SkinCell(
+                        course, ring, false, p0, p1, false,
+                        Closer: true)));
+                }
+            }
+        }
+
+        // ---- FINALISATION of the staged stones, exactly the round-one
+        // emission but off the possibly-extended intervals.
+        foreach (SkinCloserStone stone in staged)
+        {
+            SkinLevelCurve other = stone.Other;
+            double a0 = stone.A0;
+            double a1 = stone.A1;
+            List<double[]> along = stone.Along;
+            List<double[]> back = a1 >= a0
+                ? Run(other, a0, a1)
+                : Run(other, a1, a0);
+            if (a1 >= a0)
+                back.Reverse();
+            if (Distance(along[0], back[^1]) > maximumJoint ||
+                Distance(along[^1], back[0]) > maximumJoint)
+            {
+                refused++;
+                continue;
+            }
+            var outline = new List<double[]>(along);
+            outline.AddRange(back);
+            List<double[]> ring = Dedupe(outline);
+            if (ring.Count < 3)
+            {
+                // R-006: welded below three distinct corners, so there
+                // is no plan left to keep.
+                weldCollapsed++;
+                continue;
+            }
+            if (PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+            {
+                // A stone that folds in plan is REFUSED here rather than
+                // handed to the plan filter to delete, which is the
+                // discipline the force-aligned pattern's band-escape
+                // refusal already keeps: a refusal says a stone was not
+                // laid, while a drop says one was laid badly, and rule
+                // 2.5 asks the seam to stop producing drops. It happens
+                // where the other family's curve turns back on itself
+                // inside one span, the two-hump barrel's loop tips at
+                // the middle dip being the measured case.
+                refused++;
+                continue;
+            }
+            // RULE 2.4'S LOWER BOUND, counted at the one place a stone
+            // becomes real. The doc comment above proves the pitch
+            // itself cannot fall under the minimum; what can is a guide
+            // shorter than the minimum altogether, or a merge that had no
+            // neighbour to grow into. Counted here so a sliver ships
+            // named rather than unseen.
+            if (stone.U1 - stone.U0 < minimumPiece - 1.0e-9)
+                undersized++;
+            // SECTIONS are the cell's own two runs, both read in the
+            // same direction, which is route (a) of rule 5.2.3: the
+            // guide's run and the other family's run, the second turned
+            // back the way the first goes so a loft between them does
+            // not twist.
+            var upper = new List<double[]>(back);
+            upper.Reverse();
+            closers.Add((stone.Guide, new SkinCell(
+                course, ring, stone.Clipped, stone.U0, stone.U1, false,
+                Sections: new[]
+                {
+                    (IReadOnlyList<double[]>)along, upper
+                },
+                Closer: true)));
+        }
         return closers;
+    }
+
+    /// <summary>One staged closer stone: the guide run and the mapped
+    /// interval on the other family's curve, held mutable between the
+    /// staging pass and the finalisation so the pinch-out pass can extend
+    /// a flanking stone across a small residual gap.</summary>
+    private sealed class SkinCloserStone
+    {
+        public SkinLevelCurve Guide = null!;
+        public SkinLevelCurve Other = null!;
+        public double U0;
+        public double U1;
+        public bool Clipped;
+        public List<double[]> Along = null!;
+        public double A0;
+        public double A1;
+    }
+
+    /// <summary>Seam-offset arc turned into RAW arc on the curve's own
+    /// 0-to-Length domain, the same clamp-or-wrap PointAt applies.</summary>
+    private static double RawArcOn(SkinLevelCurve curve, double u)
+    {
+        double s = curve.Seam + u;
+        if (curve.Closed)
+        {
+            s %= curve.Length;
+            if (s < 0.0)
+                s += curve.Length;
+            return s;
+        }
+        return Math.Min(Math.Max(s, 0.0), curve.Length);
+    }
+
+    /// <summary>The guide corner of a staged stone at the end of its
+    /// mapped interval: the along-run corner whose nearest point produced
+    /// that end of the back run.</summary>
+    private static double[] CloserEndCorner(
+        SkinCloserStone stone, bool maxEnd)
+    {
+        bool forward = stone.A0 <= stone.A1;
+        return (maxEnd == forward)
+            ? stone.Along[^1]
+            : stone.Along[0];
+    }
+
+    /// <summary>Grow one flanking stone's back run across a small residual
+    /// gap, where the flank exists and the longer head joint still obeys
+    /// the bound; answers whether the gap was absorbed.</summary>
+    private static bool TryExtendCloser(
+        SkinLevelCurve other,
+        (SkinCloserStone Stone, bool MaxEnd)? flank,
+        double gapLength,
+        bool forwardOfMax,
+        double maximumJoint,
+        bool apply = true)
+    {
+        if (flank is not { } at)
+            return false;
+        SkinCloserStone stone = at.Stone;
+        if (at.MaxEnd != forwardOfMax)
+            return false;
+        bool forward = stone.A0 <= stone.A1;
+        double grownA0 = stone.A0;
+        double grownA1 = stone.A1;
+        if (at.MaxEnd)
+        {
+            if (forward)
+                grownA1 += gapLength;
+            else
+                grownA0 += gapLength;
+        }
+        else
+        {
+            if (forward)
+                grownA0 -= gapLength;
+            else
+                grownA1 -= gapLength;
+        }
+        double movedEnd = at.MaxEnd
+            ? Math.Max(grownA0, grownA1)
+            : Math.Min(grownA0, grownA1);
+        double[] corner = CloserEndCorner(stone, at.MaxEnd);
+        if (Distance(PointAt(other, movedEnd), corner) > maximumJoint)
+            return false;
+        if (apply)
+        {
+            stone.A0 = grownA0;
+            stone.A1 = grownA1;
+        }
+        return true;
     }
 
     /// <summary>Which candidate curve lies NEAREST this one in plan, by the

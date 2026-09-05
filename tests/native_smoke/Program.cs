@@ -1253,7 +1253,22 @@ internal static class Program
                 "the 199 of 653 pinstripes the diagnosis measured, every " +
                 "one a closer in the three thin slabs that starved; the 8 " +
                 "boundary-clipped free-edge pieces that remain are pinned " +
-                "two-sidedly and named as the held free-edge class.");
+                "two-sidedly and named as the held free-edge class. FIX 2, " +
+                "the pinch-out coverage: the residual regions beyond each " +
+                "guide's last head joint, the stone-sized voids over the " +
+                "free-edge openings and the triangles at the seam tips, " +
+                "are closed against the two families' own ends, a residue " +
+                "under Min Piece extending the flanking stones' back runs " +
+                "half each and a stone-sized gap becoming an END-STONE on " +
+                "the other family's uncovered run, both under the standing " +
+                "head-joint bound, which is what keeps the pass off the " +
+                "plateau fixtures. The slab's UNCOVERED plan area, sampled " +
+                "at the diagnosis's 7.5 cm against every kept cell, is " +
+                "0.0000 m2 where 8b9a44a measured 2.78 m2 of voids, pinned " +
+                "at nought with a one-sliver-stone floor; and the closing " +
+                "stones sit inside the adjacent courses' own size range " +
+                "ALONG and ACROSS, under the ordinary course's own " +
+                "excursion bar with rule 3.1's 90 per cent width floor.");
         }
         catch (Exception exception)
         {
@@ -20169,19 +20184,29 @@ internal static class Program
                      // a sliver of closers interleaved, now reads the two
                      // guides the closer was cut on and nothing else.
                      //
-                     // AND THE SKIP COUNT FALLS TO ZERO, which is the most
-                     // telling number here after the wave. It stood at 3:
-                     // the pairs 30/31, 31/32 and 32/33 carried different
-                     // run counts, so the item-k claim was not asserted
-                     // across them at all. Every consecutive pair on this
-                     // arch now carries the same run count, so all 32 pairs
-                     // and 859 item indices are asserted and none is
-                     // skipped. The topology change is still in the field;
-                     // what has gone is the BISECTION'S wreckage either
-                     // side of it.
+                     // THE SKIP COUNT FELL TO ZERO under round one and
+                     // ROSE TO TWO under round two, and both movements are
+                     // the waves' own design. It stood at 3 before the
+                     // seam-flow wave: the pairs 30/31, 31/32 and 32/33
+                     // carried different run counts. Round one's absorption
+                     // took course 31 from 12 runs to 2, so every pair
+                     // agreed and all 32 pairs and 859 item indices were
+                     // asserted. Round two's pinch-out coverage then lands
+                     // the crotch END-STONES on course 31, cut on the
+                     // OTHER family's curve and therefore a run of their
+                     // own: course 31 reads 3 runs again, the pairs either
+                     // side of it are skipped, and the item-k claim is
+                     // asserted across the 30 pairs that agree. The two
+                     // stones the run carries are the two crotch voids the
+                     // round-one coverage exemption used to name.
+                     // The end-stone run's ONE arc gap is the crotch pair:
+                     // the two crotch voids sit at opposite ends of the
+                     // same other-family curve, so their stones stand a
+                     // whole vault apart in arc, and a gap between two
+                     // stones the closer laid on purpose is not a refusal.
                      ("Param's crown arch", crown, 0.10, 0.30,
                       "2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2," +
-                      "2,2,2,2,2,2,2,2,2,2", 0, 859, 32, 0)
+                      "2,2,2,2,2,2,2,2,3,2", 1, 828, 30, 2)
                  })
         {
             object built = courses.Invoke(
@@ -22100,14 +22125,39 @@ internal static class Program
         // over a full Course Height instead of a bisection sliver, so at
         // CH 0.30 every one of its sixty stones comes out at 0.0983 m and
         // the excursion is nil.
+        //
+        // THE COVERAGE EXEMPTIONS ARE GONE, DELETED BY ROUND TWO's
+        // pinch-out coverage: the two crotch voids that pinned this net at
+        // 92.78 and 97.34 per cent are exactly the residual regions beyond
+        // each guide's last head joint, and the end-stones cut against the
+        // two families' own ends close them: measured 100.05 per cent at
+        // CH 0.30 against neighbours at 100.00, inside the spec's own bar
+        // with the 0.5 per cent end-stone allowance the guard above
+        // explains.
+        // Stones re-measured 2026-09-05 for round two, 62 to 68: the two
+        // crotch voids are closed by six end-stone pieces cut at the
+        // pattern's own scale. The seam-chord MEASUREMENT moves with them,
+        // 26 to 32, because an end-stone spans the crotch the seam runs
+        // into; the claim's status is unchanged (rule 2.3's no-chord
+        // clause is NOT met, the corner weld is what the bond rests on)
+        // and the number exists so the chords cannot grow unseen.
         SeamFixture(
             "Param's crown arch", crown, 0.10, 0.30,
-            expectedStones: 62, dropsAllowed: 0,
-            expectedSeamChords: 26, expectedBond: 0.0492,
+            expectedStones: 68, dropsAllowed: 0,
+            expectedSeamChords: 32, expectedBond: 0.0492,
             expectedSpanExcursion: 0.0276,
-            coverageExemption: 0.9278,
             widthExemption: 0.8679,
             widthFloorFraction: 0.9);
+        // CH 0.375 KEEPS its coverage exemption at the same number, and
+        // the reason is now a construction fact rather than a hole class:
+        // at this setting the outermost stones' back runs already reach
+        // the other family's own ENDS, so the crotch residue lies beyond
+        // BOTH families and no uncovered arc remains for an end-stone to
+        // be cut against; what is left is the sub-stone discretisation
+        // wedge between the two curve tips, the same class the symmetric
+        // six-lobe carries at its seam tips, each piece under the sliver
+        // floor. At CH 0.30 the same crotches DO leave an arc and the
+        // end-stones close them to 100.05 per cent.
         SeamFixture(
             "Param's crown arch at CH 0.375", crown, 0.17, 0.375,
             expectedStones: 34, dropsAllowed: 0,
@@ -22884,9 +22934,18 @@ internal static class Program
                     "has nothing to compare against.");
             }
             double neighbourRatio = neighbourRatios.Average();
+            // THE UPPER GUARD MOVED WITH ROUND TWO's pinch-out coverage,
+            // from 1.0 + 1e-6 to 1.0 + 5e-3, and the reason is what the
+            // end-stones ARE: a stone closing the residual region beyond a
+            // guide's last head joint reaches to the two families' own end
+            // corners, and at a crotch that reach stands a little outside
+            // the slab's own clipped plan, which is where the void it
+            // closes actually lives. Measured on the crown arch at CH
+            // 0.30: 100.05 per cent. A double-covered slab still fails
+            // this guard an order of magnitude before the allowance.
             if (!double.IsFinite(coverageExemption))
             {
-                if (!(ratio >= neighbourRatio - 0.02) || ratio > 1.0 + 1.0e-6)
+                if (!(ratio >= neighbourRatio - 0.02) || ratio > 1.0 + 5.0e-3)
                 {
                     throw new InvalidOperationException(
                         $"{label}: the closer covers {ratio:P2} of the " +
@@ -22932,6 +22991,27 @@ internal static class Program
             // comes before the guard that would answer for it.
             double worstLow = 0.0;
             double worstHigh = 0.0;
+            // 4(a). Every closer stone touches each bounding traced family.
+            // WHAT THIS CAN AND CANNOT SEE, said plainly because a review
+            // round said it first: every point of a closer outline comes out
+            // of Run(guide, ...) or Run(other, ...), so it lies on one of the
+            // two traced polylines by construction and this distance is zero
+            // in the last bits. The only thing part (a) can detect is that a
+            // DIFFERENT LEVEL was traced, which is exactly the mutation it
+            // was proved red by. It is kept for that, and part (b) below is
+            // the assertion about the bond itself.
+            //
+            // ROUND TWO'S END-STONES answer to HALF of it, by construction
+            // and not by leniency: a sectionless closer is a fix-2
+            // end-stone, cut where one family has ENDED, so its run lies
+            // on the surviving family and its guide side is the chord
+            // between the two families' own end corners; there is no
+            // second curve for its interior corners to stand on. It must
+            // still touch the family it was cut on. A SECTIONED closer
+            // touches both, exactly as round one required.
+            worstLow = 0.0;
+            worstHigh = 0.0;
+            double worstEndStone = double.PositiveInfinity;
             foreach (var cell in closers)
             {
                 double bestLow = double.PositiveInfinity;
@@ -22943,18 +23023,15 @@ internal static class Program
                     bestHigh = Math.Min(
                         bestHigh, DistanceToLevel(highGrid, corner));
                 }
+                if (cell.Sections is null)
+                {
+                    worstEndStone = Math.Min(
+                        worstEndStone, Math.Min(bestLow, bestHigh));
+                    continue;
+                }
                 worstLow = Math.Max(worstLow, bestLow);
                 worstHigh = Math.Max(worstHigh, bestHigh);
             }
-            // 4(a). Every closer stone touches each bounding traced family.
-            // WHAT THIS CAN AND CANNOT SEE, said plainly because a review
-            // round said it first: every point of a closer outline comes out
-            // of Run(guide, ...) or Run(other, ...), so it lies on one of the
-            // two traced polylines by construction and this distance is zero
-            // in the last bits. The only thing part (a) can detect is that a
-            // DIFFERENT LEVEL was traced, which is exactly the mutation it
-            // was proved red by. It is kept for that, and part (b) below is
-            // the assertion about the bond itself.
             if (worstLow > 1.0e-6 || worstHigh > 1.0e-6)
             {
                 throw new InvalidOperationException(
@@ -22963,6 +23040,14 @@ internal static class Program
                     $"standing weld fuses at; the worst are {worstLow:E3} " +
                     $"m to the lower family and {worstHigh:E3} m to the " +
                     "upper.");
+            }
+            if (double.IsFinite(worstEndStone) && worstEndStone > 1.0e-6)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: an end-stone is cut ON the surviving " +
+                    "family's own run, so a corner of it lies on one of " +
+                    "the two traced families within the same 1e-6 m; the " +
+                    $"worst stands {worstEndStone:E3} m from both.");
             }
             // 4(b). THE JOINTS, AGAINST THE NEIGHBOURS' OWN JOINTS. Rule 2.3
             // claims the closer's corners are FUSED to the neighbouring
@@ -23280,10 +23365,14 @@ internal static class Program
         // what put the guide family's curves on the free boundary (the
         // twelve stone-sized voids) and sagged its closers to 35 mm
         // mid-face.
-        double[] slabWidths = ((IEnumerable)made.GetType()
+        (double Low, double High)[] slabIntervals =
+            ((IEnumerable)made.GetType()
                 .GetProperty("TransitionIntervals")!.GetValue(made)!)
             .Cast<object>()
             .Select(ReadInterval)
+            .OrderBy(interval => interval.Low)
+            .ToArray();
+        double[] slabWidths = slabIntervals
             .Select(interval => (interval.High - interval.Low) / courseHeight)
             .OrderBy(width => width)
             .ToArray();
@@ -23366,6 +23455,260 @@ internal static class Program
                 $"{tiny.Length}. If a fix legitimately moved this, " +
                 "re-measure and re-justify the pin.");
         }
+
+        // ---- FIX 2. THE PINCH-OUT COVERAGE, measured the way the
+        // diagnosis measured the voids: the slab's own plan region,
+        // clipped face by face on the BLENDED field, subdivided to the
+        // diagnosis's 7.5 cm and every sample tested against every kept
+        // cell. The area ratio is the WRONG instrument here and the
+        // number says why: the closers' summed plan area reads 102.79
+        // per cent of the slab, because an end-stone over an opening
+        // legitimately reaches below the slab's own Low toward the free
+        // boundary where the void it closes actually lives. What the
+        // acceptance asks is that NOTHING in the slab is uncovered:
+        // 8b9a44a measured 2.78 m2 of voids on this fixture (2.12 m2 of
+        // them the guide pinch-outs), fix 1 alone left 0.56 m2, and the
+        // end-stones and flank extensions close it to ZERO. The
+        // stone-size floor is the bar: what may stay open is less than
+        // one sliver stone, and the measurement is pinned at nought.
+        MethodInfo blended = RequirePublicStatic(
+            patterns, "Blended", netType, typeof(double));
+        object blendedNet = blended.Invoke(
+            null, new object[] { net, courseHeight })!;
+        double[][] netVertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!.GetValue(blendedNet)!)
+            .Cast<double[]>().ToArray();
+        int[][] netFaces = ((IEnumerable)netType
+                .GetProperty("Faces")!.GetValue(blendedNet)!)
+            .Cast<int[]>().ToArray();
+        double[] netField = ((IEnumerable)netType
+                .GetProperty("Levels")!.GetValue(blendedNet)!)
+            .Cast<double>().ToArray();
+        double uncovered = SlabUncoveredArea(
+            netVertices, netFaces, netField,
+            slabIntervals[0].Low, slabIntervals[0].High,
+            cells.Select(cell => cell.Outline).ToArray());
+        if (uncovered > 0.3 * medianArea)
+        {
+            throw new InvalidOperationException(
+                "Fix 2 closes the pinch-outs: the residual regions beyond " +
+                "each guide's last head joint get end-stones cut against " +
+                "the two families' own ends, and residues under Min Piece " +
+                "extend the flanking stones, so no more of the slab than " +
+                "ONE SLIVER STONE'S plan (the same thirty per cent of the " +
+                $"median course area, {0.3 * medianArea:F4} m2) may stay " +
+                $"open; {uncovered:F4} m2 is. 8b9a44a measured 2.78 m2 of " +
+                "voids here.");
+        }
+        if (uncovered > 0.005)
+        {
+            throw new InvalidOperationException(
+                "And the measurement itself is pinned: the asymmetric " +
+                "six-lobe's slab closes to 0.0000 m2 uncovered at the " +
+                "diagnosis's own 7.5 cm sampling; got " +
+                $"{uncovered:F4} m2. If a fix legitimately moved this, " +
+                "re-measure and re-justify the pin.");
+        }
+
+        // AND THE CLOSING STONES SIT INSIDE THE ADJACENT COURSES' SIZE
+        // RANGE, ALONG AND ACROSS, which is Param's own acceptance
+        // sentence for this wave. The bar is the one the seam fixtures
+        // already hold closers to: no further outside the two adjacent
+        // ordinary courses' own range than an ordinary course of this
+        // pattern stands from its own two neighbours, floored at the
+        // spec's 2 per cent. The widths carry rule 3.1's absolute floor
+        // as well, 90 per cent of Course Height. Sectionless end-stones
+        // have no width across (a fan has no rails) and answer to the
+        // sliver census above instead.
+        var closerCells = cells.Where(cell => cell.Closer).ToArray();
+        int[] closerCourses = closerCells
+            .Select(cell => cell.Course).Distinct().ToArray();
+        var neighbourCells = cells
+            .Where(cell => !cell.Closer && !cell.Cap)
+            .Where(cell => closerCourses.Any(
+                course => Math.Abs(cell.Course - course) <= 1))
+            .ToArray();
+        if (closerCells.Length == 0 || neighbourCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The lobed fixture must carry closers and adjacent " +
+                "courses, or the size-range claim holds vacuously.");
+        }
+        (double ordinarySpanBar, _) =
+            OrdinaryCourseExcursion(cells, cell => cell.U1 - cell.U0);
+        double closerSpanMin = closerCells.Min(cell => cell.U1 - cell.U0);
+        double closerSpanMax = closerCells.Max(cell => cell.U1 - cell.U0);
+        double neighbourSpanMin =
+            neighbourCells.Min(cell => cell.U1 - cell.U0);
+        double neighbourSpanMax =
+            neighbourCells.Max(cell => cell.U1 - cell.U0);
+        double spanExcursion = Math.Max(
+            Math.Max(
+                0.0, (neighbourSpanMin - closerSpanMin) / neighbourSpanMin),
+            Math.Max(
+                0.0, (closerSpanMax - neighbourSpanMax) / neighbourSpanMax));
+        if (spanExcursion > Math.Max(0.02, ordinarySpanBar))
+        {
+            throw new InvalidOperationException(
+                "The closing stones' spans sit INSIDE the adjacent " +
+                $"courses' own {neighbourSpanMin:F4} to " +
+                $"{neighbourSpanMax:F4} m, no further outside than an " +
+                "ordinary course of this pattern stands from its own two " +
+                $"neighbours ({ordinarySpanBar:P2}); they run " +
+                $"{closerSpanMin:F4} to {closerSpanMax:F4} m, " +
+                $"{spanExcursion:P2} outside.");
+        }
+        double[] closerWidths = closerCells
+            .Select(CellWidthAcross)
+            .Where(width => width > 0.0)
+            .ToArray();
+        double[] neighbourWidths = neighbourCells
+            .Select(CellWidthAcross)
+            .Where(width => width > 0.0)
+            .ToArray();
+        if (closerWidths.Length == 0 || neighbourWidths.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The lobed fixture's closers and neighbours both carry " +
+                "sections, so both have widths across; got " +
+                $"{closerWidths.Length} and {neighbourWidths.Length}.");
+        }
+        if (closerWidths.Min() < 0.9 * courseHeight)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.1 gives every seam stone an ordinary course's " +
+                "width across, at least 90 per cent of Course Height " +
+                $"({0.9 * courseHeight:F4} m); the narrowest is " +
+                $"{closerWidths.Min():F4} m.");
+        }
+        double widthExcursion = Math.Max(
+            Math.Max(
+                0.0,
+                (neighbourWidths.Min() - closerWidths.Min()) /
+                neighbourWidths.Min()),
+            Math.Max(
+                0.0,
+                (closerWidths.Max() - neighbourWidths.Max()) /
+                neighbourWidths.Max()));
+        (double ordinaryWidthBar, _) =
+            OrdinaryCourseExcursion(cells, CellWidthAcross);
+        if (widthExcursion > Math.Max(0.02, ordinaryWidthBar))
+        {
+            throw new InvalidOperationException(
+                "And their WIDTHS ACROSS sit inside the adjacent courses' " +
+                $"own {neighbourWidths.Min():F4} to " +
+                $"{neighbourWidths.Max():F4} m under the same bar " +
+                $"({ordinaryWidthBar:P2}); they run " +
+                $"{closerWidths.Min():F4} to {closerWidths.Max():F4} m, " +
+                $"{widthExcursion:P2} outside.");
+        }
+    }
+
+    /// <summary>The slab's UNCOVERED plan area: every net face clipped to
+    /// the slab on the linear interpolant (the same clip SlabPlanArea
+    /// uses), fan-triangulated, subdivided to the diagnosis's 7.5 cm
+    /// sample scale, and each sample triangle's centroid tested against
+    /// every kept cell's plan ring. What comes back is the area of the
+    /// slab no stone covers, which is the void the findings photograph.
+    /// </summary>
+    private static double SlabUncoveredArea(
+        double[][] vertices,
+        int[][] faces,
+        double[] field,
+        double low,
+        double high,
+        double[][][] cellRings)
+    {
+        var boxes = new (double MinX, double MaxX, double MinY, double MaxY)[
+            cellRings.Length];
+        for (int at = 0; at < cellRings.Length; at++)
+        {
+            double[][] ring = cellRings[at];
+            boxes[at] = (
+                ring.Min(point => point[0]), ring.Max(point => point[0]),
+                ring.Min(point => point[1]), ring.Max(point => point[1]));
+        }
+        bool Covered(double x, double y)
+        {
+            for (int at = 0; at < cellRings.Length; at++)
+            {
+                if (x < boxes[at].MinX || x > boxes[at].MaxX ||
+                    y < boxes[at].MinY || y > boxes[at].MaxY)
+                {
+                    continue;
+                }
+                double[][] ring = cellRings[at];
+                bool inside = false;
+                for (int i = 0, j = ring.Length - 1; i < ring.Length; j = i++)
+                {
+                    if ((ring[i][1] > y) != (ring[j][1] > y) &&
+                        x < ((ring[j][0] - ring[i][0]) * (y - ring[i][1]) /
+                             (ring[j][1] - ring[i][1])) + ring[i][0])
+                    {
+                        inside = !inside;
+                    }
+                }
+                if (inside)
+                    return true;
+            }
+            return false;
+        }
+        double uncovered = 0.0;
+        foreach (int[] face in faces)
+        {
+            var polygon = new List<double[]>();
+            var values = new List<double>();
+            bool finite = true;
+            foreach (int corner in face)
+            {
+                if (!double.IsFinite(field[corner]))
+                    finite = false;
+                polygon.Add(vertices[corner]);
+                values.Add(field[corner]);
+            }
+            if (!finite)
+                continue;
+            polygon = ClipToHalfSpace(polygon, values, low, true, out values);
+            if (polygon.Count < 3)
+                continue;
+            polygon = ClipToHalfSpace(
+                polygon, values, high, false, out values);
+            if (polygon.Count < 3)
+                continue;
+            var stack = new Stack<(double[] A, double[] B, double[] C)>();
+            for (int at = 1; at + 1 < polygon.Count; at++)
+                stack.Push((polygon[0], polygon[at], polygon[at + 1]));
+            while (stack.Count > 0)
+            {
+                (double[] a, double[] b, double[] c) = stack.Pop();
+                double area = Math.Abs(
+                    ((b[0] - a[0]) * (c[1] - a[1])) -
+                    ((c[0] - a[0]) * (b[1] - a[1]))) / 2.0;
+                if (area < 1.0e-12)
+                    continue;
+                if (area > 0.0056)
+                {
+                    double[] ab =
+                        { (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0 };
+                    double[] bc =
+                        { (b[0] + c[0]) / 2.0, (b[1] + c[1]) / 2.0, 0.0 };
+                    double[] ca =
+                        { (c[0] + a[0]) / 2.0, (c[1] + a[1]) / 2.0, 0.0 };
+                    stack.Push((a, ab, ca));
+                    stack.Push((ab, b, bc));
+                    stack.Push((ca, bc, c));
+                    stack.Push((ab, bc, ca));
+                    continue;
+                }
+                if (!Covered(
+                        (a[0] + b[0] + c[0]) / 3.0,
+                        (a[1] + b[1] + c[1]) / 3.0))
+                {
+                    uncovered += area;
+                }
+            }
+        }
+        return uncovered;
     }
 
     /// <summary>
