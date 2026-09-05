@@ -120,6 +120,11 @@ const state = {
   armedPropType: null,  // kept for the older arming path used by nothing in the panel now
   selectedProp: null,   // the record whose object is highlighted and keyboard-driven
   propEdit: false,      // the Edit button: only then do clicks grab placed props
+  // Layers group placed props (Param: "control, duplicate and place
+  // groups of objects"). New props land on the ACTIVE layer.
+  propLayers: [{ id: 1, name: "Layer 1", visible: true }],
+  activeLayer: 1,
+  nextLayerId: 2,
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
@@ -987,9 +992,66 @@ function propsKey() {
   return "bench-studio-props:" + state.bundle.export;
 }
 
+// ---------- layers ----------
+function layerById(id) {
+  return state.propLayers.find((layer) => layer.id === id);
+}
+
+function layerVisible(id) {
+  const layer = layerById(id);
+  return !layer || layer.visible !== false;
+}
+
+// A hidden layer's props stay in the record and out of the scene AND out
+// of picking: an invisible tree that still catches clicks would be a
+// haunting.
+function applyLayerVisibility() {
+  for (const record of state.props) {
+    record.object.visible = layerVisible(record.layer);
+  }
+  if (state.selectedProp && !layerVisible(state.selectedProp.layer)) {
+    selectProp(null);
+  }
+}
+
+function newLayer(name) {
+  // The name reads the id BEFORE the increment, or "Layer 2" is born
+  // calling itself Layer 3 (it was).
+  const layer = { id: state.nextLayerId,
+    name: name || ("Layer " + state.nextLayerId), visible: true };
+  state.nextLayerId += 1;
+  state.propLayers.push(layer);
+  state.activeLayer = layer.id;
+  return layer;
+}
+
+// Restore a saved layers list (from a layout or a scene), tolerating the
+// older shapes that had none.
+function adoptLayers(saved) {
+  if (Array.isArray(saved) && saved.length) {
+    state.propLayers = saved.map((layer) => ({
+      id: +layer.id || 1,
+      name: String(layer.name || "Layer"),
+      visible: layer.visible !== false,
+    }));
+  } else {
+    state.propLayers = [{ id: 1, name: "Layer 1", visible: true }];
+  }
+  state.nextLayerId = 1 + Math.max(...state.propLayers.map((l) => l.id));
+  if (!layerById(state.activeLayer)) {
+    state.activeLayer = state.propLayers[0].id;
+  }
+}
+
 function saveProps() {
-  const layout = state.props.map((p) => ({
-    type: p.type, x: p.x, y: p.y, rotation: p.rotation, scale: p.scale || 1 }));
+  if (!state.bundle) return;   // no study, nowhere to key the layout
+  const layout = {
+    layers: state.propLayers.map((layer) => ({
+      id: layer.id, name: layer.name, visible: layer.visible })),
+    props: state.props.map((p) => ({
+      type: p.type, x: p.x, y: p.y, rotation: p.rotation,
+      scale: p.scale || 1, layer: p.layer || 1 })),
+  };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
 
@@ -1029,9 +1091,18 @@ function restoreProps() {
   } catch (error) {
     layout = [];
   }
-  if (!Array.isArray(layout)) layout = [];
+  // Two shapes on disk: the old bare array of props, and the layered
+  // {layers, props} that replaced it. Both restore.
+  let entries = layout;
+  if (!Array.isArray(layout) && layout && Array.isArray(layout.props)) {
+    adoptLayers(layout.layers);
+    entries = layout.props;
+  } else {
+    adoptLayers(null);
+  }
+  if (!Array.isArray(entries)) entries = [];
   propsAwaitingLibrary = false;
-  for (const entry of layout) {
+  for (const entry of entries) {
     if (!knownPropType(entry.type)) {
       // Either the library is still in flight, or this prop is gone from
       // it. Either way the entry stays in the saved layout untouched, so a
@@ -1039,9 +1110,11 @@ function restoreProps() {
       propsAwaitingLibrary = true;
       continue;
     }
-    placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0,
-      false, +entry.scale || 1);
+    const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
+      +entry.rotation || 0, false, +entry.scale || 1);
+    record.layer = +entry.layer || 1;
   }
+  applyLayerVisibility();
 }
 
 // ---------- the prop library ----------
@@ -1243,7 +1316,9 @@ function placeProp(type, x, y, rotation, save, scale = 1) {
   object.scale.setScalar(scale);
   propsGroup.add(object);
   object.userData.fromLibrary = !!template;
-  const record = { type, x, y, rotation, scale, object };
+  const record = { type, x, y, rotation, scale,
+    layer: state.activeLayer, object };
+  object.visible = layerVisible(record.layer);
   state.props.push(record);
   if (save) saveProps();
   return record;
@@ -1423,7 +1498,7 @@ function propRecordAt(event) {
     let node = hit.object;
     while (node.parent && node.parent !== propsGroup) node = node.parent;
     const record = state.props.find((p) => p.object === node);
-    if (record) return record;
+    if (record && record.object.visible) return record;
   }
   // A tree is mostly air: a click between the leaves misses every
   // triangle. Fall back to the bounding boxes, nearest box first, so
@@ -1434,6 +1509,7 @@ function propRecordAt(event) {
   let best = null;
   let bestDistance = Infinity;
   for (const record of state.props) {
+    if (!record.object.visible) continue;
     box.setFromObject(record.object);
     if (!propRaycaster.ray.intersectBox(box, point)) continue;
     const distance = point.distanceToSquared(propRaycaster.ray.origin);
@@ -1879,8 +1955,10 @@ function collectScene() {
       rotation: state.ground.rotation },
     props: state.props.map((record) => ({
       type: record.type, x: record.x, y: record.y, rotation: record.rotation,
-      scale: record.scale,
+      scale: record.scale, layer: record.layer || 1,
     })),
+    propLayers: state.propLayers.map((layer) => ({
+      id: layer.id, name: layer.name, visible: layer.visible })),
     layers: Object.assign({}, state.layers),
     cut: {
       material: control("material-select").value,
@@ -1963,11 +2041,14 @@ async function applyScene(record) {
     }
     state.props = [];
     state.selectedProp = null;
+    adoptLayers(scene_.propLayers);
     for (const entry of scene_.props) {
       if (!knownPropType(entry.type)) continue;
-      placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0,
-        false, +entry.scale || 1);
+      const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
+        +entry.rotation || 0, false, +entry.scale || 1);
+      record.layer = +entry.layer || 1;
     }
+    applyLayerVisibility();
   }
 
   // The environment owns background, fog, exposure base and the sun's
@@ -3035,18 +3116,122 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("scene-save").classList
     .toggle("hidden", shelfKind !== "scenes");
+  document.getElementById("layer-new").classList
+    .toggle("hidden", shelfKind !== "layers");
   document.getElementById("scene-list").classList
     .toggle("hidden", shelfKind !== "scenes");
   propHolder.classList.toggle("hidden", shelfKind !== "props");
   grid.classList.toggle("hidden",
     shelfKind === "props" || shelfKind === "scenes");
   grid.classList.toggle("wide", shelfKind === "skies");
+  grid.classList.toggle("rows", shelfKind === "layers");
   document.getElementById("prop-credit").textContent = "";
   if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
   if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
   if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); return; }
+  if (shelfKind === "layers") { cats.innerHTML = ""; renderShelfLayers(grid); return; }
   if (shelfKind === "scenes") { cats.innerHTML = ""; refreshScenes(); }
 }
+
+// ---------- the Layers drawer ----------
+// Rows, not tiles: each row is a group of placed props. The lit row is
+// the ACTIVE layer, where the next placed prop lands; the eye hides a
+// whole set; Duplicate stamps a second copy of the set a step away on a
+// fresh layer -- "control, duplicate and place groups of objects".
+function renderShelfLayers(grid) {
+  grid.innerHTML = "";
+  for (const layer of state.propLayers) {
+    const row = document.createElement("div");
+    row.className = "layer-row" + (layer.id === state.activeLayer ? " active" : "");
+    const name = document.createElement("span");
+    name.className = "layer-name";
+    name.textContent = layer.name;
+    name.title = "Click to make active; double-click to rename";
+    name.addEventListener("click", () => {
+      state.activeLayer = layer.id;
+      renderShelf();
+    });
+    name.addEventListener("dblclick", () => {
+      const fresh = window.prompt("Rename layer", layer.name);
+      if (fresh) { layer.name = fresh; saveProps(); renderShelf(); }
+    });
+    const count = document.createElement("span");
+    count.className = "layer-count";
+    const members = state.props.filter((r) => r.layer === layer.id).length;
+    count.textContent = members + (members === 1 ? " prop" : " props");
+    const eye = document.createElement("button");
+    eye.textContent = layer.visible !== false ? "Shown" : "Hidden";
+    eye.title = "Show or hide every prop on this layer";
+    eye.addEventListener("click", () => {
+      layer.visible = layer.visible === false;
+      applyLayerVisibility();
+      saveProps();
+      renderShelf();
+    });
+    const dup = document.createElement("button");
+    dup.textContent = "Duplicate";
+    dup.title = "Place a copy of this whole group a step away, on a new layer";
+    dup.addEventListener("click", () => duplicateLayer(layer.id));
+    const del = document.createElement("button");
+    del.className = "layer-delete";
+    del.textContent = "✕";
+    del.title = "Delete this layer and every prop on it";
+    del.addEventListener("click", () => deleteLayer(layer.id));
+    row.append(name, count, eye, dup, del);
+    grid.appendChild(row);
+  }
+}
+
+function duplicateLayer(id) {
+  const source = layerById(id);
+  if (!source) return;
+  const copy = newLayer(source.name + " copy");
+  copy.visible = true;
+  const members = state.props.filter((record) => record.layer === id);
+  for (const record of members) {
+    const twin = placeProp(record.type, record.x + 1.5, record.y + 1.5,
+      record.rotation, false, record.scale || 1);
+    twin.layer = copy.id;
+  }
+  applyLayerVisibility();
+  saveProps();
+  renderShelf();
+  logStudio("duplicated " + source.name + ": " + members.length
+    + " props placed a step away on " + copy.name);
+}
+
+function deleteLayer(id) {
+  const layer = layerById(id);
+  if (!layer) return;
+  const members = state.props.filter((record) => record.layer === id);
+  if (members.length
+      && !window.confirm("Delete " + layer.name + " and its "
+        + members.length + " props?")) {
+    return;
+  }
+  for (const record of members) {
+    disposeProp(record.object);
+    propsGroup.remove(record.object);
+  }
+  state.props = state.props.filter((record) => record.layer !== id);
+  state.propLayers = state.propLayers.filter((entry) => entry.id !== id);
+  if (!state.propLayers.length) {
+    state.propLayers = [{ id: 1, name: "Layer 1", visible: true }];
+    state.nextLayerId = 2;
+  }
+  if (!layerById(state.activeLayer)) {
+    state.activeLayer = state.propLayers[0].id;
+  }
+  selectProp(null);
+  saveProps();
+  renderShelf();
+}
+
+document.getElementById("layer-new").addEventListener("click", () => {
+  newLayer(null);
+  saveProps();
+  renderShelf();
+});
 
 function renderShelfProps(cats, holder) {
   const groups = [...new Set(state.propLibrary.map(

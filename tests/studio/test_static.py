@@ -2730,7 +2730,7 @@ def test_the_shelf_is_the_asset_browser_and_stays_open():
 
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="shelf-body"' in page and 'id="shelf-tabs"' in page
-    for kind in ("props", "materials", "skies", "scenes"):
+    for kind in ("props", "materials", "skies", "layers", "scenes"):
         assert 'data-shelf="' + kind + '"' in page
     assert 'id="shelf-assign-skin"' in page and 'id="shelf-assign-ground"' in page
     # Scenes moved off the panel wholesale: saving, restoring and deleting
@@ -2814,3 +2814,22 @@ def test_the_camera_menu_owns_the_lens_and_the_recording_keeps_it():
     assert "const frame = recordingFrame();" in js
     assert "renderer.setSize(frame.width, frame.height, false);" in js
     assert "renderer.setSize(1920, 1080, false)" not in js
+
+
+def test_layers_group_props_and_survive_saves():
+    """Param: "add a layers tile where we can control, duplicate and
+    place groups of objects". New props land on the active layer, hidden
+    layers leave picking as well as the scene, and both the per-study
+    layout and saved scenes carry the layer list."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "layer: state.activeLayer," in js, "a placed prop joins the active layer"
+    assert "object.visible = layerVisible(record.layer);" in js
+    assert "if (record && record.object.visible) return record;" in js, (
+        "an invisible prop must not catch the pointer"
+    )
+    assert "adoptLayers(layout.layers);" in js and "adoptLayers(scene_.propLayers);" in js
+    body = _function_body(js, "duplicateLayer")
+    assert "record.x + 1.5" in body, "the copy lands a step away, not on top"
+    save = _function_body(js, "saveProps")
+    assert "layers:" in save and "layer: p.layer || 1" in save
