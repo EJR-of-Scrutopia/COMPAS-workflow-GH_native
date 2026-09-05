@@ -43,6 +43,30 @@ Diagnosis names each with its mechanism (the round-two classes: guide pinch-out,
 starve, plan drop; or a new ridge-specific class), and the fix closes them under the standing
 acceptance: covered, at course size, no slivers.
 
+## Live witnesses, his four screenshots of 2026-09-06 00:50 ("skin errors on all shape")
+
+Each mapped to its diagnosed class; the fix wave's Verify phase must check every one is
+answered by a fix or named as explicit residue:
+
+1. SIX-LOBE WITH HOLES, top view: thin radial open lines along the lobe valleys (seam gaps on
+   the REAL net, which carries design holes near the crown; round two closed the synthetic
+   asym fixture to 0.0000 m2, so the hole rims are the suspected difference: extra free edges
+   and families the fixtures do not carry). ALSO the ring of rectangular openings around the
+   crown is to be adjudicated: design holes or missing stones, decided against his .gh, not
+   assumed. NEW WITNESS, possibly outside the four G classes: a hole-rimmed six-lobe fixture
+   is wanted before this class is called closed.
+2. FREE-EDGE LOBE END: the BOTTOM TWO COURSES ship as flat translucent un-thickened faces
+   while everything above is solid (his chin's "first at course 2"). The thickening failure
+   concentrates on boundary-clipped bottom-course cells; fix 7 (top-from-walls) must be
+   checked against exactly this witness class, clipped free-edge cells included.
+3. BARREL CROWN: the lens-shaped opening with a diamond solid inside is G3 in the flesh: the
+   summit loop's cap simplified to 4 corners (the diamond) with crescent voids around it,
+   plus G1's plateau ribbon on either side.
+4. THREE-LOBE DOME: white radial course-interruption strips down the lobes (G4 merge-hole
+   class or plan drops, to be measured on the three-lobe fixture) and pale open ring bands
+   around the dome crown (G1/G2 ridge-plateau and starve, plus fix 1's half-CH orphan
+   courses rendering as the banding).
+
 ## Acceptance
 
 Round two's acceptance sentences carry over unchanged, now pinned on barrel-class and
