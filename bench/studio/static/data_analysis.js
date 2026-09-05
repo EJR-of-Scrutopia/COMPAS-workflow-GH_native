@@ -266,6 +266,11 @@ export function computeAnalysisInput(bundle, stage) {
     input.criticalStage = critical;
     if (peakCarry.formworkKN > 0) {
       input.formworkPeak = { stage: peakCarry.stage, kN: peakCarry.formworkKN };
+      // Some staging models let the formwork hold everything placed until
+      // striking: the carry then GROWS to the end instead of peaking and
+      // falling away, and the handover story must not pretend otherwise.
+      input.formworkGrowsToEnd = input.formworkKN != null
+        && input.formworkKN >= 0.95 * peakCarry.formworkKN;
       let selfFrom = null;
       for (const row of input.stageSeries) {
         if (row.formworkKN <= 0.1 * peakCarry.formworkKN) {
@@ -361,6 +366,12 @@ function pill(band) {
 
 function mpa(value) {
   return value.toFixed(2) + " MPa";
+}
+
+// A member force in readable units: a 14 N pull must not print as
+// "0.0 kN" (a real bundle's worst tension did exactly that).
+function forceLabel(kN) {
+  return kN >= 0.1 ? kN.toFixed(1) + " kN" : Math.round(kN * 1000) + " N";
 }
 
 export function buildRecommendations(input) {
@@ -504,9 +515,9 @@ export function buildAnalysisHtml(input) {
       + (census.tensionCount
         ? "; " + census.tensionCount + " pick"
           + (census.tensionCount > 1 ? "" : "s") + " up tension, the "
-          + "worst at " + census.worstTensionKN.toFixed(1) + " kN against "
-          + census.worstCompressionKN.toFixed(1)
-          + " kN in the hardest-pushing strut."
+          + "worst at " + forceLabel(census.worstTensionKN) + " against "
+          + forceLabel(census.worstCompressionKN)
+          + " in the hardest-pushing strut."
         : " -- every member, the funicular promise kept whole."));
   }
   if (input.reactionStory) {
@@ -604,14 +615,19 @@ export function buildAnalysisHtml(input) {
           + mpa(input.peakTension) + ".</p>");
     }
     if (input.formworkPeak) {
-      parts.push("<p>Formwork carry peaks at stage "
-        + input.formworkPeak.stage + " ("
-        + input.formworkPeak.kN.toFixed(1) + " kN)"
-        + (input.selfSupportingFrom != null
-          ? "; from stage " + input.selfSupportingFrom
-            + " the carry stays under a tenth of that peak -- the vault "
-            + "essentially carrying itself from there on."
-          : " and is still working at the final stage.") + "</p>");
+      parts.push(input.formworkGrowsToEnd
+        ? "<p>The formwork's carry grows with the build to "
+          + input.formworkPeak.kN.toFixed(1) + " kN: in this staging "
+          + "model it holds everything placed until striking, and the "
+          + "shell takes the load only when it is struck.</p>"
+        : "<p>Formwork carry peaks at stage "
+          + input.formworkPeak.stage + " ("
+          + input.formworkPeak.kN.toFixed(1) + " kN)"
+          + (input.selfSupportingFrom != null
+            ? "; from stage " + input.selfSupportingFrom
+              + " the carry stays under a tenth of that peak -- the vault "
+              + "essentially carrying itself from there on."
+            : " and is still working at the final stage.") + "</p>");
     }
   }
 

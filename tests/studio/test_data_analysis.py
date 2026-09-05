@@ -189,6 +189,21 @@ CHECK = textwrap.dedent("""
       "the critical stage is storied");
     expect(html.includes("carrying itself"),
       "the formwork handover is storied");
+    expect(input.formworkGrowsToEnd === false,
+      "a 5 kN final carry against a 150 kN peak is not growth");
+    // Some staging models let the formwork hold everything until struck:
+    // final carry at the peak must read as growth, not a peak-and-fall.
+    const reversed = computeAnalysisInput({ ...bundle,
+      staging: { stages: [...bundle.staging.stages].reverse() } }, stage);
+    expect(reversed.formworkGrowsToEnd === true,
+      "final carry at the peak reads as growth");
+    expect(buildAnalysisHtml(reversed).includes("grows with the build"),
+      "the growth wording replaces the peak-and-fall story");
+    // A 14 N pull must not print as "0.0 kN" (a real bundle did this).
+    const smallPull = buildAnalysisHtml({ ...input,
+      forceCensus: { ...input.forceCensus, worstTensionKN: 0.014 } });
+    expect(smallPull.includes("14 N"),
+      "a small pull is written in newtons, not rounded to 0.0 kN");
 
     // ---- recommendations fire on their rules ----
     const calm = buildRecommendations(
