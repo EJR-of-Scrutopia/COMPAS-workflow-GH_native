@@ -27,9 +27,12 @@ The native v0.2 vertical slice contains twenty-one components:
 01 Model
   Pattern      Geometry, Mode, Tol            -> PAT  registered pattern
   Supports     PAT, Points, Tol               -> SUP  anchored pattern
-  Loads        SUP, Vector, NodeIDs, Factor   -> PRB  problem (surface load
-                                                 by default, point loads
-                                                 with NodeIDs)
+  Loads        SUP, Vector, NodeIDs, Factor,  -> PRB  problem (self-weight
+               Thickness, Density                    of tributary area x T
+                                                     x D, and point loads
+                                                     on NodeIDs beside it,
+                                                     additive; T and D
+                                                     empty read as 1.0)
 
 02 Solve
   TNA Relax    PRB, ForceDensity, Sag%        -> RLX  relaxed state
