@@ -633,6 +633,27 @@ internal static class Program
 
         try
         {
+            ValidateLoadsArchiveRoundTrip(plugin);
+            Console.WriteLine(
+                "PASS  Loads' archived wire, round-tripped through GH_IO's " +
+                "own writer and reader: a definition saved when this " +
+                "component had FOUR inputs comes back with all six ports, " +
+                "slots 0 to 3 carrying their archived names and the " +
+                "archived Factor value, and slots 4 and 5 still holding no " +
+                "persistent data and still optional. That is the appended-" +
+                "port compatibility rule MEASURED rather than argued: an " +
+                "empty port is how Thickness and Density tell a canvas " +
+                "that asked for a self-weight from one that never heard " +
+                "of them.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Loads' archived wire: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateResultGooRawWireSnapshot(plugin);
             Console.WriteLine(
                 "PASS  ResultGoo RawWire snapshot: construction and " +
@@ -37601,6 +37622,292 @@ internal static class Program
                     + $"{selfWeight} should read '{expected}'; it read "
                     + $"'{chin ?? "<none>"}'.");
             }
+        }
+    }
+
+    /// <summary>
+    /// THE ARCHIVED WIRE, MEASURED instead of reasoned.
+    ///
+    /// The compatibility rule for the appended Thickness and Density ports
+    /// stands on two claims about a definition saved when Loads had FOUR
+    /// inputs: that Grasshopper reattaches its wires by index onto slots 0
+    /// to 3, and that slots 4 and 5 come back EMPTY, so
+    /// <c>data.GetData(4, ...)</c> returns false and the component knows
+    /// nobody asked for a self-weight. Neither claim was exercised. The
+    /// nickname pin proves only today's registration, and PersistentDataCount
+    /// read off a FRESHLY CONSTRUCTED component proves nothing about a read.
+    ///
+    /// plugin/definitions/ananke_equilibrium_v01.gh, the one saved definition
+    /// in the repository, carries no native Loads component, so there is no
+    /// four-input archive of it to read; and a hand-written archive would be
+    /// no better, because it is written by the same guesses it would be
+    /// checked against. So this makes the archive with GH_IO's OWN writer,
+    /// from the component itself with the two appended ports unregistered,
+    /// which is exactly the file a canvas saved before those ports existed:
+    /// GH_IO writes InputCount 4 by itself and gives each surviving port its
+    /// own chunk. Reading that back into a fresh component answers both
+    /// claims at once, headless, with Grasshopper serialising at both ends.
+    /// It goes red the day GH's param server stops preserving ports the
+    /// archive does not mention.
+    /// </summary>
+    private static void ValidateLoadsArchiveRoundTrip(Assembly plugin)
+    {
+        Type loads = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.LoadsComponent")
+            ?? throw new InvalidOperationException(
+                "LoadsComponent was not found.");
+        Type identity = RequireComponentType(plugin, "ParameterIdentity");
+        MethodInfo archivedNames = RequireStatic(identity, "ArchivedNames");
+        // GH_IO as the PLUGIN binds to it, so this cannot end up writing one
+        // assembly's archive and reading it back with another's reader.
+        Type readerType = archivedNames.GetParameters()[0].ParameterType;
+        Type writerType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_IWriter", throwOnError: true)!;
+        Type archiveType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_Archive", throwOnError: true)!;
+
+        IList Inputs(object component)
+        {
+            object server = loads.GetProperty("Params")!.GetValue(component)!;
+            return (IList)server.GetType().GetProperty("Input")!
+                .GetValue(server)!;
+        }
+        string PortName(object port) =>
+            (string)port.GetType().GetProperty("Name")!.GetValue(port)!;
+        int Stored(object port) =>
+            (int)port.GetType().GetProperty("PersistentDataCount")!
+                .GetValue(port)!;
+        bool IsOptional(object port) =>
+            (bool)port.GetType().GetProperty("Optional")!.GetValue(port)!;
+
+        string[] expectedNames =
+        {
+            "Anchored Pattern", "Vector", "Node IDs", "Factor"
+        };
+        const double ArchivedFactor = 2.5;
+
+        object archive = Activator.CreateInstance(archiveType)
+            ?? throw new InvalidOperationException(
+                "GH_Archive could not be constructed.");
+        object saved = Activator.CreateInstance(loads)!;
+        object? reopened = null;
+        try
+        {
+            IList registered = Inputs(saved);
+            if (registered.Count != 6)
+            {
+                throw new InvalidOperationException(
+                    $"LoadsComponent registers {registered.Count} inputs, "
+                    + "not the six this round trip is written against.");
+            }
+            object server = loads.GetProperty("Params")!.GetValue(saved)!;
+            MethodInfo unregister = server.GetType().GetMethods()
+                .First(method =>
+                    method.Name == "UnregisterInputParameter" &&
+                    method.GetParameters().Length == 1);
+            // Highest index first, or the second removal takes a port that
+            // has already slid down into slot 4.
+            unregister.Invoke(server, new[] { registered[5] });
+            unregister.Invoke(server, new[] { registered[4] });
+
+            // A value on Factor, so the read has something of the archive's
+            // OWN to put back: without it this could pass by reading nothing
+            // at all and leaving a freshly constructed component alone.
+            object factor = Inputs(saved)[3]!;
+            MethodInfo setPersistent = factor.GetType().GetMethods()
+                .First(method =>
+                    method.Name == "SetPersistentData" &&
+                    method.GetParameters().Length == 1 &&
+                    method.GetParameters()[0].ParameterType
+                        == typeof(object[]));
+            setPersistent.Invoke(
+                factor,
+                new object[] { new object[] { ArchivedFactor } });
+
+            MethodInfo createTop = archiveType.GetMethod(
+                "CreateTopLevelNode", new[] { typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.CreateTopLevelNode(string) was not found.");
+            object writer = createTop.Invoke(
+                archive, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive gave no writer to save the component into.");
+            MethodInfo write = loads.GetMethod("Write", new[] { writerType })
+                ?? throw new InvalidOperationException(
+                    "LoadsComponent.Write(GH_IWriter) was not found.");
+            if (write.Invoke(saved, new[] { writer }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "LoadsComponent refused to write itself into a "
+                    + "GH_Archive, so there is no archived wire to measure.");
+            }
+
+            object root =
+                archiveType.GetProperty("GetRootNode")?.GetValue(archive)
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.GetRootNode gave nothing to read.");
+            // GetRootNode is the archive's "Root" node and the top-level
+            // node made above hangs off it, exactly as a saved definition's
+            // Container hangs off Root > Definition > DefinitionObjects >
+            // Object. The Container chunk is the reader a component's Read
+            // override is handed, so this is the same place Grasshopper
+            // walks to.
+            object container = root.GetType()
+                .GetMethod("FindChunk", new[] { typeof(string) })!
+                .Invoke(root, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "The archive carries no 'Container' chunk to read the "
+                    + "component out of.");
+
+            // The archive really is the FOUR-input shape, read back through
+            // the same ArchivedNames a reopened definition goes through. A
+            // six-input file would make everything below vacuous, and a
+            // reading that comes back NULL is how this measurement found
+            // that ArchivedNames knew only the v0.1 script components'
+            // ParameterData shape and nothing about the indexed
+            // "param_input" chunks every native component actually writes.
+            object names = archivedNames.Invoke(null, new[] { container })
+                ?? throw new InvalidOperationException(
+                    "ArchivedNames returned nothing.");
+            var archivedInputs = names.GetType().GetField("Item1")!
+                .GetValue(names) as string?[];
+            if (archivedInputs is null || archivedInputs.Length != 4)
+            {
+                throw new InvalidOperationException(
+                    "the archive read back must be a FOUR-input file, or it "
+                    + "is not the shape of a definition saved before "
+                    + "Thickness and Density; GH_IO wrote "
+                    + $"'{archivedInputs?.Length.ToString() ?? "no"}' input "
+                    + "chunks.");
+            }
+            for (int slot = 0; slot < expectedNames.Length; slot++)
+            {
+                if (!string.Equals(
+                        archivedInputs[slot],
+                        expectedNames[slot],
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"the archived name at slot {slot} should be "
+                        + $"'{expectedNames[slot]}'; the file carries "
+                        + $"'{archivedInputs[slot] ?? "<none>"}'.");
+                }
+            }
+
+            reopened = Activator.CreateInstance(loads)!;
+            MethodInfo read = loads.GetMethod("Read", new[] { readerType })
+                ?? throw new InvalidOperationException(
+                    "LoadsComponent.Read(GH_IReader) was not found.");
+            if (read.Invoke(reopened, new[] { container }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "LoadsComponent refused to read the archive back.");
+            }
+
+            IList loaded = Inputs(reopened);
+            if (loaded.Count != 6)
+            {
+                throw new InvalidOperationException(
+                    "an archive naming four inputs came back on a component "
+                    + $"carrying {loaded.Count}: Grasshopper no longer "
+                    + "preserves ports the archive does not mention, so an "
+                    + "APPEND is not the safe reshape this component's "
+                    + "whole backwards rule assumes.");
+            }
+            for (int slot = 0; slot < expectedNames.Length; slot++)
+            {
+                if (!string.Equals(
+                        PortName(loaded[slot]!),
+                        expectedNames[slot],
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"the archived wire on slot {slot} landed on "
+                        + $"'{PortName(loaded[slot]!)}' where the file left "
+                        + $"it on '{expectedNames[slot]}'. Grasshopper "
+                        + "reattaches by index, so a slot that changes "
+                        + "meaning silently changes what the canvas solves.");
+                }
+            }
+
+            object reloadedFactor = loaded[3]!;
+            object persistent = reloadedFactor.GetType()
+                .GetProperty("PersistentData")!.GetValue(reloadedFactor)!;
+            MethodInfo allData = persistent.GetType().GetMethod(
+                "AllData", new[] { typeof(bool) })
+                ?? throw new InvalidOperationException(
+                    "GH_Structure.AllData(bool) was not found.");
+            double[] restored = ((IEnumerable)allData.Invoke(
+                persistent, new object[] { true })!)
+                .Cast<object?>()
+                .Where(goo => goo is not null)
+                .Select(goo => Convert.ToDouble(
+                    goo!.GetType().GetProperty("Value")!.GetValue(goo),
+                    CultureInfo.InvariantCulture))
+                .ToArray();
+            if (!restored.Any(
+                    value => Math.Abs(value - ArchivedFactor) <= 1.0e-12))
+            {
+                throw new InvalidOperationException(
+                    $"the archive carried a Factor of {ArchivedFactor} and "
+                    + "the reopened component holds "
+                    + $"[{string.Join(", ", restored)}]. This read put "
+                    + "nothing of the FILE's own back, so it proves nothing "
+                    + "about the ports beside it either.");
+            }
+
+            // AND THE HALF THE WHOLE RULE RESTS ON. Slots 4 and 5 were never
+            // in the file, so they must come back exactly as registered:
+            // empty, and optional. A value in either reads as GIVEN, and
+            // every point-load definition ever saved would silently start
+            // carrying a vault's own weight.
+            foreach (int slot in new[] { 4, 5 })
+            {
+                object port = loaded[slot]!;
+                if (Stored(port) != 0 || !IsOptional(port))
+                {
+                    throw new InvalidOperationException(
+                        $"'{PortName(port)}' came back off a four-input "
+                        + $"archive holding {Stored(port)} value(s), "
+                        + $"optional {IsOptional(port)}. An empty port is "
+                        + "the one thing an archived definition cannot "
+                        + "counterfeit, and it is how this component tells "
+                        + "a canvas that asked for a self-weight from one "
+                        + "that never heard of the port.");
+                }
+            }
+
+            // AND THE SENTENCE THE REOPENED CANVAS IS OWED. The warning is
+            // the only thing on a reopened file that says the surface
+            // moved, and an append is the one reshape whose wires all
+            // survive, so it must say that rather than the harsher
+            // check-every-wire close.
+            MethodInfo runtimeMessages = loads.GetMethod(
+                "RuntimeMessages",
+                BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    "GH_ActiveObject.RuntimeMessages was not found.");
+            Type levelType =
+                runtimeMessages.GetParameters()[0].ParameterType;
+            object messages = runtimeMessages.Invoke(
+                reopened, new[] { Enum.Parse(levelType, "Warning") })!;
+            string warnings = string.Join(
+                " | ", ((IEnumerable)messages).Cast<object>());
+            if (!warnings.Contains("Thickness", StringComparison.Ordinal) ||
+                !warnings.Contains("Density", StringComparison.Ordinal) ||
+                !warnings.Contains("were appended", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "a four-input archive must reopen carrying the pure-"
+                    + "append Warning naming Thickness and Density, or the "
+                    + "one thing that tells a canvas its surface moved says "
+                    + $"nothing at all; it said '{warnings}'.");
+            }
+        }
+        finally
+        {
+            (saved as IDisposable)?.Dispose();
+            (reopened as IDisposable)?.Dispose();
         }
     }
 
