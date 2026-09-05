@@ -1268,7 +1268,16 @@ internal static class Program
                 "at nought with a one-sliver-stone floor; and the closing " +
                 "stones sit inside the adjacent courses' own size range " +
                 "ALONG and ACROSS, under the ordinary course's own " +
-                "excursion bar with rule 3.1's 90 per cent width floor.");
+                "excursion bar with rule 3.1's 90 per cent width floor. " +
+                "FIX 3, the depth-0 rescue: rule 2.5's nearest-point " +
+                "rescue is un-gated from bisected bands, so the course-14 " +
+                "fold against the wiggly crown loop is REBUILT instead of " +
+                "dropped, the drops read 0 and 0 where the gate cost 1 " +
+                "self-crossing and 1 overlapping, and the CROWN SHIPS " +
+                "CLOSED with its one cap cell where finding 1c measured " +
+                "it dying in the plan filter. The same rescue removes the " +
+                "L-shaped shell's long-standing re-entrant drops at CH " +
+                "0.5 and 0.3, re-pinned at zero in their own check.");
         }
         catch (Exception exception)
         {
@@ -23602,6 +23611,37 @@ internal static class Program
                 $"{closerWidths.Min():F4} to {closerWidths.Max():F4} m, " +
                 $"{widthExcursion:P2} outside.");
         }
+
+        // ---- FIX 3. THE DEPTH-0 RESCUE (finding 1c). Course 14 is a
+        // depth-0 band whose upper boundary is the wiggly crown loop; the
+        // proportional arc map folds against it, and round one's rule-2.5
+        // rescue was gated to bisected bands, so the fold shipped as a
+        // self-crossing drop, its kept neighbour overreached into the
+        // crown loop, and KeepValidPlans killed the CAP for overlapping
+        // it: 1 and 1 measured on this fixture, crown OPEN, which is
+        // finding 1c's whole cascade. Un-gated, the drops read zero and
+        // the crown ships closed.
+        int degenerateDropped = (int)made.GetType()
+            .GetProperty("PlanDegenerateDropped")!.GetValue(made)!;
+        int overlapDropped = (int)made.GetType()
+            .GetProperty("PlanOverlapDropped")!.GetValue(made)!;
+        if (degenerateDropped != 0 || overlapDropped != 0)
+        {
+            throw new InvalidOperationException(
+                "Fix 3 un-gates the rule-2.5 nearest-point rescue for " +
+                "depth-0 bands, so the course-14 fold against the crown " +
+                "loop is rescued and nothing is dropped: 1 self-crossing " +
+                "and 1 overlapping measured before the fix; got " +
+                $"{degenerateDropped} and {overlapDropped}.");
+        }
+        int capCount = cells.Count(cell => cell.Cap);
+        if (capCount != 1)
+        {
+            throw new InvalidOperationException(
+                "And the CAP survives the plan filter it was measured " +
+                "dying in (finding 1c): the crown ships CLOSED with one " +
+                $"cap cell; got {capCount}.");
+        }
     }
 
     /// <summary>The slab's UNCOVERED plan area: every net face clipped to
@@ -25543,17 +25583,18 @@ internal static class Program
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
                 ClosedLine(22, "between z=0.898 and z=0.906"),
                 // RE-MEASURED for the 2026-09-04 seam wave, from (4, 2) to
-                // (2, 0), and the two that remain are NOT at the seam. Both
-                // were located: they sit in COURSE 3, the top band, at a
-                // hump APEX, where the level curve at z 1.999998 collapses
-                // onto the apex vertex and the cell's upper run is that one
-                // point written five times over. The two SEAM-located
-                // self-crossers of course 1 and both overlaps are gone, by
-                // the remap and the closer named on the upright fixture
-                // above; the apex pair is a different defect, on a different
-                // course, and is pinned here rather than quietly folded into
-                // a claim about seams.
-                (2, 0),
+                // (2, 0): the two SEAM-located self-crossers of course 1
+                // and both overlaps went with the remap and the closer.
+                // The two that remained sat in COURSE 3, the top band, at
+                // a hump APEX, where the level curve at z 1.999998
+                // collapses onto the apex vertex and the cell's upper run
+                // is that one point written five times over. RE-MEASURED
+                // AGAIN 2026-09-05 for round two's fix 3, from (2, 0) to
+                // (0, 0): course 3 is a DEPTH-0 band, so the un-gated
+                // nearest-point rescue now reaches the apex fold too and
+                // rebuilds the component instead of letting the filter
+                // drop the pair.
+                (0, 0),
                 (2, 10));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
@@ -27743,31 +27784,42 @@ internal static class Program
         // centre disc, W + 1 = 6 cap cells in place of the one: 99 less
         // the 4 ordinary top-course pieces the cap replaces, plus 6 for
         // the rosette, less the two pre-existing drops, leaves 98.
-        if (degenerate != 1 || dropped != 1)
+        // RE-MEASURED 2026-09-05 for round two's fix 3: the re-entrant
+        // corner's folded cell is a DEPTH-0 band's, and round one's
+        // nearest-point rescue was gated to bisected bands, so the fold
+        // shipped as a drop and its overreaching neighbour took a second
+        // cell with it: 1 and 1, this check's own long-standing
+        // measurement. Un-gated, the rescue rebuilds the folded
+        // component by nearest point, the fold goes, and the filter
+        // drops NOTHING on this shell: 0 and 0, with the survivors still
+        // required disjoint and simple below, which is the guarantee.
+        if (degenerate != 0 || dropped != 0)
         {
             throw new InvalidOperationException(
-                "A non-convex L-shaped shell at CH 0.5 builds TWO " +
-                "courses cells the height-field argument says it cannot, " +
-                "one self-crossing in plan and one overlapping a cell " +
-                "already kept, and the filter drops both: 1 and 1; got " +
-                $"{degenerate} and {dropped}.");
+                "A non-convex L-shaped shell at CH 0.5 folds one cell at " +
+                "the re-entrant corner, and round two's un-gated " +
+                "nearest-point rescue (fix 3) rebuilds it instead of " +
+                "letting the filter drop it and its overlapped " +
+                "neighbour: 0 and 0, where 1 and 1 stood before the " +
+                $"rescue reached depth-0 bands; got {degenerate} and " +
+                $"{dropped}.");
         }
-        if (cells.Length != 98)
+        if (cells.Length != 100)
         {
             throw new InvalidOperationException(
-                "99 less 4 that the crown cap now replaces with a " +
-                "6-cell rosette (rule 2.6) less the two dropped leaves " +
-                $"98; got {cells.Length}.");
+                "99 less 4 that the crown cap replaces with a 6-cell " +
+                "rosette (rule 2.6), with nothing dropped any more, " +
+                $"leaves 100; got {cells.Length}.");
         }
         string diagnostics = (string)built.GetType()
             .GetProperty("Diagnostics")!.GetValue(built)!;
         if (!diagnostics.Contains(
-                "Plan-degenerate cells dropped: 1",
+                "Plan-degenerate cells dropped: 0",
                 StringComparison.Ordinal) ||
             !diagnostics.Contains(
-                "Plan-overlap cells dropped: 1",
+                "Plan-overlap cells dropped: 0",
                 StringComparison.Ordinal) ||
-            !diagnostics.Contains("Cells: 98", StringComparison.Ordinal))
+            !diagnostics.Contains("Cells: 100", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "A dropped cell is never silent: both counts are their " +
@@ -27805,15 +27857,17 @@ internal static class Program
             .GetProperty("PlanDegenerateDropped")!.GetValue(atThreeTenths)!;
         int shallowOverlap = (int)atThreeTenths.GetType()
             .GetProperty("PlanOverlapDropped")!.GetValue(atThreeTenths)!;
-        if (shallowDegenerate != 1 || shallowOverlap != 0)
+        // RE-MEASURED 2026-09-05 with fix 3, 1 and 0 to 0 and 0: the CH
+        // 0.3 fold is the same depth-0 re-entrant mechanism as CH 0.5's,
+        // and the same un-gated rescue removes it.
+        if (shallowDegenerate != 0 || shallowOverlap != 0)
         {
             throw new InvalidOperationException(
-                "The L-shaped shell at CH 0.3 is the second course " +
-                "height where the re-entrant corner shears one cell into " +
-                "a self-crossing plan, a MEASUREMENT of the inherited " +
-                "absolute-arc-length defect and not a derivation: 1 " +
-                $"self-crossing and 0 overlapping; got {shallowDegenerate} " +
-                $"and {shallowOverlap}.");
+                "The L-shaped shell at CH 0.3 folds one cell at the " +
+                "re-entrant corner and round two's un-gated nearest-point " +
+                "rescue rebuilds it: 0 self-crossing and 0 overlapping, " +
+                "where 1 and 0 stood before fix 3; got " +
+                $"{shallowDegenerate} and {shallowOverlap}.");
         }
         RequireDisjointSimplePlans(
             SkinCells(atThreeTenths).Select(cell => cell.Outline).ToArray(),

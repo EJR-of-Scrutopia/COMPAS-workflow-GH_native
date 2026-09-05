@@ -4390,16 +4390,24 @@ internal static class SkinPatterns
                 // plan filter dropped, two self-crossing and two
                 // overlapping, every one at the dip.
                 //
-                // THE RULE IS NARROW AND IT IS NARROW ON PURPOSE. The
-                // nearest-point map is taken ONLY where the proportional one
-                // actually folds, ONLY inside a bisected band, and then for
-                // the WHOLE component at once so its cells go on tiling
-                // their curves without a seam between two maps; and it is
-                // kept only where it removes every fold. Every band away
-                // from a seam, and every bisected band whose cells are
-                // already sound, is untouched and bit-identical, which is
-                // what keeps rule 1.8.4's deferred question deferred rather
-                // than half-answered here.
+                // THE RULE IS NARROW, AND ROUND TWO WIDENED IT BY EXACTLY
+                // ONE CLAUSE (spec 2026-09-05 round two, fix 3). The
+                // nearest-point map is taken ONLY where the proportional
+                // one actually folds, and then for the WHOLE component at
+                // once so its cells go on tiling their curves without a
+                // seam between two maps; and it is kept only where it
+                // removes every fold. Round one additionally gated the
+                // rescue to bisected bands (Depth > 0), and the asymmetric
+                // six-lobe measured that gate's price: course 14 is DEPTH
+                // 0, its upper boundary is the wiggly crown loop, the
+                // proportional map folds against it, the folded cell was
+                // dropped as self-crossing, its kept neighbour overreached
+                // into the crown loop and KeepValidPlans killed the CAP
+                // for overlapping it. One gate, two drops and an open
+                // crown. The gate is gone; every band whose cells are
+                // already sound is untouched and bit-identical, which is
+                // what keeps rule 1.8.4's deferred question deferred
+                // rather than half-answered here.
                 var laid = new List<SkinCell>();
                 bool folded = false;
                 foreach ((double u0, double u1, bool clipped) in spans)
@@ -4412,7 +4420,7 @@ internal static class SkinPatterns
                         (PlanSelfCrosses(cell.Outline) ||
                          PlanVertexOnEdge(cell.Outline));
                 }
-                if (folded && band.Depth > 0)
+                if (folded)
                 {
                     var rebuilt = new List<SkinCell>();
                     bool stillFolded = false;
