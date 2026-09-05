@@ -514,6 +514,455 @@ public sealed class TnaRelaxComponent :
     }
 }
 
+public sealed record TnaHorizontalTaskResult(
+    TnaPreparedDto? Prepared,
+    Exception? Error,
+    TimeSpan Elapsed);
+
+/// <summary>
+/// Move a relaxed Pattern's PLAN toward horizontal equilibrium before the
+/// solve reads it.
+///
+/// TNA has two families of unknowns, the force densities and the plan
+/// geometry, and TNA Solve adjusts only the first: it projects onto the
+/// self-stress space of the plan AS DRAWN. A plan with fan corners, free
+/// nodes whose every edge leaves into a wedge narrower than a half-plane,
+/// admits no self-stress in pure compression at all, so no iteration count
+/// and no slider passes the reciprocity gate. RhinoVault passes those forms
+/// because its preparation MOVES PLAN VERTICES. This station is that
+/// movement, made explicit and dialled.
+///
+/// RLX in and RLX out, so wiring it is the whole opt-in and unwiring it is
+/// the undo. Supports and floating anchors are held, bit for bit, at every
+/// Move; principal-line nodes are WATCHED rather than pinned, and the chin
+/// says how many of them the movement took with it.
+/// </summary>
+public sealed class TnaHorizontalComponent :
+    NativeTaskComponentBase<TnaHorizontalTaskResult>
+{
+    private readonly List<Line> _drawnPreview = new();
+    private readonly List<Line> _movedPreview = new();
+    private readonly List<Point3d> _supportPreview = new();
+    private BoundingBox _clippingBox = BoundingBox.Empty;
+
+    public TnaHorizontalComponent()
+        : base(
+            "TNA Horizontal",
+            "TNA Horizontal",
+            "Move a relaxed Pattern's plan toward horizontal equilibrium " +
+            "so the solve has a plan it can balance. Move 0 returns the " +
+            "drawing untouched; 100 is the equilibrated plan. Supports and " +
+            "floating anchors never move.",
+            ComponentCategories.Solve,
+            "tna_horizontal")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("c1f7a284-5b3d-4e69-8a07-2f4d6b9e0c53");
+
+    public override bool IsPreviewCapable => true;
+
+    public override BoundingBox ClippingBox => _clippingBox;
+
+    protected override void RegisterInputParams(
+        GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new RelaxedParam(),
+            "Relaxed",
+            "RLX",
+            "Relaxed Pattern paired with the Problem carrying its load " +
+            "case, from TNA Relax.",
+            GH_ParamAccess.item);
+        parameters.AddNumberParameter(
+            "Move",
+            "M",
+            "How far the drawing may travel toward horizontal " +
+            "equilibrium, 0 to 100 per cent. 0 returns the plan " +
+            "untouched, 100 is the equilibrated plan, and every value " +
+            "between is a plan that much of the way there. Supports and " +
+            "floating anchors are held at every setting.",
+            GH_ParamAccess.item,
+            100.0);
+    }
+
+    protected override void RegisterOutputParams(
+        GH_OutputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new RelaxedParam(),
+            "Relaxed",
+            "RLX",
+            "The same relaxed stage with its plan moved, ready for TNA " +
+            "Solve.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        _drawnPreview.Clear();
+        _movedPreview.Clear();
+        _supportPreview.Clear();
+        _clippingBox = BoundingBox.Empty;
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        if (InPreSolve)
+        {
+            if (!TryReadInputs(data, out RelaxedDto? relaxed, out double move))
+                return;
+            TaskList.Add(Task.Run(
+                () => ComputeAsync(
+                    ContractJson.DeepClone(relaxed!),
+                    move,
+                    CancelToken),
+                CancelToken));
+            return;
+        }
+
+        if (!TryReadInputs(
+                data,
+                out RelaxedDto? fallbackRelaxed,
+                out double fallbackMove))
+        {
+            return;
+        }
+
+        TnaHorizontalTaskResult result;
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
+        {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; the siblings recompute
+            // synchronously for exactly this reason.
+            result = ComputeAsync(
+                    ContractJson.DeepClone(fallbackRelaxed!),
+                    fallbackMove,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        if (result.Error is not null)
+        {
+            Message = result.Error is OperationCanceledException
+                ? "Cancelled"
+                : "Failed";
+            AddRuntimeMessage(
+                result.Error is OperationCanceledException
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Error,
+                "TNA Horizontal: " +
+                result.Error.GetBaseException().Message);
+            foreach (string line in SafeRecentStderr().TakeLast(3))
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, line);
+            return;
+        }
+        if (result.Prepared is null)
+        {
+            Message = "Failed";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "TNA Horizontal produced no moved stage.");
+            return;
+        }
+
+        IReadOnlyDictionary<string, double> metrics =
+            HorizontalMetrics(result.Prepared.WorkerMetadata);
+        string lengthUnit =
+            fallbackRelaxed!.Prepared?.Source?.Topology?.LengthUnit ?? "m";
+        (string chin, string? warning) =
+            HorizontalSummary(metrics, lengthUnit);
+        if (warning is not null)
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, warning);
+        Message = chin;
+
+        BuildPreview(fallbackRelaxed!.Prepared, result.Prepared);
+        data.SetData(
+            0,
+            new RelaxedGoo(new RelaxedDto
+            {
+                Prepared = result.Prepared,
+                Problem = fallbackRelaxed.Problem
+            }));
+    }
+
+    public override void DrawViewportWires(IGH_PreviewArgs args)
+    {
+        if (Hidden)
+            return;
+        base.DrawViewportWires(args);
+        foreach (Line edge in _drawnPreview)
+        {
+            args.Display.DrawLine(
+                edge,
+                Color.FromArgb(190, 188, 184),
+                1);
+        }
+        foreach (Line edge in _movedPreview)
+        {
+            args.Display.DrawLine(
+                edge,
+                Color.FromArgb(169, 70, 46),
+                2);
+        }
+        foreach (Point3d point in _supportPreview)
+        {
+            args.Display.DrawPoint(
+                point,
+                PointStyle.RoundControlPoint,
+                7,
+                Color.FromArgb(30, 165, 85));
+        }
+    }
+
+    /// <summary>
+    /// The station's own numbers, off the prepared stage's worker metadata.
+    /// They arrive as text under the "diagnostic_metrics." prefix, which is
+    /// how every worker metric reaches this side; anything that will not
+    /// parse as a number is simply absent, and every reader below treats
+    /// absence as "not measured" rather than as nought.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, double> HorizontalMetrics(
+        IReadOnlyDictionary<string, string> workerMetadata)
+    {
+        var metrics = new Dictionary<string, double>(StringComparer.Ordinal);
+        const string prefix = "diagnostic_metrics.horizontal_";
+        foreach (KeyValuePair<string, string> item in workerMetadata)
+        {
+            if (!item.Key.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+            string name = "horizontal_" + item.Key[prefix.Length..];
+            if (double.TryParse(
+                    item.Value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double value))
+            {
+                metrics[name] = value;
+            }
+            else if (bool.TryParse(item.Value, out bool flag))
+            {
+                metrics[name] = flag ? 1.0 : 0.0;
+            }
+        }
+        return metrics;
+    }
+
+    /// <summary>
+    /// The chin the 2026-09-04 ruling asks for: "moved X max, Y mean; N
+    /// tension edges and A degrees became N' and A'; K principal-line nodes
+    /// moved", and the warning a Move that did not reach the gate owes the
+    /// canvas.
+    ///
+    /// Each clause is dropped rather than faked when its numbers are not
+    /// there: a pattern with no principal lines annotated says nothing
+    /// about them, and a tension count the algebraic projection could not
+    /// measure is absent rather than reported as nought.
+    /// </summary>
+    internal static (string Chin, string? Warning) HorizontalSummary(
+        IReadOnlyDictionary<string, double> metrics,
+        string lengthUnit)
+    {
+        string unit = string.IsNullOrWhiteSpace(lengthUnit)
+            ? string.Empty
+            : " " + lengthUnit.Trim();
+        var parts = new List<string>();
+        if (metrics.TryGetValue("horizontal_plan_move_max", out double max) &&
+            metrics.TryGetValue("horizontal_plan_move_mean", out double mean))
+        {
+            parts.Add(
+                $"moved {Number(max)}{unit} max, {Number(mean)} mean");
+        }
+        bool haveAngleBefore = metrics.TryGetValue(
+            "horizontal_angle_before", out double before);
+        bool haveAngleAfter = metrics.TryGetValue(
+            "horizontal_angle_after", out double after);
+        bool haveAngles = haveAngleBefore && haveAngleAfter;
+        bool haveTensionBefore = metrics.TryGetValue(
+            "horizontal_negative_q_before", out double tensionBefore);
+        bool haveTensionAfter = metrics.TryGetValue(
+            "horizontal_negative_q_after", out double tensionAfter);
+        bool haveTension = haveTensionBefore && haveTensionAfter;
+        if (haveAngles && haveTension)
+        {
+            parts.Add(
+                $"{tensionBefore:F0} tension edges and " +
+                $"{Degrees(before)} degrees became " +
+                $"{tensionAfter:F0} and {Degrees(after)}");
+        }
+        else if (haveAngles)
+        {
+            parts.Add(
+                $"{Degrees(before)} degrees became {Degrees(after)}");
+        }
+        if (metrics.TryGetValue(
+                "horizontal_watched_node_count", out double watched) &&
+            watched >= 1.0 &&
+            metrics.TryGetValue(
+                "horizontal_watched_moved_count", out double watchedMoved))
+        {
+            parts.Add(
+                $"{watchedMoved:F0} principal-line " +
+                (watchedMoved == 1.0 ? "node moved" : "nodes moved"));
+        }
+        string chin = parts.Count > 0
+            ? string.Join("; ", parts)
+            : "no measurement";
+
+        string? warning = null;
+        if (metrics.TryGetValue(
+                "horizontal_converged_after", out double converged) &&
+            converged < 0.5 &&
+            haveAngles)
+        {
+            double gate = metrics.TryGetValue(
+                "horizontal_gate_degrees", out double gateValue)
+                ? gateValue
+                : 5.0;
+            warning =
+                $"The gate still fails at this Move: reciprocity stands at " +
+                $"{Degrees(after)} degrees against {Degrees(gate)}. Raise " +
+                "Move, or redraw the corners the plan cannot balance: a " +
+                "free node whose every edge leaves into less than a " +
+                "half-plane cannot be balanced by any positive force " +
+                "density, at any plan the station is allowed to reach.";
+        }
+        return (chin, warning);
+    }
+
+    private static string Number(double value) =>
+        value.ToString("G3", CultureInfo.InvariantCulture);
+
+    private static string Degrees(double value) =>
+        value.ToString("F1", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Read RLX and Move. Move is CLAMPED rather than refused, with a
+    /// Remark saying so: a slider dragged past its end is a slider at its
+    /// end, and silently solving 120 as 100 would be the component telling
+    /// the canvas nothing.
+    /// </summary>
+    private bool TryReadInputs(
+        IGH_DataAccess data,
+        out RelaxedDto? relaxed,
+        out double move)
+    {
+        relaxed = null;
+        move = 100.0;
+        RelaxedGoo? relaxedGoo = null;
+        if (!data.GetData(0, ref relaxedGoo) ||
+            relaxedGoo?.Value is not RelaxedDto relaxedValue)
+        {
+            return false;
+        }
+        double requested = 100.0;
+        data.GetData(1, ref requested);
+        if (!double.IsFinite(requested))
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "Move must be a finite percentage between 0 and 100.");
+            return false;
+        }
+        move = Math.Clamp(requested, 0.0, 100.0);
+        if (move != requested)
+        {
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Remark,
+                $"Move {requested.ToString("G6", CultureInfo.InvariantCulture)} " +
+                $"is outside 0 to 100 and was read as " +
+                $"{move.ToString("G6", CultureInfo.InvariantCulture)}.");
+        }
+
+        var errors = new List<string>(relaxedValue.Validate());
+        if (errors.Count > 0)
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                string.Join(" ", errors));
+            return false;
+        }
+
+        relaxed = relaxedValue;
+        return true;
+    }
+
+    private static async Task<TnaHorizontalTaskResult> ComputeAsync(
+        RelaxedDto relaxed,
+        double move,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            TnaPreparedDto prepared = relaxed.Prepared!;
+            JsonElement response = await WorkerRuntime.Host
+                .RequestAsync<JsonElement>(
+                    "tna.equilibrate",
+                    TnaWorkflowWorkerCodec.EquilibratePayload(prepared, move),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            // Decoded against the SAME source Pattern the stage went out
+            // with, so a station that changed anything but the plan is
+            // refused here rather than passed on to the solve.
+            TnaPreparedDto moved = TnaWorkflowWorkerCodec.DecodePrepared(
+                response,
+                prepared.Source!);
+            stopwatch.Stop();
+            return new TnaHorizontalTaskResult(moved, null, stopwatch.Elapsed);
+        }
+        catch (Exception error)
+        {
+            stopwatch.Stop();
+            return new TnaHorizontalTaskResult(null, error, stopwatch.Elapsed);
+        }
+    }
+
+    private void BuildPreview(TnaPreparedDto? drawn, TnaPreparedDto moved)
+    {
+        _drawnPreview.Clear();
+        _movedPreview.Clear();
+        _supportPreview.Clear();
+        if (drawn is not null)
+        {
+            _drawnPreview.AddRange(
+                TnaWorkflowPreview.GraphLines(
+                    drawn.FormGraph,
+                    Vector3d.Zero));
+        }
+        _movedPreview.AddRange(
+            TnaWorkflowPreview.GraphLines(
+                moved.FormGraph,
+                Vector3d.Zero));
+        _supportPreview.AddRange(
+            moved.SupportSet!.NodeIds.Select(
+                id => TnaWorkflowPreview.Point(
+                    moved.Pattern.Vertices[id])));
+        _clippingBox = TnaWorkflowPreview.Box(
+            _drawnPreview.Concat(_movedPreview),
+            _supportPreview);
+    }
+
+    private static IReadOnlyList<string> SafeRecentStderr()
+    {
+        try
+        {
+            return WorkerRuntime.Host.RecentStderr;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+}
+
 public sealed record TnaSolveTaskResult(
     ResultDto? Result,
     Exception? Error,
@@ -814,16 +1263,11 @@ public class TnaSolveComponent :
                     "horizontal_mode_is_auto",
                     out double isAuto) &&
                 isAuto >= 0.5;
-            string advice = autoMode
-                ? "More iterations will not pass the gate: the held " +
-                  "pattern interior is not in horizontal equilibrium. " +
-                  "Smooth the pattern or accept the residual."
-                : "Raise Iterations, or leave the input blank for " +
-                  "auto-convergence.";
             AddRuntimeMessage(
                 GH_RuntimeMessageLevel.Warning,
                 $"Reciprocity stalled at {angle:F1}° on force-bearing " +
-                "edges (RhinoVault accepts under 5°). " + advice);
+                "edges (RhinoVault accepts under 5°). " +
+                ReciprocityAdvice(autoMode));
         }
         if (metrics.TryGetValue(
                 "algebraic_negative_q_count",
@@ -865,6 +1309,29 @@ public class TnaSolveComponent :
         data.SetDataList(2, thrustLines);
         data.SetDataList(3, supports);
     }
+
+    /// <summary>
+    /// What a canvas is told to do about a failed reciprocity gate.
+    ///
+    /// The advice used to end at "smooth the pattern or accept the
+    /// residual", which named no remedy the author could actually reach:
+    /// a plan with fan corners admits no compression-only self-stress at
+    /// all, and no amount of smoothing by hand finds one reliably. TNA
+    /// Horizontal is that remedy, so the sentence names it. Advice only:
+    /// nothing here runs the station, and unwiring it is the undo.
+    /// </summary>
+    internal static string ReciprocityAdvice(bool autoMode) =>
+        autoMode
+            ? "More iterations will not pass the gate: the held pattern " +
+              "interior is not in horizontal equilibrium as drawn. Wire " +
+              "TNA Horizontal between Relax and Solve to let the plan " +
+              "move toward equilibrium, smooth the pattern, or accept " +
+              "the residual."
+            : "Raise Iterations, or leave the input blank for " +
+              "auto-convergence. If it still stalls, wire TNA Horizontal " +
+              "between Relax and Solve: the plan as drawn may admit no " +
+              "compression-only equilibrium for any iteration count to " +
+              "find.";
 
     /// <summary>
     /// Rule 2.5 of the 2026-09-04 selfweight design: the chin line a

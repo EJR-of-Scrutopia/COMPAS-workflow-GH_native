@@ -277,6 +277,17 @@ internal static class Program
                     "02 Solve",
                     new[] { "PRB", "q", "Sag %", "FA" },
                     new[] { "RLX" }),
+                // TNA Horizontal is pinned because its whole surface IS the
+                // ruling of 2026-09-04: RLX in, RLX out, and exactly two
+                // inputs. An iteration count, a gate and a report-only
+                // toggle were each considered and each cut; a third port
+                // appearing here is that ruling being quietly reopened.
+                ["Ananke.COMPAS.Native.Components.TnaHorizontalComponent"] = (
+                    "TNA Horizontal",
+                    "TNA Horizontal",
+                    "02 Solve",
+                    new[] { "RLX", "M" },
+                    new[] { "RLX" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
                     "TNA Solve",
@@ -349,6 +360,8 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] = ("tna_supports", "SU"),
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] = ("load_case", "LO"),
             ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = ("tna_relax", "RX"),
+            ["Ananke.COMPAS.Native.Components.TnaHorizontalComponent"] =
+                ("tna_horizontal", "HO"),
             ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = ("tna_solve", "TS"),
             ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] =
                 ("tna_solve_algebraic", "TA"),
@@ -560,16 +573,18 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 21)
+        if (componentTypes.Length != 22)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested. 21 is
+            // with nineteen components' worth of contract untested. 21 was
             // the skin rework: Skin and Armadillo Dual became ONE Skin
-            // component in 05 Deliver, three patterns behind one flag.
+            // component in 05 Deliver, three patterns behind one flag. 22 is
+            // TNA Horizontal, the plan-moving station that stands between
+            // TNA Relax and TNA Solve.
             failures.Add(
-                $"Expected 21 concrete public components, found " +
+                $"Expected 22 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -2821,6 +2836,46 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Icon family: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateHorizontalStation(plugin);
+            Console.WriteLine(
+                "PASS  TNA Horizontal's chin (the 2026-09-04 ruling): the "
+                + "worker's numbers reach this side as text and read back "
+                + "as numbers, a boolean as one or nought, and a value "
+                + "that will not parse as ABSENT rather than nought; the "
+                + "chin then reads 'moved X max, Y mean; N tension edges "
+                + "and A degrees became N' and A'; K principal-line nodes "
+                + "moved', with the tension clause dropped when the "
+                + "projection could not measure it and the principal-line "
+                + "clause dropped when the pattern has none, rather than "
+                + "either being reported as nought; and a Move that did "
+                + "not reach the gate names the angle it stalled at, the "
+                + "gate it missed, and what the author can do next.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"TNA Horizontal's chin: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateReciprocityAdvice(plugin);
+            Console.WriteLine(
+                "PASS  TNA Solve's failed-gate advice names TNA "
+                + "Horizontal, in both the auto and the hand-set "
+                + "iteration modes, BESIDE accepting the residual rather "
+                + "than instead of it. Advice only: nothing in the solve "
+                + "runs the station, and unwiring it is the undo.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"TNA Solve's failed-gate advice: "
+                + $"{DescribeException(exception)}");
         }
 
         try
@@ -37908,6 +37963,249 @@ internal static class Program
         {
             (saved as IDisposable)?.Dispose();
             (reopened as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// TNA Horizontal's chin and its warning, measured through the
+    /// component's own two static readers rather than described.
+    ///
+    /// The chin is the 2026-09-04 ruling word for word: what moved, what
+    /// the movement bought, and how many watched principal-line nodes went
+    /// with it. Every clause is DROPPED rather than faked when its numbers
+    /// are absent, which is the difference between "the tension count could
+    /// not be measured" and "there are no tension edges".
+    /// </summary>
+    private static void ValidateHorizontalStation(Assembly plugin)
+    {
+        Type component = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaHorizontalComponent")
+            ?? throw new InvalidOperationException(
+                "TnaHorizontalComponent was not found.");
+        MethodInfo readMetrics = component.GetMethod(
+            "HorizontalMetrics",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaHorizontalComponent.HorizontalMetrics was not found.");
+        MethodInfo summary = component.GetMethod(
+            "HorizontalSummary",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaHorizontalComponent.HorizontalSummary was not found.");
+
+        IReadOnlyDictionary<string, double> Metrics(
+            params (string Key, string Value)[] metadata)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach ((string key, string value) in metadata)
+                map[key] = value;
+            return (IReadOnlyDictionary<string, double>)readMetrics.Invoke(
+                null, new object[] { map })!;
+        }
+
+        (string Chin, string? Warning) Summarise(
+            IReadOnlyDictionary<string, double> metrics)
+        {
+            object result = summary.Invoke(
+                null, new object[] { metrics, "m" })
+                ?? throw new InvalidOperationException(
+                    "HorizontalSummary returned null.");
+            Type tuple = result.GetType();
+            return (
+                (string)tuple.GetField("Item1")!.GetValue(result)!,
+                (string?)tuple.GetField("Item2")!.GetValue(result));
+        }
+
+        // The worker's own numbers reach this side as TEXT under the
+        // diagnostic_metrics prefix. Booleans arrive as "true"/"false" and
+        // must read as one and nought, a key that is not the station's is
+        // not the station's, and a value that will not parse is ABSENT
+        // rather than nought.
+        IReadOnlyDictionary<string, double> parsed = Metrics(
+            ("diagnostic_metrics.horizontal_angle_before", "25.5238"),
+            ("diagnostic_metrics.horizontal_converged_after", "true"),
+            ("diagnostic_metrics.horizontal_negative_q_before", "30"),
+            ("diagnostic_metrics.horizontal_move", "not a number"),
+            ("diagnostic_metrics.boundary_support_count", "6"),
+            ("metadata.horizontal_angle_before", "999"));
+        if (!parsed.TryGetValue("horizontal_angle_before", out double angle) ||
+            Math.Abs(angle - 25.5238) > 1e-9)
+        {
+            throw new InvalidOperationException(
+                "the station's angle should read back off the worker "
+                + $"metadata; got {(parsed.ContainsKey("horizontal_angle_before") ? angle.ToString(CultureInfo.InvariantCulture) : "<none>")}.");
+        }
+        if (!parsed.TryGetValue(
+                "horizontal_converged_after", out double converged) ||
+            converged != 1.0)
+        {
+            throw new InvalidOperationException(
+                "a worker boolean must read as one or nought, not be "
+                + "dropped for failing to parse as a number.");
+        }
+        if (parsed.ContainsKey("horizontal_move"))
+        {
+            throw new InvalidOperationException(
+                "a value that will not parse is absent, never nought: a "
+                + "Move of nought and a Move nobody could read are "
+                + "different things.");
+        }
+        if (parsed.ContainsKey("boundary_support_count") ||
+            parsed.Count != 3)
+        {
+            throw new InvalidOperationException(
+                "the reader takes the station's own metrics and nothing "
+                + $"else; it took {parsed.Count}.");
+        }
+
+        // The worked case: the fan-cornered plan of the python fixture,
+        // cured at Move 100.
+        var full = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["horizontal_plan_move_max"] = 1.7042,
+            ["horizontal_plan_move_mean"] = 0.15234,
+            ["horizontal_angle_before"] = 25.5238,
+            ["horizontal_angle_after"] = 0.0219,
+            ["horizontal_negative_q_before"] = 30.0,
+            ["horizontal_negative_q_after"] = 0.0,
+            ["horizontal_watched_node_count"] = 12.0,
+            ["horizontal_watched_moved_count"] = 9.0,
+            ["horizontal_converged_after"] = 1.0,
+            ["horizontal_gate_degrees"] = 5.0
+        };
+        (string chin, string? warning) = Summarise(full);
+        const string expected =
+            "moved 1.7 m max, 0.152 mean; 30 tension edges and 25.5 "
+            + "degrees became 0 and 0.0; 9 principal-line nodes moved";
+        if (chin != expected)
+        {
+            throw new InvalidOperationException(
+                $"the chin should read '{expected}'; got '{chin}'.");
+        }
+        if (warning is not null)
+        {
+            throw new InvalidOperationException(
+                "a Move that passed the gate warns the canvas about "
+                + $"nothing; got '{warning}'.");
+        }
+
+        // One watched node moved, so the word is singular.
+        var single = new Dictionary<string, double>(full, StringComparer.Ordinal)
+        {
+            ["horizontal_watched_moved_count"] = 1.0
+        };
+        if (!Summarise(single).Chin.EndsWith(
+                "1 principal-line node moved", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "one moved node is a node, not nodes; got "
+                + $"'{Summarise(single).Chin}'.");
+        }
+
+        // A pattern with no principal lines annotated says NOTHING about
+        // them, rather than reporting nought of nought moved; and a tension
+        // count the projection could not measure is dropped with it.
+        var bare = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["horizontal_plan_move_max"] = 1.7042,
+            ["horizontal_plan_move_mean"] = 0.15234,
+            ["horizontal_angle_before"] = 25.5238,
+            ["horizontal_angle_after"] = 0.0219,
+            ["horizontal_watched_node_count"] = 0.0,
+            ["horizontal_watched_moved_count"] = 0.0,
+            ["horizontal_converged_after"] = 1.0
+        };
+        (string bareChin, string? bareWarning) = Summarise(bare);
+        if (bareChin !=
+            "moved 1.7 m max, 0.152 mean; 25.5 degrees became 0.0")
+        {
+            throw new InvalidOperationException(
+                "with no tension count and no principal lines the chin "
+                + $"carries neither clause; got '{bareChin}'.");
+        }
+        if (bareWarning is not null)
+            throw new InvalidOperationException("bare case warned wrongly.");
+
+        // The gate still failing is the one thing the station owes the
+        // canvas a sentence about, and the sentence has to say what the
+        // author can do next.
+        var stalled = new Dictionary<string, double>(full, StringComparer.Ordinal)
+        {
+            ["horizontal_angle_after"] = 18.75,
+            ["horizontal_converged_after"] = 0.0
+        };
+        (_, string? stalledWarning) = Summarise(stalled);
+        if (stalledWarning is null ||
+            !stalledWarning.Contains("18.8", StringComparison.Ordinal) ||
+            !stalledWarning.Contains("5.0", StringComparison.Ordinal) ||
+            !stalledWarning.Contains("Raise Move", StringComparison.Ordinal) ||
+            !stalledWarning.Contains("half-plane", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "a Move that did not reach the gate must name the angle "
+                + "it stalled at, the gate it missed, and what to do; got "
+                + $"'{stalledWarning ?? "<none>"}'.");
+        }
+
+        // Nothing measured at all is said as nothing measured.
+        if (Summarise(
+                new Dictionary<string, double>(StringComparer.Ordinal))
+            .Chin != "no measurement")
+        {
+            throw new InvalidOperationException(
+                "an empty metric set is no measurement, not an empty chin.");
+        }
+    }
+
+    /// <summary>
+    /// TNA Solve's failed-gate advice names TNA Horizontal.
+    ///
+    /// The advice used to end at "smooth the pattern or accept the
+    /// residual", which named no remedy an author could reach: a plan
+    /// whose corners no positive force density can balance is not smoothed
+    /// into equilibrium by hand. Advice only, in both modes; nothing here
+    /// runs the station.
+    /// </summary>
+    private static void ValidateReciprocityAdvice(Assembly plugin)
+    {
+        Type component = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaSolveComponent")
+            ?? throw new InvalidOperationException(
+                "TnaSolveComponent was not found.");
+        MethodInfo advice = component.GetMethod(
+            "ReciprocityAdvice",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaSolveComponent.ReciprocityAdvice was not found.");
+
+        string Advice(bool autoMode) =>
+            (string)advice.Invoke(null, new object[] { autoMode })!;
+
+        foreach (bool autoMode in new[] { true, false })
+        {
+            string text = Advice(autoMode);
+            if (!text.Contains("TNA Horizontal", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"the {(autoMode ? "auto" : "fixed")}-iteration advice "
+                    + "must name TNA Horizontal as the remedy; got "
+                    + $"'{text}'.");
+            }
+        }
+        if (!Advice(true).Contains(
+                "accept the residual", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "the station is named BESIDE accepting the residual, not "
+                + "instead of it: an author who wants the residual must "
+                + "still be told they may have it.");
+        }
+        if (!Advice(false).Contains(
+                "Raise Iterations", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "a hand-set iteration count still gets its own first "
+                + "remedy before the station is offered.");
         }
     }
 

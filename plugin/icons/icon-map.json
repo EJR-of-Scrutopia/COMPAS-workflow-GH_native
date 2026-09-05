@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
-  "size": [24, 24],
+  "size": [
+    24,
+    24
+  ],
   "categories": {
     "01 Model": {
       "fill": "#126E82",
@@ -129,6 +132,12 @@
       "label": "RX",
       "category": "02 Solve",
       "filename": "tna_relax.png"
+    },
+    {
+      "key": "tna_horizontal",
+      "label": "HO",
+      "category": "02 Solve",
+      "filename": "tna_horizontal.png"
     },
     {
       "key": "tna_solve",

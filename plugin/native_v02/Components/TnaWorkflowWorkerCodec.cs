@@ -125,6 +125,33 @@ internal static class TnaWorkflowWorkerCodec
         return prepared;
     }
 
+    /// <summary>
+    /// The horizontal station's request: the prepared stage as it stands,
+    /// how far its plan may travel, and the principal-line nodes to WATCH.
+    /// The runs never went to the worker as an annotation, so the nodes are
+    /// flattened out of them here; watching is all the worker does with
+    /// them, and it reports how many of them the movement took with it.
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> EquilibratePayload(
+        TnaPreparedDto prepared,
+        double move)
+    {
+        EnsureValid(prepared);
+        int vertexCount = prepared.Pattern.Vertices.Count;
+        int[] watched = prepared.Source!.Topology!.PrincipalRuns
+            .SelectMany(run => run)
+            .Where(index => index >= 0 && index < vertexCount)
+            .Distinct()
+            .OrderBy(index => index)
+            .ToArray();
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["prepared"] = PreparedPayload(prepared),
+            ["move"] = move,
+            ["watched_node_ids"] = watched
+        };
+    }
+
     public static IReadOnlyDictionary<string, object?> StagedSolvePayload(
         TnaPreparedDto prepared,
         LoadCaseDto loadCase,
