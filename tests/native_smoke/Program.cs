@@ -669,6 +669,29 @@ internal static class Program
 
         try
         {
+            ValidateDensityMaterialList(plugin);
+            Console.WriteLine(
+                "PASS  Loads' Density material list: the table pins ten " +
+                "materials in order, name and kN per cubic metre, with the " +
+                "scale-free 1.0 first; a value list still carrying the " +
+                "content Grasshopper dropped it with is filled with exactly " +
+                "those ten and lands on the first, so attaching one changes " +
+                "no number until a material is picked; a list whose items " +
+                "have been edited, and a list already filled, are both left " +
+                "alone; and Density itself is still a bare optional Number " +
+                "port holding no persistent data, with NO suggested list, " +
+                "because an EMPTY Density is what tells the solve nobody " +
+                "asked for a self-weight and a list dropped automatically " +
+                "would destroy that signal.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Loads' Density material list: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateResultGooRawWireSnapshot(plugin);
             Console.WriteLine(
                 "PASS  ResultGoo RawWire snapshot: construction and " +
@@ -37735,6 +37758,302 @@ internal static class Program
     /// It goes red the day GH's param server stops preserving ports the
     /// archive does not mention.
     /// </summary>
+    /// <summary>
+    /// Loads' Density material list, in two halves, the way this harness
+    /// splits every measurement it cannot take whole outside Rhino.
+    ///
+    /// The FIRST half is the material table itself, pinned as data off the
+    /// component's own static field: ten materials, in order, with their
+    /// unit weights in kN per cubic metre. Nothing about Grasshopper is
+    /// needed to measure that, so nothing about Grasshopper is allowed to
+    /// weaken it.
+    ///
+    /// The SECOND half is the fill, run against real GH_ValueList objects
+    /// constructed here. That much DOES work headless, because a value
+    /// list's items are plain data; what cannot be measured here is the
+    /// canvas event that calls the fill when Param drags a wire onto the
+    /// port, and the scheduled solution that follows it. Those two are
+    /// Rhino's and they are named in the report as unmeasured.
+    /// </summary>
+    private static void ValidateDensityMaterialList(Assembly plugin)
+    {
+        Type loads = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.LoadsComponent")
+            ?? throw new InvalidOperationException(
+                "LoadsComponent was not found.");
+
+        // ---- half one: the table, pinned as data.
+        FieldInfo tableField = loads.GetField(
+            "DensityMaterials",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.DensityMaterials was not found.");
+        Array table = (Array)tableField.GetValue(null)!;
+        (string Label, double Density)[] expected =
+        {
+            ("Unit weight (form-finding)", 1.0),
+            ("Sandstone", 22.0),
+            ("Limestone", 24.0),
+            ("Granite", 26.5),
+            ("Marble", 27.0),
+            ("Brick masonry", 18.5),
+            ("Concrete", 24.0),
+            ("Reinforced concrete", 25.0),
+            ("Rammed earth", 20.0),
+            ("Timber (CLT)", 5.5)
+        };
+        if (table.Length != expected.Length)
+        {
+            throw new InvalidOperationException(
+                $"The Density material table must pin exactly {expected.Length} " +
+                $"materials; it holds {table.Length}.");
+        }
+        for (int i = 0; i < expected.Length; i++)
+        {
+            object entry = table.GetValue(i)!;
+            Type tuple = entry.GetType();
+            string label = (string)tuple.GetField("Item1")!.GetValue(entry)!;
+            double density = (double)tuple.GetField("Item2")!.GetValue(entry)!;
+            if (label != expected[i].Label || density != expected[i].Density)
+            {
+                throw new InvalidOperationException(
+                    $"Density material {i} must pin as (\"{expected[i].Label}\", " +
+                    $"{expected[i].Density.ToString("R", CultureInfo.InvariantCulture)}); " +
+                    $"found (\"{label}\", " +
+                    $"{density.ToString("R", CultureInfo.InvariantCulture)}).");
+            }
+        }
+        // The first entry IS the value an empty port already reads as, which
+        // is the whole reason attaching a list is safe.
+        {
+            object first = table.GetValue(0)!;
+            double firstDensity = (double)first.GetType()
+                .GetField("Item2")!.GetValue(first)!;
+            if (firstDensity != 1.0)
+            {
+                throw new InvalidOperationException(
+                    "The first Density material must be 1.0, the value an " +
+                    "empty port reads as, or attaching a value list would " +
+                    $"change the weight on its own; it is {firstDensity}.");
+            }
+        }
+
+        // ---- half two: the fill, against real value lists.
+        MethodInfo fill = loads.GetMethod(
+            "FillDensityValueList",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.FillDensityValueList was not found.");
+        // The GH_ValueList type as the PLUGIN binds to it, off the fill's
+        // own signature, so this cannot end up exercising one assembly's
+        // value list against another's.
+        Type valueListType = fill.GetParameters()[0].ParameterType;
+
+        IList Items(object list) =>
+            (IList)valueListType.GetProperty("ListItems")!.GetValue(list)!;
+        string ItemName(object item) =>
+            (string)item.GetType().GetProperty("Name")!.GetValue(item)!;
+        string ItemExpression(object item) =>
+            (string)item.GetType().GetProperty("Expression")!.GetValue(item)!;
+        bool ItemSelected(object item) =>
+            (bool)item.GetType().GetProperty("Selected")!.GetValue(item)!;
+
+        object fresh = Activator.CreateInstance(valueListType)
+            ?? throw new InvalidOperationException(
+                "A GH_ValueList could not be constructed headless.");
+        int pristineCount = Items(fresh).Count;
+        if (pristineCount == 0)
+        {
+            throw new InvalidOperationException(
+                "A freshly constructed GH_ValueList carries no items here, " +
+                "so 'still carries what Grasshopper dropped it with' has " +
+                "nothing to mean and the fill cannot tell a new list from " +
+                "an emptied one.");
+        }
+
+        if (fill.Invoke(null, new[] { fresh }) is not true)
+        {
+            throw new InvalidOperationException(
+                "The fill refused a value list that still carries the " +
+                "content Grasshopper gave it, so wiring a fresh list onto " +
+                "Density would leave Item1..ItemN standing.");
+        }
+        IList filled = Items(fresh);
+        if (filled.Count != expected.Length)
+        {
+            throw new InvalidOperationException(
+                $"A filled value list must hold exactly {expected.Length} " +
+                $"items; it holds {filled.Count}.");
+        }
+        for (int i = 0; i < expected.Length; i++)
+        {
+            object item = filled[i]!;
+            string wantExpression = expected[i].Density
+                .ToString("R", CultureInfo.InvariantCulture);
+            if (ItemName(item) != expected[i].Label ||
+                ItemExpression(item) != wantExpression)
+            {
+                throw new InvalidOperationException(
+                    $"Filled item {i} must read (\"{expected[i].Label}\", " +
+                    $"\"{wantExpression}\"); found (\"{ItemName(item)}\", " +
+                    $"\"{ItemExpression(item)}\").");
+            }
+            // The expression is a BARE number, never a quoted string, so
+            // the Number port takes it without a cast standing between.
+            if (!double.TryParse(
+                    ItemExpression(item),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double parsed) ||
+                parsed != expected[i].Density)
+            {
+                throw new InvalidOperationException(
+                    $"Filled item {i}'s expression must be a bare number a " +
+                    "Number port reads directly; it is " +
+                    $"\"{ItemExpression(item)}\".");
+            }
+            bool wantSelected = i == 0;
+            if (ItemSelected(item) != wantSelected)
+            {
+                throw new InvalidOperationException(
+                    $"Filled item {i} (\"{expected[i].Label}\") must be " +
+                    $"{(wantSelected ? "SELECTED" : "unselected")}: only the " +
+                    "scale-free 1.0 is chosen, so attaching a list changes " +
+                    "no number until Param picks a material.");
+            }
+        }
+
+        // A list already filled is not filled again. Without this the fill
+        // would reset Param's chosen material on every wiring event.
+        if (fill.Invoke(null, new[] { fresh }) is not false)
+        {
+            throw new InvalidOperationException(
+                "The fill ran a SECOND time on a list it had already " +
+                "filled, so a chosen material would be reset back to 1.0.");
+        }
+
+        // A list the author has edited is left exactly as it stands. Two
+        // fixtures, because an edit can change the items' text or their
+        // number and either one must stop the fill.
+        {
+            object renamed = Activator.CreateInstance(valueListType)!;
+            object firstItem = Items(renamed)[0]!;
+            firstItem.GetType().GetProperty("Name")!
+                .SetValue(firstItem, "Param's own");
+            if (fill.Invoke(null, new[] { renamed }) is not false)
+            {
+                throw new InvalidOperationException(
+                    "The fill CLOBBERED a value list whose items had been " +
+                    "renamed; an edited list is the author's own.");
+            }
+            IList after = Items(renamed);
+            if (after.Count != pristineCount ||
+                ItemName(after[0]!) != "Param's own")
+            {
+                throw new InvalidOperationException(
+                    "A renamed value list was refused and then MUTATED " +
+                    $"anyway: it holds {after.Count} items and its first " +
+                    $"reads \"{ItemName(after[0]!)}\".");
+            }
+        }
+        {
+            object shortened = Activator.CreateInstance(valueListType)!;
+            IList items = Items(shortened);
+            items.RemoveAt(items.Count - 1);
+            if (fill.Invoke(null, new[] { shortened }) is not false)
+            {
+                throw new InvalidOperationException(
+                    "The fill CLOBBERED a value list whose items had been " +
+                    "added to or removed; an edited list is the author's own.");
+            }
+            if (Items(shortened).Count != pristineCount - 1)
+            {
+                throw new InvalidOperationException(
+                    "A shortened value list was refused and then MUTATED " +
+                    $"anyway: it holds {Items(shortened).Count} items.");
+            }
+        }
+
+        // ---- and Density is still a bare number.
+        object component = Activator.CreateInstance(loads)!;
+        try
+        {
+            object server = loads.GetProperty("Params")!.GetValue(component)!;
+            IList inputs = (IList)server.GetType().GetProperty("Input")!
+                .GetValue(server)!;
+            if (inputs.Count != 6)
+            {
+                throw new InvalidOperationException(
+                    $"LoadsComponent registers {inputs.Count} inputs, not " +
+                    "the six this check is written against.");
+            }
+            object port = inputs[5]!;
+            Type portType = port.GetType();
+            string PortString(string name) =>
+                (string)portType.GetProperty(name)!.GetValue(port)!;
+            if (PortString("Name") != "Density" || PortString("NickName") != "D")
+            {
+                throw new InvalidOperationException(
+                    "Input 5 must still be Density / D; it is " +
+                    $"{PortString("Name")} / {PortString("NickName")}.");
+            }
+            if (portType.FullName != "Grasshopper.Kernel.Parameters.Param_Number")
+            {
+                throw new InvalidOperationException(
+                    "Density must stay a plain Number input, not become a " +
+                    $"list-shaped port; it is {portType.FullName}.");
+            }
+            if ((bool)portType.GetProperty("Optional")!.GetValue(port)! is false)
+            {
+                throw new InvalidOperationException(
+                    "Density must stay OPTIONAL: an empty port is the " +
+                    "signal that nobody asked for a self-weight.");
+            }
+            int stored = (int)portType.GetProperty("PersistentDataCount")!
+                .GetValue(port)!;
+            if (stored != 0)
+            {
+                throw new InvalidOperationException(
+                    "Density must hold NO persistent data, or every archived " +
+                    "point-load definition gains a self-weight; it holds " +
+                    $"{stored} value(s).");
+            }
+            if (!PortString("Description").Contains(
+                    "value list", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Density's description must say that an attached value " +
+                    "list fills itself with materials.");
+            }
+
+            // And NOTHING drops a list on it by itself. This is the half
+            // that matters most: the shared SuggestedValueLists mechanism
+            // creates a list whenever an input has no source, which would
+            // make Density permanently non-empty and silently add a
+            // self-weight to every point-load definition on the canvas.
+            PropertyInfo suggested = loads.GetProperty(
+                "SuggestedValueLists",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "SuggestedValueLists was not found on LoadsComponent.");
+            IList specs = (IList)suggested.GetValue(component)!;
+            if (specs.Count != 0)
+            {
+                throw new InvalidOperationException(
+                    "LoadsComponent must suggest NO value lists: a list " +
+                    "dropped automatically fills Density, and a Density " +
+                    "that is never empty turns every archived point-load " +
+                    "definition into one carrying a self-weight. It " +
+                    $"suggests {specs.Count}.");
+            }
+        }
+        finally
+        {
+            if (component is IDisposable disposable)
+                disposable.Dispose();
+        }
+    }
+
     private static void ValidateLoadsArchiveRoundTrip(Assembly plugin)
     {
         Type loads = plugin.GetType(

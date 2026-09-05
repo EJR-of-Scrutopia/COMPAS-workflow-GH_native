@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Special;
 using Rhino;
 using Rhino.Display;
 using Rhino.Geometry;
@@ -605,6 +606,34 @@ public sealed class LoadsComponent : NativePreviewComponentBase
     // default the ports' own descriptions name.
     private const double DefaultSelfweightInput = 1.0;
 
+    // Where Density sits among the registered inputs.
+    private const int DensityInputIndex = 5;
+
+    /// <summary>
+    /// The materials a value list ATTACHED to Density is filled with, as
+    /// unit weight in kN per cubic metre, which is the model's force unit
+    /// beside its metres.
+    ///
+    /// The first entry is 1.0, the scale-free form-finding density the
+    /// empty port already reads as, and it is the entry the fill selects.
+    /// Attaching a list therefore changes no number until Param picks a
+    /// material.
+    /// </summary>
+    internal static readonly (string Label, double Density)[]
+        DensityMaterials =
+    {
+        ("Unit weight (form-finding)", 1.0),
+        ("Sandstone", 22.0),
+        ("Limestone", 24.0),
+        ("Granite", 26.5),
+        ("Marble", 27.0),
+        ("Brick masonry", 18.5),
+        ("Concrete", 24.0),
+        ("Reinforced concrete", 25.0),
+        ("Rammed earth", 20.0),
+        ("Timber (CLT)", 5.5)
+    };
+
     private readonly List<Line> _previewArrows = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -618,6 +647,7 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             ComponentCategories.Model,
             "load_case")
     {
+        Params.ParameterSourcesChanged += OnParameterSourcesChanged;
     }
 
     public override Guid ComponentGuid =>
@@ -674,7 +704,10 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             "D",
             "Self-weight density per unit volume. Empty reads as 1.0. A " +
             "magnitude, never signed: the Vector says which way the " +
-            "weight acts.",
+            "weight acts. Wire a fresh value list here and it fills itself " +
+            "with masonry, concrete, earth and timber unit weights in kN " +
+            "per cubic metre, the model's force unit beside its metres, " +
+            "starting on 1.0 for scale-free form-finding.",
             GH_ParamAccess.item);
 
         parameters[2].DataMapping = GH_DataMapping.Flatten;
@@ -684,6 +717,119 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         // colour the component orange for being blank.
         parameters[4].Optional = true;
         parameters[5].Optional = true;
+    }
+
+    /// <summary>
+    /// Fills a value list the author WIRES INTO Density, rather than
+    /// dropping one beside the port the way SuggestedValueLists does
+    /// everywhere else in this plugin.
+    ///
+    /// The difference is forced and it is not a stylistic one. Density is
+    /// the port whose EMPTINESS carries meaning: densityGiven in the solve
+    /// is what separates point loads standing alone from point loads with
+    /// a self-weight underneath them, so a list dropped on the canvas
+    /// automatically would silently add a self-weight to every archived
+    /// point-load definition the moment the component was rebuilt. A list
+    /// the author attaches is the author asking for a self-weight, which
+    /// is exactly the signal the port is built to read.
+    ///
+    /// The fill happens once, and only to a list that still carries the
+    /// content Grasshopper gave it when it was dropped. A list whose items
+    /// have been edited is the author's own and is left untouched.
+    /// </summary>
+    private void OnParameterSourcesChanged(
+        object sender,
+        GH_ParamServerEventArgs e)
+    {
+        if (e.ParameterSide != GH_ParameterSide.Input ||
+            e.ParameterIndex != DensityInputIndex)
+        {
+            return;
+        }
+        FillAttachedDensityLists();
+    }
+
+    private void FillAttachedDensityLists()
+    {
+        if (Params.Input.Count <= DensityInputIndex)
+            return;
+
+        bool filled = false;
+        foreach (IGH_Param source in
+            Params.Input[DensityInputIndex].Sources)
+        {
+            if (source is GH_ValueList list && FillDensityValueList(list))
+            {
+                // The sources changed on the CANVAS, never inside a
+                // solution, so expiring here is safe. Expire without
+                // recomputing and let the document schedule the pass, so
+                // the new selection reaches this component's own solve.
+                list.ExpireSolution(false);
+                filled = true;
+            }
+        }
+
+        if (filled)
+            OnPingDocument()?.ScheduleSolution(1);
+    }
+
+    /// <summary>
+    /// Replaces a default-content value list's items with the material
+    /// table and selects the first, returning whether it did. A list that
+    /// no longer carries default content is left exactly as it stands.
+    /// </summary>
+    internal static bool FillDensityValueList(GH_ValueList list)
+    {
+        if (list is null || !CarriesDefaultContent(list))
+            return false;
+
+        list.ListMode = GH_ValueListMode.DropDown;
+        list.ListItems.Clear();
+        foreach ((string label, double density) in DensityMaterials)
+        {
+            list.ListItems.Add(new GH_ValueListItem(
+                label,
+                density.ToString("R", CultureInfo.InvariantCulture)));
+        }
+
+        // Cleared first and then selected, the way the shared placement
+        // does it, because whether SelectItem assigns or toggles cannot be
+        // established here without Rhino running.
+        foreach (GH_ValueListItem item in list.ListItems)
+            item.Selected = false;
+        list.SelectItem(0);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a value list still holds exactly what Grasshopper puts in a
+    /// freshly dropped one. Measured against a pristine instance rather
+    /// than against hard-coded item text, so this cannot start silently
+    /// clobbering edited lists the day Grasshopper changes its defaults.
+    /// </summary>
+    internal static bool CarriesDefaultContent(GH_ValueList list)
+    {
+        if (list is null)
+            return false;
+
+        var pristine = new GH_ValueList();
+        if (list.ListItems.Count != pristine.ListItems.Count)
+            return false;
+        for (int i = 0; i < list.ListItems.Count; i++)
+        {
+            if (!string.Equals(
+                    list.ListItems[i].Name,
+                    pristine.ListItems[i].Name,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    list.ListItems[i].Expression,
+                    pristine.ListItems[i].Expression,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected override void RegisterOutputParams(
