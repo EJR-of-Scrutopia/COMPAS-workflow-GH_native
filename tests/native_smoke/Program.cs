@@ -34376,14 +34376,24 @@ internal static class Program
                 $"cells, closest corners {smallest:0.###e+0} m");
         }
 
-        // THE ONE MEASURED SETTING ON THIS CONTRACT where a removal
-        // mechanism can be seen at all, pinned as a count so the check
-        // cannot pass merely because the engines never make a duplicate.
-        // Narrow Dedupe's whole-ring per-axis plan test from 1e-6 to
-        // 1e-12 and the hexagonal engine gives 1048 here instead of 1046,
-        // two cells carrying four plan-coincident corner pairs between
-        // them. Neutering the weld leaves it at 1046, which is how this
-        // check knows which mechanism it is watching.
+        // THE ONE MEASURED SETTING ON THIS CONTRACT, pinned as a count so
+        // the check cannot pass merely because the engines never make a
+        // duplicate.
+        //
+        // WHAT THIS PIN USED TO WATCH AND NO LONGER DOES, re-measured
+        // 2026-09-05 and corrected rather than left standing. Until this
+        // wave, narrowing Dedupe's whole-ring per-axis plan test from 1e-6
+        // to 1e-12 gave the hexagonal engine 1054 cells here instead of
+        // 1052, two extra carrying four plan-coincident corner pairs
+        // between them, and that pair of numbers was the mechanism the pin
+        // named. IT IS GONE. Driven again with the weld narrowed to 1e-12
+        // and the two corner-pair assertions above silenced so the count
+        // could be read at all, the hexagonal engine emits 1009, the SAME
+        // count as with the weld at 1e-6: rule 2.2's blended field moved
+        // every row near the crown and the two cells whose corners were
+        // coincident to within 1e-6 in plan are no longer among them. So
+        // the pin is a pin on the COUNT alone now, and the sentence saying
+        // otherwise is withdrawn rather than reworded around.
         object planSensitive = hexagonal.Invoke(
             null, new object[] { net, 0.10, 0.30 })!;
         int planSensitiveCells = SkinCells(planSensitive).Length;
@@ -34391,20 +34401,18 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "The hexagonal engine on Param's own net at S 0.10 and " +
-                "CH 0.30 emits 1009 cells. With the whole-ring per-axis " +
-                "plan test narrowed to 1e-12 it emits 1011, the two " +
-                "extra carrying four plan-coincident corner pairs, which " +
-                "is the studio's own defect. RE-MEASURED 2026-09-05 from " +
-                "1052 and 1054, for the seam-flow wave: the honeycomb " +
-                "reads the same beds the courses pattern does, and rule " +
-                "2.2's blended field lowers the ridge along the meeting " +
-                "line by R / 4, so every row near the crown moved and the " +
-                "lattice lost cells with it. Before that it was " +
-                "re-measured 2026-09-03 from 1046 and 1048, for the " +
-                "whole-branch review's finding 13. The MECHANISM this pin " +
-                "watches is unchanged across both: narrowing the plan " +
-                "test still lets exactly two more cells through carrying " +
-                "four plan-coincident pairs between them. Got " +
+                "CH 0.30 emits 1009 cells. RE-MEASURED 2026-09-05 from " +
+                "1052, for the seam-flow wave: the honeycomb reads the " +
+                "same beds the courses pattern does, and rule 2.2's " +
+                "blended field lowers the ridge along the meeting line by " +
+                "R / 4, so every row near the crown moved and the lattice " +
+                "lost cells with it. Before that it was re-measured " +
+                "2026-09-03 from 1046, for the whole-branch review's " +
+                "finding 13. THE MECHANISM THIS PIN USED TO WATCH IS GONE " +
+                "and the claim is withdrawn: narrowing the whole-ring " +
+                "per-axis plan test to 1e-12 gave 1054 against 1052 " +
+                "before this wave and gives 1009 against 1009 after it, " +
+                "measured. Got " +
                 $"{planSensitiveCells}.");
         }
 
