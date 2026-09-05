@@ -6172,9 +6172,11 @@ const INFLATE_SECONDS = 3;
 // this: "at the end of the animation when the form work drops away, can we
 // continue the rotation one more time so we look at the final form".
 //
-// One revolution at the spin rate in force, floored so a still camera still
-// pauses on the result, and capped so a very slow spin does not quietly add
-// a minute to every take and every recording.
+// HALF a revolution at the spin rate in force (Param: "change the
+// animation rotation at the end to just a half rotation instead of a
+// full when finished"), floored so a still camera still pauses on the
+// result, and capped so a very slow spin does not quietly add a minute
+// to every take and every recording.
 const ADMIRE_MIN_SECONDS = 4;
 const ADMIRE_MAX_SECONDS = 40;
 
@@ -6182,7 +6184,7 @@ function admireSeconds() {
   const spin = state.timeline ? state.timeline.orbitSpeed : 0;
   if (!(spin > 0)) return ADMIRE_MIN_SECONDS;
   return Math.min(ADMIRE_MAX_SECONDS,
-    Math.max(ADMIRE_MIN_SECONDS, (2 * Math.PI) / spin));
+    Math.max(ADMIRE_MIN_SECONDS, Math.PI / spin));
 }
 
 function timelineDuration() {

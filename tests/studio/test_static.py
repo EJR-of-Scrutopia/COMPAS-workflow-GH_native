@@ -2650,7 +2650,10 @@ def test_the_take_ends_on_the_vault_not_on_the_strike():
     duration = _function_body(js, "timelineDuration")
     assert "admireSeconds()" in duration
     admire = _function_body(js, "admireSeconds")
-    assert "(2 * Math.PI) / spin" in admire
+    # Re-pinned 2026-09-05 on Param's word: "just a half rotation
+    # instead of a full when finished".
+    assert "Math.PI / spin" in admire
+    assert "(2 * Math.PI) / spin" not in admire
     assert "ADMIRE_MIN_SECONDS" in admire and "ADMIRE_MAX_SECONDS" in admire
     # The strike itself is unchanged: it still clamps at 1, so the tail
     # holds the struck state rather than replaying it.
