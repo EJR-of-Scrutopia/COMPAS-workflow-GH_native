@@ -1197,6 +1197,44 @@ internal static class Program
 
         try
         {
+            ValidateSkinBlendedField(plugin);
+            Console.WriteLine(
+                "PASS  Skin blended field (spec 2026-09-05 section 2): the " +
+                "marching carries the SECOND-nearest family's arrival " +
+                "beside the first, and d2 is checked twice, once against " +
+                "the shipped marching run per family on that family's own " +
+                "seeds, exactly, and once against a per-family DIJKSTRA " +
+                "the harness walks itself, which it may never exceed and " +
+                "which it undercuts by no more than the triangle update " +
+                "can cut a corner. The field is then the QUADRATIC SOFT " +
+                "MINIMUM of the two inside a blend zone of one Course " +
+                "Height and the min outside it, with all four of rule " +
+                "2.3's properties asserted: SYMMETRIC in its two arrivals " +
+                "to the last bit over a grid of arguments; C1 across the " +
+                "old crease, the one-sided slopes agreeing where the min's " +
+                "differ by one whole unit; the gradient never above the " +
+                "raw field's own maximum and never below a measured floor " +
+                "inside the zone; and EXACTLY the min outside it, proved " +
+                "on the BITS by SHA-256 over the field's own bytes at R = " +
+                "0 and over every vertex beyond the zone at R = one Course " +
+                "Height. THE CONSEQUENCE IS MEASURED AND IT IS SMALLER THAN " +
+                "THE WAVE EXPECTED: what turns a bed hard at a meeting is " +
+                "the MERGE and not the crease, so the blend, which lowers " +
+                "the merge by exactly R / 4 and is checked on that, buys " +
+                "three to five degrees of the hundred and forty a bed turns " +
+                "just above it. Measured at matched offsets above each " +
+                "field's OWN merge, all sixteen numbers pinned, and better " +
+                "on both settings at the two offsets where the two profiles " +
+                "are aligned.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin blended field: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -23100,6 +23138,840 @@ internal static class Program
                     $"seam curve in plan; got {crossings}.");
             }
         }
+    }
+
+    /// <summary>
+    /// SPEC 2026-09-05 SECTION 2, ON PARAM'S OWN CROWN ARCH, the only net in
+    /// this harness anchored on TWO springings and therefore the only one
+    /// with a second family to arrive at all.
+    ///
+    /// A. THE BEST-TWO MARCHING (rule 2.1), twice over. Once EXACTLY, against
+    ///    the shipped marching re-run per family with the rim cut down to
+    ///    that family's own seeds, which is what d2 is defined to be. Once
+    ///    INDEPENDENTLY, against a Dijkstra the harness walks itself over the
+    ///    net's own edges from the second family's seeds: the fast marching's
+    ///    triangle update can cut a corner an edge walk cannot, so d2 may
+    ///    never EXCEED the graph distance and the fraction by which it
+    ///    undercuts it is pinned. That second one is what would catch d2
+    ///    holding the wrong family, or the same family twice, or d1 copied.
+    ///
+    /// B. THE BLEND (rules 2.2 and 2.3), all four properties.
+    ///
+    /// C. THE CONSEQUENCE (rule 2.4): the chevron. The turn a traced bed
+    ///    makes where it crosses the seam curve, worst over the whole ladder,
+    ///    before and after.
+    /// </summary>
+    private static void ValidateSkinBlendedField(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo seamCurves = RequirePublicStatic(patterns, "SeamCurves");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo blended = RequirePublicStatic(
+            patterns, "Blended", netType, typeof(double));
+        MethodInfo withRadius = RequirePublicStatic(
+            patterns, "WithBlendRadius", netType, typeof(double));
+        MethodInfo softMinimum = RequirePublicStatic(
+            patterns, "SoftMinimum",
+            typeof(double), typeof(double), typeof(double));
+        MethodInfo marching = RequirePublicStatic(
+            patterns, "RimDistanceFieldWithSeeds");
+
+        string path = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object crown = readNet.Invoke(
+                null,
+                new object?[]
+                {
+                    DeserializeContract(
+                        plugin, resultType, File.ReadAllText(path))
+                })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so every claim below would hold vacuously.");
+
+        double[][] vertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!.GetValue(crown)!)
+            .Cast<double[]>().ToArray();
+        int[][] faces = ((IEnumerable)netType
+                .GetProperty("Faces")!.GetValue(crown)!)
+            .Cast<int[]>().ToArray();
+        int[] rim = ((IEnumerable)netType
+                .GetProperty("Rim")!.GetValue(crown)!)
+            .Cast<int>().ToArray();
+        double[] d1 = ((IEnumerable)netType
+                .GetProperty("RawLevels")!.GetValue(crown)!)
+            .Cast<double>().ToArray();
+        double[] d2 = ((IEnumerable)netType
+                .GetProperty("SecondLevels")!.GetValue(crown)!)
+            .Cast<double>().ToArray();
+        int[] g1 = ((IEnumerable)netType
+                .GetProperty("SeedGroups")!.GetValue(crown)!)
+            .Cast<int>().ToArray();
+        int[] g2 = ((IEnumerable)netType
+                .GetProperty("SecondSeedGroups")!.GetValue(crown)!)
+            .Cast<int>().ToArray();
+
+        // ---- A(a). THE SHAPE OF THE ANSWER. Two families, every reachable
+        // vertex carrying a second arrival, and that arrival's family never
+        // the one that got there first.
+        int[] families = g1.Where(group => group >= 0).Distinct()
+            .OrderBy(group => group).ToArray();
+        if (families.Length != 2)
+        {
+            throw new InvalidOperationException(
+                "Param's crown arch springs from TWO anchor lines, so rule " +
+                "2.1's second arrival has exactly one family to come from; " +
+                $"the marching found {families.Length}.");
+        }
+        int missing = 0;
+        int sameFamily = 0;
+        for (int at = 0; at < d1.Length; at++)
+        {
+            if (!double.IsFinite(d1[at]))
+                continue;
+            if (!double.IsFinite(d2[at]) || g2[at] < 0)
+                missing++;
+            else if (g2[at] == g1[at])
+                sameFamily++;
+        }
+        if (missing != 0 || sameFamily != 0)
+        {
+            throw new InvalidOperationException(
+                "Every vertex the first front reached is reachable from the " +
+                "other springing too, so it carries a SECOND FAMILY'S " +
+                $"arrival and that family is not its own; {missing} carry " +
+                $"no second arrival and {sameFamily} name their own family.");
+        }
+
+        // ---- A(b). THE EXACT CROSS-CHECK. d2 is the smallest per-family
+        // arrival over the families that are not g1, and the per-family
+        // arrivals are the SHIPPED marching run on that family's seeds. No
+        // tolerance: this is a definition, not a measurement.
+        var perFamily = new Dictionary<int, double[]>();
+        foreach (int family in families)
+        {
+            int[] own = rim
+                .Where(seed => seed >= 0 && seed < g1.Length &&
+                               g1[seed] == family && d1[seed] == 0.0)
+                .ToArray();
+            object answer = marching.Invoke(
+                null, new object[] { vertices, faces, own })!;
+            perFamily[family] = ((IEnumerable)answer.GetType()
+                    .GetField("Item1")!.GetValue(answer)!)
+                .Cast<double>().ToArray();
+        }
+        int wrongValue = 0;
+        int wrongFamily = 0;
+        double worstValueGap = 0.0;
+        for (int at = 0; at < d2.Length; at++)
+        {
+            double best = double.PositiveInfinity;
+            int bestFamily = -1;
+            foreach (int family in families)
+            {
+                if (family == g1[at])
+                    continue;
+                if (perFamily[family][at] < best)
+                {
+                    best = perFamily[family][at];
+                    bestFamily = family;
+                }
+            }
+            if (!double.IsFinite(best) && !double.IsFinite(d2[at]))
+                continue;
+            if (best != d2[at])
+            {
+                wrongValue++;
+                worstValueGap =
+                    Math.Max(worstValueGap, Math.Abs(best - d2[at]));
+            }
+            if (bestFamily != g2[at])
+                wrongFamily++;
+        }
+        if (wrongValue != 0 || wrongFamily != 0)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.1's d2 IS the smallest arrival of a family other " +
+                "than the one that got there first, so it must equal the " +
+                "shipped marching run on that family's own seeds EXACTLY; " +
+                $"{wrongValue} vertices of {d2.Length} disagree, worst by " +
+                $"{worstValueGap:E3} m, and {wrongFamily} name a different " +
+                "family.");
+        }
+
+        // ---- A(c). THE INDEPENDENT DIJKSTRA. Walked here, over the net's
+        // own edges, from the second family's seeds. The fast marching
+        // solves a triangle and can therefore cut across a face where an
+        // edge walk must go round, so d2 is at most the graph distance and
+        // no more than a measured fraction under it.
+        var edges = new Dictionary<int, List<(int To, double Cost)>>();
+        foreach (int[] face in faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                double cost = Distance3(vertices[a], vertices[b]);
+                if (!edges.TryGetValue(a, out List<(int, double)>? here))
+                    edges[a] = here = new List<(int, double)>();
+                here.Add((b, cost));
+                if (!edges.TryGetValue(b, out List<(int, double)>? there))
+                    edges[b] = there = new List<(int, double)>();
+                there.Add((a, cost));
+            }
+        }
+        var graph = new Dictionary<int, double[]>();
+        foreach (int family in families)
+        {
+            var walked = new double[vertices.Length];
+            for (int at = 0; at < walked.Length; at++)
+                walked[at] = double.PositiveInfinity;
+            var queue = new SortedSet<(double Cost, int At)>();
+            foreach (int seed in rim)
+            {
+                if (seed < 0 || seed >= walked.Length || g1[seed] != family)
+                    continue;
+                if (d1[seed] != 0.0)
+                    continue;
+                walked[seed] = 0.0;
+                queue.Add((0.0, seed));
+            }
+            while (queue.Count > 0)
+            {
+                (double Cost, int At) top = queue.Min;
+                queue.Remove(top);
+                if (top.Cost > walked[top.At])
+                    continue;
+                if (!edges.TryGetValue(
+                        top.At, out List<(int To, double Cost)>? links))
+                {
+                    continue;
+                }
+                foreach ((int to, double cost) in links)
+                {
+                    double offer = top.Cost + cost;
+                    if (offer < walked[to] - 1.0e-15)
+                    {
+                        walked[to] = offer;
+                        queue.Add((offer, to));
+                    }
+                }
+            }
+            graph[family] = walked;
+        }
+        int aboveGraph = 0;
+        double worstAbove = 0.0;
+        double worstUnder = 0.0;
+        int measured = 0;
+        for (int at = 0; at < d2.Length; at++)
+        {
+            if (g2[at] < 0 || !double.IsFinite(d2[at]))
+                continue;
+            double walked = graph[g2[at]][at];
+            if (!double.IsFinite(walked) || !(walked > 0.0))
+                continue;
+            measured++;
+            if (d2[at] > walked + 1.0e-9)
+            {
+                aboveGraph++;
+                worstAbove = Math.Max(worstAbove, d2[at] - walked);
+            }
+            worstUnder = Math.Max(worstUnder, (walked - d2[at]) / walked);
+        }
+        if (measured < 400)
+        {
+            throw new InvalidOperationException(
+                "The Dijkstra cross-check must reach nearly every vertex of " +
+                "this 441-vertex net, or it answers for nothing; it reached " +
+                $"{measured}.");
+        }
+        if (aboveGraph != 0)
+        {
+            throw new InvalidOperationException(
+                "A fast-marching arrival can only be shorter than the walk " +
+                "along the edges, never longer, so rule 2.1's d2 is bounded " +
+                "above by a per-family Dijkstra from the SAME family's " +
+                $"seeds; {aboveGraph} vertices exceed it, worst by " +
+                $"{worstAbove:E3} m.");
+        }
+        if (Math.Abs(worstUnder - DijkstraShortfallPinned) > 5.0e-4)
+        {
+            throw new InvalidOperationException(
+                "And it undercuts that walk by the width of the triangle " +
+                "update's own corner-cutting and no more, pinned at " +
+                $"{DijkstraShortfallPinned:P2} over " +
+                $"{measured} vertices; it reads {worstUnder:P2}. A d2 that " +
+                "had gone to the wrong family, or copied d1, would move " +
+                "this number rather than break the bound above it.");
+        }
+
+        // ---- A(d). d2 IS NEVER BELOW d1, which is what lets rule 2.2's
+        // Math.Min hand back d1's own bits outside the zone.
+        int inverted = 0;
+        double worstInversion = 0.0;
+        for (int at = 0; at < d1.Length; at++)
+        {
+            if (!double.IsFinite(d1[at]) || !double.IsFinite(d2[at]))
+                continue;
+            if (d2[at] < d1[at])
+            {
+                worstInversion = Math.Max(worstInversion, d1[at] - d2[at]);
+                if (d1[at] - d2[at] > 1.0e-9)
+                    inverted++;
+            }
+        }
+        if (inverted != 0)
+        {
+            throw new InvalidOperationException(
+                "The NEAREST family's arrival is never further than the " +
+                "second's by anything but the last bits of the arithmetic, " +
+                "which is what makes Math.Min hand back d1 unchanged " +
+                $"outside the blend zone; {inverted} vertices invert by " +
+                $"more than a nanometre, worst {worstInversion:E3} m.");
+        }
+
+        // ---- B(a). SYMMETRY, over a grid of arguments and to the LAST BIT,
+        // together with rule 2.3's fourth property, the exact reduction.
+        double[] samples =
+        {
+            0.0, 1.0e-9, 0.01, 0.1, 0.25, 0.3, 0.5, 1.0, 2.5, 9.5, 100.0
+        };
+        double[] radii = { 0.0, 1.0e-6, 0.05, 0.3, 0.375, 1.0 };
+        int asymmetric = 0;
+        int notReduced = 0;
+        int compared = 0;
+        foreach (double radius in radii)
+        {
+            foreach (double first in samples)
+            {
+                foreach (double second in samples)
+                {
+                    double one = (double)softMinimum.Invoke(
+                        null, new object[] { first, second, radius })!;
+                    double other = (double)softMinimum.Invoke(
+                        null, new object[] { second, first, radius })!;
+                    compared++;
+                    // Symmetry is asserted where the blend is ON. At R = 0
+                    // the function IS the identity on its first argument, by
+                    // rule 2.2's mandatory OFF, so swapping is not a
+                    // symmetry claim there and asserting it would assert the
+                    // opposite of the rule.
+                    if (radius > 0.0 &&
+                        BitConverter.DoubleToInt64Bits(one) !=
+                        BitConverter.DoubleToInt64Bits(other))
+                    {
+                        asymmetric++;
+                    }
+                    if (radius > 0.0 &&
+                        Math.Abs(first - second) >= radius &&
+                        BitConverter.DoubleToInt64Bits(one) !=
+                        BitConverter.DoubleToInt64Bits(
+                            Math.Min(first, second)))
+                    {
+                        notReduced++;
+                    }
+                }
+            }
+        }
+        if (compared < 300 || asymmetric != 0 || notReduced != 0)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.3's first and fourth properties, over " +
+                $"{compared} argument triples: the blend is SYMMETRIC in " +
+                "its two arrivals, so both families give way equally, and " +
+                "it reduces EXACTLY to the minimum where they stand a full " +
+                $"radius apart. {asymmetric} triples are asymmetric and " +
+                $"{notReduced} do not reduce, both measured on the BITS.");
+        }
+
+        // ---- B(b). C1 ACROSS THE OLD CREASE, which is the property the
+        // whole wave exists for: a contour crossing the meeting line must
+        // not turn a corner. Measured as the one-sided slopes of
+        // s -> F(m + s, m - s) at s = 0, against the same slopes of the MIN
+        // it replaces, so the check says what the blend BUYS and could not
+        // pass on a function that had not changed.
+        const double Middle = 5.0;
+        const double Radius = 0.30;
+        const double Step = 1.0e-7;
+        double Blend(double s) => (double)softMinimum.Invoke(
+            null, new object[] { Middle + s, Middle - s, Radius })!;
+        double blendRight = (Blend(Step) - Blend(0.0)) / Step;
+        double blendLeft = (Blend(0.0) - Blend(-Step)) / Step;
+        double minRight =
+            (Math.Min(Middle + Step, Middle - Step) - Middle) / Step;
+        double minLeft =
+            (Middle - Math.Min(Middle - Step, Middle + Step)) / Step;
+        if (Math.Abs(blendRight - blendLeft) > 1.0e-4)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.3's second property: the blend is C1 across the old " +
+                "crease, so the one-sided slopes of F(m + s, m - s) at " +
+                $"s = 0 agree; they read {blendRight:F6} and " +
+                $"{blendLeft:F6}.");
+        }
+        if (Math.Abs(minRight - minLeft) < 1.9)
+        {
+            throw new InvalidOperationException(
+                "And the MINIMUM it replaces is not, which is what makes " +
+                "the assertion above worth making: its own one-sided slopes " +
+                $"read {minRight:F6} and {minLeft:F6} and must differ by " +
+                "the whole unit that IS the crease.");
+        }
+
+        // ---- B(c). THE BITS, AT R = 0 AND BEYOND THE ZONE (rule 2.2). The
+        // field is dumped to bytes and hashed, which is the only way to say
+        // "bit for bit" and be believed: a tolerance of any size would pass
+        // a field that had moved.
+        object atZero = blended.Invoke(
+            null,
+            new object[]
+            {
+                withRadius.Invoke(null, new object[] { crown, 0.0 })!, 0.30
+            })!;
+        double[] zeroField = ((IEnumerable)netType
+                .GetProperty("Levels")!.GetValue(atZero)!)
+            .Cast<double>().ToArray();
+        if (!string.Equals(
+                FieldDigest(zeroField, null),
+                FieldDigest(d1, null),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Rule 2.2's mandatory OFF: at R = 0 the field is the " +
+                "shipped one BIT FOR BIT, and the two SHA-256 digests of " +
+                $"their own bytes disagree: {FieldDigest(zeroField, null)} " +
+                $"against {FieldDigest(d1, null)}.");
+        }
+        object atCourse = blended.Invoke(
+            null, new object[] { crown, 0.30 })!;
+        double[] blendedField = ((IEnumerable)netType
+                .GetProperty("Levels")!.GetValue(atCourse)!)
+            .Cast<double>().ToArray();
+        var outside = new List<int>();
+        var inside = new List<int>();
+        for (int at = 0; at < d1.Length; at++)
+        {
+            if (!double.IsFinite(d1[at]))
+                continue;
+            if (double.IsFinite(d2[at]) && d2[at] - d1[at] < 0.30)
+                inside.Add(at);
+            else
+                outside.Add(at);
+        }
+        if (inside.Count < 20 || outside.Count < 200)
+        {
+            throw new InvalidOperationException(
+                "The blend zone must hold enough of this net for either " +
+                "half of rule 2.2 to mean anything: " +
+                $"{inside.Count} vertices inside the zone and " +
+                $"{outside.Count} beyond it.");
+        }
+        if (!string.Equals(
+                FieldDigest(blendedField, outside),
+                FieldDigest(d1, outside),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Rule 2.2: where d2 - d1 is at least R the field equals d1 " +
+                "TO THE LAST BIT, which is what leaves everything away from " +
+                $"a seam untouched. Over the {outside.Count} vertices " +
+                "beyond the zone the two SHA-256 digests disagree: " +
+                $"{FieldDigest(blendedField, outside)} against " +
+                $"{FieldDigest(d1, outside)}.");
+        }
+        int movedInside = 0;
+        double deepest = 0.0;
+        foreach (int at in inside)
+        {
+            if (blendedField[at] != d1[at])
+                movedInside++;
+            deepest = Math.Max(deepest, d1[at] - blendedField[at]);
+        }
+        if (movedInside < inside.Count / 2 ||
+            Math.Abs(deepest - (0.30 / 4.0)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "And INSIDE the zone it moves, or the digest above is a " +
+                "statement about a function that does nothing: " +
+                $"{movedInside} of {inside.Count} moved and the deepest " +
+                $"the field is drawn down is {deepest:F9} m, which rule " +
+                "2.3's own arithmetic puts at R / 4 exactly, 0.075 m.");
+        }
+
+        // ---- B(d). THE GRADIENT (rule 2.3's third property), per face, on
+        // the piecewise-linear interpolant the tracer itself cuts. The upper
+        // bound is stated against the RAW field's own maximum rather than
+        // against 1: the raw field is a discrete approximation of a geodesic
+        // distance and its own interpolant already overshoots unit slope on
+        // this mesh, so "never above 1" is a statement about the continuous
+        // field and this is the measurable form of it.
+        double rawMax = 0.0;
+        double blendMax = 0.0;
+        double zoneFloor = double.PositiveInfinity;
+        var insideSet = new HashSet<int>(inside);
+        foreach (int[] face in faces)
+        {
+            double raw = FaceGradient(vertices, face, d1);
+            double blend = FaceGradient(vertices, face, blendedField);
+            if (double.IsFinite(raw))
+                rawMax = Math.Max(rawMax, raw);
+            if (!double.IsFinite(blend))
+                continue;
+            blendMax = Math.Max(blendMax, blend);
+            bool touchesZone = false;
+            foreach (int corner in face)
+            {
+                if (insideSet.Contains(corner))
+                    touchesZone = true;
+            }
+            if (touchesZone)
+                zoneFloor = Math.Min(zoneFloor, blend);
+        }
+        if (blendMax > rawMax + 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.3's third property, the upper half: the blend is a " +
+                "convex combination of the two arrivals' own gradients, so " +
+                "its magnitude can never exceed theirs. The raw field's own " +
+                $"worst face gradient is {rawMax:F6} and the blended " +
+                $"field's is {blendMax:F6}.");
+        }
+        if (Math.Abs(zoneFloor - ZoneGradientFloorPinned) > 5.0e-4)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.3's third property, the lower half, which is a " +
+                "MEASUREMENT and not a constant. A C1 smoothing of two " +
+                "fronts meeting head on must have a stationary crest, so " +
+                "the floor inside the zone is whatever the mesh reads on " +
+                "the face that holds the crest and not some chosen number. " +
+                $"Pinned at {ZoneGradientFloorPinned:F6}; it reads " +
+                $"{zoneFloor:F6}, against a raw-field maximum of " +
+                $"{rawMax:F6} and a blended maximum of {blendMax:F6}.");
+        }
+
+        // ---- C. THE CHEVRON (rule 2.4), MATCHED TO EACH FIELD'S OWN
+        // MERGE, and the reason that qualification is there is the largest
+        // finding of this wave.
+        //
+        // WHAT WAS EXPECTED AND WHAT WAS MEASURED. The expectation was that
+        // removing the crease would take the turn out of the beds crossing
+        // the meeting line. It does not, and the first form of this check
+        // said so loudly: the raw min field's worst turn at the seam read
+        // 130.8 degrees and the blended field's read 148.1, which looks like
+        // a regression and is not one. Driven level by level in steps of
+        // 0.025 m through the same tracer, the two profiles are the SAME
+        // CURVE SHIFTED DOWN BY R / 4: the turn is small below the merge,
+        // spikes to about 150 degrees at the level where two strips become
+        // one loop, and decays above it. What turns a bed hard at a meeting
+        // is the MERGE, the level set changing topology, and no smoothing of
+        // the field removes that: the loop that has just closed has a WAIST
+        // at the meeting point whatever the field is. The blend lowers the
+        // merge by exactly R / 4, so a ladder of fixed levels catches the
+        // two fields at different points of one profile and compares
+        // nothing.
+        //
+        // SO THE COMPARISON IS MADE AT MATCHED OFFSETS above each field's
+        // OWN merge level, which is found here by walking the level set's
+        // component count. THE CREASE ITSELF IS PROVED GONE ELSEWHERE, on
+        // the field rather than on a bed: B(b) above measures the one-sided
+        // slopes across the meeting line and they agree where the min's
+        // differ by a whole unit. That is rule 2.3's C1 property, it is
+        // exact, and it is the claim the wave rests on; this block is rule
+        // 2.4's honest reading of what that buys a traced bed near a merge.
+        double[][][] seams = ((IEnumerable)seamCurves.Invoke(
+                null, new object[] { crown })!)
+            .Cast<double[][]>().ToArray();
+        double meanEdge = MeanEdgeLength(vertices, faces);
+        object creased = withRadius.Invoke(
+            null, new object[] { crown, 0.0 })!;
+        foreach ((double CourseHeight, double[] Crease, double[] Smooth)
+                 setting in SeamTurnsPinned)
+        {
+            object smoothNet = blended.Invoke(
+                null, new object[] { crown, setting.CourseHeight })!;
+            double creaseMerge = MergeLevel(
+                traceAll, creased, netType, setting.CourseHeight);
+            double smoothMerge = MergeLevel(
+                traceAll, smoothNet, netType, setting.CourseHeight);
+            if (!(creaseMerge > 0.0) || !(smoothMerge > 0.0) ||
+                Math.Abs((creaseMerge - smoothMerge) -
+                         (setting.CourseHeight / 4.0)) > 0.01)
+            {
+                throw new InvalidOperationException(
+                    "The blend lowers the meeting line's own ridge by R / 4 " +
+                    "and therefore lowers the MERGE by the same, which is " +
+                    "what makes a fixed ladder compare two different points " +
+                    $"of one profile. At CH {setting.CourseHeight} the min " +
+                    $"field merges at {creaseMerge:F4} and the blended " +
+                    $"field at {smoothMerge:F4}, a fall of " +
+                    $"{creaseMerge - smoothMerge:F4} against the " +
+                    $"{setting.CourseHeight / 4.0:F4} rule 2.3 predicts.");
+            }
+            for (int step = 1; step <= 4; step++)
+            {
+                double offset = step * setting.CourseHeight / 8.0;
+                double crease = SeamTurnExcess(
+                    traceAll, creased, netType, seams,
+                    creaseMerge + offset, meanEdge / 2.0);
+                double smooth = SeamTurnExcess(
+                    traceAll, smoothNet, netType, seams,
+                    smoothMerge + offset, meanEdge / 2.0);
+                if (Math.Abs(crease - setting.Crease[step - 1]) > 0.5 ||
+                    Math.Abs(smooth - setting.Smooth[step - 1]) > 0.5)
+                {
+                    throw new InvalidOperationException(
+                        $"Rule 2.4's chevron at CH {setting.CourseHeight}, " +
+                        $"{offset:F4} m above each field's own merge: the " +
+                        "min field's beds turn " +
+                        $"{setting.Crease[step - 1]:F2} degrees more at the " +
+                        "meeting line than they turn elsewhere on " +
+                        "themselves and the blended field's turn " +
+                        $"{setting.Smooth[step - 1]:F2}; they read " +
+                        $"{crease:F2} and {smooth:F2}.");
+                }
+                // THE IMPROVEMENT IS ASSERTED ON THE TWO OFFSETS NEAREST
+                // THE MERGE and pinned as a measurement on the other two,
+                // and the reason is measured rather than chosen. The excess
+                // profile is a STAIRCASE in the level: it holds one value
+                // over a run of levels, drops, holds again. Matching the
+                // merge aligns the two staircases at their first step and
+                // nowhere else, so at three and four eighths of a Course
+                // Height above it the two fields are being read on
+                // different treads and the comparison stops meaning
+                // anything: at CH 0.30 the min field has already dropped to
+                // 51.03 where the blended field still holds 56.31. Both
+                // numbers are pinned so neither can move unseen.
+                if (step <= 2 && !(smooth < crease))
+                {
+                    throw new InvalidOperationException(
+                        "And the blended field must turn LESS at the two " +
+                        "offsets nearest the merge, which is where the two " +
+                        $"staircases are aligned; at CH {setting.CourseHeight} " +
+                        $"and {offset:F4} m above the merge it turns " +
+                        $"{smooth:F2} degrees against the min field's " +
+                        $"{crease:F2}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE LEVEL AT WHICH THE LEVEL SET MERGES: the lowest level, walked up
+    /// from the field's own minimum in steps of a sixty-fourth of a Course
+    /// Height, at which the traced component count is LOWER than it was one
+    /// step below. Zero where no such level is found.
+    ///
+    /// It is found rather than assumed because the blend MOVES it, by R / 4
+    /// exactly, and every comparison of a bed's turn before and after has to
+    /// be taken at the same place relative to it or it compares two
+    /// different points of one profile.
+    /// </summary>
+    private static double MergeLevel(
+        MethodInfo traceAll,
+        object net,
+        Type netType,
+        double courseHeight)
+    {
+        double[] field = ((IEnumerable)netType
+                .GetProperty("Levels")!.GetValue(net)!)
+            .Cast<double>().ToArray();
+        double low = double.PositiveInfinity;
+        double high = double.NegativeInfinity;
+        foreach (double value in field)
+        {
+            if (!double.IsFinite(value))
+                continue;
+            low = Math.Min(low, value);
+            high = Math.Max(high, value);
+        }
+        double step = courseHeight / 64.0;
+        int previous = -1;
+        for (double at = low + step; at < high - step; at += step)
+        {
+            int count = TracedLevel(traceAll, net, at).Length;
+            if (previous > 0 && count > 0 && count < previous)
+                return at - step;
+            if (count > 0)
+                previous = count;
+        }
+        return 0.0;
+    }
+
+    /// <summary>The fraction by which rule 2.1's d2 undercuts the harness's
+    /// own per-family Dijkstra over the net's edges, worst over Param's
+    /// crown arch: the width of the triangle update's corner-cutting, and
+    /// the number a d2 pointed at the wrong family would move.</summary>
+    private const double DijkstraShortfallPinned = 0.0440;
+
+    /// <summary>Rule 2.3's gradient FLOOR inside the blend zone, measured on
+    /// the piecewise-linear interpolant per face and not chosen: a C1
+    /// smoothing of two fronts meeting head on has a stationary crest across
+    /// the meeting line, so what is left on the crest face is the field's
+    /// own variation ALONG the seam.</summary>
+    private const double ZoneGradientFloorPinned = 0.9083;
+
+    /// <summary>Rule 2.4's chevron, per Course Height: the excess turn in
+    /// degrees at one, two, three and four eighths of a Course Height above
+    /// each field's OWN merge level, with the blend off and with it at one
+    /// Course Height.</summary>
+    private static readonly
+        (double CourseHeight, double[] Crease, double[] Smooth)[]
+        SeamTurnsPinned =
+        {
+            (0.30,
+                new[] { 140.01, 130.78, 130.86, 51.03 },
+                new[] { 136.46, 126.36, 126.45, 56.31 }),
+            (0.375,
+                new[] { 140.01, 130.82, 56.05, 51.03 },
+                new[] { 135.45, 125.16, 57.79, 57.79 })
+        };
+
+    /// <summary>The magnitude of the gradient of the piecewise-linear
+    /// interpolant of a vertex field over one triangle, which is the field
+    /// the tracer cuts and therefore the only gradient that means anything
+    /// here. Not-a-number where the triangle is degenerate or a corner
+    /// carries no finite value.</summary>
+    private static double FaceGradient(
+        double[][] vertices,
+        int[] face,
+        double[] field)
+    {
+        if (face.Length != 3)
+            return double.NaN;
+        double[] a = vertices[face[0]];
+        double[] b = vertices[face[1]];
+        double[] c = vertices[face[2]];
+        if (!double.IsFinite(field[face[0]]) ||
+            !double.IsFinite(field[face[1]]) ||
+            !double.IsFinite(field[face[2]]))
+        {
+            return double.NaN;
+        }
+        double[] u = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+        double[] v = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+        double uu = (u[0] * u[0]) + (u[1] * u[1]) + (u[2] * u[2]);
+        double vv = (v[0] * v[0]) + (v[1] * v[1]) + (v[2] * v[2]);
+        double uv = (u[0] * v[0]) + (u[1] * v[1]) + (u[2] * v[2]);
+        double determinant = (uu * vv) - (uv * uv);
+        if (!(Math.Abs(determinant) > 1.0e-18))
+            return double.NaN;
+        double fu = field[face[1]] - field[face[0]];
+        double fv = field[face[2]] - field[face[0]];
+        // The gradient in the (u, v) basis, then its length through the
+        // metric: |grad|^2 = [fu fv] G^-1 [fu fv]^T with G the Gram matrix.
+        double squared =
+            ((vv * fu * fu) - (2.0 * uv * fu * fv) + (uu * fv * fv)) /
+            determinant;
+        return squared > 0.0 ? Math.Sqrt(squared) : 0.0;
+    }
+
+    /// <summary>
+    /// THE CHEVRON, MEASURED (spec 2026-09-05 rule 2.4): the worst EXCESS
+    /// turn, in degrees, that any traced bed of a net's own course ladder
+    /// makes where it crosses the seam, over the turn that same bed makes
+    /// everywhere else.
+    ///
+    /// THE EXCESS AND NOT THE TURN, and the reason is a measurement that the
+    /// first form of this check could not survive. A bed near the crest of a
+    /// ridge is a small closed loop and turns hard at every point of itself,
+    /// crease or no crease; the raw min field read 137.6 degrees at the
+    /// meeting line and the blended field read 153.8, and the second number
+    /// is not a worse chevron, it is a rounder summit. What a CREASE does,
+    /// and the only thing it does, is turn the bed HARDER where it crosses
+    /// the meeting line than that same bed turns anywhere else. So the
+    /// statistic is the turn at the crossing minus the MEDIAN turn over the
+    /// rest of the same curve, worst over the ladder, and a bed that flows
+    /// from one family into the other reads nearly nothing.
+    ///
+    /// The turn is taken between the chord two points back and the chord two
+    /// points on, rather than between adjacent segments, because a level
+    /// curve carries one point per face it crosses and adjacent segments are
+    /// dominated by the mesh rather than by the field. Both fields are
+    /// measured with the same window and the same stride, so the comparison
+    /// is of the two fields and not of two conventions.
+    /// </summary>
+    private static double SeamTurnExcess(
+        MethodInfo traceAll,
+        object net,
+        Type netType,
+        double[][][] seams,
+        double level,
+        double window)
+    {
+        double worst = 0.0;
+        {
+            foreach (double[][] curve in TracedLevel(traceAll, net, level))
+            {
+                var atSeam = new List<double>();
+                var away = new List<double>();
+                for (int at = 2; at + 2 < curve.Length; at++)
+                {
+                    double[] back =
+                    {
+                        curve[at][0] - curve[at - 2][0],
+                        curve[at][1] - curve[at - 2][1],
+                        curve[at][2] - curve[at - 2][2]
+                    };
+                    double[] on =
+                    {
+                        curve[at + 2][0] - curve[at][0],
+                        curve[at + 2][1] - curve[at][1],
+                        curve[at + 2][2] - curve[at][2]
+                    };
+                    double backLength = Math.Sqrt(
+                        (back[0] * back[0]) + (back[1] * back[1]) +
+                        (back[2] * back[2]));
+                    double onLength = Math.Sqrt(
+                        (on[0] * on[0]) + (on[1] * on[1]) + (on[2] * on[2]));
+                    if (!(backLength > 1.0e-9) || !(onLength > 1.0e-9))
+                        continue;
+                    double dot =
+                        ((back[0] * on[0]) + (back[1] * on[1]) +
+                         (back[2] * on[2])) / (backLength * onLength);
+                    dot = Math.Min(Math.Max(dot, -1.0), 1.0);
+                    double turn = Math.Acos(dot) * 180.0 / Math.PI;
+                    if (ToPolylines(seams, curve[at]) <= window)
+                        atSeam.Add(turn);
+                    else
+                        away.Add(turn);
+                }
+                // A curve with no crossing says nothing, and one with too
+                // little of itself away from the seam has no baseline to be
+                // compared against: eight samples is two per quadrant of the
+                // smallest loop this ladder traces.
+                if (atSeam.Count == 0 || away.Count < 8)
+                    continue;
+                away.Sort();
+                double baseline = away[away.Count / 2];
+                worst = Math.Max(worst, atSeam.Max() - baseline);
+            }
+        }
+        return worst;
+    }
+
+    /// <summary>SHA-256 over a field's own bytes, optionally over a chosen
+    /// set of vertices in ascending order. The only way to say "bit for bit"
+    /// and be believed: a comparison with any tolerance at all would pass a
+    /// field that had moved.</summary>
+    private static string FieldDigest(
+        double[] field,
+        IReadOnlyList<int>? at)
+    {
+        IReadOnlyList<int> indices = at
+            ?? Enumerable.Range(0, field.Length).ToArray();
+        var bytes = new byte[indices.Count * 8];
+        for (int on = 0; on < indices.Count; on++)
+        {
+            BitConverter.GetBytes(
+                    BitConverter.DoubleToInt64Bits(field[indices[on]]))
+                .CopyTo(bytes, on * 8);
+        }
+        return Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
     /// <summary>The mean length of the net's distinct edges.</summary>
