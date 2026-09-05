@@ -2771,6 +2771,28 @@ internal static class Program
             failures.Add($"Icon family: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateSelfweightSummary(plugin);
+            Console.WriteLine(
+                "PASS  TNA Solve's self-weight chin (design 2026-09-04 "
+                + "rule 2.5): a solve that refined its self-weight says so "
+                + "on the chin, in the worker's own round count and its "
+                + "own drift as a percentage; a FENCED one says fenced "
+                + "there and hands the canvas a warning naming the rounds, "
+                + "the drift and the round-1 weight it fell back to; and a "
+                + "solve that ran NO refinement, which is every canvas "
+                + "with no surface load and every natural height, gets "
+                + "neither line rather than 'settled in 1 round' for a "
+                + "loop that never ran. A missing selfweight_refined key "
+                + "reads as absent, not as a refinement of zero rounds.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"TNA Solve self-weight chin: {DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -37219,6 +37241,149 @@ internal static class Program
   ""schemaVersion"": ""0.2"",
   ""kind"": ""Relaxed""
 }";
+
+    /// <summary>
+    /// TNA Solve's self-weight chin and its fenced warning, rule 2.5 of
+    /// the 2026-09-04 design.
+    ///
+    /// What went wrong before it: the canvas carried the line "Natural
+    /// selfweight frozen 0" on a solve whose self-weight was live, which
+    /// is a guard reporting itself OFF in words that read as a safety
+    /// measure engaged. The replacement has to say what actually
+    /// happened, so the numbers here are the worker's own and the check
+    /// drives the component's own formatter rather than reciting it.
+    ///
+    /// A solve that ran no refinement gets NO line at all. That is the
+    /// half worth guarding: a formatter that defaulted its way to
+    /// "settled in 1 round" would be the old defect wearing new words.
+    /// </summary>
+    private static void ValidateSelfweightSummary(Assembly plugin)
+    {
+        Type component = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaSolveComponent")
+            ?? throw new InvalidOperationException(
+                "TnaSolveComponent was not found.");
+        MethodInfo summary = component.GetMethod(
+            "SelfweightSummary",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaSolveComponent.SelfweightSummary was not found.");
+
+        (string? Chin, string? Warning) Run(
+            params (string Key, double Value)[] metrics)
+        {
+            var map = new Dictionary<string, double>(StringComparer.Ordinal);
+            foreach ((string key, double value) in metrics)
+                map[key] = value;
+            object result = summary.Invoke(null, new object[] { map })
+                ?? throw new InvalidOperationException(
+                    "SelfweightSummary returned null.");
+            Type tuple = result.GetType();
+            return (
+                (string?)tuple.GetField("Item1")!.GetValue(result),
+                (string?)tuple.GetField("Item2")!.GetValue(result));
+        }
+
+        // A converged refinement: the worker's seven rounds and its
+        // 0.0009 drift, read back as rounds and per cent.
+        (string? chin, string? warning) = Run(
+            ("selfweight_refined", 1.0),
+            ("selfweight_rounds_run", 7.0),
+            ("selfweight_final_drift", 0.0008999),
+            ("selfweight_converged", 1.0),
+            ("selfweight_fenced", 0.0));
+        if (chin != "self-weight settled in 7 rounds (drift 0.1 per cent)")
+        {
+            throw new InvalidOperationException(
+                "a settled refinement's chin should name its rounds and "
+                + $"its drift; got '{chin ?? "<none>"}'.");
+        }
+        if (warning is not null)
+        {
+            throw new InvalidOperationException(
+                "a settled refinement warns the canvas about nothing; got "
+                + $"'{warning}'.");
+        }
+
+        // A fenced one. The chin says fenced rather than settled, and the
+        // canvas is told in sentences: the rounds, the drift, and which
+        // round's weight it is looking at.
+        (chin, warning) = Run(
+            ("selfweight_refined", 1.0),
+            ("selfweight_rounds_run", 10.0),
+            ("selfweight_final_drift", 0.0142),
+            ("selfweight_converged", 0.0),
+            ("selfweight_fenced", 1.0));
+        if (chin != "self-weight fenced at 10 rounds (drift 1.4 per cent)")
+        {
+            throw new InvalidOperationException(
+                "a fenced refinement's chin should say fenced and carry "
+                + $"its drift; got '{chin ?? "<none>"}'.");
+        }
+        if (warning is null ||
+            !warning.Contains("did not settle in 10 rounds",
+                StringComparison.Ordinal) ||
+            !warning.Contains("still moving 1.4 per cent",
+                StringComparison.Ordinal) ||
+            !warning.Contains("round-1 weight", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "a fenced refinement must name the rounds, the drift and "
+                + "the round it fell back to; got "
+                + $"'{warning ?? "<none>"}'.");
+        }
+
+        // One round, so the word is singular in both places. This is the
+        // cap-of-one case the python fence check drives.
+        (chin, warning) = Run(
+            ("selfweight_refined", 1.0),
+            ("selfweight_rounds_run", 1.0),
+            ("selfweight_final_drift", 0.3312),
+            ("selfweight_converged", 0.0),
+            ("selfweight_fenced", 1.0));
+        if (chin != "self-weight fenced at 1 round (drift 33.1 per cent)")
+        {
+            throw new InvalidOperationException(
+                $"a one-round fence reads in the singular; got '{chin}'.");
+        }
+        if (warning is null ||
+            !warning.Contains("did not settle in 1 round;",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "a one-round fence's warning reads in the singular; got "
+                + $"'{warning ?? "<none>"}'.");
+        }
+
+        // No refinement ran. A natural height freezes its weight at the
+        // plan and has no target to refine against, and a canvas with no
+        // surface load has no weight at all: neither owes the chin a
+        // line, and neither is a fence.
+        (chin, warning) = Run(
+            ("selfweight_refined", 0.0),
+            ("selfweight_rounds_run", 1.0),
+            ("selfweight_final_drift", 0.0),
+            ("selfweight_converged", 1.0),
+            ("selfweight_fenced", 0.0));
+        if (chin is not null || warning is not null)
+        {
+            throw new InvalidOperationException(
+                "a solve that ran no refinement should say nothing about "
+                + $"one; got chin '{chin ?? "<none>"}' and warning "
+                + $"'{warning ?? "<none>"}'.");
+        }
+
+        // An older worker, or a solve whose metrics never arrived: the
+        // absence of the key is absence, not a refinement of no rounds.
+        (chin, warning) = Run(("zmax_solved", 5.0));
+        if (chin is not null || warning is not null)
+        {
+            throw new InvalidOperationException(
+                "metrics carrying no self-weight keys should produce no "
+                + $"line; got chin '{chin ?? "<none>"}' and warning "
+                + $"'{warning ?? "<none>"}'.");
+        }
+    }
 
     /// <summary>
     /// The icon family, checked against the components themselves.

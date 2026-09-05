@@ -847,6 +847,16 @@ public class TnaSolveComponent :
                 "or adjust the pattern/supports if strict " +
                 "compression-only is required.");
         }
+        (string? selfweightChin, string? selfweightWarning) =
+            SelfweightSummary(metrics);
+        if (selfweightChin is not null)
+            summary.Add(selfweightChin);
+        if (selfweightWarning is not null)
+        {
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Warning,
+                selfweightWarning);
+        }
         summary.Add($"{result.Elapsed.TotalMilliseconds:F0} ms");
         Message = string.Join(" · ", summary);
 
@@ -854,6 +864,51 @@ public class TnaSolveComponent :
         data.SetData(1, thrustMesh);
         data.SetDataList(2, thrustLines);
         data.SetDataList(3, supports);
+    }
+
+    /// <summary>
+    /// Rule 2.5 of the 2026-09-04 selfweight design: the chin line a
+    /// refined selfweight solve carries, and the sentence a FENCED one
+    /// owes the canvas.
+    ///
+    /// Every number here is the worker's own. A solve that ran no
+    /// refinement (no surface load, or a natural height, where the weight
+    /// is frozen at the plan and has no target to refine against) gets
+    /// neither line, because "settled in 1 round" would be reporting a
+    /// loop that never ran.
+    /// </summary>
+    internal static (string? Chin, string? Warning) SelfweightSummary(
+        IReadOnlyDictionary<string, double> metrics)
+    {
+        if (!metrics.TryGetValue("selfweight_refined", out double refined) ||
+            refined < 0.5)
+        {
+            return (null, null);
+        }
+        metrics.TryGetValue("selfweight_rounds_run", out double roundsRun);
+        metrics.TryGetValue("selfweight_final_drift", out double drift);
+        bool fenced =
+            metrics.TryGetValue("selfweight_fenced", out double fencedFlag) &&
+            fencedFlag >= 0.5;
+        int rounds = (int)Math.Round(roundsRun);
+        string plural = rounds == 1 ? "round" : "rounds";
+        string percent = (drift * 100.0).ToString(
+            "F1", CultureInfo.InvariantCulture);
+        if (!fenced)
+        {
+            return (
+                $"self-weight settled in {rounds} {plural} " +
+                $"(drift {percent} per cent)",
+                null);
+        }
+        return (
+            $"self-weight fenced at {rounds} {plural} " +
+            $"(drift {percent} per cent)",
+            $"The self-weight refinement did not settle in {rounds} " +
+            $"{plural}; the total load was still moving {percent} per " +
+            "cent; the result carries the round-1 weight, evaluated on " +
+            "the plan. Ask for a shallower crown, or accept a vault " +
+            "weighed at its plan.");
     }
 
     /// <summary>
