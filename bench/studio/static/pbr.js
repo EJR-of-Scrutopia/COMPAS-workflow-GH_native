@@ -20,7 +20,16 @@ import * as THREE from "three";
 // this library is the one-unit crop at whatever size it was cut from a 4K or
 // 8K source. There is no larger thing to ask for, and asking for a tier
 // instead would be choosing to be blurrier than the files allow.
-export const VIEWPORT_PX = 0;
+//
+// Unless the device is the wrong size for the master. The studio travels
+// over the tailnet now, and an iPad asked for five master-tier maps per
+// material change spends seconds decoding and uploading them -- and under
+// GPU memory pressure iOS starts dropping texture uploads, which is the
+// silver-props face of the same problem. Touch is the tell: iPadOS
+// masquerades as a Mac in its user agent, but a Mac has no touch points.
+export const CONSTRAINED_DEVICE =
+  typeof navigator !== "undefined" && navigator.maxTouchPoints > 1;
+export const VIEWPORT_PX = CONSTRAINED_DEVICE ? 1024 : 0;
 export const TILE_PX = 256;
 
 // Which file goes in which slot.

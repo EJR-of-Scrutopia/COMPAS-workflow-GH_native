@@ -104,9 +104,13 @@ def test_the_height_map_drives_the_shading_because_the_mesh_cannot_be_moved():
 
 def test_the_viewport_asks_for_the_master_not_a_tier():
     """0 means the master: the largest the library holds. Asking for a tier
-    instead is choosing to be blurrier than the files allow."""
+    instead is choosing to be blurrier than the files allow -- on a machine
+    with the memory to spend. A touch device gets the 1024 tier instead:
+    an iPad asked for five master maps per material change spent seconds
+    on them and shed textures under GPU memory pressure (the silver-props
+    fault, 2026-09-05)."""
 
-    assert "export const VIEWPORT_PX = 0;" in pbr()
+    assert "VIEWPORT_PX = CONSTRAINED_DEVICE ? 1024 : 0" in pbr()
     assert "anisotropy: renderer.capabilities.getMaxAnisotropy()" in studio(), (
         "a vault is looked at from underneath, which is every texture's "
         "worst angle, and anisotropy is the only thing that answers it"

@@ -24,6 +24,7 @@ import {
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
   repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX, GROUND_BASE,
+  CONSTRAINED_DEVICE,
 } from "/static/pbr.js";
 
 // ---------- diagnosis ----------
@@ -67,6 +68,18 @@ function reportProblem(message, detail) {
         recent: recentLog.slice(-12),
       };
     } catch (error) { /* module still assembling itself */ }
+    // Which machine, in numbers: a remote report from an iPad has to say
+    // so itself, and the GPU ceilings are the facts that separate "bug"
+    // from "this device ran out". Its own guard, because the renderer may
+    // not exist yet when the report is about the boot itself.
+    try {
+      body.context.device = {
+        touch: navigator.maxTouchPoints,
+        dpr: window.devicePixelRatio,
+        maxTexture: renderer.capabilities.maxTextureSize,
+        ua: navigator.userAgent.slice(0, 120),
+      };
+    } catch (error) { /* before the renderer exists */ }
     const wire = JSON.stringify(body);
     // sendBeacon first: it is the transport built for pages that are dying,
     // which is exactly when this report is worth the most. A tab being
@@ -214,7 +227,19 @@ const state = {
 const canvas = document.getElementById("view");
 const scrubber = document.getElementById("timeline-scrubber");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+// Full native density on the desktop; a ceiling on touch devices. An iPad
+// at DPR 2 is a 3200x2400 canvas, and shading it is half of why the studio
+// felt slow there; 1.5 is the standard trade and still crisp at 264 ppi.
+renderer.setPixelRatio(CONSTRAINED_DEVICE
+  ? Math.min(window.devicePixelRatio, 1.5) : window.devicePixelRatio);
+// When iOS reclaims graphics memory it takes the context with it, and every
+// symptom downstream (silver props, missing textures, a frozen viewport)
+// looks like a different bug. Written down with the device's numbers, so a
+// remote report says which ceiling was hit.
+canvas.addEventListener("webglcontextlost", () => {
+  reportProblem("WebGL context lost", null);
+  logStudio("the graphics context was lost; reload the page");
+});
 renderer.shadowMap.enabled = true;
 // PCFSoftShadowMap is deprecated in r185 and silently downgraded to this
 // with a console warning: PCF was rewritten to a hardware-comparison

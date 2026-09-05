@@ -320,6 +320,36 @@ def test_fingers_and_narrow_screens_are_provided_for():
     assert "calc((100vw - var(--panel-w)) / 2)" in css
 
 
+def test_constrained_devices_ask_for_smaller_maps():
+    """An iPad asked for five MASTER-tier maps per material change spends
+    seconds decoding them, and under GPU memory pressure iOS drops texture
+    uploads -- the silver-props face of the same ceiling. Touch is the
+    tell (iPadOS masquerades as a Mac; Macs have no touch points), and the
+    server's tier system does the rest."""
+
+    pbr = (REPO / "bench" / "studio" / "static" / "pbr.js").read_text(
+        encoding="utf-8")
+    assert "navigator.maxTouchPoints > 1" in pbr
+    assert "VIEWPORT_PX = CONSTRAINED_DEVICE ? 1024 : 0" in pbr
+
+
+def test_touch_devices_render_at_a_capped_density_and_losses_are_reported():
+    """DPR 2 on an iPad is a 3200x2400 canvas -- half of the slowness by
+    itself. And when iOS reclaims the graphics context, the report must
+    say so with the device's numbers, or every downstream symptom looks
+    like a different bug."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "Math.min(window.devicePixelRatio, 1.5)" in js
+    assert '"webglcontextlost"' in js
+    lost = js[js.index('"webglcontextlost"'):]
+    lost = lost[:lost.index("});")]
+    assert 'reportProblem("WebGL context lost"' in lost
+    report = _js_function(js, "function reportProblem(message, detail)")
+    assert "maxTextureSize" in report
+    assert "maxTouchPoints" in report
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,
