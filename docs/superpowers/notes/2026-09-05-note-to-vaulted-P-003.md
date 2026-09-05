@@ -21,8 +21,9 @@ schema "bench.mechanism/1". SHAPE ONLY, no per-frame data ever:
   a. PARTS: designed meshes wired in on the canvas and embedded ONCE
      (vertices, faces, material tag): TWO pulley unit types (the EDGE
      REEL on the anchor lines and the NODE REEL that sits by each
-     principal node and reels the net's sag and relax), the sliding
-     ground bar, the fused anchor-plus-tension-tie. Heavy but rare; it
+     principal node and reels the net's sag and relax) and the ANCHOR
+     TIE, the sliding bar, anchor clamps and column tension tie fused
+     as one authored piece, exported in world coordinates as placed. Heavy but rare; it
      re-sends only when its own change key moves, per the standing
      per-document keys.
   b. SOCKETS: each pulley type carries an ordered list of planes in its
@@ -31,8 +32,9 @@ schema "bench.mechanism/1". SHAPE ONLY, no per-frame data ever:
   c. PLACEMENTS: plugin-computed frames per instance (edge reels
      tangential to the anchor rows; node reels under each principal
      node, vertical rule plugin-side and revisable without touching
-     this schema; the bar attached to the anchors; one tie frame per
-     position along the anchored edge), each reel instance carrying the
+     this schema; the anchor tie carrying NO computed
+     placement, authored in place and validated against the anchor
+     rows), each reel instance carrying the
      WIRE IDS it serves, a wire id pairing a net vertex index with an
      anchor node index (edge reels) or a column-node-stream index (node
      reels), both already animated by the frames you replay.

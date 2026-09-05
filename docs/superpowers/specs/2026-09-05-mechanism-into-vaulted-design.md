@@ -54,10 +54,13 @@ optional, item or tree access as noted:
         spool per unit of net-side length change, the four-wheel advantage as one number.
     SR  Spool radii (tree of numbers matching PU; default per type from the unit's bounding box
         smallest dimension over 4, said in the chin so the default is never silent).
-    BR  Bar mesh (item): the sliding ground bar the columns rise from.
-    AT  Anchor tie mesh (item): the fused anchor clamp and column tension tie, authored by
-        Param. (The generated-default clamp is PARKED, deliberately: he authors this piece
-        because it is structural and he wants the quick fix in his own hands.)
+    AT  Anchor tie mesh (item or tree, one per anchored row): the sliding ground bar, the anchor
+        clamps and the column tension tie AS ONE AUTHORED PIECE, his ruling of 2026-09-05: "i
+        will turn the sliding bar and the anchor as one mesh, the sliding bar is the tension tie
+        in my mind." Authored IN PLACE on the form and exported in world coordinates: the plugin
+        computes no placement for it, it VALIDATES it (a proximity check against the anchor rows,
+        warning by name when the piece strays), the door-guard pattern. The generated-default
+        clamp stays PARKED: this piece is structural and the quick fix stays in his hands.
     MT  Materials (tree of text): tags per part, matched by position to the ports above; a
         missing tag falls back to the part's name.
 
@@ -83,10 +86,9 @@ The plugin computes, from the Result it already owns:
   default until he rules is ground. Wire ids for these reels pair a net vertex index with the
   principal node's index in the frames' column-node stream, so the sag and relax wires derive
   their spin by the same section 5 arithmetic, in whichever direction the physics runs them.
-- BAR PLACEMENT: the sliding bar attached to the anchors, one frame (or one per span where spans
-  are separate), oriented along the anchor row.
-- ANCHOR TIE INSTANCES: one frame per tie position along the anchored edge, oriented to the
-  skin edge tangent, so his one authored piece lands correctly on every form.
+- THE ANCHOR TIE takes NO computed placement: authored in place, world coordinates, validated
+  against the anchor rows with a named warning when it strays (rule above). One piece per row
+  where rows are separate.
 - All placements are data in the mechanism document: {part, frame, wires?}. The studio stamps
   instances; it never re-derives placement logic.
 
