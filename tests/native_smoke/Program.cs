@@ -1235,6 +1235,34 @@ internal static class Program
 
         try
         {
+            ValidateSkinSeamRoundTwo(plugin);
+            Console.WriteLine(
+                "PASS  Skin seam round two (spec 2026-09-05 round-two " +
+                "findings), on the ASYMMETRIC SIX-LOBE, the fixture class " +
+                "of Param's own screenshots: six anchor arcs, five seams, " +
+                "six merges at different heights. FIX 1, the absorb " +
+                "rework: the five CH/64 refusals in courses 2 and 3 " +
+                "COALESCE into ONE slab, grown by whole bands only where " +
+                "the slab still needs all of them and by SUB-BAND bites at " +
+                "traced levels where a whole band would overshoot, so the " +
+                "slab ladder reads ONE slab of exactly 1.000 CH where " +
+                "8b9a44a measured five slabs of 1.91 / 0.23 / 0.05 / 0.16 " +
+                "/ 1.66 CH competing for one band list. And the closer " +
+                "sliver census is ZERO: no closing stone is under thirty " +
+                "per cent of the median ordinary-course plan area, against " +
+                "the 199 of 653 pinstripes the diagnosis measured, every " +
+                "one a closer in the three thin slabs that starved; the 8 " +
+                "boundary-clipped free-edge pieces that remain are pinned " +
+                "two-sidedly and named as the held free-edge class.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin seam round two: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -23141,9 +23169,210 @@ internal static class Program
     }
 
     /// <summary>
+    /// THE LOBED MULTI-SEAM NET of the round-two diagnosis
+    /// (docs/superpowers/specs/2026-09-05-seam-flow-round-two-diagnosis.md),
+    /// lifted verbatim from the diagnosis probe: a paraboloid dome of rise h
+    /// over a flower plan r(theta) = r0 (1 + amp cos(lobes theta) +
+    /// asym1 cos(theta + 0.7) + asym2 sin(2 theta + 1.3)), n angular by m
+    /// radial quads, with the rim anchored in `lobes` SEPARATE ARCS of
+    /// rimCols boundary columns each, free-edge openings between them, so
+    /// the marching sees `lobes` seed groups and recovers lobes - 1 seam
+    /// curves. The ASYMMETRIC six-lobe (asym1 0.10, asym2 0.07) is the
+    /// class of form Param photographed: its six merges happen at DIFFERENT
+    /// heights, and at 8b9a44a it reproduced every round-two finding at
+    /// once, 2.78 m2 of voids, 199 sliver stones and an open crown.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinLobedNet(
+            int lobes,
+            int n,
+            int m,
+            double r0,
+            double amp,
+            double h,
+            int rimCols,
+            double asym1 = 0.0,
+            double asym2 = 0.0)
+    {
+        var vertices = new List<double[]> { new[] { 0.0, 0.0, h } };
+        for (int t = 1; t <= m; t++)
+        {
+            double fraction = (double)t / m;
+            double z = h * (1.0 - (fraction * fraction));
+            for (int i = 0; i < n; i++)
+            {
+                double theta = 2.0 * Math.PI * i / n;
+                double rMax = r0 * (1.0 + (amp * Math.Cos(lobes * theta)) +
+                    (asym1 * Math.Cos(theta + 0.7)) +
+                    (asym2 * Math.Sin((2.0 * theta) + 1.3)));
+                double rho = rMax * fraction;
+                vertices.Add(
+                    new[] { rho * Math.Cos(theta), rho * Math.Sin(theta), z });
+            }
+        }
+        int Idx(int t, int i) => 1 + ((t - 1) * n) + (((i % n) + n) % n);
+        var faces = new List<int[]>();
+        for (int i = 0; i < n; i++)
+            faces.Add(new[] { 0, Idx(1, i), Idx(1, i + 1) });
+        for (int t = 1; t < m; t++)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                faces.Add(new[]
+                {
+                    Idx(t, i), Idx(t, i + 1), Idx(t + 1, i + 1), Idx(t + 1, i)
+                });
+            }
+        }
+        var rim = new List<int>();
+        int perLobe = n / lobes;
+        int half = (rimCols - 1) / 2;
+        for (int k = 0; k < lobes; k++)
+        {
+            int centre = k * perLobe;
+            for (int d = -half; d <= half; d++)
+                rim.Add(Idx(m, centre + d));
+        }
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// ROUND TWO ON THE ASYMMETRIC SIX-LOBE (spec 2026-09-05 round-two
+    /// findings and diagnosis), the fixture that reproduces Param's own
+    /// screenshots. FIX 1, THE ABSORB REWORK: adjacent refusals COALESCE
+    /// into one slab before anything absorbs, and the absorption bites at
+    /// SUB-BAND granularity toward one Course Height instead of whole
+    /// bands. Asserted on the two numbers the diagnosis measured the defect
+    /// by: the slab widths, which read 1.91 / 0.23 / 0.05 / 0.16 / 1.66 CH
+    /// at 8b9a44a because five CH/64 refusals in courses 2 and 3 competed
+    /// for one band list, and the sliver census, which read 199 of 653
+    /// cells under thirty per cent of the median ordinary-course plan area,
+    /// every one a closer in the three thin slabs, while CloserUndersized
+    /// read 0 throughout because it bounds only the along-seam span and is
+    /// structurally blind to the across direction.
+    /// </summary>
+    private static void ValidateSkinSeamRoundTwo(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+
+        (double[][] vertices, int[][] faces, int[] rim) =
+            SkinLobedNet(6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07);
+        object net = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                vertices, faces, rim, Array.CreateInstance(edgeType, 0)
+            })!;
+        const double size = 0.6;
+        const double courseHeight = 0.35;
+        object made = courses.Invoke(
+            null, new object[] { net, size, courseHeight })!;
+
+        // ---- FIX 1(a). THE SLABS. Every refusal this form produces is one
+        // topological event, the six seams merging in sequence, so the
+        // coalesce-and-grow absorption must hand the closer ONE slab of
+        // about one Course Height, not five competing ones. The bar with
+        // teeth is the upper one, because the 8b9a44a slab of 1.91 CH is
+        // what put the guide family's curves on the free boundary (the
+        // twelve stone-sized voids) and sagged its closers to 35 mm
+        // mid-face.
+        double[] slabWidths = ((IEnumerable)made.GetType()
+                .GetProperty("TransitionIntervals")!.GetValue(made)!)
+            .Cast<object>()
+            .Select(ReadInterval)
+            .Select(interval => (interval.High - interval.Low) / courseHeight)
+            .OrderBy(width => width)
+            .ToArray();
+        if (slabWidths.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "The asymmetric six-lobe's five refusals are ONE " +
+                "topological event and must coalesce into ONE slab; got " +
+                $"{slabWidths.Length} slabs of " +
+                string.Join(
+                    ", ",
+                    slabWidths.Select(width => $"{width:F2}")) + " CH.");
+        }
+        if (Math.Abs(slabWidths[0] - 1.0) > 0.02)
+        {
+            throw new InvalidOperationException(
+                "Fix 1 grows the slab to one Course Height and no " +
+                "further: the coalesced refusals plus their bisected " +
+                "siblings land at exactly 1.000 CH on this fixture, " +
+                "against the 1.91 CH the whole-band bite measured at " +
+                "8b9a44a; got " +
+                string.Join(
+                    ", ",
+                    slabWidths.Select(width => $"{width:F3}")) + " CH.");
+        }
+
+        // ---- FIX 1(b). THE SLIVER CENSUS, Param's sentence made a number:
+        // no tiny fill-in pieces. A cell under thirty per cent of the
+        // median ordinary-course plan area is the diagnosis's own
+        // definition of a sliver, and 8b9a44a shipped 199 of them on this
+        // fixture, EVERY ONE A CLOSER in the three starved slabs. The
+        // closing stones therefore carry the zero, absolutely: a closer
+        // sliver is the defect this fix exists to kill. The cap is
+        // excluded because its area is the crown's and not a piece's.
+        var cells = ReadSeamCells(made);
+        double[] courseAreas = cells
+            .Where(cell => !cell.Cap && !cell.Closer)
+            .Select(cell => PlanAreaOf(cell.Outline))
+            .OrderBy(area => area)
+            .ToArray();
+        if (courseAreas.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The six-lobe fixture must carry ordinary course cells, or " +
+                "every claim below holds vacuously.");
+        }
+        double medianArea = courseAreas[courseAreas.Length / 2];
+        var tiny = cells
+            .Where(cell => !cell.Cap)
+            .Where(cell => PlanAreaOf(cell.Outline) < 0.3 * medianArea)
+            .ToArray();
+        int tinyClosers = tiny.Count(cell => cell.Closer);
+        if (tinyClosers != 0)
+        {
+            throw new InvalidOperationException(
+                "No tiny fill-in pieces, which is Param's own acceptance: " +
+                "a closing stone under thirty per cent of the median " +
+                $"ordinary-course plan area ({medianArea:F4} m2 here) is a " +
+                $"sliver, 8b9a44a shipped 199 of 653, and {tinyClosers} " +
+                "closer(s) came back under the line.");
+        }
+        // AND THE RESIDUE IS PINNED TWO-SIDEDLY, so it cannot grow unseen
+        // and cannot shrink unremarked: 8 ORDINARY cells sit under the
+        // thirty per cent line on this fixture, none of them closers.
+        // Seven are the boundary-clipped end pieces of the bisection's own
+        // resolved half-bands [0.700, 0.875] and [1.225, 1.400] beside the
+        // slab, at the free-edge openings, and one is an ordinary clipped
+        // course piece at an opening; measured by the band census in the
+        // round-two report. They are the FREE-EDGE class the findings hold
+        // out of this wave except where the diagnosis names a void class,
+        // which it does not for clipped pieces; the number is carried here
+        // so the wave that takes the free-edge tasks starts from a
+        // measurement.
+        if (tiny.Length != 8)
+        {
+            throw new InvalidOperationException(
+                "The non-closer sliver residue on the asymmetric six-lobe " +
+                "is pinned at 8 boundary-clipped free-edge pieces (against " +
+                $"a median course area of {medianArea:F4} m2); got " +
+                $"{tiny.Length}. If a fix legitimately moved this, " +
+                "re-measure and re-justify the pin.");
+        }
+    }
+
+    /// <summary>
     /// SPEC 2026-09-05 SECTION 2, ON PARAM'S OWN CROWN ARCH, the only net in
-    /// this harness anchored on TWO springings and therefore the only one
-    /// with a second family to arrive at all.
+    /// this harness anchored on TWO springings before the lobed fixture
+    /// arrived and therefore the first with a second family to arrive at
+    /// all.
     ///
     /// A. THE BEST-TWO MARCHING (rule 2.1), twice over. Once EXACTLY, against
     ///    the shipped marching re-run per family with the rim cut down to

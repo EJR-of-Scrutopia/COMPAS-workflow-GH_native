@@ -3842,6 +3842,206 @@ internal static class SkinPatterns
             }
         }
 
+        // RULE 3.1, REWORKED (spec 2026-09-05 round two, finding 1): the
+        // closer still absorbs neighbours toward one full Course Height
+        // before it cuts anything, but the slabs are built HERE, before the
+        // level index and the component ranks are taken, because a bite can
+        // now end INSIDE a band and the remainder needs a mid of its own
+        // traced.
+        //
+        // WHAT CHANGED, measured on the asymmetric six-lobe fixture whose
+        // five CH/64 refusals land in two adjacent courses. First, COALESCE:
+        // adjacent refusals are one topological event, the seams merging in
+        // sequence, and they become ONE slab rather than five competing
+        // ones. Processed separately against one shared band list, the first
+        // slab ate the bands the later ones needed and three slabs shipped
+        // at 0.23, 0.05 and 0.16 CH, whose closer stones were full pitch
+        // long but ribbon thin: 199 of 653 cells under thirty per cent of
+        // the median course area, the pinstripe reborn one level up, and
+        // CloserUndersized read 0 throughout because it bounds only the
+        // along-seam span. Growth that reaches the NEXT refusal absorbs it
+        // for the same reason: one event with a band between. Second,
+        // SUB-BAND BITES: a whole band is absorbed only where the slab
+        // still needs all of it, and the bite that would overshoot stops at
+        // a traced level inside the band, or is refused where stopping
+        // short leaves the slab nearer one Course Height than any stop
+        // would. The old whole-band bite measured a slab of 1.91 CH on the
+        // same fixture, whose guide family's curves end on the free
+        // boundary over every opening, which is where the twelve
+        // stone-sized voids sat, and whose closers sag 35 mm mid-face
+        // against the ordinary courses' 9 mm p90. The bite stops are the
+        // level list's own, already traced by the ladder and the bisection;
+        // the only levels this block ever ADDS are the mids of the
+        // remainders it leaves, retraced once below exactly as the cap pass
+        // retraces its own two.
+        //
+        // WHAT IS NOT ABSORBED is unchanged from round one: the band the
+        // cap pass planned against, whose curves are the cap's own outline.
+        // AND IT STILL HAPPENS AT A MEETING AND NOWHERE ELSE: a net with no
+        // seam has no meeting, its refusals straddle plateaux, and
+        // absorbing there was built, measured and refused in round one (20
+        // plan-overlap drops on the two-peak net, 22 closer refusals on the
+        // split-and-death net).
+        var tileable = new List<SkinBandInterval>(resolved.Tileable);
+        var slabs = new List<(int Course, double Low, double High)>();
+        {
+            var slabLevels = new List<double>(resolved.Levels);
+            bool retrace = false;
+            foreach ((int refusedCourse, double low, double high) in
+                     resolved.Refused.OrderBy(item => item.Low))
+            {
+                if (slabs.Count > 0 && low <= slabs[^1].High + 1.0e-9)
+                {
+                    (int heldCourse, double heldLow, double heldHigh) =
+                        slabs[^1];
+                    slabs[^1] = (
+                        Math.Min(heldCourse, refusedCourse),
+                        heldLow,
+                        Math.Max(heldHigh, high));
+                    continue;
+                }
+                slabs.Add((refusedCourse, low, high));
+            }
+            for (int at = 0; at < slabs.Count; at++)
+            {
+                (int course, double lo, double hi) = slabs[at];
+                while (seams.Count > 0 &&
+                       hi - lo < courseHeight - 1.0e-9)
+                {
+                    if (at + 1 < slabs.Count &&
+                        slabs[at + 1].Low <= hi + 1.0e-9)
+                    {
+                        course = Math.Min(course, slabs[at + 1].Course);
+                        hi = Math.Max(hi, slabs[at + 1].High);
+                        slabs.RemoveAt(at + 1);
+                        continue;
+                    }
+                    int below = -1;
+                    int above = -1;
+                    for (int scan = 0; scan < tileable.Count; scan++)
+                    {
+                        SkinBandInterval band = tileable[scan];
+                        if (top is not null &&
+                            Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
+                            Math.Abs(band.High - top.High) <= 1.0e-12)
+                        {
+                            continue;
+                        }
+                        if (Math.Abs(band.High - lo) <= 1.0e-12)
+                            below = scan;
+                        if (Math.Abs(band.Low - hi) <= 1.0e-12)
+                            above = scan;
+                    }
+                    if (below < 0 && above < 0)
+                        break;
+                    double need = courseHeight - (hi - lo);
+                    double thickBelow = below >= 0
+                        ? tileable[below].High - tileable[below].Low
+                        : double.PositiveInfinity;
+                    double thickAbove = above >= 0
+                        ? tileable[above].High - tileable[above].Low
+                        : double.PositiveInfinity;
+                    bool wholeBelow =
+                        below >= 0 && thickBelow <= need + 1.0e-9;
+                    bool wholeAbove =
+                        above >= 0 && thickAbove <= need + 1.0e-9;
+                    if (wholeBelow || wholeAbove)
+                    {
+                        // A band the slab still needs ALL of is taken
+                        // whole, thinner side first, which on a bisected
+                        // course walks the sibling chain outward in the
+                        // order the bisection built it and grows the slab
+                        // about the meeting rather than off one side of it.
+                        bool takeAbove = wholeAbove &&
+                            (!wholeBelow ||
+                             thickAbove < thickBelow - 1.0e-12);
+                        int take = takeAbove ? above : below;
+                        if (takeAbove)
+                            hi = tileable[take].High;
+                        else
+                            lo = tileable[take].Low;
+                        tileable.RemoveAt(take);
+                        continue;
+                    }
+                    // Neither band is fully needed, so a whole bite would
+                    // overshoot: bite to the traced level that lands the
+                    // slab nearest one Course Height, or stop where no
+                    // stop improves on stopping here.
+                    double bestScore =
+                        Math.Abs(hi - lo - courseHeight) - 1.0e-12;
+                    int bestAt = -1;
+                    bool bestFromAbove = false;
+                    double bestStop = double.NaN;
+                    foreach ((int side, bool fromAbove) in
+                             new[] { (below, false), (above, true) })
+                    {
+                        if (side < 0)
+                            continue;
+                        SkinBandInterval band = tileable[side];
+                        foreach (double stop in slabLevels)
+                        {
+                            if (!(stop > band.Low + 1.0e-12) ||
+                                !(stop < band.High - 1.0e-12))
+                            {
+                                continue;
+                            }
+                            double grown = fromAbove
+                                ? stop - lo
+                                : hi - stop;
+                            double score =
+                                Math.Abs(grown - courseHeight);
+                            if (score < bestScore)
+                            {
+                                bestScore = score;
+                                bestAt = side;
+                                bestFromAbove = fromAbove;
+                                bestStop = stop;
+                            }
+                        }
+                    }
+                    if (bestAt < 0)
+                        break;
+                    SkinBandInterval bitten = tileable[bestAt];
+                    int levelsBefore = slabLevels.Count;
+                    if (bestFromAbove)
+                    {
+                        hi = bestStop;
+                        tileable[bestAt] = new SkinBandInterval(
+                            bitten.Course,
+                            bestStop,
+                            AddLevel(
+                                slabLevels,
+                                (bestStop + bitten.High) / 2.0),
+                            bitten.High,
+                            bitten.Depth);
+                    }
+                    else
+                    {
+                        lo = bestStop;
+                        tileable[bestAt] = new SkinBandInterval(
+                            bitten.Course,
+                            bitten.Low,
+                            AddLevel(
+                                slabLevels,
+                                (bitten.Low + bestStop) / 2.0),
+                            bestStop,
+                            bitten.Depth);
+                    }
+                    retrace |= slabLevels.Count != levelsBefore;
+                }
+                slabs[at] = (course, lo, hi);
+            }
+            if (retrace)
+            {
+                slabLevels.Sort();
+                resolved = resolved with
+                {
+                    Levels = slabLevels,
+                    Traced = TraceAll(net, slabLevels)
+                };
+            }
+        }
+
         var levelIndex = new Dictionary<double, int>();
         for (int at = 0; at < resolved.Levels.Count; at++)
             levelIndex[resolved.Levels[at]] = at;
@@ -3915,98 +4115,9 @@ internal static class SkinPatterns
         int closerRefused = 0;
         int closerUndersized = 0;
         int seamBandsRemapped = 0;
-        // RULE 3.1 (spec 2026-09-05): THE CLOSER ABSORBS ADJACENT BANDS to
-        // at least one full Course Height of field interval BEFORE it cuts
-        // anything.
-        //
-        // WHY. The bisection of rule 8.2.3 leaves the refused residual CH/64
-        // thick, about 5 mm at the shipped CH. Tiling that sliver on its own
-        // gave stones Size long and millimetres wide: a PINSTRIPE, which is
-        // the second of the two defects this spec names and which the
-        // similar-size rule of the last wave missed because it was pinned
-        // along the curve and never across it. A stone is not the same size
-        // as its neighbours until it is the same size in BOTH directions.
-        //
-        // WHAT IS ABSORBED. Whole tileable bands, and only whole ones, taken
-        // off the SAME list the tiling loop below walks, so nothing is laid
-        // twice and no new level has to be traced: the absorbed band's own
-        // Low and High are already in the level list. The THINNER of the two
-        // neighbours goes first, which on a bisected course walks the
-        // sibling chain outward in the order the bisection built it and
-        // grows the slab about the meeting rather than off one side of it.
-        //
-        // WHAT IS NOT ABSORBED. The band the cap pass planned against. Its
-        // curves are the cap's own outline and the rosette is cut off them,
-        // so handing it to the closer would be two constructions on one
-        // interval.
-        //
-        // AND IT HAPPENS AT A MEETING AND NOWHERE ELSE, which is rule 3.1's
-        // own first clause ("where a band is refused at the (now smooth)
-        // MEETING") and is a MEASURED gate rather than a cautious one. A net
-        // with no seam has no meeting: no anchor groups, no seam curve, and
-        // rule 2's blend never touched its field. The harness's three such
-        // fixtures are diagnostic plateaux and not vaults, and absorbing on
-        // them was built and measured before it was refused: the two-peak
-        // net went from 0 plan-overlap drops to 20, and the split-and-death
-        // net from 0 closer refusals to 22, because a ribbon between two
-        // curves half a metre apart in field folds where the field is FLAT
-        // over a whole block of plan. The pinstripe is real on those nets
-        // too and it stays there, named, until something is built that can
-        // cover a plateau; the wave's own bar is that a fixture may not be
-        // made worse to satisfy a rule written about a different shape.
-        var tileable = new List<SkinBandInterval>(resolved.Tileable);
-        var slabs = new List<(int Course, double Low, double High)>();
-        foreach ((int refusedCourse, double low, double high) in
-                 resolved.Refused)
-        {
-            double lo = low;
-            double hi = high;
-            while (seams.Count > 0 && hi - lo < courseHeight - 1.0e-9)
-            {
-                int below = -1;
-                int above = -1;
-                for (int at = 0; at < tileable.Count; at++)
-                {
-                    SkinBandInterval band = tileable[at];
-                    if (top is not null &&
-                        Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
-                        Math.Abs(band.High - top.High) <= 1.0e-12)
-                    {
-                        continue;
-                    }
-                    if (Math.Abs(band.High - lo) <= 1.0e-12)
-                        below = at;
-                    if (Math.Abs(band.Low - hi) <= 1.0e-12)
-                        above = at;
-                }
-                if (below < 0 && above < 0)
-                    break;
-                bool takeAbove;
-                if (below < 0)
-                {
-                    takeAbove = true;
-                }
-                else if (above < 0)
-                {
-                    takeAbove = false;
-                }
-                else
-                {
-                    double thickBelow =
-                        tileable[below].High - tileable[below].Low;
-                    double thickAbove =
-                        tileable[above].High - tileable[above].Low;
-                    takeAbove = thickAbove < thickBelow - 1.0e-12;
-                }
-                int take = takeAbove ? above : below;
-                if (takeAbove)
-                    hi = tileable[take].High;
-                else
-                    lo = tileable[take].Low;
-                tileable.RemoveAt(take);
-            }
-            slabs.Add((refusedCourse, lo, hi));
-        }
+        // The slabs themselves were built above, before the level index was
+        // taken, because a sub-band bite can leave a remainder band whose
+        // new mid needs tracing; what happens HERE is only the cutting.
         foreach ((int refusedCourse, double low, double high) in slabs)
         {
             AddTransition(transitions, low, high);
@@ -6405,6 +6516,7 @@ internal static class SkinPatterns
                     Closer: true)));
             }
         }
+
         return closers;
     }
 
