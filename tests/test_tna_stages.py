@@ -1485,3 +1485,79 @@ def test_a_selfweight_wire_that_can_carry_no_load_at_all_is_still_refused():
         "solve-zero-thickness-alone",
     )
     assert "carries no node loads either" in nothing_at_all
+
+    # AND THE WIRE THE GUARD USED TO MISS. A load case that LISTS a node
+    # and gives it a zero vector resolves to the mapping {12: 0.0}, which
+    # is a truthy container carrying nothing, so a guard written as
+    # ``if not pz`` never fired and the canvas got
+    # "COMPAS TNA zmax vertical solve failed: RuntimeError: Factor is
+    # exactly singular" behind 35 lines of "dgstrf info 1" on stderr:
+    # the bare library failure the guard exists to keep off the canvas.
+    zero_vectors = refusal(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 0.0,
+            "density": 1.0,
+            "node_ids": [LOADED_VERTEX],
+            "vectors": [(0.0, 0.0, 0.0)],
+        },
+        "solve-zero-thickness-zero-vector",
+    )
+    assert "carries no node loads either" in zero_vectors
+    assert "Factor is exactly singular" not in zero_vectors
+
+
+def test_a_point_case_of_all_zero_vectors_is_refused_rather_than_left_to_scipy():
+    """The same leak on the branch that never had a guard at all.
+
+    The surface branch's guard is the only one the previous round wrote,
+    so a PURE point case listing a node and giving it a zero vector fell
+    straight through to the library with the same singular factorisation.
+    Rule 2.3 of the 2026-09-04 design is that a canvas is never handed
+    scipy's own sentence, and the branch a load arrives on does not
+    change that.
+    """
+
+    response = dispatch(request(
+        "tna.solve",
+        loads_case_grid_payload({
+            "name": "dead",
+            "distribution": "point",
+            "node_ids": [LOADED_VERTEX],
+            "vectors": [(0.0, 0.0, 0.0)],
+        }),
+        "solve-point-zero-vector",
+    ))
+    assert response["type"] == "error", response
+    message = response["error"]["message"]
+    assert "resolves to no load at all" in message
+    assert "Factor is exactly singular" not in message
+
+
+def test_a_self_balancing_load_still_solves_because_the_guard_asks_each_vertex():
+    """The guard asks the VERTEX, not the total, and this is why.
+
+    A total-based guard would refuse this canvas: two point loads of +10
+    and -10 sum to nought while carrying real load at both vertices. It
+    solves today, so refusing it would be a new refusal of a working
+    definition rather than a fence around a library failure. The guard
+    therefore fires only when nothing is carried anywhere.
+    """
+
+    solved = solve_loads_case(
+        {
+            "name": "dead",
+            "distribution": "point",
+            "node_ids": [LOADED_VERTEX - 1, LOADED_VERTEX + 1],
+            "vectors": [(0.0, 0.0, 10.0), (0.0, 0.0, -10.0)],
+        },
+        "solve-self-balancing-pair",
+    )
+    pz_by_vertex = effective_pz_by_vertex(solved)
+    assert pz_by_vertex[LOADED_VERTEX - 1] == pytest.approx(10.0, rel=1e-12)
+    assert pz_by_vertex[LOADED_VERTEX + 1] == pytest.approx(-10.0, rel=1e-12)
+    assert solved["diagnostic_metrics"]["effective_total_pz"] == pytest.approx(
+        0.0, abs=1e-12
+    )
