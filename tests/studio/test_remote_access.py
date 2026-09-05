@@ -51,11 +51,19 @@ def test_heavy_assets_are_cached_and_their_indexes_are_not(
     props = tmp_path / "props"
     props.mkdir()
     (props / "boulder.glb").write_bytes(b"glTF fake, weight is the point")
+    (props / "boulder.glb.thumb.png").write_bytes(b"png fake")
     monkeypatch.setattr(studio_app, "PROPS_DIR", props)
 
     model = client.get("/api/props/boulder.glb")
     assert model.status_code == 200
     assert model.headers["cache-control"] == studio_app.HEAVY_ASSET_CACHE
+    assert model.headers["content-type"] == "model/gltf-binary"
+
+    # The drawer's snapshots share the route and the cache tier, but they
+    # are PICTURES: calling a PNG a glTF worked only by browser sniffing.
+    thumb = client.get("/api/props/boulder.glb.thumb.png")
+    assert thumb.headers["cache-control"] == studio_app.HEAVY_ASSET_CACHE
+    assert thumb.headers["content-type"] == "image/png"
 
     row = client.get("/api/props/folder")
     assert row.status_code == 200
@@ -140,6 +148,121 @@ def test_the_waker_spawn_is_quiet_and_browserless():
     assert '"-Quiet"' in body
     assert "CREATE_NO_WINDOW" in body
     assert '"launch.ps1"' in body, "one launch path, the shortcut's own"
+
+
+def _js_function(source, header):
+    """One function's text, from its header to the next top-level one."""
+
+    start = source.index(header)
+    end = source.index("\nfunction ", start + 1)
+    for stop in ("\nasync function ", "\nconst ", "\nlet "):
+        try:
+            end = min(end, source.index(stop, start + 1))
+        except ValueError:
+            pass
+    return source[start:end]
+
+
+STUDIO_JS = (REPO / "bench" / "studio" / "static" / "studio.js")
+
+
+def test_the_prop_library_loads_no_models_at_boot():
+    """Eager loading pulled 241 MB of models through every boot. A desktop
+    shrugged; the iPad died of it -- an iOS tab gets a fraction of a
+    desktop's memory, and the studio would not open there at all. The
+    manifest and the tiles are the whole boot cost now."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(source, "async function loadPropLibrary()")
+    assert "loadPropTemplate" not in body, (
+        "boot must not touch model files; ensurePropTemplate owns loading")
+    assert "buildPropTiles()" in body
+    # Every manifest entry is offered in the select, not only loaded ones.
+    assert "propTemplates.has" not in body
+
+
+def test_a_model_loads_once_and_a_failure_stays_failed():
+    """The promise map is the dedup AND the convergence rule: restoreProps
+    re-runs when a model lands, so a failed load that cleared its promise
+    would be re-asked-for on every landing, forever."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(source, "function ensurePropTemplate(key)")
+    assert "propTemplatePromises.has(key)" in body
+    assert "return null" in body
+    assert "propTemplatePromises.delete" not in body
+    assert "beginLoading" in body, "a load the user asked for shows the toast"
+
+
+def test_tiles_draw_snapshots_not_geometry():
+    """A tile's picture is a .thumb.png file (snapped once by
+    tools/props/snap_thumbs.py); only a prop with no snapshot falls back to
+    loading its model live. The click is what loads geometry, and it waits."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(source, "function buildPropTiles()")
+    # The CODE forms, not the words: the comments explain snapshots too,
+    # and a pin a comment can satisfy is no pin at all.
+    assert 'picture.src = "/api/props/"' in body
+    assert 'encodeURIComponent(entry.file + ".thumb.png")' in body
+    assert "picture.onerror" in body
+    assert "await ensurePropTemplate(entry.key)" in body
+
+
+def test_restores_summon_their_own_models():
+    """A saved layout and a saved scene both name models that are no longer
+    resident at boot. Each path must ask for what it needs: the layout by
+    re-running itself as models land, the scene by loading them all before
+    placing any."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    restore = _js_function(source, "function restoreProps()")
+    assert "ensurePropTemplate(entry.type)" in restore
+    assert "restoreProps()" in restore.replace("function restoreProps()", "", 1)
+    scene_block = source[source.index("adoptLayers(scene_.propLayers)"):]
+    scene_block = scene_block[:scene_block.index("applyLayerVisibility()")]
+    assert "await Promise.all" in scene_block
+    assert "ensurePropTemplate(type)" in scene_block
+
+
+def test_the_report_survives_a_dying_page():
+    """The iPad's crash never reached diagnostics.log: a tab being
+    reclaimed for memory drops in-flight fetch bodies. sendBeacon is the
+    transport built for dying pages, and the context must never be the
+    message's ransom -- an error during module evaluation reaches the
+    reporter before `state` exists."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(source, "function reportProblem(message, detail)")
+    assert "navigator.sendBeacon" in body
+    assert body.index("sendBeacon") < body.index('fetch("/api/diagnostics"'), (
+        "the beacon is the first choice, fetch the fallback")
+    assert "context: null" in body, "the bare message travels without context"
+
+
+def test_the_boot_banner_hears_rejections_and_stands_down():
+    """An async boot step that dies arrives as a rejection, not an error
+    event -- but a stray rejection during ordinary use must not shout
+    half-built over a fully built page."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert '"unhandledrejection"' in html
+    assert "__studioReady" in html
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    assert "window.__studioReady = true" in source
+
+
+def test_big_props_fit_the_preview_frustum():
+    """The rig's far plane is 20, sized for the material ball; a cliff
+    framed from sixty metres sat beyond it and sixteen of the library's
+    previews came out empty squares. The planes follow the framing."""
+
+    source = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(source, "function renderObjectPreview(object, canvasEl)")
+    assert "camera.far = distance * 4 + reach" in body
+    assert "updateProjectionMatrix" in body
+    assert "camera.far = 20" in body, "and the ball gets its frustum back"
 
 
 def test_the_waker_stays_on_loopback_and_stays_silent():

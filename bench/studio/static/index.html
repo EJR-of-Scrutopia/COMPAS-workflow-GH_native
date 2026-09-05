@@ -382,12 +382,29 @@
   // A module-level throw halfway down studio.js leaves half a panel built
   // and the rest silently never built, which looks merely disappointing
   // rather than broken. Registered before the module loads, so it catches
-  // one however early it happens.
-  window.addEventListener("error", function (event) {
+  // one however early it happens. Both roads are watched: a throw arrives
+  // as an error event, an async boot step that died arrives as an
+  // unhandled rejection, and WebKit reports module throws as a bare
+  // "Script error." besides -- so the full story is in the server's
+  // diagnostics log (bench/studio/diagnostics.log), and the banner says
+  // what it can.
+  function bootFault(message) {
     shout("<b>The studio stopped setting itself up.</b> "
-      + ((event && event.message) || "An error was thrown")
+      + (message || "An error was thrown")
       + ". The panel is half-built. If the build stamp above is not the one "
-      + "you expect, this is a cached script: reload with Ctrl+Shift+R.");
+      + "you expect, this is a cached script: hard-reload (Ctrl+Shift+R on "
+      + "a computer, or clear this site's data on a tablet).");
+  }
+  window.addEventListener("error", function (event) {
+    bootFault(event && event.message);
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    // Only while the studio is still assembling itself: a stray rejection
+    // during ordinary use is studio.js's own diagnostics' business, and a
+    // "half-built" banner over a fully built page would be a lie.
+    if (window.__studioReady) return;
+    var reason = event && event.reason;
+    bootFault(reason && reason.message ? reason.message : String(reason || ""));
   });
 }());
 </script>

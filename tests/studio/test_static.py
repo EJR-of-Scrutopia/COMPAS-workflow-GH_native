@@ -2189,7 +2189,8 @@ def test_the_ground_presets_swap_one_discs_material():
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert ("window.__studio = { state, scene, camera, controls, "
-            "applyDayCycle, placeProp }" in js), (
+            "applyDayCycle, placeProp,\n  ensurePropTemplate, "
+            "renderObjectPreview }" in js), (
         "the probe rig reads app state through this hook, and frames "
         "detail captures through the camera and controls; applyDayCycle is "
         "exposed too (Task 3) so a probe can drive the day cycle directly "
@@ -2699,7 +2700,9 @@ def test_asset_loads_announce_themselves_on_the_glass():
     assert 'beginLoading("Preparing sky " + name + " at full quality")' in js
     assert 'beginLoading("Loading " + (entry.label || "material"))' in js
     assert 'beginLoading("Loading floor " + (entry.label || key))' in js
-    assert 'beginLoading("Loading " + entries.length + " props")' in js
+    # Props announce ONE MODEL at a time now: the library is lazy (the
+    # iPad's memory is why), so there is no boot-time batch left to name.
+    assert 'beginLoading("Loading " + (entry.label || entry.key))' in js
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#loading-toast {" in css and "var(--scrim)" in css.split("#loading-toast {")[1][:400]
 

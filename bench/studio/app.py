@@ -1305,7 +1305,12 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         path = PROPS_DIR / name
         if not path.is_file():
             raise HTTPException(404, "no prop file {}".format(name))
-        return FileResponse(path, media_type="model/gltf-binary")
+        # Two kinds of file live in the library now: the models, and the
+        # .thumb.png snapshots the prop drawer draws instead of loading
+        # geometry. Calling a PNG a glTF worked only by browser sniffing.
+        media = ("image/png" if name.endswith(".thumb.png")
+                 else "model/gltf-binary")
+        return FileResponse(path, media_type=media)
 
     @app.get("/api/hdri")
     def hdri_list():

@@ -45,7 +45,14 @@ function reportProblem(message, detail) {
       stack: detail && detail.stack ? String(detail.stack).slice(0, 4000) : null,
       page: location.pathname + location.search,
       when: new Date().toISOString(),
-      context: {
+      context: null,
+    };
+    // The context is a bonus, never the message's ransom: an error thrown
+    // DURING module evaluation reaches this function before `state` exists,
+    // and on the iPad that turned the one report that mattered into
+    // silence. The bare message still travels when the context cannot.
+    try {
+      body.context = {
         study: (document.getElementById("study-select") || {}).value || null,
         showMode: state.showMode,
         source: state.source,
@@ -58,13 +65,26 @@ function reportProblem(message, detail) {
         playing: !!(state.timeline && state.timeline.playing),
         t: state.timeline ? state.timeline.t : null,
         recent: recentLog.slice(-12),
-      },
-    };
-    fetch("/api/diagnostics", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch(() => { /* the studio is not worth breaking over a log line */ });
+      };
+    } catch (error) { /* module still assembling itself */ }
+    const wire = JSON.stringify(body);
+    // sendBeacon first: it is the transport built for pages that are dying,
+    // which is exactly when this report is worth the most. A tab being
+    // reclaimed for memory (the iPad's way of failing) drops in-flight
+    // fetch() bodies; beacons are handed to the browser process and
+    // survive. fetch stays as the fallback for anything without beacons.
+    let sent = false;
+    try {
+      sent = !!(navigator.sendBeacon && navigator.sendBeacon(
+        "/api/diagnostics", new Blob([wire], { type: "application/json" })));
+    } catch (error) { sent = false; }
+    if (!sent) {
+      fetch("/api/diagnostics", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: wire,
+      }).catch(() => { /* the studio is not worth breaking over a log line */ });
+    }
   } catch (error) {
     /* the same */
   } finally {
@@ -1104,10 +1124,19 @@ function restoreProps() {
   propsAwaitingLibrary = false;
   for (const entry of entries) {
     if (!knownPropType(entry.type)) {
-      // Either the library is still in flight, or this prop is gone from
+      // Either the manifest is still in flight, or this prop is gone from
       // it. Either way the entry stays in the saved layout untouched, so a
       // library that arrives late can put it back.
       propsAwaitingLibrary = true;
+      // Known to the manifest but not loaded yet: ask for exactly this
+      // model, and run the restore again when it lands. ensure dedupes,
+      // and the re-run fires only from the call that CREATED the load, so
+      // repeated restores cannot multiply into repeated fetches.
+      if (propLibraryEntry(entry.type) && !propTemplatePromises.has(entry.type)) {
+        ensurePropTemplate(entry.type).then((template) => {
+          if (template && propsAwaitingLibrary) restoreProps();
+        });
+      }
       continue;
     }
     const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
@@ -1125,6 +1154,42 @@ function restoreProps() {
 // if the studio scales it to a stated height rather than trusting the file.
 const propLoader = new GLTFLoader();
 const propTemplates = new Map();
+// One promise per model asked for, forever: a failed load resolves null and
+// STAYS null for the session, or restoreProps would re-ask for a broken
+// file every time a template arrived and never converge.
+const propTemplatePromises = new Map();
+
+function propLibraryEntry(key) {
+  return state.propLibrary.find((entry) => entry.key === key) || null;
+}
+
+// The library loads NOTHING up front any more. Eager loading pulled all
+// 241 MB of models through the wire and the parser at every boot, which a
+// desktop shrugged at and the iPad died of: an iOS tab gets a fraction of
+// a desktop's memory, and the boot-time spike of parsing a hundred models
+// while the vault was still cutting was the difference between the studio
+// working there and not opening at all. A model now loads the first time
+// something actually needs its geometry: a placement, a restore, or a
+// tile whose thumbnail file is missing.
+function ensurePropTemplate(key) {
+  if (propTemplates.has(key)) return Promise.resolve(propTemplates.get(key));
+  const entry = propLibraryEntry(key);
+  if (!entry) return Promise.resolve(null);
+  if (!propTemplatePromises.has(key)) {
+    const done = beginLoading("Loading " + (entry.label || entry.key));
+    propTemplatePromises.set(key, loadPropTemplate(entry)
+      .then((template) => {
+        propTemplates.set(key, template);
+        return template;
+      })
+      .catch((error) => {
+        logStudio("prop " + key + " would not load: " + error.message);
+        return null;
+      })
+      .finally(done));
+  }
+  return propTemplatePromises.get(key);
+}
 
 async function loadPropLibrary() {
   let payload = null;
@@ -1137,34 +1202,24 @@ async function loadPropLibrary() {
   if (!entries.length) return;
   state.propLibrary = entries;
   state.propCredits = payload.library || null;
-  const done = beginLoading("Loading " + entries.length + " props");
-  try {
-    for (const entry of entries) {
-      try {
-        propTemplates.set(entry.key, await loadPropTemplate(entry));
-      } catch (error) {
-        logStudio("prop " + entry.key + " would not load: " + error.message);
-      }
-    }
-  } finally {
-    done();
-  }
   buildPropTiles();
   // The type select is still the source of truth for what Place will place,
-  // exactly as the material select is behind the material tiles.
+  // exactly as the material select is behind the material tiles. Every
+  // manifest entry is offered: whether its file loads is only knowable by
+  // loading it, which now happens when it is chosen.
   const select = document.getElementById("prop-type");
   select.innerHTML = "";
   for (const entry of entries) {
-    if (!propTemplates.has(entry.key)) continue;
     const option = document.createElement("option");
     option.value = entry.key;
     option.textContent = entry.label || entry.key;
     select.appendChild(option);
   }
   if (select.options.length) select.value = select.options[0].value;
-  logStudio("prop library: " + select.options.length + " models");
-  // A cold boot restores a study's props before this finishes, so anything
-  // it had to skip gets a second chance now that the models are here.
+  logStudio("prop library: " + entries.length + " models");
+  // A cold boot restores a study's props before this manifest arrives, so
+  // anything it had to skip gets a second chance now that the names are
+  // known (the models themselves follow, one ensure at a time).
   if (propsAwaitingLibrary) restoreProps();
 }
 
@@ -1229,8 +1284,6 @@ function buildPropTiles() {
     || String(a.label || a.key).localeCompare(String(b.label || b.key)));
   let group = null;
   for (const entry of ordered) {
-    const template = propTemplates.get(entry.key);
-    if (!template) continue;
     if ((entry.group || "other") !== group) {
       group = entry.group || "other";
       const heading = document.createElement("span");
@@ -1239,8 +1292,27 @@ function buildPropTiles() {
       heading.dataset.group = group;
       holder.appendChild(heading);
     }
+    // The picture is a FILE, not a render: a .thumb.png snapped once on
+    // the desktop sits beside each model, and drawing it costs an image
+    // fetch instead of the model itself. Only a prop with no snapshot yet
+    // falls back to loading its geometry for a live preview -- the cost
+    // the whole lazy library exists to avoid paying a hundred times.
     const tile = previewTile(entry.key, entry.label || entry.key,
-      (canvasEl) => renderObjectPreview(template, canvasEl));
+      (canvasEl) => {
+        fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+        const picture = new Image();
+        picture.onload = () => {
+          canvasEl.getContext("2d").drawImage(
+            picture, 0, 0, canvasEl.width, canvasEl.height);
+        };
+        picture.onerror = () => {
+          ensurePropTemplate(entry.key).then((template) => {
+            if (template) renderObjectPreview(template, canvasEl);
+          });
+        };
+        picture.src = "/api/props/"
+          + encodeURIComponent(entry.file + ".thumb.png");
+      });
     tile.dataset.group = group;
     // Scale in words, which is Blender's own advice and the only method in
     // the whole survey that does not put a stock human being in the picture.
@@ -1248,7 +1320,7 @@ function buildPropTiles() {
       + (entry.sizeMetres ? "  " + entry.sizeMetres.map(
         (n) => n.toFixed(n < 1 ? 2 : 1)).join(" x ") + " m" : "")
       + (entry.credit ? " -- " + entry.credit : "");
-    tile.addEventListener("click", () => {
+    tile.addEventListener("click", async () => {
       select.value = entry.key;
       paintTileSelection(holder, entry.key);
       showPropCredit(entry);
@@ -1258,7 +1330,11 @@ function buildPropTiles() {
       // model is carrying, not arming: the prop exists from this moment,
       // follows the cursor, and the next click puts it down. The SHELF
       // STAYS OPEN: closing itself after every click was the old picker's
-      // worst habit.
+      // worst habit. The model itself may not be here yet -- this click is
+      // often the very first thing to want it -- so the carry waits for
+      // the load, behind the same toast every other load shows.
+      const template = await ensurePropTemplate(entry.key);
+      if (!template && !PROP_BUILDERS[entry.key]) return;
       carryNewProp(entry.key);
     });
     holder.appendChild(tile);
@@ -1294,9 +1370,20 @@ function renderObjectPreview(object, canvasEl) {
   previewRig.camera.position.set(
     centre.x + distance * 0.62, centre.y - distance * 0.72, centre.z + distance * 0.42);
   previewRig.camera.lookAt(centre);
+  // The rig's frustum is sized for the material ball (far plane 20). A
+  // cliff face framed from sixty metres sat entirely BEYOND it, and every
+  // large prop's preview came out an empty square -- sixteen of the
+  // library's models, measured. The planes follow the framing, then go
+  // back, so the ball keeps its tuned depth precision.
+  previewRig.camera.near = Math.max(distance / 50, 0.01);
+  previewRig.camera.far = distance * 4 + reach;
+  previewRig.camera.updateProjectionMatrix();
   drawPreview(canvasEl);
   previewRig.holder.remove(shown);
   previewRig.ball.visible = true;
+  previewRig.camera.near = 0.05;
+  previewRig.camera.far = 20;
+  previewRig.camera.updateProjectionMatrix();
   previewRig.camera.position.set(0, -3.05, 1.02);
   previewRig.camera.lookAt(0, 0, 0);
 }
@@ -2042,6 +2129,12 @@ async function applyScene(record) {
     state.props = [];
     state.selectedProp = null;
     adoptLayers(scene_.propLayers);
+    // Every model the scene stands on, loaded before any is placed: the
+    // library is lazy now, and a scene that placed only what happened to
+    // be resident would come back missing furniture.
+    await Promise.all([...new Set(scene_.props.map((entry) => entry.type))]
+      .filter((type) => propLibraryEntry(type))
+      .map((type) => ensurePropTemplate(type)));
     for (const entry of scene_.props) {
       if (!knownPropType(entry.type)) continue;
       const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
@@ -5865,6 +5958,7 @@ document.getElementById("props-folder-choose").addEventListener("click", () =>
     // until a study is reloaded, which is the honest behaviour: they are in
     // the scene, and the scene has not been asked to change.
     propTemplates.clear();
+    propTemplatePromises.clear();
     await loadPropLibrary();
   }));
 
@@ -7795,6 +7889,11 @@ requestAnimationFrame(frame);
 // placeProp joins them so a probe can populate a scene without synthesising
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
-window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp };
+window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp,
+  ensurePropTemplate, renderObjectPreview };
+// The page's boot-fault banner (index.html) stands down once evaluation has
+// made it to here: from this line on, a stray rejection is an incident for
+// the diagnostics log, not a "half-built panel" alarm.
+window.__studioReady = true;
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };
