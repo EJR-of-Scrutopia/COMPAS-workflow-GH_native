@@ -1936,11 +1936,8 @@ def test_three_buttons_replace_the_show_select():
     # Re-pinned 2026-09-04: the two locals became the one netClearance()
     # record that the finished net, Both mode and the formwork act all read.
     # Still two lifts, still one per object's own radius.
-    # "both" grew a sibling: the force lens riding shell mode lifts too,
-    # for the same crown-seam reason.
-    assert "position.z = lifted ? clearance.wires" in body
-    assert '(forcesOn && shellOn)' in body
-    assert "position.z = lifted ? clearance.nodes" in body
+    assert 'position.z = state.showMode === "both" ? clearance.wires' in body
+    assert 'position.z = state.showMode === "both" ? clearance.nodes' in body
 
 
 def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():

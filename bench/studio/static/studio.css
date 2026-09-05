@@ -143,9 +143,16 @@ body { overflow: hidden;
 #panel input:focus-visible { outline: 2px solid var(--accent);
          outline-offset: 1px; }
 #props-row button.armed { outline: 2px solid var(--accent); }
+/* A card, not loose ink: white-on-gravel was unreadable (Param's crop).
+   Same translucent family as the banner and the Data sheet. */
 #hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
        line-height: 1.5; white-space: pre; pointer-events: none;
-       text-shadow: 0 1px 3px #000; }
+       padding: var(--s2) var(--s3);
+       background: var(--scrim);
+       -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+       border: 1px solid var(--line); border-radius: var(--radius);
+       color: var(--ink); text-shadow: none; }
+#hud:empty { display: none; }
 /* F6: clear of the panel plus a margin, derived from the width token so a
    resized panel cannot overlap it again -- the log used to paint its text
    underneath the panel itself. */
@@ -212,6 +219,8 @@ body { overflow: hidden;
   color: var(--ink-2); font-size: var(--t-2); }
 #layer-toggles .layer-slider input { flex: 1; width: auto; }
 #layer-toggles .layer-slider.hidden { display: none; }
+#layer-toggles .layer-note { margin: 0 0 var(--s1) var(--s3);
+  color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
 #overlays-tuck { display: flex; gap: var(--s2); align-items: center;
   margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
 /* Bottom right, clear of the panel (derived from its width token), rather

@@ -182,7 +182,7 @@ const state = {
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
-  analysisSliders: { stressThreshold: 0, loadsScale: 1, reactionsScale: 1 },
+  analysisSliders: { loadsScale: 1, reactionsScale: 1 },
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   pattern: "bonded-courses",
   size: 0.9,
@@ -4194,9 +4194,6 @@ const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
 // What each lens carries under its button when it is on. Values live in
 // state so a rebuild of the toggle list never resets a slider.
 const LAYER_SLIDERS = {
-  stress: { key: "stressThreshold", label: "Threshold",
-            min: 0, max: 0.9, step: 0.05,
-            title: "Grey out everything below this share of the peak, so the loaded regions stand alone" },
   loads: { key: "loadsScale", label: "Scale",
            min: 0.2, max: 4, step: 0.1,
            title: "Arrow length multiplier" },
@@ -4333,12 +4330,18 @@ function buildLayerToggles() {
     button.textContent = label;
     button.disabled = !availability.on;
     if (availability.why) button.title = availability.why;
-    else if (name === "pulse") {
-      button.title = "Glows each course by its staged solve: green "
-        + "converged, red did not, grey has no solver";
-    }
     button.addEventListener("click", () => setLayer(name, !state.layers[name]));
     holder.appendChild(button);
+    if (name === "pulse") {
+      // Twice asked what this does; a tooltip was not the answer. The
+      // caption lives on the panel where the question is asked.
+      const note = document.createElement("div");
+      note.className = "layer-note";
+      note.textContent = "While the build animation plays, each course "
+        + "glows green if its staged solve stands, red if it failed, "
+        + "grey where no solver exists.";
+      holder.appendChild(note);
+    }
     if (name === "deflection") {
       holder.appendChild(exaggerationRow);
       exaggerationRow.classList.toggle("hidden", !state.layers.deflection);
@@ -4359,8 +4362,7 @@ function buildLayerToggles() {
       slider.value = state.analysisSliders[spec.key];
       slider.addEventListener("change", () => {
         state.analysisSliders[spec.key] = +slider.value;
-        if (name === "stress") recolourSegments();
-        else updateVectorLayers();
+        updateVectorLayers();
       });
       row.appendChild(caption);
       row.appendChild(slider);
@@ -4378,14 +4380,25 @@ function setLayer(name, on) {
       if (other !== name) state.layers[other] = false;
     }
   }
+  const forcesWasOn = name !== "forces" && on
+    && EXCLUSIVE_LAYERS.includes(name) && state.showModeBeforeForces;
   if (name === "loads" || name === "reactions") updateVectorLayers();
   if (EXCLUSIVE_LAYERS.includes(name)) {
     recolourSegments();
     applyWireForces();
-    // Wire forces are wires: a lens that colours the net must bring the
-    // net on screen, whatever the Show mode (Param: "needs to actually
-    // show the wires").
-    applyShowMode();
+    // Wire forces ARE the net's lens, so raising it shows the bare net
+    // (Param: "i cant see the wire forces becuase it doesnt change
+    // geometry to formwork") and lowering it -- by its own button or by
+    // another lens taking over -- returns to the view it interrupted.
+    if (name === "forces" && on) {
+      state.showModeBeforeForces = state.showMode;
+      setShowMode("framework");
+    } else if ((name === "forces" && !on) || forcesWasOn) {
+      setShowMode(state.showModeBeforeForces || "both");
+      state.showModeBeforeForces = null;
+    } else {
+      applyShowMode();
+    }
   }
   buildLayerToggles();
   if (name === "pulse" && !on && state.objects.shell) {
@@ -4567,11 +4580,6 @@ function recolourSegments() {
   // hole in coverage. Grey is clearly outside every scale this function
   // paints (compression blue, zero pale beige, tension red).
   const noData = new THREE.Color(0x808080);
-  // Below the threshold the surface stands back in a flat bone tone --
-  // deliberately not the no-data grey, which means something else -- so
-  // the regions above it carry the whole story.
-  const belowCut = new THREE.Color(0xd8d5cd);
-  const threshold = state.analysisSliders.stressThreshold || 0;
   for (const segment of state.objects.shell.children) {
     const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
@@ -4590,10 +4598,7 @@ function recolourSegments() {
           // do have data, so null here means every one of them is missing,
           // not just one -- an honest "no data" reads as grey, not white.
           const value = sampleScalar(field, weights[i]);
-          colour = value === null ? noData
-            : threshold && Math.abs(value) < threshold * stressMagnitude
-              ? belowCut
-              : STRESS_SCALE(value, stressMagnitude);
+          colour = value === null ? noData : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
           colour = STRESS_SCALE(stressValue(null, surface, stressMagnitude), stressMagnitude);
@@ -7732,11 +7737,7 @@ function applyShowMode() {
   if (!state.objects.shell || !state.objects.wires || !state.objects.nodes || !state.bundle) return;
   if (state.showMode === "timeline") return;
   const shellOn = state.showMode === "shell" || state.showMode === "both";
-  // The force lens colours the net, so the net comes with it whatever the
-  // Show mode says.
-  const forcesOn = !!(state.layers.forces && layerAvailability("forces").on);
-  const netOn = state.showMode === "framework" || state.showMode === "both"
-    || forcesOn;
+  const netOn = state.showMode === "framework" || state.showMode === "both";
   applyInflation(1);
   for (const segment of state.objects.shell.children) {
     segment.visible = shellOn;
@@ -7790,11 +7791,8 @@ function applyShowMode() {
   // shared clearance under-cleared whichever one was bigger, and growing
   // the Node size slider alone could push the white dots back through.
   const clearance = netClearance();
-  // Lifted clear whenever the shell is also on screen -- the classic
-  // crown-seam clearance, extended to the force lens riding shell mode.
-  const lifted = state.showMode === "both" || (forcesOn && shellOn);
-  state.objects.wires.position.z = lifted ? clearance.wires : 0;
-  state.objects.nodes.position.z = lifted ? clearance.nodes : 0;
+  state.objects.wires.position.z = state.showMode === "both" ? clearance.wires : 0;
+  state.objects.nodes.position.z = state.showMode === "both" ? clearance.nodes : 0;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";

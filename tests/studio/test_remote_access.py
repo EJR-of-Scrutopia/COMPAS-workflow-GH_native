@@ -561,28 +561,34 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];' in js
     set_layer = _js_function(js, "function setLayer(name, on)")
     assert "state.layers[other] = false;" in set_layer
-    assert "applyShowMode();" in set_layer, "the force lens must reveal the net"
+    # Round two of his walk: wire forces ARE the net's lens, so raising it
+    # switches the view to the bare formwork and lowering it -- by its own
+    # button or by another lens taking over -- restores what it interrupted.
+    assert 'setShowMode("framework");' in set_layer
+    assert 'setShowMode(state.showModeBeforeForces || "both");' in set_layer
 
     build = _js_function(js, "function buildLayerToggles()")
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
-    for key in ("stressThreshold", "loadsScale", "reactionsScale"):
+    for key in ("loadsScale", "reactionsScale"):
         assert key in js
+    assert "stressThreshold" not in js
 
+    # Round two removed the stress threshold on his word.
     recolour = _js_function(js, "function recolourSegments()")
-    assert "threshold * stressMagnitude" in recolour
-    assert "belowCut" in recolour
-
+    assert "threshold" not in recolour
     assert '"member force, kN"' in js, "the key speaks for the wires too"
+    # And the pulse explains itself ON the panel, where the question was
+    # asked twice; a tooltip was not the answer.
+    build2 = _js_function(js, "function buildLayerToggles()")
+    assert '"layer-note"' in build2
 
     arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1)")
     assert "depthTest: false" in arrows
     assert "depthTest = false" in arrows
     assert "renderOrder = 25" in arrows
 
-    show = _js_function(js, "function applyShowMode()")
-    assert "|| forcesOn;" in show
 
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
         encoding="utf-8")
