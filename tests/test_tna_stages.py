@@ -6,7 +6,9 @@ pytest.importorskip("compas_tna")
 pytest.importorskip("compas_fd")
 
 from ananke_equilibrium.worker import dispatch
+from tree_forest_compas import tna as tna_module
 from tree_forest_compas.tna import prepare_tna_pattern
+from tree_forest_compas.tna import register_tna_pattern
 from tree_forest_compas.tna import solve_tna_problem
 
 
@@ -561,3 +563,359 @@ def test_plan_fixed_rim_holds_its_shape_without_becoming_a_support():
     assert set(preparation.pattern.vertices_where(is_support=True)) == set(
         corners
     )
+
+
+# The reproduction's own configuration, from section 1 of the 2026-09-04
+# selfweight design: a square meshgrid on four corner supports at a
+# uniform force density of 1, carrying no nodal load at all so that
+# nothing constant remains, and asked for a crown far deeper than its
+# span. Measured against this repository's code as it stood before this
+# wave (HEAD~1 of the selfweight commit, driven side by side with the new
+# module on this same fixture): at a vertical iteration cap of 1000 the
+# live density raises "array must not contain infs or NaNs", the exact
+# failure Param's six-lobe forms died of, and at a cap of 100 it returns
+# a crown of 1.7e38 for a request of 160. The refined solve lands on 160
+# exactly, in seven rounds.
+SELFWEIGHT_MESHGRID_SIZE = 11
+SELFWEIGHT_MESHGRID_ZMAX = 160.0
+
+
+def selfweight_meshgrid(size=SELFWEIGHT_MESHGRID_SIZE):
+    """A square meshgrid of unit quads with its four corners supported."""
+    vertices = [
+        (float(x), float(y), 0.0)
+        for y in range(size)
+        for x in range(size)
+    ]
+    faces = [
+        (
+            y * size + x,
+            y * size + x + 1,
+            (y + 1) * size + x + 1,
+            (y + 1) * size + x,
+        )
+        for y in range(size - 1)
+        for x in range(size - 1)
+    ]
+    corners = (0, size - 1, size * (size - 1), size * size - 1)
+    return vertices, faces, corners
+
+
+def solve_selfweight_meshgrid(
+    zmax=SELFWEIGHT_MESHGRID_ZMAX,
+    size=SELFWEIGHT_MESHGRID_SIZE,
+    density=-1.0,
+):
+    vertices, faces, corners = selfweight_meshgrid(size)
+    problem = register_tna_pattern(
+        vertices=vertices,
+        faces=faces,
+        vertex_keys=range(len(vertices)),
+    )
+    return solve_tna_problem(
+        problem,
+        support_mode="keys",
+        support_keys=corners,
+        pz=0.0,
+        vertical_mode="zmax",
+        zmax=zmax,
+        density=density,
+        horizontal_kmax=100,
+        vertical_kmax=1000,
+        vertical_tolerance=1.0e-3,
+    )
+
+
+def round_to_round_drifts(totals):
+    return [
+        abs(totals[index] - totals[index - 1]) / abs(totals[index - 1])
+        for index in range(1, len(totals))
+    ]
+
+
+def test_the_deep_meshgrid_that_diverged_live_settles_under_refinement():
+    """Check 2 of the 2026-09-04 design.
+
+    On the fixture where the live configuration overflows into a NaN, the
+    refinement settles: the crown lands on the target, the total load
+    stops moving, and every round after the second moves it less than the
+    round before it. The first round is the plan-frozen solve, and on a
+    vault this deep it under-weighs the surface by a factor of thirty
+    three, which is what the refinement is for.
+    """
+
+    session = solve_selfweight_meshgrid()
+    diagnostics = session.diagnostics
+
+    assert diagnostics["selfweight_mode"] == "refined on the solved geometry"
+    assert diagnostics["selfweight_refined"] is True
+    assert diagnostics["selfweight_converged"] is True
+    assert diagnostics["selfweight_fenced"] is False
+    assert diagnostics["zmax_solved"] == pytest.approx(
+        SELFWEIGHT_MESHGRID_ZMAX, rel=1e-6
+    )
+
+    rounds = diagnostics["selfweight_rounds_run"]
+    assert 1 < rounds < tna_module.SELFWEIGHT_REFINEMENT_MAX_ROUNDS
+    totals = list(diagnostics["selfweight_total_load_by_round"])
+    assert len(totals) == rounds
+    assert diagnostics["selfweight_final_drift"] < (
+        tna_module.SELFWEIGHT_REFINEMENT_TOLERANCE
+    )
+
+    # The plan area is 10 x 10 at a density of -1, so round one holds
+    # exactly the plan weight, and the surface it finds is nowhere near
+    # flat: freezing at the plan alone would have under-weighed this
+    # vault thirty-three fold.
+    assert totals[0] == pytest.approx(-100.0, rel=1e-9)
+    assert abs(totals[-1]) > 30.0 * abs(totals[0])
+
+    drifts = round_to_round_drifts(totals)
+    # Round two carries the whole plan-to-surface correction, so it is
+    # not part of the monotone tail; it is asserted separately, because a
+    # fixture whose first correction was small would prove nothing about
+    # a refinement that has to survive a large one.
+    assert drifts[0] > 1.0
+    for index in range(1, len(drifts)):
+        assert drifts[index] < drifts[index - 1], (
+            "the round-to-round load change stopped falling at round "
+            "{}: {}".format(index + 2, drifts)
+        )
+
+
+def test_the_refinement_tolerance_is_what_stops_the_loop(monkeypatch):
+    """Check 6, the tolerance half. The loop stops at the first round
+    whose relative load change falls under the tolerance, so loosening
+    the tolerance to five per cent must stop it at round three, where
+    that fixture's measured drift is 4.1 per cent."""
+
+    monkeypatch.setattr(
+        tna_module, "SELFWEIGHT_REFINEMENT_TOLERANCE", 5.0e-2
+    )
+    session = solve_selfweight_meshgrid()
+    diagnostics = session.diagnostics
+
+    assert diagnostics["selfweight_converged"] is True
+    assert diagnostics["selfweight_fenced"] is False
+    assert diagnostics["selfweight_rounds_run"] == 3
+    assert diagnostics["selfweight_final_drift"] == pytest.approx(
+        4.13e-2, rel=5e-2
+    )
+
+
+def test_the_refinement_cap_fences_back_to_round_one_and_names_the_drift(
+    monkeypatch,
+):
+    """Check 3 of the 2026-09-04 design.
+
+    A cap the fixture cannot settle inside must not ship the round that
+    was still moving. It falls back to round one, the plan-frozen solve,
+    which always exists, and says so with the drift it stopped at.
+
+    The fallback is proved by running the same fixture at a cap of three
+    and at a cap of one: if the fence holds, the three-round solve throws
+    rounds two and three away and lands on exactly the state the
+    one-round solve reached.
+    """
+
+    monkeypatch.setattr(tna_module, "SELFWEIGHT_REFINEMENT_MAX_ROUNDS", 1)
+    with pytest.warns(tna_module.TNASelfweightRefinementWarning):
+        round_one = solve_selfweight_meshgrid()
+
+    monkeypatch.setattr(tna_module, "SELFWEIGHT_REFINEMENT_MAX_ROUNDS", 3)
+    with pytest.warns(
+        tna_module.TNASelfweightRefinementWarning,
+        match=(
+            r"did not settle in 3 rounds; the total load was still moving "
+            r"[0-9]+\.[0-9] per cent; the result carries the round-1 weight"
+        ),
+    ):
+        fenced = solve_selfweight_meshgrid()
+
+    assert fenced.diagnostics["selfweight_converged"] is False
+    assert fenced.diagnostics["selfweight_fenced"] is True
+    assert fenced.diagnostics["selfweight_rounds_run"] == 3
+
+    # The fenced result IS round one, vertex for vertex, edge for edge.
+    assert fenced.diagnostics["vertical_scale"] == pytest.approx(
+        round_one.diagnostics["vertical_scale"], rel=1e-12
+    )
+    assert fenced.diagnostics["effective_total_pz"] == pytest.approx(
+        round_one.diagnostics["effective_total_pz"], rel=1e-12
+    )
+    for key in fenced.form.vertices():
+        assert fenced.form.vertex_attribute(key, "z") == pytest.approx(
+            round_one.form.vertex_attribute(key, "z"), rel=1e-12, abs=1e-12
+        )
+        assert fenced.form.vertex_attribute(key, "pz") == pytest.approx(
+            round_one.form.vertex_attribute(key, "pz"), rel=1e-12, abs=1e-12
+        )
+    for edge, force_density in fenced.edge_q.items():
+        assert force_density == pytest.approx(
+            round_one.edge_q[edge], rel=1e-12
+        )
+
+    # And it is not the settled answer: round one holds the plan weight,
+    # which on this vault is a thirty-third of the weight the refinement
+    # converges on at its own cap.
+    monkeypatch.undo()
+    settled = solve_selfweight_meshgrid()
+    assert settled.diagnostics["selfweight_converged"] is True
+    assert fenced.diagnostics["effective_total_pz"] == pytest.approx(
+        -100.0, rel=1e-9
+    )
+    assert abs(settled.diagnostics["effective_total_pz"]) > 30.0 * abs(
+        fenced.diagnostics["effective_total_pz"]
+    )
+
+
+def test_a_non_finite_round_is_named_with_its_vertex_and_its_round(
+    monkeypatch,
+):
+    """Check 4 of the 2026-09-04 design.
+
+    A NaN injected through the library seam must arrive as a named error
+    carrying the vertex it appeared at and the round that produced it,
+    not as scipy's bare complaint about infs and NaNs two calls
+    downstream. The first round is allowed through untouched, so the
+    round number in the message is measured rather than assumed.
+    """
+
+    victim = 60
+    real_vertical_from_zmax = tna_module.vertical_from_zmax
+    rounds_seen = []
+
+    def poisoned_vertical_from_zmax(form, **kwargs):
+        rounds_seen.append(len(rounds_seen) + 1)
+        result = real_vertical_from_zmax(form, **kwargs)
+        if len(rounds_seen) >= 2:
+            form.vertex_attribute(victim, "z", float("nan"))
+        return result
+
+    monkeypatch.setattr(
+        tna_module, "vertical_from_zmax", poisoned_vertical_from_zmax
+    )
+    with pytest.raises(tna_module.TNANonFiniteError) as raised:
+        solve_selfweight_meshgrid()
+
+    message = str(raised.value)
+    assert "selfweight round 2" in message, message
+    assert "vertex key {!r}".format(victim) in message, message
+    assert len(rounds_seen) == 2
+
+
+def test_the_zmax_branch_never_hands_the_library_a_density():
+    """Check 1 of the 2026-09-04 design, the grep half.
+
+    Every call this module makes to the library's target-height routine
+    passes a literal zero density. The rule is worth reading off the
+    source as well as off behaviour: a density reaching that routine is
+    both the instability of section 1 and, at a negative value, a
+    negative scale.
+    """
+
+    import inspect
+
+    source = inspect.getsource(tna_module)
+    calls = []
+    marker = "vertical_from_zmax("
+    start = source.find(marker)
+    while start != -1:
+        cursor = start + len(marker)
+        depth = 1
+        while depth > 0:
+            if source[cursor] == "(":
+                depth += 1
+            elif source[cursor] == ")":
+                depth -= 1
+            cursor += 1
+        calls.append(source[start:cursor])
+        start = source.find(marker, cursor)
+
+    assert len(calls) == 2, (
+        "the zmax call sites moved; this check must be pointed at all of "
+        "them, and it found {}".format(len(calls))
+    )
+    for call in calls:
+        assert "density=0.0," in call, call
+        assert "density=density" not in call, call
+        assert "density=vertical_density" not in call, call
+
+
+def test_the_worker_zmax_seam_passes_a_zero_density_to_the_library(
+    monkeypatch,
+):
+    """Check 1 of the 2026-09-04 design, the behaviour half.
+
+    Driven through the worker protocol seam with a surface load and a
+    target height, so the density the library is handed is the one a
+    canvas would produce, not one a unit test chose.
+    """
+
+    vertices, faces, edges, rim, _ = polar_disk()
+    free = {rim[j] for j in range(16) if j % 4 in (1, 2)}
+    supports = [key for key in rim if key not in free]
+    prepared = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "disk-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": supports},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.15,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+            },
+        },
+        "prepare-density-seam",
+    ))["result"]
+
+    real_vertical_from_zmax = tna_module.vertical_from_zmax
+    densities = []
+
+    def recording_vertical_from_zmax(form, **kwargs):
+        densities.append(kwargs["density"])
+        return real_vertical_from_zmax(form, **kwargs)
+
+    monkeypatch.setattr(
+        tna_module, "vertical_from_zmax", recording_vertical_from_zmax
+    )
+    solved_response = dispatch(request(
+        "tna.solve",
+        {
+            "prepared": prepared,
+            "load_case": {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": (0.0, 0.0, -1.0),
+            },
+            "control": {
+                "height_control": {"mode": "zmax", "value": 5.0},
+                "settings": {
+                    "horizontal_alpha": 100.0,
+                    "horizontal_iterations": None,
+                    "vertical_iterations": 1000,
+                    "tolerance": 1.0e-3,
+                },
+            },
+        },
+        "solve-density-seam",
+    ))
+
+    assert solved_response["type"] == "result", solved_response
+    metrics = solved_response["result"]["diagnostic_metrics"]
+    # The canvas really did wire a surface load: the solve refined it.
+    assert metrics["selfweight_refined"] is True
+    assert metrics["selfweight_rounds_run"] > 1
+    assert len(densities) == metrics["selfweight_rounds_run"]
+    assert densities == [0.0] * len(densities)
