@@ -627,3 +627,30 @@ is the casualty. Same ceiling as the prop boot death, one asset later.
   Grasshopper outputs wired in as the data feed later, "might be the
   best way of feeding some of the information to you". Brainstorm the
   data contract with him before building.
+
+## 2026-09-05 -- THE TURNTABLE FRAMES THE VAULT; iPAD SKY STILL OPEN
+
+His asks: "keep the focus on that during its turntable motion"; shift
+the on-screen log clear of the bottom tiles; the belfast_16k sun
+drop-out persists ("worked fine on other hdri").
+
+- ORBIT, FINAL FORM: captureOrbitBase circles STATE.CENTRE (falling
+  back to controls.target with no bundle), captures lookFrom =
+  controls.target + aimFromT = the clock reference; applyTimeline
+  glides the aim lookFrom -> centre with smoothstep over
+  min(6, max(0.8, opening - aimFromT)) TAKE-seconds and copies
+  controls.target along. Guarantees, all measured: press-frame
+  identical (pos and aim delta 0.0), aim error 0.0 mid-turn, drag
+  mid-take resumes from the aim's actual position. Pins updated to
+  this final contract (two intermediate-contract pins retired).
+- EVENT LOG: bottom 16px -> 64px, above the shelf strip.
+- iPAD BELFAST SKY, STILL OPEN: the 4k tier WAS served (access log:
+  GET background?px=4096), both derivations byte-healthy (brightness
+  profile identical full vs capped), belfast .light.hdr byte-identical
+  in size to every working sky, tip WebKit on the desktop renders the
+  same flow perfectly (env set, sun 2.98), and the iPad filed NO error
+  and NO context loss -- the lighting dies silently. Milestones now
+  log 'sky light ready' / 'sky backdrop ready at Npx'; HIS NEXT iPad
+  SCREENSHOT of the on-screen log names the failing stage. Candidate
+  suspects once the stage is known: PMREM output on iOS, texture-unit
+  eviction without contextlost, Brave iOS shields.
