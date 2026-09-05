@@ -1367,7 +1367,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                             "image/vnd.radiance")
 
     @app.get("/api/hdri/{name}/background")
-    def hdri_background(name: str):
+    def hdri_background(name: str, px: int = 0):
         """The sky the eye LOOKS at: source resolution (GPU-capped),
         tone-mapped, eight bits.
 
@@ -1376,8 +1376,21 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         be small enough to prefilter cheaply. The suffix is versioned:
         the old 2048-wide derivations sit beside the skies looking newer
         than their sources, and only a fresh name gets past that check.
+
+        px asks for a CEILING. A touch device that uploaded the 16k sky
+        as half a gigabyte of texture shed its other textures to fit it,
+        the lighting environment first -- the sun going out mid-switch.
+        Each ceiling is its own derived file, built once and kept beside
+        the full one.
         """
 
+        cap = min(int(px), hdri_preview.BACKGROUND_WIDTH) if px > 0 else 0
+        if cap:
+            return _derived_sky(
+                name, ".bg-{}.png".format(cap),
+                lambda source, destination: hdri_preview.build_background(
+                    source, destination, cap),
+                "image/png")
         return _derived_sky(name, ".bg-full.png",
                             hdri_preview.build_background, "image/png")
 

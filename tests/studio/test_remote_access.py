@@ -522,6 +522,25 @@ def test_a_small_recorded_history_undoes_the_last_thing():
         "yesterday's undos must not write into a different picture")
 
 
+def test_touch_devices_get_a_sky_they_can_carry():
+    """A 16k backdrop uploads as half a gigabyte of texture. An iPad asked
+    to carry it sheds every other texture to fit -- the prefiltered
+    lighting first, which is Param's "sun drop out while changing hdris on
+    other devices". Touch devices ask the background route for a 4k
+    ceiling; each ceiling is its own derived file beside the full one."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert '+ (CONSTRAINED_DEVICE ? "?px=4096" : "")' in js
+    source = (REPO / "bench" / "studio" / "app.py").read_text(encoding="utf-8")
+    route = source[source.index('@app.get("/api/hdri/{name}/background")'):]
+    route = route[:route.index("\n    @app.")]
+    assert "def hdri_background(name: str, px: int = 0):" in route
+    assert '".bg-{}.png".format(cap)' in route
+    assert "min(int(px), hdri_preview.BACKGROUND_WIDTH)" in route, (
+        "the ceiling is clamped to the full tier, never above it")
+    assert '".bg-full.png"' in route, "no px still means the master"
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

@@ -642,8 +642,15 @@ async function loadHdriBackdrop(name) {
   const wanted = name;
   const done = beginLoading("Preparing sky " + name + " at full quality");
   try {
+    // Full resolution is for machines with the memory to hold it: a 16k
+    // backdrop uploads as half a GIGABYTE of texture, and an iPad asked
+    // to carry that sheds every other texture to fit it -- the lighting
+    // environment included, which is where Param's "sun drop out while
+    // changing hdris on other devices" came from. Touch devices get a 4k
+    // sky: 32 MB, and the vault keeps its light.
     const texture = await new THREE.TextureLoader().loadAsync(
-      "/api/hdri/" + encodeURIComponent(name) + "/background");
+      "/api/hdri/" + encodeURIComponent(name) + "/background"
+      + (CONSTRAINED_DEVICE ? "?px=4096" : ""));
     done();
     // A slower sky that lost the race must not replace a faster one that
     // won it: the user may have changed their mind while this was in flight.
