@@ -41,14 +41,19 @@ All designed meshes enter THROUGH THE CANVAS, not through files: a new collector
 (working name MECHANISM, "ME") whose output feeds Export beside RES and Cells. Ports, all
 optional, item or tree access as noted:
 
-    PU  Pulley unit mesh (item): the one canonical reeling unit Param designs.
-    PS  Pulley sockets (tree of planes): the routing frames embedded in the unit's own local
-        space, IN WIRE ORDER, directing where a wire runs through the wheels. His "series of
-        frames". Stored with the asset, transformed with every instance.
-    PR  Pulley reeve factor (number, default 1.0): rope crossing the spool per unit of net-side
-        length change, the four-wheel advantage as one number.
-    SR  Spool radius (number, default from the unit's bounding box smallest dimension over 4,
-        said in the chin so the default is never silent).
+    PU  Pulley unit meshes (TREE, one branch per pulley TYPE): branch {0} is the EDGE REEL, the
+        anchor-line unit; branch {1} is the NODE REEL, the unit that sits by each principal node
+        and reels the sag and relax of the net (added by Param 2026-09-05: "another pulley
+        mechanism that goes by each principle node ... on the ground or just below each node").
+        A missing branch means the machine has no reels of that type. The ports stay four; the
+        family lives in the tree.
+    PS  Pulley sockets (tree of planes, branches matching PU): the routing frames embedded in
+        each unit's own local space, IN WIRE ORDER, directing where a wire runs through the
+        wheels. His "series of frames". Stored with the asset, transformed with every instance.
+    PR  Reeve factors (tree of numbers matching PU, default 1.0 per type): rope crossing the
+        spool per unit of net-side length change, the four-wheel advantage as one number.
+    SR  Spool radii (tree of numbers matching PU; default per type from the unit's bounding box
+        smallest dimension over 4, said in the chin so the default is never silent).
     BR  Bar mesh (item): the sliding ground bar the columns rise from.
     AT  Anchor tie mesh (item): the fused anchor clamp and column tension tie, authored by
         Param. (The generated-default clamp is PARKED, deliberately: he authors this piece
@@ -65,11 +70,19 @@ build-on-rest rules.
 
 The plugin computes, from the Result it already owns:
 
-- PULLEY INSTANCES: one placement frame per reeling group, origin on the anchor line, X tangent
-  to the anchor row, Z up, exactly his "always tangential to the anchors ... decided in the
-  plugin to make it safe". Count scales with the wires. Each instance carries the LIST OF WIRE
-  IDS it serves (the wire-to-unit mapping), where a wire id is the pair (net vertex index,
+- EDGE REEL INSTANCES: one placement frame per reeling group, origin on the anchor line, X
+  tangent to the anchor row, Z up, exactly his "always tangential to the anchors ... decided in
+  the plugin to make it safe". Count scales with the wires. Each instance carries the LIST OF
+  WIRE IDS it serves (the wire-to-unit mapping), where a wire id is the pair (net vertex index,
   anchor node index) the frames already animate.
+- NODE REEL INSTANCES: one per principal node, plan position under the node, oriented to the
+  bar's tangent there. THE VERTICAL RULE IS DELIBERATELY OPEN, his words "on the ground or just
+  below each node ... i am deciding on still": the plugin's placement function carries a mode
+  (ground z, or a fixed drop below the node) settled when his design lands, and NOTHING
+  DOWNSTREAM DEPENDS ON THE CHOICE, because the document carries only the resulting frames. The
+  default until he rules is ground. Wire ids for these reels pair a net vertex index with the
+  principal node's index in the frames' column-node stream, so the sag and relax wires derive
+  their spin by the same section 5 arithmetic, in whichever direction the physics runs them.
 - BAR PLACEMENT: the sliding bar attached to the anchors, one frame (or one per span where spans
   are separate), oriented along the anchor row.
 - ANCHOR TIE INSTANCES: one frame per tie position along the anchored edge, oriented to the

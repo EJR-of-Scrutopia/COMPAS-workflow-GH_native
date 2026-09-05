@@ -19,19 +19,23 @@ the plugin repo): a new sibling document, "<study>-mechanism.json",
 schema "bench.mechanism/1". SHAPE ONLY, no per-frame data ever:
 
   a. PARTS: designed meshes wired in on the canvas and embedded ONCE
-     (vertices, faces, material tag): the pulley unit, the sliding
+     (vertices, faces, material tag): TWO pulley unit types (the EDGE
+     REEL on the anchor lines and the NODE REEL that sits by each
+     principal node and reels the net's sag and relax), the sliding
      ground bar, the fused anchor-plus-tension-tie. Heavy but rare; it
      re-sends only when its own change key moves, per the standing
      per-document keys.
-  b. SOCKETS: the pulley unit carries an ordered list of planes in its
+  b. SOCKETS: each pulley type carries an ordered list of planes in its
      own local space, the routing frames a wire runs through around its
-     four wheels. Placed instances carry their sockets with them.
-  c. PLACEMENTS: plugin-computed frames per instance (pulley units
-     tangential to the anchor rows, the bar attached to the anchors,
-     one tie frame per position along the anchored edge), each pulley
-     instance carrying the WIRE IDS it serves, a wire id being the
-     (net vertex index, anchor node index) pair the frames already
-     animate.
+     wheels. Placed instances carry their sockets with them.
+  c. PLACEMENTS: plugin-computed frames per instance (edge reels
+     tangential to the anchor rows; node reels under each principal
+     node, vertical rule plugin-side and revisable without touching
+     this schema; the bar attached to the anchors; one tie frame per
+     position along the anchored edge), each reel instance carrying the
+     WIRE IDS it serves, a wire id pairing a net vertex index with an
+     anchor node index (edge reels) or a column-node-stream index (node
+     reels), both already animated by the frames you replay.
   d. DECLARED FACTS: spool radius and reeve factor (rope crossing the
      spool per unit of net-side length change; his unit has four
      wheels).
