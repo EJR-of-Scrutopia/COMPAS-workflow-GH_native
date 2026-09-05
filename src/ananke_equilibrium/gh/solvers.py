@@ -729,15 +729,17 @@ def solve_tna(
                 "TNA v0.1 accepts loads along analysis-plane Z only. Use FD "
                 "for a general spatial load vector."
             )
+        if abs(float(base_vector[2])) <= 1e-12:
+            raise AdapterError(
+                "Surface loading requires a base vector with a non-zero "
+                "Z: it is the direction the self-weight acts in. Ask for "
+                "no self-weight with a Thickness or a Density of zero, "
+                "which both leave the weight out and keep the node loads."
+            )
         surface_thickness = float(get_any(load_case, ("thickness",), 1.0))
         load_density = float(base_vector[2]) * float(
             get_any(load_case, ("density",), 1.0)
         )
-        if abs(load_density * surface_thickness) <= 1e-12:
-            raise AdapterError(
-                "Surface loading requires a non-zero vertical vector, "
-                "thickness and density."
-            )
         # RULE 2.4(b). The nodal point loads used to be ZEROED here
         # whenever a surface load was wired, so a canvas could carry the
         # self-weight or its point loads but never both. They now ride
@@ -751,6 +753,26 @@ def solve_tna(
             faces_override=faces if prepared is not None else None,
             nodal_only=True,
         )
+        # A THICKNESS OR A DENSITY OF ZERO IS NO SELF-WEIGHT, not a
+        # refusal. Both contracts accept zero on either port
+        # (SpineComponents.cs and ContractDtos.cs), the worker already
+        # reads a "t" of nought as a caller asking for no weight, and the
+        # FD path returns all-zero records for it, so refusing here was
+        # the only reading of the three and it took the canvas's point
+        # loads down with it. Density zero is how the worker is told
+        # there is no weight: it turns selfweight_active off, so the
+        # solve reports the node loads alone and ships no self-weight
+        # diagnostics for a weight nobody asked for.
+        if abs(load_density * surface_thickness) <= 1e-12:
+            load_density = 0.0
+            if not pz:
+                raise AdapterError(
+                    "A Thickness or a Density of zero asks for no "
+                    "self-weight, and this load case carries no node "
+                    "loads either, so there is nothing to solve. Give a "
+                    "non-zero thickness and density, or wire the node "
+                    "loads the solve should carry."
+                )
     else:
         load_density = 0.0
         surface_thickness = 1.0

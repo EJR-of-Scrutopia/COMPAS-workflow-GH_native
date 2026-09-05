@@ -1383,3 +1383,105 @@ def test_a_surface_load_authored_before_thickness_and_density_keeps_its_weight()
     ][0] == pytest.approx(
         0.5 * old_metrics["selfweight_total_load_by_round"][0], rel=1e-12
     )
+
+
+def test_a_thickness_or_density_of_zero_is_no_selfweight_not_a_refusal():
+    """The value both contracts accept and the solve used to refuse.
+
+    ``LoadsComponent`` permits Thickness and Density of zero or greater
+    and ``LoadCaseDto`` permits both zero, so T = 0 validates green on
+    the canvas; the adapter then refused the WHOLE solve with "Surface
+    loading requires a non-zero vertical vector, thickness and density",
+    naming none of the three numbers and taking the author's point loads
+    down with it. The worker has read a thickness of nought as a caller
+    asking for no weight since the previous round, and the FD path
+    returns all-zero records for it, so the refusal was the odd reading
+    of three. Zero on either port now means NO SELF-WEIGHT: the node
+    loads stand alone and no self-weight diagnostics are shipped for a
+    weight nobody asked for.
+    """
+
+    for label, thickness, density in (
+        ("thickness", 0.0, 1.0),
+        ("density", 1.0, 0.0),
+    ):
+        solved = solve_loads_case(
+            {
+                "name": "dead",
+                "distribution": "self_weight",
+                "base_vector": (0.0, 0.0, -1.0),
+                "thickness": thickness,
+                "density": density,
+                "node_ids": [LOADED_VERTEX],
+                "vectors": [(0.0, 0.0, NODAL_LOAD)],
+            },
+            "solve-zero-{}".format(label),
+        )
+        metrics = solved["diagnostic_metrics"]
+        assert metrics["selfweight_mode"] == "none", label
+        assert metrics["effective_total_pz"] == pytest.approx(
+            NODAL_LOAD, rel=1e-12
+        ), label
+        for key in ("nodal_total_pz", "selfweight_total_pz"):
+            assert key not in metrics, (
+                "a zero {} asks for no self-weight, so the solve must not "
+                "report one: {}".format(label, sorted(metrics))
+            )
+        # The point load is where the author put it, and nowhere else.
+        pz_by_vertex = effective_pz_by_vertex(solved)
+        assert pz_by_vertex[LOADED_VERTEX] == pytest.approx(
+            NODAL_LOAD, rel=1e-12
+        ), label
+        assert all(
+            value == pytest.approx(0.0, abs=1e-12)
+            for vertex, value in pz_by_vertex.items()
+            if vertex != LOADED_VERTEX
+        ), label
+
+
+def test_a_selfweight_wire_that_can_carry_no_load_at_all_is_still_refused():
+    """The two wires that stay refused, and the reason each is refused.
+
+    A base vector with no Z says nothing about which way a weight acts,
+    and it is the one number the old model could not do without. And a
+    zero thickness with no node loads beside it is a solve with no load
+    on it at all: allowed through, it reaches the library and comes back
+    as `RuntimeError: Factor is exactly singular` behind a wall of
+    `dgstrf info 1`, which is precisely the bare-library failure rule 2.3
+    of the 2026-09-04 design exists to keep off the canvas.
+    """
+
+    def refusal(load_case, request_id):
+        response = dispatch(request(
+            "tna.solve",
+            loads_case_grid_payload(load_case),
+            request_id,
+        ))
+        assert response["type"] == "error", response
+        return response["error"]["message"]
+
+    zero_vector = refusal(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, 0.0),
+            "thickness": 1.0,
+            "density": 1.0,
+            "node_ids": [LOADED_VERTEX],
+            "vectors": [(0.0, 0.0, NODAL_LOAD)],
+        },
+        "solve-zero-base-vector",
+    )
+    assert "base vector with a non-zero Z" in zero_vector
+
+    nothing_at_all = refusal(
+        {
+            "name": "dead",
+            "distribution": "self_weight",
+            "base_vector": (0.0, 0.0, -1.0),
+            "thickness": 0.0,
+            "density": 1.0,
+        },
+        "solve-zero-thickness-alone",
+    )
+    assert "carries no node loads either" in nothing_at_all
