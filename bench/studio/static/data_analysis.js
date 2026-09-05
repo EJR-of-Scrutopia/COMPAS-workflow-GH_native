@@ -67,6 +67,13 @@ export const MATERIAL_LIMITS = {
   },
 };
 
+// Densities, kg/m3, duplicating staging.py's table (which itself mirrors
+// ananke_fea) so the narrative can weigh the shell without a server call.
+export const DENSITIES = {
+  concrete: 2400, "concrete-c50": 2400, "concrete-sprayed": 2300,
+  timber: 385, brick: 1900, tile: 1800, stone: 2500,
+};
+
 // Where something is, in an architect's words rather than coordinates:
 // height band first, then compass bearing from the plan centre. North is
 // +y, matching the sun widget's compass.
@@ -143,35 +150,181 @@ export function computeAnalysisInput(bundle, stage) {
       compression: row.struck_now && row.struck_now.peak_compression != null
         ? Math.abs(row.struck_now.peak_compression) / 1e6 : null,
       formworkKN: (row.formwork_carries_newtons || 0) / 1000,
+      displacementMM: row.struck_now && row.struck_now.peak_displacement != null
+        ? row.struck_now.peak_displacement * 1000 : null,
+      weightKN: (row.placed_weight_newtons || 0) / 1000,
     })),
   };
+
+  // The member-force census: the funicular measure. In the exporter's
+  // convention compression is negative, so the share of members at or
+  // below zero says how honestly the form keeps its compression promise.
+  const forces = bundle.member_forces || [];
+  if (forces.length) {
+    let compressionCount = 0, worstC = 0, worstT = 0;
+    for (const force of forces) {
+      if (force <= 0) {
+        compressionCount += 1;
+        worstC = Math.min(worstC, force);
+      } else {
+        worstT = Math.max(worstT, force);
+      }
+    }
+    input.forceCensus = {
+      members: forces.length,
+      compressionCount,
+      tensionCount: forces.length - compressionCount,
+      compressionShare: compressionCount / forces.length,
+      worstCompressionKN: -worstC / 1e3,
+      worstTensionKN: worstT / 1e3,
+    };
+  }
+
+  // The supports, read as thrust: how much the vault pushes outward and
+  // how steeply the resultant leaves the springing. The angle is judged
+  // only on supports doing real work, so a near-idle node's noise never
+  // names the "steepest" thrust.
+  const reactionRows = Object.entries(bundle.reactions || {});
+  if (reactionRows.length) {
+    let maxMagnitude = 0;
+    for (const [, vector] of reactionRows) {
+      maxMagnitude = Math.max(maxMagnitude,
+        Math.hypot(vector[0], vector[1], vector[2]));
+    }
+    let totalVertical = 0, worst = null, steepest = null;
+    for (const [node, vector] of reactionRows) {
+      const magnitude = Math.hypot(vector[0], vector[1], vector[2]);
+      totalVertical += vector[2];
+      if (!worst || magnitude > worst.magnitude) worst = { node, magnitude };
+      if (magnitude >= 0.05 * maxMagnitude) {
+        const outward = Math.hypot(vector[0], vector[1]);
+        const degrees =
+          Math.atan2(outward, Math.abs(vector[2])) * 180 / Math.PI;
+        if (!steepest || degrees > steepest.degrees) {
+          steepest = { node, degrees, outwardKN: outward / 1e3 };
+        }
+      }
+    }
+    input.reactionStory = {
+      count: reactionRows.length,
+      totalVerticalKN: totalVertical / 1e3,
+      worstKN: worst.magnitude / 1e3,
+      worstWhere: vertices[+worst.node]
+        ? describeLocation(vertices[+worst.node], bounds) : null,
+      steepestDeg: steepest ? steepest.degrees : null,
+      steepestOutwardKN: steepest ? steepest.outwardKN : null,
+      steepestWhere: steepest && vertices[+steepest.node]
+        ? describeLocation(vertices[+steepest.node], bounds) : null,
+    };
+  }
+
+  // What the shell carries and what it is: total applied load, surface
+  // area (polygon fan, so quads count too), and a weight for the load to
+  // stand against -- the solver's own figure when a stage carries one,
+  // else area x thickness x density.
+  const loadRows = Object.values(bundle.loads || {});
+  if (loadRows.length) {
+    let total = 0;
+    for (const vector of loadRows) {
+      total += Math.hypot(vector[0], vector[1], vector[2]);
+    }
+    input.totalLoadKN = total / 1e3;
+  }
+  let area = 0;
+  for (const face of bundle.analysis_mesh.faces) {
+    for (let i = 2; i < face.length; i++) {
+      const a = vertices[face[0]], b = vertices[face[i - 1]],
+        c = vertices[face[i]];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      area += Math.hypot(u[1] * w[2] - u[2] * w[1],
+        u[2] * w[0] - u[0] * w[2],
+        u[0] * w[1] - u[1] * w[0]) / 2;
+    }
+  }
+  input.shellArea = area;
+  if (input.totalLoadKN != null && area > 0) {
+    input.loadPerM2 = input.totalLoadKN / area;
+  }
+  input.selfWeightKN = stage && stage.self_weight_newtons != null
+    ? stage.self_weight_newtons / 1e3
+    : DENSITIES[bundle.material] && thickness > 0 && area > 0
+      ? area * thickness * DENSITIES[bundle.material] * 9.81 / 1e3
+      : null;
+
+  // The build's tender moment and its handover: the stage that would
+  // suffer most if struck early, where the formwork works hardest, and
+  // the stage from which the carry stays below a tenth of that peak --
+  // the vault carrying itself from there on.
+  if (input.stageSeries.length) {
+    let critical = null, peakCarry = null;
+    for (const row of input.stageSeries) {
+      if (row.tension != null
+          && (!critical || row.tension > critical.tension)) critical = row;
+      if (!peakCarry || row.formworkKN > peakCarry.formworkKN) peakCarry = row;
+    }
+    input.criticalStage = critical;
+    if (peakCarry.formworkKN > 0) {
+      input.formworkPeak = { stage: peakCarry.stage, kN: peakCarry.formworkKN };
+      let selfFrom = null;
+      for (const row of input.stageSeries) {
+        if (row.formworkKN <= 0.1 * peakCarry.formworkKN) {
+          if (selfFrom == null) selfFrom = row.stage;
+        } else {
+          selfFrom = null;
+        }
+      }
+      input.selfSupportingFrom = selfFrom;
+    }
+  }
 
   if (stage) {
     input.peakTension = stage.peak_tension / 1e6;
     input.peakCompression = Math.abs(stage.peak_compression) / 1e6;
-    // The worst faces, for the "where" of the story.
+    // The worst faces, for the "where" of the story -- and while walking
+    // them, the extent: how much of the surface runs beyond half of each
+    // limit, so the narrative can say spike or field.
     let worstT = -Infinity, worstC = -Infinity, faceT = null, faceC = null;
+    let hotT = 0, overT = 0, hotC = 0, overC = 0, faceCount = 0;
     const faces = bundle.analysis_mesh.faces;
     for (const [key, pair] of Object.entries(stage.stresses || {})) {
       const tension = Math.max(pair.top[0], pair.bottom[0]);
       const compression = Math.max(-pair.top[1], -pair.bottom[1]);
       if (tension > worstT) { worstT = tension; faceT = faces[+key]; }
       if (compression > worstC) { worstC = compression; faceC = faces[+key]; }
+      faceCount += 1;
+      if (input.limits) {
+        if (tension / 1e6 >= 0.5 * input.limits.tension) hotT += 1;
+        if (tension / 1e6 >= input.limits.tension) overT += 1;
+        if (compression / 1e6 >= 0.5 * input.limits.compression) hotC += 1;
+        if (compression / 1e6 >= input.limits.compression) overC += 1;
+      }
     }
     input.tensionWhere = faceT
       ? describeLocation(faceCentroid(faceT, vertices), bounds) : null;
     input.compressionWhere = faceC
       ? describeLocation(faceCentroid(faceC, vertices), bounds) : null;
+    if (input.limits && faceCount) {
+      input.stressExtent = {
+        faces: faceCount,
+        hotTension: hotT, overTension: overT,
+        hotCompression: hotC, overCompression: overC,
+      };
+    }
     // displacements is a dict keyed by node id, not an array (measured on
-    // the real bundle), and the solver ships its own peak besides.
+    // the real bundle), and the solver ships its own peak besides. The
+    // dict is still walked for the ARGMAX so the movement gets a place.
     let deflection = stage.peak_displacement != null
       ? stage.peak_displacement : 0;
-    if (!deflection) {
-      for (const d of Object.values(stage.displacements || {})) {
-        deflection = Math.max(deflection, Math.hypot(d[0], d[1], d[2]));
-      }
+    let moved = 0, movedNode = null;
+    for (const [node, d] of Object.entries(stage.displacements || {})) {
+      const magnitude = Math.hypot(d[0], d[1], d[2]);
+      if (magnitude > moved) { moved = magnitude; movedNode = node; }
     }
+    if (!deflection) deflection = moved;
     input.deflection = deflection;
+    input.deflectionWhere = movedNode != null && vertices[+movedNode]
+      ? describeLocation(vertices[+movedNode], bounds) : null;
   } else if (input.verification && input.verification.stress) {
     input.peakTension = (input.verification.stress.peak_tension || 0) / 1e6;
     input.peakCompression =
@@ -230,6 +383,23 @@ export function buildRecommendations(input) {
       + (input.compressionWhere ? " " + input.compressionWhere : "")
       + "; thicken the section there or choose a stronger grade.");
   }
+  if (input.reactionStory && input.reactionStory.steepestDeg != null
+      && input.reactionStory.steepestDeg >= 35) {
+    out.push("The thrust leaves the worst springing at "
+      + Math.round(input.reactionStory.steepestDeg)
+      + " degrees from vertical ("
+      + input.reactionStory.steepestOutwardKN.toFixed(1) + " kN outward"
+      + (input.reactionStory.steepestWhere
+        ? ", " + input.reactionStory.steepestWhere : "")
+      + "): the abutment there must hold that push, or a tie between "
+      + "springings must close it.");
+  }
+  if (input.forceCensus && input.forceCensus.compressionShare < 0.85) {
+    out.push("Only " + Math.round(input.forceCensus.compressionShare * 100)
+      + "% of members work in compression: the form has drifted from the "
+      + "funicular. Revisit the form-finding before sizing anything, "
+      + "because thickening cannot buy back a load path.");
+  }
   if (input.deflectionRatio != null && input.deflectionRatio < 250) {
     out.push("Deflection is L/" + Math.round(input.deflectionRatio)
       + ", slacker than the customary L/250 serviceability line: "
@@ -284,6 +454,24 @@ export function buildAnalysisHtml(input) {
         ? " These are the verification file's peaks only; a staged run "
           + "would place them on the surface."
         : "") + "</p>");
+    if (input.stressExtent) {
+      const extent = input.stressExtent;
+      parts.push("<p>Tension beyond half the limit touches <b>"
+        + extent.hotTension + " of " + extent.faces + " faces</b>"
+        + (extent.overTension
+          ? ", and " + extent.overTension + " exceed"
+            + (extent.overTension > 1 ? "" : "s") + " it outright"
+          : "")
+        + (extent.hotTension / extent.faces <= 0.1
+          ? ": a local spike, not a field"
+          : ": a spread condition, not one bad face")
+        + (extent.hotCompression
+          ? ". Compression runs past half its limit on "
+            + extent.hotCompression + " face"
+            + (extent.hotCompression > 1 ? "s" : "") + "."
+          : ". Compression stays below half its limit everywhere.")
+        + "</p>");
+    }
     if (input.limits) {
       parts.push("<p>In a funicular shell the tension number is the one "
         + "to watch: the form exists so the load path stays in "
@@ -294,6 +482,7 @@ export function buildAnalysisHtml(input) {
       parts.push("<h3>The deflection</h3>");
       parts.push("<p>The worst movement is <b>"
         + (input.deflection * 1000).toFixed(2) + " mm</b>"
+        + (input.deflectionWhere ? ", found " + input.deflectionWhere : "")
         + (input.deflectionRatio
           ? ", which over the " + input.span.toFixed(1) + " m span is L/"
             + Math.round(input.deflectionRatio)
@@ -302,6 +491,56 @@ export function buildAnalysisHtml(input) {
               : " -- slacker than the customary L/250")
           : "") + ".</p>");
     }
+  }
+
+  // The load path reads bundle-level data (member forces, reactions,
+  // loads), so it speaks even before any staged run exists.
+  const path = [];
+  if (input.forceCensus) {
+    const census = input.forceCensus;
+    path.push("Of <b>" + census.members + " members</b>, "
+      + Math.round(census.compressionShare * 100)
+      + "% work in compression"
+      + (census.tensionCount
+        ? "; " + census.tensionCount + " pick"
+          + (census.tensionCount > 1 ? "" : "s") + " up tension, the "
+          + "worst at " + census.worstTensionKN.toFixed(1) + " kN against "
+          + census.worstCompressionKN.toFixed(1)
+          + " kN in the hardest-pushing strut."
+        : " -- every member, the funicular promise kept whole."));
+  }
+  if (input.reactionStory) {
+    const story = input.reactionStory;
+    path.push("The vault stands on <b>" + story.count + " supports</b> "
+      + "carrying " + story.totalVerticalKN.toFixed(1)
+      + " kN of vertical load between them; the hardest-working takes "
+      + story.worstKN.toFixed(1) + " kN"
+      + (story.worstWhere ? ", " + story.worstWhere : "") + "."
+      + (story.steepestDeg != null
+        ? " The steepest thrust leaves at <b>"
+          + Math.round(story.steepestDeg)
+          + " degrees from vertical</b>, an outward push of "
+          + story.steepestOutwardKN.toFixed(1)
+          + " kN the abutment there must hold."
+        : ""));
+  }
+  if (input.totalLoadKN != null || input.selfWeightKN != null) {
+    path.push((input.totalLoadKN != null
+      ? "The applied load totals " + input.totalLoadKN.toFixed(1)
+        + " kN over about " + input.shellArea.toFixed(1)
+        + " m<sup>2</sup> of shell"
+        + (input.loadPerM2 != null
+          ? " (" + input.loadPerM2.toFixed(1) + " kN/m<sup>2</sup>)" : "")
+      : "The shell surface is about " + input.shellArea.toFixed(1)
+        + " m<sup>2</sup>")
+      + (input.selfWeightKN != null
+        ? "; the shell itself weighs about "
+          + (input.selfWeightKN / 9.81).toFixed(1) + " tonnes."
+        : "."));
+  }
+  if (path.length) {
+    parts.push("<h3>The load path</h3>");
+    parts.push(path.map((sentence) => "<p>" + sentence + "</p>").join(""));
   }
 
   if (input.limits) {
@@ -349,6 +588,31 @@ export function buildAnalysisHtml(input) {
         ? "; the formwork carries " + input.formworkKN.toFixed(1)
           + " kN at the final stage"
         : "") + ".</p>");
+    if (input.criticalStage && input.criticalStage.tension != null
+        && input.peakTension > 0) {
+      const ratio = input.criticalStage.tension / input.peakTension;
+      parts.push(ratio >= 1.2
+        ? "<p>The tender moment is <b>stage " + input.criticalStage.stage
+          + "</b>: struck then, tension would reach "
+          + mpa(input.criticalStage.tension) + ", about "
+          + (ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1))
+          + "x the finished vault's " + mpa(input.peakTension)
+          + ". The formwork is not an accessory; it holds that promise "
+          + "until the ring closes.</p>"
+        : "<p>No stage is tenderer than the finished vault: struck-early "
+          + "tension never rises meaningfully past the final "
+          + mpa(input.peakTension) + ".</p>");
+    }
+    if (input.formworkPeak) {
+      parts.push("<p>Formwork carry peaks at stage "
+        + input.formworkPeak.stage + " ("
+        + input.formworkPeak.kN.toFixed(1) + " kN)"
+        + (input.selfSupportingFrom != null
+          ? "; from stage " + input.selfSupportingFrom
+            + " the carry stays under a tenth of that peak -- the vault "
+            + "essentially carrying itself from there on."
+          : " and is still working at the final stage.") + "</p>");
+    }
   }
 
   parts.push("<h3>Recommendations</h3><ul>"
@@ -402,13 +666,49 @@ export function buildGraphSpecs(input, theme) {
     specs.push({ id: "graph-stage-stress", data,
       layout: layout("Peak stress per built stage, MPa") });
   }
-  if (input.stageSeries.length) {
-    specs.push({ id: "graph-formwork",
+  if (input.stageSeries.some((row) => row.displacementMM != null)) {
+    specs.push({ id: "graph-stage-deflection",
       data: [{ x: input.stageSeries.map((row) => row.stage),
-        y: input.stageSeries.map((row) => row.formworkKN),
-        type: "bar", name: "formwork carries",
-        marker: { color: theme.accent } }],
-      layout: layout("Formwork load per stage, kN", { showlegend: false }) });
+        y: input.stageSeries.map((row) => row.displacementMM),
+        type: "scatter", mode: "lines+markers", name: "peak deflection",
+        line: { color: theme.accent } }],
+      layout: layout("Peak deflection per built stage, mm",
+        { showlegend: false }) });
+  }
+  if (input.stageSeries.length) {
+    const handover = [{ x: input.stageSeries.map((row) => row.stage),
+      y: input.stageSeries.map((row) => row.formworkKN),
+      type: "bar", name: "formwork carries",
+      marker: { color: theme.accent } }];
+    const weighed = input.stageSeries.some((row) => row.weightKN > 0);
+    if (weighed) {
+      handover.push({ x: input.stageSeries.map((row) => row.stage),
+        y: input.stageSeries.map((row) => row.weightKN),
+        type: "scatter", mode: "lines+markers", name: "placed weight",
+        line: { color: theme.ink2 } });
+    }
+    specs.push({ id: "graph-formwork", data: handover,
+      layout: layout(weighed
+        ? "Formwork carry against placed weight, kN"
+        : "Formwork load per stage, kN",
+        { showlegend: weighed }) });
+  }
+  if (input.tensionUtilisation != null) {
+    const bands = [utilisationBand(input.tensionUtilisation),
+      utilisationBand(input.compressionUtilisation)];
+    const bandColours = { good: "#3f9e57", warn: "#c99a2e", bad: "#c24936" };
+    specs.push({ id: "graph-utilisation",
+      data: [
+        { x: ["tension", "compression"],
+          y: [input.tensionUtilisation * 100,
+            input.compressionUtilisation * 100],
+          type: "bar", name: "utilisation",
+          marker: { color: bands.map((band) => bandColours[band.cls]) } },
+        { x: ["tension", "compression"], y: [100, 100],
+          type: "scatter", mode: "lines", name: "the limit",
+          line: { color: "#cc2211", dash: "dot", width: 1 } },
+      ],
+      layout: layout("Utilisation against material limits, %") });
   }
   if (input.memberForces && input.memberForces.length) {
     // Binned here, not by the plotting library, so the histogram is
