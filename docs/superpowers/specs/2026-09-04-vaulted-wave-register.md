@@ -605,3 +605,25 @@ uniform"; "randomise... its random for every instance and repetition".
   reported. Windows and 0/180 flips were already per-piece hashes.
 - 722 tests green; 4/4 mutation kills (axis dropped, global turn
   restored, replay gate removed, cross-study leak).
+
+## 2026-09-05 -- THE SKY THE IPAD CAN CARRY (sun drop-out)
+
+His report: "weird sun drop out while changing hdris on other devices"
+(screenshot: 16k belfast farmhouse backdrop drawn, vault and floor
+pitch black). Diagnosis: the 16k .bg-full.png decodes to ~0.5 GB of
+GPU texture; iOS sheds other textures to fit it, and the PMREM
+lighting environment -- which IS the sun and all light in HDRI mode --
+is the casualty. Same ceiling as the prop boot death, one asset later.
+- /api/hdri/{name}/background?px=N derives a capped tier (clamped to
+  BACKGROUND_WIDTH, suffix .bg-{N}.png, built once, heavy cache tier);
+  loadHdriBackdrop appends ?px=4096 on CONSTRAINED_DEVICE. Live: 4.6 MB
+  vs 14.3 MB on an 8k source, image/png, derived in 8.1s.
+- The tier is tunable: if 4096 reads soft on the iPad, 8192 is one
+  constant away (128 MB decoded -- risky, measure first).
+- QUEUED, HIS DEADLINE EXCLUDES IT (his words: "out of the scope...
+  but its worth considering"): plotly analysis panel -- live stress /
+  deflection graphs updating as props are PLACED (props already carry
+  weight-relevant mass; the bundle carries per-piece forces); his
+  Grasshopper outputs wired in as the data feed later, "might be the
+  best way of feeding some of the information to you". Brainstorm the
+  data contract with him before building.
