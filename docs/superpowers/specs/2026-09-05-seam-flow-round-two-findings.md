@@ -62,6 +62,27 @@ traced loop, simplified to its structural corners, instead of the fan; the keyst
 ordering keeps its slot (one keystone, no rosette). The existing cap gates are untouched: this
 changes what a cap EMITS, not when a cap fires.
 
+## Live-model confirmations, from Param's own Grasshopper pull, 2026-09-05 late afternoon
+
+He ran the installed 8b9a44a build on his six-lobe and read the chins back. These are the
+ground truth the fixtures must reproduce:
+
+- FINDING 2(b) CONFIRMED: "32 faces would not close into a SOLID at Thickness 0.200, the
+  first at course 2. Those cells are STILL EXPORTED and are drawn as the un-thickened face."
+  The chin's own remedy ("a smaller Thickness") is the component admitting it has no rescue.
+  His close-up shows exactly this: a grey face sunk to bottom height amid closed red solids.
+  The fix must rescue the cell, not advise on sliders: either close the solid robustly or, at
+  minimum, ship the fallback face AT TOP HEIGHT so it reads in the coursing while a named
+  warning still says it is not a solid.
+- FINDING 1 (plan drops, live count): "3 of the 863 cells this pattern proposed were REFUSED
+  or DROPPED: 0 self-crossing, 3 overlapping a cell already kept. The skin has a small hole
+  where each one was." The overlap class, not the fold class, owns his visible holes on this
+  model; the fixture work already measured the crown fold class separately.
+- SEAM WORKING: "1 seam was CLOSED with 80 stones of a closer band cut along the seam,
+  between d=4.000 and d=4.500 m." The round-one machinery is live and firing on his model.
+- Context: mean piece length 0.495 m, 863 cells, crown cap girth 1.983 m with 0 wedges
+  reported on this pull, 10 boundary-clipped cells, 0 merged pieces.
+
 ## Sequencing
 
 Round two dispatches when wf_c45cd653-3b3 lands and the tree frees, ahead of everything except
