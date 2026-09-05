@@ -2158,6 +2158,153 @@ def _unoriented_angle(degrees: float) -> float:
     return min(value, 180.0 - value)
 
 
+def _reciprocity_angle_pair(form: FormDiagram) -> Tuple[float, float]:
+    """(gated worst, raw worst) folded reciprocity angles in degrees.
+
+    The gated value ignores edges carrying under
+    ``HORIZONTAL_FORCE_GATE_FRACTION`` of the peak horizontal force: their
+    force-diagram duals are near-zero length, so their direction is
+    numerical noise, not an equilibrium error. Chasing that noise is what
+    used to drive the auto loop to its iteration cap.
+    """
+    samples = []
+    for u, v in form.edges_where({"_is_edge": True}):
+        folded = _unoriented_angle(
+            abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+        )
+        magnitude = abs(float(form.edge_attribute((u, v), "_f") or 0.0))
+        samples.append((folded, magnitude))
+    if not samples:
+        return 0.0, 0.0
+    raw_worst = max(angle for angle, _ in samples)
+    gate = HORIZONTAL_FORCE_GATE_FRACTION * max(f for _, f in samples)
+    gated = [angle for angle, f in samples if f >= gate]
+    return (max(gated) if gated else 0.0), raw_worst
+
+
+def _snapshot_horizontal_state(form: FormDiagram, force: ForceDiagram):
+    """Every value a horizontal pass writes, so a worse pass can be undone."""
+    return (
+        {
+            key: tuple(form.vertex_attributes(key, "xy"))
+            for key in form.vertices()
+        },
+        {
+            (u, v): tuple(
+                form.edge_attributes((u, v), ("q", "_f", "_l", "_a"))
+            )
+            for u, v in form.edges_where({"_is_edge": True})
+        },
+        {
+            key: tuple(force.vertex_attributes(key, "xy"))
+            for key in force.vertices()
+        },
+        {
+            tuple(edge): tuple(force.edge_attributes(edge, ("_l", "_a")))
+            for edge in force.edges()
+        },
+    )
+
+
+def _restore_horizontal_state(
+    form: FormDiagram,
+    force: ForceDiagram,
+    snapshot,
+) -> None:
+    form_xy, form_edge_state, force_xy, force_edge_state = snapshot
+    for key, xy in form_xy.items():
+        form.vertex_attributes(key, "xy", xy)
+    for edge, values in form_edge_state.items():
+        form.edge_attributes(edge, ("q", "_f", "_l", "_a"), values)
+    for key, xy in force_xy.items():
+        force.vertex_attributes(key, "xy", xy)
+    for edge, values in force_edge_state.items():
+        force.edge_attributes(edge, ("_l", "_a"), values)
+
+
+def _run_horizontal_block(
+    form: FormDiagram,
+    force: ForceDiagram,
+    alpha: float,
+    kmax: int,
+) -> None:
+    """One block of parallelisation at the requested form/force weighting.
+
+    An alpha of 100 holds the form fixed, which admits the sparse
+    fixed-form solver; any other alpha falls back to the library's nodal
+    implementation, which handles a MOVING form. That second path is what
+    the horizontal station runs on, and it holds supports and plan-fixed
+    vertices of its own accord (``horizontal_nodal`` reads
+    ``form.supports()`` and ``form.fixed()`` as its fixed set).
+    """
+    if float(alpha) == 100.0:
+        _horizontal_fixed_form(form, force, kmax)
+    else:
+        horizontal_nodal(form, force, alpha=float(alpha), kmax=kmax)
+
+
+def _horizontal_auto_converge(
+    form: FormDiagram,
+    force: ForceDiagram,
+    alpha: float = 100.0,
+) -> Tuple[float, float, int]:
+    """Run the horizontal parallelisation until it stops improving.
+
+    The parallelisation is not monotone: more iterations can worsen the
+    reciprocity of an individual state. The loop therefore keeps the best
+    state seen so far, accepts at RhinoVault's own 5-degree gate, and stops
+    once four successive blocks fail to improve that best state (a plateau
+    no amount of iteration will pass). Returns the gated worst angle, the
+    raw worst angle, and the iterations run.
+    """
+    first_block = 100  # RhinoVault's own default single run
+    # Checking often costs one O(edges) sweep against 250 O(edges)
+    # iterations; fine blocks keep the loop from stepping over a short
+    # sub-threshold dip in the non-monotone angle trajectory.
+    block_size = 250
+    cap = 10000
+    iterations_run = 0
+    angle = 0.0
+    raw_angle = 0.0
+    best_snapshot = None
+    stalled_blocks = 0
+    polish_deadline = None
+    while iterations_run < cap:
+        block = first_block if iterations_run == 0 else block_size
+        _run_horizontal_block(form, force, alpha, block)
+        iterations_run += block
+        gated, raw = _reciprocity_angle_pair(form)
+        improvement_floor = max(0.02, 0.02 * angle)
+        if best_snapshot is None or gated < angle - improvement_floor:
+            angle = gated
+            raw_angle = raw
+            best_snapshot = _snapshot_horizontal_state(form, force)
+            stalled_blocks = 0
+        else:
+            stalled_blocks += 1
+        # Passing the 5-degree acceptance gate is not the finish line:
+        # residual reciprocity is unbalanced horizontal thrust in the
+        # result. Keep polishing while the best state improves, but within
+        # a bounded budget so an asymptotic tail of tiny improvements
+        # cannot hold the canvas; numerical completeness (a tenth of a
+        # degree) or a genuine plateau stops the loop earlier.
+        if angle <= HORIZONTAL_POLISH_DEGREES:
+            break
+        if angle <= HORIZONTAL_ACCEPT_DEGREES:
+            if polish_deadline is None:
+                polish_deadline = iterations_run + HORIZONTAL_POLISH_BUDGET
+            elif iterations_run >= polish_deadline:
+                break
+        # Iterations are cheap under the sparse solver, so the loop can
+        # afford patience with an oscillating trajectory before calling
+        # the plateau.
+        if stalled_blocks >= 4:
+            break
+    if best_snapshot is not None:
+        _restore_horizontal_state(form, force, best_snapshot)
+    return angle, raw_angle, iterations_run
+
+
 @dataclass
 class _ConditionedPattern:
     """A registered Pattern conditioned into a solvable form/force pair.
@@ -2426,60 +2573,7 @@ def solve_tna_problem(
     source_nodal_pz = conditioned.source_nodal_pz
 
     def _reciprocity_angles() -> "tuple[float, float]":
-        """(gated worst, raw worst) folded reciprocity angles in degrees.
-
-        The gated value ignores edges carrying under
-        ``HORIZONTAL_FORCE_GATE_FRACTION`` of the peak horizontal force:
-        their force-diagram duals are near-zero length, so their direction
-        is numerical noise, not an equilibrium error. Chasing that noise is
-        what used to drive the auto loop to its iteration cap.
-        """
-        samples = []
-        for u, v in form.edges_where({"_is_edge": True}):
-            folded = _unoriented_angle(
-                abs(float(form.edge_attribute((u, v), "_a") or 0.0))
-            )
-            magnitude = abs(float(form.edge_attribute((u, v), "_f") or 0.0))
-            samples.append((folded, magnitude))
-        if not samples:
-            return 0.0, 0.0
-        raw_worst = max(angle for angle, _ in samples)
-        gate = HORIZONTAL_FORCE_GATE_FRACTION * max(f for _, f in samples)
-        gated = [angle for angle, f in samples if f >= gate]
-        return (max(gated) if gated else 0.0), raw_worst
-
-    def _snapshot_horizontal():
-        return (
-            {
-                key: tuple(form.vertex_attributes(key, "xy"))
-                for key in form.vertices()
-            },
-            {
-                (u, v): tuple(
-                    form.edge_attributes((u, v), ("q", "_f", "_l", "_a"))
-                )
-                for u, v in form.edges_where({"_is_edge": True})
-            },
-            {
-                key: tuple(force.vertex_attributes(key, "xy"))
-                for key in force.vertices()
-            },
-            {
-                tuple(edge): tuple(force.edge_attributes(edge, ("_l", "_a")))
-                for edge in force.edges()
-            },
-        )
-
-    def _restore_horizontal(snapshot) -> None:
-        form_xy, form_edge_state, force_xy, force_edge_state = snapshot
-        for key, xy in form_xy.items():
-            form.vertex_attributes(key, "xy", xy)
-        for edge, values in form_edge_state.items():
-            form.edge_attributes(edge, ("q", "_f", "_l", "_a"), values)
-        for key, xy in force_xy.items():
-            force.vertex_attributes(key, "xy", xy)
-        for edge, values in force_edge_state.items():
-            force.edge_attributes(edge, ("_l", "_a"), values)
+        return _reciprocity_angle_pair(form)
 
     method = str(horizontal_method or "iterative").strip().lower()
     if method in ("", "iterative", "parallelise", "parallelize", "nodal"):
@@ -2496,34 +2590,7 @@ def solve_tna_problem(
             "horizontal_alpha must be 100."
         )
 
-    # The default alpha of 100 holds the form fixed, which admits the
-    # sparse fixed-form solver; any other alpha falls back to the library's
-    # nodal implementation, which handles a moving form.
-    use_fixed_form = float(horizontal_alpha) == 100.0
-
-    def _run_horizontal(block_kmax: int) -> None:
-        if use_fixed_form:
-            _horizontal_fixed_form(form, force, block_kmax)
-        else:
-            horizontal_nodal(
-                form,
-                force,
-                alpha=float(horizontal_alpha),
-                kmax=block_kmax,
-            )
-
-    # The parallelisation is not monotone: more iterations can worsen the
-    # reciprocity of an individual state. The auto loop therefore keeps
-    # the best state seen so far, accepts at RhinoVault's own 5-degree gate,
-    # and stops once two successive blocks fail to improve that best state
-    # (a plateau no amount of iteration will pass).
     horizontal_auto = horizontal_kmax is None
-    horizontal_first_block = 100  # RhinoVault's own default single run
-    # Checking often costs one O(edges) sweep against 250 O(edges)
-    # iterations; fine blocks keep the loop from stepping over a short
-    # sub-threshold dip in the non-monotone angle trajectory.
-    horizontal_block = 250
-    horizontal_cap = 10000
     horizontal_iterations_run = 0
     horizontal_angle = 0.0
     horizontal_raw_angle = 0.0
@@ -2536,55 +2603,17 @@ def solve_tna_problem(
             )
             horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
         elif horizontal_auto:
-            best_snapshot = None
-            stalled_blocks = 0
-            polish_deadline = None
-            while horizontal_iterations_run < horizontal_cap:
-                block = (
-                    horizontal_first_block
-                    if horizontal_iterations_run == 0
-                    else horizontal_block
-                )
-                _run_horizontal(block)
-                horizontal_iterations_run += block
-                gated, raw = _reciprocity_angles()
-                improvement_floor = max(0.02, 0.02 * horizontal_angle)
-                if (
-                    best_snapshot is None
-                    or gated < horizontal_angle - improvement_floor
-                ):
-                    horizontal_angle = gated
-                    horizontal_raw_angle = raw
-                    best_snapshot = _snapshot_horizontal()
-                    stalled_blocks = 0
-                else:
-                    stalled_blocks += 1
-                # Passing the 5-degree acceptance gate is not the finish
-                # line: residual reciprocity is unbalanced horizontal
-                # thrust in the result. Keep polishing while the best
-                # state improves, but within a bounded budget so an
-                # asymptotic tail of tiny improvements cannot hold the
-                # canvas; numerical completeness (a tenth of a degree) or
-                # a genuine plateau stops the loop earlier.
-                if horizontal_angle <= HORIZONTAL_POLISH_DEGREES:
-                    break
-                if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
-                    if polish_deadline is None:
-                        polish_deadline = (
-                            horizontal_iterations_run
-                            + HORIZONTAL_POLISH_BUDGET
-                        )
-                    elif horizontal_iterations_run >= polish_deadline:
-                        break
-                # Iterations are cheap under the sparse solver, so the loop
-                # can afford patience with an oscillating trajectory before
-                # calling the plateau.
-                if stalled_blocks >= 4:
-                    break
-            if best_snapshot is not None:
-                _restore_horizontal(best_snapshot)
+            (
+                horizontal_angle,
+                horizontal_raw_angle,
+                horizontal_iterations_run,
+            ) = _horizontal_auto_converge(
+                form, force, float(horizontal_alpha)
+            )
         else:
-            _run_horizontal(int(horizontal_kmax))
+            _run_horizontal_block(
+                form, force, float(horizontal_alpha), int(horizontal_kmax)
+            )
             horizontal_iterations_run = int(horizontal_kmax)
             horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
     except Exception as error:
