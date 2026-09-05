@@ -9,6 +9,21 @@ anthurium_botany_01
 bark_debris_01
   Bark debris
   https://polyhaven.com/a/bark_debris_01
+beech_european_beech_field_01
+  European Beech Field 01
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_01
+  European Beech Forest 01
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_02
+  European Beech Forest 02
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_03
+  European Beech Forest 03
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
+beech_european_beech_forest_04
+  European Beech Forest 04
+  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
 beech_european_beech_forest_05
   European Beech Forest 05
   https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf

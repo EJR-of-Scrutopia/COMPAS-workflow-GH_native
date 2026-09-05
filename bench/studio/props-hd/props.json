@@ -34,6 +34,54 @@
       "source": "https://polyhaven.com/a/bark_debris_01"
     },
     {
+      "key": "beech_european_beech_forest_01",
+      "label": "European Beech Forest 01",
+      "file": "beech_european_beech_forest_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        30.172,
+        48.445,
+        31.774
+      ],
+      "triangles": 219430,
+      "bytes": 19682988,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_forest_03",
+      "label": "European Beech Forest 03",
+      "file": "beech_european_beech_forest_03.glb",
+      "group": "planting",
+      "sizeMetres": [
+        15.872,
+        32.795,
+        15.99
+      ],
+      "triangles": 204269,
+      "bytes": 18085748,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
+      "key": "beech_european_beech_forest_04",
+      "label": "European Beech Forest 04",
+      "file": "beech_european_beech_forest_04.glb",
+      "group": "planting",
+      "sizeMetres": [
+        15.579,
+        31.624,
+        14.36
+      ],
+      "triangles": 199982,
+      "bytes": 18131464,
+      "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+      "licence": "Fab Standard License",
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+    },
+    {
       "key": "beech_european_beech_forest_05",
       "label": "European Beech Forest 05",
       "file": "beech_european_beech_forest_05.glb",
@@ -43,8 +91,8 @@
         25.321,
         9.402
       ],
-      "triangles": 227768,
-      "bytes": 14301868,
+      "triangles": 199987,
+      "bytes": 11899940,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
       "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
@@ -59,8 +107,8 @@
         15.278,
         6.882
       ],
-      "triangles": 163932,
-      "bytes": 10546864,
+      "triangles": 130045,
+      "bytes": 8704824,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
       "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
@@ -75,8 +123,8 @@
         13.524,
         7.844
       ],
-      "triangles": 131865,
-      "bytes": 8964188,
+      "triangles": 97979,
+      "bytes": 7255900,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
       "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
@@ -91,8 +139,8 @@
         7.597,
         4.175
       ],
-      "triangles": 118925,
-      "bytes": 8018632,
+      "triangles": 91848,
+      "bytes": 6636952,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
       "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"

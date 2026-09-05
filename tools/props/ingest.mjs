@@ -155,6 +155,28 @@ async function buildOne(io, file, config) {
 
   const document = await io.read(file);
   const before = triangleCount(document);
+  // Unreal bake hygiene, both measured on the beech forest canopies:
+  // - The IMPOSTOR billboard (the far-distance card the pack carries)
+  //   arrives textureless with a magenta fallback and drew itself as a
+  //   black mass over the real canopy. The real leaves are all there;
+  //   the impostor goes.
+  // - Baked materials ship metallicFactor 1 with no metallic texture,
+  //   which dims every leaf under image lighting. A tree is not chrome.
+  for (const material of document.getRoot().listMaterials()) {
+    if (/impostor/i.test(material.getName() || "")) {
+      for (const mesh of document.getRoot().listMeshes()) {
+        for (const primitive of mesh.listPrimitives()) {
+          if (primitive.getMaterial() === material) primitive.dispose();
+        }
+      }
+      material.dispose();
+      continue;
+    }
+    if (!material.getMetallicRoughnessTexture()
+        && material.getMetallicFactor() === 1) {
+      material.setMetallicFactor(0);
+    }
+  }
   // A Megaplant tree arrives SKINNED (Unreal assembles its branches on a
   // skeleton for wind). The bind pose is the tree; dropping the skin
   // keeps that shape and lets prune sweep the joints, weights and
