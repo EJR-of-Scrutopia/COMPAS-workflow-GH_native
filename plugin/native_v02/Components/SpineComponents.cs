@@ -610,14 +610,16 @@ public sealed class LoadsComponent : NativePreviewComponentBase
     private const int DensityInputIndex = 5;
 
     /// <summary>
-    /// The materials a value list ATTACHED to Density is filled with, as
-    /// unit weight in kN per cubic metre, which is the model's force unit
-    /// beside its metres.
+    /// The materials a Density value list is filled with, as unit weight
+    /// in kN per cubic metre, which is the model's force unit beside its
+    /// metres. One table serves both routes to such a list: the one
+    /// SHIPPED beside a freshly placed component, and a fresh list the
+    /// author wires in by hand.
     ///
     /// The first entry is 1.0, the scale-free form-finding density the
     /// empty port already reads as, and it is the entry the fill selects.
-    /// Attaching a list therefore changes no number until Param picks a
-    /// material.
+    /// Neither shipping a list nor attaching one therefore changes any
+    /// number until Param picks a material.
     /// </summary>
     internal static readonly (string Label, double Density)[]
         DensityMaterials =
@@ -704,10 +706,12 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             "D",
             "Self-weight density per unit volume. Empty reads as 1.0. A " +
             "magnitude, never signed: the Vector says which way the " +
-            "weight acts. Wire a fresh value list here and it fills itself " +
-            "with masonry, concrete, earth and timber unit weights in kN " +
-            "per cubic metre, the model's force unit beside its metres, " +
-            "starting on 1.0 for scale-free form-finding.",
+            "weight acts. A freshly placed Loads ships with a material " +
+            "value list already wired here, masonry, concrete, earth and " +
+            "timber unit weights in kN per cubic metre, the model's force " +
+            "unit beside its metres, starting on 1.0 for scale-free " +
+            "form-finding; wire a fresh value list yourself and it fills " +
+            "itself with the same table.",
             GH_ParamAccess.item);
 
         parameters[2].DataMapping = GH_DataMapping.Flatten;
@@ -719,19 +723,92 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         parameters[5].Optional = true;
     }
 
+    // The gate on the shipped Density list, mirroring the base's own
+    // fresh-vs-archive gate on suggested value lists: ReadFromArchive is
+    // set in Read() before anything else, and checked here at
+    // AddedToDocument time. The latch beside it makes the creation a
+    // once-only attempt, the way _suggestedListsAttempted does for the
+    // suggest route, so a component moved between documents does not grow
+    // a second list.
+    private bool _shippedDensityListAttempted;
+
     /// <summary>
-    /// Fills a value list the author WIRES INTO Density, rather than
-    /// dropping one beside the port the way SuggestedValueLists does
-    /// everywhere else in this plugin.
+    /// Whether document-add creates the shipped Density value list: true
+    /// on a component that came off the palette and has not attempted one
+    /// yet, false forever on a component whose Read ran. This is the
+    /// DECISION, separated from the canvas act so it can be measured
+    /// headless; <see cref="AddedToDocument"/> obeys it and nothing else
+    /// does the creating.
+    /// </summary>
+    internal bool CreatesShippedDensityListOnAdd =>
+        !ReadFromArchive && !_shippedDensityListAttempted;
+
+    /// <summary>
+    /// Builds the value list a fresh Loads ships with: the material table,
+    /// through the same fill an attached list goes through, so the two
+    /// routes cannot drift apart. A freshly constructed GH_ValueList
+    /// carries exactly the default content the fill replaces, which is why
+    /// the fill is simply reused rather than the table written in twice.
+    /// </summary>
+    internal static GH_ValueList BuildShippedDensityList()
+    {
+        var list = new GH_ValueList
+        {
+            Name = "Density",
+            NickName = "Density",
+            Description = "Supported values for Density."
+        };
+        FillDensityValueList(list);
+        return list;
+    }
+
+    /// <summary>
+    /// Ships the Density material list beside a FRESHLY PLACED component,
+    /// and only there.
     ///
-    /// The difference is forced and it is not a stylistic one. Density is
-    /// the port whose EMPTINESS carries meaning: densityGiven in the solve
-    /// is what separates point loads standing alone from point loads with
-    /// a self-weight underneath them, so a list dropped on the canvas
-    /// automatically would silently add a self-weight to every archived
-    /// point-load definition the moment the component was rebuilt. A list
-    /// the author attaches is the author asking for a self-weight, which
-    /// is exactly the signal the port is built to read.
+    /// Density is the port whose EMPTINESS carries meaning: densityGiven
+    /// in the solve is what separates point loads standing alone from
+    /// point loads with a self-weight underneath them. A component READ
+    /// FROM AN ARCHIVE therefore never gets a list: a saved point-load
+    /// definition must come back solving exactly what it solved, and a
+    /// list auto-wired onto its Density would silently put a self-weight
+    /// underneath every point load in it. A fresh placement has no saved
+    /// meaning to corrupt, its list arrives selected on the scale-free
+    /// 1.0 an empty port already reads as, and the list stands VISIBLE on
+    /// the canvas, which is everything the silent archive case is not.
+    /// </summary>
+    public override void AddedToDocument(GH_Document document)
+    {
+        base.AddedToDocument(document);
+
+        if (!CreatesShippedDensityListOnAdd)
+            return;
+        _shippedDensityListAttempted = true;
+
+        if (Params.Input.Count <= DensityInputIndex)
+            return;
+        IGH_Param input = Params.Input[DensityInputIndex];
+        if (input.SourceCount > 0 || input.HasProxySources)
+            return;
+
+        SuggestedValueListPlacement.Attach(
+            this,
+            input,
+            BuildShippedDensityList(),
+            document);
+    }
+
+    /// <summary>
+    /// Fills a value list the author WIRES INTO Density by hand, the
+    /// second of the two routes to a material list on this port. The
+    /// first is the one shipped by <see cref="AddedToDocument"/> beside a
+    /// fresh placement; this one answers an author who deleted that list,
+    /// or is reviving an archived definition, and is asking for a
+    /// self-weight, which is exactly the signal the port is built to
+    /// read. The suggest route (SuggestedValueLists) stays closed either
+    /// way: its context menu item would drop a list on an ARCHIVED
+    /// component, which is the one place a list must never arrive on its
+    /// own.
     ///
     /// The fill happens once, and only to a list that still carries the
     /// content Grasshopper gave it when it was dropped. A list whose items

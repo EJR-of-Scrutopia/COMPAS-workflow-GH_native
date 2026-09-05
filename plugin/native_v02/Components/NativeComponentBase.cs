@@ -153,47 +153,64 @@ internal static class SuggestedValueListPlacement
                     item.Selected = false;
                 valueList.SelectItem(selectedIndex);
             }
-            valueList.CreateAttributes();
+            Attach(owner, input, valueList, document);
+        }
+    }
 
-            // Placement is a convenience, not a requirement. Attributes can
-            // legitimately be null before they have been created, so fall
-            // back to the default position rather than throwing.
-            if (owner.Attributes is not null &&
-                input.Attributes is not null &&
-                valueList.Attributes is not null)
-            {
-                // Attributes.Pivot is not a stored point. It is read off the
-                // centre of Bounds, and Bounds on a freshly dropped component
-                // holds whatever the last layout pass computed, not where the
-                // object visibly sits. Reading it without forcing a layout
-                // lands the lists near the canvas origin instead of beside
-                // their input. ExpireLayout marks the cached boxes stale and
-                // PerformLayout recomputes them immediately, every param box
-                // included, so the input's own Pivot is real on return.
-                //
-                // AddedToDocument fires on a drop or a file reopen, never
-                // while Grasshopper is solving, so mutating the canvas from
-                // it directly is safe.
-                owner.Attributes.ExpireLayout();
-                owner.Attributes.PerformLayout();
+    /// <summary>
+    /// Places one already-built value list beside its input and wires it
+    /// in: the canvas half of Create, shared with the one component that
+    /// builds its list another way. Loads ships its Density material list
+    /// on a fresh placement rather than through the suggest route, and the
+    /// geometry, the add and the wire must be the same ones or the two
+    /// paths drift apart.
+    /// </summary>
+    internal static void Attach(
+        GH_Component owner,
+        IGH_Param input,
+        GH_ValueList valueList,
+        GH_Document document)
+    {
+        valueList.CreateAttributes();
 
-                PointF pivot = input.Attributes.Pivot;
-                valueList.Attributes.Pivot =
-                    new PointF(pivot.X - 220.0f, pivot.Y - 10.0f);
+        // Placement is a convenience, not a requirement. Attributes can
+        // legitimately be null before they have been created, so fall
+        // back to the default position rather than throwing.
+        if (owner.Attributes is not null &&
+            input.Attributes is not null &&
+            valueList.Attributes is not null)
+        {
+            // Attributes.Pivot is not a stored point. It is read off the
+            // centre of Bounds, and Bounds on a freshly dropped component
+            // holds whatever the last layout pass computed, not where the
+            // object visibly sits. Reading it without forcing a layout
+            // lands the lists near the canvas origin instead of beside
+            // their input. ExpireLayout marks the cached boxes stale and
+            // PerformLayout recomputes them immediately, every param box
+            // included, so the input's own Pivot is real on return.
+            //
+            // AddedToDocument fires on a drop or a file reopen, never
+            // while Grasshopper is solving, so mutating the canvas from
+            // it directly is safe.
+            owner.Attributes.ExpireLayout();
+            owner.Attributes.PerformLayout();
 
-                // The same forcing aimed at the new list. Its Bounds were
-                // sized for an empty control back at CreateAttributes, before
-                // it held any items or had a pivot, so lay it out again to
-                // size it to what it actually holds.
-                valueList.Attributes.ExpireLayout();
-                valueList.Attributes.PerformLayout();
-            }
+            PointF pivot = input.Attributes.Pivot;
+            valueList.Attributes.Pivot =
+                new PointF(pivot.X - 220.0f, pivot.Y - 10.0f);
 
-            if (document.AddObject(valueList, false))
-            {
-                input.AddSource(valueList);
-                valueList.ExpireSolution(true);
-            }
+            // The same forcing aimed at the new list. Its Bounds were
+            // sized for an empty control back at CreateAttributes, before
+            // it held any items or had a pivot, so lay it out again to
+            // size it to what it actually holds.
+            valueList.Attributes.ExpireLayout();
+            valueList.Attributes.PerformLayout();
+        }
+
+        if (document.AddObject(valueList, false))
+        {
+            input.AddSource(valueList);
+            valueList.ExpireSolution(true);
         }
     }
 
@@ -687,6 +704,23 @@ public abstract class NativeComponentBase : GH_Component
     /// holds on every file saved before an output was renamed.
     /// </summary>
     protected bool InputPortsMovedOnLoad => _inputPortsMoved;
+
+    /// <summary>
+    /// Whether this instance came out of an archive rather than off the
+    /// component palette: a reopened file, a pasted definition, an undo.
+    /// Set before base.Read touches anything, so it is true however the
+    /// read itself goes.
+    ///
+    /// It is what already keeps the suggested value lists off reopened
+    /// files in <see cref="AddedToDocument"/>, offered to components the
+    /// way the port-moved flags are so a component can gate its OWN
+    /// document-add work the same way. Loads needs exactly that: its
+    /// shipped Density list may greet a fresh placement, and must never
+    /// touch a definition being read back, because feeding an archived
+    /// Density silently turns a saved point-load definition into a
+    /// self-weight one.
+    /// </summary>
+    protected bool ReadFromArchive => _readFromArchive;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added

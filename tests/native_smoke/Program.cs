@@ -679,15 +679,38 @@ internal static class Program
                 "no number until a material is picked; a list whose items " +
                 "have been edited, and a list already filled, are both left " +
                 "alone; and Density itself is still a bare optional Number " +
-                "port holding no persistent data, with NO suggested list, " +
-                "because an EMPTY Density is what tells the solve nobody " +
-                "asked for a self-weight and a list dropped automatically " +
-                "would destroy that signal.");
+                "port holding no persistent data, with NO suggested list " +
+                "ever, because the shipped list arrives through the " +
+                "fresh-placement route alone and the suggest route's " +
+                "context menu would feed an archived Density.");
         }
         catch (Exception exception)
         {
             failures.Add(
                 $"Loads' Density material list: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateShippedDensityList(plugin);
+            Console.WriteLine(
+                "PASS  Loads' shipped Density list, fresh placement only: " +
+                "a component straight off the palette decides to create " +
+                "the list at document-add time, and the list it would ship " +
+                "is the material table filled through the same fill an " +
+                "attached list takes, with the scale-free 1.0 selected; a " +
+                "component whose Read ran decides to create NOTHING, " +
+                "however its archive read went, so a saved point-load " +
+                "definition reopens solving exactly what it solved. The " +
+                "canvas act itself, AddObject beside the D port and the " +
+                "wire onto it, is Rhino's and is not measured here: the " +
+                "DECISION and the CONTENT are, and AddedToDocument obeys " +
+                "the pinned decision property and nothing else.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Loads' shipped Density list: {DescribeException(exception)}");
         }
 
         try
@@ -40098,11 +40121,15 @@ internal static class Program
                     "list fills itself with materials.");
             }
 
-            // And NOTHING drops a list on it by itself. This is the half
-            // that matters most: the shared SuggestedValueLists mechanism
-            // creates a list whenever an input has no source, which would
-            // make Density permanently non-empty and silently add a
-            // self-weight to every point-load definition on the canvas.
+            // And the SUGGEST route stays closed, forever. The shipped
+            // Density list arrives through the fresh-placement route
+            // alone (a component whose Read never ran, at document-add
+            // time); SuggestedValueLists is the wrong door for it,
+            // because that mechanism also hangs off the "Create suggested
+            // value lists" context menu item, which an author can invoke
+            // on an ARCHIVED component, and an archived Density fed a
+            // list turns a saved point-load definition into a self-weight
+            // one.
             PropertyInfo suggested = loads.GetProperty(
                 "SuggestedValueLists",
                 BindingFlags.Instance | BindingFlags.NonPublic)
@@ -40112,17 +40139,230 @@ internal static class Program
             if (specs.Count != 0)
             {
                 throw new InvalidOperationException(
-                    "LoadsComponent must suggest NO value lists: a list " +
-                    "dropped automatically fills Density, and a Density " +
-                    "that is never empty turns every archived point-load " +
-                    "definition into one carrying a self-weight. It " +
-                    $"suggests {specs.Count}.");
+                    "LoadsComponent must suggest NO value lists, ever: " +
+                    "the shipped Density list arrives only through the " +
+                    "fresh-placement route, while a SUGGESTED list can " +
+                    "also be created from the context menu on an archived " +
+                    "component, and a Density that is never empty turns " +
+                    "every archived point-load definition into one " +
+                    $"carrying a self-weight. It suggests {specs.Count}.");
             }
         }
         finally
         {
             if (component is IDisposable disposable)
                 disposable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Loads' SHIPPED Density list, the fresh-placement-only rule, in the
+    /// halves this harness can take headless.
+    ///
+    /// The DECISION half is whole. CreatesShippedDensityListOnAdd is the
+    /// one gate AddedToDocument obeys, and both of its answers are
+    /// measured: a component straight off the palette answers true, and a
+    /// component whose Read ran answers false, taken by writing a
+    /// component into GH_IO's own archive and reading it back the way a
+    /// reopened file or a pasted definition does. The false answer is the
+    /// half the rule exists for, because a list auto-wired onto an
+    /// archived Density silently puts a self-weight underneath every
+    /// saved point-load definition.
+    ///
+    /// The CONTENT half is whole too. BuildShippedDensityList is the list
+    /// AddedToDocument wires in, and it must carry the DensityMaterials
+    /// table itself, item for item, through the same fill an attached
+    /// list takes, with the scale-free first entry selected and nothing
+    /// else.
+    ///
+    /// The CANVAS half is Rhino's and is named unmeasured: AddObject into
+    /// the document, the pivot beside the D port, AddSource onto it.
+    /// Those need a live GH_Document, which this harness does not
+    /// construct, so the check pins the decision and the content and says
+    /// so in its report.
+    /// </summary>
+    private static void ValidateShippedDensityList(Assembly plugin)
+    {
+        Type loads = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.LoadsComponent")
+            ?? throw new InvalidOperationException(
+                "LoadsComponent was not found.");
+
+        PropertyInfo decision = loads.GetProperty(
+            "CreatesShippedDensityListOnAdd",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.CreatesShippedDensityListOnAdd was not "
+                + "found.");
+
+        // ---- fresh: a component straight off the palette says CREATE.
+        object fresh = Activator.CreateInstance(loads)!;
+        try
+        {
+            if (decision.GetValue(fresh) is not true)
+            {
+                throw new InvalidOperationException(
+                    "a freshly constructed Loads must decide to create "
+                    + "the shipped Density list at document-add time; it "
+                    + "decided not to, so the list would never ship with "
+                    + "the component.");
+            }
+        }
+        finally
+        {
+            if (fresh is IDisposable disposableFresh)
+                disposableFresh.Dispose();
+        }
+
+        // ---- archived: a component whose Read ran says NOTHING. The
+        // archive is written and read through GH_IO's own writer and
+        // reader, as the plugin binds to them, exactly the way the
+        // archive round trip below takes its measurement.
+        MethodInfo read = loads.GetMethods()
+            .First(method =>
+                method.Name == "Read" &&
+                method.GetParameters().Length == 1 &&
+                method.GetParameters()[0].ParameterType.Name
+                    == "GH_IReader");
+        Type readerType = read.GetParameters()[0].ParameterType;
+        Type writerType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_IWriter", throwOnError: true)!;
+        Type archiveType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_Archive", throwOnError: true)!;
+
+        object archive = Activator.CreateInstance(archiveType)
+            ?? throw new InvalidOperationException(
+                "GH_Archive could not be constructed.");
+        object saved = Activator.CreateInstance(loads)!;
+        object? reopened = null;
+        try
+        {
+            MethodInfo createTop = archiveType.GetMethod(
+                "CreateTopLevelNode", new[] { typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.CreateTopLevelNode(string) was not found.");
+            object writer = createTop.Invoke(
+                archive, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive gave no writer to save the component into.");
+            MethodInfo write = loads.GetMethod("Write", new[] { writerType })
+                ?? throw new InvalidOperationException(
+                    "LoadsComponent.Write(GH_IWriter) was not found.");
+            if (write.Invoke(saved, new[] { writer }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "LoadsComponent refused to write itself into a "
+                    + "GH_Archive, so there is no archived component to "
+                    + "measure the decision on.");
+            }
+
+            object root =
+                archiveType.GetProperty("GetRootNode")?.GetValue(archive)
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.GetRootNode gave nothing to read.");
+            object container = root.GetType()
+                .GetMethod("FindChunk", new[] { typeof(string) })!
+                .Invoke(root, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "The archive carries no 'Container' chunk to read the "
+                    + "component out of.");
+
+            reopened = Activator.CreateInstance(loads)!;
+            if (read.Invoke(reopened, new[] { container }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "LoadsComponent refused to read the archive back.");
+            }
+            if (decision.GetValue(reopened) is not false)
+            {
+                throw new InvalidOperationException(
+                    "a Loads whose Read ran must decide to create NOTHING "
+                    + "at document-add time, or every saved point-load "
+                    + "definition would reopen with a list feeding its "
+                    + "Density and a self-weight underneath its point "
+                    + "loads; it decided to create the list.");
+            }
+        }
+        finally
+        {
+            if (saved is IDisposable disposableSaved)
+                disposableSaved.Dispose();
+            if (reopened is IDisposable disposableReopened)
+                disposableReopened.Dispose();
+        }
+
+        // ---- the content: the list AddedToDocument would wire in is the
+        // DensityMaterials table itself, first entry selected. Compared
+        // against the component's own static table rather than literals,
+        // because the literals are already pinned by the material-list
+        // check and pinning them twice would just be two places to edit.
+        MethodInfo build = loads.GetMethod(
+            "BuildShippedDensityList",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.BuildShippedDensityList was not found.");
+        FieldInfo tableField = loads.GetField(
+            "DensityMaterials",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "LoadsComponent.DensityMaterials was not found.");
+        Array table = (Array)tableField.GetValue(null)!;
+
+        object list = build.Invoke(null, null)
+            ?? throw new InvalidOperationException(
+                "BuildShippedDensityList returned nothing.");
+        Type valueListType = build.ReturnType;
+        string listName = (string)valueListType.GetProperty("Name")!
+            .GetValue(list)!;
+        if (listName != "Density")
+        {
+            throw new InvalidOperationException(
+                "the shipped list must be named 'Density', so the canvas "
+                + $"says what it feeds; it is named '{listName}'.");
+        }
+        IList items = (IList)valueListType.GetProperty("ListItems")!
+            .GetValue(list)!;
+        if (items.Count != table.Length)
+        {
+            throw new InvalidOperationException(
+                $"the shipped list must hold all {table.Length} materials; "
+                + $"it holds {items.Count} item(s), so the build did not go "
+                + "through the shared fill.");
+        }
+        for (int i = 0; i < table.Length; i++)
+        {
+            object entry = table.GetValue(i)!;
+            Type tuple = entry.GetType();
+            string label = (string)tuple.GetField("Item1")!.GetValue(entry)!;
+            double density = (double)tuple.GetField("Item2")!.GetValue(entry)!;
+            object item = items[i]!;
+            string name = (string)item.GetType().GetProperty("Name")!
+                .GetValue(item)!;
+            string expression = (string)item.GetType()
+                .GetProperty("Expression")!.GetValue(item)!;
+            bool selected = (bool)item.GetType().GetProperty("Selected")!
+                .GetValue(item)!;
+            if (name != label ||
+                !double.TryParse(
+                    expression,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double parsed) ||
+                parsed != density)
+            {
+                throw new InvalidOperationException(
+                    $"shipped item {i} must carry (\"{label}\", {density
+                        .ToString("R", CultureInfo.InvariantCulture)}); "
+                    + $"found (\"{name}\", \"{expression}\").");
+            }
+            if (selected != (i == 0))
+            {
+                throw new InvalidOperationException(
+                    $"shipped item {i} (\"{label}\") must be "
+                    + $"{(i == 0 ? "SELECTED" : "unselected")}: a fresh "
+                    + "Loads reads density 1.0, the value an empty port "
+                    + "already reads as, until a material is picked.");
+            }
         }
     }
 
