@@ -338,14 +338,30 @@ public sealed class SkinComponent : NativeComponentBase
                 Message = $"0 cells · 0 courses · {PatternName(pattern)}";
                 return;
             }
-            SkinPatternResult generated = pattern switch
+            // Cut 2: the pattern is keyed on (Result identity, pattern,
+            // S, CH, MP) -- Th and Gaps deliberately absent, because the
+            // pattern does not depend on them -- so a Thickness or Gaps
+            // drag skips the whole rebuild and gets the SAME object back.
+            SkinPatternResult generated;
+            if (_cache.TryGetPattern(
+                    result, pattern, size, courseHeight, minPiece,
+                    out SkinPatternResult? cachedPattern))
             {
-                0 => SkinPatterns.Courses(
-                    net, size, courseHeight, minPiece),
-                1 => SkinPatterns.Hexagonal(net, size, courseHeight),
-                _ => SkinPatterns.ForceAligned(
-                    net, size, courseHeight, minPiece)
-            };
+                generated = cachedPattern!;
+            }
+            else
+            {
+                generated = pattern switch
+                {
+                    0 => SkinPatterns.Courses(
+                        net, size, courseHeight, minPiece),
+                    1 => SkinPatterns.Hexagonal(net, size, courseHeight),
+                    _ => SkinPatterns.ForceAligned(
+                        net, size, courseHeight, minPiece)
+                };
+                _cache.StorePattern(
+                    pattern, size, courseHeight, minPiece, generated);
+            }
 
             // Rule 1.7.4: the field fallback, in its own words, because a
             // world-Z fallback changes what Course Height MEANS (a rise,
@@ -442,13 +458,39 @@ public sealed class SkinComponent : NativeComponentBase
             int firstThickenFailedCourse = -1;
             int thickenShippedLow = 0;
             bool thickening = Thickening(thickness);
+            // Cut 2's Brep half. On a pattern hit whose last Brep pass
+            // completed, every bottom face is handed out as a DUPLICATE
+            // of the cached one instead of being lofted or fanned again:
+            // geometrically the same face, and a fresh instance per
+            // solve, so the join that absorbs it or the tree that ships
+            // it can never reach the cached copy. On a miss (or a first
+            // pass) the faces are built exactly as before, the ORIGINALS
+            // flow on untouched, and duplicates go into the cache; the
+            // cache is committed only when the loop completes, so a
+            // headless abort (CellSurface throws without the native
+            // core) can never store a half-filled list.
+            IReadOnlyList<Brep?>? cachedBottoms = _cache.Bottoms;
+            List<Brep?>? freshBottoms = cachedBottoms is null
+                ? new List<Brep?>(generated.Cells.Count)
+                : null;
+            int cellSlot = -1;
             foreach (SkinCell cell in generated.Cells)
             {
+                cellSlot++;
                 int course = Math.Min(
                     Math.Max(cell.Course, 0),
                     Math.Max(generated.CourseCount - 1, 0));
                 cellBranches[course].Add(ClosedOutlineCurve(cell.Outline));
-                Brep? face = CellSurface(cell, net);
+                Brep? face;
+                if (cachedBottoms is not null)
+                {
+                    face = cachedBottoms[cellSlot]?.DuplicateBrep();
+                }
+                else
+                {
+                    face = CellSurface(cell, net);
+                    freshBottoms!.Add(face?.DuplicateBrep());
+                }
                 Brep? solid =
                     face is not null && thickening
                         ? ThickenCellSurface(
@@ -497,6 +539,8 @@ public sealed class SkinComponent : NativeComponentBase
                         firstThickenFailedCourse = course;
                 }
             }
+            if (freshBottoms is not null)
+                _cache.StoreBottoms(freshBottoms);
             // Two failures, two sentences. One message counting both sent
             // the reader to the wrong function: spec 5.3.1 and the
             // thickness spec both say a NULL slot means the FACE failed,
@@ -1327,6 +1371,15 @@ public sealed class SkinComponent : NativeComponentBase
     /// then found equal. A comparison that let zero through would replace
     /// every face on a default canvas with a rebuilt one.
     ///
+    /// ONE AMENDMENT under the solve cache (speed diagnosis 2026-09-05,
+    /// cut 2): on a cache-HIT solve CellSurface does not run at all, and
+    /// the slot carries a DuplicateBrep of the cached bottom instead -- a
+    /// fresh instance whose geometry is the built face's, byte for byte.
+    /// The ruling's substance, that Th = 0 puts no thickening arithmetic
+    /// between the built face and the tree, stands on both paths; the
+    /// same-reference wording describes the BUILD solve, where it still
+    /// holds exactly.
+    ///
     /// A Th THAT IS NOT FINITE asks for nothing either. NaN compares equal
     /// to nothing, itself included, so "thickness != 0.0" is TRUE of it and
     /// the bare comparison sent a NaN into the thickener, where every
@@ -1979,6 +2032,24 @@ internal sealed class SkinSolveCache
     private string? _resultDigest;
     private SkinNet? _net;
 
+    // CUT 2'S KEY, stated as the diagnosis asks: the pattern and its
+    // bottom faces are keyed on (RESULT IDENTITY, PATTERN, S, CH, MP) --
+    // result identity as SameResult defines it above, the other four
+    // compared exactly. Th and Gaps are NOT in the key, deliberately:
+    // the pattern and the bottom faces do not depend on them (diagnosis
+    // section 2's dependency table; the Th = 0 same-reference ruling on
+    // Thickening is the measured proof), which is the whole saving -- a
+    // Th or Gaps drag skips the pattern rebuild and the bottom builds
+    // entirely. MP rides in the key for all three patterns even though
+    // the hexagonal engine ignores it: a spurious rebuild is correct,
+    // a spurious hit never is.
+    private int _pattern;
+    private double _size;
+    private double _courseHeight;
+    private double _minPiece;
+    private SkinPatternResult? _patternResult;
+    private List<Brep?>? _bottoms;
+
     /// <summary>
     /// CUT 3: the net for this Result, rebuilt ONLY when the Result's
     /// identity changes. The net (triangulation, the d1 march, one d2
@@ -2050,10 +2121,88 @@ internal sealed class SkinSolveCache
         }
     }
 
+    /// <summary>
+    /// CUT 2, the read side: the pattern for exactly this key, or false.
+    /// A hit hands back the SAME SkinPatternResult object the engine
+    /// built -- bit-identical by construction, because the skipped work's
+    /// inputs are unchanged and no arithmetic reruns. A knob mismatch
+    /// leaves the stored pattern STANDING (the caller is about to
+    /// StorePattern over it); only a Result identity change tears
+    /// everything down, inside SameResult's caller NetFor or here.
+    /// </summary>
+    public bool TryGetPattern(
+        ResultDto result,
+        int pattern,
+        double size,
+        double courseHeight,
+        double minPiece,
+        out SkinPatternResult? made)
+    {
+        made = null;
+        if (_patternResult is null || !SameResult(result))
+            return false;
+        if (pattern != _pattern ||
+            size != _size ||
+            courseHeight != _courseHeight ||
+            minPiece != _minPiece)
+        {
+            return false;
+        }
+        made = _patternResult;
+        return true;
+    }
+
+    /// <summary>
+    /// CUT 2, the write side. Callable only for the Result the net was
+    /// just resolved for (SolveNative calls NetFor first, which settles
+    /// the identity); the knobs overwrite the stored key and the BOTTOM
+    /// FACES ARE DROPPED, because they belong to the pattern they were
+    /// built over and to no other.
+    /// </summary>
+    public void StorePattern(
+        int pattern,
+        double size,
+        double courseHeight,
+        double minPiece,
+        SkinPatternResult made)
+    {
+        _pattern = pattern;
+        _size = size;
+        _courseHeight = courseHeight;
+        _minPiece = minPiece;
+        _patternResult = made;
+        _bottoms = null;
+    }
+
+    /// <summary>
+    /// The cached bottom faces, aligned slot for slot with the stored
+    /// pattern's Cells (a null slot is a cell whose face would not
+    /// close), or null where no completed Brep pass has stored them --
+    /// including every headless run, where CellSurface throws before the
+    /// first face exists. THE CACHE HOLDS ITS OWN COPIES: the caller
+    /// stores duplicates and hands out duplicates, because JoinBreps
+    /// consumes its inputs, a shipped solid absorbs the face it was
+    /// joined from, and a Brep that ever leaves this cache by reference
+    /// could be mutated under it.
+    /// </summary>
+    public IReadOnlyList<Brep?>? Bottoms =>
+        _patternResult is not null &&
+        _bottoms is not null &&
+        _bottoms.Count == _patternResult.Cells.Count
+            ? _bottoms
+            : null;
+
+    public void StoreBottoms(List<Brep?> bottoms)
+    {
+        _bottoms = bottoms;
+    }
+
     private void Invalidate()
     {
         _resultRef = null;
         _resultDigest = null;
         _net = null;
+        _patternResult = null;
+        _bottoms = null;
     }
 }

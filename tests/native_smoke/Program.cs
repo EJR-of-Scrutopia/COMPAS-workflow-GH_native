@@ -855,7 +855,13 @@ internal static class Program
                 "Result that will NOT serialize (a default JsonElement, " +
                 "which System.Text.Json refuses to write) degrades to " +
                 "reference identity -- same object hits, new reference " +
-                "safely misses -- instead of failing the solve.");
+                "safely misses -- instead of failing the solve. The " +
+                "PATTERN rides on (Result identity, pattern, S, CH, MP): " +
+                "the exact key hands back the same SkinPatternResult " +
+                "object, every one of the five invalidates alone, a knob " +
+                "miss does not evict, and the cached bottom faces are " +
+                "null until a completed Brep pass stores them, then drop " +
+                "with the pattern they were built over.");
         }
         catch (Exception exception)
         {
@@ -18978,6 +18984,125 @@ internal static class Program
                 "byte identity to compare, so it must MISS and rebuild " +
                 "-- always correct -- rather than throw or hand back the " +
                 "old net.");
+        }
+
+        // CUT 2: the PATTERN rides on (Result identity, pattern, S, CH,
+        // MP) and on nothing else -- Th and Gaps are deliberately absent
+        // from the key, which is the whole saving. Driven on a fresh
+        // cache so the unserialisable fixtures above cannot colour it.
+        object patternCache = CreateInstance(cacheType);
+        object keyResult = SkinSolveCacheResult(plugin, 1.0);
+        object? keyNet = netFor.Invoke(patternCache, new[] { keyResult })
+            ?? throw new InvalidOperationException(
+                "The pattern-key fixture must read a net.");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo courses = patterns.GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+            .Single(method =>
+                string.Equals(method.Name, "Courses", StringComparison.Ordinal)
+                && method.GetParameters().Length == 4);
+        object made = courses.Invoke(
+            null, new object?[] { keyNet, 0.6, 0.35, 1.0 / 3.0 })!;
+        MethodInfo tryGet = cacheType.GetMethod("TryGetPattern")
+            ?? throw new InvalidOperationException(
+                "SkinSolveCache.TryGetPattern was not found.");
+        MethodInfo store = cacheType.GetMethod("StorePattern")
+            ?? throw new InvalidOperationException(
+                "SkinSolveCache.StorePattern was not found.");
+        PropertyInfo bottoms = cacheType.GetProperty("Bottoms")
+            ?? throw new InvalidOperationException(
+                "SkinSolveCache.Bottoms was not found.");
+        MethodInfo storeBottoms = cacheType.GetMethod("StoreBottoms")
+            ?? throw new InvalidOperationException(
+                "SkinSolveCache.StoreBottoms was not found.");
+
+        bool Hit(object result_, int pattern_, double s, double ch, double mp,
+            out object? handed)
+        {
+            object?[] args = { result_, pattern_, s, ch, mp, null };
+            bool hit = (bool)tryGet.Invoke(patternCache, args)!;
+            handed = args[5];
+            return hit;
+        }
+
+        if (Hit(keyResult, 0, 0.6, 0.35, 1.0 / 3.0, out _))
+        {
+            throw new InvalidOperationException(
+                "Nothing has been stored, so the pattern lookup must " +
+                "MISS.");
+        }
+        store.Invoke(patternCache,
+            new object?[] { 0, 0.6, 0.35, 1.0 / 3.0, made });
+        if (!Hit(keyResult, 0, 0.6, 0.35, 1.0 / 3.0, out object? handed) ||
+            !ReferenceEquals(handed, made))
+        {
+            throw new InvalidOperationException(
+                "The exact key must HIT and hand back the SAME " +
+                "SkinPatternResult object the engine built.");
+        }
+        (int Pattern, double S, double Ch, double Mp, string Name)[] offKey =
+        {
+            (1, 0.6, 0.35, 1.0 / 3.0, "Pattern"),
+            (0, 0.61, 0.35, 1.0 / 3.0, "S"),
+            (0, 0.6, 0.36, 1.0 / 3.0, "CH"),
+            (0, 0.6, 0.35, 0.25, "MP")
+        };
+        foreach ((int p, double s, double ch, double mp, string name)
+                 in offKey)
+        {
+            if (Hit(keyResult, p, s, ch, mp, out _))
+            {
+                throw new InvalidOperationException(
+                    $"A changed {name} must MISS: the pattern is keyed " +
+                    "on (Result identity, pattern, S, CH, MP) and every " +
+                    "one of the five must invalidate.");
+            }
+        }
+        if (!Hit(keyResult, 0, 0.6, 0.35, 1.0 / 3.0, out _))
+        {
+            throw new InvalidOperationException(
+                "A knob MISS must not evict the stored pattern: the " +
+                "original key must still hit afterwards.");
+        }
+
+        // The bottom faces belong to the stored pattern: absent until a
+        // completed Brep pass stores them, handed back aligned with the
+        // pattern's own cells, and dropped the moment a new pattern is
+        // stored over them or the Result identity moves.
+        if (bottoms.GetValue(patternCache) is not null)
+        {
+            throw new InvalidOperationException(
+                "No Brep pass has run, so Bottoms must be null.");
+        }
+        int cellCount = ((IList)made.GetType()
+            .GetProperty("Cells")!.GetValue(made)!).Count;
+        var bottomList = (IList)Activator.CreateInstance(
+            storeBottoms.GetParameters()[0].ParameterType)!;
+        for (int at = 0; at < cellCount; at++)
+            bottomList.Add(null);
+        storeBottoms.Invoke(patternCache, new object?[] { bottomList });
+        if (bottoms.GetValue(patternCache) is null)
+        {
+            throw new InvalidOperationException(
+                "A completed pass's bottoms, one slot per cell, must be " +
+                "handed back.");
+        }
+        store.Invoke(patternCache,
+            new object?[] { 0, 0.7, 0.35, 1.0 / 3.0, made });
+        if (bottoms.GetValue(patternCache) is not null)
+        {
+            throw new InvalidOperationException(
+                "Storing a pattern under a NEW key must drop the bottom " +
+                "faces: they belong to the pattern they were built over " +
+                "and to no other.");
+        }
+        object movedResult = SkinSolveCacheResult(plugin, 3.0);
+        netFor.Invoke(patternCache, new[] { movedResult });
+        if (Hit(movedResult, 0, 0.7, 0.35, 1.0 / 3.0, out _))
+        {
+            throw new InvalidOperationException(
+                "A Result identity change must tear the pattern down " +
+                "with the net.");
         }
     }
 
