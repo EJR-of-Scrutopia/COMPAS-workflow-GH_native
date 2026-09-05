@@ -869,7 +869,10 @@ def test_transport_is_pause_and_restart_only():
     # which also switches to the animation view and reads the framing off
     # the viewport, so a take can never begin in the wrong mode or from a
     # camera the user did not choose.
-    restart_start = js.index('getElementById("restart-button")')
+    # The ADDEENER, not the first mention: the shelf's restart icon
+    # delegates by clicking this very button, and that call sits earlier
+    # in the file than the handler it reaches.
+    restart_start = js.index('getElementById("restart-button").addEventListener')
     restart_body = js[restart_start:js.index("\n});", restart_start)]
     assert "startPlaying(true)" in restart_body
     start_body = _function_body(js, "startPlaying")
@@ -2560,7 +2563,11 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
     assert "const base = state.timeline.orbitBase;" in body
     assert "if (base &&" in body, "no framing captured yet means hands off the camera"
     assert "orbitDistance" not in js, "the distance comes from the camera now"
-    assert "if (state.timeline && state.timeline.playing) captureOrbitBase();" in js
+    drag_end = js[js.index('controls.addEventListener("end"'):]
+    drag_end = drag_end[:drag_end.index("\n});")]
+    assert "captureOrbitBase();" in drag_end
+    assert "settleControls();" in drag_end, (
+        "a drag's leftover glide would nudge the freshly captured base")
 
 
 def test_every_control_the_script_asks_for_exists_on_the_page():

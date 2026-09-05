@@ -959,6 +959,10 @@ body.panel-collapsed #panel-collapse { right: 0; }
    frees that band. */
 body.panel-collapsed #event-log { right: var(--s4); }
 
-/* Play sits beside the drawer tabs but is not one: a beat of space
-   says so. */
+/* The take's controls sit beside the drawer tabs but are not tabs: a
+   beat of space says so, and they are square icon tiles -- play,
+   restart, record -- rather than words. */
+#shelf-tabs .shelf-act { width: 34px; padding: 5px 0; text-align: center;
+  font-size: 13px; line-height: 1.2; }
 #shelf-play { margin-left: 10px; }
+#shelf-record { color: #d05548; }

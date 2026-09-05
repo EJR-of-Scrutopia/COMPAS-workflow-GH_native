@@ -552,7 +552,12 @@ export function formworkVisibility({
 }) {
   const act = seconds > 0 && showMode === "timeline";
   if (!act) {
-    return { group: false, net: false, members: false, columnMesh: !!hasColumnMesh };
+    // Rule 1 cuts both ways: the columns are the MACHINE'S, and Shell is
+    // the vault ALONE -- the one rest mode that shows no machine shows no
+    // columns either (Param: "it should just show shell but it shows the
+    // columns too").
+    return { group: false, net: false, members: false,
+             columnMesh: !!hasColumnMesh && showMode !== "shell" };
   }
   const standing = !(strikeU >= 1);
   const net = t < seconds;

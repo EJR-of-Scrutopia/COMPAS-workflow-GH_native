@@ -7627,6 +7627,19 @@ function applyShowMode() {
 // he asked for: whatever you can see is what the animation shows, from
 // where you left it. The current rotation is subtracted out so a capture
 // taken mid-take does not jump the camera a quarter turn.
+// The controls keep gliding after a drag ends -- that is what damping IS
+// -- and any leftovers still in them when a take starts keep nudging the
+// camera off the captured base for the next dozen frames: the play-press
+// jump's SECOND cause (the first was lookAt re-aiming). One update with
+// damping off applies the remainder whole and clears it, so the capture
+// that follows reads a camera that has finished arriving.
+function settleControls() {
+  const damped = controls.enableDamping;
+  controls.enableDamping = false;
+  controls.update();
+  controls.enableDamping = damped;
+}
+
 function captureOrbitBase() {
   if (!state.timeline) return;
   // The orbit turns about what the CAMERA is aimed at, not the bundle's
@@ -7699,6 +7712,7 @@ async function recordAnimation() {
   const wasShowMode = state.showMode;
   state.showMode = "timeline";
   paintShowButtons();
+  settleControls();
   captureOrbitBase();
   // The chosen frame rides into the take: ratio, FOV and the grade are
   // all camera truths the recording must keep.
@@ -7842,16 +7856,24 @@ controls.addEventListener("end", () => {
   rememberSession();
   // Moving the camera mid-take moves the take with it: the orbit carries on
   // from where the drag left off instead of snapping back to where it began.
-  if (state.timeline && state.timeline.playing) captureOrbitBase();
+  if (state.timeline && state.timeline.playing) {
+    settleControls();
+    captureOrbitBase();
+  }
 });
 
 // The play control lives twice -- the Animation section and the shelf tab
 // strip (Param: "add a play button next to the scene tile") -- and one
 // painter keeps their labels telling the same story.
 function paintPlayButtons(text) {
-  for (const id of ["play-button", "shelf-play"]) {
-    const button = document.getElementById(id);
-    if (button) button.textContent = text;
+  const panel = document.getElementById("play-button");
+  if (panel) panel.textContent = text;
+  // The shelf's control is an ICON tile: a triangle at rest, two bars
+  // while the take runs.
+  const shelf = document.getElementById("shelf-play");
+  if (shelf) {
+    shelf.textContent = text === "Pause" ? "❚❚" : "▶";
+    shelf.title = text === "Pause" ? "Pause the animation" : "Play the animation";
   }
 }
 
@@ -7861,6 +7883,7 @@ function startPlaying(fromTheTop) {
   // wherever the camera is standing at that moment.
   state.showMode = "timeline";
   paintShowButtons();
+  settleControls();
   captureOrbitBase();
   if (fromTheTop || state.timeline.t >= timelineDuration()) applyTimeline(0);
   state.timeline.playing = true;
@@ -7878,6 +7901,12 @@ document.getElementById("play-button").addEventListener("click", () => {
 });
 document.getElementById("shelf-play").addEventListener("click", () => {
   document.getElementById("play-button").click();
+});
+document.getElementById("shelf-restart").addEventListener("click", () => {
+  document.getElementById("restart-button").click();
+});
+document.getElementById("shelf-record").addEventListener("click", () => {
+  document.getElementById("record-button").click();
 });
 document.getElementById("restart-button").addEventListener("click", () => {
   if (!state.timeline) return;
@@ -7949,7 +7978,14 @@ function frame(now) {
   if (state.timeline && document.activeElement !== scrubber) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
-  controls.update();
+  // While the take's turntable owns the camera, the controls must not
+  // also steer it: their damping re-applies whatever inertia remains,
+  // every frame, on top of the pinned orbit. A drag mid-take hands
+  // ownership back (userDragging), and its end settles and recaptures.
+  const turntableOwns = state.timeline && state.timeline.playing
+    && state.timeline.orbitBase && state.timeline.autoSpin
+    && !state.userDragging;
+  if (!turntableOwns) controls.update();
   renderView();
   requestAnimationFrame(frame);
 }

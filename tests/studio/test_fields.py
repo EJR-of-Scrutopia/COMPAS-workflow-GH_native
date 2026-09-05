@@ -346,6 +346,13 @@ VISIBILITY_CHECK = textwrap.dedent("""
     expect(rest.group === false, "the act belongs to the timeline");
     expect(rest.columnMesh === true, "outside the timeline the exported solids draw");
 
+    // Except Shell, which is the vault ALONE: the columns are the
+    // machine's, and Shell shows no machine.
+    const shellOnly = formworkVisibility({ ...act, t: 5, showMode: "shell" });
+    expect(shellOnly.columnMesh === false, "Shell shows the vault and nothing else");
+    const framework = formworkVisibility({ ...act, t: 5, showMode: "framework" });
+    expect(framework.columnMesh === true, "Framework keeps the solids standing in");
+
     console.log("ok");
 """)
 

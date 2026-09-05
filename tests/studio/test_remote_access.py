@@ -405,6 +405,49 @@ def test_play_lives_on_the_shelf_and_starts_where_you_stand():
     apply_block = _js_function(js, "function applyTimeline(t)")
     assert "base.centre || state.centre" in apply_block
 
+    # The trio: play, restart, record, icons in a row (his walk), each
+    # delegating to the one real control so no logic is duplicated.
+    tabs = html[html.index('id="shelf-tabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'id="shelf-restart"' in tabs and 'id="shelf-record"' in tabs
+    assert 'document.getElementById("restart-button").click()' in js
+    assert 'document.getElementById("record-button").click()' in js
+    assert r'"❚❚"' in js and r'"▶"' in js, (
+        "the shelf play tile is an icon: triangle at rest, bars playing")
+
+
+def test_the_take_neither_reaims_nor_inherits_the_drags_glide():
+    """Param, after the re-aim fix: "it still did it though". The second
+    cause: the controls keep gliding after a drag (damping), and the
+    render loop's unconditional controls.update() re-applied that inertia
+    on top of the pinned orbit every frame. Every capture now settles the
+    controls first (one damped-off update applies and clears leftovers),
+    and while the turntable owns the camera the controls stand aside."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    settle = _js_function(js, "function settleControls()")
+    assert "controls.enableDamping = false;" in settle
+    assert "controls.update();" in settle
+    assert "controls.enableDamping = damped;" in settle
+
+    for owner in ("function startPlaying(fromTheTop)",
+                  "async function recordAnimation()"):
+        body = _js_function(js, owner)
+        assert "settleControls();" in body
+        assert body.index("settleControls();") < body.index(
+            "captureOrbitBase();"), owner + " must settle before capturing"
+
+    drag_end = js[js.index('controls.addEventListener("end"'):]
+    drag_end = drag_end[:drag_end.index("\n});")]
+    assert "settleControls();" in drag_end
+
+    loop = js[js.index("const turntableOwns"):]
+    loop = loop[:loop.index("renderView()")]
+    assert "state.timeline.playing" in loop
+    assert "state.timeline.orbitBase" in loop
+    assert "!state.userDragging" in loop
+    assert "if (!turntableOwns) controls.update();" in loop
+
 
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
