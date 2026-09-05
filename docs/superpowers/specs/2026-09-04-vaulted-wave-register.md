@@ -934,3 +934,16 @@ data button show whether its active or not too".
 - 12 mutation kills; suite 730 green; live probe: 6 lens labels
   correct, net casting at rest, thrust groups 2, hud parented, active
   toggling true/false.
+
+## 2026-09-06 -- BLACKISH METAL BARS (small wave on his word)
+
+"a more metalic colour maybe more of a blackish metal and have it more
+rectangular... Thickness only 40mm maybe": netInstances' tubes became
+square BoxGeometry bars 2 x wireRadius a side (0.02 default = his
+40 mm; slider semantics unchanged), materials.bar (0x24262a, metalness
+1.0, roughness 0.38) worn by wires AND joints; applyWireForces' rest
+branch restores bar colour not steel. Square not strap: the segment
+writer orients by direction alone, an oblong would roll arbitrarily --
+surface-aligned flat straps would need per-edge normals (possible
+follow-up). 5 mutation kills; live: BoxGeometry/#24262a/metalness 1/
+casting, joints matching.
