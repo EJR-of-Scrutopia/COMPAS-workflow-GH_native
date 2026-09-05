@@ -466,7 +466,13 @@ def test_natural_height_with_surface_load_freezes_selfweight():
     ))
     assert solved_response["type"] == "result", solved_response
     metrics = solved_response["result"]["diagnostic_metrics"]
-    assert metrics["natural_selfweight_frozen"] is True
+    # Rule 2.5 of the 2026-09-04 design reworded the old
+    # "natural_selfweight_frozen" boolean, which read out on the canvas as
+    # "Natural selfweight frozen 0" whenever the guard was OFF. The
+    # diagnostic now says what mode the weight was evaluated in.
+    assert metrics["selfweight_mode"] == "frozen at the plan geometry"
+    assert metrics["selfweight_refined"] is False
+    assert metrics["selfweight_rounds_run"] == 1
     # The frozen natural height is unit-relative but stays in the same
     # order of magnitude as the plan; the feedback loop blew far past it.
     assert 0.0 < metrics["zmax_solved"] < 60.0

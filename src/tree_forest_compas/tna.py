@@ -12,6 +12,7 @@ outside face and is removed. Trees and other inputs without loaded faces are not
 TNA patterns and are rejected with guidance to use ``compas_fd`` instead.
 """
 
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
@@ -63,6 +64,20 @@ HORIZONTAL_POLISH_BUDGET = 2000
 # their reciprocity angle, is numerical noise rather than equilibrium error.
 HORIZONTAL_FORCE_GATE_FRACTION = 0.01
 
+# Rule 2.2 of the 2026-09-04 self-weight design. The vertical solve never
+# hands the library a live density: the self-weight is evaluated here, held
+# constant through the library call, then re-evaluated on the geometry that
+# call produced. The loop stops when the total load's relative change falls
+# under this tolerance. Architectural rises settle in two or three rounds.
+SELFWEIGHT_REFINEMENT_TOLERANCE = 1.0e-3
+
+# The round cap is the pathology fence, not the expectation. Live tributary
+# self-weight in deep regimes is intrinsically unstable (measured: overflow
+# at 1e154 and a NaN minted by inf times zero inside compas_tna's own load
+# updater), and the refinement is the guard against it, so it needs a
+# guard of its own for the day it does not settle either.
+SELFWEIGHT_REFINEMENT_MAX_ROUNDS = 10
+
 
 class TNAError(RuntimeError):
     """Base exception for the headless TNA workflow."""
@@ -78,6 +93,25 @@ class TNATopologyError(TNAError, ValueError):
 
 class TNASolveError(TNAError):
     """Raised when COMPAS TNA cannot solve a registered problem."""
+
+
+class TNANonFiniteError(TNASolveError):
+    """Raised when a vertical round returns a non-finite state.
+
+    Rule 2.3 of the 2026-09-04 self-weight design. The failure this
+    replaces was scipy's bare ``ValueError`` about infs or NaNs, raised
+    two calls downstream after ninety blind seconds and naming nothing.
+    This one carries the first offending vertex key and the self-weight
+    round that produced it.
+    """
+
+
+class TNASelfweightRefinementWarning(UserWarning):
+    """Warned when the self-weight refinement hits its round cap.
+
+    The result then carries the last converged round's weight rather than
+    an unsettled one, and this warning names the drift it stopped at.
+    """
 
 
 @dataclass
@@ -2164,13 +2198,17 @@ def solve_tna_problem(
     ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
     into world coordinates using its recorded ``analysis_plane`` metadata.
 
-    Selfweight through ``density`` follows RhinoVault's loading model: the
-    vertical solve recomputes each vertex load from its CURRENT
-    three-dimensional tributary area every iteration. Under this wrapper's
-    signed analysis-Z convention a downward surface load is a NEGATIVE
-    density (mirroring negative nodal ``pz``); the final effective loads
-    are written back to the form after the solve so reporting stays
-    truthful.
+    Selfweight through ``density`` follows RhinoVault's loading model,
+    tributary area times thickness times density, but it is evaluated
+    here rather than inside the library: the weight is written into the
+    nodal ``pz`` and HELD CONSTANT through each library call. Under a
+    target height the held weight is then re-evaluated on the geometry
+    the solve produced and the solve repeated, until the total load stops
+    moving (``SELFWEIGHT_REFINEMENT_TOLERANCE``) or the round cap fences
+    it. Under this wrapper's signed analysis-Z convention a downward
+    surface load is a NEGATIVE density (mirroring negative nodal ``pz``);
+    the effective loads on the form are always the ones the reported
+    equilibrium actually satisfies.
     """
     # Grasshopper may retain a problem created before a Python module refresh.
     # Accept that equivalent contract while still rejecting arbitrary objects.
@@ -2197,14 +2235,13 @@ def solve_tna_problem(
     density = float(density)
     if not isfinite(density):
         raise TNAInputError("density must be finite.")
-    # Non-zero density enables COMPAS TNA's LoadUpdater: the vertical solve
-    # recomputes each vertex's load from the CURRENT three-dimensional
-    # tributary area every iteration (area x thickness t x density), which
-    # is exactly RhinoVault's loading model. Under this wrapper's signed
-    # analysis-Z convention a downward surface load is a NEGATIVE density,
-    # mirroring negative nodal pz. The updater never writes its final
-    # effective loads back to the form, so this wrapper persists them
-    # itself after the solve; see the post-solve block below.
+    # Non-zero density is RhinoVault's loading model, area x thickness t x
+    # density, and under this wrapper's signed analysis-Z convention a
+    # downward surface load is a NEGATIVE density, mirroring negative
+    # nodal pz. What this wrapper does NOT do is hand that density to the
+    # library and let the load chase the geometry inside the solver; see
+    # the vertical block below, which evaluates the weight itself, holds
+    # it constant through the call, and refines it around the call.
 
     form = problem.form.copy()
     form.dual = None
@@ -2490,6 +2527,19 @@ def solve_tna_problem(
         mode = "q"
         q_scale = -1.0
 
+    # The nodal point loads exactly as the caller registered them. The
+    # library's load updater writes pz = p0 + selfweight, so every
+    # re-evaluation has to start from these same base loads: reading the
+    # form's own current pz back as p0 would compound the selfweight once
+    # per refinement round and the loop would climb instead of settle.
+    base_point_loads = {
+        int(key): tuple(
+            float(value)
+            for value in form.vertex_attributes(key, ["px", "py", "pz"])
+        )
+        for key in form.vertices()
+    }
+
     def _persist_selfweight_loads() -> None:
         """Evaluate the selfweight at the form's current geometry and
         persist it into the nodal pz attributes."""
@@ -2500,7 +2550,7 @@ def solve_tna_problem(
         vertex_order = list(form.vertices())
         point_loads = _np_array(
             [
-                form.vertex_attributes(key, ["px", "py", "pz"])
+                base_point_loads.get(int(key), (0.0, 0.0, 0.0))
                 for key in vertex_order
             ],
             dtype=float,
@@ -2526,20 +2576,182 @@ def solve_tna_problem(
         for index, key in enumerate(vertex_order):
             form.vertex_attribute(key, "pz", float(effective[index, 2]))
 
-    # The natural-height solve is scale-free: it lets the given force
-    # densities find their own height. Geometry-dependent selfweight makes
-    # that a positive feedback loop (a taller surface carries more
-    # tributary load, which pushes it taller still), which either runs
-    # away or crawls toward an absurd equilibrium while re-evaluating the
-    # loads every iteration. Freeze the selfweight at the plan geometry
-    # instead: the reported natural height answers "what height do these
-    # force densities give under the pattern's own plan-evaluated weight",
-    # and a Height input remains the way to run true selfweight physics.
-    frozen_selfweight = natural_height and density != 0.0
-    if frozen_selfweight:
+    def _total_effective_pz() -> float:
+        """The total vertical load the form currently carries."""
+        return sum(
+            float(form.vertex_attribute(key, "pz") or 0.0)
+            for key in form.vertices()
+        )
+
+    def _relative_load_change(total: float, previous: float) -> float:
+        if total == previous:
+            return 0.0
+        return abs(total - previous) / max(abs(previous), 1.0e-12)
+
+    def _snapshot_vertical():
+        """Everything a vertical round writes, so a fenced solve can be
+        handed back the round it fell back to rather than the round that
+        was still moving."""
+        return (
+            {
+                key: tuple(
+                    float(value)
+                    for value in form.vertex_attributes(key, ["x", "y", "z"])
+                )
+                for key in form.vertices()
+            },
+            {
+                key: tuple(
+                    float(value)
+                    for value in form.vertex_attributes(key, ["px", "py", "pz"])
+                )
+                for key in form.vertices()
+            },
+            {
+                key: tuple(
+                    float(value or 0.0)
+                    for value in form.vertex_attributes(
+                        key, ["_rx", "_ry", "_rz"]
+                    )
+                )
+                for key in form.vertices()
+            },
+            {
+                (u, v): tuple(
+                    float(value or 0.0)
+                    for value in form.edge_attributes((u, v), ("q", "_f"))
+                )
+                for u, v in form.edges_where({"_is_edge": True})
+            },
+        )
+
+    def _restore_vertical(snapshot) -> None:
+        positions, loads, residuals, edge_state = snapshot
+        for key, values in positions.items():
+            form.vertex_attributes(key, ["x", "y", "z"], values)
+        for key, values in loads.items():
+            form.vertex_attributes(key, ["px", "py", "pz"], values)
+        for key, values in residuals.items():
+            form.vertex_attributes(key, ["_rx", "_ry", "_rz"], values)
+        for edge, values in edge_state.items():
+            form.edge_attributes(edge, ("q", "_f"), values)
+
+    def _assert_round_is_finite(round_number: int, scale: Any) -> None:
+        """Rule 2.3: every round asserts finiteness of xyz, pz and the
+        scale the moment the library returns, and names the first vertex
+        that is not finite along with the round that produced it."""
+        for key in form.vertices():
+            position = form.vertex_coordinates(key)
+            if not all(isfinite(float(value)) for value in position):
+                raise TNANonFiniteError(
+                    "The vertical solve produced a non-finite vertex "
+                    "position at vertex key {!r} in selfweight round {}. "
+                    "The tributary selfweight and the height search were "
+                    "chasing each other; lower the target height or "
+                    "reduce the load density.".format(key, round_number)
+                )
+            load = form.vertex_attribute(key, "pz")
+            if load is None or not isfinite(float(load)):
+                raise TNANonFiniteError(
+                    "The vertical solve produced a non-finite vertical "
+                    "load at vertex key {!r} in selfweight round {}. "
+                    "The tributary selfweight and the height search were "
+                    "chasing each other; lower the target height or "
+                    "reduce the load density.".format(key, round_number)
+                )
+        if scale is None or not isfinite(float(scale)):
+            raise TNANonFiniteError(
+                "The vertical solve returned a non-finite force-diagram "
+                "scale in selfweight round {}.".format(round_number)
+            )
+
+    def _refined_zmax_solve(target: float):
+        """Rule 2.2 of the 2026-09-04 selfweight design.
+
+        Evaluate the selfweight on the current geometry, solve to the
+        target height at that HELD load, re-evaluate on the geometry the
+        solve produced, and repeat until the total load stops moving.
+        The library never sees a density on this path, so its height
+        search runs against a constant right-hand side and lands in one
+        step instead of orbiting a moving one.
+        """
+        cap = max(1, int(SELFWEIGHT_REFINEMENT_MAX_ROUNDS))
+        totals: List[float] = []
+        drift = 0.0
+        converged = False
+        rounds_run = 0
+        cumulative_scale = 1.0
+        first_round_state = None
+        first_round_scale = 1.0
+        for round_number in range(1, cap + 1):
+            _persist_selfweight_loads()
+            total = _total_effective_pz()
+            if totals:
+                drift = _relative_load_change(total, totals[-1])
+            totals.append(total)
+            _, round_scale = vertical_from_zmax(
+                form,
+                zmax=target,
+                kmax=int(vertical_kmax),
+                xtol=vertical_tolerance,
+                rtol=vertical_tolerance,
+                # Rule 2.1: the library always gets a constant load.
+                density=0.0,
+                display=bool(display),
+            )
+            rounds_run = round_number
+            _assert_round_is_finite(round_number, round_scale)
+            # Each round rescales the q the previous round left on the
+            # form, so the scale against the ORIGINAL force densities is
+            # the product of the rounds' scales.
+            cumulative_scale *= float(round_scale)
+            if round_number == 1:
+                first_round_state = _snapshot_vertical()
+                first_round_scale = cumulative_scale
+            if len(totals) > 1 and drift < SELFWEIGHT_REFINEMENT_TOLERANCE:
+                converged = True
+                break
+        if converged:
+            return cumulative_scale, tuple(totals), drift, True, False
+        # The cap ran out. Measure what the load would still move by, so
+        # the warning carries a number rather than an adjective, then fall
+        # back to the last converged round. Round 1, the plan-frozen
+        # solve, always exists.
+        _persist_selfweight_loads()
+        drift = _relative_load_change(_total_effective_pz(), totals[-1])
+        _restore_vertical(first_round_state)
+        warnings.warn(
+            "the selfweight refinement did not settle in {} rounds; the "
+            "total load was still moving {:.1f} per cent; the result "
+            "carries the round-1 weight.".format(rounds_run, drift * 100.0),
+            TNASelfweightRefinementWarning,
+            stacklevel=2,
+        )
+        return first_round_scale, tuple(totals), drift, False, True
+
+    # Geometry-dependent selfweight fed straight to the library is a
+    # positive feedback loop: a taller surface carries more tributary
+    # load, which pushes it taller still, and in deep regimes it
+    # overflows rather than settles. So the weight is never live. It is
+    # evaluated HERE, written into pz, and held constant through the
+    # library call, which therefore always receives density zero. Under a
+    # target height the held load is then refined against the geometry it
+    # produced (rule 2.2); the natural height is scale-free and has no
+    # target to hold the refinement still, so it stays frozen at the plan
+    # geometry and reports the height those force densities give under
+    # the pattern's own plan-evaluated weight.
+    selfweight_active = density != 0.0
+    refine_selfweight = selfweight_active and mode == "zmax"
+    frozen_selfweight = selfweight_active and (natural_height or refine_selfweight)
+    if frozen_selfweight and not refine_selfweight:
         _persist_selfweight_loads()
     vertical_density = 0.0 if frozen_selfweight else density
     vertical_scale = None
+    selfweight_totals: Tuple[float, ...] = ()
+    selfweight_rounds_run = 1
+    selfweight_drift = 0.0
+    selfweight_converged = True
+    selfweight_fenced = False
     try:
         if mode == "zmax":
             zmax = float(zmax)
@@ -2550,15 +2762,27 @@ def solve_tna_problem(
                 raise TNAInputError(
                     "zmax must be finite and above the highest support elevation."
                 )
-            _, vertical_scale = vertical_from_zmax(
-                form,
-                zmax=zmax,
-                kmax=int(vertical_kmax),
-                xtol=vertical_tolerance,
-                rtol=vertical_tolerance,
-                density=vertical_density,
-                display=bool(display),
-            )
+            if refine_selfweight:
+                (
+                    vertical_scale,
+                    selfweight_totals,
+                    selfweight_drift,
+                    selfweight_converged,
+                    selfweight_fenced,
+                ) = _refined_zmax_solve(zmax)
+                selfweight_rounds_run = len(selfweight_totals)
+            else:
+                _, vertical_scale = vertical_from_zmax(
+                    form,
+                    zmax=zmax,
+                    kmax=int(vertical_kmax),
+                    xtol=vertical_tolerance,
+                    rtol=vertical_tolerance,
+                    # Rule 2.1: the library always gets a constant load.
+                    density=0.0,
+                    display=bool(display),
+                )
+                _assert_round_is_finite(1, vertical_scale)
         elif mode == "q":
             q_scale = float(q_scale)
             if not isfinite(q_scale) or q_scale == 0:
@@ -2572,9 +2796,14 @@ def solve_tna_problem(
                 display=bool(display),
             )
             vertical_scale = q_scale
+            _assert_round_is_finite(1, vertical_scale)
         else:
             raise TNAInputError("vertical_mode must be 'zmax' or 'q'.")
     except TNAInputError:
+        raise
+    except TNANonFiniteError:
+        # Rule 2.3's named error already carries the vertex and the round.
+        # Rewrapping it as a generic solve failure would throw both away.
         raise
     except Exception as error:
         raise TNASolveError(
@@ -2700,7 +2929,30 @@ def solve_tna_problem(
                 "load_sum + reaction_sum = 0"
             ),
             "vertical_mode": "natural" if natural_height else mode,
-            "natural_selfweight_frozen": frozen_selfweight,
+            # Rule 2.5. The old "natural_selfweight_frozen" read out as
+            # "Natural selfweight frozen 0" on a canvas whose selfweight
+            # was live, which is the guard reporting itself OFF in words
+            # that sounded like a safety measure engaged. These say what
+            # mode the weight was evaluated in and how it settled.
+            "selfweight_mode": (
+                "none"
+                if not selfweight_active
+                else (
+                    "refined on the solved geometry"
+                    if refine_selfweight
+                    else (
+                        "frozen at the plan geometry"
+                        if frozen_selfweight
+                        else "live inside the library"
+                    )
+                )
+            ),
+            "selfweight_refined": refine_selfweight,
+            "selfweight_rounds_run": selfweight_rounds_run,
+            "selfweight_total_load_by_round": selfweight_totals,
+            "selfweight_final_drift": selfweight_drift,
+            "selfweight_converged": selfweight_converged,
+            "selfweight_fenced": selfweight_fenced,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
             "horizontal_method": method,
