@@ -64,6 +64,13 @@ HORIZONTAL_POLISH_BUDGET = 2000
 # their reciprocity angle, is numerical noise rather than equilibrium error.
 HORIZONTAL_FORCE_GATE_FRACTION = 0.01
 
+# A plan vertex counts as MOVED when its displacement exceeds this fraction
+# of the pattern's mean edge length. The threshold is a numerical zero, not
+# a design tolerance: an equilibration that leaves a vertex a billionth of
+# an edge from where it was drawn has not moved it, and a report that said
+# otherwise would count round-off as design.
+HORIZONTAL_MOVE_EPSILON_FRACTION = 1.0e-9
+
 # Rule 2.2 of the 2026-09-04 self-weight design. The vertical solve never
 # hands the library a live density: the self-weight is evaluated here, held
 # constant through the library call, then re-evaluated on the geometry that
@@ -1087,6 +1094,26 @@ def _assert_finite_pattern(form: FormDiagram, stage: str) -> None:
             )
 
 
+def _flag_vertices(
+    diagram: FormDiagram,
+    name: str,
+    keys: Sequence[int],
+) -> None:
+    """Set a boolean vertex flag on exactly the named vertices.
+
+    ``Mesh.vertices_attribute`` reads an EMPTY key list as "every vertex"
+    (``if not keys: keys = self.vertices()``), so passing an empty selection
+    to it sets the flag on the whole diagram. That is how a Pattern with no
+    floating anchors came to have ``is_fixed`` true everywhere: harmless
+    while nothing read the flag, and a pattern that cannot move at all the
+    moment the horizontal station asks the library to move it.
+    """
+    selected = [int(key) for key in keys or ()]
+    if not selected:
+        return
+    diagram.vertices_attribute(name, True, keys=selected)
+
+
 def _relax_pattern(
     form: FormDiagram,
     fixed: Sequence[int],
@@ -1361,7 +1388,7 @@ def prepare_tna_problem(
         problem, pattern, support_mode, support_keys
     )
     selected_support_set = set(selected_supports)
-    pattern.vertices_attribute("is_support", True, keys=selected_supports)
+    _flag_vertices(pattern, "is_support", selected_supports)
 
     selected_support_source_keys = []
     if str(support_mode or "").strip().lower() == "keys":
@@ -1380,7 +1407,7 @@ def prepare_tna_problem(
     fixed_source_keys, fixed_form_keys = _resolve_source_keys(
         problem, fixed_keys, "fixed plan"
     )
-    pattern.vertices_attribute("is_fixed", True, keys=fixed_form_keys)
+    _flag_vertices(pattern, "is_fixed", fixed_form_keys)
 
     # The Pattern's plan is the design: a whole-plan relaxation shrinks
     # dense regions (a polar hub halves its ring radius), loading their
@@ -2158,6 +2185,23 @@ def _unoriented_angle(degrees: float) -> float:
     return min(value, 180.0 - value)
 
 
+def _plan_distance(
+    a: Sequence[float],
+    b: Sequence[float],
+) -> float:
+    return sqrt(
+        (float(b[0]) - float(a[0])) ** 2 + (float(b[1]) - float(a[1])) ** 2
+    )
+
+
+def _plan_edge_length(
+    xy: Mapping,
+    u: int,
+    v: int,
+) -> float:
+    return _plan_distance(xy[int(u)], xy[int(v)])
+
+
 def _reciprocity_angle_pair(form: FormDiagram) -> Tuple[float, float]:
     """(gated worst, raw worst) folded reciprocity angles in degrees.
 
@@ -2353,11 +2397,11 @@ def _condition_pattern(
     selected_supports = _resolve_supports(
         problem, form, support_mode, support_keys
     )
-    form.vertices_attribute("is_support", True, keys=selected_supports)
+    _flag_vertices(form, "is_support", selected_supports)
     _, selected_fixed = _resolve_source_keys(
         problem, fixed_keys, "fixed plan"
     )
-    form.vertices_attribute("is_fixed", True, keys=selected_fixed)
+    _flag_vertices(form, "is_fixed", selected_fixed)
 
     source_nodal_pz, registered_nodal_pz = _normalise_pz(problem, pz)
     for key in form.vertices():
@@ -2460,6 +2504,413 @@ def _condition_pattern(
         source_nodal_pz=source_nodal_pz,
     )
 
+
+def _negative_q_count(
+    form: FormDiagram,
+    force: ForceDiagram,
+) -> Optional[int]:
+    """How many edges an EXACT self-stress of this plan needs in tension.
+
+    The iterative parallelisation cannot report this number. It rebuilds q
+    from two diagram lengths, so its q is non-negative by construction
+    wherever no edge is flagged as a tie, and a plan that cannot balance in
+    pure compression shows up there as residual reciprocity error instead.
+    The count exists only in the algebraic projection, which is run here on
+    a snapshot and rolled back, so the state reported to the canvas remains
+    exactly the iterative one. ``None`` when the projection degenerates: an
+    unmeasurable count is said by its absence, never by a zero.
+    """
+    snapshot = _snapshot_horizontal_state(form, force)
+    try:
+        diagnostics = _horizontal_algebraic(form, force)
+    except Exception:
+        return None
+    finally:
+        _restore_horizontal_state(form, force, snapshot)
+    return int(diagnostics.get("algebraic_negative_q_count", 0))
+
+
+@dataclass
+class TNAEquilibration:
+    """A Pattern's plan moved toward horizontal equilibrium, and what it cost.
+
+    ``moved_source_points`` carries the moved plan positions by SOURCE key,
+    so an adapter can write them back over the prepared Pattern without
+    knowing anything about form keys. ``z`` is not here: nothing vertical
+    happens at this station.
+    """
+
+    problem: TNAProblem
+    form: FormDiagram
+    force: ForceDiagram
+    move: float
+    moved_source_points: Dict[Hashable, Tuple[float, float]]
+    source_to_form: Dict[Hashable, Optional[int]]
+    held_form_keys: Tuple[int, ...]
+    watched_source_keys: Tuple[Hashable, ...]
+    moved_watched_source_keys: Tuple[Hashable, ...]
+    diagnostics: Dict[str, Any]
+    metadata: Dict[str, Any]
+    report: str
+
+
+def _pattern_fdm_plan(
+    form: FormDiagram,
+    held_keys: Sequence[int],
+) -> Dict[int, Tuple[float, float]]:
+    """The plan the Pattern's OWN force densities want, in pure compression.
+
+    One ``fd_numpy`` solve on the plan alone, zero loads, holding the
+    supports and the plan-fixed vertices: exactly the relaxation
+    ``prepare_tna_problem`` already runs around each opening, extended from
+    that apron to every free vertex. Its answer satisfies
+    ``sum_j q_ij (xy_j - xy_i) = 0`` at every free vertex with the Pattern's
+    own q, every one of them positive, which IS horizontal equilibrium in
+    pure compression. That is why this target needs no gate of its own: the
+    only question left is how far the drawing is allowed to travel toward
+    it.
+    """
+    from compas_fd.solvers import fd_numpy
+
+    k_i = form.vertex_index()
+    xyz = []
+    for key in form.vertices():
+        x, y = form.vertex_attributes(key, "xy")
+        xyz.append([float(x), float(y), 0.0])
+    edges = []
+    densities = []
+    for u, v in form.edges_where({"_is_edge": True}):
+        edges.append((k_i[u], k_i[v]))
+        value = float(form.edge_attribute((u, v), "q") or 0.0)
+        # A missing, zero or negative q is not a design intent this station
+        # can read; the registrar's own nominal weight of one stands in.
+        densities.append(value if isfinite(value) and value > 0.0 else 1.0)
+    fixed = sorted({k_i[key] for key in held_keys})
+    if not fixed:
+        raise TNATopologyError(
+            "The horizontal station needs at least one held vertex: every "
+            "support and floating anchor was removed from the pattern."
+        )
+    loads = [[0.0, 0.0, 0.0] for _ in xyz]
+    try:
+        result = fd_numpy(
+            vertices=xyz,
+            fixed=fixed,
+            edges=edges,
+            forcedensities=densities,
+            loads=loads,
+        )
+    except Exception as error:
+        raise TNASolveError(
+            "The plan equilibration failed: {}: {}".format(
+                type(error).__name__, error
+            )
+        ) from error
+    target = {}
+    for key in form.vertices():
+        point = result.vertices[k_i[key]]
+        x = float(point[0])
+        y = float(point[1])
+        if not (isfinite(x) and isfinite(y)):
+            raise TNASolveError(
+                "The plan equilibration produced a non-finite position at "
+                "vertex {!r}. Check that every free part of the pattern "
+                "reaches a support or a floating anchor.".format(key)
+            )
+        target[int(key)] = (x, y)
+    return target
+
+
+def _rebuild_force_diagram(
+    form: FormDiagram,
+    edge_count: int,
+) -> ForceDiagram:
+    """Reseed the dual on a plan that has moved.
+
+    The force diagram is a topological dual with centroid coordinates. Once
+    the plan has moved, the old one describes the plan that was drawn, so
+    the after-measurement would be starting the parallelisation from a
+    stale seed and reporting its trouble as the moved plan's.
+    """
+    form.dual = None
+    try:
+        force = ForceDiagram.from_formdiagram(form)
+    except Exception as error:
+        raise TNATopologyError(
+            "The moved plan could not produce a dual force diagram."
+        ) from error
+    if force.number_of_edges() != edge_count:
+        raise TNATopologyError(
+            "The moved plan's dual lost edges ({} against {}). The movement "
+            "has folded the pattern; lower Move.".format(
+                force.number_of_edges(), edge_count
+            )
+        )
+    return force
+
+
+def equilibrate_tna_problem(
+    problem: TNAProblem,
+    *,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
+    move: float = 100.0,
+    watched_keys: Optional[Sequence[Hashable]] = None,
+    metadata: Optional[Mapping] = None,
+) -> TNAEquilibration:
+    """Move the plan toward horizontal equilibrium and report what it bought.
+
+    TNA needs the plan pattern to be in horizontal equilibrium before
+    heights mean anything: at every free node the horizontal edge forces
+    must close a polygon in pure compression. There are two families of
+    unknowns, the force densities and the PLAN GEOMETRY, and the solve
+    adjusts only the first. This station adjusts the second.
+
+    ``move`` is a percentage, 0 to 100, of how far the drawing may travel
+    toward the equilibrated plan. The movement is POSITIONAL and
+    per-vertex, ``moved = drawn + move/100 * (equilibrated - drawn)``, so
+    the dial is monotone: 0 returns the drawing untouched, 100 is the
+    equilibrated plan, and every value between is a plan that much of the
+    way there.
+
+    What is HELD is what was always held: structural supports and
+    plan-fixed vertices, floating anchors among them, so a hole rim rides
+    through untouched. Held vertices are never written at all, at any Move,
+    so they come back bit-identical rather than approximately still.
+    Principal-line nodes are WATCHED, not pinned: ``watched_keys`` names
+    them and the diagnostics count how many moved.
+
+    The reciprocity angle and the exact-self-stress tension count are
+    measured BEFORE and AFTER, the before on the held state the solve would
+    otherwise have solved and the after on the moved plan with a freshly
+    seeded dual, so the report says what the movement bought rather than
+    only where it ended.
+    """
+    move = float(move)
+    if not isfinite(move):
+        raise TNAInputError("move must be a finite percentage.")
+    if move < 0.0 or move > 100.0:
+        raise TNAInputError("move must be a percentage between 0 and 100.")
+
+    conditioned = _condition_pattern(
+        problem,
+        support_mode=support_mode,
+        support_keys=support_keys,
+        fixed_keys=fixed_keys,
+        # Nothing vertical happens here, so there is no load to carry and
+        # no thickness to weigh: a zero nodal pz keeps the conditioning
+        # identical to the solve's in every respect that touches the plan.
+        pz=0.0,
+        thickness=1.0,
+    )
+    form = conditioned.form
+    force = conditioned.force
+
+    drawn_xy = {
+        int(key): tuple(
+            float(value) for value in form.vertex_attributes(key, "xy")
+        )
+        for key in form.vertices()
+    }
+    edge_lengths = [
+        _plan_edge_length(drawn_xy, u, v) for u, v in conditioned.real_edges
+    ]
+    mean_edge_length = (
+        sum(edge_lengths) / len(edge_lengths) if edge_lengths else 0.0
+    )
+    move_epsilon = HORIZONTAL_MOVE_EPSILON_FRACTION * mean_edge_length
+    held_form_keys = tuple(
+        sorted(
+            set(conditioned.support_form_keys)
+            | set(conditioned.fixed_form_keys)
+        )
+    )
+    held_set = set(held_form_keys)
+
+    drawn_state = _snapshot_horizontal_state(form, force)
+
+    # The HELD pass first: this is exactly the state TNA Solve would have
+    # solved, so the "before" numbers are the ones its own gate would have
+    # failed on rather than a separate measurement of a different thing.
+    try:
+        (
+            angle_before,
+            raw_angle_before,
+            iterations_held,
+        ) = _horizontal_auto_converge(form, force, 100.0)
+    except Exception as error:
+        raise TNASolveError(
+            "The held horizontal measurement failed for the registered "
+            "pattern: {}: {}".format(type(error).__name__, error)
+        ) from error
+    negative_before = _negative_q_count(form, force)
+
+    if move > 0.0:
+        _restore_horizontal_state(form, force, drawn_state)
+        target = _pattern_fdm_plan(form, held_form_keys)
+        factor = move / 100.0
+        for key in form.vertices():
+            index = int(key)
+            if index in held_set:
+                # Not "moved by zero": never written, so bit-identical.
+                continue
+            drawn_x, drawn_y = drawn_xy[index]
+            target_x, target_y = target[index]
+            form.vertex_attributes(
+                key,
+                "xy",
+                [
+                    drawn_x + factor * (target_x - drawn_x),
+                    drawn_y + factor * (target_y - drawn_y),
+                ],
+            )
+        force = _rebuild_force_diagram(form, len(conditioned.real_edges))
+        try:
+            (
+                angle_after,
+                raw_angle_after,
+                iterations_moved,
+            ) = _horizontal_auto_converge(form, force, 100.0)
+        except Exception as error:
+            raise TNASolveError(
+                "The horizontal measurement of the moved plan failed at "
+                "move {:g}: {}: {}".format(
+                    move, type(error).__name__, error
+                )
+            ) from error
+        negative_after = _negative_q_count(form, force)
+    else:
+        # Move 0 writes nothing, so the drawn plan IS the answer and the
+        # held pass IS the after-measurement.
+        angle_after = angle_before
+        raw_angle_after = raw_angle_before
+        iterations_moved = 0
+        negative_after = negative_before
+
+    moved_xy = {
+        int(key): tuple(
+            float(value) for value in form.vertex_attributes(key, "xy")
+        )
+        for key in form.vertices()
+    }
+    displacement = {
+        key: _plan_distance(drawn_xy[key], moved_xy[key])
+        for key in moved_xy
+        if key in drawn_xy
+    }
+    plan_move_max = max(displacement.values()) if displacement else 0.0
+    plan_move_mean = (
+        sum(displacement.values()) / len(displacement) if displacement else 0.0
+    )
+    moved_vertex_count = sum(
+        1 for value in displacement.values() if value > move_epsilon
+    )
+    held_move_max = max(
+        (displacement.get(key, 0.0) for key in held_form_keys),
+        default=0.0,
+    )
+
+    watched_source_keys = tuple(watched_keys or ())
+    moved_watched = []
+    for source_key in watched_source_keys:
+        form_key = conditioned.source_to_form.get(source_key)
+        if form_key is None:
+            continue
+        if displacement.get(int(form_key), 0.0) > move_epsilon:
+            moved_watched.append(source_key)
+
+    moved_source_points = {}
+    for source_key, form_key in conditioned.source_to_form.items():
+        if form_key is None:
+            continue
+        point = moved_xy.get(int(form_key))
+        if point is not None:
+            moved_source_points[source_key] = (point[0], point[1])
+
+    diagnostics = {
+        "status": "equilibrated",
+        "horizontal_move": move,
+        "horizontal_blend": move / 100.0,
+        "horizontal_gate_degrees": HORIZONTAL_ACCEPT_DEGREES,
+        "horizontal_angle_before": angle_before,
+        "horizontal_angle_after": angle_after,
+        "horizontal_raw_angle_before": raw_angle_before,
+        "horizontal_raw_angle_after": raw_angle_after,
+        "horizontal_converged_before": (
+            angle_before <= HORIZONTAL_ACCEPT_DEGREES
+        ),
+        "horizontal_converged_after": (
+            angle_after <= HORIZONTAL_ACCEPT_DEGREES
+        ),
+        "horizontal_iterations_held": iterations_held,
+        "horizontal_iterations_moved": iterations_moved,
+        "horizontal_mean_edge_length": mean_edge_length,
+        "horizontal_plan_move_max": plan_move_max,
+        "horizontal_plan_move_mean": plan_move_mean,
+        "horizontal_plan_move_max_fraction": (
+            plan_move_max / mean_edge_length if mean_edge_length > 0 else 0.0
+        ),
+        "horizontal_plan_move_mean_fraction": (
+            plan_move_mean / mean_edge_length if mean_edge_length > 0 else 0.0
+        ),
+        "horizontal_moved_vertex_count": moved_vertex_count,
+        "horizontal_held_node_count": len(held_form_keys),
+        "horizontal_held_move_max": held_move_max,
+        "horizontal_watched_node_count": len(watched_source_keys),
+        "horizontal_watched_moved_count": len(moved_watched),
+        "horizontal_vertex_count": len(moved_xy),
+        "horizontal_edge_count": len(conditioned.real_edges),
+    }
+    if negative_before is not None:
+        diagnostics["horizontal_negative_q_before"] = negative_before
+    if negative_after is not None:
+        diagnostics["horizontal_negative_q_after"] = negative_after
+
+    report = (
+        "TNA plan equilibrated at Move {:g}\n"
+        "Plan movement: {:.6g} maximum, {:.6g} mean "
+        "({:.4g} and {:.4g} of a mean edge); {} of {} nodes moved\n"
+        "Reciprocity: {:.4g} degrees became {:.4g} against a {:g} degree "
+        "gate\n"
+        "Held nodes (supports and floating anchors): {}, moved by {:.3g}\n"
+        "Watched principal-line nodes: {} of {} moved"
+    ).format(
+        move,
+        plan_move_max,
+        plan_move_mean,
+        (plan_move_max / mean_edge_length if mean_edge_length > 0 else 0.0),
+        (plan_move_mean / mean_edge_length if mean_edge_length > 0 else 0.0),
+        moved_vertex_count,
+        len(moved_xy),
+        angle_before,
+        angle_after,
+        HORIZONTAL_ACCEPT_DEGREES,
+        len(held_form_keys),
+        held_move_max,
+        len(moved_watched),
+        len(watched_source_keys),
+    )
+    if negative_before is not None and negative_after is not None:
+        report += (
+            "\nTension edges an exact self-stress needs: {} became "
+            "{}".format(negative_before, negative_after)
+        )
+
+    return TNAEquilibration(
+        problem=problem,
+        form=form,
+        force=force,
+        move=move,
+        moved_source_points=moved_source_points,
+        source_to_form=conditioned.source_to_form,
+        held_form_keys=held_form_keys,
+        watched_source_keys=watched_source_keys,
+        moved_watched_source_keys=tuple(moved_watched),
+        diagnostics=diagnostics,
+        metadata=dict(metadata or {}),
+        report=report,
+    )
 
 def solve_tna_problem(
     problem: TNAProblem,
