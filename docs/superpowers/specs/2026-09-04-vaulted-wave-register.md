@@ -765,3 +765,41 @@ information properly... says what it can and cant do".
   show the REAL story -- struck-early stages carry 5-6 MPa vs 0.27
   finished, which is exactly what staged analysis exists to surface.
 - 726 tests green; 4 narrative-rule mutation kills + 1 wiring kill.
+
+## 2026-09-05 -- THE NARRATIVE LEARNS THE LOAD PATH (autonomous sweep)
+
+His word: "full sweep review, test everything... any improvement you
+want to make you can go ahead. if theres more detail to the analysis
+you want to include that is a priority." ROS is QUEUED AND BLOCKED on
+his structuring brief -- do not start it.
+
+- data_analysis.js now reads EVERYTHING the bundle carries, not just
+  the staged peaks: a member-force census (funicular share, worst pull
+  vs hardest push, small pulls in newtons not "0.0 kN"), the thrust
+  story from bundle.reactions (total vertical carry, hardest springing,
+  steepest departure angle + outward push = the buttressing demand),
+  applied load over the fan-measured shell area with kN/m2, solver
+  self_weight_newtons (DENSITIES table mirrors staging.py as fallback),
+  stress EXTENT beside the peak (hot faces past half the limit; <= 10%
+  of faces reads "a local spike, not a field"), a place for the worst
+  movement (displacement argmax node), the build's tender moment
+  (struck-early tension vs finished, "about 41x" on Column diagnosis)
+  and the formwork handover -- WITH the growth case: this staging model
+  GROWS carry to the end (holds all placed weight until striking), so
+  "peaks then falls" wording is gated on formworkGrowsToEnd.
+- Two new recommendations: thrust >= 35 degrees calls out the abutment
+  or a tie; compression share < 0.85 reads as form drift thickening
+  cannot buy back.
+- Graphs grew to five: + peak deflection per stage, + utilisation bars
+  (band-coloured, dotted 100% line), placed weight rides the formwork
+  chart. The load-path section speaks even with NO staged run.
+- Proving: 15 mutation kills across two batteries; suite 726 green.
+- LIVE sweep, 28 checks, CLEAN (scratchpad sweep_ui.py pattern): boot,
+  staged study load, all six lenses (exclusivity, forces mode-juggle
+  and restore, pulse), transport (play/restart/pause, camera finite),
+  undo round-trip on environment-mode, panel fold, five shelf tabs,
+  three data tabs, five plotly graphs, no banner, diagnostics.log did
+  not grow. Remote door verified standing (8443 / + /start).
+- Sweep-calibration lesson, NOT a defect: stress/deflection/pulse
+  buttons are rightly DISABLED on a bundle without staging; a sweep
+  must load a staged study before judging the lenses.
