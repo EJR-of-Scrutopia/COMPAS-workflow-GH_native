@@ -2746,6 +2746,7 @@ def equilibrate_tna_problem(
         ) from error
     negative_before = _negative_q_count(form, force)
 
+    written_form_keys: set = set()
     if move > 0.0:
         _restore_horizontal_state(form, force, drawn_state)
         target = _pattern_fdm_plan(form, held_form_keys)
@@ -2765,6 +2766,7 @@ def equilibrate_tna_problem(
                     drawn_y + factor * (target_y - drawn_y),
                 ],
             )
+            written_form_keys.add(index)
         force = _rebuild_force_diagram(form, len(conditioned.real_edges))
         try:
             (
@@ -2820,9 +2822,14 @@ def equilibrate_tna_problem(
         if displacement.get(int(form_key), 0.0) > move_epsilon:
             moved_watched.append(source_key)
 
+    # ONLY the vertices the station actually wrote travel back out. A held
+    # vertex, and every vertex at Move 0, is absent from this map rather
+    # than present with its own coordinate re-sent, so the encoder leaves
+    # the incoming numbers exactly as they arrived and the Move 0 identity
+    # is structural instead of arithmetical.
     moved_source_points = {}
     for source_key, form_key in conditioned.source_to_form.items():
-        if form_key is None:
+        if form_key is None or int(form_key) not in written_form_keys:
             continue
         point = moved_xy.get(int(form_key))
         if point is not None:

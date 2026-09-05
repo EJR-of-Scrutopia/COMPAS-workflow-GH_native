@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytest.importorskip("compas_tna")
 pytest.importorskip("compas_fd")
 
+from ananke_equilibrium.codec import decode_tna_equilibrate_payload
+from ananke_equilibrium.gh.tna_stages import equilibrate_tna
 from ananke_equilibrium.worker import dispatch
 from tree_forest_compas import tna as tna_module
 from tree_forest_compas.tna import HORIZONTAL_ACCEPT_DEGREES
@@ -1744,16 +1748,23 @@ def test_the_fan_cornered_plan_fails_held_and_passes_once_it_may_move():
 def test_move_nought_returns_the_prepared_stage_bit_identical():
     """Not "close enough": every field the stage carries comes back the same
     object it went in as, byte for byte, because a station wired at Move 0
-    must be indistinguishable from no station at all."""
+    must be indistinguishable from no station at all.
+
+    The comparison is on the SERIALISED text, not on the values. ``==`` on
+    nested lists of floats cannot tell 0 from 0.0 or 0.0 from -0.0, and the
+    encoder rewrites every coordinate it is handed as a float, so a
+    value-compare would pass a stage that came back renormalised and the
+    claim in this check's own name would be untrue.
+    """
     prepared, _, _ = fan_cornered_pattern()
     response = equilibrate(prepared, 0.0, request_id="identity")
     assert response["type"] == "result", response
     moved = response["result"]
 
-    assert moved["pattern"] == prepared["pattern"]
     for field in (
         "kind",
         "schema_version",
+        "pattern",
         "topology",
         "support_set",
         "config",
@@ -1763,10 +1774,42 @@ def test_move_nought_returns_the_prepared_stage_bit_identical():
         "diagnostics",
         "mappings",
     ):
-        assert moved[field] == prepared[field], field
+        assert json.dumps(moved[field], sort_keys=True) == json.dumps(
+            prepared[field], sort_keys=True
+        ), field
     # And what it is allowed to change, it changed.
     assert moved["report"] != prepared["report"]
     assert "horizontal_move" in moved["diagnostic_metrics"]
+
+
+def test_move_nought_hands_the_encoder_no_moved_points_at_all():
+    """The Move 0 identity is STRUCTURAL, not arithmetical.
+
+    The encoder rewrites every vertex it is told about, so an identity that
+    rests on "the station re-sent the same numbers" rests on a weld and a
+    canonicalisation round-tripping each float exactly. It need not. The
+    station therefore names only the vertices it actually wrote: none at
+    Move 0, and never a held one, so the untouched coordinates are the
+    incoming bytes themselves rather than a fresh rendering of them.
+    """
+    prepared, _, valleys = fan_cornered_pattern(fixed_node_ids=[0])
+    still, _, move, watched = decode_tna_equilibrate_payload(
+        {"prepared": prepared, "move": 0.0}
+    )
+    assert equilibrate_tna(still, move, watched).unwrap()["moved_points"] == {}
+
+    full, _, move, watched = decode_tna_equilibrate_payload(
+        {"prepared": prepared, "move": 100.0}
+    )
+    moved_points = equilibrate_tna(full, move, watched).unwrap()[
+        "moved_points"
+    ]
+    # Move 100 names plenty, but never a held node: a support and a floating
+    # anchor are absent from the map rather than present and unchanged.
+    assert len(moved_points) > 0
+    assert 0 not in moved_points
+    for support in valleys:
+        assert support not in moved_points, support
 
 
 def test_supports_and_floating_anchors_are_bit_immobile_at_every_move():
