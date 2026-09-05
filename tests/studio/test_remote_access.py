@@ -656,6 +656,32 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "pre-wrap" in hud
 
 
+def test_a_scene_outranks_the_device_appearance_memory():
+    """Param's report: restored on another device, a scene came back with
+    the right sky but the wrong skin and floor. loadStudy restores the
+    DEVICE's per-material appearance on its way in, so applyScene must
+    re-impose the scene's own appearance AFTER loadStudy returns, load
+    the library skin and floor the scene names, and let the device
+    memory follow the screen."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    apply_start = js.index("async function applyScene(record)")
+    apply_body = js[apply_start:js.index("repaintSettingControls();", apply_start)]
+    load = apply_body.index("await loadStudy(study);")
+    after_load = apply_body[load:]
+    # The guard is part of the pin: an if (false) around the assignment
+    # would leave the text standing and the behaviour gone.
+    reimpose = after_load.index(
+        "if (scene_.appearance) {\n"
+        "    state.appearance = Object.assign({}, scene_.appearance);")
+    assert "await ensureLibraryMaterial(state.appearance.skin);" in after_load
+    assert "persistAppearance();" in after_load
+    assert "await loadGroundMaterial(scene_.ground.preset);" in after_load
+    # And the order holds: the re-imposition sits before the tail's
+    # rebuildAppearance, which is what repaints the pieces with it.
+    assert reimpose < after_load.index("rebuildAppearance();")
+
+
 def test_a_scene_missing_its_sky_says_so_and_restores_the_rest():
     """Param's live case: a scene saved under a sky whose file later left
     the sky folder. loadHdri swallows its own failure, so applyScene must

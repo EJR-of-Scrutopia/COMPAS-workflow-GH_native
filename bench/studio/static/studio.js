@@ -2162,6 +2162,25 @@ async function applyScene(record) {
     return false;
   }
 
+  // loadStudy just wrote THIS DEVICE's per-material appearance memory over
+  // the scene's own look (restoreAppearance runs on its way in) -- which
+  // is why a scene restored on another device came back with the right
+  // sky and the wrong skin and floor (Param's report). The scene is the
+  // authority: its appearance goes back on top, the library skin and
+  // floor it names are loaded before the tail's rebuild repaints, and
+  // the device memory follows the screen from here on.
+  if (scene_.appearance) {
+    state.appearance = Object.assign({}, scene_.appearance);
+    if (isLibraryKey(state.appearance.skin)
+        && !libraryCache.has(state.appearance.skin)) {
+      await ensureLibraryMaterial(state.appearance.skin);
+    }
+    persistAppearance();
+  }
+  if (scene_.ground && scene_.ground.preset) {
+    await loadGroundMaterial(scene_.ground.preset);
+  }
+
   // Props: cleared and replaced rather than merged, because a scene is a
   // whole picture. placeProp with save=false keeps the per-study layout in
   // localStorage untouched until the user moves one themselves.
