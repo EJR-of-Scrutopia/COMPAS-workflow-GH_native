@@ -516,3 +516,33 @@ His asks: "if i stop the server we need a ztart server too"; footer
   context-loss rows and the device block; candidate next steps are a
   constrained-device prop texture tier (ingest already bakes 1024) and
   capping the environment/backdrop sizes on touch.
+
+## 2026-09-05 -- FOLD HANDLE, SHELF PLAY, NO-JUMP TAKES
+
+His asks: "a little tile arrow attached to the mid left side of the
+banner... collapse... pressed again to open"; "add a play button next
+to the scene tile"; "when i start the animation the viewport jumps
+slightly and changes its camera lens size".
+
+- FOLD: #panel-collapse, a fixed sibling at right: var(--panel-w),
+  top 50% (the panel's overflow scroll would clip a child outside its
+  box). body.panel-collapsed moves everything on CSS alone: panel
+  translateX(100%), tab rail opacity 0 + pointer-events none, handle
+  rides to right: 0, event log frees the band. Arrow reverses
+  (open shows a right-pointing chevron, collapsed a left-pointing one); choice persists in
+  localStorage "panel-collapsed". Live: panel left edge measured AT the
+  viewport edge folded, back at 1224 reopened, survives reload.
+- SHELF PLAY: #shelf-play beside the Scenes tab, delegating to
+  #play-button's click; paintPlayButtons() is the ONE label painter
+  (every direct textContent write replaced; pin forbids new ones); tab
+  wiring scoped to #shelf-tabs button[data-shelf] in all three query
+  sites or the newcomer would openShelf(undefined).
+- NO-JUMP: captureOrbitBase centres on controls.target.clone() (stored
+  as base.centre; applyTimeline uses base.centre || state.centre).
+  lookAt(state.centre) on the first played frame was the jump AND the
+  perceived lens change. Measured with a deliberately panned camera:
+  quaternion delta 0.0, fov 45 -> 45, labels flip together both ways.
+- 718 tests green; pins mutation-proved (5 kills; one mutation misfired
+  on indent and was re-proved properly). The old take-orbit pin updated
+  to the deeper version of the same ruling: the framing IS the shot,
+  including its aim.
