@@ -546,3 +546,32 @@ slightly and changes its camera lens size".
   on indent and was re-proved properly). The old take-orbit pin updated
   to the deeper version of the same ruling: the framing IS the shot,
   including its aim.
+
+## 2026-09-05 -- THE JUMP'S SECOND CAUSE, TRANSPORT ICONS, SHELL ALONE
+
+His reports: "it still did it though, where it jumped slightly";
+"change the tiles for play to the play icon, a restart icon and a
+record icon all lines up there"; "when i press the shell button... it
+shows the columns too".
+
+- THE GLIDE: OrbitControls damping keeps applying leftover drag inertia
+  through the render loop's unconditional controls.update(), on top of
+  the turntable's pinned orbit -- the jump that survived the re-aim
+  fix. settleControls() (damping off, one update, damping back) flushes
+  the leftovers before EVERY capture (startPlaying, recordAnimation,
+  drag-end mid-take), and frame() skips controls.update() while
+  turntableOwns (playing && orbitBase && autoSpin && !userDragging).
+  Measured with a real synthetic drag then play: pos and aim drift 0.0
+  over 0.9 s.
+- TRANSPORT ICONS: #shelf-play (triangle at rest / pause bars playing, painted by
+  paintPlayButtons), #shelf-restart (clockwise arrow), #shelf-record (dot, tinted) --
+  square .shelf-act tiles beside the drawer tabs, each delegating to
+  the real control (play-button/restart-button/record-button clicks).
+  NOTE the glyphs in studio.js are literal characters, not escapes.
+- SHELL ALONE: formworkVisibility's rest branch returns columnMesh
+  false for showMode "shell" -- the columns are the machine's, and
+  Shell shows no machine. Node test extended (shell hides, framework
+  keeps); verified live on Column diagnosis: Shell False, Both True.
+- 719 tests green; 4 fresh mutation kills; three stale pins updated to
+  the new truths (restart slice needed .addEventListener anchoring now
+  that a delegate mentions the same id earlier in the file).
