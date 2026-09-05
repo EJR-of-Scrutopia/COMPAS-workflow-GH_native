@@ -55,6 +55,11 @@ def test_no_external_urls_in_the_page_or_scripts():
         # BROWSER loads.
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
         text = re.sub(r"^\s*//.*$", "", text, flags=re.M)
+        # Loopback is not the network: the Start server button knocks the
+        # waker on this same machine (127.0.0.1:8611), which involves no
+        # wire and fails silently when nothing listens. The claim defended
+        # here is no EXTERNAL dependency -- no CDN, no third-party host.
+        text = text.replace("http://127.0.0.1", "")
         assert not re.search(r"https?://", text), (
             "{} references the network; the studio must work offline".format(name)
         )

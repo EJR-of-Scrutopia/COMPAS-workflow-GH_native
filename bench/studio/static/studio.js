@@ -5923,11 +5923,52 @@ document.getElementById("stop-studio").addEventListener("click", async () => {
       status.textContent = "the server is still answering...";
     } catch (error) {
       status.textContent = "stopped";
+      // The gesture reverses in place: the button that stopped the server
+      // gives its seat to the one that starts it (Param: "if i stop the
+      // server we need a ztart server too").
+      button.hidden = true;
+      button.disabled = false;
+      document.getElementById("start-studio").hidden = false;
       return;
     }
   }
   button.disabled = false;
   status.textContent = "it would not stop; end it from the desktop";
+});
+
+// Starting again, from the page that stopped it. The studio is gone, but
+// the waker on the desktop is not, and it answers in two places: at this
+// origin's /start mount when the page came through the tailnet, and on
+// its own loopback port when the page is the desktop's. Both are knocked
+// and neither answer is read -- the knock is the message -- then the page
+// waits for its own server to answer again and reloads onto it. The
+// waker's spawn cooldown makes the double knock a single launch.
+document.getElementById("start-studio").addEventListener("click", async () => {
+  const button = document.getElementById("start-studio");
+  const status = document.getElementById("restart-status");
+  button.disabled = true;
+  status.textContent = "asking the desktop to start the studio...";
+  fetch("/start", { cache: "no-store" }).catch(() => {});
+  fetch("http://127.0.0.1:8611/start", { mode: "no-cors", cache: "no-store" })
+    .catch(() => {});
+  const deadline = Date.now() + 100000;
+  while (Date.now() < deadline) {
+    await new Promise((wake) => setTimeout(wake, 800));
+    try {
+      const reply = await fetch("/api/health", { cache: "no-store" });
+      if (!reply.ok) throw new Error("the proxy answered for a dead server");
+      const health = await reply.json();
+      if (health && health.studio) {
+        status.textContent = "reloading";
+        location.reload();
+        return;
+      }
+    } catch (error) {
+      status.textContent = "waiting for the server...";
+    }
+  }
+  button.disabled = false;
+  status.textContent = "the desktop did not answer; use the Vaulted shortcut";
 });
 
 document.getElementById("material-relief").addEventListener("input", (e) => {

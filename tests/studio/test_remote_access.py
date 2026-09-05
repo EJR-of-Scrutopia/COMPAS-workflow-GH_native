@@ -265,6 +265,61 @@ def test_big_props_fit_the_preview_frustum():
     assert "camera.far = 20" in body, "and the ball gets its frustum back"
 
 
+def test_the_page_can_start_what_it_stopped():
+    """Param: "if i stop the server we need a ztart server too". The
+    studio is gone but the waker is not, and it answers in two places:
+    this origin's /start mount (the tailnet page) and its own loopback
+    port (the desktop page). Both are knocked -- the knock IS the message,
+    neither answer is read -- and the page reloads when its own server
+    answers again. The button appears exactly when "stopped" does."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    stop = js[js.index('getElementById("stop-studio").addEventListener'):]
+    stop = stop[:stop.index("\n});")]
+    assert 'document.getElementById("start-studio").hidden = false;' in stop
+
+    start = js[js.index('getElementById("start-studio").addEventListener'):]
+    start = start[:start.index("\n});")]
+    assert 'fetch("/start", { cache: "no-store" })' in start
+    assert 'fetch("http://127.0.0.1:8611/start", { mode: "no-cors"' in start
+    assert "location.reload()" in start
+    assert "health.studio" in start, (
+        "through the proxy only a real studio answer means up; a 502 or "
+        "the waker page must not trigger the reload")
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="start-studio" hidden' in html
+
+
+def test_the_footer_sits_on_the_banner_floor():
+    """Param: the footer belongs "on the bottom of the banner not on the
+    bottom of the menus displayed". The panel is a flex column and the
+    mode row's auto top margin swallows the free space when the open
+    section is short; sticky still owns the overflowing case."""
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    panel = css[css.index("#panel { position: fixed"):]
+    panel = panel[:panel.index("}")]
+    assert "flex-direction: column" in panel
+    mode = css[css.index("#mode-row { position: sticky"):]
+    mode = mode[:mode.index("}")]
+    assert "margin-top: auto;" in mode
+
+
+def test_fingers_and_narrow_screens_are_provided_for():
+    """First device-fit pass for the tailnet's tablets: coarse pointers
+    get taller footer buttons and tabs, and below 1000px the drawer
+    centres itself in the space LEFT of the panel instead of under it."""
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "@media (pointer: coarse)" in css
+    assert "@media (max-width: 1000px)" in css
+    assert "calc((100vw - var(--panel-w)) / 2)" in css
+
+
 def test_the_waker_stays_on_loopback_and_stays_silent():
     """Loopback-only is the security model: Tailscale Serve is the only
     road in. And the handler must override the stdlib's request logging,

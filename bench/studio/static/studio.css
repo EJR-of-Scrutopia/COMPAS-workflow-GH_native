@@ -98,7 +98,13 @@ body { overflow: hidden;
          background: var(--panel-veil);
          backdrop-filter: blur(18px) saturate(115%);
          -webkit-backdrop-filter: blur(18px) saturate(115%);
-         border-left: 1px solid var(--line); }
+         border-left: 1px solid var(--line);
+         /* A column, so the footer rows can fall to the true bottom when
+            the open section is short (Param: the footer belongs "on the
+            bottom of the banner not on the bottom of the menus"). When
+            content overflows, sticky takes over exactly as before. */
+         display: flex; flex-direction: column; }
+#panel > * { flex-shrink: 0; }
 /* Section summaries are hidden: the tab rail carries every section's
    name, and exactly one section is on show at a time. The details/summary
    structure stays in the markup -- the machinery that finds sections by
@@ -236,7 +242,9 @@ body { overflow: hidden;
                  transform: translateX(-50%); display: flex; gap: var(--s2);
                  align-items: center; padding: 6px 14px;
                  background: var(--scrim); border: 1px solid var(--line);
-                 border-radius: var(--radius); backdrop-filter: blur(6px);
+                 border-radius: var(--radius);
+                 -webkit-backdrop-filter: blur(6px);
+                 backdrop-filter: blur(6px);
                  color: var(--ink); font-size: 12px; z-index: 30;
                  pointer-events: none; }
 #loading-toast.hidden { display: none; }
@@ -345,6 +353,11 @@ body { overflow: hidden;
 #mode-row { position: sticky; bottom: 0; z-index: 5; display: grid;
   grid-template-columns: repeat(3, 1fr); gap: var(--s1);
   margin: var(--s6) calc(-1 * var(--s3)) 0;
+  /* In the panel's flex column, auto swallows the free space when the
+     open section is short, dropping this row (and the panel foot after
+     it) to the banner's true bottom. With overflowing content auto
+     resolves to nothing and sticky carries on as before. */
+  margin-top: auto;
   padding: var(--s2) var(--s3) var(--s3); background: var(--panel);
   border-top: 1px solid var(--line); }
 /* The panel's blanket button rule would otherwise put a 4px margin between
@@ -783,9 +796,11 @@ body { overflow: hidden;
   display: flex; align-items: center; gap: var(--s2);
   margin: 0 calc(-1 * var(--s3));
   padding: var(--s2) var(--s3) var(--s3); background: var(--panel); }
-#panel #restart-studio, #panel #stop-studio { width: auto;
-  height: var(--h-small); margin: 0; padding: 0 var(--s2);
+#panel #restart-studio, #panel #stop-studio, #panel #start-studio {
+  width: auto; height: var(--h-small); margin: 0; padding: 0 var(--s2);
   font-size: var(--t-2); color: var(--ink-2); white-space: nowrap; }
+/* The width rule above would defeat the hidden attribute. */
+#panel #start-studio[hidden] { display: none; }
 #restart-status { color: var(--ink-3); font-size: var(--t-meta); }
 /* Clearance = the foot's full height (compact button + its two paddings),
    so the two sticky bars meet with no gap for content to show through. */
@@ -806,12 +821,13 @@ body { overflow: hidden;
 #shelf-tabs button { width: auto; margin: 0; padding: 5px 16px;
   font-size: 12px; color: var(--ink-2); background: var(--scrim);
   border: 1px solid var(--line); border-radius: var(--radius);
-  backdrop-filter: blur(6px); }
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 #shelf-tabs button:hover { color: var(--ink); border-color: var(--ink-3); }
 #shelf-tabs button.active { background: var(--accent-bg); color: var(--ink);
   border-color: var(--accent); }
 #shelf-body { width: 100%; background: var(--scrim);
-  backdrop-filter: blur(10px); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
   border-radius: var(--radius); overflow: hidden; }
 #shelf-body.hidden { display: none; }
 #shelf-head { display: flex; align-items: center; gap: 8px;
@@ -898,3 +914,21 @@ body { overflow: hidden;
   color: var(--ink); }
 #layer-tabs .layer-delete:hover { background: var(--danger); color: #fff; }
 
+
+/* ---------- device fit, first pass ----------
+   The studio now travels: the tailnet serves it to an iPad as readily as
+   to this desktop. Two adjustments where one size did not fit: fingers
+   get taller footer buttons and shelf tabs, and on narrow screens the
+   drawer centres itself in the space LEFT of the panel instead of under
+   it (the desktop keeps its numbers untouched). A fuller adaptive pass
+   -- portrait phones, a collapsible panel -- waits on Param's direction. */
+@media (pointer: coarse) {
+  #panel #restart-studio, #panel #stop-studio, #panel #start-studio {
+    height: 32px; }
+  #shelf-tabs button { padding: 9px 18px; }
+  #layer-tabs button { padding: 8px 14px; }
+}
+@media (max-width: 1000px) {
+  #shelf { left: calc((100vw - var(--panel-w)) / 2);
+           width: min(880px, calc(100vw - var(--panel-w) - 24px)); }
+}
