@@ -929,9 +929,9 @@ internal static class Program
                 "every branch the cells run COMPONENT BY COMPONENT and each " +
                 "component in ONE direction, its signed arc strictly " +
                 "increasing, on a closed dome course and on the barrel's " +
-                "two open strips alike; the dome is one run per course and " +
-                "two at its crown, where the keystone leads the rosette it " +
-                "must win its overlaps against, and the ridged barrel two. " +
+                "two open strips alike; the dome is one run per course " +
+                "everywhere, its crown course the one-polygon cap walked " +
+                "as one run of one cell, and the ridged barrel two. " +
                 "The " +
                 "order is measured against the CELLS' OWN CORNERS and not " +
                 "against the engine's sort key: the places where the order " +
@@ -1971,9 +1971,10 @@ internal static class Program
             Console.WriteLine(
                 "PASS  Skin two-dome cap plans (finding 15): a top band " +
                 "carrying TWO qualifying caps, one either side of the " +
-                "maximum piece, gives each of them ITS OWN plan: the " +
-                "wide dome splits into a rosette and the narrow one is " +
-                "emitted whole, with no cap oversized.");
+                "maximum piece, gives each of them ITS OWN plan: each " +
+                "dome gets ONE polygonal cap reporting its own " +
+                "component's girth, and exactly one cap, the wide " +
+                "dome's over the maximum, is flagged OVERSIZED.");
         }
         catch (Exception exception)
         {
@@ -19918,13 +19919,12 @@ internal static class Program
                     var previous = branch[run[at - 1]];
                     var here = branch[run[at]];
                     // A CAP IS EXEMPT FROM BOTH CLAUSES, because its U is
-                    // arc along its OWN outline and not along a course: a
-                    // whole cap and a centre disc each span [-L/2, +L/2] of
-                    // their own girth, so a disc's arc overlaps the wedges
-                    // beside it by construction and says nothing about
-                    // where either sits. Measured on the dome's own crown
-                    // rosette at course 3, a wedge [-1.208, 0] followed by
-                    // the disc [-0.885, 0.885].
+                    // arc along its OWN outline and not along a course:
+                    // the one-polygon cap (round two, finding 3) spans
+                    // [-L/2, +L/2] of its own girth, so wherever a course
+                    // cell lands in the cap's run its arc overlaps the
+                    // cap's by construction and says nothing about where
+                    // either sits.
                     if (previous.Cap || here.Cap)
                         continue;
                     if (here.U0 < previous.U1 - 1.0e-9)
@@ -20021,17 +20021,13 @@ internal static class Program
             // component broken into pieces by a mirrored order, which is the
             // whole defect.
             //
-            // THE DOME'S CROWN COURSE IS THE ONE EXCEPTION AND IT IS RE-
-            // MEASURED, not relaxed. It used to read 1 because the centre
-            // disc of its rosette was walked with the wedges, its mid-span of
-            // 0 falling between them; rule 2.6.5 requires the KEYSTONE to win
-            // any overlap against its own wedges, so the disc now leads its
-            // rosette by the sort's LEAD term and the course arrives as the
-            // disc alone and then the ring walked in one direction: 2 runs of
-            // 1 and 2 cells at W = 2. This is a cap ordering ahead of a
-            // course, exactly as the whole cap already leads its branch, and
-            // it is not a component broken in two: the wedges are still one
-            // run and RequireRunsFollowTheGeometry has already walked them.
+            // THE DOME'S CROWN COURSE STOPPED BEING AN EXCEPTION when the
+            // rosette went (round two, finding 3), and that is re-measured,
+            // not assumed: while the crown carried rule 2.6's split, its
+            // centre disc led the wedges and the course read 2 runs; the
+            // one-polygon cap is ONE cell walked as one run, so the dome
+            // reads one run per course everywhere, which is the fixture
+            // pin above.
             //
             // AND THE STRAND SPLIT IS GONE. This check used to separate a
             // ridge course's two components by watching for a U range already
@@ -20634,9 +20630,10 @@ internal static class Program
         int sliverCourses = Reading<int>(sliver, "CourseCount");
         var sliverCaps = sliverCells.Where(cell => cell.Cap).ToArray();
         // At this CH the crown's own girth exceeds Mx = S / MP at the
-        // default MP (task 22, rule 2.6), so the cap is a SPLIT rosette
-        // of W + 1 cells rather than one whole cell; every one of them
-        // still carries Course = 12, which is the rule this check pins.
+        // default MP (task 22, rule 2.6), so the cap is ONE polygon
+        // emitted whole and flagged OVERSIZED (round two, finding 3)
+        // rather than split; it still carries Course = 12, which is the
+        // rule this check pins.
         if (sliverCourses != 13 ||
             sliverCaps.Length < 1 ||
             sliverCaps.Any(cell => cell.Course != 12))
@@ -23432,7 +23429,28 @@ internal static class Program
         double uncovered = SlabUncoveredArea(
             netVertices, netFaces, netField,
             slabIntervals[0].Low, slabIntervals[0].High,
-            cells.Select(cell => cell.Outline).ToArray());
+            cells.Select(cell => cell.Outline).ToArray(),
+            out double slabArea);
+        // A ZERO IS ONLY A MEASUREMENT OVER A POSITIVE SLAB. Before the
+        // pins below may trust 0.0000 m2 uncovered, the slab the helper
+        // sampled must itself be there: a clip or enumeration regression
+        // local to SlabUncoveredArea (every face skipped, an inverted
+        // half-space) reads zero uncovered over zero slab and the pin at
+        // nought passes vacuously, the false-green class this repo's
+        // history documents. MEASURED on this fixture: the slab samples
+        // to 7.5730 m2, about 56 median course areas, so a floor of one
+        // median course area (0.1353 m2 here) is two orders under the
+        // real reading and still refuses the empty enumeration outright.
+        if (!(slabArea >= medianArea))
+        {
+            throw new InvalidOperationException(
+                "SlabUncoveredArea sampled a slab whose own plan area " +
+                $"reads {slabArea:F4} m2 against a floor of one median " +
+                $"course area ({medianArea:F4} m2); measured at 7.5730 " +
+                "m2 on this fixture. The uncovered pin at nought means " +
+                "nothing over a slab this small: the helper's clip or " +
+                "face enumeration is broken, not the coverage.");
+        }
         if (uncovered > 0.3 * medianArea)
         {
             throw new InvalidOperationException(
@@ -23700,15 +23718,26 @@ internal static class Program
     /// sample scale, and each sample triangle's centroid tested against
     /// every kept cell's plan ring. What comes back is the area of the
     /// slab no stone covers, which is the void the findings photograph.
-    /// </summary>
+    ///
+    /// AND THE SLAB'S OWN AREA COMES BACK WITH IT, summed over the same
+    /// sample triangles the uncovered reading is taken on, because a
+    /// zero-uncovered reading is only a measurement if the loop actually
+    /// visited a slab: a clip or enumeration defect local to this helper
+    /// (every face skipped non-finite, an inverted half-space) reads
+    /// 0.0000 uncovered over NO area at all, and the caller's pin at
+    /// nought then passes for the wrong reason, the vacuous-zero class
+    /// this repository's history documents. The caller guards slabArea
+    /// before it trusts the zero.</summary>
     private static double SlabUncoveredArea(
         double[][] vertices,
         int[][] faces,
         double[] field,
         double low,
         double high,
-        double[][][] cellRings)
+        double[][][] cellRings,
+        out double slabArea)
     {
+        slabArea = 0.0;
         var boxes = new (double MinX, double MaxX, double MinY, double MaxY)[
             cellRings.Length];
         for (int at = 0; at < cellRings.Length; at++)
@@ -23790,6 +23819,10 @@ internal static class Program
                     stack.Push((ab, bc, ca));
                     continue;
                 }
+                // Every LEAF sample triangle counts toward the slab's own
+                // area, covered or not; the subdivided parents do not, or
+                // the area would be counted twice.
+                slabArea += area;
                 if (!Covered(
                         (a[0] + b[0] + c[0]) / 3.0,
                         (a[1] + b[1] + c[1]) / 3.0))
@@ -29694,10 +29727,11 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     "This hemisphere carries a crown cap at both settings, " +
-                    "whole at CH 0.35 and as the centre disc of a rosette " +
-                    "at CH 1.2, and route 5.2.3(d)'s apex is measured on " +
-                    $"it; at CH {courseHeight} no cell came back Cap with " +
-                    "no sections at all, so that apex went unmeasured.");
+                    "ONE sectionless polygon at CH 0.35 and at CH 1.2 " +
+                    "alike since round two's one-polygon cap (finding 3), " +
+                    "and route 5.2.3(d)'s apex is measured on it; at CH " +
+                    $"{courseHeight} no cell came back Cap with no " +
+                    "sections at all, so that apex went unmeasured.");
             }
             // RE-MEASURED 2026-09-05 for round two's finding 3: the
             // split arm is GONE with the rosette. Both settings of the

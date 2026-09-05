@@ -4130,25 +4130,16 @@ internal static class SkinPatterns
                 ? rank
                 : int.MaxValue;
 
-        // THE LEAD TERM IS ONE ROSETTE'S OWN TIE-BREAK and it exists for one
-        // cell in the engine: the centre DISC of a split cap (rule 2.6.5 of
-        // the 2026-09-01 buildability spec), which must WIN any overlap
-        // against the wedges round it, since the keystone is the piece least
-        // worth dropping. Rule 2.6.5 carried that on rule 7.1's |mid| order,
-        // where the disc's mid-span of 0 put it first and an ODD W's middle
-        // wedge, also centred on the seam, was separated from it "explicitly
-        // and in the disc's favour". Rule 3.1's signed arc walks the rosette
-        // instead, and there the disc and its wedges share Course, Cap, Rank
-        // and Level, so only the signed mid separates them and at odd W the
-        // middle wedge's mid is -g/2 + (W/2)(g/W), which is 0 to within the
-        // last bits: at W = 3 and g = 1 it computes as -2.78e-17, BELOW the
-        // disc's exact 0, so the wedge would lead and take the overlap. The
-        // tie-break is therefore made structural rather than arithmetic: 0
-        // for the disc, 1 for everything else, ranked after the level and
-        // before the arc, so it reaches the disc's own rosette and nothing
-        // else in the branch.
+        // THE LEAD TERM WAS HERE, rule 2.6.5's tie-break that put a split
+        // cap's centre disc ahead of its own wedges, whose arithmetic near-
+        // tie at odd W (a middle wedge's mid computing as -2.78e-17 against
+        // the disc's exact 0) was its whole reason. Round two's one-polygon
+        // cap (finding 3) leaves no rosette: every cap is ONE cell, so the
+        // term had become a copy of the Cap term in the sort below (Lead
+        // was 0 exactly where Cap is true) and went with the machinery it
+        // tie-broke; the history lives at the round-one commits.
         var keyed = new List<(
-            int Course, int Rank, double Level, int Lead, SkinCell Cell)>();
+            int Course, int Rank, double Level, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
         int mergedPieces = 0;
         int mergedShortKept = 0;
@@ -4232,7 +4223,7 @@ internal static class SkinPatterns
             {
                 closerCells++;
                 keyed.Add((
-                    cell.Course, RankOf(guide), guide.Level, 1, cell));
+                    cell.Course, RankOf(guide), guide.Level, cell));
             }
         }
         int transitionBands = resolved.Refused.Count;
@@ -4271,13 +4262,11 @@ internal static class SkinPatterns
                 // is.
                 int rank = RankOf(mid);
 
-                // THE CAP'S OUTLINE IS THE LEVEL CURVE, whole, from its seam
-                // round to its seam (rule 2.3.1), or a ring of wedges about a
-                // smaller centre disc where rule 2.6 split it. It carries
-                // every trace vertex of the curves it is built from, so it
-                // typically has tens of corners, and it follows the surface
-                // exactly rather than chording across it, the same property
-                // Run gives every other cell edge. It is NOT exempted from
+                // THE CAP'S OUTLINE IS ONE POLYGON (spec 2026-09-05 round
+                // two, finding 3): the final traced level loop simplified
+                // to its structural corners, chords held inside the loop,
+                // by CapPolygonOutline, whose own comment carries the
+                // measured reasoning. It is NOT exempted from
                 // KeepValidPlans and must not be: if it ever fails, that is
                 // a defect and the filter is where it should show.
                 //
@@ -4297,12 +4286,13 @@ internal static class SkinPatterns
                 // is lowers[lowerAt]. Three ways of naming a component and
                 // two of them assumed to agree. Where a level's components
                 // come back in a different order at the mid than at the
-                // low, which nothing forbids, a cap takes another cap's
-                // wedge count, inner level and ring mid: a dome that
-                // needed no split is cut into a rosette at heights
-                // borrowed from its neighbour, and one that needed a split
-                // is emitted whole and oversized with CapsOversized
-                // reading zero.
+                // low, which nothing forbids, a cap answers to another
+                // cap's plan: the polygon is cut for a component the
+                // qualification never passed, the qualifying dome goes
+                // uncapped, and the girth, side count and OVERSIZED flag
+                // ride against the wrong component, which is exactly what
+                // the two-dome check's own-girth and one-cap-per-dome pins
+                // catch.
                 SkinCapPlan? plan = isCapBand
                     ? capPlans.FirstOrDefault(
                         item => item.ComponentAt == lowerAt)
@@ -4323,9 +4313,10 @@ internal static class SkinPatterns
                     // a triangle, and a rim of enough corners keeps the
                     // fan's sag in the millimetre class. The keystone
                     // ordering keeps its slot: the polygon IS the
-                    // keystone, Lead 0, and the cap still leads its branch
-                    // and still answers to KeepValidPlans like every other
-                    // cell (the standing rule at the plan-filter comment).
+                    // keystone, the cap still leads its branch by the
+                    // sort's Cap term below, and it still answers to
+                    // KeepValidPlans like every other cell (the standing
+                    // rule at the plan-filter comment).
                     SkinLevelCurve outer = lowers[lowerAt];
                     var loop = CapPolygonOutline(outer, minimumPiece);
                     if (loop.Count >= 3)
@@ -4333,7 +4324,7 @@ internal static class SkinPatterns
                         capGirths.Add(outer.Length);
                         capWedges.Add(loop.Count);
                         keyed.Add((
-                            band.Course, rank, band.Mid, 0,
+                            band.Course, rank, band.Mid,
                             new SkinCell(
                                 band.Course, loop, false,
                                 -outer.Length / 2.0,
@@ -4445,7 +4436,7 @@ internal static class SkinPatterns
                         weldCollapsed++;
                         continue;
                     }
-                    keyed.Add((band.Course, rank, band.Mid, 1, cell));
+                    keyed.Add((band.Course, rank, band.Mid, cell));
                 }
             }
         }
@@ -4453,8 +4444,8 @@ internal static class SkinPatterns
         // CAP, which leads it; then the COMPONENT, ranked by seam association
         // and by the plan position of its start; then the LEVEL, which orders
         // one component's several curves within one course bottom-up; then
-        // the keystone's LEAD over its own rosette; then SIGNED ARC along the
-        // curve, ascending, which is one consistent direction round it.
+        // SIGNED ARC along the curve, ascending, which is one consistent
+        // direction round it.
         // The tree's SHAPE is untouched by all of this, the path is still the
         // course alone, and Export's own course derivation and the staging
         // read the path.
@@ -4492,23 +4483,12 @@ internal static class SkinPatterns
         // cap with them. Cells went from 95 to 108 and the cap count from 1
         // to 0, against rule 2.6.6's own pin. Led by the cap, the fixture
         // reads 95 and 1 again, which is where it stood.
-        //
-        // AND THE KEYSTONE LEADS ITS OWN ROSETTE, which is the LEAD term and
-        // the one place the four terms above cannot separate two cells that
-        // must be separated: a split cap's centre disc and its wedges share
-        // the course, the cap flag, the rank and the level, and the signed
-        // mid then decides between a disc centred on 0 and, at odd W, a
-        // middle wedge whose own centre is 0 to within the last bits. Rule
-        // 2.6.5 requires the disc to win any overlap against its own wedges
-        // and says the tie is broken "explicitly and in the disc's favour";
-        // this term is that sentence, and it reaches nothing else.
         List<SkinCell> cells = KeepValidPlans(
             keyed
                 .OrderBy(item => item.Course)
                 .ThenBy(item => item.Cell.Cap ? 0 : 1)
                 .ThenBy(item => item.Rank)
                 .ThenBy(item => item.Level)
-                .ThenBy(item => item.Lead)
                 .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
                 .Select(item => item.Cell)
                 .ToList(),
