@@ -2840,6 +2840,25 @@ internal static class Program
 
         try
         {
+            ValidateEquilibratePayload(plugin);
+            Console.WriteLine(
+                "PASS  TNA Horizontal's request: the prepared stage it "
+                + "sends is byte for byte the one tna.solve already sends, "
+                + "so the worker decoder that reads one reads the other "
+                + "and the station inherits a proven wire shape instead of "
+                + "asserting a new one; the Move crosses unchanged; and "
+                + "the principal lines, which are a C# annotation that "
+                + "never went to the worker, are flattened into node IDs "
+                + "to be WATCHED, deduplicated, in range and in order.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"TNA Horizontal's request: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateHorizontalStation(plugin);
             Console.WriteLine(
                 "PASS  TNA Horizontal's chin (the 2026-09-04 ruling): the "
@@ -37338,6 +37357,17 @@ internal static class Program
   ""mappings"": __MAPPINGS__
 }";
 
+    private const string TnaControlJson = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.tna_control"",
+  ""heightMode"": ""natural"",
+  ""horizontalAlpha"": 100.0,
+  ""horizontalMethod"": ""iterative"",
+  ""verticalIterations"": 1000,
+  ""tolerance"": 0.001
+}";
+
     private const string RelaxedJsonTemplate = @"
 {
   ""schemaVersion"": ""0.2"",
@@ -37963,6 +37993,135 @@ internal static class Program
         {
             (saved as IDisposable)?.Dispose();
             (reopened as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The station's REQUEST: what actually crosses the worker boundary.
+    ///
+    /// Two claims are measured here. First, the prepared block the station
+    /// sends is byte for byte the prepared block <c>tna.solve</c> already
+    /// sends, so the Python decoder that reads one reads the other and the
+    /// station inherits a wire shape that is already proven end to end
+    /// rather than asserting a new one. Second, the principal lines: they
+    /// are a C# annotation that never went to the worker at all, so the
+    /// station flattens their runs into node IDs and sends those to be
+    /// WATCHED, deduplicated and ordered: two lines crossing at a node
+    /// would otherwise have that node counted twice in the chin.
+    /// </summary>
+    private static void ValidateEquilibratePayload(Assembly plugin)
+    {
+        Type preparedType = RequireContractType(plugin, "TnaPreparedDto");
+        Type loadType = RequireContractType(plugin, "LoadCaseDto");
+        Type controlType = RequireContractType(plugin, "TnaControlDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type codec = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaWorkflowWorkerCodec")
+            ?? throw new InvalidOperationException(
+                "TnaWorkflowWorkerCodec was not found.");
+        MethodInfo equilibrate = codec.GetMethod(
+            "EquilibratePayload",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaWorkflowWorkerCodec.EquilibratePayload was not found.");
+        MethodInfo staged = codec.GetMethod(
+            "StagedSolvePayload",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TnaWorkflowWorkerCodec.StagedSolvePayload was not found.");
+
+        // A three-vertex faced pattern carrying two principal runs that
+        // SHARE a node and arrive out of order, which is what two lines
+        // crossing at a node looks like. Out of range is not tested here:
+        // TopologyDto refuses a run index that is not a vertex, so the
+        // builder's own range filter guards a case the contract has
+        // already made unreachable.
+        string zeroHash = new string('0', 64);
+        string topologyDraft = TopologyJsonTemplate
+            .Replace("__HASH__", zeroHash)
+            .Replace(
+                "\"topologyHash\"",
+                "\"principalRuns\": [[2, 0], [0, 1]],\n  "
+                + "\"topologyHash\"");
+        object draft = DeserializeContract(plugin, topologyType, topologyDraft);
+        string topologyHash = ComputeTopologyHash(plugin, draft);
+        string topologyJson = topologyDraft.Replace(zeroHash, topologyHash);
+        string supportSetJson =
+            SupportSetJsonTemplate.Replace("__HASH__", topologyHash);
+        string patternJson = TnaPatternJsonTemplate
+            .Replace("__TOPOLOGY__", topologyJson)
+            .Replace("__SUPPORTS__", supportSetJson);
+        string preparedJson = TnaPreparedJsonTemplate
+            .Replace("__PATTERN__", patternJson)
+            .Replace("__HASH__", topologyHash)
+            .Replace("__SUPPORTS__", supportSetJson)
+            .Replace("__PREPARED_PATTERN__", TnaPreparedPatternJson)
+            .Replace("__FORM_GRAPH__", TnaDiagramGraphJson)
+            .Replace("__FORCE_GRAPH__", TnaDiagramGraphJson)
+            .Replace("__MAPPINGS__", TnaPreparedMappingsJson);
+        object prepared =
+            DeserializeContract(plugin, preparedType, preparedJson);
+        RequireNoValidationErrors(prepared, "TNA Horizontal payload fixture");
+
+        object payload = equilibrate.Invoke(
+            null, new object[] { prepared, 42.5 })
+            ?? throw new InvalidOperationException(
+                "EquilibratePayload returned null.");
+        var map = (IReadOnlyDictionary<string, object?>)payload;
+        var expectedKeys = new[] { "prepared", "move", "watched_node_ids" };
+        if (map.Count != expectedKeys.Length ||
+            expectedKeys.Any(key => !map.ContainsKey(key)))
+        {
+            throw new InvalidOperationException(
+                "the station's request carries exactly the prepared stage, "
+                + "the Move and the watch list; it carried "
+                + string.Join(", ", map.Keys) + ".");
+        }
+        if (!Equals(map["move"], 42.5))
+        {
+            throw new InvalidOperationException(
+                $"the Move must cross unchanged; got {map["move"]}.");
+        }
+        int[] watched = (int[])map["watched_node_ids"]!;
+        if (!watched.SequenceEqual(new[] { 0, 1, 2 }))
+        {
+            throw new InvalidOperationException(
+                "the watch list is the principal runs' own nodes, "
+                + "deduplicated, in range and in order; got ["
+                + string.Join(", ", watched) + "].");
+        }
+
+        object load = DeserializeContract(
+            plugin,
+            loadType,
+            LoadCaseJsonTemplate.Replace("__HASH__", topologyHash));
+        object control =
+            DeserializeContract(plugin, controlType, TnaControlJson);
+        object solvePayload = staged.Invoke(
+            null, new object[] { prepared, load, control })
+            ?? throw new InvalidOperationException(
+                "StagedSolvePayload returned null.");
+        var solveMap = (IReadOnlyDictionary<string, object?>)solvePayload;
+        string stationPrepared = JsonSerializer.Serialize(map["prepared"]);
+        string solvePrepared = JsonSerializer.Serialize(solveMap["prepared"]);
+        if (stationPrepared != solvePrepared)
+        {
+            throw new InvalidOperationException(
+                "the station sends a DIFFERENT prepared stage from the one "
+                + "tna.solve sends, so the worker's decoder is being asked "
+                + "to read two shapes where one is proven.");
+        }
+        if (!stationPrepared.Contains("\"tna_prepared\"",
+                StringComparison.Ordinal) ||
+            !stationPrepared.Contains("\"form_graph\"",
+                StringComparison.Ordinal) ||
+            !stationPrepared.Contains("\"edge_force_densities\"",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "the prepared block must carry the snake_case fields the "
+                + "worker decodes; got " + stationPrepared[
+                    ..Math.Min(200, stationPrepared.Length)]);
         }
     }
 
