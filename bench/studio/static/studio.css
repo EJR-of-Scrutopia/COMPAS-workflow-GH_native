@@ -894,3 +894,14 @@ body { overflow: hidden;
   color: var(--ink); }
 #shelf-body .layer-row .layer-delete:hover { background: var(--danger);
   color: #fff; }
+/* Object rows under each layer: the drawer is a list of what stands in
+   the scene. Tick to gather a group; click a name to select it. */
+#shelf-body .object-row { display: flex; align-items: center; gap: 8px;
+  margin-left: 18px; padding: 3px 10px; border: 1px solid transparent;
+  border-radius: 3px; color: var(--ink-2); font-size: 12px; }
+#shelf-body .object-row:hover { border-color: var(--line); color: var(--ink); }
+#shelf-body .object-row.selected { border-color: var(--accent);
+  background: var(--accent-bg); color: var(--ink); }
+#shelf-body .object-row .object-name { flex: 1 1 auto; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#shelf-body .object-row input[type="checkbox"] { margin: 0; }

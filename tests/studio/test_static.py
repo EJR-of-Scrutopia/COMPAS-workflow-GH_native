@@ -2833,3 +2833,29 @@ def test_layers_group_props_and_survive_saves():
     assert "record.x + 1.5" in body, "the copy lands a step away, not on top"
     save = _function_body(js, "saveProps")
     assert "layers:" in save and "layer: p.layer || 1" in save
+
+
+def test_gathered_objects_stamp_until_escape():
+    """Param: "i grab 3 random objects from the layer tile and then group
+    and duplicate, i can then place many of these objects until i click
+    esc then it releases them". The drawer lists placed objects; ticked
+    ones become a stamp whose every click plants a copy."""
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="stamp-group"' in page
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "const gatheredProps = new Set();" in js
+    begin = _function_body(js, "beginStamp")
+    assert "record.x - cx" in begin, "defs are relative to the group centroid"
+    place = _function_body(js, "placeStampInstance")
+    assert "spawnStampInstance(hit.x, hit.y);" in place, (
+        "planting one copy loads the next: the stamp repeats until Escape"
+    )
+    end = _function_body(js, "endStamp")
+    assert "disposeProp(record.object);" in end, (
+        "the copy in hand never arrived; only planted ones stay"
+    )
+    # Escape ends the stamp before anything else hears it.
+    assert 'if (event.key === "Escape" && stampRig)' in js
+    # Clicking an object row selects it in the viewport.
+    assert "selectProp(record);" in _function_body(js, "renderShelfLayers")

@@ -3118,6 +3118,8 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "scenes");
   document.getElementById("layer-new").classList
     .toggle("hidden", shelfKind !== "layers");
+  document.getElementById("stamp-group").classList
+    .toggle("hidden", shelfKind !== "layers");
   document.getElementById("scene-list").classList
     .toggle("hidden", shelfKind !== "scenes");
   propHolder.classList.toggle("hidden", shelfKind !== "props");
@@ -3134,12 +3136,32 @@ function renderShelf() {
 }
 
 // ---------- the Layers drawer ----------
-// Rows, not tiles: each row is a group of placed props. The lit row is
-// the ACTIVE layer, where the next placed prop lands; the eye hides a
-// whole set; Duplicate stamps a second copy of the set a step away on a
-// fresh layer -- "control, duplicate and place groups of objects".
+// A list of what actually stands in the scene (Param: "have it more as
+// a list of placed objects so i click the objects from this layer tool,
+// it selects that object"). Layer rows carry the group controls; under
+// each, one row per placed prop: click the name to select it in the
+// viewport, tick the box to gather it into a stamp.
+const gatheredProps = new Set();
+
+function propLabel(record) {
+  const entry = (state.propLibrary || []).find((e) => e.key === record.type);
+  return entry ? entry.label : record.type;
+}
+
+function paintStampButton() {
+  const button = document.getElementById("stamp-group");
+  const count = [...gatheredProps]
+    .filter((record) => state.props.includes(record)).length;
+  button.disabled = !count;
+  button.textContent = count
+    ? "Place copies of " + count : "Group & place copies";
+}
+
 function renderShelfLayers(grid) {
   grid.innerHTML = "";
+  for (const record of [...gatheredProps]) {
+    if (!state.props.includes(record)) gatheredProps.delete(record);
+  }
   for (const layer of state.propLayers) {
     const row = document.createElement("div");
     row.className = "layer-row" + (layer.id === state.activeLayer ? " active" : "");
@@ -3157,8 +3179,9 @@ function renderShelfLayers(grid) {
     });
     const count = document.createElement("span");
     count.className = "layer-count";
-    const members = state.props.filter((r) => r.layer === layer.id).length;
-    count.textContent = members + (members === 1 ? " prop" : " props");
+    const members = state.props.filter((r) => r.layer === layer.id);
+    count.textContent = members.length
+      + (members.length === 1 ? " prop" : " props");
     const eye = document.createElement("button");
     eye.textContent = layer.visible !== false ? "Shown" : "Hidden";
     eye.title = "Show or hide every prop on this layer";
@@ -3170,7 +3193,7 @@ function renderShelfLayers(grid) {
     });
     const dup = document.createElement("button");
     dup.textContent = "Duplicate";
-    dup.title = "Place a copy of this whole group a step away, on a new layer";
+    dup.title = "Place a copy of this whole layer a step away, on a new layer";
     dup.addEventListener("click", () => duplicateLayer(layer.id));
     const del = document.createElement("button");
     del.className = "layer-delete";
@@ -3179,7 +3202,32 @@ function renderShelfLayers(grid) {
     del.addEventListener("click", () => deleteLayer(layer.id));
     row.append(name, count, eye, dup, del);
     grid.appendChild(row);
+    for (const record of members) {
+      const line = document.createElement("div");
+      line.className = "object-row"
+        + (record === state.selectedProp ? " selected" : "");
+      const tick = document.createElement("input");
+      tick.type = "checkbox";
+      tick.checked = gatheredProps.has(record);
+      tick.title = "Gather into the stamp";
+      tick.addEventListener("change", () => {
+        if (tick.checked) gatheredProps.add(record);
+        else gatheredProps.delete(record);
+        paintStampButton();
+      });
+      const label = document.createElement("span");
+      label.className = "object-name";
+      label.textContent = propLabel(record);
+      label.title = "Select this object in the viewport";
+      label.addEventListener("click", () => {
+        selectProp(record);
+        renderShelf();
+      });
+      line.append(tick, label);
+      grid.appendChild(line);
+    }
   }
+  paintStampButton();
 }
 
 function duplicateLayer(id) {
@@ -3232,6 +3280,77 @@ document.getElementById("layer-new").addEventListener("click", () => {
   saveProps();
   renderShelf();
 });
+
+// ---------- the stamp ----------
+// Ticked objects become one rubber stamp (Param: "i grab 3 random
+// objects from the layer tile and then group and duplicate, i can then
+// place many of these objects until i click esc then it releases
+// them"). The stamp is defs relative to the group's centroid; one live
+// instance rides the cursor, every click plants it and spawns the next,
+// Escape removes the one in hand and ends the run.
+let stampRig = null;
+
+function spawnStampInstance(x, y) {
+  stampRig.records = stampRig.defs.map((def) => {
+    const record = placeProp(def.type, x + def.dx, y + def.dy,
+      def.rotation, false, def.scale);
+    return record;
+  });
+}
+
+function beginStamp() {
+  const chosen = [...gatheredProps]
+    .filter((record) => state.props.includes(record));
+  if (!chosen.length) return;
+  let cx = 0, cy = 0;
+  for (const record of chosen) { cx += record.x; cy += record.y; }
+  cx /= chosen.length; cy /= chosen.length;
+  stampRig = {
+    defs: chosen.map((record) => ({ type: record.type,
+      dx: record.x - cx, dy: record.y - cy,
+      rotation: record.rotation, scale: record.scale || 1 })),
+    records: [],
+    placed: 0,
+  };
+  spawnStampInstance(cx + 1.5, cy + 1.5);
+  controls.enabled = false;
+  closeShelf();
+  logStudio("stamp of " + stampRig.defs.length
+    + ": every click places a copy, escape lets go");
+}
+
+function moveStamp(hit) {
+  for (let i = 0; i < stampRig.records.length; i++) {
+    const def = stampRig.defs[i];
+    const record = stampRig.records[i];
+    record.x = hit.x + def.dx;
+    record.y = hit.y + def.dy;
+    record.object.position.set(record.x, record.y, 0);
+  }
+}
+
+function placeStampInstance(hit) {
+  stampRig.placed += 1;
+  saveProps();
+  spawnStampInstance(hit.x, hit.y);
+}
+
+function endStamp() {
+  // The copy in hand never arrived: it goes, the planted ones stay.
+  for (const record of stampRig.records) {
+    disposeProp(record.object);
+    propsGroup.remove(record.object);
+    state.props = state.props.filter((p) => p !== record);
+  }
+  const planted = stampRig.placed;
+  stampRig = null;
+  controls.enabled = true;
+  saveProps();
+  logStudio("stamp released: " + planted
+    + (planted === 1 ? " copy" : " copies") + " placed");
+}
+
+document.getElementById("stamp-group").addEventListener("click", beginStamp);
 
 function renderShelfProps(cats, holder) {
   const groups = [...new Set(state.propLibrary.map(
@@ -6067,6 +6186,13 @@ document.getElementById("props-clear").addEventListener("click", () => {
 });
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state.bundle) return;
+  // A stamp in hand: this click plants the whole group and loads the
+  // next copy. Escape is the only way out.
+  if (stampRig) {
+    const hit = groundPointAt(event);
+    if (hit) placeStampInstance(hit);
+    return;
+  }
   // Carrying something: this click puts it down (whatever the mode -- the
   // carry began with a deliberate library choice).
   if (state.carrying) {
@@ -6112,6 +6238,12 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 });
 canvas.addEventListener("pointermove", (event) => {
+  // The stamp rides the cursor as one unit.
+  if (stampRig) {
+    const hit = groundPointAt(event);
+    if (hit) moveStamp(hit);
+    return;
+  }
   // A live gumball drag: the ring turns the prop, the square scales it,
   // both measured in plan about the prop's feet, the way Rhino reads a
   // gumball drag in top view.
@@ -6173,6 +6305,10 @@ canvas.addEventListener("pointercancel", endPropDrag);
 window.addEventListener("keydown", (event) => {
   // Escape puts a carried prop back where it came from, or removes it if it
   // never had anywhere to go back to.
+  if (event.key === "Escape" && stampRig) {
+    endStamp();
+    return;
+  }
   if (event.key === "Escape" && state.carrying) {
     cancelCarry();
     return;
