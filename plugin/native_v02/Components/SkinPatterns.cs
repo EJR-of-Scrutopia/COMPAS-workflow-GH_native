@@ -912,7 +912,7 @@ internal static class SkinPatterns
     /// answers across, so no net is ever marched twice. The radius the net
     /// itself asks for WINS over the pattern's default, which is how a
     /// fixture drives R = 0 and R beyond the whole field.</summary>
-    internal static SkinNet Blended(SkinNet net, double courseHeight)
+    public static SkinNet Blended(SkinNet net, double courseHeight)
     {
         double radius = net.BlendRadius ?? courseHeight;
         IReadOnlyList<double>? field = BlendedField(net, radius);
@@ -4024,6 +4024,7 @@ internal static class SkinPatterns
                          size,
                          minimumPiece,
                          high - low,
+                         high - low >= courseHeight - 1.0e-9,
                          ref mergedPieces,
                          ref mergedShortKept,
                          ref mergedStillShort,
@@ -6217,6 +6218,7 @@ internal static class SkinPatterns
         double size,
         double minimumPiece,
         double thickness,
+        bool stagger,
         ref int mergedPieces,
         ref int mergedShortKept,
         ref int mergedStillShort,
@@ -6272,9 +6274,40 @@ internal static class SkinPatterns
             // 2.3, which is what the bond actually rests on, holds exactly.
             int pieces = Math.Max(1, (int)Math.Round(guide.Length / size));
             double pitch = guide.Length / pieces;
+            // THE CLOSER TAKES ITS COURSE'S OWN PHASE (spec 2026-09-05 rule
+            // 3.2), which is the running bond's half-pitch stagger on odd
+            // courses and nothing on even ones, exactly as an ordinary band
+            // does at line 4250.
+            //
+            // IT WAS ZERO AND IT WAS MEASURED WRONG. While the closer tiled
+            // a CH/64 sliver its guide was a curve of its own, traced at a
+            // level nothing else was cut on, so the phase could not collide
+            // with anything. Rule 3.1's absorption puts the closer's guide
+            // ON A COURSE BOUNDARY, the same curve the band below ends on,
+            // and at phase zero both divide that curve at the same pitch
+            // from the same origin: measured on Param's crown arch at CH
+            // 0.375, the worst distance from a closer head joint to the
+            // nearest head joint the course below plants on the same curve
+            // fell from 0.0915 m to nought. Every head joint continued
+            // across the bed is a THROUGH JOINT, which is the defect bond
+            // exists to prevent and is the first thing a reviewer picks out
+            // of a screenshot. The phase is therefore the course's.
+            //
+            // AND IT RIDES WITH THE ABSORPTION, for the same reason the
+            // absorption itself rides with the seam. Where the slab was NOT
+            // grown, the closer is still tiling a bisection sliver, its
+            // stones are a hundredth of a course deep, and there is no bond
+            // to speak of to stagger; the stagger there was built and
+            // MEASURED before it was refused, and it cost the
+            // split-and-death net more than half its plan coverage, 11.65
+            // per cent falling to 4.92, because moving a sliver's division
+            // half a pitch moves both its ends off the ribbon it can reach.
+            // A fixture the wave does not otherwise touch is not made worse
+            // to satisfy a rule about a stone the wave did not give it.
+            double phase = stagger && course % 2 != 0 ? 0.5 * pitch : 0.0;
             var spans = new List<(double U0, double U1, bool Clipped)>();
             foreach ((double u0, double u1) in
-                     CourseSpans(guide, pieces, pitch, 0.0))
+                     CourseSpans(guide, pieces, pitch, phase))
             {
                 spans.Add((u0, u1, u1 - u0 < pitch - 1.0e-9));
             }
