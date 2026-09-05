@@ -83,7 +83,9 @@ internal sealed record SkinNet(
         IReadOnlyList<int[]> Triangles,
         IReadOnlyList<double> Levels,
         IReadOnlyList<int> Seeds,
-        IReadOnlyList<double[]> Normals) _built =
+        IReadOnlyList<double[]> Normals,
+        IReadOnlyList<double> Second,
+        IReadOnlyList<int> SecondSeeds) _built =
             SkinPatterns.BuildNet(Vertices, Faces, Rim);
 
     /// <summary>The faces, triangulated. An all-triangle face list comes
@@ -96,8 +98,70 @@ internal sealed record SkinNet(
     /// to 1.2.3). Computed once here, for the same reason the triangulation
     /// is: the harness builds its nets straight through this constructor, so
     /// a field that lived in ReadNet alone would be a field no fixture could
-    /// measure.</summary>
-    public IReadOnlyList<double> Levels => _built.Levels;
+    /// measure.
+    ///
+    /// THE BLENDED FIELD RIDES HERE (spec 2026-09-05 rule 2.2). Where a
+    /// pattern has replaced the field with the soft minimum of the nearest
+    /// and second-nearest family arrivals, this property hands back THAT
+    /// field, so every reader downstream (the tracer, the band ladder, the
+    /// cap test, the slab areas) sees one field and cannot be given two.
+    /// <see cref="RawLevels"/> is the marching's own d1, which the blend is
+    /// defined against and which the R = 0 pin reads.</summary>
+    public IReadOnlyList<double> Levels => BlendedLevels ?? _built.Levels;
+
+    /// <summary>The blended field, or null where no pattern has blended
+    /// this net. An init property and not a positional parameter, so that
+    /// every two-argument and four-argument construction in the engine and
+    /// in the harness goes on binding, and so that `net with { BlendedLevels
+    /// = ... }` copies the marching's own answers rather than marching
+    /// again: the record's copy constructor carries `_built` across.
+    /// </summary>
+    public IReadOnlyList<double>? BlendedLevels { get; init; }
+
+    /// <summary>THE BLEND RADIUS THIS NET ASKS FOR, or null to take the
+    /// pattern's own default of one Course Height (spec 2026-09-05 rule
+    /// 2.2). It rides on the NET and not on every pattern's signature for
+    /// one measured reason: the harness resolves Hexagonal by NAME at
+    /// thirteen call sites, and a second overload there throws
+    /// AmbiguousMatchException at every one of them, so a radius parameter
+    /// on the patterns would have been a rewrite of thirteen unrelated
+    /// checks to buy nothing. A plain constructor field is also the one
+    /// shape reflection can set without arguing about init-only accessors:
+    /// <see cref="SkinPatterns.WithBlendRadius"/> is how a fixture asks for
+    /// R = 0 or for a radius past the whole field.</summary>
+    public double? BlendRadius => _blendRadius;
+
+    private readonly double? _blendRadius;
+
+    /// <summary>The net with an EXPLICIT blend radius, the five-argument
+    /// construction. Zero is rule 2.2's mandatory OFF and reproduces the
+    /// shipped field bit for bit.</summary>
+    public SkinNet(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces,
+        IReadOnlyList<int> rim,
+        IReadOnlyList<SkinNetEdge> edges,
+        double blendRadius)
+        : this(vertices, faces, rim, edges)
+    {
+        _blendRadius = blendRadius;
+    }
+
+    /// <summary>D1: the NEAREST family's arrival, the marching's own field,
+    /// untouched by any blend. Rule 2.2's "exactly d1 outside the zone" is
+    /// stated against this and pinned against this.</summary>
+    public IReadOnlyList<double> RawLevels => _built.Levels;
+
+    /// <summary>D2 (spec 2026-09-05 rule 2.1): the SECOND-NEAREST seed
+    /// FAMILY's arrival at every vertex, positive infinity where there is
+    /// no second family to arrive. It is a family and not a seed: the
+    /// nearest vertex of one's own family is not a second arrival, it is
+    /// the same front.</summary>
+    public IReadOnlyList<double> SecondLevels => _built.Second;
+
+    /// <summary>G2 (spec 2026-09-05 rule 2.1): WHICH family the second
+    /// arrival came from, -1 where none did.</summary>
+    public IReadOnlyList<int> SecondSeedGroups => _built.SecondSeeds;
 
     /// <summary>WHICH SEED GROUP REACHED THIS VERTEX FIRST (spec 2026-09-04
     /// rule 1.1): the index of the connected component of the anchor set
@@ -663,7 +727,9 @@ internal static class SkinPatterns
         IReadOnlyList<int[]> Triangles,
         IReadOnlyList<double> Levels,
         IReadOnlyList<int> Seeds,
-        IReadOnlyList<double[]> Normals) BuildNet(
+        IReadOnlyList<double[]> Normals,
+        IReadOnlyList<double> Second,
+        IReadOnlyList<int> SecondSeeds) BuildNet(
             IReadOnlyList<double[]> vertices,
             IReadOnlyList<int[]> faces,
             IReadOnlyList<int> rim)
@@ -671,12 +737,196 @@ internal static class SkinPatterns
         IReadOnlyList<int[]> triangles = Triangulate(vertices, faces);
         (IReadOnlyList<double> levels, IReadOnlyList<int> seeds) =
             RimDistanceFieldWithSeeds(vertices, triangles, rim);
+        (IReadOnlyList<double> second, IReadOnlyList<int> secondSeeds) =
+            SecondFamilyField(vertices, triangles, rim, seeds);
         return (
             triangles,
             levels,
             seeds,
-            OrientedVertexNormals(vertices, triangles));
+            OrientedVertexNormals(vertices, triangles),
+            second,
+            secondSeeds);
     }
+
+    /// <summary>
+    /// THE SECOND-NEAREST FAMILY'S ARRIVAL (spec 2026-09-05 rule 2.1),
+    /// d2 and g2, beside the d1 and g1 the marching already carries.
+    ///
+    /// HOW IT IS COMPUTED, and why this way rather than a two-label heap.
+    /// The shipped marching is run ONCE PER FAMILY, with the rim cut down to
+    /// that family's own seeds, and d2 at a vertex is the smallest of those
+    /// per-family answers over every family EXCEPT the one that reached it
+    /// first. The alternative, one heap carrying (value, vertex, family) and
+    /// freezing a vertex twice, was rejected for a reason that decides the
+    /// whole wave: it would change the triangle update. Today's single
+    /// marching happily takes a triangle whose two known corners were
+    /// reached by DIFFERENT families and solves it as though they were one
+    /// front, and that is what the shipped d1 is. A two-label march would
+    /// refuse that mix, so d1 would move, and rule 2.2's guarantee that the
+    /// field away from a seam is untouched to the last bit would be gone
+    /// before the blend was even written. Running the shipped routine again,
+    /// on a smaller seed set, cannot move d1 by construction: d1 is not
+    /// recomputed at all.
+    ///
+    /// THE COST IS PAID ONLY WHERE THERE IS A SECOND FAMILY. A net anchored
+    /// on ONE continuous rim, which is every dome, barrel, ring and walled
+    /// vault in the harness, returns positive infinity and -1 without
+    /// marching once more; the two extra marchings are spent on the arches
+    /// and the two-hump forms alone, and check 12.9(b) holds the whole net
+    /// construction under a fifth of the pattern's own time.
+    ///
+    /// THE TIE-BREAK is the LOWEST-NUMBERED family, which falls out of
+    /// iterating a SortedSet and comparing strictly, so d2 and g2 are a
+    /// property of the mesh's own numbering exactly as d1 and g1 are.
+    /// </summary>
+    public static (IReadOnlyList<double> Values, IReadOnlyList<int> Seeds)
+        SecondFamilyField(
+            IReadOnlyList<double[]> vertices,
+            IReadOnlyList<int[]> faces,
+            IReadOnlyList<int> rim,
+            IReadOnlyList<int> nearest)
+    {
+        int count = vertices.Count;
+        var second = new double[count];
+        var secondSeeds = new int[count];
+        for (int at = 0; at < count; at++)
+        {
+            second[at] = double.PositiveInfinity;
+            secondSeeds[at] = -1;
+        }
+        if (rim.Count == 0)
+            return (second, secondSeeds);
+        IReadOnlyList<int> groups = SeedGroupsOf(count, faces, rim);
+        var families = new SortedSet<int>();
+        foreach (int seed in rim)
+        {
+            if (seed >= 0 && seed < count && groups[seed] >= 0)
+                families.Add(groups[seed]);
+        }
+        if (families.Count < 2)
+            return (second, secondSeeds);
+        foreach (int family in families)
+        {
+            var own = new List<int>();
+            foreach (int seed in rim)
+            {
+                if (seed >= 0 && seed < count && groups[seed] == family)
+                    own.Add(seed);
+            }
+            IReadOnlyList<double> alone =
+                RimDistanceFieldWithSeeds(vertices, faces, own).Values;
+            for (int at = 0; at < count; at++)
+            {
+                if (family == nearest[at])
+                    continue;
+                if (alone[at] < second[at])
+                {
+                    second[at] = alone[at];
+                    secondSeeds[at] = family;
+                }
+            }
+        }
+        return (second, secondSeeds);
+    }
+
+    /// <summary>
+    /// THE BLEND (spec 2026-09-05 rule 2.3): the quadratic soft minimum of
+    /// the two family arrivals, which is the one closed form that meets all
+    /// four of the rule's binding properties and that reduces to the min
+    /// EXACTLY rather than nearly.
+    ///
+    /// Let m = min(d1, d2), t = |d1 - d2| and R the blend radius.
+    ///
+    ///     t &gt;= R           F = m
+    ///     t &lt;  R           F = m - R h^2 / 4,   h = (R - t) / R
+    ///
+    /// SYMMETRY. It reads d1 and d2 only through m and t, both symmetric,
+    /// so the two families give way equally: neither is the guide.
+    ///
+    /// C1 ACROSS THE OLD CREASE. Write F as a function of s = d1 - d2 with
+    /// the mean held: F = (d1 + d2)/2 - |s|/2 - (R - |s|)^2 / (4R). Its
+    /// derivative in |s| is -1/2 + (R - |s|)/(2R), which is ZERO at s = 0.
+    /// The kink of the min is exactly cancelled, which is the whole point:
+    /// a contour crossing the meeting line no longer turns a corner. At
+    /// |s| = R the same derivative is -1/2, the min's own, so the two pieces
+    /// join C1 at the edge of the zone as well as at its middle.
+    ///
+    /// GRADIENT. grad F = (1 - h/2) grad d1 + (h/2) grad d2 where d1 is the
+    /// nearer, so it is a CONVEX COMBINATION of two unit vectors and its
+    /// magnitude is at most 1: the contouring distance never overstates
+    /// itself. The floor is |1 - h| where the two gradients are opposed,
+    /// which is what a head-on meeting is, so it falls to zero on the crest
+    /// alone. That is not a defect of the blend; it is what a smooth ridge
+    /// IS, and today's field has the same flat spot at every summit. The
+    /// floor is therefore MEASURED on the fixtures and pinned rather than
+    /// asserted as a constant.
+    ///
+    /// EXACT REDUCTION. Outside the zone the return is Math.Min itself, so
+    /// the value is d1's own bits; at R = 0 the first guard returns d1
+    /// before anything is computed, which is rule 2.2's mandatory OFF.
+    /// </summary>
+    public static double SoftMinimum(
+        double first,
+        double second,
+        double radius)
+    {
+        if (!(radius > 0.0))
+            return first;
+        if (!double.IsFinite(first) || !double.IsFinite(second))
+            return first;
+        double gap = Math.Abs(first - second);
+        double nearer = Math.Min(first, second);
+        if (!(gap < radius))
+            return nearer;
+        double h = (radius - gap) / radius;
+        return nearer - (h * h * radius * 0.25);
+    }
+
+    /// <summary>The blended field over a whole net, or NULL where the blend
+    /// moves nothing: no radius, or no second family anywhere. Null and not
+    /// a copy, so that a net with one continuous rim is handed on as the
+    /// SAME OBJECT and every pin it carries is bit-identical because no
+    /// arithmetic ran at all.</summary>
+    public static IReadOnlyList<double>? BlendedField(
+        SkinNet net,
+        double radius)
+    {
+        if (!(radius > 0.0))
+            return null;
+        IReadOnlyList<double> first = net.RawLevels;
+        IReadOnlyList<double> second = net.SecondLevels;
+        var blended = new double[first.Count];
+        bool moved = false;
+        for (int at = 0; at < first.Count; at++)
+        {
+            blended[at] = SoftMinimum(first[at], second[at], radius);
+            if (blended[at] != first[at])
+                moved = true;
+        }
+        return moved ? blended : null;
+    }
+
+    /// <summary>The net a pattern actually tessellates: the same net where
+    /// there is nothing to blend, and a copy carrying the blended field
+    /// where there is. The copy constructor carries the marching's own
+    /// answers across, so no net is ever marched twice. The radius the net
+    /// itself asks for WINS over the pattern's default, which is how a
+    /// fixture drives R = 0 and R beyond the whole field.</summary>
+    internal static SkinNet Blended(SkinNet net, double courseHeight)
+    {
+        double radius = net.BlendRadius ?? courseHeight;
+        IReadOnlyList<double>? field = BlendedField(net, radius);
+        return field is null ? net : net with { BlendedLevels = field };
+    }
+
+    /// <summary>The same net, asking for an EXPLICIT blend radius. It
+    /// rebuilds rather than copies, which costs one marching per family and
+    /// is a fixture's price rather than a solve's: Triangulate is
+    /// idempotent, so the net that comes back carries the same triangles,
+    /// the same field and the same identities as the one handed in.
+    /// </summary>
+    public static SkinNet WithBlendRadius(SkinNet net, double radius) =>
+        new SkinNet(net.Vertices, net.Faces, net.Rim, net.Edges, radius);
 
     public static IReadOnlyList<double> RimDistanceField(
         IReadOnlyList<double[]> vertices,
@@ -3462,6 +3712,12 @@ internal static class SkinPatterns
         double minPiece)
     {
         RequireSizes(size, courseHeight);
+        // THE BLENDED FIELD (spec 2026-09-05 rules 2.2 and 2.3), applied to
+        // the NET before anything reads a level, so the band ladder, the
+        // tracer, the cap test and the slab areas all see ONE field. R
+        // defaults to one Course Height; a net that names its own radius
+        // wins, and R = 0 hands back the same object and the shipped field.
+        net = Blended(net, courseHeight);
         // Rule 6.4's bounds, applied in the engine so the harness can
         // measure them without a canvas. The component clamps and WARNS
         // (rule 9.5); the engine simply takes the clamped value, the same
@@ -3659,18 +3915,108 @@ internal static class SkinPatterns
         int closerRefused = 0;
         int closerUndersized = 0;
         int seamBandsRemapped = 0;
+        // RULE 3.1 (spec 2026-09-05): THE CLOSER ABSORBS ADJACENT BANDS to
+        // at least one full Course Height of field interval BEFORE it cuts
+        // anything.
+        //
+        // WHY. The bisection of rule 8.2.3 leaves the refused residual CH/64
+        // thick, about 5 mm at the shipped CH. Tiling that sliver on its own
+        // gave stones Size long and millimetres wide: a PINSTRIPE, which is
+        // the second of the two defects this spec names and which the
+        // similar-size rule of the last wave missed because it was pinned
+        // along the curve and never across it. A stone is not the same size
+        // as its neighbours until it is the same size in BOTH directions.
+        //
+        // WHAT IS ABSORBED. Whole tileable bands, and only whole ones, taken
+        // off the SAME list the tiling loop below walks, so nothing is laid
+        // twice and no new level has to be traced: the absorbed band's own
+        // Low and High are already in the level list. The THINNER of the two
+        // neighbours goes first, which on a bisected course walks the
+        // sibling chain outward in the order the bisection built it and
+        // grows the slab about the meeting rather than off one side of it.
+        //
+        // WHAT IS NOT ABSORBED. The band the cap pass planned against. Its
+        // curves are the cap's own outline and the rosette is cut off them,
+        // so handing it to the closer would be two constructions on one
+        // interval.
+        //
+        // AND IT HAPPENS AT A MEETING AND NOWHERE ELSE, which is rule 3.1's
+        // own first clause ("where a band is refused at the (now smooth)
+        // MEETING") and is a MEASURED gate rather than a cautious one. A net
+        // with no seam has no meeting: no anchor groups, no seam curve, and
+        // rule 2's blend never touched its field. The harness's three such
+        // fixtures are diagnostic plateaux and not vaults, and absorbing on
+        // them was built and measured before it was refused: the two-peak
+        // net went from 0 plan-overlap drops to 20, and the split-and-death
+        // net from 0 closer refusals to 22, because a ribbon between two
+        // curves half a metre apart in field folds where the field is FLAT
+        // over a whole block of plan. The pinstripe is real on those nets
+        // too and it stays there, named, until something is built that can
+        // cover a plateau; the wave's own bar is that a fixture may not be
+        // made worse to satisfy a rule written about a different shape.
+        var tileable = new List<SkinBandInterval>(resolved.Tileable);
+        var slabs = new List<(int Course, double Low, double High)>();
         foreach ((int refusedCourse, double low, double high) in
                  resolved.Refused)
+        {
+            double lo = low;
+            double hi = high;
+            while (seams.Count > 0 && hi - lo < courseHeight - 1.0e-9)
+            {
+                int below = -1;
+                int above = -1;
+                for (int at = 0; at < tileable.Count; at++)
+                {
+                    SkinBandInterval band = tileable[at];
+                    if (top is not null &&
+                        Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
+                        Math.Abs(band.High - top.High) <= 1.0e-12)
+                    {
+                        continue;
+                    }
+                    if (Math.Abs(band.High - lo) <= 1.0e-12)
+                        below = at;
+                    if (Math.Abs(band.Low - hi) <= 1.0e-12)
+                        above = at;
+                }
+                if (below < 0 && above < 0)
+                    break;
+                bool takeAbove;
+                if (below < 0)
+                {
+                    takeAbove = true;
+                }
+                else if (above < 0)
+                {
+                    takeAbove = false;
+                }
+                else
+                {
+                    double thickBelow =
+                        tileable[below].High - tileable[below].Low;
+                    double thickAbove =
+                        tileable[above].High - tileable[above].Low;
+                    takeAbove = thickAbove < thickBelow - 1.0e-12;
+                }
+                int take = takeAbove ? above : below;
+                if (takeAbove)
+                    hi = tileable[take].High;
+                else
+                    lo = tileable[take].Low;
+                tileable.RemoveAt(take);
+            }
+            slabs.Add((refusedCourse, lo, hi));
+        }
+        foreach ((int refusedCourse, double low, double high) in slabs)
         {
             AddTransition(transitions, low, high);
             // RULE 3.2'S LAST SENTENCE: a closer stone sorts AT ITS
             // COMPONENT'S POSITION in the same scheme. The component it
             // belongs to is the GUIDE curve it was cut on, so the key is
-            // taken off that curve and off nothing else. A refused interval
-            // is CH/64 from the sub-bands the bisection left tileable beside
-            // it, and those sub-bands share this course, so the two kinds
-            // interleave by component rather than the closers arriving in a
-            // block of their own at one end of the branch.
+            // taken off that curve and off nothing else. The absorbed
+            // sub-bands share this course, so the two kinds interleave by
+            // component rather than the closers arriving in a block of their
+            // own at one end of the branch.
             foreach ((SkinLevelCurve guide, SkinCell cell) in CloserBand(
                          resolved.Traced[levelIndex[low]],
                          resolved.Traced[levelIndex[high]],
@@ -3691,7 +4037,7 @@ internal static class SkinPatterns
             }
         }
         int transitionBands = resolved.Refused.Count;
-        foreach (SkinBandInterval band in resolved.Tileable)
+        foreach (SkinBandInterval band in tileable)
         {
             IReadOnlyList<SkinLevelCurve> mids =
                 resolved.Traced[levelIndex[band.Mid]];
@@ -4166,6 +4512,12 @@ internal static class SkinPatterns
         double minPiece)
     {
         RequireSizes(size, courseHeight);
+        // THE BLENDED FIELD (spec 2026-09-05 rules 2.2 and 2.3), applied to
+        // the NET before anything reads a level, so the band ladder, the
+        // tracer, the cap test and the slab areas all see ONE field. R
+        // defaults to one Course Height; a net that names its own radius
+        // wins, and R = 0 hands back the same object and the shipped field.
+        net = Blended(net, courseHeight);
         double clampedMinPiece =
             double.IsFinite(minPiece)
                 ? Math.Min(Math.Max(minPiece, 0.0), 0.5)
@@ -6644,6 +6996,12 @@ internal static class SkinPatterns
         double courseHeight)
     {
         RequireSizes(size, courseHeight);
+        // THE BLENDED FIELD (spec 2026-09-05 rules 2.2 and 2.3), applied to
+        // the NET before anything reads a level, so the band ladder, the
+        // tracer, the cap test and the slab areas all see ONE field. R
+        // defaults to one Course Height; a net that names its own radius
+        // wins, and R = 0 hands back the same object and the shipped field.
+        net = Blended(net, courseHeight);
         (double dMin, double dMax) = LevelRange(net);
         if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("hexagonal", net);
