@@ -2766,3 +2766,22 @@ def test_picking_survives_the_frame_it_was_born_in():
     # The slim look hides a fat invisible grab twin, Rhino's own trick.
     assert 'grabRing.userData.handle = "rotate";' in js
     assert 'grabGrip.userData.handle = "scale";' in js
+
+
+def test_the_panel_faces_follow_silent_restores():
+    """Param: "the scene menu will still say its on studio even though we
+    are clearly in a hdri, and the ground as dark studio even though its
+    got the pebble dash material on right now". Restores and library boots
+    write their controls WITHOUT change events, by design (dispatching
+    would fire overlapping server cuts) -- so the render-only faces are
+    repainted by hand wherever a silent write happens."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "repaintSettingControls")
+    assert 'paintSegmented("environment-segments", "environment-mode")' in body
+    assert '"ground-picker"' in body and '"hdri-picker"' in body
+    assert "syncGroundControls();" in body
+    # The three silent writers all repaint: the scene restore, the
+    # material-library boot restore, and the hdri list refresh -- plus
+    # the shelf's sky click.
+    assert js.count("repaintSettingControls();") >= 4

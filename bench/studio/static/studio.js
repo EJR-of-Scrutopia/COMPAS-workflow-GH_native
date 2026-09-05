@@ -553,8 +553,10 @@ async function refreshHdriList(selectName) {
   const stored = selectName || localStorage.getItem("bench-studio-hdri");
   if (stored && files.includes(stored)) select.value = stored;
   // The tiles are built from the same list and read the same select, so
-  // the picture and the choice cannot disagree.
+  // the picture and the choice cannot disagree. The picker face gets the
+  // same courtesy: the value above was set without a change event.
   buildHdriTiles(files);
+  repaintSettingControls();
   return files;
 }
 
@@ -2066,6 +2068,9 @@ async function applyScene(record) {
     // framing it was saved at rather than from a ring of its own.
     if (state.timeline) state.timeline.orbitBase = null;
   }
+  // Everything above wrote controls silently; give them their faces back
+  // (segments, picker names and swatches, the ground dials).
+  repaintSettingControls();
   logStudio("restored scene " + (record.name || "the last view"));
   rememberSession();
   return true;
@@ -2791,6 +2796,10 @@ async function refreshMaterialLibrary() {
   }
   buildSkinTiles();
   buildGroundTiles();
+  // The restore above set the selects without change events; the picker
+  // faces need telling (his floor wore pebbles while the picker still
+  // said Dark studio).
+  repaintSettingControls();
   logStudio("material library: " + state.materialLibrary.length
     + " skin materials, " + state.groundLibrary.length + " ground materials");
 }
@@ -2864,6 +2873,29 @@ function wireAllPickers() {
     wirePicker(trigger, holder, select,
       (swatch, value) => borrowTileImage(swatch, holder, value), openInstead);
   }
+}
+
+// The scene restore and the library boot write their controls SILENTLY
+// on purpose (dispatching change would fire six overlapping server
+// cuts), so what they wrote has to be repainted by hand. Everything in
+// here is render-only: segment highlights, picker faces, slider
+// readouts. Param: "the menu needs to stay tuned to the settings
+// already applied instead of starting fresh" -- the settings WERE
+// applied; only their faces had gone stale.
+function repaintSettingControls() {
+  paintSegmented("environment-segments", "environment-mode");
+  for (const [trigger, holder, select] of [
+    ["material-picker", "material-tiles", "material-select"],
+    ["skin-picker", "skin-tiles", "render-skin"],
+    ["ground-picker", "ground-tiles", "ground-preset"],
+    ["weather-picker", "weather-tiles", "weather-preset"],
+    ["hdri-picker", "hdri-tiles", "hdri-select"],
+  ]) {
+    paintPicker(trigger, select,
+      (swatch, value) => borrowTileImage(swatch, holder, value));
+  }
+  syncGroundControls();
+  syncAppearanceControls();
 }
 
 // ---------- the shelf ----------
@@ -3025,11 +3057,18 @@ function renderShelfSkies(grid) {
     label.textContent = name.replace(/\.hdr$/i, "").replace(/_(\d+k)$/i, "");
     tile.appendChild(label);
     tile.addEventListener("click", () => {
+      // Choosing a sky MEANS looking at it: the environment follows.
+      const mode = document.getElementById("environment-mode");
+      if (mode.value !== "hdri") {
+        mode.value = "hdri";
+        mode.dispatchEvent(new Event("change"));
+      }
       if (select.value !== name) {
         select.value = name;
         select.dispatchEvent(new Event("change"));
       }
       paintTileSelection(grid, name);
+      repaintSettingControls();
     });
     grid.appendChild(tile);
   }
