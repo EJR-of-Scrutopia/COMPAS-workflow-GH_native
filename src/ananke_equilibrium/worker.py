@@ -28,10 +28,12 @@ from .codec import FrameTooLargeError
 from .codec import MAX_FRAME_BYTES
 from .codec import TruncatedFrameError
 from .codec import decode_fd_payload
+from .codec import decode_tna_equilibrate_payload
 from .codec import decode_tna_prepare_payload
 from .codec import decode_tna_payload
 from .codec import encode_result
 from .codec import encode_solved_case
+from .codec import encode_tna_equilibrated
 from .codec import encode_tna_prepared
 from .codec import encode_tna_result
 from .codec import read_frame
@@ -40,6 +42,7 @@ from .codec import write_frame
 from .contracts import ContractError
 from .contracts import SCHEMA_VERSION
 from .gh import ComponentResult
+from .gh import equilibrate_tna
 from .gh import solve_fd
 from .gh import prepare_tna
 from .gh import solve_tna
@@ -54,6 +57,7 @@ ALLOWED_COMMANDS = frozenset(
         "system.shutdown",
         "fd.solve",
         "tna.prepare",
+        "tna.equilibrate",
         "tna.solve",
         "export.compas",
         "pattern.armadillo_dual",
@@ -202,6 +206,12 @@ def health_payload() -> Dict[str, Any]:
             "commands": sorted(ALLOWED_COMMANDS),
             "fd.solve": packages["compas_fd"] is not None,
             "tna.prepare": (
+                packages["compas_fd"] is not None
+                and packages["compas_tna"] is not None
+            ),
+            # The station's equilibrated target is one fd_numpy solve on the
+            # plan, so it needs the same pair the preparation needs.
+            "tna.equilibrate": (
                 packages["compas_fd"] is not None
                 and packages["compas_tna"] is not None
             ),
@@ -399,6 +409,68 @@ def _tna_prepare_payload(
     )
 
 
+def _tna_equilibrate_payload(
+    payload: Mapping[str, Any],
+    *,
+    tna_equilibrate_backend: Any = None,
+    tna_equilibrate_solver: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    (
+        prepared,
+        source,
+        move,
+        watched,
+    ) = decode_tna_equilibrate_payload(payload)
+    solver = tna_equilibrate_solver or equilibrate_tna
+    component_result = solver(
+        prepared,
+        move,
+        watched,
+        backend=tna_equilibrate_backend,
+    )
+    if not isinstance(component_result, ComponentResult):
+        raise ProtocolError(
+            "solver_contract_error",
+            "TNA Horizontal returned {}, not ComponentResult.".format(
+                type(component_result).__name__
+            ),
+        )
+    if not component_result.ok or component_result.value is None:
+        status = component_result.status
+        raise ProtocolError(
+            "tna_equilibrate_failed",
+            status.message,
+            {
+                "severity": status.severity,
+                "details": dict(status.details),
+            },
+        )
+    status = component_result.status
+    moved = component_result.unwrap()
+    return encode_tna_equilibrated(
+        source,
+        moved["moved_points"],
+        moved["diagnostics"],
+        moved["report"],
+        provenance={
+            "worker": WORKER_NAME,
+            "worker_version": __version__,
+            "protocol_version": PROTOCOL_VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "horizontal_station": "tna.equilibrate",
+            "horizontal_move": move,
+            # The dual on this stage still belongs to the drawn plan; the
+            # solve builds its own from whatever plan reaches it.
+            "horizontal_force_graph": "unchanged",
+            "adapter_status": {
+                "severity": status.severity,
+                "message": status.message,
+                "details": dict(status.details),
+            },
+        },
+    )
+
+
 def _tna_payload(
     payload: Mapping[str, Any],
     *,
@@ -465,6 +537,8 @@ def dispatch(
     fd_solver: Optional[Callable[..., Any]] = None,
     tna_prepare_backend: Any = None,
     tna_prepare_solver: Optional[Callable[..., Any]] = None,
+    tna_equilibrate_backend: Any = None,
+    tna_equilibrate_solver: Optional[Callable[..., Any]] = None,
     tna_backend: Any = None,
     tna_solver: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
@@ -501,6 +575,15 @@ def dispatch(
                     payload,
                     tna_prepare_backend=tna_prepare_backend,
                     tna_prepare_solver=tna_prepare_solver,
+                ),
+            )
+        if command == "tna.equilibrate":
+            return result_response(
+                request_id,
+                _tna_equilibrate_payload(
+                    payload,
+                    tna_equilibrate_backend=tna_equilibrate_backend,
+                    tna_equilibrate_solver=tna_equilibrate_solver,
                 ),
             )
         if command == "tna.solve":
@@ -600,6 +683,8 @@ def serve(
     fd_solver: Optional[Callable[..., Any]] = None,
     tna_prepare_backend: Any = None,
     tna_prepare_solver: Optional[Callable[..., Any]] = None,
+    tna_equilibrate_backend: Any = None,
+    tna_equilibrate_solver: Optional[Callable[..., Any]] = None,
     tna_backend: Any = None,
     tna_solver: Optional[Callable[..., Any]] = None,
     max_frame_bytes: int = MAX_FRAME_BYTES,
@@ -642,6 +727,8 @@ def serve(
                 fd_solver=fd_solver,
                 tna_prepare_backend=tna_prepare_backend,
                 tna_prepare_solver=tna_prepare_solver,
+                tna_equilibrate_backend=tna_equilibrate_backend,
+                tna_equilibrate_solver=tna_equilibrate_solver,
                 tna_backend=tna_backend,
                 tna_solver=tna_solver,
             )

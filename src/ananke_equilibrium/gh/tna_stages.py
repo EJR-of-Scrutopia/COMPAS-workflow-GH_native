@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 from typing import Any
 
 from ._base import AdapterError
@@ -386,4 +387,117 @@ def prepare_tna(
     )
 
 
+@friendly("TNA Horizontal")
+def equilibrate_tna(
+    prepared: Any,
+    move: Any = 100.0,
+    watched_node_ids: Any = (),
+    *,
+    backend: Any = None,
+) -> Any:
+    """Move a prepared Pattern's plan toward horizontal equilibrium.
+
+    The station is the second family of TNA unknowns. TNA Solve adjusts the
+    force densities of the plan AS DRAWN; this adjusts the plan itself, so a
+    pattern whose corners no positive force density can balance stops being
+    one. Everything else about the prepared stage rides through unchanged,
+    which is why the component's output is another RLX.
+    """
+    source_topology = get_any(prepared, ("topology",))
+    supports = get_any(prepared, ("support_set", "supports"))
+    pattern = dict(get_any(prepared, ("pattern",)))
+    vertices = tuple(pattern.get("vertices", ()))
+    faces = tuple(pattern.get("faces", ()))
+    if not faces:
+        raise AdapterError(
+            "TNA Horizontal requires a prepared faced Pattern, not isolated "
+            "lines."
+        )
+    prepared_edges = tuple(pattern.get("edges", ()))
+    prepared_q = tuple(pattern.get("edge_force_densities", ()))
+    if len(prepared_edges) != len(prepared_q):
+        raise AdapterError(
+            "Prepared Pattern q values do not align with its edges."
+        )
+    fixed_ids = tuple(int(value) for value in pattern.get("fixed_node_ids", ()))
+    support_ids = _support_ids(source_topology, supports)
+
+    move = float(move)
+    if not isfinite(move):
+        raise AdapterError("Move must be a finite percentage.")
+    if move < 0.0 or move > 100.0:
+        raise AdapterError("Move must be a percentage between 0 and 100.")
+    watched = tuple(
+        int(value)
+        for value in (watched_node_ids or ())
+        if 0 <= int(value) < len(vertices)
+    )
+
+    module = import_backend(
+        backend,
+        candidates=_TNA_BACKENDS,
+        purpose="TNA Horizontal",
+    )
+    topology_metadata = get_any(source_topology, ("metadata",), {})
+    tolerance = float(topology_metadata.get("weld_tolerance", 1e-6))
+    problem = call_backend(
+        module,
+        "register_tna_pattern",
+        vertices=vertices,
+        faces=faces,
+        vertex_keys=tuple(range(len(vertices))),
+        tolerance=tolerance,
+        metadata=dict(topology_metadata),
+    )
+    # The prepared force densities are the design intent this station moves
+    # toward: the relaxation's own uniform weight, scaled on the boundary
+    # chains by the sag matching. Registering without them would equilibrate
+    # toward a plan nobody asked for.
+    actual_edges = {
+        tuple(sorted((int(u), int(v)))): (int(u), int(v))
+        for u, v in problem.form.edges()
+    }
+    for edge, q_value in zip(prepared_edges, prepared_q):
+        key = tuple(sorted((int(edge[0]), int(edge[1]))))
+        registered = actual_edges.get(key)
+        if registered is None:
+            raise AdapterError(
+                "Prepared Pattern edge {} was lost during "
+                "reconstruction.".format(tuple(edge))
+            )
+        problem.form.edge_attribute(registered, "q", float(q_value))
+
+    equilibration = call_backend(
+        module,
+        "equilibrate_tna_problem",
+        problem,
+        support_mode="keys",
+        support_keys=support_ids,
+        fixed_keys=fixed_ids,
+        move=move,
+        watched_keys=watched,
+    )
+    moved_points = {
+        int(source_key): (float(point[0]), float(point[1]))
+        for source_key, point in get_any(
+            equilibration, ("moved_source_points",)
+        ).items()
+    }
+    return {
+        "moved_points": moved_points,
+        "diagnostics": dict(get_any(equilibration, ("diagnostics",), {})),
+        "report": str(get_any(equilibration, ("report",), "")),
+        "support_node_ids": tuple(support_ids),
+        "fixed_node_ids": fixed_ids,
+        "watched_node_ids": watched,
+        "moved_watched_node_ids": tuple(
+            int(value)
+            for value in get_any(
+                equilibration, ("moved_watched_source_keys",), ()
+            )
+        ),
+    }
+
+
 tna_prepare = prepare_tna
+tna_equilibrate = equilibrate_tna

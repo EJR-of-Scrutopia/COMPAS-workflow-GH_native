@@ -666,6 +666,155 @@ def decode_prepared_tna(value: Any) -> PreparedTNA:
     )
 
 
+def decode_tna_equilibrate_payload(
+    value: Any,
+) -> Tuple[PreparedTNA, Dict[str, Any], float, Tuple[int, ...]]:
+    """Decode the input payload for ``tna.equilibrate``.
+
+    The prepared stage is returned twice over: once decoded into its
+    contract, which is what validates it, and once as the RAW mapping it
+    arrived as, because the response echoes that mapping with only its plan
+    moved. Re-encoding a decoded contract instead would quietly drop the
+    reciprocal graphs the prepared stage carries and cannot rebuild.
+    """
+
+    data = _object(value, "tna.equilibrate payload")
+    expected = {"prepared", "move", "watched_node_ids"}
+    missing = sorted({"prepared"} - set(data))
+    unknown = sorted(set(data) - expected)
+    if missing:
+        raise CodecError(
+            "tna.equilibrate payload is missing: {}.".format(
+                ", ".join(missing)
+            )
+        )
+    if unknown:
+        raise CodecError(
+            "tna.equilibrate payload contains unsupported fields: {}.".format(
+                ", ".join(unknown)
+            )
+        )
+    source = _object(data["prepared"], "prepared")
+    prepared = decode_prepared_tna(source)
+    move = _default_if_none(data.get("move"), 100.0)
+    try:
+        move = float(move)
+    except (TypeError, ValueError) as error:
+        raise CodecError("move must be a number.") from error
+    if not isfinite(move) or move < 0.0 or move > 100.0:
+        raise CodecError(
+            "move must be a finite percentage between 0 and 100."
+        )
+    watched_value = _default_if_none(data.get("watched_node_ids"), ())
+    if isinstance(watched_value, (str, bytes)) or not isinstance(
+        watched_value, Sequence
+    ):
+        raise CodecError("watched_node_ids must be a list of node IDs.")
+    watched = []
+    for index, item in enumerate(watched_value):
+        try:
+            watched.append(int(item))
+        except (TypeError, ValueError) as error:
+            raise CodecError(
+                "watched_node_ids[{}] must be an integer node ID.".format(
+                    index
+                )
+            ) from error
+    return prepared, source, move, tuple(watched)
+
+
+def encode_tna_equilibrated(
+    source: Mapping[str, Any],
+    moved_points: Mapping[int, Sequence[float]],
+    diagnostics: Mapping[str, Any],
+    report: str,
+    provenance: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Echo a prepared payload with ONLY its plan moved.
+
+    The station changes one thing about the prepared stage, its plan, so the
+    response is the request's own prepared mapping with the moved
+    coordinates written over the pattern and the form graph. Rebuilding the
+    payload instead would risk changing fields nobody asked to change, and
+    it is what makes Move 0 return the stage bit-identical rather than
+    merely equal to several decimal places.
+
+    ``z`` is read back off the incoming vertex, never off the station:
+    nothing vertical happens here. The FORCE graph is deliberately left
+    alone; it is the drawn plan's unbalanced topological dual, and the
+    solve rebuilds its own.
+    """
+
+    result = json.loads(json.dumps(to_json_value(dict(source))))
+    pattern = _object(result.get("pattern"), "prepared.pattern")
+    vertices = [list(point) for point in pattern.get("vertices", ())]
+    for node_id, point in moved_points.items():
+        index = int(node_id)
+        if index < 0 or index >= len(vertices):
+            raise CodecError(
+                "The station moved node {} which the prepared Pattern does "
+                "not have.".format(index)
+            )
+        existing = vertices[index]
+        vertices[index] = [
+            float(point[0]),
+            float(point[1]),
+            float(existing[2]) if len(existing) > 2 else 0.0,
+        ]
+    pattern["vertices"] = vertices
+    result["pattern"] = pattern
+
+    topology = _object(result.get("topology"), "prepared.topology")
+    source_vertex_ids = list(topology.get("source_vertex_ids", ()))
+    node_of_source_id = {}
+    for index, value in enumerate(source_vertex_ids):
+        try:
+            node_of_source_id[_stable_key(value)] = index
+        except TypeError:
+            # An unhashable source ID cannot be matched back to its node;
+            # its form-graph point simply keeps the drawn position.
+            continue
+    form_graph = result.get("form_graph")
+    if isinstance(form_graph, Mapping):
+        form_graph = dict(form_graph)
+        graph_vertices = []
+        for record in form_graph.get("vertices", ()):
+            record = dict(record)
+            node_id = None
+            for source_id in record.get("source_vertex_ids", ()) or ():
+                try:
+                    node_id = node_of_source_id.get(_stable_key(source_id))
+                except TypeError:
+                    node_id = None
+                if node_id is not None:
+                    break
+            if node_id is not None and node_id in moved_points:
+                point = list(record.get("point", (0.0, 0.0, 0.0)))
+                moved = moved_points[node_id]
+                record["point"] = [
+                    float(moved[0]),
+                    float(moved[1]),
+                    float(point[2]) if len(point) > 2 else 0.0,
+                ]
+            graph_vertices.append(record)
+        form_graph["vertices"] = graph_vertices
+        result["form_graph"] = form_graph
+
+    metrics = dict(result.get("diagnostic_metrics") or {})
+    metrics.update(dict(diagnostics))
+    result["diagnostic_metrics"] = metrics
+    result["report"] = str(report)
+    merged_provenance = dict(result.get("provenance") or {})
+    merged_provenance.update(dict(provenance or {}))
+    result["provenance"] = merged_provenance
+    result["schema_version"] = SCHEMA_VERSION
+    result["kind"] = "tna_prepared"
+    encoded = to_json_value(result)
+    if not isinstance(encoded, dict):
+        raise CodecError("The equilibrated stage did not encode to an object.")
+    return encoded
+
+
 def decode_tna_payload(
     value: Any,
 ) -> Tuple[

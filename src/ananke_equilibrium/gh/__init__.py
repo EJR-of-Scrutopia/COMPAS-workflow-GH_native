@@ -18,7 +18,9 @@ from .solvers import fd_solve
 from .solvers import solve_fd
 from .solvers import solve_tna
 from .solvers import tna_solve
+from .tna_stages import equilibrate_tna
 from .tna_stages import prepare_tna
+from .tna_stages import tna_equilibrate
 from .tna_stages import tna_prepare
 from .validate import validate
 from .validate import validate_result
@@ -34,6 +36,7 @@ __all__ = [
     "build_preview_payload",
     "build_support_set",
     "diagram_style",
+    "equilibrate_tna",
     "fd_solve",
     "load_case",
     "make_diagram_style",
@@ -43,6 +46,7 @@ __all__ = [
     "solve_fd",
     "solve_tna",
     "support_set",
+    "tna_equilibrate",
     "tna_solve",
     "tna_prepare",
     "validate",
