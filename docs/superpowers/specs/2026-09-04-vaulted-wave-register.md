@@ -882,3 +882,25 @@ Vaulted hdri's folder was assembled ~23:00 that evening (17 copies
 stamped 22:56-23:11) and the setting switched to it -- evening_meadow
 just was not among the 17 picked. Deliberate switch, small gap, now
 healed. Not related to the vault-folder mis-pick of 2026-09-05 23:06.
+
+## 2026-09-05 -- THE SCENE OUTRANKS THE DEVICE MEMORY (live, fixed)
+
+His report after the sky fix: "only the hdri is working, not the skin
+material scale etc or the ground texture." Mechanism: applyScene set
+the scene's appearance BEFORE loadStudy, whose restoreAppearance then
+replaced it with the DEVICE's per-material localStorage memory -- a
+coincidence-masked bug (same device = memory matches screen = looks
+fine; other device = scene wears the local memory). Twin fault on the
+floor: the scene's LIBRARY ground was never loaded, so the plane fell
+back to the default look.
+
+- applyScene re-imposes scene_.appearance AFTER loadStudy, awaits
+  ensureLibraryMaterial for a library skin and loadGroundMaterial for
+  the scene's floor, persistAppearance() so the memory follows the
+  screen; the tail's rebuildAppearance then repaints with the truth.
+- Verified on a fresh CDP profile (= another device, empty
+  localStorage): copper-patinated-pale + #ba835e + 0.84, exposed-
+  aggregate floor at 0.25 textured, evening_meadow sky. 4 mutation
+  kills (incl. guard-form pin after an if(false) survivor); suite 730.
+- Scrap-scene orphan from the first probe deleted (scene-0b7fe404cacf);
+  five real scenes stand.
