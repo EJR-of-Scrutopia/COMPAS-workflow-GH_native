@@ -2158,98 +2158,40 @@ def _unoriented_angle(degrees: float) -> float:
     return min(value, 180.0 - value)
 
 
-def solve_tna_problem(
+@dataclass
+class _ConditionedPattern:
+    """A registered Pattern conditioned into a solvable form/force pair.
+
+    The one place ``update_boundaries`` is called and the dual is built, so
+    the horizontal station and the whole solve start from exactly the same
+    state. Anything that measures the HELD pattern has to measure the state
+    the solve would otherwise have solved, or the two disagree about which
+    pattern failed the gate.
+    """
+
+    form: FormDiagram
+    force: ForceDiagram
+    source_to_form: Dict[Hashable, Optional[int]]
+    form_to_sources: Dict[int, Tuple[Hashable, ...]]
+    source_edge_to_form: Dict[int, Optional[Edge]]
+    form_edge_to_sources: Dict[Edge, Tuple[int, ...]]
+    support_form_keys: Tuple[int, ...]
+    fixed_form_keys: Tuple[int, ...]
+    free_vertices: List[int]
+    real_edges: List[Edge]
+    source_nodal_pz: Dict[Hashable, float]
+
+
+def _condition_pattern(
     problem: TNAProblem,
     *,
     support_mode: str = "boundary",
     support_keys: Optional[Sequence[Hashable]] = None,
     fixed_keys: Optional[Sequence[Hashable]] = None,
     pz: Any = -1.0,
-    vertical_mode: str = "zmax",
-    zmax: Optional[float] = None,
-    q_scale: float = -1.0,
-    density: float = 0.0,
     thickness: float = 1.0,
-    horizontal_alpha: float = 100.0,
-    horizontal_kmax: Optional[int] = 100,
-    horizontal_method: str = "iterative",
-    vertical_kmax: int = 100,
-    vertical_tolerance: float = 1e-3,
-    display: bool = False,
-    metadata: Optional[Mapping] = None,
-) -> TNASession:
-    """Solve a registered whole TNA pattern and return all downstream state.
-
-    ``horizontal_kmax`` of ``None`` runs the auto-converging horizontal
-    solve: blocks of iterations until the worst reciprocity angle falls
-    below one degree or the hard cap is reached.  ``horizontal_method``
-    selects between ``"iterative"`` (the parallelisation loop) and
-    ``"algebraic"`` (exact force densities from the equilibrium matrix in
-    one sparse least-squares solve; requires ``horizontal_alpha`` 100 and
-    ignores ``horizontal_kmax``).  ``vertical_mode`` accepts
-    ``"natural"`` as well: the vertical solve keeps the horizontal force
-    densities exactly as they are (scale -1, compression) and reports the
-    equilibrium height they produce, instead of scaling to a target crown.
-
-    Notes
-    -----
-    ``pz`` uses the signed Z axis of the registered analysis coordinate system:
-    negative values act along negative analysis Z. ``support_reactions`` uses
-    the same analysis-coordinate components and therefore balances
-    ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
-    into world coordinates using its recorded ``analysis_plane`` metadata.
-
-    Selfweight through ``density`` and ``thickness`` follows RhinoVault's
-    loading model, tributary area times thickness times density, but it is
-    evaluated here rather than inside the library: the weight is written
-    into the nodal ``pz`` and HELD CONSTANT through each library call.
-    ``pz`` and the selfweight are ADDITIVE, their ``pz + pzext`` split: a
-    caller may register point loads and a selfweight at once, and the
-    diagnostics then report ``nodal_total_pz`` and ``selfweight_total_pz``
-    separately. Under a
-    target height the held weight is then re-evaluated on the geometry
-    the solve produced and the solve repeated, until the total load stops
-    moving (``SELFWEIGHT_REFINEMENT_TOLERANCE``) or the round cap fences
-    it. Under this wrapper's signed analysis-Z convention a downward
-    surface load is a NEGATIVE density (mirroring negative nodal ``pz``);
-    the effective loads on the form are always the ones the reported
-    equilibrium actually satisfies.
-    """
-    # Grasshopper may retain a problem created before a Python module refresh.
-    # Accept that equivalent contract while still rejecting arbitrary objects.
-    if not isinstance(problem, TNAProblem):
-        required = (
-            "form",
-            "source_kind",
-            "source_vertex_order",
-            "source_vertices",
-            "source_to_form",
-            "form_to_sources",
-            "source_edges",
-            "source_edge_to_form",
-            "form_edge_to_sources",
-            "endpoint_to_source",
-            "diagnostics",
-            "metadata",
-        )
-        if not all(hasattr(problem, name) for name in required):
-            raise TNAInputError(
-                "problem must be a TNAProblem from register_tna_pattern."
-            )
-
-    density = float(density)
-    if not isfinite(density):
-        raise TNAInputError("density must be finite.")
-    thickness = float(thickness)
-    if not isfinite(thickness) or thickness < 0.0:
-        raise TNAInputError("thickness must be finite and zero or greater.")
-    # Non-zero density is RhinoVault's loading model, area x thickness t x
-    # density, and under this wrapper's signed analysis-Z convention a
-    # downward surface load is a NEGATIVE density, mirroring negative
-    # nodal pz. What this wrapper does NOT do is hand that density to the
-    # library and let the load chase the geometry inside the solver; see
-    # the vertical block below, which evaluates the weight itself, holds
-    # it constant through the call, and refines it around the call.
+) -> _ConditionedPattern:
+    """Copy, anchor, condition and dualise a registered Pattern."""
 
     form = problem.form.copy()
     form.dual = None
@@ -2356,6 +2298,132 @@ def solve_tna_problem(
                 len(real_edges), force.number_of_edges()
             )
         )
+
+    return _ConditionedPattern(
+        form=form,
+        force=force,
+        source_to_form=active_source_to_form,
+        form_to_sources=active_form_to_sources,
+        source_edge_to_form=active_source_edge_to_form,
+        form_edge_to_sources=active_form_edge_to_sources,
+        support_form_keys=support_form_keys,
+        fixed_form_keys=tuple(int(key) for key in selected_fixed),
+        free_vertices=free_vertices,
+        real_edges=real_edges,
+        source_nodal_pz=source_nodal_pz,
+    )
+
+
+def solve_tna_problem(
+    problem: TNAProblem,
+    *,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
+    pz: Any = -1.0,
+    vertical_mode: str = "zmax",
+    zmax: Optional[float] = None,
+    q_scale: float = -1.0,
+    density: float = 0.0,
+    thickness: float = 1.0,
+    horizontal_alpha: float = 100.0,
+    horizontal_kmax: Optional[int] = 100,
+    horizontal_method: str = "iterative",
+    vertical_kmax: int = 100,
+    vertical_tolerance: float = 1e-3,
+    display: bool = False,
+    metadata: Optional[Mapping] = None,
+) -> TNASession:
+    """Solve a registered whole TNA pattern and return all downstream state.
+
+    ``horizontal_kmax`` of ``None`` runs the auto-converging horizontal
+    solve: blocks of iterations until the worst reciprocity angle falls
+    below one degree or the hard cap is reached.  ``horizontal_method``
+    selects between ``"iterative"`` (the parallelisation loop) and
+    ``"algebraic"`` (exact force densities from the equilibrium matrix in
+    one sparse least-squares solve; requires ``horizontal_alpha`` 100 and
+    ignores ``horizontal_kmax``).  ``vertical_mode`` accepts
+    ``"natural"`` as well: the vertical solve keeps the horizontal force
+    densities exactly as they are (scale -1, compression) and reports the
+    equilibrium height they produce, instead of scaling to a target crown.
+
+    Notes
+    -----
+    ``pz`` uses the signed Z axis of the registered analysis coordinate system:
+    negative values act along negative analysis Z. ``support_reactions`` uses
+    the same analysis-coordinate components and therefore balances
+    ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
+    into world coordinates using its recorded ``analysis_plane`` metadata.
+
+    Selfweight through ``density`` and ``thickness`` follows RhinoVault's
+    loading model, tributary area times thickness times density, but it is
+    evaluated here rather than inside the library: the weight is written
+    into the nodal ``pz`` and HELD CONSTANT through each library call.
+    ``pz`` and the selfweight are ADDITIVE, their ``pz + pzext`` split: a
+    caller may register point loads and a selfweight at once, and the
+    diagnostics then report ``nodal_total_pz`` and ``selfweight_total_pz``
+    separately. Under a
+    target height the held weight is then re-evaluated on the geometry
+    the solve produced and the solve repeated, until the total load stops
+    moving (``SELFWEIGHT_REFINEMENT_TOLERANCE``) or the round cap fences
+    it. Under this wrapper's signed analysis-Z convention a downward
+    surface load is a NEGATIVE density (mirroring negative nodal ``pz``);
+    the effective loads on the form are always the ones the reported
+    equilibrium actually satisfies.
+    """
+    # Grasshopper may retain a problem created before a Python module refresh.
+    # Accept that equivalent contract while still rejecting arbitrary objects.
+    if not isinstance(problem, TNAProblem):
+        required = (
+            "form",
+            "source_kind",
+            "source_vertex_order",
+            "source_vertices",
+            "source_to_form",
+            "form_to_sources",
+            "source_edges",
+            "source_edge_to_form",
+            "form_edge_to_sources",
+            "endpoint_to_source",
+            "diagnostics",
+            "metadata",
+        )
+        if not all(hasattr(problem, name) for name in required):
+            raise TNAInputError(
+                "problem must be a TNAProblem from register_tna_pattern."
+            )
+
+    density = float(density)
+    if not isfinite(density):
+        raise TNAInputError("density must be finite.")
+    thickness = float(thickness)
+    if not isfinite(thickness) or thickness < 0.0:
+        raise TNAInputError("thickness must be finite and zero or greater.")
+    # Non-zero density is RhinoVault's loading model, area x thickness t x
+    # density, and under this wrapper's signed analysis-Z convention a
+    # downward surface load is a NEGATIVE density, mirroring negative
+    # nodal pz. What this wrapper does NOT do is hand that density to the
+    # library and let the load chase the geometry inside the solver; see
+    # the vertical block below, which evaluates the weight itself, holds
+    # it constant through the call, and refines it around the call.
+
+    conditioned = _condition_pattern(
+        problem,
+        support_mode=support_mode,
+        support_keys=support_keys,
+        fixed_keys=fixed_keys,
+        pz=pz,
+        thickness=thickness,
+    )
+    form = conditioned.form
+    force = conditioned.force
+    active_source_to_form = conditioned.source_to_form
+    active_form_to_sources = conditioned.form_to_sources
+    active_source_edge_to_form = conditioned.source_edge_to_form
+    active_form_edge_to_sources = conditioned.form_edge_to_sources
+    support_form_keys = conditioned.support_form_keys
+    free_vertices = conditioned.free_vertices
+    source_nodal_pz = conditioned.source_nodal_pz
 
     def _reciprocity_angles() -> "tuple[float, float]":
         """(gated worst, raw worst) folded reciprocity angles in degrees.
