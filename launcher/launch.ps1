@@ -33,7 +33,10 @@
 # a Read-Host no one can see.
 
 param(
-    [switch]$Quiet
+    [switch]$Quiet,
+    # For the waker: a launch asked for from ANOTHER device must not open
+    # a browser window on this desktop; the asking device has its own.
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = "Stop"
@@ -151,7 +154,9 @@ foreach ($line in (netstat -ano -p TCP | Select-String "LISTENING")) {
 }
 if ($listenerPid) { Set-Content -LiteralPath $pidFile -Value $listenerPid }
 
-Start-Process "http://127.0.0.1:$port"
+if (-not $NoBrowser) {
+    Start-Process "http://127.0.0.1:$port"
+}
 if (-not $Quiet) {
     Write-Host "Bench Studio is up on http://127.0.0.1:$port (server PID $listenerPid). Log: $logFile"
 }
