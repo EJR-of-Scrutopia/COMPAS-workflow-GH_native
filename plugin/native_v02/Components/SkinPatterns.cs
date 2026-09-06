@@ -85,7 +85,8 @@ internal sealed record SkinNet(
         IReadOnlyList<int> Seeds,
         IReadOnlyList<double[]> Normals,
         IReadOnlyList<double> Second,
-        IReadOnlyList<int> SecondSeeds) _built =
+        IReadOnlyList<int> SecondSeeds,
+        int InteriorRimObstacles) _built =
             SkinPatterns.BuildNet(Vertices, Faces, Rim);
 
     /// <summary>The faces, triangulated. An all-triangle face list comes
@@ -195,6 +196,16 @@ internal sealed record SkinNet(
     public int RimDropped { get; init; }
 
     public int EdgesDropped { get; init; }
+
+    /// <summary>HOW MANY RIM SEED GROUPS ROUND THREE B's RULE 2 (G5)
+    /// treated as an INTERIOR OBSTACLE rather than a coursing origin: a
+    /// connected component of the anchor set every one of whose vertices
+    /// sits on a hole loop of the mesh's own boundary rather than its outer
+    /// silhouette (SkinPatterns.InteriorHoleRimOf). Zero on
+    /// every net with no anchored hole ring, including every fixture round
+    /// two and round three ever measured, so this property moves nothing
+    /// on any of them.</summary>
+    public int InteriorRimObstacles => _built.InteriorRimObstacles;
 
     /// <summary>
     /// THE PLAN GRID over this net's triangulated faces (speed diagnosis
@@ -651,6 +662,17 @@ internal sealed record SkinPatternResult(
     /// see is not one an author should have to find by eye either.</summary>
     public IReadOnlyList<string> UncoveredRegions { get; init; } =
         Array.Empty<string>();
+
+    /// <summary>ROUND THREE B, RULE 2 (G5): how many interior anchored rim
+    /// groups this net's own field construction treated as an OBSTACLE
+    /// rather than a coursing origin (SkinNet.InteriorRimObstacles, set by
+    /// SkinPatterns.InteriorHoleRimOf inside BuildNet). Read here and not
+    /// re-derived, because the classification already ran once when the
+    /// net was built and a second reading could only disagree with itself.
+    /// Named on the component's own chin so the choice is never silent, per
+    /// the spec's own closing sentence. Zero on every net with no anchored
+    /// hole ring.</summary>
+    public int InteriorRimObstacles { get; init; }
 }
 
 /// <summary>
@@ -947,23 +969,36 @@ internal static class SkinPatterns
         IReadOnlyList<int> Seeds,
         IReadOnlyList<double[]> Normals,
         IReadOnlyList<double> Second,
-        IReadOnlyList<int> SecondSeeds) BuildNet(
+        IReadOnlyList<int> SecondSeeds,
+        int InteriorRimObstacles) BuildNet(
             IReadOnlyList<double[]> vertices,
             IReadOnlyList<int[]> faces,
             IReadOnlyList<int> rim)
     {
         IReadOnlyList<int[]> triangles = Triangulate(vertices, faces);
+        // RULE 2 (round three B, G5): an interior anchored rim is a
+        // structural support but not a coursing origin, so the seeds the
+        // field marches from exclude every rim vertex InteriorHoleRimOf
+        // proves sits on a hole loop rather than the outer silhouette;
+        // net.Rim itself is untouched, so RimVerticesUsed and every other
+        // reader of the full anchor set sees the same count as before.
+        (HashSet<int> obstacleVertices, int obstacleGroups) =
+            InteriorHoleRimOf(vertices, triangles, rim);
+        IReadOnlyList<int> courseSeeds = obstacleVertices.Count == 0
+            ? rim
+            : rim.Where(seed => !obstacleVertices.Contains(seed)).ToArray();
         (IReadOnlyList<double> levels, IReadOnlyList<int> seeds) =
-            RimDistanceFieldWithSeeds(vertices, triangles, rim);
+            RimDistanceFieldWithSeeds(vertices, triangles, courseSeeds);
         (IReadOnlyList<double> second, IReadOnlyList<int> secondSeeds) =
-            SecondFamilyField(vertices, triangles, rim, seeds);
+            SecondFamilyField(vertices, triangles, courseSeeds, seeds);
         return (
             triangles,
             levels,
             seeds,
             OrientedVertexNormals(vertices, triangles),
             second,
-            secondSeeds);
+            secondSeeds,
+            obstacleGroups);
     }
 
     /// <summary>
@@ -1369,6 +1404,200 @@ internal static class SkinPatterns
             }
         }
         return groups;
+    }
+
+    /// <summary>
+    /// ROUND THREE B, RULE 2 (spec 2026-09-06-skin-round-three-b-holed-
+    /// nets.md, G5, the anchor-proximity field capture): an interior
+    /// anchored rim is a STRUCTURAL SUPPORT but not a COURSING ORIGIN, so
+    /// the field the courses are cut from is marched only from the OUTER
+    /// support set; a hole ring near the crown stays an OBSTACLE the level
+    /// curves part around, exactly as an unanchored hole rim already is,
+    /// rather than a brand-new nearest anchor that recentres the whole
+    /// field on itself. Before this rule, <see
+    /// cref="RimDistanceFieldWithSeeds"/> treated every rim vertex as an
+    /// equally weighted coursing datum regardless of its role, so an
+    /// anchored ring a metre or two from the summit collapsed the field's
+    /// own maximum (5.53 to 3.21 m on the single-hole fixture measured in
+    /// the diagnosis) and halved the course count (16 to 8-9), with "the
+    /// crown" relocating to wherever that collapsed field's own maximum
+    /// now sat, out near the flank rather than at the architectural apex.
+    ///
+    /// TELLING OUTER FROM INTERIOR WITHOUT ANY NEW INPUT (rule 1.3.1's own
+    /// anchor set is a flat list; nothing marks a rim vertex as belonging
+    /// to a hole). The mesh's own boundary-edge set (an edge used by
+    /// exactly one face) splits into closed loops. On a net that is a
+    /// single topological disk with holes cut in it, which is every
+    /// fixture this engine builds and every real shell Param's own nets
+    /// model, exactly one loop is the outer silhouette and every other
+    /// loop rims a hole, and the two are told apart by the SIGN of each
+    /// loop's own plan area, walked in the direction its one owning face
+    /// already winds its boundary edge: the outer loop and every hole loop
+    /// wind opposite ways in plan (the same fact a polygon-with-holes fill
+    /// rule relies on), and the outer loop also encloses the greater plan
+    /// area of the two signs, since a hole cannot exceed the shell it is
+    /// cut from. The loop of greatest |area| is taken as outer; every loop
+    /// of the OPPOSITE sign is a hole. A loop sharing the outer loop's own
+    /// sign, which a genus-0 single-outer-boundary net never produces but
+    /// an open barrel or an L-shaped vault's several free edges might, is
+    /// left OUTER too: the conservative default wherever the geometry does
+    /// not plainly say "hole".
+    ///
+    /// A RIM SEED GROUP (<see cref="SeedGroupsOf"/>'s own connected
+    /// component) is an OBSTACLE only when EVERY one of its vertices sits
+    /// on a hole loop; a group that touches no hole loop at all, an
+    /// ordinary springing or a point support included, keeps seeding the
+    /// field exactly as it always has, which is the same conservative
+    /// default. Anything that leaves a loop unclosed (a non-manifold
+    /// boundary vertex shared by two loops, which none of this engine's
+    /// fixtures produce) abandons classification entirely and reports no
+    /// obstacles, so a net this method cannot read safely behaves exactly
+    /// as it always did before this rule existed.
+    /// </summary>
+    private static (HashSet<int> Vertices, int Groups) InteriorHoleRimOf(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces,
+        IReadOnlyList<int> rim)
+    {
+        var none = (new HashSet<int>(), 0);
+        if (rim.Count == 0)
+            return none;
+
+        var undirectedCount = new Dictionary<(int, int), int>();
+        foreach (int[] face in faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                var key = a < b ? (a, b) : (b, a);
+                undirectedCount[key] =
+                    undirectedCount.TryGetValue(key, out int n) ? n + 1 : 1;
+            }
+        }
+
+        // Every boundary edge, directed the way its one owning face winds
+        // it. A well-formed manifold boundary offers each vertex exactly
+        // one outgoing boundary edge; TryAdd failing means two boundary
+        // edges leave the same vertex, a non-manifold case this method
+        // does not try to classify.
+        var next = new Dictionary<int, int>();
+        bool degenerate = false;
+        foreach (int[] face in faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                var key = a < b ? (a, b) : (b, a);
+                if (undirectedCount[key] != 1)
+                    continue;
+                if (!next.TryAdd(a, b))
+                    degenerate = true;
+            }
+        }
+        if (degenerate || next.Count == 0)
+            return none;
+
+        var visited = new HashSet<int>();
+        var loops = new List<List<int>>();
+        foreach (int start in next.Keys)
+        {
+            if (visited.Contains(start))
+                continue;
+            var loop = new List<int>();
+            int at = start;
+            int guard = next.Count + 1;
+            bool closed = false;
+            while (guard-- > 0)
+            {
+                if (!visited.Add(at))
+                {
+                    closed = at == start;
+                    break;
+                }
+                loop.Add(at);
+                if (!next.TryGetValue(at, out int onward))
+                    break;
+                at = onward;
+            }
+            if (!closed)
+                return none; // an open or runaway chain: abandon, stay conservative
+            loops.Add(loop);
+        }
+        if (loops.Count < 2)
+            return none; // no interior loop at all: nothing can be a hole
+
+        var signedAreas = new double[loops.Count];
+        int outerIndex = 0;
+        double outerAbs = -1.0;
+        for (int i = 0; i < loops.Count; i++)
+        {
+            List<int> loop = loops[i];
+            double area = 0.0;
+            for (int k = 0; k < loop.Count; k++)
+            {
+                double[] p = vertices[loop[k]];
+                double[] q = vertices[loop[(k + 1) % loop.Count]];
+                area += (p[0] * q[1]) - (q[0] * p[1]);
+            }
+            area *= 0.5;
+            signedAreas[i] = area;
+            double abs = Math.Abs(area);
+            if (abs > outerAbs)
+            {
+                outerAbs = abs;
+                outerIndex = i;
+            }
+        }
+        int outerSign = Math.Sign(signedAreas[outerIndex]);
+        if (outerSign == 0)
+            return none;
+
+        var holeVertices = new HashSet<int>();
+        int holeLoops = 0;
+        for (int i = 0; i < loops.Count; i++)
+        {
+            if (i == outerIndex || Math.Sign(signedAreas[i]) != -outerSign)
+                continue;
+            holeLoops++;
+            foreach (int v in loops[i])
+                holeVertices.Add(v);
+        }
+        if (holeLoops == 0)
+            return none;
+
+        IReadOnlyList<int> groups = SeedGroupsOf(vertices.Count, faces, rim);
+        var groupAllHole = new Dictionary<int, bool>();
+        foreach (int seed in rim)
+        {
+            if (seed < 0 || seed >= groups.Count)
+                continue;
+            int group = groups[seed];
+            if (group < 0)
+                continue;
+            bool onHole = holeVertices.Contains(seed);
+            groupAllHole[group] = groupAllHole.TryGetValue(
+                group, out bool sofar) ? sofar && onHole : onHole;
+        }
+
+        var obstacleVertices = new HashSet<int>();
+        int obstacleGroups = 0;
+        foreach (KeyValuePair<int, bool> entry in groupAllHole)
+        {
+            if (!entry.Value)
+                continue;
+            obstacleGroups++;
+            foreach (int seed in rim)
+            {
+                if (seed >= 0 && seed < groups.Count &&
+                    groups[seed] == entry.Key)
+                {
+                    obstacleVertices.Add(seed);
+                }
+            }
+        }
+        return (obstacleVertices, obstacleGroups);
     }
 
     /// <summary>
@@ -5443,7 +5672,8 @@ internal static class SkinPatterns
             CloserRefused = closerRefused,
             CloserUndersized = closerUndersized,
             SeamBandsRemapped = seamBandsRemapped,
-            UncoveredRegions = uncoveredRegions
+            UncoveredRegions = uncoveredRegions,
+            InteriorRimObstacles = net.InteriorRimObstacles
         };
     }
 
@@ -6122,7 +6352,8 @@ internal static class SkinPatterns
             // the diagnostics of every pattern names them. What this pattern
             // still does not have is the closer band itself: see the
             // deferral recorded against rule 2.1 in the spec.
-            SeamCurves = seams
+            SeamCurves = seams,
+            InteriorRimObstacles = net.InteriorRimObstacles
         };
     }
 
@@ -8560,7 +8791,10 @@ internal static class SkinPatterns
             0,
             0,
             Array.Empty<double[][]>(),
-            Array.Empty<double[][]>());
+            Array.Empty<double[][]>())
+        {
+            InteriorRimObstacles = net?.InteriorRimObstacles ?? 0
+        };
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
@@ -9162,7 +9396,8 @@ internal static class SkinPatterns
             // CH-wide gaps rather than the courses' CH/64 residual; that gap
             // is a DEFERRAL recorded against rule 2.1 in the spec and not a
             // silence.
-            SeamCurves = seams
+            SeamCurves = seams,
+            InteriorRimObstacles = net.InteriorRimObstacles
         };
     }
 }

@@ -627,12 +627,26 @@ public sealed class SkinComponent : NativeComponentBase
                 .Where(cell => !cell.Cap)
                 .Select(cell => cell.U1 - cell.U0)
                 .ToArray();
+            // Round three B rule 2 (G5): an anchored hole ring is treated as
+            // an OBSTACLE the course field parts around rather than a
+            // coursing origin, and that choice must never be silent, so the
+            // chin names how many interior rims were read that way -- on the
+            // FACE of the component beside the count of ordinary courses,
+            // not buried in the Remark below, because it is the same kind of
+            // fact as "how many courses" is: it changes what the pattern IS,
+            // not merely how it measures.
             Message =
                 $"{generated.Cells.Count} cells · " +
                 $"{generated.CourseCount} courses · " +
                 PatternName(pattern) +
                 (spans.Length > 0
                     ? $" · piece {spans.Min():F2} to {spans.Max():F2} m"
+                    : string.Empty) +
+                (generated.InteriorRimObstacles > 0
+                    ? $" · {generated.InteriorRimObstacles} interior rim" +
+                      (generated.InteriorRimObstacles == 1 ? "" : "s") +
+                      " as obstacle" +
+                      (generated.InteriorRimObstacles == 1 ? "" : "s")
                     : string.Empty);
 
             // Rule 9.3.5's single Remark: the residual diagnostics content

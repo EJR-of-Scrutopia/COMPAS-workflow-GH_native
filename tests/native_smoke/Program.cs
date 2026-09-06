@@ -1413,10 +1413,13 @@ internal static class Program
                 "and the end-stone cut divides even where only one " +
                 "flanking corner exists. The count-capacity bound now " +
                 "reads clean on all six, asserted directly; the size " +
-                "bound reads clean on five of six, with the sixth " +
-                "(\"one hole, off-seam, free rim\") reduced to a single " +
-                "PROVEN NON-G6 residual (an ordinary band cell and the " +
-                "crown cap's own independent self-cross), deferred to " +
+                "bound reads clean on four of six (was five of six " +
+                "before round three B's own rule 2, G5, forced an " +
+                "anchored variant's field bit-identical to its free-rim " +
+                "sibling: the pair \"one hole, off-seam, free rim\" and " +
+                "\"one hole, off-seam, anchored rim\" now BOTH carry the " +
+                "single PROVEN NON-G6 residual an ordinary band cell and " +
+                "the crown cap's own independent self-cross), deferred to " +
                 "whichever task takes that up. The evicted geometry the " +
                 "diagnosis named returns: ten ordinary course-14 stones, " +
                 "measured back on this fixture.");
@@ -1425,6 +1428,36 @@ internal static class Program
         {
             failures.Add(
                 "Skin holed-net coverage instruments: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinHoledNetFieldCapture(plugin);
+            Console.WriteLine(
+                "PASS  Skin holed-net field capture (spec 2026-09-06 round " +
+                "three B, rule 2, G5): an anchored interior hole ring near " +
+                "the crown no longer seeds the course field. " +
+                "SkinPatterns.BuildNet now excludes every rim vertex on a " +
+                "hole loop of the mesh's own boundary from the seeds " +
+                "RimDistanceFieldWithSeeds/SecondFamilyField march from " +
+                "(InteriorHoleRimOf), so a hole ring is a structural " +
+                "support but not a coursing origin: courses still run " +
+                "outer-rim-to-crown and the ring is an obstacle the level " +
+                "curves part around. Measured directly on all three " +
+                "permanent anchored variants: net.Levels is now BIT-" +
+                "IDENTICAL to each variant's own free-rim sibling (was " +
+                "collapsed from a field max of 5.5314 m to 3.2097/2.7821/" +
+                "2.8809 m and a course count of 16 to 9/8/8), and " +
+                "InteriorRimObstacles correctly names 0 obstacles on every " +
+                "free-rim variant, 1 on the single-hole anchor and 6 on " +
+                "each six-hole anchor, so the choice reaches the " +
+                "component's own chin rather than staying silent.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin holed-net field capture: " +
                 $"{DescribeException(exception)}");
         }
 
@@ -25262,46 +25295,59 @@ internal static class Program
         // oversized mid-rail (the SAME nearest-point mismatch, off
         // midRails rather than off "other") is dropped rather than
         // shipped, falling back to the two-section loft every fixture
-        // with no mid-rail already uses. Five of six variants now read
-        // CLEAN on this instrument; G5's own anchored-variant symptom
-        // here turned out to be the SAME closer/mid-rail mismatch and is
-        // fixed as the same side effect, unproven only for
-        // RimDistanceFieldWithSeeds's own field-capture symptom (course
-        // count, cap location), which this task does not touch.
+        // with no mid-rail already uses.
         //
-        // STILL RED on ONE: "one hole, off-seam, free rim" now measures
-        // 4.4563 m at course 14 (was 5.5667 at course 13 before this
-        // fix), but the offending cell is PROVED NOT G6 -- Closer=false,
-        // an ordinary absorbed band cell, and a SEPARATE crown cap at
-        // course 15 independently fails PlanSelfCrosses (measured true
-        // before any overlap test runs), matching the diagnosis's own
-        // words for this symptom, "the true crown cap itself, which
-        // independently self-crosses". Both point at BoundaryRun's own
-        // nearest-point mapping and the level-curve trace beside a hole,
-        // neither of which CloserBand, TryExtendCloser or KeepValidPlans's
-        // tie-break touch -- a mechanism this task's own owner line does
-        // not cover and does not fix. DEFERRED to whichever task takes
-        // that one up (a ninth mechanism, or G1's own re-verification on a
-        // holed fixture the diagnosis flagged as unproven): the claim is
-        // the real, ungated assertion, so it goes stale and must be
-        // inlined the day it is fixed too.
+        // G5 ITSELF IS NOW FIXED (round three B, rule 2, a later task):
+        // BuildNet excludes an anchored hole ring's own vertices from the
+        // seeds the field marches from, so an anchored variant's field is
+        // now BIT-IDENTICAL to its free-rim sibling (asserted directly in
+        // ValidateSkinHoledNetFieldCapture, not deferred). That equality
+        // is WHY the count below moved from one variant to two: at the
+        // time this G6 fix was measured, "one hole, off-seam, anchored
+        // rim" was clean here only because G5's own field capture gave it
+        // a DIFFERENT course structure that happened not to expose this
+        // residual; now that its field is forced identical to the free-
+        // rim sibling's, it inherits the exact same residual, measured at
+        // the exact same course and run length. This is the residual
+        // becoming HONEST, not a new defect G5's fix introduced.
+        //
+        // STILL RED ON TWO: "one hole, off-seam, free rim" AND "one hole,
+        // off-seam, anchored rim" both now measure 4.4563 m at course 14
+        // (free rim was 5.5667 at course 13 before the G6 fix above), but
+        // the offending cell is PROVED NOT G6 -- Closer=false, an ordinary
+        // absorbed band cell, and a SEPARATE crown cap at course 15
+        // independently fails PlanSelfCrosses (measured true before any
+        // overlap test runs), matching the diagnosis's own words for this
+        // symptom, "the true crown cap itself, which independently self-
+        // crosses". Both point at BoundaryRun's own nearest-point mapping
+        // and the level-curve trace beside a hole, neither of which
+        // CloserBand, TryExtendCloser, KeepValidPlans's tie-break or G5's
+        // own field-seed exclusion touch -- a mechanism no task in this
+        // wave owns or fixes. DEFERRED to whichever task takes that one up
+        // (a ninth mechanism, or G1's own re-verification on a holed
+        // fixture the diagnosis flagged as unproven): the claim is the
+        // real, ungated assertion, so it goes stale and must be inlined
+        // the day it is fixed too.
         Deferred(
             "Round three B rule 1(a): no emitted course or closer stone " +
             "on any of the six permanent holed-net variants exceeds the " +
             "maximum piece bound (3 x Size) the ordinary courses obey",
             "an ordinary (non-closer) absorbed band cell and the crown " +
             "cap's own independent PlanSelfCrosses failure beside a " +
-            "hole, both measured on \"one hole, off-seam, free rim\" " +
-            "only, course 14 (Closer=false) and course 15 (the cap) -- " +
-            "NOT CloserBand, TryExtendCloser or KeepValidPlans's tie-" +
-            "break (G6, SkinPatterns.cs:7204,8008, CLOSED by this task) " +
-            "and not RimDistanceFieldWithSeeds/SeedGroupsOf (G5, " +
-            "SkinPatterns.cs:958,1092, also clean on this instrument as " +
-            "a side effect); likely BoundaryRun's own nearest-point " +
-            "mapping (SkinPatterns.cs) and the level-curve trace near a " +
-            "hole, docs/superpowers/specs/2026-09-06-skin-holed-net-" +
-            "diagnosis.md's own G1 re-verification caveat; not fixed by " +
-            "this task",
+            "hole, measured identically on \"one hole, off-seam, free " +
+            "rim\" and (since G5's own fix, round three B rule 2, forces " +
+            "its field bit-identical to the free-rim sibling) \"one " +
+            "hole, off-seam, anchored rim\" too, course 14 (Closer=false) " +
+            "and course 15 (the cap) -- NOT CloserBand, TryExtendCloser " +
+            "or KeepValidPlans's tie-break (G6, SkinPatterns.cs:7204," +
+            "8008, CLOSED by an earlier task) and not " +
+            "RimDistanceFieldWithSeeds/SeedGroupsOf (G5, SkinPatterns." +
+            "cs:958,1092, CLOSED by this task: ValidateSkinHoledNet" +
+            "FieldCapture asserts the bit-identity directly, ungated); " +
+            "likely BoundaryRun's own nearest-point mapping " +
+            "(SkinPatterns.cs) and the level-curve trace near a hole, " +
+            "docs/superpowers/specs/2026-09-06-skin-holed-net-diagnosis." +
+            "md's own G1 re-verification caveat; not fixed by this task",
             () =>
             {
                 var failing = new List<string>();
@@ -25358,6 +25404,196 @@ internal static class Program
                     "fixed; a failure here is a NEW regression, not the " +
                     "defect this instrument was built to catch.");
             }
+        }
+    }
+
+    /// <summary>
+    /// ROUND THREE B, RULE 2 (spec 2026-09-06-skin-round-three-b-holed-
+    /// nets.md, "RULE 2: G5, the anchor-proximity field capture, is the
+    /// worst outcome measured"; mechanism measured in docs/superpowers/
+    /// specs/2026-09-06-skin-holed-net-diagnosis.md's own G5 section). AN
+    /// ANCHORED interior hole ring near the crown used to become the
+    /// field's own nearest anchor and seed the course families as if it
+    /// were the vault's own rim: the diagnosis measured the field's own
+    /// maximum COLLAPSE (5.5314 to 3.2097 m on the single-hole fixture,
+    /// 5.5314 to 2.7821/2.8809 m on the six-hole ring/valley fixtures) and
+    /// the course count roughly halve (16 to 9 or 8), with the crown
+    /// itself relocating to a plan point far from the mesh centroid.
+    ///
+    /// THE RULING THIS TASK IMPLEMENTS, exactly as the spec states it: an
+    /// interior anchored rim is a STRUCTURAL SUPPORT but NOT a COURSING
+    /// ORIGIN, so the field's own seeds stay the OUTER support set and a
+    /// hole ring becomes an OBSTACLE the level curves part around, its rim
+    /// taking the free-edge treatment. SkinPatterns.BuildNet now excludes
+    /// every rim vertex SkinPatterns.InteriorHoleRimOf proves sits on a
+    /// hole loop of the mesh's own boundary (rather than its outer
+    /// silhouette) from the seeds RimDistanceFieldWithSeeds and
+    /// SecondFamilyField march from.
+    ///
+    /// THE SHARPEST PROOF AVAILABLE, and the one this check asserts: once
+    /// a hole's rim is excluded from the seeds, the ONLY difference left
+    /// between an anchored and a free-rim variant of the SAME hole layout
+    /// is which vertices sit in SkinNet.Rim itself (an unread list once
+    /// this rule runs) -- the mesh, the faces and the seeds the field
+    /// actually marches from are now IDENTICAL. So net.Levels, the raw
+    /// field the courses are cut from, must be BIT-IDENTICAL between the
+    /// free-rim and the anchored-rim net of the same hole configuration,
+    /// and CourseCount, which is derived from that field, must match too.
+    /// A field-capture regression could not pass this: the anchored
+    /// variant's field would differ from its own free-rim sibling by
+    /// exactly the amount the capturing anchor moved it, which the
+    /// diagnosis measured at 2.3 to 2.8 m at the field's own maximum.
+    ///
+    /// SkinPatternResult.InteriorRimObstacles is asserted directly too (0
+    /// on every free-rim variant, since an unanchored hole never enters
+    /// Rim at all; 1 on the single-hole anchored variant and 6 on each
+    /// six-hole anchored variant), because the spec's own closing sentence
+    /// requires the choice be NAMED and not merely correct: "the component
+    /// chin must name how many interior rims were treated as obstacles, so
+    /// the choice is never silent" (SkinComponents.cs's own Message).
+    /// </summary>
+    private static void ValidateSkinHoledNetFieldCapture(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double size = 0.6;
+        const double courseHeight = 0.35;
+
+        (object Net, object Built) Made(double[][] v, int[][] f, int[] rim)
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[]
+                {
+                    v, f, rim, Array.CreateInstance(edgeType, 0)
+                })!;
+            object built = courses.Invoke(
+                null, new object[] { net, size, courseHeight })!;
+            return (net, built);
+        }
+
+        (int TLow, int THigh, int ICentre, int IHalf)[] oneOff =
+            { (2, 5, 5, 2) };
+        (int TLow, int THigh, int ICentre, int IHalf)[] ringOff =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 5, 2)).ToArray();
+        (int TLow, int THigh, int ICentre, int IHalf)[] valley =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 10, 2)).ToArray();
+
+        var pairs = new (
+            string Label,
+            (int TLow, int THigh, int ICentre, int IHalf)[] Holes,
+            int ExpectedObstacles)[]
+        {
+            ("one hole, off-seam", oneOff, 1),
+            ("six holes, ring, off-seam", ringOff, 6),
+            ("six holes, on the valley seams", valley, 6),
+        };
+
+        var failing = new List<string>();
+        foreach (var pair in pairs)
+        {
+            var free = HoledLobedNet(
+                6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07,
+                pair.Holes, anchorHoleRims: false);
+            var anchored = HoledLobedNet(
+                6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07,
+                pair.Holes, anchorHoleRims: true);
+
+            var (freeNet, freeBuilt) = Made(free.V, free.F, free.Rim);
+            var (anchorNet, anchorBuilt) =
+                Made(anchored.V, anchored.F, anchored.Rim);
+
+            int freeObstacles = Reading<int>(freeBuilt, "InteriorRimObstacles");
+            if (freeObstacles != 0)
+            {
+                failing.Add(
+                    $"{pair.Label}, free rim: InteriorRimObstacles reads " +
+                    $"{freeObstacles}, expected 0 (an unanchored hole " +
+                    "never enters Rim at all, so there is no group to " +
+                    "classify).");
+            }
+            int anchorObstacles =
+                Reading<int>(anchorBuilt, "InteriorRimObstacles");
+            if (anchorObstacles != pair.ExpectedObstacles)
+            {
+                failing.Add(
+                    $"{pair.Label}, anchored rim: InteriorRimObstacles " +
+                    $"reads {anchorObstacles}, expected " +
+                    $"{pair.ExpectedObstacles}; the component chin cannot " +
+                    "name the choice correctly if this count is wrong.");
+            }
+
+            double[] freeLevels = SkinLevels(freeNet);
+            double[] anchorLevels = SkinLevels(anchorNet);
+            if (freeLevels.Length != anchorLevels.Length)
+            {
+                failing.Add(
+                    $"{pair.Label}: the free and anchored variants carry " +
+                    $"different vertex counts ({freeLevels.Length} vs " +
+                    $"{anchorLevels.Length}), so their fields cannot even " +
+                    "be compared.");
+            }
+            else
+            {
+                int mismatches = 0;
+                double worstGap = 0.0;
+                for (int at = 0; at < freeLevels.Length; at++)
+                {
+                    double a = freeLevels[at], b = anchorLevels[at];
+                    bool bothFinite = double.IsFinite(a) && double.IsFinite(b);
+                    if (bothFinite)
+                    {
+                        if (a != b)
+                        {
+                            mismatches++;
+                            worstGap = Math.Max(worstGap, Math.Abs(a - b));
+                        }
+                    }
+                    else if (double.IsFinite(a) != double.IsFinite(b))
+                    {
+                        mismatches++;
+                    }
+                }
+                if (mismatches > 0)
+                {
+                    failing.Add(
+                        $"{pair.Label}: the anchored rim's own raw field " +
+                        "must be BIT-IDENTICAL to its free-rim sibling " +
+                        "(rule 2: an anchored hole ring seeds no course, " +
+                        "so both must march from the identical outer-only " +
+                        $"seed set on the identical mesh); {mismatches} of " +
+                        $"{freeLevels.Length} vertices differ, worst gap " +
+                        $"{worstGap:F6} m -- the anchor is still capturing " +
+                        "the field.");
+                }
+            }
+
+            int freeCourses = Reading<int>(freeBuilt, "CourseCount");
+            int anchorCourses = Reading<int>(anchorBuilt, "CourseCount");
+            if (freeCourses != anchorCourses)
+            {
+                failing.Add(
+                    $"{pair.Label}: CourseCount must match between the " +
+                    $"free ({freeCourses}) and anchored ({anchorCourses}) " +
+                    "rim once the anchored ring is treated as an obstacle " +
+                    "rather than a coursing origin -- a mismatch here is " +
+                    "the course-count collapse the diagnosis measured " +
+                    "(16 down to 8 or 9).");
+            }
+        }
+        if (failing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{failing.Count} defect" +
+                (failing.Count == 1 ? "" : "s") +
+                $" across the {pairs.Length} holed-net pairs still show " +
+                "the anchor-proximity field capture (G5): " +
+                string.Join("; ", failing) + ".");
         }
     }
 
