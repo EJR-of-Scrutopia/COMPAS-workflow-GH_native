@@ -3448,6 +3448,23 @@ internal static class SkinPatterns
         return Math.Sqrt(dx * dx + dy * dy + dz * dz);
     }
 
+    /// <summary>
+    /// ROUND THREE B (G6, the hole-adjacent crown cascade): a run's own
+    /// total travelled length, point to point -- the same arithmetic the
+    /// harness's own WorstOversizedStone instrument sums over a cell's
+    /// Sections. CloserBand uses this to gate a stone's TWO sides against
+    /// the maximum piece bound at the one place a stone becomes real,
+    /// rather than trusting the arc-length subtraction that staged it to
+    /// still hold once Dedupe and the joint rescues have had their say.
+    /// </summary>
+    private static double RunLength(IReadOnlyList<double[]> run)
+    {
+        double total = 0.0;
+        for (int i = 0; i + 1 < run.Count; i++)
+            total += Distance(run[i], run[i + 1]);
+        return total;
+    }
+
     private static double[] Lerp(double[] a, double[] b, double t) => new[]
     {
         a[0] + (b[0] - a[0]) * t,
@@ -7241,6 +7258,20 @@ internal static class SkinPatterns
         // says a stone was not laid instead of the drop count saying one was
         // laid badly.
         double maximumJoint = Math.Max(size, 4.0 * thickness);
+        // ROUND THREE B, RULE 1(a) (spec 2026-09-06-skin-round-three-b-
+        // holed-nets.md, G6, "a closer stone must obey the same size
+        // bounds as ordinary courses -- the maximumPiece rule already
+        // exists [for caps] and must bind the closer too, which is where
+        // the 17x stone came from"). The SAME derivation the cap pass
+        // already uses (SkinPatterns.cs, capsOversized's own
+        // "size / clampedMinPiece"): minimumPiece already carries the
+        // caller's own Min Piece ratio times Size, so Max Piece is Size
+        // squared over it, 3 x Size at the default 1/3 ratio -- no new
+        // parameter, the same bound from the same two numbers this method
+        // already has.
+        double maximumPiece = minimumPiece > 0.0
+            ? size * size / minimumPiece
+            : double.PositiveInfinity;
         bool guideIsLow = lows.Count >= highs.Count;
         IReadOnlyList<SkinLevelCurve> guides = guideIsLow ? lows : highs;
         IReadOnlyList<SkinLevelCurve> others = guideIsLow ? highs : lows;
@@ -7328,7 +7359,26 @@ internal static class SkinPatterns
             spans = MergeShortPieces(
                 spans, minimumPiece,
                 ref mergedPieces, ref mergedShortKept, ref mergedStillShort);
-            foreach ((double u0, double u1, bool clipped) in spans)
+            // ROUND THREE B, RULE 1(a) (G6): a span's OTHER side is
+            // mapped by nearest point in plan, which is exactly where a
+            // seam whose two sides sit at mismatched scale breaks --
+            // measured on the hole-adjacent crown cascade, a guide piece
+            // sized off a near-full merged crown ring maps to an arc on a
+            // small local loop many times its own length, because nearest
+            // -point is a PROJECTION and carries no promise that equal
+            // steps on one side land as equal steps on the other. Staged
+            // AS A LOCAL FUNCTION rather than inline, so an oversized
+            // mapping can be CUT AGAINST WHAT THE OTHER SIDE CAN ACTUALLY
+            // CARRY and re-staged at that side's own scale, the same
+            // ceiling-division discipline the end-stone gap cut already
+            // uses (line 7734 below), rather than bridged as one span the
+            // guide's own length alone chose. Recursion is depth-guarded:
+            // each level re-measures the mapping it just cut, so a span
+            // that still cannot be carried after repeated halving is
+            // REFUSED rather than shipped oversized, never emitted
+            // regardless.
+            int stagingRefusals = 0;
+            void StageSpan(double u0, double u1, bool clipped, int depth)
             {
                 List<double[]> along = Run(guide, u0, u1);
                 // THE OTHER FAMILY'S CURVE IS CHOSEN PER STONE and not per
@@ -7342,8 +7392,8 @@ internal static class SkinPatterns
                     PointAt(guide, (u0 + u1) / 2.0), others);
                 if (other is null || !(other.Length > 1.0e-9))
                 {
-                    refused++;
-                    continue;
+                    stagingRefusals++;
+                    return;
                 }
                 double a0 = NearestArcInPlan(other, along[0]) - other.Seam;
                 double a1 = NearestArcInPlan(other, along[^1]) - other.Seam;
@@ -7360,6 +7410,32 @@ internal static class SkinPatterns
                     while (a0 - a1 > half)
                         a1 += other.Length;
                 }
+                double otherRun = Math.Abs(a1 - a0);
+                if (otherRun > maximumPiece + 1.0e-9)
+                {
+                    if (depth < 8 && u1 - u0 > 1.0e-6)
+                    {
+                        int subPieces = Math.Max(
+                            2,
+                            Math.Min(
+                                64,
+                                (int)Math.Ceiling(otherRun / size)));
+                        for (int sub = 0; sub < subPieces; sub++)
+                        {
+                            double su0 =
+                                u0 + (u1 - u0) * sub / subPieces;
+                            double su1 =
+                                u0 + (u1 - u0) * (sub + 1) / subPieces;
+                            StageSpan(su0, su1, clipped, depth + 1);
+                        }
+                        return;
+                    }
+                    // Cannot be cut any finer: a stone this size would
+                    // still exceed the bound every ordinary course obeys,
+                    // so it is refused rather than shipped oversized.
+                    stagingRefusals++;
+                    return;
+                }
                 staged.Add(new SkinCloserStone
                 {
                     Guide = guide,
@@ -7372,6 +7448,9 @@ internal static class SkinPatterns
                     A1 = a1
                 });
             }
+            foreach ((double u0, double u1, bool clipped) in spans)
+                StageSpan(u0, u1, clipped, 0);
+            refused += stagingRefusals;
         }
 
         // ---- FIX 2, THE PINCH-OUT COVERAGE (spec 2026-09-05 round two).
@@ -7671,25 +7750,25 @@ internal static class SkinPatterns
                         gap.HighFlank is not null &&
                         TryExtendCloser(
                             other, gap.LowFlank, gap.Length / 2.0, true,
-                            maximumJoint, apply: false) &&
+                            maximumJoint, maximumPiece, apply: false) &&
                         TryExtendCloser(
                             other, gap.HighFlank, gap.Length / 2.0, false,
-                            maximumJoint, apply: false))
+                            maximumJoint, maximumPiece, apply: false))
                     {
                         TryExtendCloser(
                             other, gap.LowFlank, gap.Length / 2.0, true,
-                            maximumJoint);
+                            maximumJoint, maximumPiece);
                         TryExtendCloser(
                             other, gap.HighFlank, gap.Length / 2.0, false,
-                            maximumJoint);
+                            maximumJoint, maximumPiece);
                         continue;
                     }
                     if (TryExtendCloser(
                             other, gap.LowFlank, gap.Length, true,
-                            maximumJoint) ||
+                            maximumJoint, maximumPiece) ||
                         TryExtendCloser(
                             other, gap.HighFlank, gap.Length, false,
-                            maximumJoint))
+                            maximumJoint, maximumPiece))
                     {
                         continue;
                     }
@@ -7710,9 +7789,24 @@ internal static class SkinPatterns
                 // on the CHORD between the two attachment corners, which
                 // is the same edge the single stone would have carried,
                 // interpolated by arc fraction, so adjacent pieces share
-                // it and bond; where an attachment is missing the gap is
-                // one stone, since interior joints would have nothing to
-                // stand on.
+                // it and bond.
+                //
+                // ROUND THREE B, RULE 1(a) (G6): WHERE AN ATTACHMENT IS
+                // MISSING THE GAP IS STILL DIVIDED, not one stone
+                // regardless of length -- measured on the hole-adjacent
+                // crown cascade's own free-rim variants, a one-sided
+                // residual against a small local loop is exactly the
+                // mismatched-scale bridge the diagnosis names, one stone
+                // running the small loop's own full remaining length
+                // (10.78 m measured on the six-hole ring, against a 1.8 m
+                // bound). ChordAt already answers a one-sided fraction
+                // with the SAME single corner for every piece, which is
+                // no degenerate joint but an ordinary fan: each piece is
+                // the run between two arc positions and the one corner
+                // both share, a valid sliced wedge rather than a chord
+                // interpolated between two DIFFERENT corners, so ceiling
+                // division applies here exactly as it does with both
+                // attachments present.
                 double og0 = gap.Start - other.Seam;
                 double[]? attLow = gap.LowFlank is { } lowFlank
                     ? CloserEndCorner(lowFlank.Stone, lowFlank.MaxEnd)
@@ -7747,11 +7841,8 @@ internal static class SkinPatterns
                     refused++;
                     continue;
                 }
-                int gapPieces = attLow is not null && attHigh is not null
-                    ? Math.Max(
-                        1,
-                        (int)Math.Ceiling(gap.Length / size - 1.0e-9))
-                    : 1;
+                int gapPieces = Math.Max(
+                    1, (int)Math.Ceiling(gap.Length / size - 1.0e-9));
                 double[] ChordAt(double fraction) =>
                     attLow is null
                         ? attHigh!
@@ -7901,6 +7992,22 @@ internal static class SkinPatterns
             // named rather than unseen.
             if (stone.U1 - stone.U0 < minimumPiece - 1.0e-9)
                 undersized++;
+            // ROUND THREE B, RULE 1(a) (G6), belt-and-braces: the staging
+            // split above already keeps a fresh stone's own back run
+            // under the bound, but TryExtendCloser's growth and the
+            // corner-closing rescue just above both touch A0/A1 or
+            // substitute BACK after staging, so the bound is re-measured
+            // here, at the one place a stone becomes a cell, rather than
+            // trusted to have survived every path that could have moved
+            // it since. Refused rather than emitted, the same discipline
+            // the fold refusal just above keeps: a stone this size is not
+            // laid, not laid oversized.
+            if (Math.Max(RunLength(along), RunLength(back)) >
+                maximumPiece + 1.0e-9)
+            {
+                refused++;
+                continue;
+            }
             // SECTIONS are the cell's own two runs, both read in the
             // same direction, which is route (a) of rule 5.2.3: the
             // guide's run and the other family's run, the second turned
@@ -7939,7 +8046,21 @@ internal static class SkinPatterns
                             : Run(midCurve, m1, m0);
                         if (m1 < m0)
                             rail.Reverse();
-                        midRun = rail;
+                        // ROUND THREE B, RULE 1(a) (G6): the mid-rail is
+                        // ITS OWN nearest-point mapping, off midCurve
+                        // rather than off "other", and carries no promise
+                        // of scale either -- measured on the hole-adjacent
+                        // crown cascade's own anchored variants, where the
+                        // rescued crest's own mid-rail bridged a merged
+                        // guide against a small local loop the same way
+                        // the outline's own back run once did (4.64 to
+                        // 10.78 m against the 1.8 m bound). The OUTLINE is
+                        // unaffected either way (built from along and back
+                        // alone); dropping an oversized rail falls back to
+                        // the two-section loft every fixture with no
+                        // mid-rail already uses, not a new behaviour.
+                        if (RunLength(rail) <= maximumPiece + 1.0e-9)
+                            midRun = rail;
                     }
                 }
             }
@@ -8004,13 +8125,24 @@ internal static class SkinPatterns
 
     /// <summary>Grow one flanking stone's back run across a small residual
     /// gap, where the flank exists and the longer head joint still obeys
-    /// the bound; answers whether the gap was absorbed.</summary>
+    /// the bound; answers whether the gap was absorbed.
+    ///
+    /// ROUND THREE B, RULE 1(a) (G6): growth is refused, not only where the
+    /// joint bound fails, but where the GROWN stone's own back run would
+    /// exceed the maximum piece bound the staging pass already cuts
+    /// against. A flank absorbing a residual gap is always a SMALL
+    /// addition (the gap is under Min Piece by the caller's own gate), so
+    /// this only ever refuses a flank that arrived at the bound already --
+    /// the mismatched-scale case the staging split could not fully close
+    /// -- and pushes the caller on to the END-STONE cut, which is already
+    /// cut at the pattern's own scale for exactly this reason.</summary>
     private static bool TryExtendCloser(
         SkinLevelCurve other,
         (SkinCloserStone Stone, bool MaxEnd)? flank,
         double gapLength,
         bool forwardOfMax,
         double maximumJoint,
+        double maximumPiece,
         bool apply = true)
     {
         if (flank is not { } at)
@@ -8035,6 +8167,8 @@ internal static class SkinPatterns
             else
                 grownA1 -= gapLength;
         }
+        if (Math.Abs(grownA1 - grownA0) > maximumPiece + 1.0e-9)
+            return false;
         double movedEnd = at.MaxEnd
             ? Math.Max(grownA0, grownA1)
             : Math.Min(grownA0, grownA1);

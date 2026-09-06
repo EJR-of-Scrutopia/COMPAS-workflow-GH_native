@@ -1401,20 +1401,25 @@ internal static class Program
                 "under 90 per cent of its own area-derived capacity, on " +
                 "either fixture. The six permanent HoledLobedNet variants " +
                 "this task lifts in -- {one hole, six holes} x {off-seam, " +
-                "on the valley seams} x {free rim, anchored rim} -- are " +
-                "measured against BOTH new instruments here: the size " +
-                "bound is RED on all six (an oversized stone from 1.86 to " +
-                "10.78 m against a 1.8 m bound, G5's field-captured course " +
-                "collapse on the three anchored variants and G6's " +
-                "mismatched-scale closer stitch on the three free ones), " +
-                "and the count-capacity bound is RED only on the three " +
-                "free-rim variants (ratios 0.683, 0.864, 0.862 against a " +
-                "0.90 floor) while holding clean, and asserted directly, " +
-                "on the three anchored ones (1.36 to 1.42). Both reds are " +
-                "the diagnosis's own G6 made visible where PlanCoverage " +
-                "and the harness's own sampler both read the fixture as " +
-                "essentially fully covered; both are DEFERRED to the fix " +
-                "task that closes G5 or G6, not silently dropped.");
+                "on the valley seams} x {free rim, anchored rim} -- were " +
+                "RED on both instruments (size bound on all six, 1.86 to " +
+                "10.78 m against 1.8 m; count-capacity on the three " +
+                "free-rim variants, 0.683 to 0.864 against a 0.90 floor) " +
+                "under G6, the diagnosis's own mismatched-scale closer " +
+                "stitch. G6 IS NOW FIXED (this task): CloserBand's " +
+                "staging cuts a span against what its other side can " +
+                "carry, TryExtendCloser refuses a growth past the bound, " +
+                "an oversized mid-rail is dropped rather than shipped, " +
+                "and the end-stone cut divides even where only one " +
+                "flanking corner exists. The count-capacity bound now " +
+                "reads clean on all six, asserted directly; the size " +
+                "bound reads clean on five of six, with the sixth " +
+                "(\"one hole, off-seam, free rim\") reduced to a single " +
+                "PROVEN NON-G6 residual (an ordinary band cell and the " +
+                "crown cap's own independent self-cross), deferred to " +
+                "whichever task takes that up. The evicted geometry the " +
+                "diagnosis named returns: ten ordinary course-14 stones, " +
+                "measured back on this fixture.");
         }
         catch (Exception exception)
         {
@@ -25080,6 +25085,20 @@ internal static class Program
     /// variants below -- a real, currently-true property worth protecting
     /// against regression -- and deferred only where it is presently
     /// false.
+    ///
+    /// ROUND THREE B, RULE 1's OWN FIX (this task, G6): CloserBand's
+    /// staging now cuts a span against what its OTHER side can carry
+    /// rather than bridging a mismatched-scale seam with one span,
+    /// TryExtendCloser refuses a growth that would push a stone past the
+    /// bound (falling to the END-STONE cut instead, itself now divided
+    /// even where only one flanking corner exists), and an oversized
+    /// mid-rail is dropped rather than shipped. <see
+    /// cref="WorstOversizedStone"/> falls from 6 of 6 variants to 1 (the
+    /// remaining case PROVED not to be G6, see rule 1(a) below); <see
+    /// cref="WorstCountDeficit"/> falls from 3 of 6 to 0 and is now
+    /// asserted DIRECTLY on all six, not deferred at all. The evicted
+    /// geometry named above is measured back: "one hole, off-seam, free
+    /// rim" carries its ten ordinary course-14 stones again.
     /// </summary>
     private static void ValidateSkinHoledNetCoverageInstruments(
         Assembly plugin)
@@ -25232,30 +25251,57 @@ internal static class Program
             cellsByLabel[v.Label] = ReadSeamCells(made);
         }
 
-        // ---- RULE 1(a), on every one of the six: currently RED on ALL
-        // SIX (measured worst run per variant, metres, against the 1.8 m
-        // bound): 5.5667 (one hole, free), 4.6423 (one hole, anchor),
-        // 10.7772 (six-hole ring, free), 1.9798 (six-hole ring, anchor),
-        // 2.0354 (six-hole valley, free), 1.9811 (six-hole valley,
-        // anchor). Every anchored variant's own oversized stone is G5's
-        // signature (the field-captured course collapse mints stones
-        // spanning several genuine course-heights at once); every free
-        // variant's is G6's (the mismatched-scale closer stitch the
-        // diagnosis named). DEFERRED to whichever fix task closes G5 or
-        // G6, not silently dropped: the claim is the real, ungated
-        // assertion, so it goes stale and must be inlined the day either
-        // mechanism is actually fixed.
+        // ---- RULE 1(a), G6 CLOSED (round three B): was RED on all six
+        // (5.5667 one hole free, 4.6423 one hole anchor, 10.7772 six-hole
+        // ring free, 1.9798 six-hole ring anchor, 2.0354 six-hole valley
+        // free, 1.9811 six-hole valley anchor, all against the 1.8 m
+        // bound). CloserBand's own staging now cuts a span against what
+        // its OTHER side can carry rather than bridging a mismatched-scale
+        // seam with one span (SkinPatterns.cs's StageSpan), TryExtendCloser
+        // refuses a growth that would push a stone past the bound, and an
+        // oversized mid-rail (the SAME nearest-point mismatch, off
+        // midRails rather than off "other") is dropped rather than
+        // shipped, falling back to the two-section loft every fixture
+        // with no mid-rail already uses. Five of six variants now read
+        // CLEAN on this instrument; G5's own anchored-variant symptom
+        // here turned out to be the SAME closer/mid-rail mismatch and is
+        // fixed as the same side effect, unproven only for
+        // RimDistanceFieldWithSeeds's own field-capture symptom (course
+        // count, cap location), which this task does not touch.
+        //
+        // STILL RED on ONE: "one hole, off-seam, free rim" now measures
+        // 4.4563 m at course 14 (was 5.5667 at course 13 before this
+        // fix), but the offending cell is PROVED NOT G6 -- Closer=false,
+        // an ordinary absorbed band cell, and a SEPARATE crown cap at
+        // course 15 independently fails PlanSelfCrosses (measured true
+        // before any overlap test runs), matching the diagnosis's own
+        // words for this symptom, "the true crown cap itself, which
+        // independently self-crosses". Both point at BoundaryRun's own
+        // nearest-point mapping and the level-curve trace beside a hole,
+        // neither of which CloserBand, TryExtendCloser or KeepValidPlans's
+        // tie-break touch -- a mechanism this task's own owner line does
+        // not cover and does not fix. DEFERRED to whichever task takes
+        // that one up (a ninth mechanism, or G1's own re-verification on a
+        // holed fixture the diagnosis flagged as unproven): the claim is
+        // the real, ungated assertion, so it goes stale and must be
+        // inlined the day it is fixed too.
         Deferred(
             "Round three B rule 1(a): no emitted course or closer stone " +
             "on any of the six permanent holed-net variants exceeds the " +
             "maximum piece bound (3 x Size) the ordinary courses obey",
-            "G5 (RimDistanceFieldWithSeeds/SeedGroupsOf's anchor-" +
-            "proximity field capture, SkinPatterns.cs:958,1092) and G6 " +
-            "(CloserBand/TryExtendCloser's ratio-less mismatched-scale " +
-            "closer stitch, SkinPatterns.cs:7204,8008; KeepValidPlans's " +
-            "order-only tie-break, SkinPatterns.cs:2925-2980), docs/" +
-            "superpowers/specs/2026-09-06-skin-holed-net-diagnosis.md; " +
-            "neither is fixed by this task",
+            "an ordinary (non-closer) absorbed band cell and the crown " +
+            "cap's own independent PlanSelfCrosses failure beside a " +
+            "hole, both measured on \"one hole, off-seam, free rim\" " +
+            "only, course 14 (Closer=false) and course 15 (the cap) -- " +
+            "NOT CloserBand, TryExtendCloser or KeepValidPlans's tie-" +
+            "break (G6, SkinPatterns.cs:7204,8008, CLOSED by this task) " +
+            "and not RimDistanceFieldWithSeeds/SeedGroupsOf (G5, " +
+            "SkinPatterns.cs:958,1092, also clean on this instrument as " +
+            "a side effect); likely BoundaryRun's own nearest-point " +
+            "mapping (SkinPatterns.cs) and the level-curve trace near a " +
+            "hole, docs/superpowers/specs/2026-09-06-skin-holed-net-" +
+            "diagnosis.md's own G1 re-verification caveat; not fixed by " +
+            "this task",
             () =>
             {
                 var failing = new List<string>();
@@ -25281,15 +25327,20 @@ internal static class Program
                 }
             });
 
-        // ---- RULE 1(b), surgical: currently RED only on the THREE FREE-
-        // rim variants (0.683 one hole, 0.864 six-hole ring, 0.862 six-
-        // hole valley -- all G6's mismatched-scale stitch), currently
-        // GREEN on all three anchored ones (worst readings 1.407, 1.364,
-        // 1.422, comfortably above the 0.90 floor even though G5 has
-        // already collapsed their course count): asserted DIRECTLY on
-        // the anchored three, a real property worth protecting, and
-        // DEFERRED on the free three, to the same G6 owner as rule 1(a).
-        foreach (var v in variants.Where(v => v.Anchored))
+        // ---- RULE 1(b), G6 CLOSED (round three B): was RED on the three
+        // FREE-rim variants alone (0.683 one hole, 0.864 six-hole ring,
+        // 0.862 six-hole valley, all under the 0.90 floor -- G6's
+        // mismatched-scale closer stitch minting one oversized stone in
+        // place of many ordinary ones, exactly the count collapse the
+        // stitch itself produces), GREEN throughout on the three anchored
+        // ones (1.36 to 1.42, comfortably above the floor even though G5
+        // had already collapsed their course count). The SAME staging,
+        // TryExtendCloser and mid-rail fix that closed rule 1(a)'s G6
+        // reading closes this one too: every one of the six now reads
+        // clean, asserted DIRECTLY rather than deferred, because the
+        // defect it stood over is fixed (Deferred's own rule: a claim
+        // that never fails is stale and must be inlined).
+        foreach (var v in variants)
         {
             var deficit = WorstCountDeficit(
                 madeByLabel[v.Label], cellsByLabel[v.Label], size,
@@ -25300,47 +25351,14 @@ internal static class Program
                     $"{v.Label}: a band's emitted stone count must not " +
                     $"fall under {capacityFloor:F2} of its own area-" +
                     $"derived capacity; course {d.Course} reads " +
-                    $"{d.Ratio:F3}. This anchored variant currently " +
-                    "reads clean (worst 1.36 to 1.42 measured); a " +
-                    "regression here is a NEW defect, not G5 or G6.");
+                    $"{d.Ratio:F3}. Every one of the six permanent " +
+                    "holed-net variants read clean here once G6 " +
+                    "(CloserBand/TryExtendCloser's mismatched-scale " +
+                    "closer stitch, SkinPatterns.cs:7204,8008) was " +
+                    "fixed; a failure here is a NEW regression, not the " +
+                    "defect this instrument was built to catch.");
             }
         }
-        Deferred(
-            "Round three B rule 1(b): no band's emitted stone count, " +
-            "on the three FREE-rim holed-net variants, collapses under " +
-            "0.90 of its own area-derived capacity",
-            "G6 (CloserBand/TryExtendCloser's ratio-less mismatched-" +
-            "scale closer stitch, SkinPatterns.cs:7204,8008; " +
-            "KeepValidPlans's order-only tie-break, SkinPatterns.cs:" +
-            "2925-2980), docs/superpowers/specs/2026-09-06-skin-holed-" +
-            "net-diagnosis.md section 4's G6; not fixed by this task",
-            () =>
-            {
-                var failing = new List<string>();
-                foreach (var v in variants.Where(v => !v.Anchored))
-                {
-                    var deficit = WorstCountDeficit(
-                        madeByLabel[v.Label], cellsByLabel[v.Label], size,
-                        courseHeight, capacityFloor);
-                    if (deficit is { } d)
-                    {
-                        failing.Add(
-                            $"{v.Label}: course {d.Course} at " +
-                            $"{d.Ratio:F3}");
-                    }
-                }
-                if (failing.Count > 0)
-                {
-                    throw new InvalidOperationException(
-                        "No band's emitted stone count on the free-rim " +
-                        $"holed-net variants may fall under " +
-                        $"{capacityFloor:F2} of its own area-derived " +
-                        $"capacity; {failing.Count} of " +
-                        $"{variants.Count(v => !v.Anchored)} free-rim " +
-                        "variants carry one: " +
-                        string.Join("; ", failing) + ".");
-                }
-            });
     }
 
     /// <summary>
