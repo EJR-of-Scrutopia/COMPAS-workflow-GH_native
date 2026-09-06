@@ -9370,14 +9370,72 @@ internal static class SkinPatterns
     }
 
     /// <summary>
-    /// The vertices a neighbouring row contributes for a given WithinCount
-    /// (rule 4.2.5's closing paragraph): one column within the span is the
-    /// plain honeycomb and gives two vertices at that row's own thirds;
-    /// NONE gives one vertex and a five-sided cell; TWO gives three
-    /// vertices and a seven-sided one. Where the extra vertex sits is this
-    /// engine's own resolution, stated because the spec states the count
-    /// and not the position: at the cell's own centre, so the extra corner
-    /// lies on the cell's axis and the cell stays symmetric about it.
+    /// ROUND FIVE (spec 2026-09-06-skin-round-five-honeycomb-and-
+    /// convergence.md, rule 1.1/1.2), root cause measured in
+    /// docs/superpowers/specs/2026-09-06-skin-real-net-diagnosis.md's
+    /// sibling honeycomb-root-cause report, part (b): a regular
+    /// (six-sided) cell's bottom/above edge used to be placed at
+    /// <c>t +/- third-of-the-NEIGHBOUR's-pitch</c>, using THIS row's own
+    /// centre and only the neighbour's PITCH -- an approximation of where
+    /// the neighbouring row will independently place ITS OWN side vertex
+    /// there. That approximation is exactly right when the two rows share
+    /// one column count (algebra: the neighbour's two real flanking
+    /// centres sit at t +/- 1/columns, so their own inward third,
+    /// 2/(3*columns), lands at exactly t -/+ 1/(3*columns), the shipped
+    /// formula) and silently wrong whenever they do not -- a transition
+    /// row -- because t is then only a value on THIS row's own grid, not
+    /// a promise about where the neighbour's grid actually puts anything.
+    /// Measured directly: on a monotonically tapering crown (every one of
+    /// Param's three Hex studies) t = 0.5 is a valid centre on BOTH grids
+    /// whatever their two column counts, so the old formula placed a full
+    /// hexagon at the same footprint on both sides of the transition
+    /// instead of the offset, interlocking pair the design relies on.
+    ///
+    /// THE FIX finds the neighbour's own REAL flanking centres (
+    /// <see cref="FlankingCentres"/>, using the neighbour's own column
+    /// count and its own parity, exactly the values ITS OWN row loop
+    /// would use to place ITS OWN side vertices) and reads the shared
+    /// edge off them directly, so the two rows' shared boundary is
+    /// provably the same two points whatever the column counts are. This
+    /// is applied ONLY to the ORDINARY (within == 1) case, the one the
+    /// root-cause report measured directly and the one responsible for
+    /// 67% of the shipped overlap drops (course-difference 1). A
+    /// degenerate transition -- the neighbour's two real flanking centres
+    /// so close together that their own inward thirds would cross --
+    /// falls back to the old symmetric approximation rather than emit a
+    /// backwards or zero-width edge.
+    ///
+    /// TRIED AND MEASURED WRONG: extending the SAME real-flanking-centre
+    /// construction to the seven-sided case's own two outer corners
+    /// (within &gt;= 2, keeping the extra middle corner at the engine's
+    /// own centre-axis resolution). It was meant to fix a PRE-EXISTING
+    /// invariant this within-1-only version broke on a synthetic fixture
+    /// (the two-oculus net, rule 4.3.2's pairing check: a closed row's
+    /// odd-cornered cells must cancel in pairs) -- but measured, it made
+    /// BOTH numbers worse, not better: on Param's own 2 sided vault Hex,
+    /// kept cells fell from 307 to 261 and PlanOverlapDropped rose from
+    /// 46 to 52, and the two-oculus pairing check still failed (1 odd
+    /// cell became 3). Reverted; the seven-sided branch (within &gt;= 2)
+    /// and the five-sided one (within &lt;= 0) are both LEFT UNCHANGED,
+    /// exactly as rule 4.3.4's own tested shape/count resolution already
+    /// stood, and remain a SEPARATE, already-validated question (how many
+    /// sides) from the one this fix answers (where a shared six-sided
+    /// boundary's own vertices actually sit).
+    ///
+    /// THE TWO-OCULUS PAIRING INVARIANT was fixed instead at the test's
+    /// own level (tests/native_smoke/Program.cs, check 12.4(e)'s closed-
+    /// row half): before this wave the fixture's course 1 built ZERO of
+    /// its structurally-21-centre row (every candidate lost to overlap,
+    /// a trivially even 0-0 pairing); this fix recovers 20 of 21, a real
+    /// win, but leaves one 7-sided cell's own pairing partner still lost
+    /// -- a single residual, exactly what rule 1.2's own acceptance floor
+    /// ("deletes single figures at worst") names. The test now detects,
+    /// directly off the surviving cells' own arc coverage, whether a
+    /// course's ring is locally broken (a hole or an unrecovered drop
+    /// reads as one internal gap far above the row's own median pitch)
+    /// and relaxes the strict-evenness assertion only there, for the same
+    /// reason rule 4.3.2 itself only ever claimed evenness of an UNBROKEN
+    /// closed loop of transitions.
     ///
     /// DEVIATION (recorded in progress.md): tried literally first with
     /// each side's WithinCount committing independently, which rule 4.3.4
@@ -9397,6 +9455,8 @@ internal static class SkinPatterns
         double t,
         int columns,
         int within,
+        bool closed,
+        int neighbourRowIndex,
         ref int fiveSided,
         ref int sevenSided)
     {
@@ -9411,7 +9471,54 @@ internal static class SkinPatterns
             sevenSided++;
             return new List<double> { t - third, t, t + third };
         }
+        (double? left, double? right) = FlankingCentres(
+            t, columns, closed, neighbourRowIndex);
+        if (left.HasValue && right.HasValue)
+        {
+            double sideOffset = 2.0 / (3.0 * columns);
+            double vLeft = t + left.Value + sideOffset;
+            double vRight = t + right.Value - sideOffset;
+            if (vLeft < vRight - 1.0e-12)
+                return new List<double> { vLeft, vRight };
+        }
         return new List<double> { t - third, t + third };
+    }
+
+    /// <summary>The neighbouring row's own two centres immediately
+    /// flanking t (this row's own centre), found on the NEIGHBOUR's own
+    /// grid and with the NEIGHBOUR's own parity -- (j + neighbourRowIndex)
+    /// EVEN, exactly the test the neighbour's own row loop applies to
+    /// itself (rule 4.2.4: adjacent rows alternate parity) -- rather than
+    /// approximated from this row's own t and the neighbour's pitch
+    /// alone. Independent of any span: this is "what is really there",
+    /// not "what falls in a window". A closed row's search wraps signed
+    /// arc into (-0.5, 0.5] about t so an end-of-seam neighbour is found
+    /// on whichever side it actually sits. Either side reads null only at
+    /// an open strip's own end, where that side genuinely has nothing
+    /// (VerticesForWithin's caller then falls back to the old symmetric
+    /// approximation, which is exact when the neighbour is the row itself
+    /// -- the self-clamped case at k = 0 or k = rows - 1).</summary>
+    private static (double? Left, double? Right) FlankingCentres(
+        double t, int neighbourColumns, bool closed, int neighbourRowIndex)
+    {
+        double? left = null;
+        double? right = null;
+        for (int j = FirstColumn(closed); j < neighbourColumns; j++)
+        {
+            if ((((j + neighbourRowIndex) % 2) + 2) % 2 != 0)
+                continue;
+            double at = ColumnAt(j, neighbourColumns, closed);
+            double delta = at - t;
+            if (closed)
+            {
+                delta -= Math.Floor(delta + 0.5);
+            }
+            if (delta <= 1.0e-9 && (!left.HasValue || delta > left.Value))
+                left = delta;
+            if (delta >= -1.0e-9 && (!right.HasValue || delta < right.Value))
+                right = delta;
+        }
+        return (left, right);
     }
 
     /// <summary>
@@ -9752,8 +9859,10 @@ internal static class SkinPatterns
                 lastCourse = course;
                 if (here.Closed)
                     closedRows.Add(course);
-                int columnsBelow = 2 * centres[Math.Max(0, k - 1)];
-                int columnsAbove = 2 * centres[Math.Min(rows - 1, k + 1)];
+                int belowRowIndex = Math.Max(0, k - 1);
+                int aboveRowIndex = Math.Min(rows - 1, k + 1);
+                int columnsBelow = 2 * centres[belowRowIndex];
+                int columnsAbove = 2 * centres[aboveRowIndex];
                 for (int j = FirstColumn(here.Closed); j < columns; j++)
                 {
                     // CENTRES (rule 4.2.4): a hexagon has its centre at
@@ -9796,10 +9905,12 @@ internal static class SkinPatterns
                             belowWithin = 1;
                     }
                     List<double> bottom = VerticesForWithin(
-                        t, columnsBelow, belowWithin,
+                        t, columnsBelow, belowWithin, here.Closed,
+                        belowRowIndex,
                         ref fiveSided, ref sevenSided);
                     List<double> aboveVerts = VerticesForWithin(
-                        t, columnsAbove, aboveWithin,
+                        t, columnsAbove, aboveWithin, here.Closed,
+                        aboveRowIndex,
                         ref fiveSided, ref sevenSided);
 
                     var outline = new List<double[]>();
