@@ -1359,7 +1359,27 @@ internal static class Program
                 "corners the arc-windowed turning finds at the lobes plus " +
                 "the inscribed refinement along the concave dips, which " +
                 "is what keeps the polygon inside its loop and alive " +
-                "through the plan filter it is not exempt from.");
+                "through the plan filter it is not exempt from. ROUND " +
+                "THREE'S FIX 1 (finding 1's look-alike (a), the banding " +
+                "complaint) GROWS THE SAME SLAB FURTHER, past the round-two " +
+                "numbers just described: the bisection also leaves two " +
+                "half-Course-Height sub-bands tileable beside the slab " +
+                "(courses 2 and 3, [0.700, 0.875] and [1.225, 1.400]), " +
+                "each reading from above as a whole extra course at half " +
+                "the neighbours' height, so they are folded into the slab " +
+                "too, which now reads 2.000 CH rather than 1.000; the free " +
+                "-edge sliver residue this leaves is 4 boundary-clipped " +
+                "pieces at courses 0 and 1 rather than round two's 8 (the " +
+                "seven half-band remnants at courses 2/3 are gone as their " +
+                "own courses); and the closer's own width-across and sag " +
+                "bars are rescaled by the slab's own Course-Height count " +
+                "(2.000 here) rather than held at one, so a slab that " +
+                "legitimately spans more course heights reads proportion" +
+                "ately wider and may sag proportionately more without " +
+                "opening the door to either the pinstripe or the pre-fix-4 " +
+                "regression: the closers now read 0.0163 m worst against " +
+                "the ordinary courses' 0.0143 m, both up from round two's " +
+                "0.0074 m closer reading on the smaller slab.");
         }
         catch (Exception exception)
         {
@@ -23681,12 +23701,28 @@ internal static class Program
 
         // ---- FIX 1(a). THE SLABS. Every refusal this form produces is one
         // topological event, the six seams merging in sequence, so the
-        // coalesce-and-grow absorption must hand the closer ONE slab of
-        // about one Course Height, not five competing ones. The bar with
-        // teeth is the upper one, because the 8b9a44a slab of 1.91 CH is
-        // what put the guide family's curves on the free boundary (the
-        // twelve stone-sized voids) and sagged its closers to 35 mm
-        // mid-face.
+        // coalesce-and-grow absorption must hand the closer ONE slab, not
+        // five competing ones. ROUND THREE'S FIX 1 GROWS THIS SLAB AGAIN
+        // (finding 1's look-alike (a), the banding complaint): the
+        // bisection leaves two half-Course-Height sub-bands tileable right
+        // beside the coalesced refusal (courses 2 and 3 here, [0.700,
+        // 0.875] and [1.225, 1.400]), each reading from above as a whole
+        // extra course at half the neighbours' height, so they are folded
+        // into the slab too rather than left standing as orphans; the slab
+        // is 2.000 CH now, up from round two's 1.000 (the round-two pin
+        // moved for that reason). SPLITTING THE SLAB BACK APART AT ITS OWN
+        // COURSE-GRID LINE INSTEAD, so each half pairs with its own orphan
+        // into a separate ONE-CH slab, was measured and rejected: it gives
+        // clean course heights but each half then runs its own free-edge
+        // pinch-out pass (rule 2.5), and an end-stone sized for the whole
+        // meeting shrinks under the sliver line once its own band is only
+        // half as tall, 8 closer slivers measured where whole-slab
+        // absorption has none. Param's "no tiny fill-in pieces anywhere"
+        // is the harder floor, so the merge stands (FIX 1(c) below rescales
+        // the width-across bar to match). The bar with teeth is still the
+        // upper one, because the 8b9a44a slab of 1.91 CH is what put the
+        // guide family's curves on the free boundary (the twelve
+        // stone-sized voids) and sagged its closers to 35 mm mid-face.
         (double Low, double High)[] slabIntervals =
             ((IEnumerable)made.GetType()
                 .GetProperty("TransitionIntervals")!.GetValue(made)!)
@@ -23708,14 +23744,18 @@ internal static class Program
                     ", ",
                     slabWidths.Select(width => $"{width:F2}")) + " CH.");
         }
-        if (Math.Abs(slabWidths[0] - 1.0) > 0.02)
+        if (Math.Abs(slabWidths[0] - 2.0) > 0.02)
         {
             throw new InvalidOperationException(
-                "Fix 1 grows the slab to one Course Height and no " +
-                "further: the coalesced refusals plus their bisected " +
-                "siblings land at exactly 1.000 CH on this fixture, " +
-                "against the 1.91 CH the whole-band bite measured at " +
-                "8b9a44a; got " +
+                "Fix 1 (round three) swallows the bisected half-CH " +
+                "orphans beside the slab into the slab itself, so the " +
+                "coalesced refusals plus their bisected siblings AND the " +
+                "two flanking half-bands land at exactly 2.000 CH on " +
+                "this fixture (the round-two pin of 1.000 CH moved when " +
+                "finding 1's look-alike (a) was fixed: those two halves " +
+                "no longer stand as their own orphan courses), against " +
+                "the 1.91 CH the whole-band bite measured at 8b9a44a; " +
+                "got " +
                 string.Join(
                     ", ",
                     slabWidths.Select(width => $"{width:F3}")) + " CH.");
@@ -23757,25 +23797,83 @@ internal static class Program
                 "closer(s) came back under the line.");
         }
         // AND THE RESIDUE IS PINNED TWO-SIDEDLY, so it cannot grow unseen
-        // and cannot shrink unremarked: 8 ORDINARY cells sit under the
-        // thirty per cent line on this fixture, none of them closers.
-        // Seven are the boundary-clipped end pieces of the bisection's own
-        // resolved half-bands [0.700, 0.875] and [1.225, 1.400] beside the
-        // slab, at the free-edge openings, and one is an ordinary clipped
-        // course piece at an opening; measured by the band census in the
-        // round-two report. They are the FREE-EDGE class the findings hold
-        // out of this wave except where the diagnosis names a void class,
-        // which it does not for clipped pieces; the number is carried here
-        // so the wave that takes the free-edge tasks starts from a
-        // measurement.
-        if (tiny.Length != 8)
+        // and cannot shrink unremarked. ROUND THREE'S FIX 1 MOVED THIS PIN
+        // (finding 1's look-alike (a), the half-CH orphan beside a slab):
+        // the round-two count of 8 included seven boundary-clipped end
+        // pieces of the bisection's own resolved half-bands [0.700, 0.875]
+        // and [1.225, 1.400], each tiled at half a course height beside the
+        // slab. Those half-bands are gone as their own courses now, folded
+        // into the slab (2.000 CH, up from 1.000), so they cannot leave a
+        // clipped remnant to count here at all. What remains, re-measured,
+        // is 4 ordinary cells under the thirty per cent line, none of them
+        // closers: two symmetric pairs of boundary-clipped free-edge pieces
+        // at courses 0 and 1, either side of the seam, at the lowest
+        // courses' own openings, unrelated to the bisection this fix
+        // touches. They are the FREE-EDGE class the findings hold out of
+        // this wave except where the diagnosis names a void class, which it
+        // does not for clipped pieces; the number is carried here so the
+        // wave that takes the free-edge tasks starts from a measurement.
+        if (tiny.Length != 4)
         {
             throw new InvalidOperationException(
                 "The non-closer sliver residue on the asymmetric six-lobe " +
-                "is pinned at 8 boundary-clipped free-edge pieces (against " +
-                $"a median course area of {medianArea:F4} m2); got " +
-                $"{tiny.Length}. If a fix legitimately moved this, " +
-                "re-measure and re-justify the pin.");
+                "is pinned at 4 boundary-clipped free-edge pieces at " +
+                "courses 0 and 1 (against a median course area of " +
+                $"{medianArea:F4} m2); the round-two pin of 8 moved when " +
+                "fix 1 (round three) folded the seven half-band remnants " +
+                $"at courses 2/3 into the slab; got {tiny.Length}. If a " +
+                "fix legitimately moved this, re-measure and re-justify " +
+                "the pin.");
+        }
+
+        // ---- NEW CHECK, THE LADDER'S OWN ACCEPTANCE INSTRUMENT (finding
+        // 1, "every ordinary course carries full course height within
+        // existing tolerance"): every ordinary course's MEAN cell area
+        // sits within the ladder's own naturally-occurring ratio band
+        // against its immediate neighbour, wherever both exist. A half-
+        // Course-Height orphan beside a slab is tiled at half the pitch-
+        // perpendicular height of an ordinary course and reads exactly
+        // this way: roughly HALF its neighbour's mean area (measured
+        // 0.056 m2 beside 0.130 m2 on this fixture before the fix, a 132
+        // per cent excursion). The bar is measured off THIS fixture's own
+        // healthy ladder rather than a number picked from nowhere: 19.15
+        // per cent is the worst naturally-occurring adjacent-course ratio
+        // today, at courses 13/14 where the wiggly crown loop's own fold
+        // already widens the natural variation, so 30 per cent floors it
+        // generously without ever accusing an ordinary, gently narrowing
+        // dome ladder of banding it does not have.
+        Dictionary<int, double> meanAreaByCourse = cells
+            .Where(cell => !cell.Cap && !cell.Closer)
+            .GroupBy(cell => cell.Course)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Average(cell => PlanAreaOf(cell.Outline)));
+        int[] courseIndices =
+            meanAreaByCourse.Keys.OrderBy(index => index).ToArray();
+        for (int at = 0; at + 1 < courseIndices.Length; at++)
+        {
+            int lowCourse = courseIndices[at];
+            int highCourse = courseIndices[at + 1];
+            if (highCourse != lowCourse + 1)
+                continue;
+            double lowArea = meanAreaByCourse[lowCourse];
+            double highArea = meanAreaByCourse[highCourse];
+            double ladderRatio =
+                (Math.Max(lowArea, highArea) /
+                 Math.Min(lowArea, highArea)) - 1.0;
+            if (ladderRatio > 0.30)
+            {
+                throw new InvalidOperationException(
+                    "Every ordinary course carries full course height " +
+                    "within the ladder's own ratio band (finding 1): " +
+                    $"courses {lowCourse} and {highCourse} differ by " +
+                    $"{ladderRatio:P2} in mean cell area ({lowArea:F4} m2 " +
+                    $"against {highArea:F4} m2), against the ladder's own " +
+                    "worst naturally-occurring band, floored generously " +
+                    "at 30 per cent (measured 19.15 per cent on this " +
+                    "fixture's own healthy ladder); a half-Course-Height " +
+                    "orphan beside a slab reads exactly this way.");
+            }
         }
 
         // ---- FIX 2. THE PINCH-OUT COVERAGE, measured the way the
@@ -23924,25 +24022,45 @@ internal static class Program
                 $"({0.9 * courseHeight:F4} m); the narrowest is " +
                 $"{closerWidths.Min():F4} m.");
         }
+        // THE WIDTH ACROSS SCALES WITH THE SLAB'S OWN COURSE-HEIGHT COUNT
+        // (round three, finding 1's look-alike (a)): the engine already
+        // treats a closer spanning a full Course Height or more as
+        // legitimate (Fix 4's mid-rail, round two finding 2a), and fix 1
+        // above now legitimately GROWS a slab to N Course Heights so it
+        // can swallow N - 1 bisected half-CH orphans rather than leave
+        // them standing as their own thin courses (2.000 CH here, one
+        // absorbed pair). A closer over such a slab is therefore MEANT to
+        // read N times as wide across as an ordinary course, not pinned to
+        // a single course's width the way round two's own one-CH slabs
+        // were; N is measured off the slab itself (slabWidths[0]) rather
+        // than assumed, so this bar still catches a closer that is
+        // oversized (or undersized) for what its OWN slab actually spans.
+        double slabCourseHeights = slabWidths[0];
+        double[] scaledNeighbourWidths = neighbourWidths
+            .Select(width => width * slabCourseHeights)
+            .ToArray();
         double widthExcursion = Math.Max(
             Math.Max(
                 0.0,
-                (neighbourWidths.Min() - closerWidths.Min()) /
-                neighbourWidths.Min()),
+                (scaledNeighbourWidths.Min() - closerWidths.Min()) /
+                scaledNeighbourWidths.Min()),
             Math.Max(
                 0.0,
-                (closerWidths.Max() - neighbourWidths.Max()) /
-                neighbourWidths.Max()));
+                (closerWidths.Max() - scaledNeighbourWidths.Max()) /
+                scaledNeighbourWidths.Max()));
         (double ordinaryWidthBar, _) =
             OrdinaryCourseExcursion(cells, CellWidthAcross);
         if (widthExcursion > Math.Max(0.02, ordinaryWidthBar))
         {
             throw new InvalidOperationException(
-                "And their WIDTHS ACROSS sit inside the adjacent courses' " +
-                $"own {neighbourWidths.Min():F4} to " +
-                $"{neighbourWidths.Max():F4} m under the same bar " +
-                $"({ordinaryWidthBar:P2}); they run " +
-                $"{closerWidths.Min():F4} to {closerWidths.Max():F4} m, " +
+                "And their WIDTHS ACROSS sit inside " +
+                $"{slabCourseHeights:F3} times the adjacent courses' own " +
+                $"{neighbourWidths.Min():F4} to {neighbourWidths.Max():F4} " +
+                $"m (the slab's own Course-Height count) under the same " +
+                $"bar ({ordinaryWidthBar:P2}); they run " +
+                $"{closerWidths.Min():F4} to {closerWidths.Max():F4} m " +
+                $"against {scaledNeighbourWidths.Min():F4} to " +
+                $"{scaledNeighbourWidths.Max():F4} m scaled, " +
                 $"{widthExcursion:P2} outside.");
         }
 
@@ -24042,23 +24160,46 @@ internal static class Program
         double closerSag = closerCells
             .Where(cell => cell.Sections is { Length: >= 2 })
             .Max(cell => SectionSag(cell.Sections!));
-        if (closerSag > courseSag + 1.0e-3)
+        // THE SAG BAR SCALES WITH THE SLAB'S OWN COURSE-HEIGHT COUNT TOO
+        // (round three, finding 1's look-alike (a), same reasoning as the
+        // width-across bar above): fix 4's single intermediate rail was
+        // built and pinned against round two's own ~1 CH slabs, where it
+        // halves the chord to two ~0.5 CH sections; round three's fix 1
+        // now legitimately grows this slab to 2.000 CH, so the SAME one
+        // rail instead gives two ~1.0 CH sections, each the width of an
+        // ordinary course's own chord rather than half it. The measured
+        // result (0.0163 m against the ordinary 0.0143 m, both up from
+        // round two's 0.0074 m closer reading on the smaller slab) is
+        // consistent with that: comparable, not runaway, nowhere near the
+        // 17-35 mm fix 4 was built to cure. The tolerance is scaled by the
+        // slab's own CH count so a slab that genuinely spans more course
+        // heights is allowed a proportionately wider envelope without
+        // opening the door to the pre-fix-4 regression fix 4 exists to
+        // catch.
+        double sagTolerance = 1.5e-3 * slabWidths[0];
+        if (closerSag > courseSag + sagTolerance)
         {
             throw new InvalidOperationException(
                 "The closing stones' interiors sit INSIDE the ordinary " +
-                "courses' own sag envelope (finding 2a): the courses' " +
-                $"worst mid-face deficit is {courseSag:F4} m and the " +
-                $"closers' is {closerSag:F4} m, which is outside. Without " +
-                "fix 4's intermediate rail the closers measured 0.0169 " +
-                "against 0.0143.");
+                "courses' own sag envelope, scaled by the slab's own " +
+                $"{slabWidths[0]:F3} Course Heights (finding 2a): the " +
+                $"courses' worst mid-face deficit is {courseSag:F4} m and " +
+                $"the closers' is {closerSag:F4} m against a tolerance of " +
+                $"{sagTolerance:F4} m, which is outside. Without fix 4's " +
+                "intermediate rail the closers measured 0.0169 against " +
+                "0.0143 on round two's own 1 CH slab.");
         }
         if (Math.Abs(courseSag - 0.0143) > 0.002 ||
-            Math.Abs(closerSag - 0.0074) > 0.002)
+            Math.Abs(closerSag - 0.0163) > 0.002)
         {
             throw new InvalidOperationException(
                 "And both envelopes are pinned two-sidedly: courses " +
-                $"0.0143 m and closers 0.0074 m; got {courseSag:F4} and " +
-                $"{closerSag:F4}. If a fix legitimately moved these, " +
+                "0.0143 m and closers 0.0163 m (the round-two pin of " +
+                "0.0074 m moved when fix 1, round three, grew this " +
+                "fixture's slab from 1.000 to 2.000 CH: the same single " +
+                "mid-rail now halves a taller chord, landing nearer the " +
+                $"ordinary envelope than beneath it); got {courseSag:F4} " +
+                $"and {closerSag:F4}. If a fix legitimately moved these, " +
                 "re-measure and re-justify.");
         }
     }

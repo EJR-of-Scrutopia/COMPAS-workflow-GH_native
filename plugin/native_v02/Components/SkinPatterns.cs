@@ -4288,6 +4288,81 @@ internal static class SkinPatterns
                     }
                     retrace |= slabLevels.Count != levelsBefore;
                 }
+                // FIX (2026-09-05 round three, finding 1's look-alike (a)):
+                // a band the bisection halved (rule 8.2.2, Depth > 0) can
+                // pass correspondence on its own at HALF a course height and
+                // survive as tileable right beside this slab, reading from
+                // above as a whole extra course at half the neighbours'
+                // height, the banding complaint. There is no stop above
+                // that serves it on its own terms: it is not needed to
+                // reach one Course Height (the slab already has that) and
+                // it is too short to read as a course of its own, so every
+                // such orphan touching this slab is swallowed into it
+                // outright, on both sides, however many the recursion left
+                // (6asym measured two: [0.700, 0.875] and [1.225, 1.400],
+                // each 0.50 CH, either side of the [0.875, 1.225] slab,
+                // giving one 2.000 CH slab).
+                //
+                // SPLITTING THE SLAB BACK APART AT THE COURSE-GRID LINE IT
+                // STILL CARRIES (every interior r * CH boundary, traced
+                // before any seam was found, rule 1.5.3) WAS TRIED AND
+                // MEASURED WORSE. It does give two ordinary-height bands,
+                // but each then runs its OWN pinch-out pass at the free
+                // edges (rule 2.5), and an end-stone sized for a full
+                // meeting shrinks under the thirty per cent sliver line
+                // once its own band is only half as tall: 8 closer slivers
+                // measured on 6asym where whole-slab absorption has none.
+                // Param's own words rule between the two defects -- "no
+                // tiny fill-in pieces anywhere" is the harder floor, so the
+                // merge stands and the width-across bar (checked further
+                // below, rule 3.2) is rescaled to the slab's own
+                // course-height count instead of held at one: the engine
+                // already treats a closer spanning a full Course Height or
+                // more as legitimate (Fix 4's mid-rail, round two finding
+                // 2a), so a slab absorbing N course-heights of banding is
+                // meant to read N times as wide across as an ordinary
+                // course, not pinned to a single course's width.
+                while (seams.Count > 0)
+                {
+                    int orphan = -1;
+                    bool orphanAbove = false;
+                    for (int scan = 0; scan < tileable.Count; scan++)
+                    {
+                        SkinBandInterval band = tileable[scan];
+                        if (band.Depth <= 0 ||
+                            band.High - band.Low >= courseHeight - 1.0e-9)
+                        {
+                            continue;
+                        }
+                        if (top is not null &&
+                            Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
+                            Math.Abs(band.High - top.High) <= 1.0e-12)
+                        {
+                            continue;
+                        }
+                        if (Math.Abs(band.High - lo) <= 1.0e-12)
+                        {
+                            orphan = scan;
+                            orphanAbove = false;
+                            break;
+                        }
+                        if (Math.Abs(band.Low - hi) <= 1.0e-12)
+                        {
+                            orphan = scan;
+                            orphanAbove = true;
+                            break;
+                        }
+                    }
+                    if (orphan < 0)
+                        break;
+                    SkinBandInterval taken = tileable[orphan];
+                    course = Math.Min(course, taken.Course);
+                    if (orphanAbove)
+                        hi = taken.High;
+                    else
+                        lo = taken.Low;
+                    tileable.RemoveAt(orphan);
+                }
                 slabs[at] = (course, lo, hi);
             }
             if (retrace)
