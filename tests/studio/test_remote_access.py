@@ -723,8 +723,8 @@ def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
     assert 'const PRINCIPAL_SKIN = "metal/steel-polished-dark";' in js
     bars = _js_function(js, "function buildPrincipalBars()")
     assert "new THREE.BoxGeometry(section, 1, section)" in bars
-    assert "Math.max(0.044, 2.2 * state.wireRadius)" in bars, (
-        "the bars stay just over the wires' diameter at any slider size")
+    assert "Math.max(0.064, 2.2 * state.wireRadius)" in bars, (
+        "64 mm on his word, and still clear of the wires at any slider size")
     assert "materials.bar.clone()" in bars
     assert "ensureLibraryMaterial(PRINCIPAL_SKIN)" in bars
     assert "state.objects.principal !== mesh) return;" in bars, (

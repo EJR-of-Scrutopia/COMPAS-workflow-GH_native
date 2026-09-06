@@ -1901,10 +1901,11 @@ function buildPrincipalBars() {
   if (!state.bundle) return;
   const pairs = principalEdges();
   if (!pairs.length) return;
-  // A square section just over the wires' own diameter, so the tube
-  // inside a principal bar never surfaces through its faces -- and it
-  // keeps that margin if the Wire size slider grows the net.
-  const section = Math.max(0.044, 2.2 * state.wireRadius);
+  // A square section comfortably over the wires' own diameter, so the
+  // tube inside a principal bar never surfaces through its faces -- and
+  // it keeps that margin if the Wire size slider grows the net. 64 mm
+  // on his word ("increase the size by another 20mm" over the 44).
+  const section = Math.max(0.064, 2.2 * state.wireRadius);
   const geometry = new THREE.BoxGeometry(section, 1, section);
   geometry.translate(0, 0.5, 0);
   const mesh = new THREE.InstancedMesh(
