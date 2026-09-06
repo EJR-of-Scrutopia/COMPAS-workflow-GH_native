@@ -1389,6 +1389,36 @@ internal static class Program
 
         try
         {
+            ValidateSkinRidgePlateau(plugin);
+            Console.WriteLine(
+                "PASS  Skin ridge plateau (spec 2026-09-05 round three, " +
+                "finding 2's G1), the diagnosis's own barrel fixture lifted " +
+                "into the harness: on a barrel whose crest falls BETWEEN " +
+                "two vertex rows, correspondence never fails, so the seam " +
+                "machinery's own trigger never fired and the ladder's own " +
+                "epsilon cut left the whole crest ribbon uncovered with " +
+                "zero refusals; the two open strips at the cap band's own " +
+                "bottom boundary are now read directly and closed with " +
+                "cross-ridge stones, full course width, coursed at the " +
+                "pattern's own pitch and lofted through the recovered seam " +
+                "as a third rail, exactly the closer's own species covering " +
+                "a plateau no refusal ever flags rather than a refused " +
+                "interval. The crest strip above dMax minus epsilon samples " +
+                "to a real, non-vacuous plan area on the even barrel and " +
+                "its own uncovered reading falls from the ribbon the " +
+                "diagnosis measured to under one sliver stone's floor; the " +
+                "odd barrel, ridge exactly on a vertex row, stays the clean " +
+                "hairline it always was. CapQualifies keeps refusing a cap " +
+                "on both, unmoved, because a ridge is not a disc.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin ridge plateau: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -17846,6 +17876,52 @@ internal static class Program
     }
 
     /// <summary>
+    /// THE ROUND-THREE RIDGE-PLATEAU FIXTURE (spec 2026-09-05 round three,
+    /// finding 2's G1), lifted from the diagnosis into a permanent fixture:
+    /// the same tent barrel as <see cref="SkinBarrelNet"/>, x 0..6 in seven
+    /// columns, but with an EVEN row count, j 0..5 over y 0..5 in six rows,
+    /// so the tent's own peak at y = 2.5 falls BETWEEN two vertex rows
+    /// rather than on one. j = 2 and j = 3 both carry z = 2.0, tied, and
+    /// the whole row of faces between them is a flat PLATEAU, not a point,
+    /// which is the diagnosis's generic even-row case (the odd-row
+    /// <see cref="SkinBarrelNet"/> plus <see cref="SkinBarrelRim"/> is its
+    /// clean, ridge-ON-a-row sibling, kept as the regression anchor beside
+    /// it: check 12.8(d)'s SAME construction, one row taller).
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinBarrelEvenNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 5; j++)
+        {
+            double z = 2.5 - Math.Abs(j - 2.5);
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new double[] { i, j, z });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 5; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>The even barrel's rim: both eaves, j = 0 and j = 5.</summary>
+    private static int[] SkinBarrelEvenRim()
+    {
+        var rim = new List<int>();
+        for (int i = 0; i <= 6; i++)
+        {
+            rim.Add(i);
+            rim.Add(5 * 7 + i);
+        }
+        return rim.ToArray();
+    }
+
+    /// <summary>
     /// Check 12.3(a)'s one-way thrust, stated as DATA rather than assumed:
     /// every edge running ALONG the barrel, between (i, j) and (i + 1, j),
     /// carries a compression of 1 kN, and every edge ACROSS it, between
@@ -24353,6 +24429,129 @@ internal static class Program
             }
         }
         return uncovered;
+    }
+
+    /// <summary>
+    /// FIX 2 (round three, finding 2's G1: the ridge plateau), the
+    /// diagnosis's own barrel fixture lifted verbatim into a permanent
+    /// harness check (spec 2026-09-05-skin-round-three-diagnosis.md,
+    /// "2a. The uniform ridge: two ordinary half-vaults, and a crest the
+    /// ladder never covers").
+    ///
+    /// ON A BARREL WHOSE CREST FALLS BETWEEN TWO VERTEX ROWS (the generic
+    /// quad-mesh case, <see cref="SkinBarrelEvenNet"/>), correspondence
+    /// never fails: both open strips run 2 to 2 all the way to the top,
+    /// so the seam machinery's own trigger, a correspondence FAILURE,
+    /// never fires. Before this wave the ladder's own epsilon cut, dMax
+    /// minus a millionth of the field range (rule 1.5.2), folded both
+    /// sides' ordinary tiling short of the true crest and left the whole
+    /// ribbon between them uncovered with zero refusals, zero drops and
+    /// zero warnings: the diagnosis measured 1.60 m2 on its own larger
+    /// fixture. The fix reads the two open strips at the cap band's own
+    /// bottom boundary -- CapQualifies already refuses a cap there,
+    /// correctly, because a ridge is not a disc -- and closes the ribbon
+    /// with cross-ridge stones, full course width, coursed at the
+    /// pattern's own pitch: the measuring instrument here is the same
+    /// SlabUncoveredArea a slab check above uses, over the field range
+    /// [dMax - epsilon, dMax] rather than a refused interval.
+    ///
+    /// BOTH PARITIES ARE MEASURED, because mesh parity is what decides
+    /// whether the defect shows at all (the diagnosis's own finding): the
+    /// even barrel is the fixture that carries a real plateau and the
+    /// vacuous-zero guard below insists its own sampled crest area is not
+    /// nought before trusting a zero uncovered reading; the odd barrel
+    /// (<see cref="SkinBarrelNet"/> plus <see cref="SkinBarrelRim"/>,
+    /// already check 12.8(d)'s course-presence fixture, ridge exactly ON
+    /// a vertex row) is the clean sibling and the regression guard, whose
+    /// own crest is a hairline the fix must not disturb.
+    /// </summary>
+    private static void ValidateSkinRidgePlateau(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double Size = 0.6;
+        const double CourseHeight = 0.5;
+
+        foreach ((string label, (double[][] Vertices, int[][] Faces) fixture,
+                  int[] rim, bool expectPlateau) in
+                 new (string, (double[][], int[][]), int[], bool)[]
+                 {
+                     ("even barrel (ridge between rows)",
+                         SkinBarrelEvenNet(), SkinBarrelEvenRim(), true),
+                     ("odd barrel (ridge on a row)",
+                         SkinBarrelNet(), SkinBarrelRim(), false)
+                 })
+        {
+            object net = SkinNetWith(
+                netType, edgeType, fixture.Vertices, fixture.Faces, rim,
+                Array.Empty<(int, int, double)>());
+            object built = courses.Invoke(
+                null, new object[] { net, Size, CourseHeight })!;
+            var cells = SkinCells(built);
+            if (cells.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Courses built no cells at all.");
+            }
+            RequireDisjointSimplePlans(
+                cells.Select(cell => cell.Outline).ToList(),
+                $"{label}, ridge plateau fixture");
+
+            double[][] vertices = ((IEnumerable)netType
+                    .GetProperty("Vertices")!.GetValue(net)!)
+                .Cast<double[]>().ToArray();
+            int[][] faces = ((IEnumerable)netType
+                    .GetProperty("Faces")!.GetValue(net)!)
+                .Cast<int[]>().ToArray();
+            double[] field = SkinLevels(net);
+            double dMin = field.Where(double.IsFinite).Min();
+            double dMax = field.Where(double.IsFinite).Max();
+            double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
+            double topCut = dMax - epsilon;
+
+            double uncovered = SlabUncoveredArea(
+                vertices, faces, field, topCut, dMax + 1.0e-6,
+                cells.Select(cell => cell.Outline).ToArray(),
+                out double crestArea);
+            // THE VACUOUS-ZERO GUARD (this repo's own standing habit): a
+            // zero uncovered reading over NO sampled area at all would
+            // pass for the wrong reason. Asked only of the fixture the
+            // diagnosis says carries a real plateau; the odd barrel's own
+            // crest is a genuine hairline and is not held to it.
+            if (expectPlateau && !(crestArea > 1.0e-4))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the crest strip above the ladder's own " +
+                    $"top cut ({topCut:F6} m of dMax {dMax:F6} m) " +
+                    $"sampled to {crestArea:F6} m2 of plan area; this " +
+                    "fixture is meant to carry a real plateau there, and " +
+                    "a vacuous area makes the uncovered reading below " +
+                    "meaningless.");
+            }
+            double medianArea = cells
+                .Select(cell => PlanAreaOf(cell.Outline))
+                .OrderBy(area => area)
+                .ElementAt(cells.Length / 2);
+            double sliverFloor = Math.Max(0.3 * medianArea, 0.02);
+            Console.WriteLine(
+                $"      Skin ridge plateau ({label}): crest strip " +
+                $"{crestArea:F4} m2 (dMax {dMax:F4}, top cut " +
+                $"{topCut:F4}), uncovered {uncovered:F4} m2 against a " +
+                $"floor of {sliverFloor:F4} m2.");
+            if (uncovered > sliverFloor)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the crest strip above the ladder's own " +
+                    $"top cut ({topCut:F6} m of dMax {dMax:F6} m) must " +
+                    "be covered by ridge stones at course size, no " +
+                    $"slivers (finding 2's G1); {uncovered:F4} m2 of its " +
+                    $"{crestArea:F4} m2 own plan area is uncovered, " +
+                    $"against a floor of {sliverFloor:F4} m2.");
+            }
+        }
     }
 
     /// <summary>

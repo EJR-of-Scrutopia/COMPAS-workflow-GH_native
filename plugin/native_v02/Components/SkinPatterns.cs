@@ -4527,6 +4527,107 @@ internal static class SkinPatterns
                 top is not null &&
                 Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
                 Math.Abs(band.High - top.High) <= 1.0e-12;
+
+            // FIX 2 (round three, finding 2's G1: the ridge plateau). A
+            // barrel-class ridge never refuses: correspondence holds 2 to
+            // 2 all the way up (ResolveBands, Corresponds passes at every
+            // level), so the cap band's two components are handed to
+            // ORDINARY per-side tiling below, each folding at the
+            // ladder's own top cut, dMax - epsilon (rule 1.5.2), and that
+            // ordinary tiling is CORRECT and stays: it is the ONLY family
+            // that reaches from the course below up to the top cut, and
+            // this fix does not touch it. Where the crest is a genuine
+            // PLATEAU rather than a point -- the field attains dMax
+            // across a whole strip of faces, the generic even-row mesh --
+            // that top cut is a fraction of the FIELD range and not of
+            // plan distance, and the STRIP BEYOND IT, between the two
+            // sides' own top-cut curves, is what the ordinary tiling
+            // never reaches: measured 1.60 m2 on the diagnosis's even
+            // barrel, a hairline ribbon on the odd one where a vertex row
+            // sits exactly on the crest.
+            //
+            // CapQualifies ALREADY refuses a ridge correctly (both
+            // components are OPEN strips, never a disc), so nothing here
+            // touches the cap. What is missing is the CLOSER: the seam
+            // this net carries recovers a spine for exactly this meeting
+            // (SeamCurves, rule 1.1) and no code path reads it, because
+            // the closer's own trigger is a correspondence FAILURE and a
+            // ridge never fails one. The fix is the same species that
+            // covers a refused interval elsewhere, now covering a plateau
+            // no refusal ever flags: the two sides' own TOP-CUT curves
+            // (uppers, the ones the ordinary tiling already folds against
+            // and stops at), paired guide to other exactly as CloserBand
+            // already pairs a slab's two families, coursed at the
+            // pattern's own pitch, with the recovered seam as the third
+            // rail so the loft does not chord across the residual (Fix
+            // 4's own rule, asked for wherever a closer spans a full
+            // Course Height or more; the joint bound is given a full
+            // Course Height of thickness rather than the residual's own
+            // sliver of field range, because the residual's two flanking
+            // curves sit a COURSE HEIGHT apart in PLAN -- one side's own
+            // top cut to the other's -- even though they are separated by
+            // a mere epsilon of field, which is the crest's whole nature).
+            //
+            // GUARDED TIGHTLY, so nothing this wave does not own moves:
+            // exactly two OPEN components at this course's own top cut, a
+            // genuine seam recovered (two rim families), and Depth 0 --
+            // the band correspondence passed WHOLE, on the first attempt,
+            // with no bisection and no refusal anywhere near it. A saddle
+            // refusal (CapQualifies' OTHER reason, two CLOSED loops
+            // meeting) never has an open component and never reaches this
+            // branch; a form-found ridge whose correspondence DOES fail
+            // (finding 2's G2, the wavy barrel) never leaves a Depth-0
+            // band at this course for `top` to find, so it stays on the
+            // existing slab-and-closer path untouched.
+            bool isRidge =
+                isCapBand &&
+                band.Depth == 0 &&
+                uppers.Count == 2 &&
+                !uppers[0].Closed && !uppers[1].Closed &&
+                seams.Count > 0;
+            if (isRidge)
+            {
+                double ridgeThickness = dMax - band.Low;
+                bool ridgeFullCourse =
+                    ridgeThickness >= courseHeight - 1.0e-9;
+                List<SkinLevelCurve>? ridgeMidRails = null;
+                if (ridgeFullCourse)
+                {
+                    SkinLevelCurve? nearestSeam = NearestCurveToPoint(
+                        PointAt(uppers[0], uppers[0].Length / 2.0),
+                        seams
+                            .Select(seam => Finish(seam.ToList(), dMax, false))
+                            .ToList());
+                    if (nearestSeam is not null)
+                    {
+                        ridgeMidRails = new List<SkinLevelCurve>
+                        {
+                            nearestSeam
+                        };
+                    }
+                }
+                foreach ((SkinLevelCurve guide, SkinCell cell) in CloserBand(
+                             new[] { uppers[0] },
+                             new[] { uppers[1] },
+                             band.Course,
+                             size,
+                             minimumPiece,
+                             ridgeThickness,
+                             ridgeFullCourse,
+                             true,
+                             ridgeMidRails,
+                             ref mergedPieces,
+                             ref mergedShortKept,
+                             ref mergedStillShort,
+                             ref weldCollapsed,
+                             ref closerRefused,
+                             ref closerUndersized))
+                {
+                    closerCells++;
+                    keyed.Add((
+                        cell.Course, RankOf(guide), guide.Level, cell));
+                }
+            }
             for (int component = 0; component < mids.Count; component++)
             {
                 SkinLevelCurve mid = mids[component];
