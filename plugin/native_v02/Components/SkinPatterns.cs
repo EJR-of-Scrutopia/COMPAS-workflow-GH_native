@@ -629,6 +629,28 @@ internal sealed record SkinPatternResult(
     /// map does not. Zero on every net whose seam-side sub-bands are already
     /// sound, which is every fixture but the two-hump barrel.</summary>
     public int SeamBandsRemapped { get; init; }
+
+    /// <summary>FIX 4 (round three, TRUTH-TELLING, Param's own ruling): every
+    /// SLAB and RIDGE residue this pattern is itself responsible for closing
+    /// that still carries plan area above SliverFloor once the closer has
+    /// had its say, one entry per residue, each carrying its own area,
+    /// mechanism, course, field range and plan location (BandUncoveredArea,
+    /// FormatUncoveredRegion). Empty on most fixtures, including every one
+    /// round three's own fixes already close; NOT empty on a fixture that
+    /// still carries a real, unfixed hole in either mechanism (the wavy
+    /// barrel's own dip, left standing by fix 3's own degeneracy guard, is
+    /// the standing example this wave ships with). Deliberately does NOT
+    /// cover G3 (the cap-lens crescents) or G4 (the shadowed free-edge
+    /// wedge): both carry their OWN prescribed geometric remedy in the
+    /// diagnosis, and a warning from an instrument that only REPORTS would
+    /// point an author at the wrong fix. This is the field the component
+    /// reads to raise its own Warning (SkinComponents.
+    /// UncoveredRegionsWarningLine): the diagnosis's own complaint was that
+    /// the plateau ribbon "ships uncovered with zero refusals, zero drops
+    /// and zero warnings", and a hole this pattern's own machinery cannot
+    /// see is not one an author should have to find by eye either.</summary>
+    public IReadOnlyList<string> UncoveredRegions { get; init; } =
+        Array.Empty<string>();
 }
 
 /// <summary>
@@ -2178,6 +2200,230 @@ internal static class SkinPatterns
             covered += Math.Abs(twice) / 2.0;
         }
         return covered / whole;
+    }
+
+    /// <summary>
+    /// FIX 4 (round three, TRUTH-TELLING, Param's own ruling): the plan
+    /// area of the smallest stone this pattern would ever call
+    /// legitimate, one Minimum Piece long by one Course Height tall, so a
+    /// residue the size of the pattern's own smallest sensible piece
+    /// never reads as a hole while anything bigger always does. THE SAME
+    /// NUMBER every slab and ridge residue below is measured against, so
+    /// one standing floor decides "sliver or hole" for every mechanism
+    /// this instrument covers. The tiny absolute floor beneath it guards
+    /// only against float noise on a degenerate Minimum Piece (S with
+    /// clampedMinPiece at its own zero), never against a real hole: no
+    /// fixture in this pattern's own harness has a legitimate residue
+    /// anywhere near 1 cm2.
+    /// </summary>
+    private static double SliverFloor(double minimumPiece, double courseHeight) =>
+        Math.Max(minimumPiece * courseHeight, 1.0e-3);
+
+    /// <summary>
+    /// FIX 4 (round three, TRUTH-TELLING): the plan area, between two
+    /// FIELD levels, that no CANDIDATE outline covers, ported near-
+    /// verbatim from the round-three diagnosis's own probe and from the
+    /// harness's own SlabUncoveredArea (tests/native_smoke/Program.cs).
+    /// It is the SAME arithmetic on purpose and not an independent
+    /// reimplementation: this function's whole job is honesty about the
+    /// pattern's OWN output, and a production warning built from a
+    /// SECOND, drifted copy of the clip-and-sample measurement would be
+    /// exactly the "two readings of one seam" failure this codebase's own
+    /// history warns against elsewhere.
+    ///
+    /// Every net face is clipped to [low, high] on the linear field
+    /// interpolant (the ladder's own clip), fan-triangulated down to a
+    /// small sample scale, and each sample leaf's centroid is tested
+    /// against every candidate outline's own bounding box and the
+    /// engine's own PlanContains. OUT bandArea carries the region's own
+    /// sampled plan area (so a caller can tell a genuine zero residue
+    /// from a clip loop that visited nothing), and OUT centroidX/Y carry
+    /// the UNCOVERED residue's own area-weighted plan centroid (NaN where
+    /// nothing is uncovered), a place on the model an author can go and
+    /// look rather than a course number alone.
+    /// </summary>
+    private static double BandUncoveredArea(
+        SkinNet net,
+        double low,
+        double high,
+        IReadOnlyList<IReadOnlyList<double[]>> outlines,
+        out double bandArea,
+        out double centroidX,
+        out double centroidY)
+    {
+        bandArea = 0.0;
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumA = 0.0;
+        var boxes = new (double MinX, double MaxX, double MinY, double MaxY)[
+            outlines.Count];
+        for (int at = 0; at < outlines.Count; at++)
+        {
+            IReadOnlyList<double[]> ring = outlines[at];
+            double minX = double.PositiveInfinity;
+            double maxX = double.NegativeInfinity;
+            double minY = double.PositiveInfinity;
+            double maxY = double.NegativeInfinity;
+            foreach (double[] point in ring)
+            {
+                minX = Math.Min(minX, point[0]);
+                maxX = Math.Max(maxX, point[0]);
+                minY = Math.Min(minY, point[1]);
+                maxY = Math.Max(maxY, point[1]);
+            }
+            boxes[at] = (minX, maxX, minY, maxY);
+        }
+        bool Covered(double x, double y)
+        {
+            for (int at = 0; at < outlines.Count; at++)
+            {
+                if (x < boxes[at].MinX || x > boxes[at].MaxX ||
+                    y < boxes[at].MinY || y > boxes[at].MaxY)
+                {
+                    continue;
+                }
+                if (PlanContains(x, y, outlines[at]))
+                    return true;
+            }
+            return false;
+        }
+        double uncovered = 0.0;
+        IReadOnlyList<double[]> vertices = net.Vertices;
+        IReadOnlyList<double> field = net.Levels;
+        foreach (int[] face in net.Faces)
+        {
+            var polygon = new List<double[]>(face.Length);
+            var values = new List<double>(face.Length);
+            bool finite = true;
+            foreach (int corner in face)
+            {
+                double level = field[corner];
+                if (!double.IsFinite(level))
+                    finite = false;
+                polygon.Add(vertices[corner]);
+                values.Add(level);
+            }
+            if (!finite)
+                continue;
+            polygon = ClipToHalfSpace(polygon, values, low, true, out values);
+            if (polygon.Count < 3)
+                continue;
+            polygon = ClipToHalfSpace(
+                polygon, values, high, false, out values);
+            if (polygon.Count < 3)
+                continue;
+            var stack = new Stack<(double[] A, double[] B, double[] C)>();
+            for (int at = 1; at + 1 < polygon.Count; at++)
+                stack.Push((polygon[0], polygon[at], polygon[at + 1]));
+            while (stack.Count > 0)
+            {
+                (double[] a, double[] b, double[] c) = stack.Pop();
+                double area = Math.Abs(
+                    ((b[0] - a[0]) * (c[1] - a[1])) -
+                    ((c[0] - a[0]) * (b[1] - a[1]))) / 2.0;
+                if (area < 1.0e-12)
+                    continue;
+                if (area > 0.0056)
+                {
+                    double[] ab =
+                        { (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 };
+                    double[] bc =
+                        { (b[0] + c[0]) / 2.0, (b[1] + c[1]) / 2.0 };
+                    double[] ca =
+                        { (c[0] + a[0]) / 2.0, (c[1] + a[1]) / 2.0 };
+                    stack.Push((a, ab, ca));
+                    stack.Push((ab, b, bc));
+                    stack.Push((ca, bc, c));
+                    stack.Push((ab, bc, ca));
+                    continue;
+                }
+                // Every LEAF sample triangle counts toward the region's
+                // own area, covered or not; the subdivided parents do
+                // not, or the area would be counted twice.
+                bandArea += area;
+                double cx = (a[0] + b[0] + c[0]) / 3.0;
+                double cy = (a[1] + b[1] + c[1]) / 3.0;
+                if (!Covered(cx, cy))
+                {
+                    uncovered += area;
+                    sumX += cx * area;
+                    sumY += cy * area;
+                    sumA += area;
+                }
+            }
+        }
+        centroidX = sumA > 1.0e-12 ? sumX / sumA : double.NaN;
+        centroidY = sumA > 1.0e-12 ? sumY / sumA : double.NaN;
+        return uncovered;
+    }
+
+    /// <summary>Sutherland-Hodgman, one half-space, ported from the same
+    /// harness helper BandUncoveredArea above is deliberately identical
+    /// to: KEEPABOVE true keeps values >= level, false keeps <= level, an
+    /// edge that crosses the level is cut at the exact interpolated
+    /// point, and only the plan coordinates travel (the field value the
+    /// clip cut against is not a plan coordinate and every caller here
+    /// reads only [0]/[1] onward).</summary>
+    private static List<double[]> ClipToHalfSpace(
+        List<double[]> polygon,
+        List<double> values,
+        double level,
+        bool keepAbove,
+        out List<double> clippedValues)
+    {
+        var kept = new List<double[]>();
+        clippedValues = new List<double>();
+        int count = polygon.Count;
+        for (int at = 0; at < count; at++)
+        {
+            int next = (at + 1) % count;
+            double here = values[at];
+            double there = values[next];
+            bool insideHere = keepAbove ? here >= level : here <= level;
+            bool insideThere = keepAbove ? there >= level : there <= level;
+            if (insideHere)
+            {
+                kept.Add(polygon[at]);
+                clippedValues.Add(here);
+            }
+            if (insideHere != insideThere &&
+                Math.Abs(there - here) > 1.0e-18)
+            {
+                double t = (level - here) / (there - here);
+                kept.Add(new[]
+                {
+                    polygon[at][0] +
+                        ((polygon[next][0] - polygon[at][0]) * t),
+                    polygon[at][1] +
+                        ((polygon[next][1] - polygon[at][1]) * t)
+                });
+                clippedValues.Add(level);
+            }
+        }
+        return kept;
+    }
+
+    /// <summary>FIX 4's own sentence for one named residue: its area, the
+    /// mechanism and course an author can find on the branch, the field
+    /// range it sits in, and where in plan the residue's own weighted
+    /// centroid falls, so "silent hole" stops being a true description of
+    /// anything this pattern's slabs and ridges can produce.</summary>
+    private static string FormatUncoveredRegion(
+        double area,
+        string mechanism,
+        int course,
+        double low,
+        double high,
+        double centroidX,
+        double centroidY)
+    {
+        static string F(double value) =>
+            value.ToString("F4", CultureInfo.InvariantCulture);
+        string where = double.IsFinite(centroidX) && double.IsFinite(centroidY)
+            ? $", centred near plan ({centroidX:F2}, {centroidY:F2})"
+            : string.Empty;
+        return $"{F(area)} m2 at {mechanism}, course {course} " +
+            $"(field {F(low)} to {F(high)} m){where}";
     }
 
     /// <summary>The chord from an open strip's first point to its last,
@@ -4010,6 +4256,11 @@ internal static class SkinPatterns
         (double dMin, double dMax) = LevelRange(net);
         if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("courses", net);
+        // FIX 4 (round three, TRUTH-TELLING): the standing floor every
+        // slab and ridge residue below is measured against, taken once so
+        // every call site answers to the same number.
+        double sliverFloor = SliverFloor(minimumPiece, courseHeight);
+        var uncoveredRegions = new List<string>();
 
         // THE SEAM CURVES (spec 2026-09-04 rule 1.1), found once per pattern
         // off the net's own seed identity. WHAT THEY ARE AND ARE NOT, stated
@@ -4575,6 +4826,11 @@ internal static class SkinPatterns
             // sub-bands share this course, so the two kinds interleave by
             // component rather than the closers arriving in a block of their
             // own at one end of the branch.
+            // FIX 4 (round three, TRUTH-TELLING): every outline the closer
+            // actually keeps for THIS slab, collected as it is emitted, so
+            // the residue below is measured against what the slab itself
+            // delivered and not against the pattern's whole cell list.
+            var slabOutlines = new List<IReadOnlyList<double[]>>();
             foreach ((SkinLevelCurve guide, SkinCell cell) in CloserBand(
                          slabLows,
                          slabHighs,
@@ -4596,6 +4852,26 @@ internal static class SkinPatterns
                 closerCells++;
                 keyed.Add((
                     cell.Course, RankOf(guide), guide.Level, cell));
+                slabOutlines.Add(cell.Outline);
+            }
+            // FIX 4 ITSELF: the slab's own uncovered plan area, over
+            // exactly the field range this slab absorbed (rule 3.1's
+            // coalesce, not the ordinary band ladder), against exactly
+            // the stones this slab's own closer call kept. A slab whose
+            // closer refused everything, starved against a degenerate
+            // family, or simply left a wedge in its own plan shadow
+            // (finding 3's G4, not yet closed by any mechanism) reads
+            // here whether or not any refusal counter above ever saw it,
+            // which is the whole point: those counters answer "did the
+            // closer try", not "did the slab end up covered".
+            double slabUncovered = BandUncoveredArea(
+                net, low, high, slabOutlines,
+                out double slabSampled, out double slabCx, out double slabCy);
+            if (slabSampled > 1.0e-9 && slabUncovered > sliverFloor)
+            {
+                uncoveredRegions.Add(FormatUncoveredRegion(
+                    slabUncovered, "the closer band", refusedCourse, low,
+                    high, slabCx, slabCy));
             }
         }
         int transitionBands = resolved.Refused.Count;
@@ -4669,12 +4945,33 @@ internal static class SkinPatterns
             // (finding 2's G2, the wavy barrel) never leaves a Depth-0
             // band at this course for `top` to find, so it stays on the
             // existing slab-and-closer path untouched.
-            bool isRidge =
+            // FIX 4's OWN GATE, READ INDEPENDENTLY OF FIX 2's: the exact
+            // same topological test (an unresolved cap band's own top
+            // cut is two open, unclosed strips over a genuine seam), but
+            // kept as its OWN expression rather than read off fix 2's
+            // isRidge below. This is deliberate and load-bearing for what
+            // FIX 4 is FOR: a truth-telling instrument that shares one
+            // boolean with the very construction it is meant to audit
+            // would go blind exactly when that construction regresses,
+            // silently, which is the one failure mode this fix exists to
+            // forbid. Proved by the red-proof (round three's own report):
+            // short-circuiting fix 2's isRidge to false, below, changes
+            // NOTHING here, and ridgeOutlines stays empty, so this gate
+            // still fires and the audit still measures a real hole.
+            bool ridgeCandidate =
                 isCapBand &&
                 band.Depth == 0 &&
                 uppers.Count == 2 &&
                 !uppers[0].Closed && !uppers[1].Closed &&
                 seams.Count > 0;
+            // FIX 4 (round three, TRUTH-TELLING): the ridge's own kept
+            // outlines, collected as they are emitted below where fix 2
+            // fires, and empty where it does not (a disabled or broken
+            // gate, or a CloserBand that refuses every stone), so the
+            // audit two paragraphs down always measures against what was
+            // ACTUALLY built rather than assuming construction ran.
+            var ridgeOutlines = new List<IReadOnlyList<double[]>>();
+            bool isRidge = ridgeCandidate;
             if (isRidge)
             {
                 double ridgeThickness = dMax - band.Low;
@@ -4722,6 +5019,32 @@ internal static class SkinPatterns
                     closerCells++;
                     keyed.Add((
                         cell.Course, RankOf(guide), guide.Level, cell));
+                    ridgeOutlines.Add(cell.Outline);
+                }
+            }
+            // FIX 4 ITSELF, run whenever ridgeCandidate holds, WHETHER OR
+            // NOT isRidge's own construction fired above: this is finding
+            // 2's own missing instrument, verbatim -- "a slab must know
+            // its own uncovered area before it returns". The residue
+            // lives between the two sides' own top-cut curves (uppers[0],
+            // uppers[1]), which is exactly [band.High, dMax]: a fraction
+            // of FIELD range on a genuine plateau even though it is a
+            // real, non-vacuous strip in PLAN. Before fix 2 this exact
+            // strip was the diagnosis's own 1.60 m2 measured with "zero
+            // refusals, zero drops and zero warnings"; disabling fix 2's
+            // own isRidge gate above leaves ridgeOutlines empty and this
+            // still measures and names the same hole.
+            if (ridgeCandidate)
+            {
+                double ridgeUncovered = BandUncoveredArea(
+                    net, band.High, dMax + 1.0e-6, ridgeOutlines,
+                    out double ridgeSampled, out double ridgeCx,
+                    out double ridgeCy);
+                if (ridgeSampled > 1.0e-9 && ridgeUncovered > sliverFloor)
+                {
+                    uncoveredRegions.Add(FormatUncoveredRegion(
+                        ridgeUncovered, "the ridge crest", band.Course,
+                        band.High, dMax, ridgeCx, ridgeCy));
                 }
             }
             for (int component = 0; component < mids.Count; component++)
@@ -5047,7 +5370,8 @@ internal static class SkinPatterns
             CloserCells = closerCells,
             CloserRefused = closerRefused,
             CloserUndersized = closerUndersized,
-            SeamBandsRemapped = seamBandsRemapped
+            SeamBandsRemapped = seamBandsRemapped,
+            UncoveredRegions = uncoveredRegions
         };
     }
 

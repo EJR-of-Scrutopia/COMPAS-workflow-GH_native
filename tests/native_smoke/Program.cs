@@ -1463,6 +1463,38 @@ internal static class Program
 
         try
         {
+            ValidateSkinUncoveredRegionsAreNamed(plugin);
+            Console.WriteLine(
+                "PASS  Skin uncovered regions are named (spec 2026-09-05 " +
+                "round three, FIX 4: TRUTH-TELLING), Param's own ruling " +
+                "that any uncovered area above the sliver floor becomes a " +
+                "NAMED warning with its area and a place to find it, " +
+                "because the diagnosis's own complaint was that the " +
+                "plateau ribbon shipped 1.60 m2 open with zero refusals, " +
+                "zero drops and zero warnings. Fix 2's own even and odd " +
+                "barrels both read an EMPTY UncoveredRegions on the " +
+                "current tree (the plateau is already closed, so the " +
+                "instrument does not cry wolf over a hole that is not " +
+                "there); fix 3's own wavy barrel reads a NON-EMPTY one " +
+                "TODAY, without disabling anything, because its dip's own " +
+                "hole is real, standing and left open by fix 3's own " +
+                "degeneracy guard -- the instrument is proved against a " +
+                "hole that already exists rather than one manufactured " +
+                "for the occasion. The red-proof proper disables fix 2's " +
+                "own isRidge gate and reruns this exact check: the even " +
+                "barrel's empty-list assertion then fails, and the " +
+                "failure message IS the engine's own named region text, " +
+                "not a paraphrase of it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin uncovered regions are named: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -24809,6 +24841,125 @@ internal static class Program
                 "plan-fold residue, not this " +
                 "fix's own joint-bound starve).");
         }
+    }
+
+    /// <summary>
+    /// FIX 4 (round three, TRUTH-TELLING, Param's own ruling): "any
+    /// uncovered area above the sliver floor becomes a NAMED warning with
+    /// area and location; silent holes forbidden" -- the diagnosis's own
+    /// complaint, verbatim, was that the even barrel's plateau ribbon
+    /// "ships uncovered with zero refusals, zero drops and zero
+    /// warnings" before fix 2. SkinPatterns.Courses now names, on its own
+    /// result (UncoveredRegions), any SLAB or RIDGE residue that survives
+    /// above SliverFloor once the closer has had its say; this check
+    /// proves the instrument tells the truth in BOTH directions, on
+    /// fixtures already in this harness, without inventing a new one.
+    ///
+    /// CASE 1, SILENCE WHERE THE HOLE IS ALREADY CLOSED. Fix 2's own even
+    /// and odd barrels (<see cref="SkinBarrelEvenNet"/>, <see
+    /// cref="SkinBarrelNet"/>) both close their own ridge; UncoveredRegions
+    /// must read EMPTY on both, or the instrument would be crying wolf
+    /// over a hole fix 2 already answered, which is exactly the failure
+    /// mode that would make it useless as a red-proof (a check that
+    /// always fires proves nothing when it fires for a genuine reason).
+    ///
+    /// CASE 2, A NAME WHERE A HOLE ACTUALLY STANDS, PROVED WITHOUT ANY
+    /// MUTATION. Fix 3's own wavy barrel (<see cref="SkinBarrelWavyNet"/>)
+    /// carries a REAL, currently open residue TODAY, on the committed
+    /// tree: its dip slab's second family is locally absent rather than
+    /// degenerate, so fix 3's own degeneracy guard deliberately leaves it
+    /// unrescued (fix 3's own report measures it at roughly 0.85 m2, named
+    /// rather than chased). UncoveredRegions must be NON-EMPTY here, today,
+    /// with no fix disabled -- proof that the instrument answers a hole
+    /// that genuinely exists rather than one manufactured for the
+    /// occasion.
+    ///
+    /// THE RED-PROOF PROPER (see the round-three report's own transcript)
+    /// disables fix 2's own isRidge gate (SkinPatterns.cs, the
+    /// "bool isRidge = ..." line, mutated to short-circuit false) and
+    /// reruns this exact check: case 1's even-barrel assertion then
+    /// fails, and because the failure message is built by joining the
+    /// engine's own UncoveredRegions strings, what a developer reads IS
+    /// the same text SkinComponents.UncoveredRegionsWarningLine would put
+    /// on a Grasshopper canvas, not a paraphrase of it.
+    /// </summary>
+    private static void ValidateSkinUncoveredRegionsAreNamed(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+
+        static string[] Regions(object generated) =>
+            ((IEnumerable)generated.GetType()
+                    .GetProperty("UncoveredRegions")!.GetValue(generated)!)
+                .Cast<string>().ToArray();
+
+        // CASE 1: fix 2's own fixtures, both parities, must stay silent
+        // on the current, unmutated tree.
+        foreach ((string label, (double[][] Vertices, int[][] Faces) fixture,
+                  int[] rim) in
+                 new (string, (double[][], int[][]), int[])[]
+                 {
+                     ("even barrel (ridge between rows)",
+                         SkinBarrelEvenNet(), SkinBarrelEvenRim()),
+                     ("odd barrel (ridge on a row)",
+                         SkinBarrelNet(), SkinBarrelRim())
+                 })
+        {
+            object net = SkinNetWith(
+                netType, edgeType, fixture.Vertices, fixture.Faces, rim,
+                Array.Empty<(int, int, double)>());
+            object built = courses.Invoke(
+                null, new object[] { net, 0.6, 0.5 })!;
+            string[] regions = Regions(built);
+            if (regions.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: fix 2 already closes this ridge's own " +
+                    "plateau, so UncoveredRegions must read empty here; " +
+                    "a non-empty reading means the truth-telling " +
+                    "instrument is crying wolf over a hole that is not " +
+                    $"there any more. Got {regions.Length} named " +
+                    "region(s):\n  " + string.Join("\n  ", regions));
+            }
+        }
+
+        // CASE 2: fix 3's own wavy barrel, a REAL, currently standing hole
+        // (the dip, left unrescued by fix 3's own degeneracy guard), must
+        // NOT be silent, on the current tree, with nothing disabled.
+        (double[][] Vertices, int[][] Faces) wavy = SkinBarrelWavyNet();
+        int[] wavyRim = SkinBarrelWavyRim();
+        object wavyNet = SkinNetWith(
+            netType, edgeType, wavy.Vertices, wavy.Faces, wavyRim,
+            Array.Empty<(int, int, double)>());
+        object wavyBuilt = courses.Invoke(
+            null, new object[] { wavyNet, 0.6, 0.35 })!;
+        string[] wavyRegions = Regions(wavyBuilt);
+        if (wavyRegions.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "wavy barrel: fix 3's own report names a standing, " +
+                "unrescued residue at the dip (roughly 0.85 m2, a second " +
+                "family merely absent rather than degenerate); " +
+                "UncoveredRegions must name it rather than read empty, " +
+                "or a real, currently open hole ships silent, which is " +
+                "the exact failure this fix exists to forbid.");
+        }
+        if (!wavyRegions.Any(
+                region => region.Contains("m2", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "wavy barrel: a named region must carry its own area in " +
+                $"square metres. Got:\n  " +
+                string.Join("\n  ", wavyRegions));
+        }
+        Console.WriteLine(
+            "      Skin uncovered regions are named (round three, FIX " +
+            "4): even and odd barrel both read empty (fix 2 already " +
+            $"closes the plateau); wavy barrel names {wavyRegions.Length} " +
+            "region(s): " + string.Join("; ", wavyRegions));
     }
 
     /// <summary>

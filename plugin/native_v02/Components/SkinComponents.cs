@@ -446,6 +446,21 @@ public sealed class SkinComponent : NativeComponentBase
             if (lostLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, lostLine);
 
+            // FIX 4 (round three, TRUTH-TELLING, Param's own ruling): any
+            // uncovered area above the pattern's own sliver floor becomes
+            // a NAMED warning carrying its own area and a place on the
+            // model, because a silent hole is worse than an ugly one. The
+            // engine names each residue (SkinPatterns.UncoveredRegions);
+            // UncoveredRegionsWarningLine only joins them into one
+            // sentence the canvas shows.
+            string? uncoveredLine = UncoveredRegionsWarningLine(
+                generated.UncoveredRegions);
+            if (uncoveredLine is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning, uncoveredLine);
+            }
+
             var cellBranches = new List<List<Curve>>();
             for (int course = 0; course < generated.CourseCount; course++)
                 cellBranches.Add(new List<Curve>());
@@ -948,6 +963,37 @@ public sealed class SkinComponent : NativeComponentBase
             $"{weldCollapsedDropped} welded below three distinct corners " +
             $"and {bandEscapedRefused} refused at emission for leaving " +
             $"their band. {scale} Diagnostics counts them.";
+    }
+
+    /// <summary>
+    /// FIX 4 (round three, TRUTH-TELLING, Param's own ruling): "any
+    /// uncovered area above the sliver floor becomes a NAMED warning with
+    /// area and location; silent holes forbidden". SkinPatterns.
+    /// UncoveredRegions already carries one line per named residue (its
+    /// own area, mechanism, course, field range and plan centroid); this
+    /// only joins them into the one sentence the canvas shows, at
+    /// Warning, because the diagnosis's own complaint about the plateau
+    /// ribbon was precisely that it shipped "with zero refusals, zero
+    /// drops and zero warnings" -- a hole this pattern's own machinery can
+    /// already measure is not one an author should have to find by eye.
+    /// Null where the list is empty, the standing case: every fixture
+    /// round three's own fixes close reads empty here, and this line is
+    /// silent exactly where the skin is not.
+    /// </summary>
+    internal static string? UncoveredRegionsWarningLine(
+        IReadOnlyList<string> uncoveredRegions)
+    {
+        if (uncoveredRegions.Count == 0)
+            return null;
+        return $"{uncoveredRegions.Count} region" +
+            (uncoveredRegions.Count == 1 ? string.Empty : "s") +
+            " of this pattern's own slabs or ridge closures " +
+            (uncoveredRegions.Count == 1 ? "is" : "are") +
+            " NOT COVERED by any stone, above the sliver floor: " +
+            string.Join("; ", uncoveredRegions) +
+            ". A hole this size is named rather than shipped silent; a " +
+            "smaller Course Height or Min Piece, or a different Result, " +
+            "is the remedy.";
     }
 
     /// <summary>
