@@ -3568,6 +3568,46 @@ internal static class Program
                 $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateRoundFourRule4ZeroWidthCells(plugin);
+            Console.WriteLine(
+                "PASS  Round four rule 4, zero-width cells and a dead " +
+                "safety net (spec 2026-09-06 skin-round-four-his-nets): " +
+                "no emitted cell on any of Param's eight studies, either " +
+                "pattern, carries a zero or near-zero along-guide span " +
+                "(U1 - U0) or a zero or near-zero plan area. BEFORE this " +
+                "fix, the 4 sided vault's closer band shipped three cells " +
+                "reading U1 - U0 = 0.000 m exactly -- CloseFreeEdgeWedge's " +
+                "own four-corner meeting stones, which wrote the same arc " +
+                "position into both fields for want of an along-guide run " +
+                "to report, and which the diagnosis's own reading (and " +
+                "MergeShortPieces reporting zero merges everywhere) took " +
+                "at face value as 'a genuinely degenerate, zero-width " +
+                "stone'. Their own plan area (0.15 to 0.20 m2, real 0.65 " +
+                "to 0.92 m legs) was ordinary throughout, before and " +
+                "after: the wedge now reports its own real reach as its " +
+                "span instead of repeating one arc position twice, so the " +
+                "field reads truthfully rather than degenerately. " +
+                "MergeShortPieces' own lone-piece exemption (rule 6.5) is " +
+                "separately hardened to drop, not keep, a piece at or " +
+                "below the standing 1e-6 m corner-weld floor -- red-proved " +
+                "by a synthetic unit test, since this gate does not fire " +
+                "on any of the eight real studies.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Round four rule 4, zero-width cells and a dead " +
+                $"safety net: {unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Round four rule 4, zero-width cells and a dead safety " +
+                $"net: {DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -22385,6 +22425,46 @@ internal static class Program
                 $"Got {ReadSpans(crowded).Length}. Reading 6.5 as \"a course " +
                 "with exactly one short piece\" is the opposite of what it " +
                 "says.");
+        }
+
+        // ROUND FOUR, RULE 4 (spec 2026-09-06-skin-round-four-his-nets):
+        // rule 6.5's own "keeps that piece as it is however short" stops at
+        // DEGENERATE, not merely short. A lone piece at or below the same
+        // 1e-6 m floor this file already welds outline corners at is
+        // dropped and counted into MergedStillShort, not kept -- proved
+        // here on a synthetic span, since none of Param's own eight
+        // studies ever reaches this exact gate (measured separately, round
+        // four rule 4's own report).
+        object degenerateLone = mergeShort.Invoke(
+            null,
+            new object?[] { SpansOf((0.4, 0.4, false)), 0.2, 0, 0, 0 })!;
+        if (ReadSpans(degenerateLone).Length != 0)
+        {
+            throw new InvalidOperationException(
+                "A lone piece whose own span has collapsed to zero must be " +
+                "DROPPED, not kept: rule 6.5 exists to avoid a hole a short " +
+                "piece would leave by being removed, and a zero-width piece " +
+                "leaves no hole either way. Merging a single (0.4, 0.4) " +
+                $"span at MP 0.2 must give 0 spans back; it gave " +
+                $"{ReadSpans(degenerateLone).Length}.");
+        }
+        // MethodInfo.Invoke writes a by-ref value-type parameter back into
+        // the SAME arguments array after the call returns (the mechanism
+        // this whole file's own RunMerge helper above already leans on
+        // implicitly by re-reading `arguments` nowhere -- made explicit
+        // here because this is the one assertion that needs the count,
+        // not just the returned spans).
+        object?[] countedArgs = { SpansOf((0.4, 0.4, false)), 0.2, 0, 0, 0 };
+        mergeShort.Invoke(null, countedArgs);
+        int stillShortAfter = (int)countedArgs[4]!;
+        if (stillShortAfter != 1)
+        {
+            throw new InvalidOperationException(
+                "A dropped degenerate lone piece must be COUNTED, into " +
+                "MergedStillShort (it answers rule 6.3's own question, " +
+                "\"did a real remainder survive the merge pass under the " +
+                $"bound\", in its most extreme case: no); got " +
+                $"MergedStillShort {stillShortAfter}.");
         }
     }
 
@@ -45093,6 +45173,165 @@ internal static class Program
                     "reproduction is the instrument that was missing all " +
                     "week; a mismatch here means a change has diverged " +
                     "from his reality.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// ROUND FOUR, RULE 4 (spec 2026-09-06-skin-round-four-his-nets): no
+    /// emitted cell -- ordinary course, closer, or free-edge wedge alike --
+    /// may carry a zero or near-zero span in either sense the rule names:
+    /// the ALONG-GUIDE one (U1 - U0, the field MergeShortPieces and every
+    /// reader after it, CloserUndersized included, treats as a stone's own
+    /// along-seam size) or the GEOMETRIC one (plan area, the sense a truly
+    /// collapsed polygon fails even where U1 - U0 happens to read fine).
+    /// Checked across all eight of Param's own studies, both patterns.
+    ///
+    /// MEASURED BEFORE THIS TASK'S OWN FIX: the 4 sided vault shipped three
+    /// cells reading U1 - U0 = 0.000 m exactly, at course 10 -- the closer
+    /// band's own CloseFreeEdgeWedge stones, closing the vault's four-corner
+    /// free-edge meetings (SkinPatterns.cs, guides.Count == 4). This is what
+    /// the diagnosis this spec is built on named "a genuinely degenerate,
+    /// zero-width stone", and MergeShortPieces reporting zero merges on
+    /// every one of the eight studies (nothing here or on any other cell
+    /// ever needed one) is what made that reading look like a dead safety
+    /// net. Both readings do not survive this check's own geometric half:
+    /// all three cells carry perfectly ordinary plan area (0.15 to 0.20 m2,
+    /// real 0.65 to 0.92 m legs measured directly off their own corners),
+    /// on every one of the eight studies, before and after this fix. The
+    /// degeneracy was in the BOOKKEEPING, not the geometry:
+    /// CloseFreeEdgeWedge wrote the SAME arc position into both U0 and U1
+    /// because a three-corner wedge closing a point meeting has no
+    /// along-guide RUN to report, and every reader downstream (this check,
+    /// the diagnosis, CloserUndersized) took that literal zero at face
+    /// value. The fix gives the field the wedge's own real reach instead
+    /// (the longer of its two legs to the far curve, centred where the
+    /// single point used to sit), so it now reads a true, non-arbitrary
+    /// span for a real stone rather than a dishonest zero for one.
+    ///
+    /// MergeShortPieces' OWN GATE was separately hardened (rule 6.5's lone-
+    /// piece exemption in the courses/hexagonal path): a lone piece whose
+    /// span is not merely short but at or below 1e-6 m -- the same floor
+    /// this file already welds outline corners at -- is now dropped and
+    /// counted rather than kept unconditionally, because keeping a truly
+    /// zero-width remainder serves no one (it leaves no hole by being
+    /// dropped, since it had no width to begin with). Measured: this gate
+    /// never actually fires on any of the eight studies (his real course
+    /// pitches never produce a genuinely arc-degenerate lone piece), so its
+    /// "engagement" is proven only by the harness's own synthetic unit test
+    /// below, not by a real number on his geometry, and this report says so
+    /// plainly rather than overclaim one.
+    /// </summary>
+    private static void ValidateRoundFourRule4ZeroWidthCells(Assembly plugin)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal",
+            netType, typeof(double), typeof(double), typeof(double));
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+
+        foreach (HisNetFixture fixture in HisNetFixtures)
+        {
+            string formPath =
+                Path.Combine(HisExportsRoot, $"{fixture.Study}-form.json");
+            if (!File.Exists(formPath))
+            {
+                throw new HisNetsUnavailableException(
+                    $"'{fixture.Study}' is missing its -form.json under " +
+                    $"'{HisExportsRoot}'.");
+            }
+            object resultDto = DeserializeContract(
+                plugin, resultType,
+                HisNetExtractResultContractJson(formPath));
+            object? net = readNet.Invoke(null, new object?[] { resultDto });
+            object generated = fixture.Pattern == 1
+                ? hexagonal.Invoke(
+                    null,
+                    new object[] { net!, Size, CourseHeight, MinPiece })!
+                : courses.Invoke(
+                    null,
+                    new object[] { net!, Size, CourseHeight, MinPiece })!;
+            IEnumerable cells =
+                (IEnumerable)generated.GetType()
+                    .GetProperty("Cells")!.GetValue(generated)!;
+
+            var zeroSpanCells = new List<string>();
+            var zeroAreaCells = new List<string>();
+            foreach (object cell in cells)
+            {
+                bool cap = Reading<bool>(cell, "Cap");
+                if (cap) continue;
+                int course = Reading<int>(cell, "Course");
+                bool closer = Reading<bool>(cell, "Closer");
+                double u0 = Reading<double>(cell, "U0");
+                double u1 = Reading<double>(cell, "U1");
+                if (u1 - u0 <= 1.0e-9)
+                {
+                    zeroSpanCells.Add(
+                        $"course {course} (closer={closer}) U0={u0:E6} " +
+                        $"U1={u1:E6}");
+                }
+                IEnumerable outline = (IEnumerable)cell.GetType()
+                    .GetProperty("Outline")!.GetValue(cell)!;
+                var pts = outline.Cast<double[]>().ToArray();
+                if (pts.Length < 3)
+                    continue;
+                double cx = 0.0, cy = 0.0;
+                foreach (double[] p in pts) { cx += p[0]; cy += p[1]; }
+                cx /= pts.Length;
+                cy /= pts.Length;
+                double twice = 0.0;
+                for (int i = 0; i < pts.Length; i++)
+                {
+                    double[] a = pts[i];
+                    double[] b = pts[(i + 1) % pts.Length];
+                    twice += (a[0] - cx) * (b[1] - cy) -
+                        (b[0] - cx) * (a[1] - cy);
+                }
+                double planArea = Math.Abs(twice) / 2.0;
+                // A firm, absolute floor rather than a fraction of the
+                // pattern's own median: measured worst genuine plan area
+                // across all eight studies is 0.024 m2 (round four's own
+                // diagnosis pass), over twenty times this floor, so
+                // nothing legitimate is close to it.
+                if (planArea <= 1.0e-3)
+                {
+                    zeroAreaCells.Add(
+                        $"course {course} (closer={closer}) area=" +
+                        $"{planArea:E6} m2, {pts.Length} corners");
+                }
+            }
+            if (zeroSpanCells.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}' (pattern {fixture.Pattern}): round " +
+                    "four rule 4 forbids a zero or near-zero along-guide " +
+                    $"span outright; {zeroSpanCells.Count} cell(s) read " +
+                    $"U1 - U0 at or below 1e-9: " +
+                    $"{string.Join("; ", zeroSpanCells)}.");
+            }
+            if (zeroAreaCells.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}' (pattern {fixture.Pattern}): round " +
+                    "four rule 4 forbids a zero or near-zero PLAN AREA " +
+                    $"outright; {zeroAreaCells.Count} cell(s) read at or " +
+                    $"below 1e-3 m2: {string.Join("; ", zeroAreaCells)}.");
             }
         }
     }

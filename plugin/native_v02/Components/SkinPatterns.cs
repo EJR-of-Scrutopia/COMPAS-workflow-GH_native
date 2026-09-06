@@ -5643,7 +5643,18 @@ internal static class SkinPatterns
                 SkinLevelCurve mid = mids[component];
                 int lowerAt = MatchBelow(mid, lowers);
                 int upperAt = MatchBelow(mid, uppers);
-                if (lowerAt < 0 || upperAt < 0 || !(mid.Length > 1.0e-9))
+                // ROUND FOUR, RULE 4: raised from 1e-9 to 1e-6, the same
+                // floor WeldConsecutiveCorners already welds outline
+                // corners at. 1e-9 is a threshold tuned to a synthetic,
+                // unit-scale fixture; measured against Param's own
+                // exported studies (coordinate magnitudes of several
+                // metres, not one) it let through nothing observed to
+                // matter directly, but a mid curve whose own length
+                // cannot clear the SAME floor this file already treats
+                // as "the same point twice" cannot produce a cell with
+                // real width either, so the guard now agrees with the
+                // rest of the file about what "the same point" means.
+                if (lowerAt < 0 || upperAt < 0 || !(mid.Length > 1.0e-6))
                     continue;
                 SkinLevelCurve lowerCurve = lowers[lowerAt];
                 SkinLevelCurve upperCurve = uppers[upperAt];
@@ -7608,9 +7619,35 @@ internal static class SkinPatterns
             .ToList();
         if (working.Count == 1)
         {
-            // A course whose ONLY piece is under the threshold keeps that
-            // piece as it is (rule 6.5), and the fact is counted.
-            if (working[0].U1 - working[0].U0 <= minimum + 1.0e-9)
+            double span = working[0].U1 - working[0].U0;
+            // ROUND FOUR, RULE 4 (spec 2026-09-06-skin-round-four-his-
+            // nets): rule 6.5's own words are "keeps that piece as it
+            // is", written for a component whose only real piece is
+            // short but genuinely THERE. A piece whose span has
+            // collapsed to at or below 1e-6 m -- the same floor this
+            // file already welds outline corners at (WeldConsecutiveCorners)
+            // -- is not short, it is DEGENERATE: it has no width left to
+            // leave a hole by being dropped, and kept it draws a self-
+            // crossing or zero-area sliver instead of a stone. This is
+            // the gate MergeShortPieces measured dead on Param's own
+            // geometry (round four's own diagnosis): every study's
+            // lone pieces were either comfortably wide or, on the 4
+            // sided vault, never reached this branch at all (its own
+            // three near-zero cells are closer wedges, a different
+            // construction fixed separately). Dropped and counted into
+            // stillShort rather than a new field, because it answers
+            // rule 6.3's own question -- did a real remainder survive
+            // the merge pass under the bound -- in its most extreme
+            // case: no.
+            if (span <= 1.0e-6)
+            {
+                stillShort++;
+                return new List<(double U0, double U1, bool Clipped)>();
+            }
+            // A course whose ONLY piece is under the threshold otherwise
+            // keeps that piece as it is (rule 6.5), and the fact is
+            // counted.
+            if (span <= minimum + 1.0e-9)
                 keptShort++;
             return working;
         }
@@ -8152,12 +8189,14 @@ internal static class SkinPatterns
                 stoneOutline.AddRange(stoneBack);
                 return Dedupe(stoneOutline);
             }
-            // Returns 0 (nothing to do, or closed), 1 (refused: joint
-            // bound or self-cross) or 2 (weld-collapsed): a ref/out
-            // parameter of CloserBand itself cannot be touched from
-            // inside a local function that also captures ordinary
-            // locals (CS1628), so the counters are bumped by the caller
-            // off this status instead.
+            // Returns 0 (nothing to do, overlapped, or closed at a
+            // fair span), 1 (refused: joint bound or self-cross), 2
+            // (weld-collapsed) or 3 (closed, but the span rule 2.4's
+            // check reads is under the bound): a ref/out parameter of
+            // CloserBand itself cannot be touched from inside a local
+            // function that also captures ordinary locals (CS1628), so
+            // the counters are bumped by the caller off this status
+            // instead.
             int CloseFreeEdgeWedge(double[] tipA, double[] tipB)
             {
                 double[] target =
@@ -8188,6 +8227,36 @@ internal static class SkinPatterns
                         return 0;
                     }
                 }
+                // ROUND FOUR, RULE 4 (spec 2026-09-06-skin-round-four-
+                // his-nets): U0 and U1 used to be written as the SAME
+                // value, otherArc - other.Seam, because a three-corner
+                // wedge closing a four-guide meeting has no along-guide
+                // run for either field to honestly report -- it is a
+                // single point of contact on "other", not a stretch
+                // along it. But rule 2.4's own span check (CloserUndersized
+                // below, and every reader of U1 - U0 elsewhere in this
+                // file, MergeShortPieces included) treats that field as
+                // THE stone's own along-seam size, and a literal U0 = U1
+                // reads as a genuine zero-width stone to every one of
+                // them -- measured on Param's own 4-sided vault, three
+                // wedges here read exactly 0.000 m despite each being a
+                // real triangle (0.65 to 0.92 m legs, real plan area),
+                // which is what round four's own diagnosis mistook for a
+                // "genuinely degenerate, zero-width" cell. The wedge's
+                // own REACH -- the longer of its two legs to "other" -- is
+                // a real, non-arbitrary measure of how much of "other" it
+                // actually occupies, so it is written as the span,
+                // centred on otherArc exactly where the single point used
+                // to sit: every existing reader of U1 - U0 keeps reading
+                // a real number, and rule 2.4's own undersized census
+                // (below) can finally see this shape too, which it could
+                // not when both fields were the same value by
+                // construction.
+                double reach = Math.Max(
+                    Distance(tipA, otherPoint), Distance(tipB, otherPoint));
+                double centre = otherArc - other.Seam;
+                double wedgeU0 = centre - (reach / 2.0);
+                double wedgeU1 = centre + (reach / 2.0);
                 // SECTIONLESS, exactly as an ordinary end-stone is: two
                 // guide corners and one point on "other" is no rail a
                 // loft can be built from. Keyed off "other" rather than
@@ -8195,10 +8264,9 @@ internal static class SkinPatterns
                 // end-stone makes, because the wedge belongs to neither
                 // guide alone.
                 closers.Add((other, new SkinCell(
-                    course, wedge, false,
-                    otherArc - other.Seam, otherArc - other.Seam, false,
+                    course, wedge, false, wedgeU0, wedgeU1, false,
                     Closer: true)));
-                return 0;
+                return reach < minimumPiece - 1.0e-9 ? 3 : 0;
             }
             if (guides.Count == 4)
             {
@@ -8227,6 +8295,8 @@ internal static class SkinPatterns
                                     refused++;
                                 else if (status == 2)
                                     weldCollapsed++;
+                                else if (status == 3)
+                                    undersized++;
                             }
                         }
                     }
