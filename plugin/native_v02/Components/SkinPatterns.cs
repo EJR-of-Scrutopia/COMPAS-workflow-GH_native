@@ -3954,6 +3954,51 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// ROUND THREE B, RULE 3 (G7, the ridge-gate false positive): the
+    /// highest field value any surviving MESH BOUNDARY EDGE reaches --
+    /// "where the holes end", found from the mesh's own remaining
+    /// topology rather than from Rim membership, so it answers correctly
+    /// whether a hole's rim was anchored (added to Rim) or left free
+    /// (never in Rim at all). The net's own OUTER rim sits at the
+    /// field's own MINIMUM by construction (the field is a distance FROM
+    /// it), so it never sets this ceiling; only an INTERIOR opening --
+    /// which the field's marching has to detour around, and which
+    /// therefore reads at whatever height it happens to sit near the
+    /// crown -- can. Negative infinity on a net with no boundary edge at
+    /// all (mathematically impossible for a real mesh, kept only so the
+    /// caller's own finite check is the one place that decides).
+    /// </summary>
+    private static double BoundaryLevelCeiling(SkinNet net)
+    {
+        var owners = new Dictionary<(int, int), int>();
+        foreach (int[] face in net.Faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                (int, int) key = a < b ? (a, b) : (b, a);
+                owners[key] = owners.TryGetValue(key, out int seen)
+                    ? seen + 1
+                    : 1;
+            }
+        }
+        double ceiling = double.NegativeInfinity;
+        foreach (var entry in owners)
+        {
+            if (entry.Value != 1)
+                continue;
+            double a = net.Levels[entry.Key.Item1];
+            double b = net.Levels[entry.Key.Item2];
+            if (double.IsFinite(a) && a > ceiling)
+                ceiling = a;
+            if (double.IsFinite(b) && b > ceiling)
+                ceiling = b;
+        }
+        return ceiling;
+    }
+
+    /// <summary>
     /// Rule 2.2.1's three tests, and the CROWN REGION they are asked of,
     /// defined tightly because three separate tests turn on it and a loose
     /// definition gives each of them a different answer.
@@ -4156,9 +4201,22 @@ internal static class SkinPatterns
     /// ONE polygonal stone, always. The record keeps its shape (Wedges,
     /// InnerLevel and RingMid ride dead at 0 and NaN) so nothing that
     /// reflects on it moves; Oversized marks a girth above the maximum
-    /// piece, which rule 2.6.6's warning still names.</summary>
+    /// piece, which rule 2.6.6's warning still names. LEVEL is round three
+    /// B's own addition (rule 3, the ridge-gate false positive): a hole
+    /// punched near the crown can force a RESCUE, qualified at a level
+    /// the ordinary band ladder never carries at all (freshly traced,
+    /// above where the holes end rather than at any course boundary), so
+    /// CURVE carries the actual outline directly rather than asking the
+    /// later per-band loop to re-derive it from Level and ComponentAt
+    /// against `lowers`/`uppers` -- there may be no band whose own Low or
+    /// High equals a rescued Level at all. An ordinary (non-rescued) cap
+    /// still sets Curve to the exact same object its own Level and
+    /// ComponentAt would resolve to, so nothing downstream needs to
+    /// branch on which kind a plan is.</summary>
     private sealed record SkinCapPlan(
         int ComponentAt,
+        double Level,
+        SkinLevelCurve Curve,
         double Girth,
         int Wedges,
         double InnerLevel,
@@ -4637,35 +4695,174 @@ internal static class SkinPatterns
             .FirstOrDefault(band => band.Course == bands - 1);
         if (top is not null)
         {
-            int topLowAt = -1;
-            for (int scan = 0; scan < resolved.Levels.Count; scan++)
+            int LevelIndexOf(double level)
             {
-                if (resolved.Levels[scan] == top.Low)
+                for (int scan = 0; scan < resolved.Levels.Count; scan++)
                 {
-                    topLowAt = scan;
-                    break;
+                    if (resolved.Levels[scan] == level)
+                        return scan;
                 }
+                return -1;
             }
+
+            bool[] onBoundary = FacesOnBoundary(net);
+
+            List<SkinCapPlan> QualifyAt(
+                double level,
+                IReadOnlyList<SkinLevelCurve> curves,
+                List<string> refusalsOut)
+            {
+                var qualified = new List<SkinCapPlan>();
+                for (int at = 0; at < curves.Count; at++)
+                {
+                    if (!CapQualifies(
+                            net, level, at, curves, onBoundary,
+                            out string refusedBy))
+                    {
+                        if (refusedBy.Length > 0)
+                            refusalsOut.Add(refusedBy);
+                        continue;
+                    }
+                    double girth = curves[at].Length;
+                    bool oversized = girth > maximumPiece + 1.0e-9;
+                    qualified.Add(new SkinCapPlan(
+                        at, level, curves[at], girth, 0, double.NaN,
+                        double.NaN, oversized));
+                }
+                return qualified;
+            }
+
+            int topLowAt = LevelIndexOf(top.Low);
             IReadOnlyList<SkinLevelCurve> topCurves =
                 resolved.Traced[topLowAt];
-            bool[] onBoundary = FacesOnBoundary(net);
-            for (int at = 0; at < topCurves.Count; at++)
+            var lowRefusals = new List<string>();
+            List<SkinCapPlan> qualifiedLow =
+                QualifyAt(top.Low, topCurves, lowRefusals);
+
+            // FIX (round three B, RULE 3: the ridge-gate false positive
+            // beside a hole-perforated point crown, spec 2026-09-06-skin-
+            // round-three-b-holed-nets.md and its own diagnosis's G7).
+            // CapQualifies' `!component.Closed` gate (rule 2.2.1's FIRST
+            // test) is a correct test of the ONE component it is handed,
+            // traced at `top`'s own Low; the defect is that a hole
+            // punched near the crown can contaminate exactly that
+            // component even where the true summit is still a solid
+            // point disc a little higher up: the trace at Low passes
+            // near or through the hole's own free edge and comes back
+            // open, reading a ridge where there is none (measured:
+            // "Crown caps: 0" on both permanent unanchored six-hole-ring
+            // fixtures, off-seam and on the valley seams, even though
+            // HoledLobedNet's own apex fan, t 0 to 1, is never touched by
+            // a hole). The fix classifies the summit from the SURVIVING
+            // crown structure instead of from that perforated-
+            // neighbourhood evidence, gated twice, both load-bearing and
+            // both proved by a real fixture this task's own red-proof
+            // must not disturb:
+            //
+            // GATE 1 (below, `ridgeGated`): tried ONLY where every one of
+            // Low's own refusals is that exact ridge-gate message -- the
+            // diagnosis's own words for G7 are that CapQualifies "refuses
+            // immediately, BEFORE any of its real tests run"; a course
+            // refused for a DIFFERENT reason (rule 2.2.1(b)'s free-edge
+            // test, which fires on a component that WAS closed but whose
+            // region carries a boundary face; or the saddle test) is left
+            // exactly as it was, because that is a different, deliberate
+            // mechanism this task does not own.
+            //
+            // GATE 2 (below, the size check after the search): a hole's
+            // own vertex sits ON its own boundary edge, so the level
+            // where CapQualifies stops refusing is found by BISECTING,
+            // between the highest field value any surviving mesh-
+            // boundary edge reaches (BoundaryLevelCeiling) and the
+            // field's own maximum, for the LOWEST level that qualifies at
+            // all -- rule 2.2.1's own region walk follows whatever stays
+            // connected above the test level, so it can still reach a
+            // hole's own boundary faces from well above the hole's own
+            // vertices (measured: refused up to 83 per cent of the way
+            // from the ceiling to dMax on the on-seam six-hole fixture),
+            // and bisection finds that true threshold rather than
+            // guessing a margin. THE RESCUE IS THEN JUDGED ONCE, AT THAT
+            // THRESHOLD, against the maximum-piece bound (rule 2.6.6)
+            // any ordinary cap is only warned about, refused OUTRIGHT
+            // here rather than merely flagged, and the search does NOT
+            // continue upward hunting for a smaller loop: every closed
+            // loop shrinks toward zero as its level nears the field's own
+            // maximum regardless of what it encloses, so climbing
+            // further would eventually manufacture a small-enough loop
+            // even where the crown genuinely has no keystone to find.
+            // Nothing added to the band ladder either way, which may
+            // carry no level anywhere near the true apex at all (measured
+            // seven tileable sub-bands sharing Course = bands - 1 on this
+            // diagnosis's own six-hole-ring fixture, bisection firing
+            // wherever a level skims a hole's rim).
+            //
+            // BOTH GATES ARE LOAD-BEARING, MEASURED SEPARATELY: a GENUINE
+            // ridge (the barrel fixtures round three fix 2 owns) passes
+            // Gate 1 (its two components are open strips, the exact
+            // ridge-gate message) but its own free SHORT ends read as a
+            // high-field boundary edge because the ridge itself runs out
+            // to them (the wavy barrel's own crest closes into a 4.86 m
+            // loop at its natural threshold), caught by Gate 2. A GENUINE
+            // OCULUS AT THE CROWN (the two-oculus fixture, check 12.2(d))
+            // ALSO passes Gate 1 (its own crown region is open at Low
+            // too) but its real oculi close into a 3.0 to 3.7 m loop at
+            // theirs, caught by Gate 2 as well. Every LEGITIMATE rescue
+            // measured on the six permanent holed-net fixtures this task
+            // owns is reasonably sized AT ITS OWN NATURAL THRESHOLD
+            // ALREADY (0.10 to 0.36 m against a Size-0.6 course's own
+            // 1.8 m bound), with nothing further to search for.
+            const string RidgeGateMessage =
+                "the top course is an OPEN strip, so its crown is a " +
+                "ridge and not a disc, and both sides get an ordinary " +
+                "top band";
+            if (qualifiedLow.Count > 0)
             {
-                if (!CapQualifies(
-                        net, top.Low, at, topCurves, onBoundary,
-                        out string refusedBy))
-                {
-                    if (refusedBy.Length > 0)
-                        capRefusals.Add(refusedBy);
-                    continue;
-                }
-                double girth = topCurves[at].Length;
-                bool oversized = girth > maximumPiece + 1.0e-9;
-                if (oversized)
-                    capsOversized++;
-                capPlans.Add(new SkinCapPlan(
-                    at, girth, 0, double.NaN, double.NaN, oversized));
+                capPlans.AddRange(qualifiedLow);
+                capRefusals.AddRange(lowRefusals);
             }
+            else
+            {
+                bool ridgeGated = lowRefusals.Count > 0 &&
+                    lowRefusals.All(reason => reason == RidgeGateMessage);
+                double boundaryCeiling = BoundaryLevelCeiling(net);
+                double searchLow = boundaryCeiling;
+                double searchHigh = dMax - epsilon;
+                List<SkinCapPlan> rescued = new();
+                var rescueRefusals = new List<string>();
+                if (ridgeGated && double.IsFinite(boundaryCeiling) &&
+                    searchLow < searchHigh)
+                {
+                    for (int halving = 0; halving < 32; halving++)
+                    {
+                        double mid = (searchLow + searchHigh) / 2.0;
+                        var attemptRefusals = new List<string>();
+                        List<SkinCapPlan> attempt = QualifyAt(
+                            mid, Trace(net, mid), attemptRefusals);
+                        if (attempt.Count > 0)
+                        {
+                            rescued = attempt;
+                            searchHigh = mid;
+                        }
+                        else
+                        {
+                            searchLow = mid;
+                            rescueRefusals = attemptRefusals;
+                        }
+                    }
+                    if (rescued.Any(plan => plan.Oversized))
+                        rescued = new List<SkinCapPlan>();
+                }
+                if (rescued.Count > 0)
+                {
+                    capPlans.AddRange(rescued);
+                }
+                else
+                {
+                    capRefusals.AddRange(lowRefusals);
+                    capRefusals.AddRange(rescueRefusals);
+                }
+            }
+            capsOversized += capPlans.Count(plan => plan.Oversized);
         }
 
         // RULE 3.1, REWORKED (spec 2026-09-05 round two, finding 1): the
@@ -4996,6 +5193,14 @@ internal static class SkinPatterns
         int weldCollapsed = 0;
         var capGirths = new List<double>();
         var capWedges = new List<int>();
+        // ROUND THREE B, RULE 3: a rescued cap's own Level matches no
+        // band's Low or High at all (it is freshly traced above where
+        // the holes end, not at any course boundary), so it cannot be
+        // told apart from ANOTHER rescued cap on a DIFFERENT crown by
+        // Level or ComponentAt the way an ordinary plan can; it is told
+        // apart by REFERENCE instead, consumed at most once across every
+        // component of every band PlanMatches, below, offers it to.
+        var consumedRescues = new HashSet<SkinCapPlan>();
         // THE CLOSER BAND (spec 2026-09-04 rules 2.1 to 2.5). Every refused
         // interval is COVERED rather than left as a hole: the stones are
         // ordinary SkinCells at the band's own course, so staging, the sort,
@@ -5183,16 +5388,22 @@ internal static class SkinPatterns
                 resolved.Traced[levelIndex[band.Low]];
             IReadOnlyList<SkinLevelCurve> uppers =
                 resolved.Traced[levelIndex[band.High]];
-            // A band's OWN Low, not merely its Course, decides whether it is
-            // the crown band the cap pass planned against: bisection (rule
-            // 8.2.3) can split a refused top course into several sub-bands
-            // that all share Course = bands - 1, and only the one sub-band
-            // whose Low equals the cap pass's own top.Low is the band that
-            // pass actually tested. Any other shares nothing but the number.
-            bool isCapBand =
-                top is not null &&
-                Math.Abs(band.Low - top.Low) <= 1.0e-12 &&
-                Math.Abs(band.High - top.High) <= 1.0e-12;
+            // A band's OWN Course is enough to gate the LOOKUP (whether a
+            // plan might belong to it at all); WHICH level the plan
+            // actually answers to is PlanMatches' own job below, matched
+            // against this band's own Low or High exactly. It used to be
+            // narrower, gated on a literal match to `top`'s own Low and
+            // High: bisection (rule 8.2.3) can split a refused top course
+            // into several sub-bands that all share Course = bands - 1,
+            // and round three B's own rescue (rule 3, G7) can qualify a
+            // cap against ANY one of them -- whichever borders the
+            // field's own maximum -- not only the specific one `top`
+            // happens to name (Tileable's own first-found order, not
+            // necessarily the one nearest the apex). Gating on Course
+            // alone costs nothing: a band with no plan recorded against
+            // either of its own two levels falls straight through to
+            // ordinary tiling below, exactly as it always did.
+            bool isCapBand = band.Course == bands - 1;
 
             // FIX 2 (round three, finding 2's G1: the ridge plateau). A
             // barrel-class ridge never refuses: correspondence holds 2 to
@@ -5395,9 +5606,30 @@ internal static class SkinPatterns
                 // ride against the wrong component, which is exactly what
                 // the two-dome check's own-girth and one-cap-per-dome pins
                 // catch.
+                // ROUND THREE B, RULE 3: a rescued cap (the ridge-gate
+                // false positive fix, above) was qualified at a level
+                // FRESHLY TRACED above where the holes end, matching no
+                // band's own Low or High at all, so it cannot be found by
+                // Level the way an ordinary cap is; it is offered to
+                // `top` specifically (the same band the cap pass itself
+                // planned against) and consumed at most once via
+                // `consumedRescues`, since `top`'s own Mid can carry more
+                // than one component and every one of them would
+                // otherwise re-match the SAME rescue. An ordinary cap
+                // (the overwhelming majority: every fixture with no hole
+                // nearby, and every holed one whose crown traced cleanly
+                // at Low) still matches by Level and ComponentAt exactly
+                // as before.
+                bool PlanMatches(SkinCapPlan item)
+                {
+                    if (Math.Abs(item.Level - band.Low) <= 1.0e-12)
+                        return item.ComponentAt == lowerAt;
+                    if (Math.Abs(item.Level - band.High) <= 1.0e-12)
+                        return item.ComponentAt == upperAt;
+                    return band == top && consumedRescues.Add(item);
+                }
                 SkinCapPlan? plan = isCapBand
-                    ? capPlans.FirstOrDefault(
-                        item => item.ComponentAt == lowerAt)
+                    ? capPlans.FirstOrDefault(PlanMatches)
                     : null;
                 if (plan is not null)
                 {
@@ -5419,7 +5651,7 @@ internal static class SkinPatterns
                     // sort's Cap term below, and it still answers to
                     // KeepValidPlans like every other cell (the standing
                     // rule at the plan-filter comment).
-                    SkinLevelCurve outer = lowers[lowerAt];
+                    SkinLevelCurve outer = plan.Curve;
                     var loop = CapPolygonOutline(
                         outer, minimumPiece, sliverFloor);
                     if (loop.Count >= 3)

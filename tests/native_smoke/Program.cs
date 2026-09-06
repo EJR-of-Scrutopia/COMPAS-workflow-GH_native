@@ -1463,6 +1463,52 @@ internal static class Program
 
         try
         {
+            ValidateSkinHoledNetRidgeGate(plugin);
+            Console.WriteLine(
+                "PASS  Skin holed-net ridge gate (spec 2026-09-06 round " +
+                "three B, rule 3, G7): CapQualifies' own !component.Closed " +
+                "gate (rule 2.2.1) used to misfire beside a hole-" +
+                "perforated POINT crown -- six holes crowded around " +
+                "HoledLobedNet's own summit are enough to make the level " +
+                "curve the cap pass tries FIRST, at the band's own Low, " +
+                "pass near or through a hole's free edge and come back " +
+                "open, reading a ridge where the true crown (the solid " +
+                "apex fan, t 0 to 1, HoledLobedNet never touches) is a " +
+                "point; measured 'Crown caps: 0' on both unanchored six-" +
+                "hole-ring variants before this fix. The gate now " +
+                "classifies the summit from the SURVIVING crown " +
+                "structure: where Low qualifies nothing at all AND every " +
+                "one of its own refusals is that exact ridge-gate " +
+                "message (gate 1, leaving a free-edge or saddle refusal " +
+                "untouched, since that is a different, deliberate " +
+                "mechanism), it BISECTS for the lowest level, freshly " +
+                "traced above the highest field value any surviving mesh " +
+                "boundary edge reaches, that closes cleanly, and accepts " +
+                "it once, at that threshold only, if it is not itself " +
+                "oversized (gate 2 -- a barrel's own free short ends, or " +
+                "a genuine oculus, would otherwise close into an " +
+                "oversized loop too, and climbing further would only " +
+                "manufacture a spuriously small one nearer the field's " +
+                "own maximum). Both permanent free-rim ring fixtures " +
+                "(off-seam and on the valley seams) now cap with exactly " +
+                "ONE polygon apiece, per the standing cap ruling. THE " +
+                "GENUINE RIDGE CASE IS UNWEAKENED: a barrel's own crest " +
+                "never closes into a loop at all, so the search finds " +
+                "nothing to accept and CapQualifies keeps refusing, " +
+                "exactly as ValidateSkinRidgePlateau and " +
+                "ValidateSkinRidgeCrestStarve, below, still measure, and " +
+                "the two-oculus fixture's real oculi close only into an " +
+                "oversized loop gate 2 refuses, exactly as check 12.2(d) " +
+                "still measures too.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin holed-net ridge gate: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRidgePlateau(plugin);
             Console.WriteLine(
                 "PASS  Skin ridge plateau (spec 2026-09-05 round three, " +
@@ -25593,6 +25639,128 @@ internal static class Program
                 (failing.Count == 1 ? "" : "s") +
                 $" across the {pairs.Length} holed-net pairs still show " +
                 "the anchor-proximity field capture (G5): " +
+                string.Join("; ", failing) + ".");
+        }
+    }
+
+    /// <summary>
+    /// ROUND THREE B, RULE 3 (spec 2026-09-06-skin-round-three-b-holed-
+    /// nets.md, "RULE 3: G7, the ridge gate false positive"; mechanism
+    /// measured in docs/superpowers/specs/2026-09-06-skin-holed-net-
+    /// diagnosis.md's own G7 section). `CapQualifies`' `!component.Closed`
+    /// gate (rule 2.2.1) is a correct test of the ONE component it is
+    /// handed, but that component is traced at the crown band's own Low,
+    /// which a hole punched near the summit can contaminate even where
+    /// the true crown, a little higher up, is still a solid point disc:
+    /// six holes crowded closely enough around HoledLobedNet's own
+    /// summit are enough to make the level curve at Low pass near or
+    /// through a hole's own free edge and come back open, reading a
+    /// ridge where there is none. Measured on 88e170f: "Crown caps: 0"
+    /// on BOTH six-hole-ring unanchored variants (off-seam and on the
+    /// valley seams), the ridge-gate message firing three times and once
+    /// respectively, even though the apex fan (t 0 to 1) is never
+    /// touched by a hole.
+    ///
+    /// THE FIX classifies the summit from the SURVIVING crown structure
+    /// rather than from that perforated-neighbourhood evidence, gated
+    /// twice. GATE 1: tried only where EVERY one of Low's own refusals
+    /// is that exact ridge-gate message -- a course refused instead for
+    /// rule 2.2.1(b)'s free-edge test (a component that WAS closed, but
+    /// whose region carries a boundary face) is a different, deliberate
+    /// mechanism this task does not own, left untouched. GATE 2: the
+    /// natural clearance level is found by BISECTING between the
+    /// highest field value any surviving mesh boundary edge reaches
+    /// (BoundaryLevelCeiling) and the field's own maximum, for the
+    /// LOWEST level that closes at all (rule 2.2.1's own region walk
+    /// can still reach a hole's boundary faces well above the hole's own
+    /// vertices, so this is not "just above the ceiling"); the rescue is
+    /// then judged ONCE, at that threshold, against the maximum-piece
+    /// bound, and refused outright if oversized, with the search NOT
+    /// continued upward hunting for a smaller loop, because every closed
+    /// loop shrinks toward zero near the field's own maximum regardless
+    /// of what it legitimately encloses. Asserted here as exactly ONE
+    /// cap cell on both free-rim ring variants, per round two finding
+    /// 3's standing cap ruling (a qualifying cap is ONE polygonal
+    /// stone).
+    ///
+    /// THE GENUINE RIDGE CASE IS PROVED UNWEAKENED, not merely asserted:
+    /// <see cref="ValidateSkinRidgePlateau"/> and
+    /// <see cref="ValidateSkinRidgeCrestStarve"/>, immediately below,
+    /// keep reading their own "CapQualifies keeps refusing a cap on
+    /// it, unmoved" pins with no change to this fix's own diff -- a
+    /// barrel's own crest never closes into a loop at all, at any level,
+    /// so gate 2 never even runs. THE TWO-OCULUS FIXTURE (check
+    /// 12.2(d)) is equally unweakened, measured directly: its own crown
+    /// region IS open at Low too (gate 1 passes it through), but its
+    /// real oculi close only into an oversized 3.0 to 3.7 m loop at
+    /// their own natural threshold, refused by gate 2 -- the SAME size
+    /// bound that catches the wavy barrel's own 4.86 m loop (its free
+    /// short ends read as a high-field boundary edge because the ridge
+    /// itself runs out to them), while every legitimate rescue measured
+    /// on the six permanent holed-net fixtures is 0.10 to 0.36 m,
+    /// comfortably inside the same bound.
+    /// </summary>
+    private static void ValidateSkinHoledNetRidgeGate(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double size = 0.6;
+        const double courseHeight = 0.35;
+
+        object Made(double[][] v, int[][] f, int[] rim)
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[]
+                {
+                    v, f, rim, Array.CreateInstance(edgeType, 0)
+                })!;
+            return courses.Invoke(
+                null, new object[] { net, size, courseHeight })!;
+        }
+
+        (int TLow, int THigh, int ICentre, int IHalf)[] ringOff =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 5, 2)).ToArray();
+        (int TLow, int THigh, int ICentre, int IHalf)[] valley =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 10, 2)).ToArray();
+
+        var fixtures = new (
+            string Label,
+            (int TLow, int THigh, int ICentre, int IHalf)[] Holes)[]
+        {
+            ("six holes, ring, off-seam, free rim", ringOff),
+            ("six holes, on the valley seams, free rim", valley),
+        };
+
+        var failing = new List<string>();
+        foreach (var fx in fixtures)
+        {
+            var holed = HoledLobedNet(
+                6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07,
+                fx.Holes, anchorHoleRims: false);
+            object made = Made(holed.V, holed.F, holed.Rim);
+            var cells = SkinCells(made);
+            var capCells = cells.Where(cell => cell.Cap).ToArray();
+            if (capCells.Length != 1)
+            {
+                failing.Add(
+                    $"{fx.Label}: expected exactly ONE crown cap (round " +
+                    "two finding 3's standing cap ruling: a point crown " +
+                    "with holes nearby must still cap), got " +
+                    $"{capCells.Length} -- the ridge gate is misfiring " +
+                    "on the surviving point crown.");
+            }
+        }
+        if (failing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{failing.Count} of {fixtures.Length} holed-net ridge-" +
+                "gate fixtures failed to cap with exactly one polygon: " +
                 string.Join("; ", failing) + ".");
         }
     }
