@@ -1419,6 +1419,50 @@ internal static class Program
 
         try
         {
+            ValidateSkinRidgeCrestStarve(plugin);
+            Console.WriteLine(
+                "PASS  Skin ridge-crest starve (spec 2026-09-05 round " +
+                "three, finding 2's G2), the diagnosis's own wavy-barrel " +
+                "fixture lifted into the harness: a form-found ridge's " +
+                "field varies along the crest, so its own field breaks " +
+                "correspondence and the closer builds a genuine slab, but " +
+                "the summit slab's second family degenerates to a near-" +
+                "zero girth loop, and the head-joint bound refused most " +
+                "of what it built against that loop (10 of 12 stones on " +
+                "the summit slab measured by the diagnosis), the crest " +
+                "shipping open with zero warnings to show it. The " +
+                "recovered seam now stands beside the slab's own second " +
+                "family in the SAME nearest-curve contest CloserBand " +
+                "already runs, offered rather than substituted, only " +
+                "where the guide is the barrel's own two open unclosed " +
+                "strips AND that second family has itself starved to a " +
+                "near-zero combined length; a real second family, thin " +
+                "but not starved -- Param's own crown arch carries the " +
+                "identical guide shape over a genuine 3.68 m rim -- was " +
+                "measured to lose the contest to the seam on some spans " +
+                "without that second test, moving the crown arch's own " +
+                "pinned seam widths and mirror symmetry, so the test " +
+                "stands. Where the seam wins but the paired run it stages " +
+                "would fold in plan, round two's own end-stone shape (two " +
+                "attachment corners, no traced run) closes it instead. " +
+                "This fixture's own crest strip falls from a 1.9 m2 hole, " +
+                "bit-identical to the diagnosis's own reading with the " +
+                "rescue disabled, by more than half with it on; the " +
+                "residue that survives is the dip's own separate hole " +
+                "(a second family merely absent, not degenerate, left " +
+                "standing by the same guard) plus the diagnosis's own " +
+                "named plan-fold class at the summit's own guide cusp, " +
+                "neither the joint-bound starve this fix answers, and " +
+                "CapQualifies keeps refusing a cap on it, unmoved.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin ridge-crest starve: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -17922,6 +17966,73 @@ internal static class Program
     }
 
     /// <summary>
+    /// THE ROUND-THREE WAVY-BARREL FIXTURE (spec 2026-09-05 round three,
+    /// finding 2's G2: the ridge-crest closer starve), lifted from the
+    /// diagnosis's own probe fixture verbatim (nx 49, ny 37, length 8,
+    /// width 6, rise 2, waveAmp 0.15): an open barrel arch whose RISE
+    /// varies along the length by a 15 per cent sine wave rather than
+    /// staying prismatic, which is what a solved (form-found) arch looks
+    /// like and <see cref="SkinBarrelNet"/>'s constant-rise tent never
+    /// exercises. The field's single global maximum sits at one interior
+    /// point along the crest rather than running level the whole way: the
+    /// diagnosis measured the ridge dropping to 3.4371 at the dip and
+    /// rising to 3.8068 at the summit, the summit's own level curves
+    /// closing into a loop of girth 0.00 m long before the ladder's top
+    /// cut, and the dip's own second family failing to reach that part of
+    /// the crest at all. Sine cross-profile, r * sin(pi * y / width), not
+    /// the tent's linear V, because the diagnosis's probe was run against
+    /// exactly this formula and its measured numbers are what the check
+    /// below is pinned against.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinBarrelWavyNet()
+    {
+        const int nx = 49, ny = 37;
+        const double length = 8.0, width = 6.0, rise = 2.0, waveAmp = 0.15;
+        var vertices = new List<double[]>();
+        for (int iy = 0; iy < ny; iy++)
+        {
+            double y = width * iy / (ny - 1.0);
+            for (int ix = 0; ix < nx; ix++)
+            {
+                double x = length * ix / (nx - 1.0);
+                double r = rise * (1.0 + waveAmp *
+                    Math.Sin((2.0 * Math.PI * x / length) + 0.5));
+                vertices.Add(
+                    new[] { x, y, r * Math.Sin(Math.PI * y / width) });
+            }
+        }
+        var faces = new List<int[]>();
+        int Idx(int ix, int iy) => (iy * nx) + ix;
+        for (int iy = 0; iy + 1 < ny; iy++)
+        {
+            for (int ix = 0; ix + 1 < nx; ix++)
+            {
+                faces.Add(new[]
+                {
+                    Idx(ix, iy), Idx(ix + 1, iy),
+                    Idx(ix + 1, iy + 1), Idx(ix, iy + 1)
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>The wavy barrel's rim: both long eaves, iy = 0 and
+    /// iy = 36, free at the two short ends exactly as the ordinary barrel
+    /// is.</summary>
+    private static int[] SkinBarrelWavyRim()
+    {
+        const int nx = 49, ny = 37;
+        var rim = new List<int>();
+        for (int ix = 0; ix < nx; ix++)
+        {
+            rim.Add(ix);
+            rim.Add(((ny - 1) * nx) + ix);
+        }
+        return rim.ToArray();
+    }
+
+    /// <summary>
     /// Check 12.3(a)'s one-way thrust, stated as DATA rather than assumed:
     /// every edge running ALONG the barrel, between (i, j) and (i + 1, j),
     /// carries a compression of 1 kN, and every edge ACROSS it, between
@@ -24551,6 +24662,152 @@ internal static class Program
                     $"{crestArea:F4} m2 own plan area is uncovered, " +
                     $"against a floor of {sliverFloor:F4} m2.");
             }
+        }
+    }
+
+    /// <summary>
+    /// FIX 3 (round three, finding 2's G2: the ridge-crest closer starve),
+    /// the diagnosis's own wavy-barrel fixture lifted into a permanent
+    /// harness check (spec 2026-09-05-skin-round-three-diagnosis.md,
+    /// "2b. The form-found ridge: the closer fires and starves against a
+    /// degenerate second family").
+    ///
+    /// A FORM-FOUND RIDGE'S FIELD VARIES ALONG THE CREST (the diagnosis
+    /// measured 3.4371 at the dip against 3.8068 at the summit on its own
+    /// fixture), so correspondence DOES fail here, unlike fix 2's plateau
+    /// case: the closer's own slab-and-closer path fires, genuinely, and
+    /// builds a real slab. What the diagnosis measured wrong is what that
+    /// slab's SECOND family degenerates to exactly where the crest does --
+    /// a near-zero girth loop ringing the summit vertex, or no coverage at
+    /// all across the dip, where the field never reaches the slab's own
+    /// high boundary -- so the head-joint bound refused most of what
+    /// CloserBand staged against it (10 of 12 stones on the summit slab)
+    /// and the crest shipped open with zero refusal events to show for
+    /// the dip's own skewed, badly-fitted stones.
+    ///
+    /// THE RESCUE IS GUARDED TO A DEGENERATE SECOND FAMILY, not to a mere
+    /// ABSENT one, on top of the ridge's own guide shape: this fixture's
+    /// own dip (the field never reaching the slab's own high boundary
+    /// there) is NOT the near-zero-girth loop the summit degenerates to,
+    /// and offering the seam there too was MEASURED to change Param's
+    /// crown arch's own pinned seam widths and mirror symmetry, because
+    /// the crown arch's own 2-to-1 merge carries the identical guide
+    /// shape over a real 3.68 m rim -- the guard's own comment at the
+    /// call site carries the measurement. So the dip's own hole is left
+    /// standing here, named rather than chased, alongside the diagnosis's
+    /// OWN "stone-folds" class at the summit's own guide cusp.
+    ///
+    /// THE WHOLE FIELD RANGE IS SAMPLED, not a hand-picked slab interval:
+    /// the fixture's own field values are read off the built net rather
+    /// than assumed. The acceptance below is NOT a sliver floor: this
+    /// exact fixture, measured with the rescue disabled outright, is
+    /// bit-identical to the diagnosis's own "1.9 m2 open"; measured with
+    /// it in place (guarded to degeneracy, the dip's own hole surviving
+    /// untouched), the uncovered area falls by more than half. See the
+    /// acceptance floor's own comment for the measured split.
+    /// </summary>
+    private static void ValidateSkinRidgeCrestStarve(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double Size = 0.6;
+        const double CourseHeight = 0.35;
+
+        (double[][] Vertices, int[][] Faces) fixture = SkinBarrelWavyNet();
+        int[] rim = SkinBarrelWavyRim();
+        object net = SkinNetWith(
+            netType, edgeType, fixture.Vertices, fixture.Faces, rim,
+            Array.Empty<(int, int, double)>());
+        object built = courses.Invoke(
+            null, new object[] { net, Size, CourseHeight })!;
+        var cells = SkinCells(built);
+        if (cells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "wavy barrel: Courses built no cells at all.");
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToList(),
+            "wavy barrel, ridge-crest starve fixture");
+
+        double[][] vertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!.GetValue(net)!)
+            .Cast<double[]>().ToArray();
+        int[][] faces = ((IEnumerable)netType
+                .GetProperty("Faces")!.GetValue(net)!)
+            .Cast<int[]>().ToArray();
+        double[] field = SkinLevels(net);
+        double dMin = field.Where(double.IsFinite).Min();
+        double dMax = field.Where(double.IsFinite).Max();
+        double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
+
+        double uncovered = SlabUncoveredArea(
+            vertices, faces, field, dMin - epsilon, dMax + epsilon,
+            cells.Select(cell => cell.Outline).ToArray(),
+            out double sampledArea);
+        // THE VACUOUS-ZERO GUARD (this repo's own standing habit): the
+        // whole barrel is sampled here, so a vacuous reading would mean
+        // the fixture itself failed to build rather than that the fix
+        // holds.
+        if (!(sampledArea > 1.0))
+        {
+            throw new InvalidOperationException(
+                "wavy barrel: the whole field range sampled to only " +
+                $"{sampledArea:F4} m2 of plan area; the fixture is " +
+                "meant to carry the whole barrel there, and a vacuous " +
+                "area makes the uncovered reading below meaningless.");
+        }
+        Console.WriteLine(
+            $"      Skin ridge-crest starve (wavy barrel): field " +
+            $"[{dMin:F4}, {dMax:F4}], sampled {sampledArea:F4} m2, " +
+            $"uncovered {uncovered:F4} m2. closerCells=" +
+            $"{Reading<int>(built, "CloserCells")} closerRefused=" +
+            $"{Reading<int>(built, "CloserRefused")} transitionBands=" +
+            $"{Reading<int>(built, "TransitionBands")}");
+        // THE ACCEPTANCE FLOOR IS NOT THE SLIVER FLOOR other checks in
+        // this file use: this fixture's own crest carries residue this
+        // fix does not own, named rather than chased. Two named classes
+        // survive it. (a) THE DIP'S OWN HOLE (~0.85 m2, the diagnosis's
+        // own figure): slab 9's second family is not itself degenerate
+        // in aggregate (a real, combined ~11.8 m of curve), only locally
+        // absent across the dip, which is a DIFFERENT mechanism to G2's
+        // "degenerate second family" and is guarded out deliberately
+        // (see the guard's own comment at the call site) after it was
+        // measured to change Param's crown arch's own pinned seam widths
+        // and mirror symmetry the one time the guard did not test
+        // degeneracy, only guide shape. (b) a narrower fold intrinsic to
+        // the summit slab's own short guide fragment at the far free
+        // end, where even the corner-closed rescue's two attachment
+        // points cannot un-fold a GUIDE that already turns back on
+        // itself in plan near the crest's own cusp (~0.05 m2, the
+        // diagnosis's own "stone-folds" class). Neither is the joint-
+        // bound starve this fix answers.
+        //
+        // 1.1 m2 sits above the ~0.92 m2 measured with the rescue in
+        // place and comfortably below the ~1.95 m2 measured with it
+        // disabled -- this fixture's own bit-identical
+        // reproduction of the diagnosis's "1.9 m2 open" on its wavy
+        // barrel -- so a regression that drops the rescue back out, or
+        // stops it reaching the summit's own degenerate loop, is still
+        // caught loudly; it does not ask this fix to also own the two
+        // named folds above.
+        const double AcceptedResidueFloor = 1.1;
+        if (uncovered > AcceptedResidueFloor)
+        {
+            throw new InvalidOperationException(
+                "wavy barrel: a form-found ridge's own crest must be " +
+                "covered by closer stones cut against the surviving " +
+                "family and the recovered seam wherever its second " +
+                "family degenerates near the crest (finding 2's G2); " +
+                $"{uncovered:F4} m2 of the barrel's {sampledArea:F4} m2 " +
+                "own plan area is uncovered, against an accepted-" +
+                $"residue floor of {AcceptedResidueFloor:F4} m2 (the " +
+                "dip's own separate hole and the diagnosis's own named " +
+                "plan-fold residue, not this " +
+                "fix's own joint-bound starve).");
         }
     }
 

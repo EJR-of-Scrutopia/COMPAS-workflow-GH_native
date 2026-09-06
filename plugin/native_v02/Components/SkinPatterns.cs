@@ -4017,10 +4017,26 @@ internal static class SkinPatterns
         // review round caught it: they are DATA, carried on the result and
         // named by diagnostics, and they are what a check measures the
         // closer's stones against. They are NOT an input to the closer's own
-        // cut. The closer divides its GUIDE LEVEL CURVE at pitch, and the
+        // CUT: the closer divides its GUIDE LEVEL CURVE at pitch, and the
         // guide runs alongside the seam rather than across it, so the
-        // sections fall across the seam without the seam curve ever being
-        // consulted. CloserBand therefore does not take them.
+        // sections fall across the seam without the seam curve deciding
+        // where a stone's own head joint falls.
+        //
+        // ROUND THREE READS THEM TWICE MORE, both narrowly. Fix 2's
+        // isRidge branch lofts a THIRD section through the nearest seam so
+        // a full-course closer does not chord across a genuine plateau
+        // (a loft-quality third rail, not a cut boundary). Fix 3 goes one
+        // step further, and only where a slab's own guide is the barrel's
+        // two open unclosed strips AND its own second family has starved
+        // to a near-zero girth (finding 2's G2; a real, merely thin second
+        // family -- the crown arch's own 2-to-1 merge carries the same
+        // guide shape over a genuine 3.68 m rim -- is measured, not
+        // assumed, never to reach for it): the seam is OFFERED to the same
+        // nearest-curve contest the closer already runs to pick one other
+        // curve over another, so a starved span gets the seam instead of a
+        // refusal. Neither reads the seam as a forced joint or a chord
+        // boundary; both still let CloserBand's own machinery choose
+        // whether the seam wins the span at all.
         IReadOnlyList<double[][]> seams = SeamCurves(net);
 
         int bands = BandCount(dMin, dMax, courseHeight);
@@ -4440,6 +4456,19 @@ internal static class SkinPatterns
         int closerRefused = 0;
         int closerUndersized = 0;
         int seamBandsRemapped = 0;
+        // FIX 3'S RESCUE CURVE (round three, finding 2's G2: the
+        // ridge-crest closer starve), built ONCE and handed to every slab
+        // rather than re-Finished per slab: a form-found ridge's own seam
+        // (rule 1.1) runs the FULL crest at every x, dip and summit alike,
+        // where the slab's nominal SECOND family does not -- a point loop
+        // at the summit (girth measured 0.00 m) or simply absent across
+        // the dip, where the field never reaches the slab's own high
+        // boundary. Kept as raw finished curves, not yet chosen for
+        // anything: a slab only reaches for one where its own guide family
+        // qualifies, below.
+        List<SkinLevelCurve> finishedSeams = seams
+            .Select(seam => Finish(seam.ToList(), dMax, false))
+            .ToList();
         // The slabs themselves were built above, before the level index was
         // taken, because a sub-band bite can leave a remainder band whose
         // new mid needs tracing; what happens HERE is only the cutting.
@@ -4479,6 +4508,66 @@ internal static class SkinPatterns
                 if (!double.IsNaN(bestLevel))
                     midRails = resolved.Traced[levelIndex[bestLevel]];
             }
+            IReadOnlyList<SkinLevelCurve> slabLows =
+                resolved.Traced[levelIndex[low]];
+            IReadOnlyList<SkinLevelCurve> slabHighs =
+                resolved.Traced[levelIndex[high]];
+            // FIX 3 (round three, finding 2's G2: the ridge-crest closer
+            // starve). Measured on the wavy barrel: the closer's own guide
+            // is chosen by count (CloserBand, guideIsLow), and a form-found
+            // crest's OTHER family degenerates exactly where the crest
+            // does -- a near-zero girth loop at the summit (measured
+            // 0.0016 m on this fixture). CloserBand paired every stone
+            // against that second family regardless, and the head-joint
+            // bound (its own rule, not relaxed here) then refused most of
+            // what it built: 10 of 12 stones on the summit slab, the crest
+            // shipping open with zero drops and zero warnings to show it.
+            //
+            // THE FIX DOES NOT REPLACE THE SECOND FAMILY, it OFFERS the
+            // recovered seam beside it, ONLY where that second family is
+            // ITSELF DEGENERATE: its own combined length under one course
+            // Size, a floor with nothing else to recommend it beyond being
+            // the pattern's own smallest sensible span -- a real second
+            // family is metres long even where it is thin (the crown
+            // arch's own 2-to-1 merge slab has the SAME guide shape, two
+            // open unclosed strips over a closed loop, and that loop is a
+            // real 3.68 m rim, not a starved one). THIS WAS MEASURED, not
+            // assumed: offering the seam wherever the guide shape matched,
+            // with no degeneracy test, changed the crown arch's own PINNED
+            // seam widths and its mirror symmetry, because a guide span
+            // can measure marginally nearer the seam than a real, distant
+            // stretch of its own true partner even though that partner is
+            // the right one; the nearest-curve contest is not a safe
+            // arbiter of WHETHER to offer a candidate, only of which one
+            // wins once both are legitimately in play. Cut against what
+            // exists: the surviving family stays the guide, unmoved; the
+            // seam stands in only where the second family has starved to
+            // a point, never beside one that is merely thin.
+            //
+            // GUARDED TO THE RIDGE'S OWN SHAPE ON TOP OF THAT, so nothing
+            // outside this exact class is offered a candidate it never had
+            // before: the slab's guide (the more populous of its two
+            // families, the same count CloserBand itself keys on) must be
+            // EXACTLY TWO OPEN, UNCLOSED components -- a lobed merge's
+            // guide is a closed loop, a fan corner's a different count --
+            // and a seam must exist at all (a net anchored on one rim has
+            // none). A depth-0 band never reaches this loop (fix 2's
+            // isRidge branch owns it, above, untouched); this is the
+            // refused, slab-and-closer path finding 2's own comment names
+            // as G2's home.
+            bool slabGuideIsLow = slabLows.Count >= slabHighs.Count;
+            IReadOnlyList<SkinLevelCurve> slabGuideFamily =
+                slabGuideIsLow ? slabLows : slabHighs;
+            IReadOnlyList<SkinLevelCurve> slabOtherFamily =
+                slabGuideIsLow ? slabHighs : slabLows;
+            List<SkinLevelCurve>? seamRescue =
+                finishedSeams.Count > 0 &&
+                slabGuideFamily.Count == 2 &&
+                !slabGuideFamily[0].Closed &&
+                !slabGuideFamily[1].Closed &&
+                slabOtherFamily.Sum(curve => curve.Length) < size
+                    ? finishedSeams
+                    : null;
             // RULE 3.2'S LAST SENTENCE: a closer stone sorts AT ITS
             // COMPONENT'S POSITION in the same scheme. The component it
             // belongs to is the GUIDE curve it was cut on, so the key is
@@ -4487,8 +4576,8 @@ internal static class SkinPatterns
             // component rather than the closers arriving in a block of their
             // own at one end of the branch.
             foreach ((SkinLevelCurve guide, SkinCell cell) in CloserBand(
-                         resolved.Traced[levelIndex[low]],
-                         resolved.Traced[levelIndex[high]],
+                         slabLows,
+                         slabHighs,
                          refusedCourse,
                          size,
                          minimumPiece,
@@ -4496,6 +4585,7 @@ internal static class SkinPatterns
                          high - low >= courseHeight - 1.0e-9,
                          seams.Count > 0,
                          midRails,
+                         seamRescue,
                          ref mergedPieces,
                          ref mergedShortKept,
                          ref mergedStillShort,
@@ -4616,6 +4706,12 @@ internal static class SkinPatterns
                              ridgeFullCourse,
                              true,
                              ridgeMidRails,
+                             // FIX 3's rescue is the OTHER species of ridge
+                             // defect (the refused slab-and-closer path, a
+                             // form-found crest); a Depth-0 band never
+                             // refuses in the first place, so there is no
+                             // starved family here to rescue.
+                             null,
                              ref mergedPieces,
                              ref mergedShortKept,
                              ref mergedStillShort,
@@ -6736,6 +6832,7 @@ internal static class SkinPatterns
         bool stagger,
         bool coverPinchOuts,
         IReadOnlyList<SkinLevelCurve>? midRails,
+        IReadOnlyList<SkinLevelCurve>? seamRescue,
         ref int mergedPieces,
         ref int mergedShortKept,
         ref int mergedStillShort,
@@ -6768,6 +6865,23 @@ internal static class SkinPatterns
         bool guideIsLow = lows.Count >= highs.Count;
         IReadOnlyList<SkinLevelCurve> guides = guideIsLow ? lows : highs;
         IReadOnlyList<SkinLevelCurve> others = guideIsLow ? highs : lows;
+        // FIX 3 (round three, finding 2's G2), OFFERED rather than
+        // substituted: the caller hands this down only where the GUIDE
+        // (chosen above, by count, before this runs) is the barrel's own
+        // two open unclosed strips AND the slab's own OTHER family has
+        // itself starved to a near-zero combined length, so a lobed or
+        // fan merge's guide never qualifies, and neither does the crown
+        // arch's own 2-to-1 merge, whose guide carries the SAME shape over
+        // a real 3.68 m rim: both leave this list empty. The degeneracy
+        // test lives at the caller because CloserBand itself has no
+        // opinion on what counts as starved beyond what it is handed; once
+        // it IS handed a rescue, appending the seam to the candidate pool
+        // still only hands a span the seam where the family it would
+        // otherwise have paired against has thinned to a point, which is
+        // what the head-joint bound was refusing wholesale (measured: 10
+        // of 12 stones on the wavy barrel's summit slab).
+        if (seamRescue is { Count: > 0 })
+            others = others.Concat(seamRescue).ToList();
         // The stones are STAGED first, the coverage read second and the
         // rings cut last, which is what lets the pinch-out pass extend a
         // flanking stone before anything is final.
@@ -7176,33 +7290,79 @@ internal static class SkinPatterns
                 : Run(other, a1, a0);
             if (a1 >= a0)
                 back.Reverse();
-            if (Distance(along[0], back[^1]) > maximumJoint ||
-                Distance(along[^1], back[0]) > maximumJoint)
+            List<double[]>? ring = null;
+            if (!(Distance(along[0], back[^1]) > maximumJoint ||
+                  Distance(along[^1], back[0]) > maximumJoint))
             {
-                refused++;
-                continue;
+                var outline = new List<double[]>(along);
+                outline.AddRange(back);
+                List<double[]> candidate = Dedupe(outline);
+                if (candidate.Count < 3)
+                {
+                    // R-006: welded below three distinct corners, so
+                    // there is no plan left to keep; the rescue below
+                    // only answers a JOINT or a FOLD, and a run that
+                    // welds this thin would collapse either way, so it
+                    // is not retried.
+                    weldCollapsed++;
+                    continue;
+                }
+                if (!PlanSelfCrosses(candidate) && !PlanVertexOnEdge(candidate))
+                    ring = candidate;
             }
-            var outline = new List<double[]>(along);
-            outline.AddRange(back);
-            List<double[]> ring = Dedupe(outline);
-            if (ring.Count < 3)
+            // FIX 3'S CORNER CLOSING (round three, finding 2's G2),
+            // reusing round two's own end-stone shape -- two ATTACHMENT
+            // CORNERS, not a traced run -- as the FALLBACK it always was
+            // there: the seam is offered as a CANDIDATE partner, not a
+            // matched family, and a short guide span can map to two seam
+            // arc positions that are not consecutive along the seam's
+            // own parametrisation (the seam threads past a genuine crest
+            // cusp near a barrel's summit and past a short guide fragment
+            // at a free end; measured, both fixed by this fallback: two
+            // of the fixture's own guide spans there, paired against the
+            // seam's full run, folded in plan). Tried ONLY where the
+            // ordinary paired run above was refused on the joint or
+            // folded, and only where the guide's own partner IS the
+            // rescue seam: the ordinary run is kept exactly as it always
+            // was everywhere else, corner-closed or not, because it
+            // covers more of the true crest than two straight corners
+            // ever would and the fold this answers is the exception, not
+            // the rule.
+            if (ring is null &&
+                seamRescue is not null && seamRescue.Contains(other))
             {
-                // R-006: welded below three distinct corners, so there
-                // is no plan left to keep.
-                weldCollapsed++;
-                continue;
+                List<double[]> cornerBack = new()
+                {
+                    PointAt(other, a1), PointAt(other, a0)
+                };
+                if (!(Distance(along[0], cornerBack[^1]) > maximumJoint ||
+                      Distance(along[^1], cornerBack[0]) > maximumJoint))
+                {
+                    var cornerOutline = new List<double[]>(along);
+                    cornerOutline.AddRange(cornerBack);
+                    List<double[]> cornerCandidate = Dedupe(cornerOutline);
+                    if (cornerCandidate.Count >= 3 &&
+                        !PlanSelfCrosses(cornerCandidate) &&
+                        !PlanVertexOnEdge(cornerCandidate))
+                    {
+                        ring = cornerCandidate;
+                        back = cornerBack;
+                    }
+                }
             }
-            if (PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+            if (ring is null)
             {
-                // A stone that folds in plan is REFUSED here rather than
-                // handed to the plan filter to delete, which is the
-                // discipline the force-aligned pattern's band-escape
-                // refusal already keeps: a refusal says a stone was not
-                // laid, while a drop says one was laid badly, and rule
-                // 2.5 asks the seam to stop producing drops. It happens
-                // where the other family's curve turns back on itself
-                // inside one span, the two-hump barrel's loop tips at
-                // the middle dip being the measured case.
+                // A stone that folds in plan, or whose head joint
+                // overruns the bound, and finds no corner-closed rescue
+                // either, is REFUSED here rather than handed to the plan
+                // filter to delete, which is the discipline the force-
+                // aligned pattern's band-escape refusal already keeps: a
+                // refusal says a stone was not laid, while a drop says one
+                // was laid badly, and rule 2.5 asks the seam to stop
+                // producing drops. The fold happens where the other
+                // family's curve turns back on itself inside one span,
+                // the two-hump barrel's loop tips at the middle dip being
+                // the measured case.
                 refused++;
                 continue;
             }
