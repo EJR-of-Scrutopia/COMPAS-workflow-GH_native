@@ -7433,6 +7433,154 @@ internal static class SkinPatterns
                 }
             }
             pieces2.Sort((left, right) => left.Start.CompareTo(right.Start));
+
+            // ---- FIX 6 (round three, finding 3's G4: the shadowed
+            // free-edge wedge). At a four-corner merge, several DIFFERENT
+            // guides (one per corner) stage stones against this SAME
+            // "other" curve, and the wedge between two of them, at the
+            // free-edge midline where their own arcs draw closest, is
+            // full-stone-size and OPEN today: measured 0.21 m2 across
+            // four wedges on the diagnosis's own square fan, 0.47 m2 on
+            // the rectangular one. The gap scan below never sees it,
+            // because it reads coverage purely in ARC space and the two
+            // guides' own mapped arc ranges touch or overlap right at
+            // the opening (the shared point on "other" nearest a
+            // free-edge midline is the natural nearest-point target from
+            // both sides at once), so no gap is ever recorded there;
+            // trying to read the flanking corners off the pieces THAT
+            // scan already staged fares no better, because a guide's own
+            // tail can spend HALF its length mapping to that same
+            // degenerate near-zero arc span (measured on the square
+            // fan), so whichever piece happens to sort as "next" is not
+            // reliably the one nearest the free edge at all.
+            //
+            // FOUND HERE OFF THE GUIDES' OWN ENDS INSTEAD: "the slab
+            // wedge between the two guide arcs' own boundary ends" (the
+            // diagnosis's own sentence) names Points[0]/Points[^1]
+            // directly, and two open guides whose own ends land within
+            // one head joint of each other are the free-edge meeting
+            // the diagnosis names, regardless of how either guide's own
+            // tail tiled against "other". The candidate stone is then
+            // PROVED AGAINST PLAN COVERAGE, the same instrument finding
+            // 2's own G1/G2 fixes and FIX 4's own residue read use,
+            // rather than trusted on distance alone: rebuilt as the
+            // ordinary stone the finalisation loop below would itself
+            // build for every OTHER stone this call has staged, and
+            // raised only where it overlaps NONE of them -- a real,
+            // unclaimed notch, not a guide's own tail-fan already
+            // covering the ground the two tips merely read far apart
+            // in plan.
+            //
+            // GUARDED TO A GENUINE FOUR-CORNER MEETING, not to every
+            // pair of open guides sharing a loop: an arch's own two
+            // springings (crown arch, barrel) are ALSO two open guides
+            // meeting one loop, at two points around it, and a lobed
+            // vault's own crown is the SAME shape with one open guide
+            // per lobe (six, on the diagnosis's own six-lobe fixture).
+            // Offering either this construction unguarded MEASURED six
+            // new overlapping cells on Param's crown arch (round two's
+            // own pinned zero) and six more on the six-lobe crown, whose
+            // "other" loop is the CAP's own boundary there -- a wedge
+            // built against it duplicates the cap, which this pass
+            // cannot see (caps are not staged closer stones). Guides.
+            // Count == 4 is the fan corner's own count and neither of
+            // theirs (G2's own guard comment already names a fan
+            // corner's count as "different" from an arch's two), so
+            // this construction runs only where exactly four separate
+            // corner families share the loop -- proved clean on both,
+            // round two's own numbers on the lobed and arch fixtures
+            // unmoved.
+            List<double[]> StoneRing(SkinCloserStone stone)
+            {
+                List<double[]> stoneBack = stone.A1 >= stone.A0
+                    ? Run(stone.Other, stone.A0, stone.A1)
+                    : Run(stone.Other, stone.A1, stone.A0);
+                if (stone.A1 >= stone.A0)
+                    stoneBack.Reverse();
+                var stoneOutline = new List<double[]>(stone.Along);
+                stoneOutline.AddRange(stoneBack);
+                return Dedupe(stoneOutline);
+            }
+            // Returns 0 (nothing to do, or closed), 1 (refused: joint
+            // bound or self-cross) or 2 (weld-collapsed): a ref/out
+            // parameter of CloserBand itself cannot be touched from
+            // inside a local function that also captures ordinary
+            // locals (CS1628), so the counters are bumped by the caller
+            // off this status instead.
+            int CloseFreeEdgeWedge(double[] tipA, double[] tipB)
+            {
+                double[] target =
+                    { (tipA[0] + tipB[0]) / 2.0, (tipA[1] + tipB[1]) / 2.0 };
+                double otherArc = NearestArcInPlan(other, target);
+                double[] otherPoint = PointAtArc(other, otherArc);
+                if (Distance(tipA, otherPoint) > maximumJoint ||
+                    Distance(tipB, otherPoint) > maximumJoint)
+                {
+                    return 1;
+                }
+                List<double[]> wedge = Dedupe(
+                    new List<double[]> { tipA, otherPoint, tipB });
+                if (wedge.Count < 3)
+                {
+                    // R-006: welded below three distinct corners -- the
+                    // two guides' own ends already coincide with "other"
+                    // itself, an ordinary correctly-fitting meeting.
+                    return 2;
+                }
+                if (PlanSelfCrosses(wedge) || PlanVertexOnEdge(wedge))
+                    return 1;
+                foreach (SkinCloserStone existing in staged)
+                {
+                    if (PlansOverlapWithInteriors(
+                            wedge, null, StoneRing(existing), null))
+                    {
+                        return 0;
+                    }
+                }
+                // SECTIONLESS, exactly as an ordinary end-stone is: two
+                // guide corners and one point on "other" is no rail a
+                // loft can be built from. Keyed off "other" rather than
+                // either flanking guide, the same choice an ordinary
+                // end-stone makes, because the wedge belongs to neither
+                // guide alone.
+                closers.Add((other, new SkinCell(
+                    course, wedge, false,
+                    otherArc - other.Seam, otherArc - other.Seam, false,
+                    Closer: true)));
+                return 0;
+            }
+            if (guides.Count == 4)
+            {
+                for (int gi = 0; gi < guides.Count; gi++)
+                {
+                    SkinLevelCurve guideA = guides[gi];
+                    if (guideA.Closed || !(guideA.Length > 1.0e-9))
+                        continue;
+                    for (int gj = gi + 1; gj < guides.Count; gj++)
+                    {
+                        SkinLevelCurve guideB = guides[gj];
+                        if (guideB.Closed || !(guideB.Length > 1.0e-9))
+                            continue;
+                        foreach (double[] tipA in
+                                 new[] { guideA.Points[0], guideA.Points[^1] })
+                        {
+                            foreach (double[] tipB in new[]
+                                     {
+                                         guideB.Points[0], guideB.Points[^1]
+                                     })
+                            {
+                                if (Distance(tipA, tipB) > maximumJoint)
+                                    continue;
+                                int status = CloseFreeEdgeWedge(tipA, tipB);
+                                if (status == 1)
+                                    refused++;
+                                else if (status == 2)
+                                    weldCollapsed++;
+                            }
+                        }
+                    }
+                }
+            }
             var merged2 = new List<(
                 double Start,
                 double End,

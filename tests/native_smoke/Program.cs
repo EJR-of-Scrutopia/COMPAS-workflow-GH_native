@@ -1524,6 +1524,39 @@ internal static class Program
 
         try
         {
+            ValidateSkinFreeEdgeWedge(plugin);
+            Console.WriteLine(
+                "PASS  Skin free-edge wedge (spec 2026-09-05 round " +
+                "three, FIX 6: G4 SHADOWED FREE-EDGE WEDGE), the " +
+                "diagnosis's own four-corner fan fixtures, both " +
+                "parities: at every free-edge midline where two corners' " +
+                "own strips merge, the ordinary pinch-out's arc-space " +
+                "gap scan reads full coverage because both sides' " +
+                "stones project onto the same touching or overlapping " +
+                "arc near the opening, while the two guides' own PLAN " +
+                "ends sit a full stone's width apart, unseen because arc " +
+                "bookkeeping cannot see a shadow by construction (0.21 " +
+                "m2 across four wedges measured on the square fan, 0.47 " +
+                "m2 across four on the rectangular one). The fix pairs " +
+                "every two open guides' own ends directly and closes the " +
+                "notch between them with the ordinary end-stone's own " +
+                "shape wherever the candidate overlaps none of the " +
+                "stones already staged, guarded to exactly four open " +
+                "guides sharing the loop so an arch's own two springings " +
+                "and a lobed vault's own six-guide crown (round two's " +
+                "pinned zero on both) are never offered it: measured " +
+                "with the fix disabled, 0.22 and 0.47 m2 open; with it " +
+                "in place, 0.08 and 0.40 m2, the square fan's own four " +
+                "wedges closing by nearly two-thirds.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin free-edge wedge: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -18094,6 +18127,76 @@ internal static class Program
     }
 
     /// <summary>
+    /// THE ROUND-THREE FOUR-CORNER FAN FIXTURE (spec 2026-09-05 round
+    /// three, finding 3's G4: the shadowed free-edge wedge), lifted from
+    /// the diagnosis's own probe fixture verbatim: a doubly-curved
+    /// paraboloid roof over a rectangular plan, SUPPORTED at the four
+    /// corners (each an L-run of cornerRun vertices along both adjacent
+    /// edges: four seed groups), FREE along the edge middles. The field
+    /// tops out at one dome apex at the centre and bottoms out along a
+    /// closed level curve touching all four corners AT ONCE (field 0):
+    /// just above it, correspondence is FOUR separate corner-cut open
+    /// strips, one per support, each ending on the two free edges
+    /// adjacent to its own corner; the field range between there and the
+    /// single closed loop the four strips merge into is exactly the
+    /// diagnosis's own four-corner slab, and each free-edge midline where
+    /// two adjacent corners' strips end near one another is one of the
+    /// diagnosis's own measured wedges. Square (lx = ly, the diagnosis's
+    /// "fan") carries the merge at one height; rectangular (lx != ly, the
+    /// diagnosis's own "fanrect") carries it at up to three -- the two
+    /// short-edge midlines, the two long-edge midlines and the centre
+    /// cross -- so both parities are exercised.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinFanRectNet(
+            int nx, int ny, double lx, double ly, double h, int cornerRun)
+    {
+        var vertices = new List<double[]>();
+        for (int iy = 0; iy < ny; iy++)
+        {
+            double y = ly * iy / (ny - 1.0);
+            for (int ix = 0; ix < nx; ix++)
+            {
+                double x = lx * ix / (nx - 1.0);
+                double u = (2.0 * x / lx) - 1.0;
+                double vv = (2.0 * y / ly) - 1.0;
+                vertices.Add(new[]
+                {
+                    x, y, h * (1.0 - (((u * u) + (vv * vv)) / 2.0))
+                });
+            }
+        }
+        int Idx(int ix, int iy) => (iy * nx) + ix;
+        var faces = new List<int[]>();
+        for (int iy = 0; iy + 1 < ny; iy++)
+        {
+            for (int ix = 0; ix + 1 < nx; ix++)
+            {
+                faces.Add(new[]
+                {
+                    Idx(ix, iy), Idx(ix + 1, iy),
+                    Idx(ix + 1, iy + 1), Idx(ix, iy + 1)
+                });
+            }
+        }
+        var rim = new List<int>();
+        foreach ((int cx, int cy, int dx, int dy) in new[]
+        {
+            (0, 0, 1, 1), (nx - 1, 0, -1, 1),
+            (nx - 1, ny - 1, -1, -1), (0, ny - 1, 1, -1)
+        })
+        {
+            rim.Add(Idx(cx, cy));
+            for (int k = 1; k <= cornerRun; k++)
+            {
+                rim.Add(Idx(cx + (k * dx), cy));
+                rim.Add(Idx(cx, cy + (k * dy)));
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
     /// Check 12.3(a)'s one-way thrust, stated as DATA rather than assumed:
     /// every edge running ALONG the barrel, between (i, j) and (i + 1, j),
     /// carries a compression of 1 kN, and every edge ACROSS it, between
@@ -25252,6 +25355,155 @@ internal static class Program
                 $"{loopArea:F4} m2, worst edge crescent at floor zero " +
                 $"{worstAtZero:F6} m2, at the pattern's own floor " +
                 $"{sliverFloor:F4} m2 worst edge {worstAtFloor:F6} m2.");
+        }
+    }
+
+    /// <summary>
+    /// FIX 6 (round three, finding 3's G4: the shadowed free-edge
+    /// wedge), the diagnosis's own four-corner fan fixtures
+    /// (<see cref="SkinFanRectNet"/>) lifted into a permanent harness
+    /// check, both parities.
+    ///
+    /// AT A FOUR-CORNER MERGE the closer's own guide (chosen by count,
+    /// CloserBand's own <c>guideIsLow</c>) is FOUR separate open corner
+    /// strips against the ONE closed loop they merge into, and the
+    /// diagnosis measured the ordinary pinch-out's own arc-space gap
+    /// scan finding NOTHING at every free-edge midline where two
+    /// adjacent corners' strips end near one another: both sides'
+    /// stones map to arcs on the shared loop that already touch or
+    /// overlap right at the opening, so the wedge between their own
+    /// PLAN corners -- a full stone's width apart despite the arcs
+    /// reading continuous -- sits in their mutual shadow, unseen by a
+    /// scan that reads coverage in arc space alone (0.21 m2 across four
+    /// wedges on the square fan, 0.47 m2 across four on the rectangular
+    /// one, "full-stone-size holes at every free-edge merge point").
+    ///
+    /// THE FIX READS THE TWO GUIDES' OWN ENDS directly (Points[0] and
+    /// Points[^1], not a piece chosen by its sort position among the
+    /// arc scan's own staged pieces, which measured unreliable: a
+    /// guide's own tail can spend half its length mapping to the SAME
+    /// degenerate near-zero arc span, so whichever piece sorts as
+    /// "next" is not reliably the one nearest the free edge at all),
+    /// pairs every two open guides whose own ends land within one head
+    /// joint of each other, and closes the notch between them with the
+    /// ordinary end-stone's own shape -- ONLY where the candidate
+    /// overlaps NONE of the stones this call has already staged (a
+    /// guide's own tail can fan several pieces at the same degenerate
+    /// point near this exact corner, and a wedge over ground one of
+    /// them already covers is not a real hole). GUARDED TO EXACTLY FOUR
+    /// open guides sharing the loop, a fan corner's own count and
+    /// neither an arch's two nor a lobed vault's crown (six on the
+    /// diagnosis's own six-lobe fixture): offering either of those the
+    /// same construction measured six new overlapping cells apiece
+    /// (round two's own pinned zero on Param's crown arch, and the
+    /// six-lobe's own cap-band duplicate), because a two-guide loop is
+    /// already a proper, closed meeting and a lobed crown's "other" loop
+    /// is the CAP's own boundary, invisible to this pass since caps are
+    /// not staged closer stones.
+    ///
+    /// THE WHOLE FIELD RANGE IS SAMPLED, the same instrument fix 3's own
+    /// wavy-barrel check uses, because the wedges sit at the merge's own
+    /// slab boundary. THE ACCEPTANCE IS A MEASURED, NAMED RESIDUE FLOOR,
+    /// not the ordinary sliver floor, on the same standing as the wavy
+    /// barrel's own dip: the four-guide guard leaves the fan's OTHER
+    /// merge counts untouched by design (a rectangular fan's own two
+    /// short-edge and two long-edge merges are pairwise, two guides
+    /// each, before its centre cross ever reaches four), so the
+    /// rectangular fixture's own residue is almost entirely that
+    /// untouched class and the square fixture's is the sliver this
+    /// fix's own overlap guard declines rather than force. Measured
+    /// with the fix disabled outright: 0.22 m2 open on the square fan,
+    /// 0.47 m2 on the rectangular one, bit-identical to the diagnosis's
+    /// own reading; measured with it in place, 0.08 and 0.40 m2, the
+    /// square fan's own four wedges closing by nearly two-thirds. A
+    /// regression that drops the four-guide construction, or stops it
+    /// reaching either fixture's own qualifying merge, is still caught
+    /// loudly; it does not ask this fix to also own the merge counts it
+    /// was measured to leave standing.
+    /// </summary>
+    private static void ValidateSkinFreeEdgeWedge(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double Size = 0.6;
+        const double CourseHeight = 0.35;
+
+        foreach ((string label,
+                  (double[][] Vertices, int[][] Faces, int[] Rim) fixture,
+                  double acceptedResidueFloor) in
+                 new (string, (double[][], int[][], int[]), double)[]
+                 {
+                     ("square fan (one merge height)",
+                         SkinFanRectNet(41, 41, 8.0, 8.0, 3.0, 6), 0.10),
+                     ("rectangular fan (three merge heights)",
+                         SkinFanRectNet(51, 31, 10.0, 6.0, 2.5, 6), 0.42),
+                 })
+        {
+            object net = SkinNetWith(
+                netType, edgeType, fixture.Vertices, fixture.Faces,
+                fixture.Rim, Array.Empty<(int, int, double)>());
+            object built = courses.Invoke(
+                null, new object[] { net, Size, CourseHeight })!;
+            var cells = SkinCells(built);
+            if (cells.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Courses built no cells at all.");
+            }
+            RequireDisjointSimplePlans(
+                cells.Select(cell => cell.Outline).ToList(),
+                $"{label}, four-corner merge fixture");
+
+            double[][] vertices = ((IEnumerable)netType
+                    .GetProperty("Vertices")!.GetValue(net)!)
+                .Cast<double[]>().ToArray();
+            int[][] faces = ((IEnumerable)netType
+                    .GetProperty("Faces")!.GetValue(net)!)
+                .Cast<int[]>().ToArray();
+            double[] field = SkinLevels(net);
+            double dMin = field.Where(double.IsFinite).Min();
+            double dMax = field.Where(double.IsFinite).Max();
+            double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
+
+            double uncovered = SlabUncoveredArea(
+                vertices, faces, field, dMin - epsilon, dMax + epsilon,
+                cells.Select(cell => cell.Outline).ToArray(),
+                out double sampledArea);
+            // THE VACUOUS-ZERO GUARD (this repo's own standing habit):
+            // the whole roof is sampled here, so a vacuous reading would
+            // mean the fixture itself failed to build rather than that
+            // the fix holds.
+            if (!(sampledArea > 1.0))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the whole field range sampled to only " +
+                    $"{sampledArea:F4} m2 of plan area; the fixture is " +
+                    "meant to carry the whole roof there, and a vacuous " +
+                    "area makes the uncovered reading below " +
+                    "meaningless.");
+            }
+            Console.WriteLine(
+                $"      Skin free-edge wedge ({label}): field " +
+                $"[{dMin:F4}, {dMax:F4}], sampled {sampledArea:F4} m2, " +
+                $"uncovered {uncovered:F4} m2 against an accepted-" +
+                $"residue floor of {acceptedResidueFloor:F4} m2.");
+            if (uncovered > acceptedResidueFloor)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: every four-corner free-edge merge's own " +
+                    "wedge must be closed by an end-stone cut against " +
+                    "the two flanking guides' own ends (finding 3's " +
+                    $"G4); {uncovered:F4} m2 of the roof's " +
+                    $"{sampledArea:F4} m2 own plan area is uncovered, " +
+                    "against an accepted-residue floor of " +
+                    $"{acceptedResidueFloor:F4} m2 (this fix's own " +
+                    "four-guide guard leaves other merge counts standing " +
+                    "by design, not the sliver this fix's own overlap " +
+                    "guard declines to chase).");
+            }
         }
     }
 
