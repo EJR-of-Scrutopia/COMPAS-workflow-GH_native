@@ -1495,6 +1495,35 @@ internal static class Program
 
         try
         {
+            ValidateSkinCapLensBound(plugin);
+            Console.WriteLine(
+                "PASS  Skin cap lens bound (spec 2026-09-05 round three, " +
+                "FIX 5: G3 CAP CRESCENTS), measured directly against " +
+                "CapPolygonOutline: the concave clause (round two, " +
+                "finding 3) only ever pulls a chord IN, toward the " +
+                "loop's own dips, so a convex arc -- every trace vertex " +
+                "on the OUTWARD side -- never trips it and ships its own " +
+                "true area between chord and arc uncovered, a crescent, " +
+                "with no floor asked of it at all. The symmetric clause " +
+                "this fix adds asks each span its own whole-arc lens " +
+                "area, the true shoelace area between the chord and the " +
+                "arc it replaces rather than a fan of single-point " +
+                "triangles, and only refines where that beats the " +
+                "sliver floor. At a floor of zero the polygon's own " +
+                "shortfall against the traced loop collapses to float " +
+                "noise, which is exactly where the pre-fix reading (no " +
+                "symmetric clause at all) is NOT; at the pattern's own " +
+                "floor the shortfall sits at or under it, the finding's " +
+                "own sentence measured rather than assumed.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin cap lens bound: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRingVaultMeshings(plugin);
             Console.WriteLine(
                 "PASS  Skin correspondence is the GEOMETRY's, not the " +
@@ -24319,18 +24348,34 @@ internal static class Program
         // vertices at 8b9a44a) ships as ONE cell whose outline carries
         // the SIX structural corners the arc-windowed turning finds at
         // the lobes plus the inscribed refinement's vertices along the
-        // concave dips, 33 corners in all: the refinement is what kept
-        // the polygon INSIDE the loop and alive through KeepValidPlans,
-        // where the bare six-corner hexagon measured its death by
-        // overlap (1 drop) on this very fixture.
+        // concave dips, 33 corners in all at 8b9a44a: the refinement is
+        // what kept the polygon INSIDE the loop and alive through
+        // KeepValidPlans, where the bare six-corner hexagon measured its
+        // death by overlap (1 drop) on this very fixture.
+        //
+        // RE-MEASURED AT 38 (round three, FIX 5, G3 CAP CRESCENTS): the
+        // concave clause above only ever pulled the chord IN, toward the
+        // loop's own dips; the symmetric clause added this wave asks each
+        // remaining span (the ascending stretches between a dip's last
+        // inserted point and the next lobe tip) its own true crescent
+        // area, and five of those on this loop's own six lobes beat the
+        // sliver floor (S 0.6 / CH 0.35, MP S / 3, floor 0.07 m2) and
+        // gained a corner apiece. Measured directly, old build against
+        // new build on this exact fixture: the polygon's own plan area
+        // rose from 0.339202 m2 (33 corners) to 0.437232 m2 (38), closing
+        // 0.0980 m2 of crescent this wave's own diagnosis never measured
+        // on the lobed forms but the fix closes anyway, for free, wherever
+        // it finds one.
         var capCell = cells.Single(cell => cell.Cap);
-        if (capCell.Outline.Length != 33)
+        if (capCell.Outline.Length != 38)
         {
             throw new InvalidOperationException(
                 "The six-lobe cap polygon carries its six structural " +
-                "corners plus the inscribed refinement along the dips, " +
-                $"33 in all (re-measure if a fix legitimately moved it); " +
-                $"got {capCell.Outline.Length}.");
+                "corners, the concave clause's refinement along the dips " +
+                "and G3's symmetric clause closing five convex crescents " +
+                "on the ascending stretches toward each lobe tip, 38 in " +
+                $"all (re-measure if a fix legitimately moved it); got " +
+                $"{capCell.Outline.Length}.");
         }
 
         // ---- FIX 4. INTERIOR SAG (finding 2a). Outline corners measure
@@ -24960,6 +25005,254 @@ internal static class Program
             "4): even and odd barrel both read empty (fix 2 already " +
             $"closes the plateau); wavy barrel names {wavyRegions.Length} " +
             "region(s): " + string.Join("; ", wavyRegions));
+    }
+
+    /// <summary>
+    /// FIX 5 (round three, G3 CAP CRESCENTS, Param's own ruling): the
+    /// finding's own sentence measured directly at the unit it names --
+    /// "a chord may not cut off more than the sliver-floor area between
+    /// chord and traced loop" -- against CapPolygonOutline itself,
+    /// reached through reflection (BindingFlags.NonPublic, the same
+    /// route check 12.6(c) already uses for MergeShortPieces), rather
+    /// than against a corner count a future, unrelated change could move
+    /// for the wrong reason.
+    ///
+    /// TWO WITNESSES, both the diagnosis's own: the asymmetric six-lobe's
+    /// own crown, traced short of dMax on the SAME net
+    /// ValidateSkinSeamRoundTwo carries at the SAME S 0.6 / CH 0.35 (MP
+    /// S / 3 = 0.2, sliver floor 0.07 m2 by SliverFloor's own formula);
+    /// and Param's own solved crown arch at S 0.10 / CH 0.30, the
+    /// diagnosis's own "0.09 m2, four lenses" reading, loaded through
+    /// ReadNet exactly as the harness's other crown-arch checks do. The
+    /// traced level is NOT the internal cap band's own exact low
+    /// boundary, which nothing outside SkinPatterns.cs can read; it is
+    /// the same loop family, traced independently, close enough that
+    /// CapPolygonOutline has the same structural corners and ascending
+    /// convex stretches to answer for on each net.
+    ///
+    /// TWO READINGS OF THE SAME LOOP, PER EDGE (the finding's own bound
+    /// is per CHORD, not a total across the whole polygon: a loop of
+    /// several lobes can legitimately close more than one floor's worth
+    /// in aggregate, and this fixture's own six lobes do, 0.100 m2
+    /// combined, matching the 0.098 m2 the real engine's own cap band
+    /// closed when the six-lobe's own pinned cap corner count moved
+    /// from 33 to 38 in ValidateSkinSeamRoundTwo). Each returned edge is
+    /// one of the loop's own points BY REFERENCE, so the span it
+    /// replaced is read off exactly and its own crescent -- the true
+    /// shoelace area between that chord and the arc it stands in for --
+    /// is measured directly. At a sliver floor of ZERO the clause this
+    /// fix adds must refine every convex bulge regardless of size, so
+    /// the WORST single edge's own crescent collapses to float noise:
+    /// the RED PROOF, because a mutant that guards the new clause
+    /// behind the OLD bare-sign test alone (or drops it) leaves this
+    /// reading exactly where the pre-fix build measured it, a real,
+    /// non-vacuous crescent on one of the ascending stretches toward a
+    /// lobe tip. At the pattern's own floor the worst edge's own
+    /// crescent must sit at or under it, the finding's own sentence
+    /// measured at the unit it names rather than assumed.
+    /// </summary>
+    private static void ValidateSkinCapLensBound(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo capPolygonOutline = patterns.GetMethod(
+            "CapPolygonOutline",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "CapPolygonOutline must be reachable for FIX 5's own " +
+                "crescent bound to be measured at the unit the finding " +
+                "names.");
+
+        (double[][] vertices, int[][] faces, int[] rim) =
+            SkinLobedNet(6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07);
+        object sixLobe = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                vertices, faces, rim, Array.CreateInstance(edgeType, 0)
+            })!;
+
+        string crownPath = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(crownPath))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the " +
+                "build output (assets/param-crown-arch-contract.json): " +
+                crownPath);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(crownPath));
+        object crownArch = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so this fixture's own reading would hold " +
+                "vacuously.");
+
+        // TWO WITNESSES, both the diagnosis's own: the asymmetric six-
+        // lobe at the S / CH ValidateSkinSeamRoundTwo already carries
+        // (MP = S / 3, floor = max(MP * CH, 1e-3) by SliverFloor's own
+        // formula), and Param's own solved crown arch at S 0.10 / CH
+        // 0.30, the diagnosis's own "0.09 m2, four lenses" reading.
+        // levelBelowDMax is NOT the internal cap band's own exact low
+        // boundary, which nothing outside SkinPatterns.cs can read; it
+        // is close enough, on each net, that the closed crown loop
+        // traces whole with plenty of vertices for CapPolygonOutline to
+        // answer for.
+        foreach ((string label, object net, double levelBelowDMax,
+                  double minimumPiece, double sliverFloor) in
+                 new (string, object, double, double, double)[]
+                 {
+                     ("asymmetric six-lobe (S 0.6 / CH 0.35)", sixLobe,
+                         0.35, 0.2, 0.07),
+                     ("Param's crown arch (S 0.10 / CH 0.30)", crownArch,
+                         0.30, 0.10 / 3.0, 0.01),
+                 })
+        {
+            double dMax = SkinLevels(net).Where(double.IsFinite).Max();
+            IList tracedLevel = (IList)traceAll.Invoke(
+                null,
+                new object[] { net, new[] { dMax - levelBelowDMax } })!;
+            IList components = (IList)tracedLevel[0]!;
+            object? loop = components
+                .Cast<object>()
+                .Where(item => Reading<bool>(item, "Closed"))
+                .OrderByDescending(item => ((IList)item.GetType()
+                    .GetProperty("Points")!.GetValue(item)!).Count)
+                .FirstOrDefault();
+            if (loop is null)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: must trace a closed crown loop short of " +
+                    "dMax for FIX 5's own bound to be measured against " +
+                    "anything at all.");
+            }
+            double[][] loopPoints = ((IList)loop.GetType()
+                    .GetProperty("Points")!.GetValue(loop)!)
+                .Cast<double[]>()
+                .ToArray();
+            if (loopPoints.Length < 8)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the traced crown loop must carry at " +
+                    "least the eight vertices CapPolygonOutline itself " +
+                    $"requires before it simplifies anything; got " +
+                    $"{loopPoints.Length}.");
+            }
+            double loopArea = PlanAreaOf(loopPoints);
+            int count = loopPoints.Length;
+
+            // THE LOOP'S OWN ORIENTATION, exactly as CapPolygonOutline
+            // reads it (its own area2 / interior), so a per-edge
+            // crescent reads POSITIVE when the arc bulges OUTWARD past
+            // the chord (the uncovered case G3 is about) and negative
+            // when the chord would have cut outside the loop (the
+            // concave case the OLDER clause already owns,
+            // unconditionally, and this bound does not police).
+            double area2 = 0.0;
+            for (int at = 0; at < count; at++)
+            {
+                double[] a = loopPoints[at];
+                double[] b = loopPoints[(at + 1) % count];
+                area2 += (a[0] * b[1]) - (b[0] * a[1]);
+            }
+            double interior = area2 >= 0.0 ? 1.0 : -1.0;
+
+            // EVERY EDGE OF THE RETURNED POLYGON is one of the loop's
+            // own points BY REFERENCE (CapPolygonOutline never copies a
+            // coordinate), so each one's position in loopPoints is
+            // exact and the span it replaced is read off directly, the
+            // same span CapPolygonOutline's own refinement measures.
+            double WorstEdgeCrescent(double floor)
+            {
+                object simplified = capPolygonOutline.Invoke(
+                    null, new object[] { loop, minimumPiece, floor })!;
+                double[][] polygon = ((IList)simplified)
+                    .Cast<double[]>().ToArray();
+                var indexOf = new Dictionary<double[], int>();
+                for (int at = 0; at < count; at++)
+                    indexOf[loopPoints[at]] = at;
+                double worst = double.NegativeInfinity;
+                for (int edge = 0; edge < polygon.Length; edge++)
+                {
+                    double[] from = polygon[edge];
+                    double[] to = polygon[(edge + 1) % polygon.Length];
+                    if (!indexOf.TryGetValue(from, out int fromAt) ||
+                        !indexOf.TryGetValue(to, out int toAt))
+                    {
+                        throw new InvalidOperationException(
+                            $"{label}: CapPolygonOutline's own returned " +
+                            "vertices must be the loop's own points by " +
+                            "reference, so this bound can be measured " +
+                            "against the arc each chord actually " +
+                            "replaces.");
+                    }
+                    int span = ((toAt - fromAt) % count + count) % count;
+                    double shoelace2 = 0.0;
+                    double[] prev = from;
+                    for (int step = 1; step < span; step++)
+                    {
+                        double[] here = loopPoints[(fromAt + step) % count];
+                        shoelace2 +=
+                            (prev[0] * here[1]) - (here[0] * prev[1]);
+                        prev = here;
+                    }
+                    shoelace2 += (prev[0] * to[1]) - (to[0] * prev[1]);
+                    shoelace2 += (to[0] * from[1]) - (from[0] * to[1]);
+                    double crescent = interior * shoelace2 / 2.0;
+                    worst = Math.Max(worst, crescent);
+                }
+                return worst;
+            }
+
+            // ---- THE RED PROOF: at a sliver floor of zero every
+            // convex bulge, however small, must become a corner, so the
+            // WORST single edge's own crescent collapses to float
+            // noise; a mutant that guards the symmetric clause behind
+            // the concave test alone (or drops it) leaves the pre-fix
+            // reading here instead, a real, non-vacuous crescent.
+            double worstAtZero = WorstEdgeCrescent(0.0);
+            if (worstAtZero > 1.0e-6)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: at a sliver floor of zero the symmetric " +
+                    "clause must refine every convex bulge regardless " +
+                    "of size, so no returned edge's own crescent " +
+                    "against the arc it replaced may exceed float " +
+                    $"noise; the worst one came back at " +
+                    $"{worstAtZero:F6} m2, which is what the pre-fix " +
+                    "build (no symmetric clause at all) reads here.");
+            }
+
+            // ---- G3's OWN BOUND, the finding's own sentence, per
+            // chord: "a chord may not cut off more than the sliver-
+            // floor area between chord and traced loop." Not a total
+            // across every edge, which a loop of several lobes can
+            // legitimately exceed one edge at a time (the six-lobe's
+            // own six lobes read a combined 0.100 m2 for exactly that
+            // reason); the bound is asked of the WORST single edge.
+            double worstAtFloor = WorstEdgeCrescent(sliverFloor);
+            if (worstAtFloor > sliverFloor + 1.0e-6)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: G3's own bound (the finding's own " +
+                    "sentence): a chord may not cut off more than the " +
+                    "sliver floor's area between it and the traced " +
+                    $"loop; the floor here is {sliverFloor:F4} m2 and " +
+                    "the worst returned edge's own crescent came back " +
+                    $"at {worstAtFloor:F6} m2.");
+            }
+            Console.WriteLine(
+                $"      Skin cap lens bound ({label}): crown loop " +
+                $"{loopArea:F4} m2, worst edge crescent at floor zero " +
+                $"{worstAtZero:F6} m2, at the pattern's own floor " +
+                $"{sliverFloor:F4} m2 worst edge {worstAtFloor:F6} m2.");
+        }
     }
 
     /// <summary>

@@ -3950,10 +3950,34 @@ internal static class SkinPatterns
     /// simplification can never thin a cap to a triangle, which is the
     /// surface-fidelity hazard the diagnosis names (fan-rim chords grow
     /// with every corner removed).
+    ///
+    /// FIX 5 (round three, G3 CAP CRESCENTS, Param's own ruling): the
+    /// refinement below was written for only ONE of its two failure
+    /// directions. A concave dip between two corners sends the chord
+    /// OUTSIDE the loop, into the course below, and the existing clause
+    /// (any trace vertex on the loop-interior side of the chord) catches
+    /// it regardless of area, because ANY overlap there fails
+    /// KeepValidPlans. A CONVEX arc never trips that clause -- every
+    /// trace vertex sits on the OUTWARD side, so the loop-interior test
+    /// stays negative all the way along it -- and the chord ships with
+    /// the loop's own true area between it and the arc uncovered: a
+    /// crescent. Measured 0.09 m2 across four lenses on Param's own
+    /// crown arch (girth 3.68 m simplified to 4 corners) and 0.59 m2 on
+    /// the jittered rectangular fan. `sliverFloor` bounds it: every span
+    /// is now asked its own whole-arc lens area (the true shoelace area
+    /// between the chord and the arc it replaces, not a fan of
+    /// single-point triangles, which would mismeasure a multi-vertex
+    /// span), and only once that beats the floor does the worst-bulging
+    /// vertex become a corner too, recursing exactly as the concave
+    /// clause does. A small bulge every dome's own trace noise leaves
+    /// stays under the floor and adds nothing: the lobed caps already
+    /// carry 33 to 240 corners from the concave clause alone, and this
+    /// symmetric one must not grow a single one of them further.
     /// </summary>
     internal static List<double[]> CapPolygonOutline(
         SkinLevelCurve loop,
-        double window)
+        double window,
+        double sliverFloor)
     {
         var points = loop.Points;
         int count = points.Count;
@@ -4048,20 +4072,50 @@ internal static class SkinPatterns
                 continue;
             double worst = 0.0;
             int worstAt = -1;
+            double bulge = 0.0;
+            int bulgeAt = -1;
+            double[] prev = points[from];
+            double lensTwice = 0.0;
             for (int step = 1; step < span; step++)
             {
                 int at = (from + step) % count;
+                double[] here = points[at];
                 double side = interior * PlanSide(
-                    points[from], points[to], points[at]);
+                    points[from], points[to], here);
                 if (side > worst + 1.0e-9)
                 {
                     worst = side;
                     worstAt = at;
                 }
+                if (side < bulge - 1.0e-9)
+                {
+                    bulge = side;
+                    bulgeAt = at;
+                }
+                lensTwice += (prev[0] * here[1]) - (here[0] * prev[1]);
+                prev = here;
             }
             if (worstAt >= 0)
             {
                 refined.Insert(edge + 1, worstAt);
+                edge--;
+                continue;
+            }
+            // FIX 5's symmetric clause: no concave overlap anywhere in
+            // this span, so ask the crescent question instead. lensTwice
+            // so far is the running shoelace sum across the span's own
+            // interior arc edges; closing it through 'to' and back across
+            // the chord to 'from' gives the FULL doubled area of the lens
+            // (arc plus chord, the region this chord fails to cover when
+            // positive), signed to the loop's own orientation.
+            lensTwice += (prev[0] * points[to][1]) -
+                         (points[to][0] * prev[1]);
+            lensTwice += (points[to][0] * points[from][1]) -
+                         (points[from][0] * points[to][1]);
+            double lensArea = interior * lensTwice / 2.0;
+            if (lensArea > sliverFloor && bulgeAt >= 0)
+            {
+                refined.Insert(edge + 1, bulgeAt);
                 edge--;
             }
         }
@@ -5120,7 +5174,8 @@ internal static class SkinPatterns
                     // KeepValidPlans like every other cell (the standing
                     // rule at the plan-filter comment).
                     SkinLevelCurve outer = lowers[lowerAt];
-                    var loop = CapPolygonOutline(outer, minimumPiece);
+                    var loop = CapPolygonOutline(
+                        outer, minimumPiece, sliverFloor);
                     if (loop.Count >= 3)
                     {
                         capGirths.Add(outer.Length);
