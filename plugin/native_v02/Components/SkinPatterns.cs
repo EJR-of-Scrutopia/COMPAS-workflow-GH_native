@@ -9264,10 +9264,93 @@ internal static class SkinPatterns
     /// deterministic on clipped cells where a clipped outline's
     /// centroid would drift with the clip.
     /// </summary>
+    /// <summary>The engine's own default for Min Piece (rule 9.5's port
+    /// default, the same one Courses carries): a third of Size. An explicit
+    /// overload and not an optional parameter, so that every reflection call
+    /// binds (Courses' own comment states the reason, verbatim).</summary>
     public static SkinPatternResult Hexagonal(
         SkinNet net,
         double size,
-        double courseHeight)
+        double courseHeight) =>
+        Hexagonal(net, size, courseHeight, 1.0 / 3.0);
+
+    /// <summary>ROUND FOUR, RULE 2 (spec 2026-09-06-skin-round-four-his-
+    /// nets.md): the closer band, consumed by the honeycomb for the first
+    /// time. Rule 2.1's deferral of 2026-09-04 (ChainCorresponds' own doc
+    /// comment) is LIFTED for the one case this wave could reach safely; the
+    /// rest of the deferral's own defect is measured, named and left
+    /// standing below rather than papered over.
+    ///
+    /// THE MEASURED CAUSE IS NOT CHAINCORRESPONDS/SKIPPEDROWS: that test
+    /// fired ZERO times on all three of Param's Hex studies, so the
+    /// deferral note's own framing ("gate the correspondence refusal") does
+    /// not describe what is actually wrong on his nets. Diagnosed instead by
+    /// tagging every built cell with its own chart, row and course, then
+    /// reading what a DROPPED cell's overlap was measured AGAINST: every one
+    /// of the 127 (2/3-sided Hex) and 252 (4-sided Hex) overlap-dropped
+    /// cells overlaps a cell from an EARLIER course, never a later one and
+    /// never its own. The trigger correlates with a row whose smoothed
+    /// centre count (rule 4.2.2) differs from its own predecessor's --
+    /// exactly the five/seven-sided transition rule 4.3.4 already permits --
+    /// but a PRE-EMPTIVE refusal on that signal alone was tried and
+    /// measured wrong: it fires on any gradually curved surface too (a
+    /// hemisphere's own honeycomb coverage collapsed from a healthy figure
+    /// to 0.55 per cent under it, refusing rows rule 4.3.4 already handles
+    /// cleanly), and even where it correctly flags Param's own bad rows, a
+    /// CloserBand bridge spanning below-to-above DOUBLE-CLAIMS the sub-bands
+    /// its unrefused neighbours already reach into (every honeycomb row
+    /// spans TWO Course Heights by construction, rule 4.2.1, so an
+    /// unrefused neighbour's own reach and a closer's bridge inherently
+    /// overlap in range): measured, this raised the overlap-dropped count
+    /// rather than lowering it (127 to 215 on the 2/3-sided studies).
+    /// CloserBand's own exclusive-band design, trusted throughout the
+    /// courses engine, is not safe to reuse verbatim here.
+    ///
+    /// WHAT IS SAFE, AND WHAT IS SHIPPED: refusal is gated on the MEASURED
+    /// OUTCOME of the plan filter every pattern is already judged by, never
+    /// on a geometric proxy computed before construction. A (chart, course)
+    /// whose own naive cells lost every one of them to the filter is no
+    /// longer handed back through to be built and rejected a second time --
+    /// this alone lowers his own overlap-dropped count (127 to 90 on the
+    /// 2 and 3 sided studies, 252 to 200 on the 4 sided one), on every
+    /// fixture this task measured, with no other fixture's own reading
+    /// moved -- and is OFFERED a real rebuild as a closer band (below
+    /// curve to above curve, its own "here" curve as Fix 4's mid-height
+    /// third rail), kept ONLY where BandUncoveredArea first measures a
+    /// real residue against every surviving cell AND the resulting stone
+    /// does not itself overlap a survivor (checked before it is ever
+    /// counted, not left for the plan filter to reject and silently
+    /// inflate the drop tally). MEASURED, not assumed: on every fixture
+    /// this task's own time reached, that offer is never taken up --
+    /// ClosedSeams and CloserCells both read zero even where the count
+    /// falls, because the residue gate finds nothing worth the sliver
+    /// floor once a course's own neighbours are counted. The consumption
+    /// this rule wires in is therefore real but UNPROVEN to ever fire
+    /// non-vacuously; ValidateRoundFourRule2Closure (tests/native_smoke)
+    /// asserts exactly this on his three Hex studies and on the split-
+    /// and-death net together, so a future fixture where a stone DOES
+    /// survive is a change this check would have to be updated to admit,
+    /// not one it already assumes. This is DELIBERATELY NARROWER than
+    /// "every row the deferral note describes": it is the one slice of the
+    /// defect measured safe to touch without regressing an unrelated
+    /// fixture. A WIDER trigger (a course whose MAJORITY, not all, of its
+    /// cells were dropped) was also built and measured: it lowers his own
+    /// overlap-dropped counts further (127 to 66, 252 to 86) but regresses
+    /// four unrelated fixtures at once (a hemisphere's own coverage under
+    /// its floor, a mirror-symmetry residual, a pinned cell count, and his
+    /// OWN sidecar reproduction pin on the 4-sided Hex study), each needing
+    /// its own re-measurement this task's own time did not extend to
+    /// re-justifying safely. The remainder -- the majority of his 127/252
+    /// overlap drops, which sit on rows that lost MOST but not ALL of their
+    /// cells -- is UNCHANGED by this wave (his own final cell counts, 226,
+    /// 226 and 381, are IDENTICAL before and after) and is named, not
+    /// claimed, in the round-four report.
+    /// </summary>
+    public static SkinPatternResult Hexagonal(
+        SkinNet net,
+        double size,
+        double courseHeight,
+        double minimumPiece)
     {
         RequireSizes(size, courseHeight);
         // THE BLENDED FIELD (spec 2026-09-05 rules 2.2 and 2.3), applied to
@@ -9320,6 +9403,12 @@ internal static class SkinPatterns
             }
         }
         var skippedRows = new HashSet<int>();
+        // Moved up from the tail of this method (ROUND FOUR, RULE 2): the
+        // closer-band calls inside the chart loop below need the net's own
+        // seam curves to gate coverPinchOuts exactly as the courses engine's
+        // own slab-and-closer call does; the final SkinPatternResult still
+        // reads this same local.
+        IReadOnlyList<double[][]> seams = SeamCurves(net);
 
         var keyed =
             new List<(int Course, int Chart, double U0, SkinCell Cell)>();
@@ -9328,6 +9417,28 @@ internal static class SkinPatterns
         int fiveSided = 0;
         int sevenSided = 0;
         int weldCollapsed = 0;
+        // ROUND FOUR, RULE 2: the closer band, consumed here for the first
+        // time by the honeycomb (Hexagonal's own doc comment carries the
+        // measured cause and the gate). Named exactly as the courses
+        // engine's own counters, so a reader comparing the two patterns'
+        // diagnostics is comparing like with like.
+        int mergedPieces = 0;
+        int mergedShortKept = 0;
+        int mergedStillShort = 0;
+        int closerCells = 0;
+        int closerRefused = 0;
+        int closerUndersized = 0;
+        int closedSeams = 0;
+        // ROUND FOUR, RULE 2's OWN LOOKUP: (chart, course) to the three
+        // curves (below, here, above) whichever row of that chart mapped to
+        // that course. Populated for EVERY row the loop below reaches,
+        // whether or not it goes on to build cells, so the post-hoc rescue
+        // after the first KeepValidPlans pass can bridge a course's own
+        // flanks without re-tracing anything.
+        var courseFlanks =
+            new Dictionary<(int Chart, int Course),
+                (SkinLevelCurve Below, SkinLevelCurve Here,
+                 SkinLevelCurve Above)>();
         for (int chartAt = 0; chartAt < charts.Count; chartAt++)
         {
             SkinChart chart = charts[chartAt];
@@ -9433,6 +9544,20 @@ internal static class SkinPatterns
                 SkinLevelCurve below = chart.Curves[Math.Max(0, k - 1)];
                 SkinLevelCurve above =
                     chart.Curves[Math.Min(rows - 1, k + 1)];
+                // ROUND FOUR, RULE 2: the course this row WOULD belong to,
+                // computed regardless of whether the row goes on to build
+                // (this is new: the original computed it only past the
+                // correspondence gate). CourseFlanks records it against
+                // (chart, course) either way, so the post-hoc rescue below
+                // can find the right below/here/above curves for a course
+                // whose naive cells turn out unusable, WITHOUT re-deriving
+                // them from scratch or re-tracing anything.
+                int rowCourse = Math.Min(
+                    bands - 1,
+                    Math.Max(0, (int)Math.Floor(
+                        (here.Level - dMin) / courseHeight + 1.0e-9)));
+                courseFlanks.TryAdd(
+                    (chartAt, rowCourse), (below, here, above));
                 if (!ChainCorresponds(here, below) ||
                     !ChainCorresponds(above, here))
                 {
@@ -9554,19 +9679,178 @@ internal static class SkinPatterns
         }
         // The plan guarantee, enforced on the sorted list exactly as the
         // courses engine enforces it, and every diagnostics number below
-        // taken off the survivors.
-        List<SkinCell> cells = KeepValidPlans(
+        // taken off the survivors -- FIRST PASS, unchanged from before this
+        // wave, so the rescue below measures against the same filter every
+        // other pattern is already judged by.
+        List<(int Course, int Chart, double U0, SkinCell Cell)> sortedKeyed =
             keyed
                 .OrderBy(item => item.Course)
                 .ThenBy(item => item.Chart)
                 .ThenBy(item => Math.Abs(
                     (item.Cell.U0 + item.Cell.U1) / 2.0))
                 .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
-                .Select(item => item.Cell)
-                .ToList(),
+                .ToList();
+        List<SkinCell> firstPass = KeepValidPlans(
+            sortedKeyed.Select(item => item.Cell).ToList(),
             out int degenerateDropped,
             out int overlapDropped,
             out int degenerateCentroidsSkipped);
+
+        // ROUND FOUR, RULE 2's OWN RESCUE (Hexagonal's doc comment carries
+        // the measurement in full): a (chart, course) whose own naive cells
+        // lost EVERY ONE of them to the filter above -- not merely most,
+        // see the doc comment for the wider thresholds tried and measured
+        // worse -- is refused wholesale and rebuilt as a closer band
+        // bridging that course's own below/here/above curves (courseFlanks,
+        // populated whether or not the row built anything). This gate reads
+        // the ACTUAL MEASURED outcome of the very filter every pattern is
+        // judged by, never a geometric proxy computed before construction.
+        var keptSet = new HashSet<SkinCell>(
+            firstPass, ReferenceEqualityComparer.Instance);
+        var rescuedChartCourses = new HashSet<(int Chart, int Course)>();
+        foreach (IGrouping<(int Chart, int Course),
+                     (int Course, int Chart, double U0, SkinCell Cell)> group
+                 in sortedKeyed.GroupBy(item => (item.Chart, item.Course)))
+        {
+            int total = group.Count();
+            int kept = group.Count(item => keptSet.Contains(item.Cell));
+            if (kept == 0)
+                rescuedChartCourses.Add(group.Key);
+        }
+
+        List<SkinCell> cells;
+        if (rescuedChartCourses.Count == 0)
+        {
+            cells = firstPass;
+        }
+        else
+        {
+            List<(int Course, int Chart, double U0, SkinCell Cell)>
+                rescuedKeyed = sortedKeyed
+                    .Where(item =>
+                        !rescuedChartCourses.Contains(
+                            (item.Chart, item.Course)))
+                    .ToList();
+            // THE HOLE IS MEASURED BEFORE IT IS CLOSED, not assumed from the
+            // refusal alone. Every row spans TWO Course Heights (below to
+            // above) by the honeycomb's own construction, so a row either
+            // side of a rescued one already reaches into part of its span;
+            // measured directly, that reach is usually enough on its own
+            // (BandUncoveredArea reads a genuine near-zero residue on
+            // Param's own studies for most rescued courses). Building a
+            // full below-to-above closer regardless of that would re-claim
+            // ground the surviving neighbours already cover, which is
+            // EXACTLY what an earlier version of this rescue did and
+            // measured worse, not better (overlap-dropped rose from the
+            // measured 127 to 215 on his 2/3-sided Hex studies): the
+            // closer's own cells were staged against the SAME flank curves
+            // the surviving rows already tile from, and the second
+            // KeepValidPlans pass below rejected most of them right back
+            // out. A closer is built ONLY where the residue this course's
+            // own removal leaves, sampled against every surviving cell
+            // (any chart, any course), still exceeds the sliver floor.
+            double sliverFloor = SliverFloor(minimumPiece, courseHeight);
+            foreach ((int chartAt, int course) in rescuedChartCourses)
+            {
+                if (!courseFlanks.TryGetValue(
+                        (chartAt, course), out var flanks))
+                {
+                    continue;
+                }
+                List<IReadOnlyList<double[]>> survivorOutlines = rescuedKeyed
+                    .Where(item => keptSet.Contains(item.Cell))
+                    .Select(item => item.Cell.Outline)
+                    .ToList();
+                double residue = BandUncoveredArea(
+                    net, flanks.Below.Level, flanks.Above.Level,
+                    survivorOutlines,
+                    out double sampled, out double _, out double _);
+                if (!(sampled > 1.0e-9) || !(residue > sliverFloor))
+                    continue;
+                // THE THIRD RAIL is this course's own "here" curve, the row
+                // that mapped to it: the refused span is a full Course
+                // Height on both sides of it (below to here, here to
+                // above), exactly the shape Fix 4's own ridge-plateau call
+                // already bridges with a mid-height rail rather than a bare
+                // chord.
+                var midRails = new List<SkinLevelCurve> { flanks.Here };
+                double thickness = flanks.Above.Level - flanks.Below.Level;
+                bool fullCourse = thickness >= courseHeight - 1.0e-9;
+                int closerCellsBefore = closerCells;
+                // A CLOSER STONE IS OFFERED, NOT TRUSTED: CloserBand tiles
+                // the WHOLE below-to-above span at its own pitch with no
+                // knowledge of what the surviving rows either side already
+                // cover, so a stone that lands where a survivor already
+                // reaches is a real risk here that it is not on the
+                // courses engine's own exclusive bands (measured: built
+                // and added unconditionally, overlap-dropped rose from 127
+                // to 215 on his 2/3-sided Hex studies, the closer's own
+                // stones being what the second KeepValidPlans pass then
+                // rejected). Each stone is checked against the SAME
+                // survivor outlines the residue above was measured against,
+                // plus every stone this course's own rescue has already
+                // accepted, and a stone that overlaps either is discarded
+                // here rather than handed to the second pass to reject and
+                // count against the pattern.
+                foreach ((SkinLevelCurve guide, SkinCell closer) in
+                         CloserBand(
+                             new[] { flanks.Below },
+                             new[] { flanks.Above },
+                             course,
+                             size,
+                             minimumPiece,
+                             thickness,
+                             fullCourse,
+                             seams.Count > 0,
+                             midRails,
+                             null,
+                             ref mergedPieces,
+                             ref mergedShortKept,
+                             ref mergedStillShort,
+                             ref weldCollapsed,
+                             ref closerRefused,
+                             ref closerUndersized))
+                {
+                    double[]? closerInside = PlanInteriorPoint(closer.Outline);
+                    bool conflicts = survivorOutlines.Any(other =>
+                        PlansOverlapWithInteriors(
+                            closer.Outline, closerInside, other, null)) ||
+                        rescuedKeyed
+                            .Where(item => item.Course == course &&
+                                           item.Chart == chartAt &&
+                                           item.Cell.Closer)
+                            .Any(item => PlansOverlapWithInteriors(
+                                closer.Outline, closerInside,
+                                item.Cell.Outline, null));
+                    if (conflicts)
+                    {
+                        closerRefused++;
+                        continue;
+                    }
+                    closerCells++;
+                    rescuedKeyed.Add(
+                        (closer.Course, chartAt, closer.U0, closer));
+                }
+                if (closerCells > closerCellsBefore)
+                    closedSeams++;
+            }
+            // SECOND PASS: the plan guarantee run again over the rescued
+            // set, so a closer stone that itself overlaps a surviving
+            // naive cell, or another rescue's own closer stones, is caught
+            // by the SAME filter rather than trusted on faith.
+            cells = KeepValidPlans(
+                rescuedKeyed
+                    .OrderBy(item => item.Course)
+                    .ThenBy(item => item.Chart)
+                    .ThenBy(item => Math.Abs(
+                        (item.Cell.U0 + item.Cell.U1) / 2.0))
+                    .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
+                    .Select(item => item.Cell)
+                    .ToList(),
+                out degenerateDropped,
+                out overlapDropped,
+                out degenerateCentroidsSkipped);
+        }
         List<int> countChangeRowsSorted =
             countChangeRows.OrderBy(row => row).ToList();
         string? oddLine = fiveSided + sevenSided > 0
@@ -9574,7 +9858,6 @@ internal static class SkinPatterns
               "(row counts change at rows " +
               string.Join(", ", countChangeRowsSorted) + ")"
             : null;
-        IReadOnlyList<double[][]> seams = SeamCurves(net);
         return new SkinPatternResult(
             cells,
             bands,
@@ -9609,12 +9892,12 @@ internal static class SkinPatterns
             sevenSided,
             countChangeRowsSorted,
             closedRows.OrderBy(row => row).ToList(),
-            0,
+            mergedPieces,
             degenerateCentroidsSkipped,
             0,
             1,
-            0,
-            0,
+            mergedShortKept,
+            mergedStillShort,
             Array.Empty<double[][]>(),
             Array.Empty<double[][]>(),
             weldCollapsed)
@@ -9622,14 +9905,20 @@ internal static class SkinPatterns
             // THE SEAM IS DATA HERE TOO, for the reason given at the
             // force-aligned return: it is a property of the net and not of
             // the tessellation, and a review round found the honeycomb
-            // handing back an empty seam list on a net that has one. The
-            // closer band is still not wired into this pattern, whose
-            // refusals are its own per-chart skippedRows against whole
-            // CH-wide gaps rather than the courses' CH/64 residual; that gap
-            // is a DEFERRAL recorded against rule 2.1 in the spec and not a
-            // silence.
+            // handing back an empty seam list on a net that has one.
+            //
+            // ROUND FOUR, RULE 2: the closer band IS now wired into this
+            // pattern (rule 2.1's deferral, recorded here until 2026-09-06,
+            // is lifted). ClosedSeams and CloserCells are no longer pinned
+            // at zero; Hexagonal's own doc comment carries the measured
+            // gate and the reason it differs from the courses engine's own
+            // CH/64 residual.
             SeamCurves = seams,
-            InteriorRimObstacles = net.InteriorRimObstacles
+            InteriorRimObstacles = net.InteriorRimObstacles,
+            ClosedSeams = closedSeams,
+            CloserCells = closerCells,
+            CloserRefused = closerRefused,
+            CloserUndersized = closerUndersized
         };
     }
 }

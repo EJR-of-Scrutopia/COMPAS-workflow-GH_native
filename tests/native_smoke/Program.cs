@@ -3492,6 +3492,42 @@ internal static class Program
                 $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateRoundFourRule2Closure(plugin);
+            Console.WriteLine(
+                "PASS  Round four rule 2, the honeycomb's own closer band " +
+                "(spec 2026-09-06 skin-round-four-his-nets): a (chart, " +
+                "course) that lost every one of its naive cells to the " +
+                "plan filter is rebuilt as a closer band wherever a real " +
+                "residue survives measurement, never overlapping a " +
+                "survivor by construction (checked before it is counted, " +
+                "not left for the filter to reject and inflate the drop " +
+                "tally). MEASURED, not assumed: on every fixture this " +
+                "check reaches, his own three Hex studies and the " +
+                "split-and-death net alike, ClosedSeams and CloserCells " +
+                "both read ZERO -- the residue gate never once found a " +
+                "survivable stone -- yet the overlap-dropped count still " +
+                "falls everywhere (127 to 90 twice, 252 to 200, 49 to 40), " +
+                "because a cell doomed to be rejected is no longer built " +
+                "and counted a second time. That is the whole of what " +
+                "this wave measured safe to ship: named as exactly that, " +
+                "not as the single-figure rate the wave's own acceptance " +
+                "bar asks for.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Round four rule 2, the honeycomb's own closer " +
+                $"band: {unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Round four rule 2, the honeycomb's own closer band: " +
+                $"{DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -20218,7 +20254,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
 
         // The serpentine is PLAN-INJECTIVE by construction, and the whole
         // engine requires it: plan x strictly increasing in i, plan y
@@ -22358,7 +22395,8 @@ internal static class Program
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
         (double[][] vertices, int[][] faces) = SkinDomeNet();
         object net = Activator.CreateInstance(
             netType, new object[] { vertices, faces })!;
@@ -23146,20 +23184,31 @@ internal static class Program
         // themselves bisection slivers, against an ordinary course's own
         // 11.1 per cent on this net.
 
-        // ---- CHECK 1(d). THE SEAM IS DATA ON EVERY PATTERN, AND THE CLOSER
-        // IS NOT. Rule 2.1 says "in every pattern" and the closer is wired
-        // into the COURSES engine alone; a review round found the honeycomb
-        // and the force-aligned results handing back an EMPTY seam list on
-        // this net, which made a reader unable to tell a pattern without the
-        // closer from a net without a seam. The seam is a property of the NET
-        // and not of the tessellation, so all three patterns must carry the
-        // same curves and name them in D. What the other two must NOT claim
-        // is a closed seam: their ClosedSeams and CloserCells stay at zero,
-        // and rule 2.1's own deferral in the spec is what says why.
+        // ---- CHECK 1(d). THE SEAM IS DATA ON EVERY PATTERN, WHETHER OR NOT
+        // THE CLOSER IS. Rule 2.1 says "in every pattern" and, before round
+        // four, the closer was wired into the COURSES engine alone; a
+        // review round found the honeycomb and the force-aligned results
+        // handing back an EMPTY seam list on this net, which made a reader
+        // unable to tell a pattern without the closer from a net without a
+        // seam. The seam is a property of the NET and not of the
+        // tessellation, so all three patterns must carry the same curves
+        // and name them in D, regardless. ROUND FOUR, RULE 2 lifts the
+        // deferral for the honeycomb on the narrow case measured safe (a
+        // course that lost every one of its naive cells, spec 2026-09-06
+        // skin-round-four-his-nets): this net's own courses never reach
+        // that case, so ClosedSeams and CloserCells still read zero HERE --
+        // as they still do on EVERY fixture this wave measured, the
+        // residue gate never once keeping a survivable stone (see
+        // ValidateRoundFourRule2Closure), so this reads as a description
+        // of every fixture checked so far and not a narrower promise about
+        // this one alone. Force-aligned's own deferral is untouched by
+        // this wave and its zero is still the standing promise.
         foreach ((string named, MethodInfo made) in new[]
                  {
                      ("hexagonal",
-                      RequirePublicStatic(patterns, "Hexagonal")),
+                      RequirePublicStatic(
+                          patterns, "Hexagonal",
+                          netType, typeof(double), typeof(double))),
                      ("force aligned",
                       RequirePublicStatic(
                           patterns, "ForceAligned",
@@ -23203,11 +23252,17 @@ internal static class Program
                 .GetProperty("CloserCells")!.GetValue(other)!;
             if (otherSeams != 0 || otherStones != 0)
             {
+                string reason = named == "hexagonal"
+                    ? "this crown net's own courses never lose every one " +
+                      "of their naive cells, round four rule 2's own " +
+                      "narrow gate for the honeycomb (spec 2026-09-06 " +
+                      "skin-round-four-his-nets)"
+                    : "rule 2.1's own recorded deferral, still standing " +
+                      "for this pattern";
                 throw new InvalidOperationException(
-                    $"The closer band is NOT wired into the {named} " +
-                    "pattern, which is rule 2.1's own recorded deferral, so " +
-                    "this result must claim no closed seam and no closer " +
-                    $"stone; it claims {otherSeams} and {otherStones}.");
+                    $"On THIS net, {reason} says {named} must claim no " +
+                    "closed seam and no closer stone; it claims " +
+                    $"{otherSeams} and {otherStones}.");
             }
         }
 
@@ -27988,7 +28043,8 @@ internal static class Program
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
@@ -28131,16 +28187,22 @@ internal static class Program
         // The honeycomb on this net is NOT clean. Re-measured for task 23
         // (rule 4.2.2's per-row normalised lattice replaces the absolute
         // one this note used to name): this net now drops 0 self-crossing
-        // and 39 overlapping. Pinned as a MEASUREMENT so it cannot grow
+        // and 39 overlapping. RE-MEASURED for round four rule 2 (the closer
+        // band's first consumption by the honeycomb, spec 2026-09-06
+        // skin-round-four-his-nets): a (chart, course) that lost every one
+        // of its naive cells to this same filter is now rebuilt as a
+        // closer band wherever BandUncoveredArea finds a real residue,
+        // never overlapping a survivor by construction; this net's own
+        // 39 falls to 26. Pinned as a MEASUREMENT so it cannot grow
         // unseen; the courses engine on the same net is still required to
         // drop NOTHING, above.
         int peakDegenerate = Reading<int>(hexBuilt, "PlanDegenerateDropped");
         int peakOverlap = Reading<int>(hexBuilt, "PlanOverlapDropped");
-        if (peakDegenerate != 0 || peakOverlap != 39)
+        if (peakDegenerate != 0 || peakOverlap != 26)
         {
             throw new InvalidOperationException(
                 "The honeycomb on the two-peak net at CH 0.5 is pinned " +
-                "to drop 0 self-crossing and 39 overlapping cells, a " +
+                "to drop 0 self-crossing and 26 overlapping cells, a " +
                 "MEASUREMENT of the per-row lattice's own residual over " +
                 "this net's split; it dropped " +
                 $"{peakDegenerate} and {peakOverlap}.");
@@ -28348,12 +28410,18 @@ internal static class Program
         // 4.2.2's per-row lattice moved every column and every one of
         // this net's charts is now covered end to end (the earlier
         // "skip a chart under three rows" guard used to drop whichever
-        // courses a short-lived chart alone carried).
+        // courses a short-lived chart alone carried). RE-MEASURED again
+        // for round four rule 2 (the closer band's first consumption by
+        // the honeycomb, spec 2026-09-06 skin-round-four-his-nets): a
+        // (chart, course) that lost every one of its naive cells is now
+        // rebuilt as a closer band wherever BandUncoveredArea finds a
+        // real residue, never overlapping a survivor by construction;
+        // this net's own 49 falls to 40.
         string SplitAndDeathCoursesLine =
             ClosedLine(18, "between z=0.594 and z=0.602");
         RefusesTheMiddleBand(
             "split-and-death", SkinSplitAndDeathNet(),
-            SplitAndDeathCoursesLine, (0, 0), (0, 49));
+            SplitAndDeathCoursesLine, (0, 0), (0, 40));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -28825,7 +28893,8 @@ internal static class Program
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
@@ -28949,6 +29018,14 @@ internal static class Program
         // throughout, and CH 0.5 on the two unlisted meshings) is unmoved,
         // and pinnedBuilt's own totals are unmoved too since a moved drop
         // is one fewer or one more KEPT cell, not a different built total.
+        // RE-MEASURED for round four rule 2 (the closer band's first
+        // consumption by the honeycomb, spec 2026-09-06 skin-round-four-
+        // his-nets): a (chart, course) that lost every one of its naive
+        // cells is now rebuilt as a closer band wherever BandUncoveredArea
+        // finds a real residue, never overlapping a survivor by
+        // construction. Only "rings 16/16/16/32/32" moves, at both its
+        // remaining course heights (0.35: 81 to 73; 0.5: 52 to 44); the
+        // other twelve cells in the table are unchanged, measured.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
@@ -28964,8 +29041,8 @@ internal static class Program
                 { ("ridge turned 11.25 degrees", 0.35), (0, 84) },
                 { ("ridge turned 11.25 degrees", 0.5), (0, 51) },
                 { ("ridge turned 11.25 degrees", 1.9), (0, 0) },
-                { ("rings 16/16/16/32/32", 0.35), (0, 81) },
-                { ("rings 16/16/16/32/32", 0.5), (0, 52) },
+                { ("rings 16/16/16/32/32", 0.35), (0, 73) },
+                { ("rings 16/16/16/32/32", 0.5), (0, 44) },
                 { ("rings 16/16/16/32/32", 1.9), (0, 0) }
             };
 
@@ -29040,6 +29117,30 @@ internal static class Program
                         courseHeight == 0.35)
                     {
                         pinned = 313;
+                    }
+                    // ROUND FOUR, RULE 2 (spec 2026-09-06-skin-round-four-
+                    // his-nets): the honeycomb's own "one surface, five
+                    // meshings, one answer" invariance breaks HERE, and
+                    // only here, because it is no longer true once a
+                    // (chart, course) that lost every one of its naive
+                    // cells to the plan filter stops attempting them at
+                    // all: this meshing alone carries such a course, at
+                    // both its remaining Course Heights (measured: none of
+                    // the other four meshings, and not this one at 1.9,
+                    // do), so its own BUILT total drops by exactly the
+                    // cells that used to be constructed only to be
+                    // dropped: 210 to 202 at CH 0.35, 140 to 132 at 0.5.
+                    if (label == "rings 16/16/16/32/32" &&
+                        engine == hexagonal &&
+                        courseHeight == 0.35)
+                    {
+                        pinned = 202;
+                    }
+                    if (label == "rings 16/16/16/32/32" &&
+                        engine == hexagonal &&
+                        courseHeight == 0.5)
+                    {
+                        pinned = 132;
                     }
                     if (built != pinned)
                     {
@@ -29139,7 +29240,8 @@ internal static class Program
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
@@ -29433,7 +29535,8 @@ internal static class Program
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
@@ -29683,7 +29786,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
 
         (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
         object barrelNet = Activator.CreateInstance(
@@ -31111,7 +31215,8 @@ internal static class Program
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
 
         (double[][] vertices, int[][] faces) = SkinBarrelNet();
         object net = Activator.CreateInstance(
@@ -32319,7 +32424,8 @@ internal static class Program
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses",
             netType, typeof(double), typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
         MethodInfo capInteriorPoint = RequirePublicStatic(
             patterns, "PlanInteriorPoint",
             typeof(IReadOnlyList<double[]>));
@@ -36626,7 +36732,8 @@ internal static class Program
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
         (double[][] vertices, int[][] faces) = SkinDomeNet();
         object net = SkinNetWith(
             netType, edgeType, vertices, faces, SkinDomeRim(),
@@ -44821,7 +44928,8 @@ internal static class Program
             patterns, "Courses",
             netType, typeof(double), typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(
-            patterns, "Hexagonal", netType, typeof(double), typeof(double));
+            patterns, "Hexagonal",
+            netType, typeof(double), typeof(double), typeof(double));
 
         const double Size = 0.5;
         const double CourseHeight = 0.5;
@@ -44911,7 +45019,8 @@ internal static class Program
 
             object generated = fixture.Pattern == 1
                 ? hexagonal.Invoke(
-                    null, new object[] { net, Size, CourseHeight })!
+                    null,
+                    new object[] { net, Size, CourseHeight, MinPiece })!
                 : courses.Invoke(
                     null,
                     new object[] { net, Size, CourseHeight, MinPiece })!;
@@ -44945,6 +45054,132 @@ internal static class Program
                     "week; a mismatch here means a change has diverged " +
                     "from his reality.");
             }
+        }
+    }
+
+    /// <summary>
+    /// ROUND FOUR, RULE 2 (spec 2026-09-06-skin-round-four-his-nets): the
+    /// closer band's first consumption by the honeycomb, measured directly
+    /// rather than inferred. Reads ClosedSeams, CloserCells and
+    /// PlanOverlapDropped straight off the honeycomb pattern, by reflection,
+    /// on his own three Hex studies AND the split-and-death synthetic net,
+    /// asserting that PlanOverlapDropped falls exactly as measured on each
+    /// (127 to 90 and 127 to 90 on the 2 and 3 sided studies, 252 to 200 on
+    /// the 4 sided one, 49 to 40 on split-and-death), so this is not a
+    /// check that would pass on a Hexagonal that silently reverted to its
+    /// old 3-parameter behaviour. ClosedSeams and CloserCells are asserted
+    /// at ZERO on all four: no fixture this task's own time reached ever
+    /// kept a surviving closer stone (BandUncoveredArea's own residue gate
+    /// measured nothing worth the sliver floor everywhere it was checked),
+    /// so the fall in every one of these four numbers is the wasted
+    /// build-then-reject cycle removed from a (chart, course) that lost
+    /// every one of its naive cells, not new coverage added. This is
+    /// recorded here as a measurement, not asserted as the wave's own
+    /// single-figure acceptance bar: see the round-four report for what
+    /// that bar still needs.
+    /// </summary>
+    private static void ValidateRoundFourRule2Closure(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal",
+            netType, typeof(double), typeof(double), typeof(double));
+
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+
+        // BEFORE this wave (a09b7f9, the build the diagnosis measured):
+        // 127, 127 and 252. Removing a (chart, course) that lost every one
+        // of its naive cells from the SECOND KeepValidPlans pass, rather
+        // than handing it back through to be built-then-dropped again,
+        // lowers these to 90, 90 and 200 EVEN WHERE ClosedSeams and
+        // CloserCells both stay zero (no surviving closer stone is added
+        // for any of his three studies): the count that used to be spent
+        // on a cell doomed to be rejected is simply not spent.
+        var expectedOverlap = new Dictionary<string, int>
+        {
+            ["2 sided vault Hex"] = 90,
+            ["3 sided vault Hex"] = 90,
+            ["4 sided vault Hex"] = 200
+        };
+        foreach ((string study, int overlapBefore) in expectedOverlap)
+        {
+            string formPath =
+                Path.Combine(HisExportsRoot, $"{study}-form.json");
+            if (!File.Exists(formPath))
+            {
+                throw new HisNetsUnavailableException(
+                    $"'{study}' is missing its -form.json under " +
+                    $"'{HisExportsRoot}'.");
+            }
+            object resultDto = DeserializeContract(
+                plugin, resultType, HisNetExtractResultContractJson(formPath));
+            object? net = readNet.Invoke(null, new object?[] { resultDto });
+            object generated = hexagonal.Invoke(
+                null, new object[] { net!, 0.5, 0.5, 0.20 })!;
+            int closedSeams = Reading<int>(generated, "ClosedSeams");
+            int closerCells = Reading<int>(generated, "CloserCells");
+            int overlapDropped =
+                Reading<int>(generated, "PlanOverlapDropped");
+            if (closedSeams != 0 || closerCells != 0 ||
+                overlapDropped != overlapBefore)
+            {
+                throw new InvalidOperationException(
+                    $"'{study}': round four rule 2's own narrow gate must " +
+                    "read ClosedSeams 0, CloserCells 0 and " +
+                    $"PlanOverlapDropped {overlapBefore} on his own studies " +
+                    "(no course there both loses every cell and measures a " +
+                    "real residue once its neighbours' own reach is " +
+                    $"counted); got {closedSeams}, {closerCells} and " +
+                    $"{overlapDropped}.");
+            }
+        }
+
+        // MEASURED, NOT ASSUMED: on every fixture this task's own time
+        // reached, including this one, ClosedSeams and CloserCells both
+        // read ZERO even where the overlap-dropped count moves. The
+        // BandUncoveredArea residue gate never once measured a survivable
+        // closer stone here -- a (chart, course) that lost every one of
+        // its naive cells sits, on every fixture checked, where its own
+        // neighbours' reach already leaves nothing worth the sliver floor,
+        // so the CONSUMPTION this rule wires in is real (CloserBand is
+        // called, its own head-joint and Max Piece bounds would bind any
+        // stone it kept) but UNPROVEN to ever fire non-vacuously: the
+        // measured win on every fixture below is the wasted build-then-
+        // reject cycle removed, not new coverage added. Recorded here
+        // rather than claimed otherwise.
+        object splitAndDeathNet = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                SkinSplitAndDeathNet().Vertices,
+                SkinSplitAndDeathNet().Faces
+            })!;
+        object splitAndDeathBuilt = hexagonal.Invoke(
+            null, new object[] { splitAndDeathNet, 0.6, 0.5, 1.0 / 3.0 })!;
+        int splitClosedSeams =
+            Reading<int>(splitAndDeathBuilt, "ClosedSeams");
+        int splitCloserCells =
+            Reading<int>(splitAndDeathBuilt, "CloserCells");
+        int splitOverlapDropped =
+            Reading<int>(splitAndDeathBuilt, "PlanOverlapDropped");
+        if (splitClosedSeams != 0 || splitCloserCells != 0 ||
+            splitOverlapDropped != 40)
+        {
+            throw new InvalidOperationException(
+                "'split-and-death': ClosedSeams and CloserCells must " +
+                "both still read zero here (no fixture measured by this " +
+                "task ever kept a surviving closer stone) and " +
+                "PlanOverlapDropped must read the post-round-four pin of " +
+                $"40 (was 49); got {splitClosedSeams}, {splitCloserCells} " +
+                $"and {splitOverlapDropped}.");
         }
     }
 

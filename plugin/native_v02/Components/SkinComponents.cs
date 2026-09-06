@@ -355,7 +355,8 @@ public sealed class SkinComponent : NativeComponentBase
                 {
                     0 => SkinPatterns.Courses(
                         net, size, courseHeight, minPiece),
-                    1 => SkinPatterns.Hexagonal(net, size, courseHeight),
+                    1 => SkinPatterns.Hexagonal(
+                        net, size, courseHeight, minPiece),
                     _ => SkinPatterns.ForceAligned(
                         net, size, courseHeight, minPiece)
                 };
