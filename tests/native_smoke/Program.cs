@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -3457,6 +3458,38 @@ internal static class Program
         {
             failures.Add(
                 $"TNA Solve self-weight chin: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateHisNetsFixtures(plugin);
+            Console.WriteLine(
+                "PASS  His eight nets (round four rule 1, spec 2026-09-06 " +
+                "skin-round-four-his-nets): each of Param's own eight " +
+                "exported studies (2/3/4/5/6-sided vaults and the Hex " +
+                "variants of 2/3/4) loads through the exact splice its own " +
+                "-form.json was written by (ContractJson.Deserialize into " +
+                "SkinPatterns.ReadNet), and its net's vertex/triangulated-" +
+                "face/edge/rim counts and seed-group count match the " +
+                "document's own ground truth (441 to 1321 vertices, zero " +
+                "rim or edge drops); the three Hex studies solve on " +
+                "PATTERN 1 (hexagonal) and the rest on PATTERN 0 " +
+                "(courses), at his canvas settings (Size 0.5, Course " +
+                "Height 0.5, Min Piece 0.20), and the resulting cell " +
+                "count and per-course tally match the -skin.json sidecar " +
+                "his own machine produced for every one of the eight.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  His eight nets (round four rule 1): " +
+                $"{unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"His eight nets (round four rule 1): " +
+                $"{DescribeException(exception)}");
         }
 
         // Every deferred assertion is reported here, at the suite level, so
@@ -44595,6 +44628,324 @@ internal static class Program
         return computeMethod.Invoke(null, new object[] { topology }) as string
             ?? throw new InvalidOperationException(
                 "TopologyFingerprint.Compute returned an unexpected type.");
+    }
+
+    /// <summary>
+    /// Thrown by <see cref="ValidateHisNetsFixtures"/> when Param's own
+    /// exported studies are not reachable from this machine (no OneDrive,
+    /// or not yet synced). Caught separately from every other exception in
+    /// <see cref="Run"/> and reported as SKIP rather than a failure: round
+    /// four rule 1 requires his nets be the fixtures, but also requires the
+    /// harness stay runnable off his OneDrive, and a named skip is the only
+    /// shape that satisfies both.
+    /// </summary>
+    private sealed class HisNetsUnavailableException : Exception
+    {
+        public HisNetsUnavailableException(string message) : base(message)
+        {
+        }
+    }
+
+    /// <summary>One of Param's eight exported studies, registered as a
+    /// permanent fixture (spec 2026-09-06 skin-round-four-his-nets, rule 1).
+    /// The five count fields are the diagnosis's own independently-measured
+    /// ground truth (2026-09-06 skin-real-net-diagnosis section 1.3), read
+    /// a second time here straight off each study's own -form.json rather
+    /// than trusted from the report, so a regenerated export that changed
+    /// shape would be caught by this table disagreeing with the file, not
+    /// by the file disagreeing with itself.</summary>
+    private readonly record struct HisNetFixture(
+        string Study,
+        int Pattern,
+        int FormVertices,
+        int RawFaces,
+        int EquilibriumEdges,
+        int Supports,
+        int SeedGroups);
+
+    /// <summary>Pattern 1 is hexagonal, per the diagnosis's own finding
+    /// (section headline): the three "Hex" studies match ONLY that pattern,
+    /// because Param's canvas was set to it when he exported them. Pattern 0
+    /// (courses) is every other study, and is also the only pattern those
+    /// five studies were ever solved under on his machine.</summary>
+    private static readonly HisNetFixture[] HisNetFixtures =
+    {
+        new("2 sided vault", 0, 441, 400, 800, 42, 2),
+        new("2 sided vault Hex", 1, 661, 600, 1200, 63, 3),
+        new("3 sided vault", 0, 661, 600, 1200, 63, 3),
+        new("3 sided vault Hex", 1, 661, 600, 1200, 63, 3),
+        new("4 sided vault", 0, 881, 800, 1600, 84, 4),
+        new("4 sided vault Hex", 1, 881, 800, 1600, 84, 4),
+        new("5 sided vault", 0, 1101, 1000, 2000, 105, 5),
+        new("6 sided vault", 0, 1321, 1200, 2400, 126, 6),
+    };
+
+    /// <summary>Where Param's eight studies live. Not configurable: the
+    /// point of rule 1 is that HIS nets are the fixtures, at the one place
+    /// he exports them to, and a harness that let this be overridden would
+    /// let a future run quietly measure something else and call it his
+    /// data.</summary>
+    private const string HisExportsRoot =
+        @"C:\Users\Param\OneDrive - Ananke-eidos\Documents\Kinetic AI\PHD robotics\COMPAS Exports";
+
+    /// <summary>The document's own ground truth for one study, read by a
+    /// SECOND, unrelated parse path (a plain JsonDocument walk over the raw
+    /// -form.json), never through the loader under test
+    /// (<see cref="HisNetExtractResultContractJson"/> plus
+    /// ContractJson.Deserialize plus SkinPatterns.ReadNet). Measuring the
+    /// loader's output against a ground truth read by the loader itself
+    /// would prove nothing; this is the diagnosis's own method (section
+    /// 1.3), lifted rather than re-argued.</summary>
+    private readonly record struct HisNetGroundTruth(
+        int FormVertices, int RawFaces, int EquilibriumEdges, int Supports);
+
+    private static HisNetGroundTruth ReadHisNetGroundTruth(string formJsonPath)
+    {
+        using FileStream stream = File.OpenRead(formJsonPath);
+        using JsonDocument document = JsonDocument.Parse(stream);
+        JsonElement root = document.RootElement;
+        return new HisNetGroundTruth(
+            root.GetProperty("formGraph").GetProperty("vertices")
+                .GetArrayLength(),
+            root.GetProperty("formGraph").GetProperty("faces")
+                .GetArrayLength(),
+            root.GetProperty("equilibrium").GetProperty("edges")
+                .GetArrayLength(),
+            root.GetProperty("mappings").GetProperty("supports")
+                .GetArrayLength());
+    }
+
+    /// <summary>
+    /// The form document's embedded contract, as the exact JSON text
+    /// ContractJson.Serialize(ResultDto) produced, recovered by dropping the
+    /// two keys FormDocument.JsonFromContract adds around it ("study" leads,
+    /// "thrustMesh" trails). Lifted verbatim from the diagnosis (2026-09-06
+    /// skin-real-net-diagnosis section 1.2): a JsonDocument walk rather than
+    /// the writer's own byte-offset trick, because a READER parsing a file
+    /// it did not just write should not assume the same byte positions, only
+    /// that the two keys exist and every other key is the contract's own.
+    /// </summary>
+    private static string HisNetExtractResultContractJson(string formJsonPath)
+    {
+        byte[] raw = File.ReadAllBytes(formJsonPath);
+        using JsonDocument document = JsonDocument.Parse(raw);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException(
+                $"{formJsonPath}: root is not a JSON object, so this is " +
+                "not a form document FormDocument.JsonFromContract wrote.");
+        }
+        using var buffer = new MemoryStream();
+        int kept = 0;
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            foreach (JsonProperty property in document.RootElement.EnumerateObject())
+            {
+                if (property.NameEquals("study") ||
+                    property.NameEquals("thrustMesh"))
+                {
+                    continue;
+                }
+                property.WriteTo(writer);
+                kept++;
+            }
+            writer.WriteEndObject();
+        }
+        if (kept == 0)
+        {
+            throw new InvalidDataException(
+                $"{formJsonPath}: nothing left once 'study' and " +
+                "'thrustMesh' are dropped -- this is not a form document, " +
+                "or the two added keys have changed name.");
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>Per-course cell tally read straight off a -skin.json
+    /// sidecar, the studio's bench.tessellation/1 shape
+    /// (ExportComponent.BuildSkinJson): course id to cell count. An
+    /// independent parse, exactly as <see cref="ReadHisNetGroundTruth"/> is
+    /// for the counts, so the reproduction pin cannot pass by construction.
+    /// </summary>
+    private static Dictionary<int, int> ReadSkinSidecarTally(string skinJsonPath)
+    {
+        using FileStream stream = File.OpenRead(skinJsonPath);
+        using JsonDocument document = JsonDocument.Parse(stream);
+        var tally = new Dictionary<int, int>();
+        foreach (JsonElement cell in
+            document.RootElement.GetProperty("cells").EnumerateArray())
+        {
+            int course = cell.GetProperty("course").GetInt32();
+            tally[course] = tally.GetValueOrDefault(course) + 1;
+        }
+        return tally;
+    }
+
+    private static string FormatCourseTally(IReadOnlyDictionary<int, int> tally) =>
+        "{" + string.Join(
+            ", ",
+            tally.OrderBy(entry => entry.Key)
+                .Select(entry => $"{entry.Key}:{entry.Value}")) + "}";
+
+    /// <summary>
+    /// RULE 1 of spec 2026-09-06 skin-round-four-his-nets: Param's own eight
+    /// exported studies, permanently registered. For each: the loader
+    /// (<see cref="HisNetExtractResultContractJson"/> into
+    /// ContractJson.Deserialize into SkinPatterns.ReadNet, every type
+    /// resolved against the built .gha exactly as the rest of this harness
+    /// resolves plugin types) is exercised, the resulting net's counts are
+    /// checked against the document's own independently-read ground truth,
+    /// the registered pattern is solved at his canvas settings, and the
+    /// generated cell count and per-course tally are checked, as a
+    /// REPRODUCTION PIN, against the -skin.json sidecar his own machine
+    /// wrote for that study. If the exports folder (or any one of the
+    /// sixteen files this needs) is not reachable, every one of the eight
+    /// is SKIPPED with a named reason rather than failed, so the harness
+    /// stays runnable on a machine without his OneDrive.
+    /// </summary>
+    private static void ValidateHisNetsFixtures(Assembly plugin)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
+
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+
+        foreach (HisNetFixture fixture in HisNetFixtures)
+        {
+            string formPath =
+                Path.Combine(HisExportsRoot, $"{fixture.Study}-form.json");
+            string skinPath =
+                Path.Combine(HisExportsRoot, $"{fixture.Study}-skin.json");
+            if (!File.Exists(formPath) || !File.Exists(skinPath))
+            {
+                throw new HisNetsUnavailableException(
+                    $"'{fixture.Study}' is missing its -form.json or " +
+                    $"-skin.json under '{HisExportsRoot}'.");
+            }
+
+            HisNetGroundTruth truth = ReadHisNetGroundTruth(formPath);
+            if (truth.FormVertices != fixture.FormVertices ||
+                truth.RawFaces != fixture.RawFaces ||
+                truth.EquilibriumEdges != fixture.EquilibriumEdges ||
+                truth.Supports != fixture.Supports)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}': its own -form.json no longer " +
+                    $"reads {fixture.FormVertices} form vertices, " +
+                    $"{fixture.RawFaces} raw faces, " +
+                    $"{fixture.EquilibriumEdges} equilibrium edges and " +
+                    $"{fixture.Supports} supports (registered ground " +
+                    $"truth); got {truth.FormVertices} vertices, " +
+                    $"{truth.RawFaces} faces, {truth.EquilibriumEdges} " +
+                    $"edges, {truth.Supports} supports. The export was " +
+                    "regenerated with different geometry; re-measure and " +
+                    "update the registered fixture.");
+            }
+
+            object resultDto = DeserializeContract(
+                plugin, resultType,
+                HisNetExtractResultContractJson(formPath));
+            object? net = readNet.Invoke(null, new object?[] { resultDto });
+            if (net is null)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}': SkinPatterns.ReadNet returned " +
+                    "null on Param's own exported form document, so every " +
+                    "claim below would hold vacuously.");
+            }
+
+            int rimDropped = Reading<int>(net, "RimDropped");
+            int edgesDropped = Reading<int>(net, "EdgesDropped");
+            int netVertices = ((IEnumerable)netType
+                    .GetProperty("Vertices")!.GetValue(net)!)
+                .Cast<double[]>().Count();
+            int netFaces = ((IEnumerable)netType
+                    .GetProperty("Faces")!.GetValue(net)!)
+                .Cast<int[]>().Count();
+            int netEdges = ((IEnumerable)netType
+                    .GetProperty("Edges")!.GetValue(net)!)
+                .Cast<object>().Count();
+            int netRim = ((IEnumerable)netType
+                    .GetProperty("Rim")!.GetValue(net)!)
+                .Cast<int>().Count();
+            int netSeedGroups = ((IEnumerable)netType
+                    .GetProperty("SeedGroups")!.GetValue(net)!)
+                .Cast<int>().Where(seed => seed >= 0).Distinct().Count();
+
+            if (rimDropped != 0 || edgesDropped != 0 ||
+                netVertices != fixture.FormVertices ||
+                netFaces != fixture.RawFaces * 2 ||
+                netEdges != fixture.EquilibriumEdges ||
+                netRim != fixture.Supports ||
+                netSeedGroups != fixture.SeedGroups)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}': ReadNet must give " +
+                    $"{fixture.FormVertices} vertices, " +
+                    $"{fixture.RawFaces * 2} triangulated faces, " +
+                    $"{fixture.EquilibriumEdges} edges, {fixture.Supports} " +
+                    $"rim vertices, {fixture.SeedGroups} seed groups and " +
+                    "zero rim/edge drops; got " +
+                    $"{netVertices} vertices, {netFaces} faces, " +
+                    $"{netEdges} edges, {netRim} rim, {netSeedGroups} " +
+                    $"seed groups, {rimDropped} rim dropped, " +
+                    $"{edgesDropped} edges dropped.");
+            }
+
+            object generated = fixture.Pattern == 1
+                ? hexagonal.Invoke(
+                    null, new object[] { net, Size, CourseHeight })!
+                : courses.Invoke(
+                    null,
+                    new object[] { net, Size, CourseHeight, MinPiece })!;
+            IEnumerable cells =
+                (IEnumerable)generated.GetType()
+                    .GetProperty("Cells")!.GetValue(generated)!;
+            var computedTally = new Dictionary<int, int>();
+            foreach (object cell in cells)
+            {
+                int course = Reading<int>(cell, "Course");
+                computedTally[course] =
+                    computedTally.GetValueOrDefault(course) + 1;
+            }
+            Dictionary<int, int> sidecarTally = ReadSkinSidecarTally(skinPath);
+            bool tallyMatches =
+                computedTally.Count == sidecarTally.Count &&
+                computedTally.All(entry =>
+                    sidecarTally.TryGetValue(entry.Key, out int expected) &&
+                    expected == entry.Value);
+            if (!tallyMatches)
+            {
+                throw new InvalidOperationException(
+                    $"'{fixture.Study}' (pattern {fixture.Pattern}): the " +
+                    "reproduction pin failed. This harness's own " +
+                    $"per-course cell tally is {FormatCourseTally(computedTally)} " +
+                    $"({computedTally.Values.Sum()} cells); Param's own " +
+                    $"-skin.json sidecar reads " +
+                    $"{FormatCourseTally(sidecarTally)} " +
+                    $"({sidecarTally.Values.Sum()} cells). His own machine's " +
+                    "reproduction is the instrument that was missing all " +
+                    "week; a mismatch here means a change has diverged " +
+                    "from his reality.");
+            }
+        }
     }
 
     private static string DescribeException(Exception exception)
