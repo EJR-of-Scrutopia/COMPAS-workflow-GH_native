@@ -2170,6 +2170,39 @@ internal static class Program
 
         try
         {
+            ValidateSkinFix7TopFromWalls(plugin);
+            Console.WriteLine(
+                "PASS  Skin fix 7, top-from-walls thickening (round " +
+                "three, \"rescue the cell\"): EdgeOffsetImpossible and " +
+                "CellOffsetImpossible fire ONLY on a concave fold offset " +
+                "PAST its own local radius of curvature (edge length over " +
+                "the corner normals' turning angle), never on parallel " +
+                "normals and never on the SAME fold pushed the other, " +
+                "convex, way at any magnitude; the reported radius " +
+                "matches one computed independently of the method under " +
+                "test; ImpossibleThicknessLine names the count, the " +
+                "course, the radius and the two real remedies (a thinner " +
+                "Thickness or a split) rather than Gaps; and on a REAL " +
+                "two-triangle creased net the rebuilt ThickenCellSurface " +
+                "reaches this guard and refuses with a null BEFORE any " +
+                "Brep call at a Thickness past the fold's radius, while " +
+                "the same cell at an ordinary safe Thickness still " +
+                "reaches RhinoCommon and throws where the native core " +
+                "will not load. NOT PROVED HERE and not provable here: " +
+                "that walls-erected-first and a top built from their own " +
+                "corners actually CLOSES a clipped free-edge cell the old " +
+                "build-top-then-walls order did not; that join is " +
+                "scripts/rhino_skin_surface.py's, run inside Rhino.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin fix 7 top-from-walls: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinWeldConsecutiveCorners(plugin);
             Console.WriteLine(
                 "PASS  Skin weld consecutive corners (studio request " +
@@ -35111,6 +35144,307 @@ internal static class Program
                 "name, so the reader is not told that a three-cornered " +
                 $"closer has seven sides; got '{odd}'.");
         }
+    }
+
+    /// <summary>
+    /// FIX 7's CREASE FIXTURE: two triangles sharing one edge (v0-v1),
+    /// folded to a KNOWN dihedral angle atan(h) about it. v2 and v3 each
+    /// belong to only ONE triangle, so their vertex normals -- unlike v0
+    /// and v1's, which blend both faces -- are EXACTLY their own face's
+    /// flat normal, with no area-weighted averaging to work through by
+    /// hand: face A is flat (z = 0 throughout), giving v2 the normal
+    /// (0, 0, 1) exactly; face B tilts by atan(h) about the shared edge,
+    /// giving v3 the normal (0, sin(theta), cos(theta)) exactly, theta =
+    /// atan(h). h = 1 puts theta at 45 degrees. This is what lets
+    /// ValidateSkinFix7TopFromWalls drive the REAL ThickenCellSurface
+    /// through a REAL net and NormalAt at a fold whose radius is computed
+    /// independently, in the test, and not merely trusted from the
+    /// method under test.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinCreaseNet(
+        double h)
+    {
+        var vertices = new[]
+        {
+            new[] { 0.0, 0.0, 0.0 }, // v0, shared crease
+            new[] { 1.0, 0.0, 0.0 }, // v1, shared crease
+            new[] { 0.5, 1.0, 0.0 }, // v2, face A's own apex (flat)
+            new[] { 0.5, -1.0, h } // v3, face B's own apex (tilted)
+        };
+        var faces = new[]
+        {
+            new[] { 0, 1, 2 }, // face A
+            new[] { 1, 0, 3 } // face B
+        };
+        return (vertices, faces);
+    }
+
+    /// <summary>
+    /// FIX 7 (round three, "rescue the cell"): the geometrically
+    /// impossible detector, on every front this process can honestly
+    /// reach -- the pure edge predicate, the whole-cell aggregate, the
+    /// warning text, and that the guard is actually WIRED INTO
+    /// ThickenCellSurface rather than sitting unused.
+    ///
+    /// WHAT IS NOT PROVED HERE. Nothing about the Brep the rebuilt
+    /// ThickenCellSurface would go on to join once the guard passes --
+    /// whether walls-erected-first and a top built from THEIR corners
+    /// actually closes where the old build-top-then-walls order did not,
+    /// on a clipped free-edge cell. RhinoCommon's native core does not
+    /// initialise outside Rhino, so that is scripts/rhino_skin_surface.py's,
+    /// run inside Rhino, the same split every other Brep claim in this
+    /// file is under.
+    ///
+    /// WHAT IS PROVED. EdgeOffsetImpossible and CellOffsetImpossible's
+    /// arithmetic, checked against a fold whose radius is computed
+    /// INDEPENDENTLY here (edge length and dihedral both hand-derived from
+    /// the fixture's own coordinates, never read off the method under
+    /// test); the sign convention, that only the CONCAVE direction of a
+    /// fold is ever flagged and the convex one never is at any magnitude;
+    /// ImpossibleThicknessLine's text, including the unmeasured-radius
+    /// fallback; and, on a REAL two-triangle creased net driven through
+    /// SkinPatterns.NormalAt, that ThickenCellSurface reaches the guard
+    /// and returns null WITHOUT touching Brep at a Thickness the fold
+    /// cannot take, while an ordinary safe Thickness on the SAME cell
+    /// still reaches RhinoCommon and throws where the native core will
+    /// not load -- exactly ValidateSkinThickenReach's own proof
+    /// technique, carrying a second branch.
+    /// </summary>
+    private static void ValidateSkinFix7TopFromWalls(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo edgeImpossible =
+            RequireStatic(skinType, "EdgeOffsetImpossible");
+        MethodInfo cellImpossible =
+            RequireStatic(skinType, "CellOffsetImpossible");
+        MethodInfo impossibleLine =
+            RequireStatic(skinType, "ImpossibleThicknessLine");
+        MethodInfo thicken = RequireStatic(skinType, "ThickenCellSurface");
+
+        bool EdgeImpossible(
+            double[] pa, double[] pb, double[] na, double[] nb, double th,
+            out double radius)
+        {
+            var args = new object?[] { pa, pb, na, nb, th, 0.0 };
+            bool answer = (bool)edgeImpossible.Invoke(null, args)!;
+            radius = (double)args[5]!;
+            return answer;
+        }
+
+        bool CellImpossible(
+            IReadOnlyList<double[]> outline, IReadOnlyList<double[]> normals,
+            double th, out int edgeIndex, out double radius)
+        {
+            var args = new object?[] { outline, normals, th, 0, 0.0 };
+            bool answer = (bool)cellImpossible.Invoke(null, args)!;
+            edgeIndex = (int)args[3]!;
+            radius = (double)args[4]!;
+            return answer;
+        }
+
+        // ---- THE FOLD, HAND-COMPUTED. Edge v2-v3 of SkinCreaseNet(1):
+        // normalA = (0, 0, 1) (face A, flat, unaveraged since v2 has no
+        // other face); normalB = (0, sin(atan 1), cos(atan 1)) (face B's
+        // own flat normal, likewise unaveraged at v3). Edge length
+        // sqrt(0^2 + 2^2 + 1^2) = sqrt(5). theta = atan(1) = pi/4.
+        double[] a = { 0.5, 1.0, 0.0 };
+        double[] b = { 0.5, -1.0, 1.0 };
+        double theta = Math.Atan(1.0);
+        double[] normalA = { 0.0, 0.0, 1.0 };
+        double[] normalB = { 0.0, Math.Sin(theta), Math.Cos(theta) };
+        double expectedLength = Math.Sqrt(5.0);
+        double expectedRadius = expectedLength / theta;
+
+        // PARALLEL NORMALS NEVER FIRE, at any thickness: no local
+        // curvature is read at all.
+        if (EdgeImpossible(
+                new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, normalA,
+                normalA, 1000.0, out _))
+        {
+            throw new InvalidOperationException(
+                "Two equal corner normals read no turning angle and no " +
+                "local curvature; EdgeOffsetImpossible must not fire on " +
+                "them at any thickness.");
+        }
+
+        // JUST PAST THE FOLD'S OWN RADIUS, CONCAVE DIRECTION: impossible,
+        // and the radius it reports must match the independently
+        // computed one.
+        double thAbove = expectedRadius + 0.1;
+        if (!EdgeImpossible(a, b, normalA, normalB, thAbove, out double radiusAbove))
+        {
+            throw new InvalidOperationException(
+                $"A concave fold of radius {expectedRadius:F6} m, offset " +
+                $"by {thAbove:F6} m -- past its own radius -- must be " +
+                "named impossible; EdgeOffsetImpossible said it was not.");
+        }
+        if (Math.Abs(radiusAbove - expectedRadius) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The reported radius must be edge length over turning " +
+                $"angle, {expectedRadius:F9} m; got {radiusAbove:F9} m.");
+        }
+
+        // JUST SHORT OF THE RADIUS, SAME DIRECTION: safe.
+        double thBelow = expectedRadius - 0.1;
+        if (EdgeImpossible(a, b, normalA, normalB, thBelow, out _))
+        {
+            throw new InvalidOperationException(
+                $"The SAME fold offset by {thBelow:F6} m -- short of its " +
+                $"own radius {expectedRadius:F6} m -- must not be named " +
+                "impossible; it was.");
+        }
+
+        // THE WRONG DIRECTION NEVER FIRES, at any magnitude: pushing this
+        // fold's two corners apart cannot fold them into each other.
+        if (EdgeImpossible(a, b, normalA, normalB, -(expectedRadius + 10.0), out _))
+        {
+            throw new InvalidOperationException(
+                "This fold is concave only toward POSITIVE thickness; a " +
+                "large NEGATIVE one pushes the corners apart and must " +
+                "never be named impossible. It was.");
+        }
+
+        // THE WHOLE CELL, over a two-point outline that walks the SAME
+        // edge in both directions -- both readings must agree, and the
+        // worst (only) edge is index 0.
+        var digon = new List<double[]> { a, b };
+        var digonNormals = new List<double[]> { normalA, normalB };
+        if (!CellImpossible(digon, digonNormals, thAbove, out int worstAt,
+                out double cellRadius) ||
+            worstAt != 0 ||
+            Math.Abs(cellRadius - expectedRadius) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "CellOffsetImpossible over the two-point outline must " +
+                $"agree with the edge predicate: got fired={worstAt >= 0}, " +
+                $"edgeIndex={worstAt}, radius={cellRadius:F9}.");
+        }
+        if (CellImpossible(digon, digonNormals, thBelow, out _, out _))
+        {
+            throw new InvalidOperationException(
+                "The same cell below its own radius must not be " +
+                "impossible.");
+        }
+        // A single point, or mismatched arrays, have no edge to answer
+        // the question with and must refuse rather than throw.
+        if (CellImpossible(
+                new List<double[]> { a }, new List<double[]> { normalA },
+                thAbove, out _, out _) ||
+            CellImpossible(
+                digon, new List<double[]> { normalA }, thAbove, out _,
+                out _))
+        {
+            throw new InvalidOperationException(
+                "A single-point outline and a corner-normal count that " +
+                "does not match the outline must both refuse false " +
+                "rather than answer or throw.");
+        }
+
+        // ---- THE WARNING TEXT.
+        string? Line(int count, int first, double th, double radius) =>
+            (string?)impossibleLine.Invoke(
+                null, new object[] { count, first, th, radius });
+        if (Line(0, -1, 3.0, expectedRadius) is not null)
+        {
+            throw new InvalidOperationException(
+                "No warning is raised when nothing is impossible.");
+        }
+        string text = Line(3, 2, 3.0, expectedRadius)!;
+        foreach (string fragment in new[]
+                 {
+                     "3 faces CANNOT close", "Thickness 3.000", "course 2",
+                     "CONCAVE CURVATURE RADIUS",
+                     expectedRadius.ToString(
+                         "F3", CultureInfo.InvariantCulture),
+                     "THINNER THICKNESS", "SPLITTING THE CELL",
+                     "BOTTOM HEIGHT"
+                 })
+        {
+            if (!text.Contains(fragment, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"'{fragment}' is missing from the impossible-" +
+                    $"thickness warning: '{text}'.");
+            }
+        }
+        if (!Line(1, 0, 3.0, expectedRadius)!.Contains(
+                "1 face CANNOT close", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A count of one must read 'face', singular.");
+        }
+        if (!Line(2, 0, 3.0, double.PositiveInfinity)!.Contains(
+                "an unmeasured span", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "An infinite (unmeasured) worst radius must not be " +
+                "formatted as a number.");
+        }
+
+        // ---- THE WIRING, on a REAL net through NormalAt, exactly
+        // ValidateSkinThickenReach's own proof technique: a null WITHOUT
+        // an exception proves a pure guard fired before any Brep call; an
+        // exception proves the method went on to ask RhinoCommon for one.
+        (double[][] creaseVertices, int[][] creaseFaces) = SkinCreaseNet(1.0);
+        object crease = Activator.CreateInstance(
+            netType, new object[] { creaseVertices, creaseFaces })!;
+        // v4, strictly interior to face A in plan (barycentric weights
+        // 0.25, 0.25, 0.5 against v0, v1, v2, none zero), so FaceFor picks
+        // face A unambiguously and NormalAt interpolates rather than
+        // hitting the vertex/boundary special cases v2 and v3 exercise.
+        var creaseOutline = new List<double[]>
+        {
+            a, b, new[] { 0.5, 0.5, 0.0 }
+        };
+        object? impossibleResult = thicken.Invoke(
+            null,
+            new object?[] { null, creaseOutline, null, crease, thAbove, 0.0 });
+        if (impossibleResult is not null)
+        {
+            throw new InvalidOperationException(
+                "ThickenCellSurface must refuse this cell at a Thickness " +
+                "past its own fold's radius with a null, before any Brep " +
+                $"call; it returned {impossibleResult.GetType().Name}.");
+        }
+        Exception? safeThrown = null;
+        try
+        {
+            object? safeResult = thicken.Invoke(
+                null,
+                new object?[]
+                {
+                    null, creaseOutline, null, crease, 0.05, 0.0
+                });
+            throw new InvalidOperationException(
+                "The SAME cell at a Thickness well under its fold's " +
+                "radius must reach RhinoCommon and throw there, proving " +
+                "the guard does not over-fire on an ordinary offset; it " +
+                "returned " +
+                (safeResult is null
+                    ? "null"
+                    : safeResult.GetType().Name) +
+                " instead.");
+        }
+        catch (TargetInvocationException invocation)
+        {
+            safeThrown = invocation.InnerException;
+        }
+        if (safeThrown is not DllNotFoundException &&
+            safeThrown is not TypeInitializationException)
+        {
+            throw new InvalidOperationException(
+                "A safe Thickness must carry the method into a Brep " +
+                "call, where RhinoCommon's native core refuses to load; " +
+                $"got {(safeThrown?.GetType().Name ?? "nothing")}.");
+        }
+        Console.WriteLine(
+            "      Fix 7 crease fixture: fold radius " +
+            $"{expectedRadius:F4} m (edge {expectedLength:F4} m over " +
+            $"{theta:F4} rad); Thickness {thAbove:F3} refused before " +
+            $"Brep, Thickness 0.05 reached it and threw " +
+            $"{safeThrown!.GetType().Name}.");
     }
 
     /// <summary>

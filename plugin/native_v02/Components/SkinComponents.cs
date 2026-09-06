@@ -472,6 +472,14 @@ public sealed class SkinComponent : NativeComponentBase
             int thickenFailed = 0;
             int firstThickenFailedCourse = -1;
             int thickenShippedLow = 0;
+            // FIX 7 (round three): counted APART from thickenFailed, not
+            // beside it -- these cells are excluded from the generic
+            // count and message entirely, because "a smaller Thickness
+            // is the remedy" is only half true for them and "the join
+            // failed for reasons only Rhino knows" is not true at all.
+            int thickenImpossible = 0;
+            int firstThickenImpossibleCourse = -1;
+            double worstImpossibleRadius = double.PositiveInfinity;
             bool thickening = Thickening(thickness);
             // Cut 2's Brep half. On a pattern hit whose last Brep pass
             // completed, every bottom face is handed out as a DUPLICATE
@@ -547,11 +555,35 @@ public sealed class SkinComponent : NativeComponentBase
                 }
                 else if (slot == CellSurfaceSlot.Face && thickening)
                 {
-                    thickenFailed++;
-                    if (topAtHeight is null)
-                        thickenShippedLow++;
-                    if (firstThickenFailedCourse < 0)
-                        firstThickenFailedCourse = course;
+                    // FIX 7: the SAME predicate ThickenCellSurface already
+                    // ran, asked again here only because the solid route
+                    // reports a bare null and this is where the two
+                    // failure classes are told apart for the warning. The
+                    // corner normals are re-read rather than threaded
+                    // through the Brep calls above because this branch is
+                    // the rare one: only a cell whose thickening already
+                    // failed pays for it.
+                    IReadOnlyList<double[]> normalsForCheck =
+                        CornerNormals(net, cell.Outline);
+                    bool impossible = CellOffsetImpossible(
+                        cell.Outline, normalsForCheck, thickness, out _,
+                        out double impossibleRadius);
+                    if (impossible)
+                    {
+                        thickenImpossible++;
+                        if (impossibleRadius < worstImpossibleRadius)
+                            worstImpossibleRadius = impossibleRadius;
+                        if (firstThickenImpossibleCourse < 0)
+                            firstThickenImpossibleCourse = course;
+                    }
+                    else
+                    {
+                        thickenFailed++;
+                        if (topAtHeight is null)
+                            thickenShippedLow++;
+                        if (firstThickenFailedCourse < 0)
+                            firstThickenFailedCourse = course;
+                    }
                 }
             }
             if (freshBottoms is not null)
@@ -570,6 +602,18 @@ public sealed class SkinComponent : NativeComponentBase
                 extrude, thickenShippedLow);
             if (thickenLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, thickenLine);
+            // FIX 7 (round three): a THIRD, distinct sentence, for the
+            // cells the offset itself proves cannot close -- named apart
+            // from thickenLine's Rhino-side failures because the remedy
+            // is different and the cause is certain rather than unknown.
+            string? impossibleLine = ImpossibleThicknessLine(
+                thickenImpossible, firstThickenImpossibleCourse, thickness,
+                worstImpossibleRadius);
+            if (impossibleLine is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning, impossibleLine);
+            }
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
             data.SetDataTree(1, OutputTree.Breps(surfaceBranches));
 
@@ -801,6 +845,60 @@ public sealed class SkinComponent : NativeComponentBase
                 ? $" {shippedLow} of them could not raise a top face " +
                   "either and ship at bottom height."
                 : string.Empty) + remedy;
+    }
+
+    /// <summary>
+    /// FIX 7 (round three, "rescue the cell"): the warning for cells the
+    /// OFFSET ITSELF proves cannot close at this Thickness, however the
+    /// solid is built -- <see cref="CellOffsetImpossible"/> found a
+    /// concave edge whose local radius of curvature is shorter than
+    /// |Th|, so the offset corners fold past one another before any wall
+    /// can be built between them.
+    ///
+    /// NAMED APART FROM <see cref="ThickenFailureLine"/> AND EXCLUDED
+    /// FROM ITS COUNT, deliberately. That sentence's "a smaller Thickness
+    /// is the remedy" is only half true here (a thinner Th can rescue
+    /// this class, but so can a split, and neither is the SAME remedy the
+    /// sentence names for an ordinary join refusal); and "where these
+    /// cells go instead is a question only a run inside Rhino can settle"
+    /// is not true at all for this class, which is proven on the
+    /// outline's own corner normals, in THIS process, with no native
+    /// core and no join attempted. Folding the two together would either
+    /// under-state a certainty as a guess or over-state a guess as a
+    /// certainty.
+    ///
+    /// These cells still ship: CellTopBuild refuses the same case for the
+    /// same reason (its own <see cref="CellOffsetImpossible"/> guard), so
+    /// the top-height fallback cannot raise a top over them either, and
+    /// they are drawn at BOTTOM HEIGHT, the un-thickened face
+    /// CellSurface already built. That is stated plainly rather than
+    /// counted, because it is architectural here and not merely typical:
+    /// no top-height rescue exists for a fold this predicate has already
+    /// certified impossible.
+    /// </summary>
+    internal static string? ImpossibleThicknessLine(
+        int count, int firstCourse, double thickness, double worstRadius)
+    {
+        if (count <= 0)
+            return null;
+        string radiusText = double.IsFinite(worstRadius)
+            ? worstRadius.ToString("F3", CultureInfo.InvariantCulture) +
+              " m"
+            : "an unmeasured span";
+        return
+            $"{count} face" + (count == 1 ? "" : "s") +
+            " CANNOT close into a solid at Thickness " +
+            thickness.ToString("F3", CultureInfo.InvariantCulture) +
+            ", the first at course " + firstCourse +
+            ": the offset EXCEEDS THE LOCAL CONCAVE CURVATURE RADIUS " +
+            $"(as tight as {radiusText} on this cell), so the offset " +
+            "corners CROSS before a wall could ever be built between " +
+            "them. This is not a join Rhino could have closed at any " +
+            "tolerance, and Gaps does not touch it either: a THINNER " +
+            "THICKNESS, or SPLITTING THE CELL so each half's own local " +
+            "radius is no longer exceeded, is the remedy. These faces are " +
+            "still exported, drawn AT BOTTOM HEIGHT since no top-height " +
+            "rescue exists for a fold already this tight.";
     }
 
     /// <summary>
@@ -1410,6 +1508,117 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
+    /// FIX 7 (round three, "rescue the cell"), THE GEOMETRICALLY
+    /// IMPOSSIBLE CASE, on a single outline edge: is the offset asked for,
+    /// at THIS edge, one no wall or join could ever close, however
+    /// carefully the solid is built?
+    ///
+    /// A CONCAVE EDGE -- one whose two corner normals CONVERGE in the
+    /// direction Th pushes, so the offset SHORTENS the edge rather than
+    /// lengthening it -- has a LOCAL RADIUS OF CURVATURE: edge length
+    /// over the corner normals' own turning angle, R = |b - a| / theta,
+    /// theta the angle between normalA and normalB. This is the discrete
+    /// arc-over-angle estimate of curvature a hinge's own dihedral gives,
+    /// read off the SAME corner normals <see cref="CornerNormals"/>
+    /// already fetches for the offset itself, so it costs nothing new to
+    /// ask and needs no Brep to answer. Offsetting a concave edge PAST
+    /// its own radius folds its two offset corners through one another:
+    /// the classical focal-surface fact that an offset surface
+    /// self-intersects at a distance equal to its local radius of
+    /// curvature on the concave side.
+    ///
+    /// CONCAVE-TOWARD-THE-OFFSET is read off the first-order rate of
+    /// change of the offset edge's own squared length at Th = 0:
+    /// d/dt |edge(t)|^2 at t = 0 is 2(b - a).(normalB - normalA), signed
+    /// by Th's own sign so the test asks about the direction actually
+    /// pushed. Negative means the edge SHRINKS as it offsets that way,
+    /// which is the concave case; a CONVEX edge (normals diverge, the
+    /// edge lengthens) has no such limit and this predicate never fires
+    /// on one, because pushing two corners further apart cannot fold
+    /// them into each other at any thickness.
+    ///
+    /// PARALLEL NORMALS (theta below 1e-9) read no local curvature at
+    /// all -- R is unboundedly large -- and a DEGENERATE EDGE (its two
+    /// corners coincident) asks a question with no edge to answer it;
+    /// both return false rather than a radius of zero, which would read
+    /// as ALWAYS impossible. A ZERO OR NON-FINITE THICKNESS asks for no
+    /// offset at all and is refused the same way <see cref="Thickening"/>
+    /// refuses it elsewhere.
+    /// </summary>
+    internal static bool EdgeOffsetImpossible(
+        double[] a,
+        double[] b,
+        double[] normalA,
+        double[] normalB,
+        double thickness,
+        out double radius)
+    {
+        radius = double.PositiveInfinity;
+        if (!double.IsFinite(thickness) || thickness == 0.0)
+            return false;
+        double dot =
+            (normalA[0] * normalB[0]) +
+            (normalA[1] * normalB[1]) +
+            (normalA[2] * normalB[2]);
+        double clamped = Math.Min(1.0, Math.Max(-1.0, dot));
+        double theta = Math.Acos(clamped);
+        if (!(theta > 1.0e-9))
+            return false;
+        double ex = b[0] - a[0], ey = b[1] - a[1], ez = b[2] - a[2];
+        double edgeLength = Math.Sqrt((ex * ex) + (ey * ey) + (ez * ez));
+        if (!(edgeLength > 1.0e-12))
+            return false;
+        double dnx = normalB[0] - normalA[0];
+        double dny = normalB[1] - normalA[1];
+        double dnz = normalB[2] - normalA[2];
+        double rate =
+            ((ex * dnx) + (ey * dny) + (ez * dnz)) * Math.Sign(thickness);
+        if (!(rate < 0.0))
+            return false;
+        radius = edgeLength / theta;
+        return Math.Abs(thickness) > radius;
+    }
+
+    /// <summary>
+    /// THE WHOLE CELL, over every outline edge in cyclic order: true and
+    /// the WORST (smallest) radius any edge names, or false where none is
+    /// exceeded. The worst edge is reported rather than the first one
+    /// found, so a warning built on it names the tightest fold on the
+    /// cell rather than an arbitrary one.
+    /// </summary>
+    internal static bool CellOffsetImpossible(
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<double[]> cornerNormals,
+        double thickness,
+        out int edgeIndex,
+        out double radius)
+    {
+        edgeIndex = -1;
+        radius = double.PositiveInfinity;
+        if (outline.Count < 2 || outline.Count != cornerNormals.Count)
+            return false;
+        double worst = double.PositiveInfinity;
+        int worstAt = -1;
+        for (int at = 0; at < outline.Count; at++)
+        {
+            int next = (at + 1) % outline.Count;
+            if (EdgeOffsetImpossible(
+                    outline[at], outline[next], cornerNormals[at],
+                    cornerNormals[next], thickness, out double local) &&
+                local < worst)
+            {
+                worst = local;
+                worstAt = at;
+            }
+        }
+        if (worstAt < 0)
+            return false;
+        edgeIndex = worstAt;
+        radius = worst;
+        return true;
+    }
+
+    /// <summary>
     /// IS ANY THICKENING ASKED FOR AT ALL? Named rather than written inline
     /// because it is the gate the "byte-identical at Th = 0" ruling rests
     /// on: at Th exactly zero the Surface tree carries the SAME Brep
@@ -1446,19 +1655,52 @@ public sealed class SkinComponent : NativeComponentBase
     /// which route built the face (loft, fan or cap), so this one method
     /// serves every cell shape without a case on Sections.
     ///
+    /// FIX 7 (round three, "rescue the cell"): THE BOX IS CLOSED BY
+    /// CONSTRUCTION, NOT BY TOLERANCE-SEWING. Corners move along their own
+    /// blended normals exactly as before (nothing here changes
+    /// <see cref="CornerNormals"/>, <see cref="CellNormalFrom"/> or
+    /// <see cref="OffsetPointsFrom"/>: <see cref="CellSurface"/>'s cached
+    /// BOTTOM is untouched and stays byte-identical, which is what keeps
+    /// the Th/Gaps solve cache's stored bottoms valid under this rebuild --
+    /// see <see cref="SkinSolveCache"/>). What changes is the ORDER and
+    /// the JOIN: the WALLS ARE ERECTED FIRST, on the moved outline, before
+    /// any top geometry exists at all; the TOP is then built by
+    /// <see cref="CellTopPieces"/> from that SAME moved outline and cell
+    /// normal the walls just stood on (never a second, independent
+    /// rebuild); and its pieces are handed to the FINAL join UNJOINED --
+    /// a loft-route cell's one loft surface, or a fan-route cell's N
+    /// triangles, flipped but not pre-sewn -- so ONE JoinBreps call sees
+    /// the bottom, every top piece and every wall together and can use
+    /// every edge in the shell to close it. Before this fix the top's own
+    /// pieces were pre-joined into a single Brep FIRST, in isolation, and
+    /// only THEN offered to the walls: a clipped, reflex-cornered
+    /// free-edge cell's fan is exactly where that isolated join could
+    /// fail on its own account while the same triangles, joined alongside
+    /// their own walls, close -- his "first at course 2" bottom-course
+    /// witness (the free-edge lobe end, round-three finding 2).
+    ///
+    /// THE GEOMETRICALLY IMPOSSIBLE CASE IS CAUGHT BEFORE ANY BREP AT ALL
+    /// (<see cref="CellOffsetImpossible"/>): where the outline carries a
+    /// concave edge whose local radius of curvature is shorter than |Th|,
+    /// the offset corners fold past each other on the arithmetic alone --
+    /// no wall or join could ever rescue that, and none is attempted.
+    /// SolveNative asks this same predicate again on a refusal, so its
+    /// warning can name this class separately from an ordinary Rhino-side
+    /// join failure and say what actually helps: a thinner Th, or
+    /// splitting the cell.
+    ///
     /// THE TOP FACE TAKES THE SAME ROUTE ITS OWN BOTTOM TOOK (spec
-    /// 2026-09-04, section 5). This is the correction the slider wave
-    /// carries. Under the offset the top used to be built as a FAN even
-    /// where the bottom is a LOFT, so a lofted cell was capped by a
-    /// triangulated crust that does not share the bottom's boundary: that
-    /// is the crust in Param's screenshot and the leading suspect for the
-    /// 148 refusals, since a fan's chords and a loft's rails cannot join at
-    /// the 1e-6 the join is asked for. Now a loft-route cell lofts its top
-    /// from its own SECTION RAILS moved corner by corner, and only a
-    /// fan-route cell fans. The route is read off Sections by the one
-    /// predicate <see cref="CellSurface"/> reads it off
-    /// (<see cref="TopTakesLoft"/>), so no new case is invented and the two
-    /// cannot drift apart.
+    /// 2026-09-04, section 5), UNCHANGED BY THIS FIX. Under the offset the
+    /// top used to be built as a FAN even where the bottom is a LOFT, so a
+    /// lofted cell was capped by a triangulated crust that does not share
+    /// the bottom's boundary: that is the crust in Param's screenshot and
+    /// the leading suspect for the 148 refusals, since a fan's chords and
+    /// a loft's rails cannot join at the 1e-6 the join is asked for. Now a
+    /// loft-route cell lofts its top from its own SECTION RAILS moved
+    /// corner by corner, and only a fan-route cell fans. The route is read
+    /// off Sections by the one predicate <see cref="CellSurface"/> reads
+    /// it off (<see cref="TopTakesLoft"/>), so no new case is invented and
+    /// the two cannot drift apart.
     ///
     /// AND A LOFT THAT WILL NOT LOFT IS REFUSED RATHER THAN FANNED
     /// (<see cref="TopRefused"/>, added 2026-09-04 on the approving
@@ -1495,6 +1737,11 @@ public sealed class SkinComponent : NativeComponentBase
     /// the Surface tree carries the SAME Brep reference CellSurface built,
     /// untouched, rather than a copy built and then found equal.
     ///
+    /// THE SIGNATURE DOES NOT MOVE. scripts/rhino_skin_surface.py binds
+    /// this method by reflection in this exact parameter order (face,
+    /// outline, sections, net, Th, Gaps), and the harness pins it
+    /// (ValidateSkinThickenReach); this rebuild changes the BODY only.
+    ///
     /// The closedness of the result needs RhinoCommon's native core to
     /// prove, which this plugin's own harness deliberately does not
     /// launch (rule 5.2.4's split): that proof is
@@ -1509,22 +1756,30 @@ public sealed class SkinComponent : NativeComponentBase
         double thickness,
         double extrude)
     {
-        // ONE TOP BUILD FOR THE SOLID AND THE FALLBACK ALIKE. CellTopBuild
-        // is the top face's whole route; this method's only additions are
-        // the flip, the walls and the join, so the fallback
-        // CellTopFaceAtHeight ships cannot diverge from the top this
-        // solid closes under.
-        Brep? top = CellTopBuild(
-            outline, sections, net, thickness, extrude,
-            out IReadOnlyList<double[]> moved);
-        if (top is null)
+        if (outline.Count < 3)
             return null;
-        // The top is the same ring seen from the other side, so a solid
-        // join sees a consistent shell rather than two faces both facing
-        // the same way; SolidOrientation below is the belt to this braces.
-        top.Flip();
+        // ONE READING OF THE FIELD PER CORNER, shared by the impossible
+        // check, the walls and the top's own pieces below -- until
+        // 2026-09-04 every corner paid for this walk twice, and this fix
+        // does not reopen that.
+        IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
 
-        var pieces = new List<Brep>(outline.Count + 2) { face, top };
+        // FIX 7: THE IMPOSSIBLE CASE, CAUGHT BEFORE ANY BREP CALL. See
+        // CellOffsetImpossible's own comment for the geometry; this is
+        // pure arithmetic on corner normals already in hand.
+        if (CellOffsetImpossible(outline, cornerNormals, thickness, out _, out _))
+            return null;
+
+        double[] cellNormal = CellNormalFrom(outline, cornerNormals);
+        IReadOnlyList<double[]> moved = OffsetPointsFrom(
+            outline, cornerNormals, cellNormal, thickness, extrude);
+
+        // FIX 7: WALLS ARE ERECTED FIRST, on these same moved corners --
+        // before any top geometry exists, which is what lets the top be
+        // built as pieces that join ALONGSIDE the walls rather than being
+        // pre-sewn in isolation and handed to the walls as a fait
+        // accompli.
+        var walls = new List<Brep>(outline.Count);
         for (int at = 0; at < outline.Count; at++)
         {
             double[] a = outline[at];
@@ -1539,8 +1794,39 @@ public sealed class SkinComponent : NativeComponentBase
                 1.0e-9);
             if (wall is null)
                 return null;
-            pieces.Add(wall);
+            walls.Add(wall);
         }
+
+        // FIX 7: THE TOP FACE IS CONSTRUCTED FROM THE WALLS' OWN UPPER
+        // CORNERS. CellTopPieces takes the SAME moved outline and cell
+        // normal the walls just stood on, and hands back its pieces
+        // UNJOINED. Where CellTopBuild's own fallback route (below) joins
+        // them into a single top face on its own, for the cases that
+        // never reach a wall at all, the solid built here joins them
+        // alongside the walls instead, in ONE pass.
+        IReadOnlyList<Brep>? topPieces = CellTopPieces(
+            outline, sections, net, moved, cellNormal, thickness, extrude);
+        if (topPieces is null)
+            return null;
+
+        var pieces = new List<Brep>(walls.Count + topPieces.Count + 1)
+        {
+            face
+        };
+        foreach (Brep piece in topPieces)
+        {
+            // The top is the same ring seen from the other side, so a
+            // solid join sees a consistent shell rather than two faces
+            // both facing the same way; SolidOrientation below is the
+            // belt to this braces. Duplicated before the flip because
+            // CellTopPieces' own pieces are handed out fresh but must
+            // never be mutated in place if a future caller keeps a
+            // reference to them.
+            Brep flipped = piece.DuplicateBrep();
+            flipped.Flip();
+            pieces.Add(flipped);
+        }
+        pieces.AddRange(walls);
 
         Brep[] joined = Brep.JoinBreps(pieces, 1.0e-6);
         if (joined is not { Length: 1 } || !joined[0].IsValid)
@@ -1565,7 +1851,14 @@ public sealed class SkinComponent : NativeComponentBase
     ///
     /// "Exactly the route" is structural and not a promise:
     /// <see cref="CellTopBuild"/> is the one body both callers run, so
-    /// this fallback and the solid's own top cannot silently diverge.
+    /// this fallback and the solid's own top cannot silently diverge. FIX
+    /// 7 keeps this true: CellTopBuild is unchanged in shape (still one
+    /// outline, one Sections, one net, Th, Gaps in, one Brep or null out,
+    /// with the moved outline on the out parameter), only refactored to
+    /// share <see cref="CellTopPieces"/> with the solid route above, and
+    /// it still refuses on the SAME <see cref="CellOffsetImpossible"/>
+    /// case the solid does, so the fallback never ships a self-folded top
+    /// over a cell the solid already refused for exactly that reason.
     /// </summary>
     private static Brep? CellTopFaceAtHeight(
         IReadOnlyList<double[]> outline,
@@ -1577,14 +1870,17 @@ public sealed class SkinComponent : NativeComponentBase
 
     /// <summary>
     /// THE TOP FACE'S ONE ROUTE (spec 2026-09-04 section 5, "the top face
-    /// takes the same route its own bottom took"), shared verbatim by the
-    /// solid (<see cref="ThickenCellSurface"/>, which flips it into the
-    /// shell) and by fix 4's fallback (<see cref="CellTopFaceAtHeight"/>,
-    /// which ships it unflipped): moved section rails lofted for a
-    /// loft-route cell, the moved fan for a fan-route one, refused where
-    /// a loft will not loft (<see cref="TopRefused"/>). The MOVED outline
-    /// ring comes back with it because the solid's side walls stand on
-    /// the same offset corners the top was built over.
+    /// takes the same route its own bottom took"), KEPT COHERENT under
+    /// fix 7: still the one body both the solid (via
+    /// <see cref="CellTopPieces"/>, joined alongside the walls) and fix
+    /// 4's fallback (<see cref="CellTopFaceAtHeight"/>, joined here on its
+    /// own) run, so the fallback and the solid's own top cannot silently
+    /// diverge. Moved section rails lofted for a loft-route cell, the
+    /// moved fan for a fan-route one, refused where a loft will not loft
+    /// (<see cref="TopRefused"/>) or where <see cref="CellOffsetImpossible"/>
+    /// proves the offset cannot exist at all. The MOVED outline ring
+    /// comes back with it because the solid's side walls stand on the
+    /// same offset corners the top was built over.
     /// </summary>
     private static Brep? CellTopBuild(
         IReadOnlyList<double[]> outline,
@@ -1601,17 +1897,66 @@ public sealed class SkinComponent : NativeComponentBase
         // faces, and until 2026-09-04 every corner paid for two walks: one
         // for the cell normal's mean and one for its own blend.
         IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
+        // FIX 7: the same impossible-case guard the solid route runs,
+        // so the top-height fallback never raises a top over a fold the
+        // arithmetic already proves cannot exist.
+        if (CellOffsetImpossible(outline, cornerNormals, thickness, out _, out _))
+            return null;
         double[] cellNormal = CellNormalFrom(outline, cornerNormals);
         moved = OffsetPointsFrom(
             outline, cornerNormals, cellNormal, thickness, extrude);
+        IReadOnlyList<Brep>? pieces = CellTopPieces(
+            outline, sections, net, moved, cellNormal, thickness, extrude);
+        if (pieces is null)
+            return null;
+        // A loft-route cell hands back exactly one piece already (the one
+        // loft surface): joining a single Brep with itself is pointless
+        // and JoinBreps of one input is not guaranteed to hand the same
+        // instance back, so it is returned directly, same as before this
+        // fix.
+        if (pieces.Count == 1)
+            return pieces[0];
+        Brep[] joined = Brep.JoinBreps(pieces, 1.0e-9);
+        return joined is { Length: 1 } && joined[0].IsValid
+            ? joined[0]
+            : null;
+    }
+
+    /// <summary>
+    /// FIX 7: THE TOP FACE'S RAW PIECES, UNJOINED -- the one body
+    /// <see cref="CellTopBuild"/> (which joins them for the fallback) and
+    /// <see cref="ThickenCellSurface"/> (which joins them alongside the
+    /// walls, in one pass) both call, over the SAME moved outline and
+    /// cell normal their own callers already computed off the SAME corner
+    /// normals, so a later edit cannot leave the two reading different
+    /// corners. A loft-route cell's top is one loft surface (a list of
+    /// one); a fan-route cell's is <paramref name="outline"/>.Count
+    /// triangles, one per moved edge, each built from that edge's own
+    /// moved corners and the moved apex -- exactly the boundary the wall
+    /// built from the same two moved corners meets. Null on the same
+    /// refusals <see cref="TopRefused"/> and the fan route already carry:
+    /// a loft that will not loft, or a fan whose apex cannot be found.
+    /// </summary>
+    private static IReadOnlyList<Brep>? CellTopPieces(
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<IReadOnlyList<double[]>>? sections,
+        SkinNet net,
+        IReadOnlyList<double[]> moved,
+        double[] cellNormal,
+        double thickness,
+        double extrude)
+    {
         IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
             MovedSections(net, sections, cellNormal, thickness, extrude);
         if (TopRefused(sections, movedSections))
             return null;
-        return movedSections is not null
-            ? LoftSections(movedSections)
-            : OffsetTopFace(
-                net, outline, moved, cellNormal, thickness, extrude);
+        if (movedSections is not null)
+        {
+            Brep? loft = LoftSections(movedSections);
+            return loft is null ? null : new[] { loft };
+        }
+        return OffsetTopFanPieces(
+            net, outline, moved, cellNormal, thickness, extrude);
     }
 
     /// <summary>
@@ -1742,12 +2087,15 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
-    /// The fan-route cell's TOP FACE: the deterministic fan of rule
-    /// 5.2.3(d) and (e) over the moved outline, from the cell's own plan
-    /// interior point lifted onto the net and then moved by that point's
-    /// own blended direction. Null where the cell has no plan interior
-    /// point, where that point lies off the net, or where the fan will not
-    /// join.
+    /// The fan-route cell's TOP FACE, AS ITS RAW UNJOINED PIECES (fix 7):
+    /// the deterministic fan of rule 5.2.3(d) and (e) over the moved
+    /// outline, from the cell's own plan interior point lifted onto the
+    /// net and then moved by that point's own blended direction. Null
+    /// where the cell has no plan interior point, where that point lies
+    /// off the net, or where any one triangle itself will not build --
+    /// the JOIN that used to happen here now happens once, in the
+    /// caller's own final pass, alongside the walls (<see cref="CellTopPieces"/>
+    /// and its two callers).
     ///
     /// IT IS NO LONGER THE ONLY TOP. Under spec 2026-09-04 section 5 this
     /// route serves a cell whose BOTTOM is a fan, and a loft-route cell
@@ -1761,7 +2109,7 @@ public sealed class SkinComponent : NativeComponentBase
     /// later edit could have moved one of the two and left the top face
     /// standing on different corners from the walls that meet it.
     /// </summary>
-    private static Brep? OffsetTopFace(
+    private static List<Brep>? OffsetTopFanPieces(
         SkinNet net,
         IReadOnlyList<double[]> outline,
         IReadOnlyList<double[]> moved,
@@ -1795,10 +2143,7 @@ public sealed class SkinComponent : NativeComponentBase
                 return null;
             pieces.Add(piece);
         }
-        Brep[] joined = Brep.JoinBreps(pieces, 1.0e-9);
-        return joined is { Length: 1 } && joined[0].IsValid
-            ? joined[0]
-            : null;
+        return pieces;
     }
 
     /// <summary>
