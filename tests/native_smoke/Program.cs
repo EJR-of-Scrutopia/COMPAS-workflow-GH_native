@@ -1389,6 +1389,42 @@ internal static class Program
 
         try
         {
+            ValidateSkinHoledNetCoverageInstruments(plugin);
+            Console.WriteLine(
+                "PASS  Skin holed-net coverage instruments (spec 2026-09-06 " +
+                "round three B, rule 1: \"G6 first, because it broke the " +
+                "instruments\"): area coverage is no longer the whole " +
+                "acceptance. No emitted course or closer stone on the " +
+                "filled-in control or on Param's own crown arch exceeds " +
+                "the maximum piece bound the ordinary courses already " +
+                "obey (3 x Size), and no band's own stone count falls " +
+                "under 90 per cent of its own area-derived capacity, on " +
+                "either fixture. The six permanent HoledLobedNet variants " +
+                "this task lifts in -- {one hole, six holes} x {off-seam, " +
+                "on the valley seams} x {free rim, anchored rim} -- are " +
+                "measured against BOTH new instruments here: the size " +
+                "bound is RED on all six (an oversized stone from 1.86 to " +
+                "10.78 m against a 1.8 m bound, G5's field-captured course " +
+                "collapse on the three anchored variants and G6's " +
+                "mismatched-scale closer stitch on the three free ones), " +
+                "and the count-capacity bound is RED only on the three " +
+                "free-rim variants (ratios 0.683, 0.864, 0.862 against a " +
+                "0.90 floor) while holding clean, and asserted directly, " +
+                "on the three anchored ones (1.36 to 1.42). Both reds are " +
+                "the diagnosis's own G6 made visible where PlanCoverage " +
+                "and the harness's own sampler both read the fixture as " +
+                "essentially fully covered; both are DEFERRED to the fix " +
+                "task that closes G5 or G6, not silently dropped.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin holed-net coverage instruments: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRidgePlateau(plugin);
             Console.WriteLine(
                 "PASS  Skin ridge plateau (spec 2026-09-05 round three, " +
@@ -24048,6 +24084,118 @@ internal static class Program
     }
 
     /// <summary>
+    /// HOLE-RIMMED LOBED FIXTURE (spec 2026-09-06 diagnosis and round three
+    /// B, rule 1: "The holed fixtures ... become PERMANENT harness
+    /// fixtures"), lifted verbatim from the diagnosis probe
+    /// (docs/superpowers/specs/2026-09-06-skin-holed-net-diagnosis.md
+    /// section 2) with no change beyond calling this file's own
+    /// <see cref="SkinLobedNet"/> in place of the probe's private copy of
+    /// the same generator: the asymmetric six-lobe dome of round two/three,
+    /// verbatim, with one or more DESIGN HOLES punched near the crown: small
+    /// rectangular patches of quads removed from a low-t (near-apex) radial
+    /// band, each hole specified in mesh INDEX space as (tLow, tHigh
+    /// exclusive, iCentre, iHalfWidth). The apex fan (t 0-1) is never
+    /// touched, so a solid disc always survives at the true summit; the
+    /// holes sit AROUND it, matching Param's own "ring of rectangular
+    /// openings around the crown".
+    ///
+    /// Each hole's rim is found by comparing the mesh's OWN boundary-edge
+    /// set (edges used by exactly one remaining face) before and after
+    /// removal: vertices boundary-only AFTER removal that were NOT
+    /// boundary-only before are the hole's rim, so the method is agnostic
+    /// to where the hole sits relative to the outer free edges between the
+    /// six rim arcs.
+    ///
+    /// anchorHoleRims false: the hole rim is a FREE EDGE ONLY, exactly like
+    /// an interior opening cut into a supported shell with no ring beam --
+    /// it contributes no seed. anchorHoleRims true: every hole-rim vertex is
+    /// appended to Rim, so each hole's rim becomes its OWN new connected
+    /// component of the anchor set -- a NEW seed family the synthetic
+    /// fixtures before this wave never carried, one per hole -- exactly how
+    /// Param sometimes builds them (a support ring cast around an oculus).
+    /// An empty <paramref name="holes"/> list reduces to the plain
+    /// <see cref="SkinLobedNet"/> control, so this one builder covers the
+    /// diagnosis's "filled-in control" too.
+    /// </summary>
+    private static (double[][] V, int[][] F, int[] Rim, int[] HoleRim)
+        HoledLobedNet(
+            int lobes, int n, int m, double r0, double amp, double h,
+            int rimCols, double asym1, double asym2,
+            IReadOnlyList<(int TLow, int THigh, int ICentre, int IHalf)> holes,
+            bool anchorHoleRims)
+    {
+        (double[][] v, int[][] fAll, int[] outerRim) =
+            SkinLobedNet(lobes, n, m, r0, amp, h, rimCols, asym1, asym2);
+
+        // Reproduce SkinLobedNet's own face emission order exactly, so the
+        // hole rectangles (given in (t, i) ring-cell coordinates) land on
+        // the faces they name: n apex-fan triangles first, then (m-1) * n
+        // ring quads, t outer then i inner, matching SkinLobedNet verbatim.
+        var removed = new bool[fAll.Length];
+        int faceIdx = n; // skip the n apex-fan triangles: never a hole site
+        for (int t = 1; t < m; t++)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                foreach (var hole in holes)
+                {
+                    if (t < hole.TLow || t >= hole.THigh)
+                        continue;
+                    int rel = (((i - hole.ICentre) % n) + n) % n;
+                    if (rel <= hole.IHalf || rel >= n - hole.IHalf)
+                    {
+                        removed[faceIdx] = true;
+                        break;
+                    }
+                }
+                faceIdx++;
+            }
+        }
+
+        var kept = new List<int[]>();
+        for (int k = 0; k < fAll.Length; k++)
+            if (!removed[k])
+                kept.Add(fAll[k]);
+
+        static HashSet<int> BoundaryVertices(IReadOnlyList<int[]> faces)
+        {
+            var edgeCount = new Dictionary<(int, int), int>();
+            foreach (int[] face in faces)
+            {
+                for (int c = 0; c < face.Length; c++)
+                {
+                    int a = face[c], b = face[(c + 1) % face.Length];
+                    var key = a < b ? (a, b) : (b, a);
+                    edgeCount[key] =
+                        edgeCount.TryGetValue(key, out int n0) ? n0 + 1 : 1;
+                }
+            }
+            var boundary = new HashSet<int>();
+            foreach (var kv in edgeCount)
+            {
+                if (kv.Value == 1)
+                {
+                    boundary.Add(kv.Key.Item1);
+                    boundary.Add(kv.Key.Item2);
+                }
+            }
+            return boundary;
+        }
+
+        HashSet<int> originalBoundary = BoundaryVertices(fAll);
+        HashSet<int> newBoundary = BoundaryVertices(kept);
+        int[] holeRim = newBoundary.Where(x => !originalBoundary.Contains(x))
+            .OrderBy(x => x)
+            .ToArray();
+
+        int[] rimFinal = anchorHoleRims
+            ? outerRim.Concat(holeRim).Distinct().OrderBy(x => x).ToArray()
+            : outerRim;
+
+        return (v, kept.ToArray(), rimFinal, holeRim);
+    }
+
+    /// <summary>
     /// ROUND TWO ON THE ASYMMETRIC SIX-LOBE (spec 2026-09-05 round-two
     /// findings and diagnosis), the fixture that reproduces Param's own
     /// screenshots. FIX 1, THE ABSORB REWORK: adjacent refusals COALESCE
@@ -24753,6 +24901,446 @@ internal static class Program
             }
         }
         return uncovered;
+    }
+
+    /// <summary>
+    /// THE HOLED FIXTURE, permanent (spec 2026-09-06 round three B, rule
+    /// 4: "The holed fixtures ... become PERMANENT harness fixtures").
+    /// Every SIZE metric below is measured off SkinCell.Sections, the
+    /// cell's own two setout runs (rule 5.2.3's route (a): "the guide's
+    /// run and the other family's run"), never the outline, so a stone
+    /// with many short outline segments along a long curve is not
+    /// disguised as small the way a max-single-edge or raw-perimeter
+    /// reading would be (both measured and rejected below before this
+    /// method was written: perimeter alone reads the SAME 2.33 m on an
+    /// ordinary boundary-clipped course cell as a genuinely oversized
+    /// closer, because a fine-sampled polyline's perimeter is inflated by
+    /// point density and not by size).
+    /// </summary>
+    private static double MaximumSectionRun(
+        double[][][]? sections)
+    {
+        if (sections is null)
+            return 0.0;
+        double worst = 0.0;
+        foreach (double[][] run in sections)
+        {
+            double total = 0.0;
+            for (int i = 0; i + 1 < run.Length; i++)
+                total += Distance3(run[i], run[i + 1]);
+            if (total > worst)
+                worst = total;
+        }
+        return worst;
+    }
+
+    /// <summary>
+    /// RULE 1(a) (spec 2026-09-06-skin-round-three-b-holed-nets.md): "no
+    /// emitted stone exceeds the size bounds the ordinary courses obey --
+    /// the maximumPiece rule already exists [for caps, rule 6.4/9.5's Min
+    /// Piece S/3 and Max Piece 3 x S, SkinPatterns.cs's own CapsOversized]
+    /// and must bind the closer too, which is exactly where the 17x
+    /// stone came from." A cap is exempt: it carries no Sections at all
+    /// (SkinCell's own doc, "a cap none") and its own girth already
+    /// answers to this bound through CapsOversized -- this instrument is
+    /// what is MISSING for every course and closer cell, which had no
+    /// bound of any kind before this task. Returns the worst violation
+    /// (course, run length) or null if every emitted stone obeys the
+    /// bound.
+    /// </summary>
+    private static (int Course, double Run)? WorstOversizedStone(
+        (int Course, double[][] Outline, double U0, double U1, bool Cap,
+            bool Closer, double[][][]? Sections)[] cells,
+        double maximumPiece)
+    {
+        double worst = 0.0;
+        int worstCourse = -1;
+        foreach (var cell in cells)
+        {
+            if (cell.Cap)
+                continue;
+            double run = MaximumSectionRun(cell.Sections);
+            if (run > worst)
+            {
+                worst = run;
+                worstCourse = cell.Course;
+            }
+        }
+        return worst > maximumPiece + 1.0e-9 ? (worstCourse, worst) : null;
+    }
+
+    /// <summary>
+    /// RULE 1(b): "the emitted stone COUNT per band does not collapse
+    /// against the traced curves' own capacity, so an eviction is
+    /// visible as a count deficit even when area reads full." CAPACITY
+    /// is the band's own KEPT plan area divided by the nominal single-
+    /// Course-Height stone footprint (Size x Course Height), scaled by
+    /// the band's own Course-Height WIDTH wherever TransitionIntervals
+    /// names it a grown slab (round three's own fix 1, "the closer's own
+    /// width-across and sag bars are rescaled by the slab's own Course-
+    /// Height count"): without that scaling, the six-lobe control's own
+    /// legitimate 2.000 CH slab (course 2, 76 closers each roughly double
+    /// a one-CH stone's area) reads ratio 0.67, indistinguishable from an
+    /// eviction, which is the false positive this scaling exists to
+    /// avoid.
+    ///
+    /// THE FLOOR, 0.90, is measured off both known-healthy readings this
+    /// task has: the six-lobe control's own worst course (1.084) and
+    /// Param's crown arch (1.775), against the diagnosis's OWN eviction
+    /// (0.683 on the single off-seam hole) and the two further ones this
+    /// task's own re-measurement finds on the six-hole rings (0.862,
+    /// 0.864) -- a real gap, not a number picked from nowhere.
+    /// </summary>
+    private static (int Course, double Ratio)? WorstCountDeficit(
+        object made,
+        (int Course, double[][] Outline, double U0, double U1, bool Cap,
+            bool Closer, double[][][]? Sections)[] cells,
+        double size,
+        double courseHeight,
+        double floor)
+    {
+        (double Low, double High)[] intervals = ((IEnumerable)made
+                .GetType().GetProperty("TransitionIntervals")!
+                .GetValue(made)!)
+            .Cast<object>().Select(ReadInterval).ToArray();
+        double worstRatio = double.PositiveInfinity;
+        int worstCourse = -1;
+        foreach (var grp in cells.Where(c => !c.Cap)
+                     .GroupBy(c => c.Course))
+        {
+            double bandLow = grp.Key * courseHeight;
+            double bandHigh = bandLow + courseHeight;
+            double width = 1.0;
+            foreach ((double Low, double High) iv in intervals)
+            {
+                if (bandLow >= iv.Low - 1.0e-6 &&
+                    bandHigh <= iv.High + 1.0e-6)
+                {
+                    width = Math.Max(
+                        width, (iv.High - iv.Low) / courseHeight);
+                }
+            }
+            double nominalArea = size * courseHeight * width;
+            double totalArea = grp.Sum(c => PlanAreaOf(c.Outline));
+            // A capacity taken over a vacuous band proves nothing (the
+            // same vacuous-zero guard SlabUncoveredArea's own caller
+            // keeps): a course with cells at all always carries positive
+            // area, so this only ever guards a defensive path.
+            if (!(totalArea > 1.0e-9))
+                continue;
+            double capacity = totalArea / nominalArea;
+            double ratio = grp.Count() / capacity;
+            if (ratio < worstRatio)
+            {
+                worstRatio = ratio;
+                worstCourse = grp.Key;
+            }
+        }
+        return worstRatio < floor ? (worstCourse, worstRatio) : null;
+    }
+
+    /// <summary>
+    /// ROUND THREE B, RULE 1 (spec 2026-09-06-skin-round-three-b-holed-
+    /// nets.md, "RULE 1: G6 first, because it broke the instruments";
+    /// mechanisms measured in docs/superpowers/specs/2026-09-06-skin-
+    /// holed-net-diagnosis.md). BOTH existing coverage instruments, the
+    /// harness's own sampler and the engine's PlanCoverage per cent,
+    /// read close to 100 per cent on the single unanchored off-seam hole
+    /// fixture while ONE closer stone evicts about 2.76 m2 of legitimate
+    /// geometry (ten ordinary course-14 stones plus the keystone) through
+    /// KeepValidPlans's own order-only tie-break (SkinPatterns.cs:2925):
+    /// an eviction that swaps ten good stones for one monster keeps the
+    /// AREA covered, so an area-only instrument cannot see it at all.
+    /// This is proved directly below: <see cref="WorstOversizedStone"/>
+    /// and <see cref="WorstCountDeficit"/> are both areas the two
+    /// existing instruments are blind to and are pinned RED on this
+    /// fixture right here, deferred to the mechanism fix that owns
+    /// closing them rather than silently skipped.
+    ///
+    /// THE HOLED FIXTURE, permanent (rule 4's own words), all SIX
+    /// variants HoledLobedNet builds -- {one hole, six holes} x
+    /// {off-seam, on the valley seams} x {free rim, anchored rim} -- and
+    /// the filled-in control, round two/three's own asymmetric six-lobe
+    /// with no holes at all, unchanged since <see cref="ValidateSkinSeamRoundTwo"/>.
+    ///
+    /// WHAT THIS TASK MEASURED THAT THE DIAGNOSIS DID NOT (a09b7f9 already
+    /// carries round three's own fixes 1 to 7, which the diagnosis's own
+    /// 88e170f build did not): <see cref="WorstOversizedStone"/> now fires
+    /// on ALL SIX holed variants, not only the single diagnosed case --
+    /// every anchored variant's own field-capture course collapse (G5)
+    /// also mints an oversized stone (4.6423 m on the single-hole anchor,
+    /// up to 1.9811 m on the six-hole anchors, against a bound of 1.8 m),
+    /// which the diagnosis's own headline table named by its symptom
+    /// (course collapse, wrong-location caps) but never by this
+    /// instrument, because this instrument did not exist yet.
+    /// <see cref="WorstCountDeficit"/> is the more SURGICAL of the two: it
+    /// fires ONLY on the three FREE-rim variants (0.683 single hole,
+    /// 0.864 six-hole ring, 0.862 six-hole valley), never on an anchored
+    /// one, so it is asserted directly (undeferred) on the three anchored
+    /// variants below -- a real, currently-true property worth protecting
+    /// against regression -- and deferred only where it is presently
+    /// false.
+    /// </summary>
+    private static void ValidateSkinHoledNetCoverageInstruments(
+        Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double size = 0.6;
+        const double courseHeight = 0.35;
+        // Rule 6.4/9.5's own split, Min Piece S/3 and Max Piece 3 x S at
+        // this method's default minPiece (the 3-argument Courses
+        // overload every fixture below uses): SkinPatterns.cs's own doc
+        // comment names it exactly, "a minimum piece of S / 3 and a
+        // maximum of 3 S."
+        double maximumPiece = 3.0 * size;
+        const double capacityFloor = 0.90;
+
+        object Made(double[][] v, int[][] f, int[] rim)
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[]
+                {
+                    v, f, rim, Array.CreateInstance(edgeType, 0)
+                })!;
+            return courses.Invoke(
+                null, new object[] { net, size, courseHeight })!;
+        }
+
+        // ---- THE FILLED-IN CONTROL: round two/three's own asymmetric
+        // six-lobe, unchanged. Both instruments must hold here, plainly,
+        // with no deferral: this is the fixture round three's own pins
+        // already trust at 0.0000 m2 uncovered, and if either new
+        // instrument disagreed with that trust the instrument itself
+        // would be the thing broken.
+        (double[][] cv, int[][] cf, int[] crim) = SkinLobedNet(
+            6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07);
+        object madeControl = Made(cv, cf, crim);
+        var controlCells = ReadSeamCells(madeControl);
+        var controlOversized = WorstOversizedStone(
+            controlCells, maximumPiece);
+        if (controlOversized is { } co)
+        {
+            throw new InvalidOperationException(
+                "The filled-in control (asymmetric six-lobe, no holes) " +
+                "must carry no emitted stone above the maximum piece " +
+                $"bound ({maximumPiece:F4} m); course {co.Course} " +
+                $"carries one at {co.Run:F4} m. This fixture is round " +
+                "three's own 0.0000 m2 pin: an oversized stone here " +
+                "means the new instrument is wrong, not the fixture.");
+        }
+        var controlDeficit = WorstCountDeficit(
+            madeControl, controlCells, size, courseHeight, capacityFloor);
+        if (controlDeficit is { } cd)
+        {
+            throw new InvalidOperationException(
+                "The filled-in control must carry no band whose emitted " +
+                $"stone count falls under {capacityFloor:F2} of its own " +
+                $"area-derived capacity; course {cd.Course} reads " +
+                $"{cd.Ratio:F3}. This fixture is round three's own " +
+                "0.0000 m2 pin: a count deficit here means the new " +
+                "instrument is wrong, not the fixture.");
+        }
+
+        // ---- PARAM'S OWN SOLVED CROWN ARCH (S 0.10 / CH 0.30), a spot-
+        // check that an existing REAL fixture at a different Size and
+        // Course Height is not already silently evicting: measured worst
+        // section run 0.1022 m against a bound of 0.30 m, worst capacity
+        // ratio 1.775 against the 0.90 floor, both comfortably clean.
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        string crownPath = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(crownPath))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the " +
+                "build output (assets/param-crown-arch-contract.json): " +
+                crownPath);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object crownResult = DeserializeContract(
+            plugin, resultType,
+            File.ReadAllText(crownPath));
+        object crownArch = readNet.Invoke(null, new object?[] { crownResult })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so this fixture's own reading would hold " +
+                "vacuously.");
+        object madeCrown = courses.Invoke(
+            null, new object[] { crownArch, 0.10, 0.30 })!;
+        var crownCells = ReadSeamCells(madeCrown);
+        var crownOversized = WorstOversizedStone(crownCells, 3.0 * 0.10);
+        if (crownOversized is { } cro)
+        {
+            throw new InvalidOperationException(
+                "Param's own crown arch must carry no emitted stone " +
+                "above its own maximum piece bound (0.3000 m); course " +
+                $"{cro.Course} carries one at {cro.Run:F4} m.");
+        }
+        var crownDeficit = WorstCountDeficit(
+            madeCrown, crownCells, 0.10, 0.30, capacityFloor);
+        if (crownDeficit is { } crd)
+        {
+            throw new InvalidOperationException(
+                "Param's own crown arch must carry no band whose " +
+                $"emitted stone count falls under {capacityFloor:F2} " +
+                $"of its own area-derived capacity; course {crd.Course} " +
+                $"reads {crd.Ratio:F3}.");
+        }
+
+        // ---- THE SIX HOLED VARIANTS, PERMANENT (rule 4). Built once so
+        // every later task in this wave (G5, G6, G7) reads the SAME
+        // fixture this task measured against.
+        (int TLow, int THigh, int ICentre, int IHalf)[] oneOff =
+            { (2, 5, 5, 2) };
+        (int TLow, int THigh, int ICentre, int IHalf)[] ringOff =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 5, 2)).ToArray();
+        (int TLow, int THigh, int ICentre, int IHalf)[] valley =
+            Enumerable.Range(0, 6)
+                .Select(k => (2, 5, (k * 20) + 10, 2)).ToArray();
+
+        var variants = new (
+            string Label,
+            (int TLow, int THigh, int ICentre, int IHalf)[] Holes,
+            bool Anchored)[]
+        {
+            ("one hole, off-seam, free rim", oneOff, false),
+            ("one hole, off-seam, anchored rim", oneOff, true),
+            ("six holes, ring, off-seam, free rim", ringOff, false),
+            ("six holes, ring, off-seam, anchored rim", ringOff, true),
+            ("six holes, on the valley seams, free rim", valley, false),
+            ("six holes, on the valley seams, anchored rim", valley, true),
+        };
+
+        var madeByLabel = new Dictionary<string, object>(StringComparer.Ordinal);
+        var cellsByLabel = new Dictionary<string, (int Course,
+            double[][] Outline, double U0, double U1, bool Cap,
+            bool Closer, double[][][]? Sections)[]>(StringComparer.Ordinal);
+        foreach (var v in variants)
+        {
+            var built = HoledLobedNet(
+                6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07,
+                v.Holes, anchorHoleRims: v.Anchored);
+            object made = Made(built.V, built.F, built.Rim);
+            madeByLabel[v.Label] = made;
+            cellsByLabel[v.Label] = ReadSeamCells(made);
+        }
+
+        // ---- RULE 1(a), on every one of the six: currently RED on ALL
+        // SIX (measured worst run per variant, metres, against the 1.8 m
+        // bound): 5.5667 (one hole, free), 4.6423 (one hole, anchor),
+        // 10.7772 (six-hole ring, free), 1.9798 (six-hole ring, anchor),
+        // 2.0354 (six-hole valley, free), 1.9811 (six-hole valley,
+        // anchor). Every anchored variant's own oversized stone is G5's
+        // signature (the field-captured course collapse mints stones
+        // spanning several genuine course-heights at once); every free
+        // variant's is G6's (the mismatched-scale closer stitch the
+        // diagnosis named). DEFERRED to whichever fix task closes G5 or
+        // G6, not silently dropped: the claim is the real, ungated
+        // assertion, so it goes stale and must be inlined the day either
+        // mechanism is actually fixed.
+        Deferred(
+            "Round three B rule 1(a): no emitted course or closer stone " +
+            "on any of the six permanent holed-net variants exceeds the " +
+            "maximum piece bound (3 x Size) the ordinary courses obey",
+            "G5 (RimDistanceFieldWithSeeds/SeedGroupsOf's anchor-" +
+            "proximity field capture, SkinPatterns.cs:958,1092) and G6 " +
+            "(CloserBand/TryExtendCloser's ratio-less mismatched-scale " +
+            "closer stitch, SkinPatterns.cs:7204,8008; KeepValidPlans's " +
+            "order-only tie-break, SkinPatterns.cs:2925-2980), docs/" +
+            "superpowers/specs/2026-09-06-skin-holed-net-diagnosis.md; " +
+            "neither is fixed by this task",
+            () =>
+            {
+                var failing = new List<string>();
+                foreach (var v in variants)
+                {
+                    var worst = WorstOversizedStone(
+                        cellsByLabel[v.Label], maximumPiece);
+                    if (worst is { } w)
+                    {
+                        failing.Add(
+                            $"{v.Label}: course {w.Course} at " +
+                            $"{w.Run:F4} m");
+                    }
+                }
+                if (failing.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "No emitted stone on any permanent holed-net " +
+                        $"variant may exceed {maximumPiece:F4} m (3 x " +
+                        $"Size); {failing.Count} of {variants.Length} " +
+                        "variants carry one: " +
+                        string.Join("; ", failing) + ".");
+                }
+            });
+
+        // ---- RULE 1(b), surgical: currently RED only on the THREE FREE-
+        // rim variants (0.683 one hole, 0.864 six-hole ring, 0.862 six-
+        // hole valley -- all G6's mismatched-scale stitch), currently
+        // GREEN on all three anchored ones (worst readings 1.407, 1.364,
+        // 1.422, comfortably above the 0.90 floor even though G5 has
+        // already collapsed their course count): asserted DIRECTLY on
+        // the anchored three, a real property worth protecting, and
+        // DEFERRED on the free three, to the same G6 owner as rule 1(a).
+        foreach (var v in variants.Where(v => v.Anchored))
+        {
+            var deficit = WorstCountDeficit(
+                madeByLabel[v.Label], cellsByLabel[v.Label], size,
+                courseHeight, capacityFloor);
+            if (deficit is { } d)
+            {
+                throw new InvalidOperationException(
+                    $"{v.Label}: a band's emitted stone count must not " +
+                    $"fall under {capacityFloor:F2} of its own area-" +
+                    $"derived capacity; course {d.Course} reads " +
+                    $"{d.Ratio:F3}. This anchored variant currently " +
+                    "reads clean (worst 1.36 to 1.42 measured); a " +
+                    "regression here is a NEW defect, not G5 or G6.");
+            }
+        }
+        Deferred(
+            "Round three B rule 1(b): no band's emitted stone count, " +
+            "on the three FREE-rim holed-net variants, collapses under " +
+            "0.90 of its own area-derived capacity",
+            "G6 (CloserBand/TryExtendCloser's ratio-less mismatched-" +
+            "scale closer stitch, SkinPatterns.cs:7204,8008; " +
+            "KeepValidPlans's order-only tie-break, SkinPatterns.cs:" +
+            "2925-2980), docs/superpowers/specs/2026-09-06-skin-holed-" +
+            "net-diagnosis.md section 4's G6; not fixed by this task",
+            () =>
+            {
+                var failing = new List<string>();
+                foreach (var v in variants.Where(v => !v.Anchored))
+                {
+                    var deficit = WorstCountDeficit(
+                        madeByLabel[v.Label], cellsByLabel[v.Label], size,
+                        courseHeight, capacityFloor);
+                    if (deficit is { } d)
+                    {
+                        failing.Add(
+                            $"{v.Label}: course {d.Course} at " +
+                            $"{d.Ratio:F3}");
+                    }
+                }
+                if (failing.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "No band's emitted stone count on the free-rim " +
+                        $"holed-net variants may fall under " +
+                        $"{capacityFloor:F2} of its own area-derived " +
+                        $"capacity; {failing.Count} of " +
+                        $"{variants.Count(v => !v.Anchored)} free-rim " +
+                        "variants carry one: " +
+                        string.Join("; ", failing) + ".");
+                }
+            });
     }
 
     /// <summary>
