@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -1212,6 +1212,20 @@ internal static class Program
             "FD settings accepted a force density rejected by the backend.");
     }
 
+    /// <summary>
+    /// The whole-chain diagnosis (docs/superpowers/specs/2026-09-06-chain-
+    /// perf-diagnosis.md, P2) found that ANY cancelled request - which is
+    /// exactly what a superseded slider-drag tick produces on Relax,
+    /// Horizontal and Solve - killed and relaunched the entire shared
+    /// WorkerHost process, at ~850-1050 ms cold and 40-100 ms warm per
+    /// cancelled tick, because <see cref="WorkerHost"/> is one process-wide
+    /// singleton every component calls into. This proves the fix two ways:
+    /// an ORDINARY cancellation (the caller's own token) must leave the
+    /// worker process running and usable for the very next request, and a
+    /// GENUINE RequestTimeoutMs expiry (nothing asked to abandon the
+    /// request; the budget simply elapsed) must still recover a worker
+    /// that really is stuck, exactly as before.
+    /// </summary>
     private static async Task ValidateCancellationRecovery(
         WorkerConfiguration installed)
     {
@@ -1220,42 +1234,86 @@ internal static class Program
         await using var host = new WorkerHost(configuration);
         await host.StartAsync().ConfigureAwait(false);
 
-        using var firstCancellation = new CancellationTokenSource(75);
-        using var secondCancellation = new CancellationTokenSource(75);
-        Task<JsonElement> first = host.RequestAsync<JsonElement>(
-            "test.delay",
-            new Dictionary<string, object?> { ["seconds"] = 3.0 },
-            firstCancellation.Token);
-        Task<JsonElement> second = host.RequestAsync<JsonElement>(
-            "test.delay",
-            new Dictionary<string, object?> { ["seconds"] = 3.0 },
-            secondCancellation.Token);
-
-        await RequireCancelled(first, "first").ConfigureAwait(false);
-        await RequireCancelled(second, "second").ConfigureAwait(false);
-        await Task.Delay(configuration.CancellationGraceMs + 500)
-            .ConfigureAwait(false);
-
-        WorkerHealth firstHealth = await host.HealthAsync().ConfigureAwait(false);
+        int? startedProcessId = host.ProcessId;
         Require(
-            string.Equals(
-                firstHealth.Status,
-                "ok",
-                StringComparison.OrdinalIgnoreCase),
-            "Replacement worker was not healthy after concurrent cancellation.");
+            startedProcessId is not null,
+            "Fake worker did not report a running process id.");
 
-        await Task.Delay(configuration.CancellationGraceMs + 250)
-            .ConfigureAwait(false);
-        WorkerHealth secondHealth = await host.HealthAsync().ConfigureAwait(false);
+        // Cancelled well before the fake worker's own delay can finish -
+        // the worker is genuinely still computing this when the caller
+        // gives up on it.
+        using (var cancellation = new CancellationTokenSource(50))
+        {
+            Task<JsonElement> cancelled = host.RequestAsync<JsonElement>(
+                "test.delay",
+                new Dictionary<string, object?> { ["seconds"] = 0.4 },
+                cancellation.Token);
+            await RequireCancelled(cancelled, "cancelled").ConfigureAwait(false);
+        }
+
+        // THE PROOF: a request issued right after succeeds on the SAME
+        // process. It simply waits its turn behind the worker's single
+        // slot (the worker is single-threaded and cannot be told to
+        // abandon the cancelled delay without being killed) instead of
+        // paying a process kill and relaunch.
+        JsonElement helloAgain = await host.RequestAsync<JsonElement>(
+            "system.hello").ConfigureAwait(false);
         Require(
-            string.Equals(
-                secondHealth.Status,
-                "ok",
-                StringComparison.OrdinalIgnoreCase),
-            "A duplicate cancellation recovery killed the replacement worker.");
-
+            helloAgain.ValueKind == JsonValueKind.Object,
+            "Worker did not answer a request issued after a cancellation.");
+        Require(
+            host.ProcessId == startedProcessId,
+            "The worker process was replaced by an ordinary cancellation; " +
+            "cancelling a request must abandon the CALLER's own wait "+
+            "only, and never kill the shared process.");
         Console.WriteLine(
-            "PASS worker recovery: concurrent cancellations coalesced.");
+            "PASS worker recovery: an ordinary cancellation left the " +
+            $"worker process (pid {startedProcessId}) running, and the " +
+            "next request succeeded on it.");
+
+        // The other half: a request that is NOT cancelled by its caller
+        // but simply outlives RequestTimeoutMs is still evidence of a
+        // stuck worker, and still recovers by killing and relaunching.
+        WorkerConfiguration timeoutConfiguration = FakeWorkerConfiguration(
+            installed,
+            badSchema: false,
+            requestTimeoutMs: 150);
+        await using var timeoutHost = new WorkerHost(timeoutConfiguration);
+        await timeoutHost.StartAsync().ConfigureAwait(false);
+        int? timeoutStartedProcessId = timeoutHost.ProcessId;
+
+        try
+        {
+            _ = await timeoutHost.RequestAsync<JsonElement>(
+                "test.delay",
+                new Dictionary<string, object?> { ["seconds"] = 2.0 })
+                .ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "A request exceeding RequestTimeoutMs did not time out.");
+        }
+        catch (TimeoutException)
+        {
+            // Expected: the caller passed no token of its own, so the
+            // timeout - not a cancellation - is what fired.
+        }
+
+        await Task.Delay(timeoutConfiguration.CancellationGraceMs + 500)
+            .ConfigureAwait(false);
+        WorkerHealth recoveredHealth =
+            await timeoutHost.HealthAsync().ConfigureAwait(false);
+        Require(
+            string.Equals(
+                recoveredHealth.Status,
+                "ok",
+                StringComparison.OrdinalIgnoreCase),
+            "Replacement worker was not healthy after a genuine timeout.");
+        Require(
+            timeoutHost.ProcessId != timeoutStartedProcessId,
+            "A genuine RequestTimeoutMs expiry must still recover a " +
+            "stuck worker by killing and relaunching it.");
+        Console.WriteLine(
+            "PASS worker recovery: a genuine request timeout still " +
+            "killed and relaunched the worker.");
     }
 
     private static async Task RequireCancelled(
@@ -1299,7 +1357,8 @@ internal static class Program
 
     private static WorkerConfiguration FakeWorkerConfiguration(
         WorkerConfiguration installed,
-        bool badSchema)
+        bool badSchema,
+        int requestTimeoutMs = 5_000)
     {
         string script = Path.Combine(
             AppContext.BaseDirectory,
@@ -1319,7 +1378,7 @@ internal static class Program
             Environment = new Dictionary<string, string>(),
             ProtocolVersion = WorkerProtocol.CurrentVersion,
             StartupTimeoutMs = 5_000,
-            RequestTimeoutMs = 5_000,
+            RequestTimeoutMs = requestTimeoutMs,
             CancellationGraceMs = 100,
             ShutdownTimeoutMs = 1_000,
             MaxFrameBytes = WorkerProtocol.MaximumFrameBytes

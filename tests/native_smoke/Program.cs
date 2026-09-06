@@ -41263,24 +41263,39 @@ internal static class Program
     ///
     /// The measured defect, and the reason the rule exists: Export used to
     /// dispatch its thrust mesh on Grasshopper's own solution token, and
-    /// WorkerHost registers a callback on whatever token it is handed which
-    /// KILLS the worker process and starts a fresh one behind a new
-    /// handshake (RecoverCancelledRequestAsync, WorkerHost.cs:911-991). So
-    /// every re-solve that superseded an in-flight export tore the worker
-    /// down mid-scrub, and the next solver component paid for a cold start.
+    /// WorkerHost registered a callback on whatever token it was handed
+    /// which KILLED the worker process and started a fresh one behind a new
+    /// handshake. So every re-solve that superseded an in-flight export tore
+    /// the worker down mid-scrub, and the next solver component paid for a
+    /// cold start. Export's own fix was to stop handing it a token that
+    /// cancels on supersession at all (its own component-lifetime token,
+    /// below); the chain-perf diagnosis of 2026-09-06 (docs/superpowers/
+    /// specs/2026-09-06-chain-perf-diagnosis.md, P2) then found the SAME
+    /// kill fired for every OTHER caller sharing this one WorkerHost -
+    /// Relax, Horizontal, Solve - since none of them could adopt Export's
+    /// trick without losing the fast local cancel a superseded solver tick
+    /// needs. The fix that shipped instead moved to WorkerHost itself: an
+    /// ordinary cancellation (the caller's own token) now abandons only the
+    /// CALLER's wait, never the worker, which keeps answering in the
+    /// background and is picked up again by the very next request; only a
+    /// genuine RequestTimeoutMs expiry - nothing asked to abandon the
+    /// request, the budget simply elapsed - still recovers by killing and
+    /// relaunching it.
     ///
     /// This is measured against a REAL WorkerHost driving a REAL child
     /// process: the harness re-launches itself in a fake-worker mode that
     /// speaks the framed protocol, answers export.compas with its own
     /// process id and a per-process serial number, and delays its
     /// odd-numbered answers so a request can be superseded while it is on
-    /// the wire. A restart is therefore visible twice over, as a new process
-    /// id and as a serial that starts again.
+    /// the wire. A restart would be visible twice over, as a new process id
+    /// and as a serial that starts again.
     ///
     /// The negative half is measured too, at the end and deliberately last:
-    /// cancelling the token DOES kill the worker, through this very seam. So
-    /// the positive half is not vacuous, and no mutation is needed to show
-    /// what it would look like if supersession cancelled anything.
+    /// cancelling a request that is NOT run on the component's lifetime
+    /// token (an ordinary, freely cancellable one, same as any solver
+    /// component's) still leaves the SAME process serving the next request,
+    /// which is what proves the fix is in WorkerHost itself and not merely
+    /// in Export's own token choice.
     /// </summary>
     private static void ValidateExportWorkerSurvivesSupersession(
         Assembly plugin)
@@ -41479,10 +41494,19 @@ internal static class Program
                     + " times for two builds.");
             }
 
-            // THE NEGATIVE HALF, last because it takes the worker down.
-            // Cancelling the token this request runs on is what kills the
-            // worker, so the assertions above are about a mechanism that
-            // demonstrably exists rather than about one that could not fire.
+            // THE NEGATIVE HALF, last because under the OLD behaviour this
+            // was the one that took the worker down. cancelling.Token is an
+            // ORDINARY, freely cancellable token - not the component's
+            // lifetime token the positive half above runs on - the same
+            // shape of token a solver component's own CancelToken is. If
+            // WorkerHost still killed the process on this kind of
+            // cancellation, this would be the case that shows it; instead
+            // it must land on the SAME process, one serial further on (this
+            // request is serial 3 - odd, so the fake worker delays it,
+            // which is why there is time to cancel it while it is still on
+            // the wire - and the worker keeps computing it in the
+            // background regardless of the cancelled caller, so the next
+            // request is serial 4, not a restarted serial 1).
             using var cancelling = new CancellationTokenSource();
             var killed = Task.Run(() =>
             {
@@ -41503,15 +41527,20 @@ internal static class Program
             Thread.Sleep(500);
             (int afterPid, int afterSerial) =
                 ReadFakeMesh(Mesh(CancellationToken.None)!);
-            if (afterPid == firstPid || afterSerial != 1)
+            if (afterPid != firstPid || afterSerial != 4)
             {
                 throw new InvalidOperationException(
-                    "The kill path could not be demonstrated at all: "
-                    + $"cancelling a request left process {afterPid} at "
-                    + $"serial {afterSerial} against the original "
-                    + $"{firstPid}. The check above would then be asserting "
-                    + "nothing, so this fixture is wrong rather than the "
-                    + "component.");
+                    "An ordinary cancellation must leave the SAME worker "
+                    + "process running, usable for the very next request "
+                    + $"(2026-09-06 P2): cancelling left process {afterPid} "
+                    + $"at serial {afterSerial}, expected the original "
+                    + $"process {firstPid} at serial 4 (3 was the cancelled "
+                    + "request, still answered by the SAME process in the "
+                    + "background; 4 is the next one, queued behind it "
+                    + "rather than sent to a relaunched process). "
+                    + "WorkerHost must abandon only the caller's own wait "
+                    + "on an ordinary cancellation, never kill the shared "
+                    + "process.");
             }
         }
         finally

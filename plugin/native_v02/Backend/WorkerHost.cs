@@ -15,10 +15,23 @@ namespace Ananke.COMPAS.Native.Backend;
 /// </summary>
 /// <remarks>
 /// The host has no Rhino or Grasshopper dependencies and makes no UI calls.
-/// It is safe to use from a task-capable Grasshopper component. Request
-/// cancellation is fail-safe: the caller is cancelled immediately; if the
-/// worker has not produced a terminal response after the configured grace
-/// period, the process is killed and a fresh, health-checked worker is started.
+/// It is safe to use from a task-capable Grasshopper component. The
+/// worker is a single synchronous process that can only ever compute one
+/// command at a time and cannot be told to abandon one mid-flight without
+/// killing it, so request cancellation is fail-safe in a specific sense:
+/// the CALLER is released immediately, but the worker itself is left
+/// alone. An ordinary cancellation (a superseded drag tick; anything the
+/// caller's own token requests) never kills the process - it just stops
+/// waiting for an answer nobody needs any more, and the still-running
+/// computation's eventual response is matched and discarded. Only a
+/// genuine <see cref="WorkerConfiguration.RequestTimeoutMs"/> expiry -
+/// the caller did NOT ask to abandon the request, the configured budget
+/// simply elapsed - is treated as evidence the worker may actually be
+/// stuck, and still recovers by killing and relaunching it. A
+/// single-flight dispatch gate (<see cref="_dispatchGate"/>) means the
+/// worker is only ever asked to do one thing at a time regardless: a
+/// request still queued for its turn when its own token cancels never
+/// reaches the worker at all.
 /// </remarks>
 public sealed class WorkerHost : IDisposable, IAsyncDisposable
 {
@@ -30,6 +43,16 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
     private readonly ConcurrentQueue<string> _recentStderr = new();
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    // The worker's own serve loop (ananke_equilibrium.worker.serve) reads
+    // one frame, dispatches it to completion, writes the response, THEN
+    // reads the next frame: it is single-threaded and cannot compute two
+    // commands at once. This gate makes that true on the C# side too, so
+    // a cancelled-but-still-running request and a fresh one issued right
+    // behind it are never both written to the pipe: the fresh one waits
+    // its turn in memory, for free, and abandons instantly if IT is
+    // superseded before its turn comes (see RequestWithRecoveryAsync).
+    private readonly SemaphoreSlim _dispatchGate = new(1, 1);
     private readonly object _stateGate = new();
 
     private Process? _process;
@@ -80,6 +103,21 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
 
     /// <summary>Gets a snapshot of recent diagnostic lines written to worker stderr.</summary>
     public IReadOnlyList<string> RecentStderr => _recentStderr.ToArray();
+
+    /// <summary>
+    /// The OS process id of the currently running worker, or null if none
+    /// is running. Exists so a caller (a test, a diagnostic) can prove a
+    /// process was NOT torn down and relaunched across some event -
+    /// exactly what an ordinary cancellation must no longer do.
+    /// </summary>
+    public int? ProcessId
+    {
+        get
+        {
+            lock (_stateGate)
+                return IsAlive(_process) ? _process!.Id : null;
+        }
+    }
 
     /// <summary>
     /// Creates a host by discovering the installed <c>backend.json</c>.
@@ -195,6 +233,7 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
             return await RequestWithRecoveryAsync<TResponse>(
                 command,
                 payload,
+                cancellationToken,
                 requestCancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error)
@@ -336,82 +375,130 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
     private async Task<TResponse> RequestWithRecoveryAsync<TResponse>(
         string command,
         object? payload,
-        CancellationToken cancellationToken)
+        CancellationToken callerToken,
+        CancellationToken operationToken)
     {
-        string requestId = Guid.NewGuid().ToString("N");
-        PendingRequest pending;
-        CancellationTokenRegistration registration = default;
-        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Waits for the single worker slot. A request that is superseded
+        // before its turn comes is cancelled HERE, by the same token the
+        // caller already carries, and never reaches the worker at all -
+        // the cheapest possible "abandon its own work".
+        await _dispatchGate.WaitAsync(operationToken).ConfigureAwait(false);
+        bool releaseGate = true;
         try
         {
-            ThrowIfDisposed();
-            lock (_stateGate)
+            string requestId = Guid.NewGuid().ToString("N");
+            PendingRequest pending;
+            CancellationTokenRegistration registration = default;
+            await _lifecycleGate.WaitAsync(operationToken).ConfigureAwait(false);
+            try
             {
-                if (!IsAlive(_process))
+                ThrowIfDisposed();
+                lock (_stateGate)
                 {
-                    throw new WorkerProcessException(
-                        "The worker process is not available.");
+                    if (!IsAlive(_process))
+                    {
+                        throw new WorkerProcessException(
+                            "The worker process is not available.");
+                    }
+                    pending = new PendingRequest(
+                        requestId,
+                        command,
+                        _processGeneration)
+                    {
+                        HoldsDispatchGate = true
+                    };
+                    if (!_pending.TryAdd(requestId, pending))
+                    {
+                        throw new WorkerProtocolException(
+                            $"Duplicate request id '{requestId}'.");
+                    }
+
+                    // The entry is live in _pending from here, so
+                    // ConcurrentDictionary.TryRemove's exactly-once
+                    // semantics now own releasing the gate (whichever of
+                    // RouteInboundEnvelope, the write-failure catch below,
+                    // or a FailPending sweep removes it first, and only
+                    // that one): never this method's own finally again.
+                    releaseGate = false;
                 }
-                pending = new PendingRequest(
-                    requestId,
-                    command,
-                    _processGeneration);
-                if (!_pending.TryAdd(requestId, pending))
-                {
-                    throw new WorkerProtocolException(
-                        $"Duplicate request id '{requestId}'.");
-                }
+
+                // Cancellation releases the CALLER immediately and never
+                // the worker. The pending entry is left in place so the
+                // real response, whenever the worker gets to it, is still
+                // matched and quietly discarded (RouteInboundEnvelope),
+                // and the dispatch gate is released only there - not by
+                // this callback - because the worker is still busy on it
+                // regardless of who stopped waiting. The one exception is
+                // a genuine RequestTimeoutMs expiry: the caller's OWN
+                // token did not fire, so nothing asked to abandon this,
+                // and a request that has run that long unanswered is
+                // reasonably treated as a stuck worker rather than a
+                // superseded one - that case alone still recovers by
+                // killing and relaunching, exactly as before.
+                registration = operationToken.Register(
+                    static state =>
+                    {
+                        var context = (CancellationContext)state!;
+                        if (!context.Host._pending.ContainsKey(context.Request.Id))
+                            return;
+
+                        context.Request.Completion.TrySetCanceled(context.Token);
+                        if (!context.CallerToken.IsCancellationRequested)
+                        {
+                            _ = context.Host.RecoverCancelledRequestAsync(
+                                context.Request.Id);
+                        }
+                    },
+                    new CancellationContext(
+                        this,
+                        pending,
+                        operationToken,
+                        callerToken));
+
+            }
+            finally
+            {
+                _lifecycleGate.Release();
             }
 
-            registration = cancellationToken.Register(
-                static state =>
+            try
+            {
+                await WriteRequestAsync(
+                    new WorkerRequestEnvelope(
+                        requestId,
+                        command,
+                        payload,
+                        _configuration.ProtocolVersion),
+                    pending.Generation,
+                    operationToken).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                registration.Dispose();
+                if (_pending.TryRemove(
+                    requestId,
+                    out PendingRequest? removed))
                 {
-                    var context = (CancellationContext)state!;
-                    if (!context.Host._pending.ContainsKey(context.Request.Id))
-                        return;
+                    removed.Completion.TrySetException(error);
+                    ReleaseDispatchGateIfHeld(removed);
+                }
+                throw;
+            }
 
-                    context.Request.Completion.TrySetCanceled(context.Token);
-                    _ = context.Host.RecoverCancelledRequestAsync(context.Request.Id);
-                },
-                new CancellationContext(this, pending, cancellationToken));
-
+            using (registration)
+            {
+                WorkerInboundEnvelope response =
+                    await pending.Completion.Task.ConfigureAwait(false);
+                return DeserializeTerminalResult<TResponse>(
+                    response,
+                    requestId,
+                    command);
+            }
         }
         finally
         {
-            _lifecycleGate.Release();
-        }
-
-        try
-        {
-            await WriteRequestAsync(
-                new WorkerRequestEnvelope(
-                    requestId,
-                    command,
-                    payload,
-                    _configuration.ProtocolVersion),
-                pending.Generation,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            registration.Dispose();
-            if (_pending.TryRemove(
-                requestId,
-                out PendingRequest? removed))
-            {
-                removed.Completion.TrySetException(error);
-            }
-            throw;
-        }
-
-        using (registration)
-        {
-            WorkerInboundEnvelope response =
-                await pending.Completion.Task.ConfigureAwait(false);
-            return DeserializeTerminalResult<TResponse>(
-                response,
-                requestId,
-                command);
+            if (releaseGate)
+                _dispatchGate.Release();
         }
     }
 
@@ -905,6 +992,7 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
             _pending.TryRemove(envelope.Id, out PendingRequest? removed))
         {
             removed.Completion.TrySetResult(envelope);
+            ReleaseDispatchGateIfHeld(removed);
         }
     }
 
@@ -1079,7 +1167,10 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
         foreach (KeyValuePair<string, PendingRequest> pair in _pending)
         {
             if (_pending.TryRemove(pair.Key, out PendingRequest? pending))
+            {
                 pending.Completion.TrySetException(error);
+                ReleaseDispatchGateIfHeld(pending);
+            }
         }
     }
 
@@ -1091,8 +1182,23 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
                 _pending.TryRemove(pair.Key, out PendingRequest? pending))
             {
                 pending.Completion.TrySetException(error);
+                ReleaseDispatchGateIfHeld(pending);
             }
         }
+    }
+
+    /// <summary>
+    /// Releases the single-flight dispatch gate for a pending request that
+    /// held it, exactly once, at the one moment its fate is actually known
+    /// (a real response routed back, or a process failure/kill sweep). A
+    /// cancelled CALLER never releases it directly (see
+    /// RequestWithRecoveryAsync): the worker may still be computing the
+    /// request regardless of who is still listening for the answer.
+    /// </summary>
+    private void ReleaseDispatchGateIfHeld(PendingRequest pending)
+    {
+        if (pending.HoldsDispatchGate)
+            _dispatchGate.Release();
     }
 
     private void AppendStderr(string line)
@@ -1182,6 +1288,16 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
         internal long Generation { get; }
 
         internal TaskCompletionSource<WorkerInboundEnvelope> Completion { get; }
+
+        /// <summary>
+        /// Whether this request holds the single-flight dispatch gate
+        /// (<see cref="_dispatchGate"/>). Only requests dispatched through
+        /// <see cref="RequestWithRecoveryAsync{TResponse}"/> ever do; the
+        /// unrecovered startup/shutdown handshake
+        /// (<see cref="RequestWithoutRecoveryAsync{TResponse}"/>) does not
+        /// take a turn in that queue and must never release it.
+        /// </summary>
+        internal bool HoldsDispatchGate { get; init; }
     }
 
     private sealed class CancellationContext
@@ -1189,11 +1305,13 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
         internal CancellationContext(
             WorkerHost host,
             PendingRequest request,
-            CancellationToken token)
+            CancellationToken token,
+            CancellationToken callerToken)
         {
             Host = host;
             Request = request;
             Token = token;
+            CallerToken = callerToken;
         }
 
         internal WorkerHost Host { get; }
@@ -1201,5 +1319,17 @@ public sealed class WorkerHost : IDisposable, IAsyncDisposable
         internal PendingRequest Request { get; }
 
         internal CancellationToken Token { get; }
+
+        /// <summary>
+        /// The ORIGINAL token the caller passed to
+        /// <see cref="RequestAsync{TResponse}"/>, distinct from
+        /// <see cref="Token"/> (that token linked with the
+        /// RequestTimeoutMs budget). Cancelled only by the caller
+        /// abandoning the request; never fires on a bare timeout, which
+        /// is exactly the distinction that decides whether a cancellation
+        /// here is an ordinary supersede (leave the worker alone) or
+        /// evidence of a genuinely stuck one (recover it).
+        /// </summary>
+        internal CancellationToken CallerToken { get; }
     }
 }
