@@ -83,7 +83,22 @@ SELFWEIGHT_REFINEMENT_TOLERANCE = 1.0e-3
 # at 1e154 and a NaN minted by inf times zero inside compas_tna's own load
 # updater), and the refinement is the guard against it, so it needs a
 # guard of its own for the day it does not settle either.
-SELFWEIGHT_REFINEMENT_MAX_ROUNDS = 10
+#
+# 2026-09-06: 10 was fencing real geometry, not pathology. Measured on
+# Param's own eight exported studies (register/prepare/equilibrate/solve
+# through this exact function, compas_tna==0.7.0, the pinned backend): seven
+# of the eight settle in 3-6 rounds exactly as designed. The eighth, his
+# largest and deepest net (6 sided vault, 1321 v), does not diverge or
+# oscillate - its round-to-round drift is monotone and strictly decreasing
+# every round from round 4 on (0.322, 0.0849, 0.0364, ... 0.00691 at round
+# 10) - it is a real, well-behaved fixed point that the cap was simply too
+# tight to reach: extending the cap alone (no other change) lets it cross
+# SELFWEIGHT_REFINEMENT_TOLERANCE at round 75 (drift 9.9e-4) and hold
+# there. A genuinely unstable case still never reaches this cap at all: it
+# raises TNANonFiniteError out of _assert_round_is_finite on the round the
+# geometry actually overflows, independently of how high this is set. 100
+# gives a 25-round margin over the worst measured case.
+SELFWEIGHT_REFINEMENT_MAX_ROUNDS = 100
 
 
 class TNAError(RuntimeError):
