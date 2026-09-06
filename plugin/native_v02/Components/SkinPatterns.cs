@@ -663,6 +663,26 @@ internal sealed record SkinPatternResult(
     public IReadOnlyList<string> UncoveredRegions { get; init; } =
         Array.Empty<string>();
 
+    /// <summary>ROUND FOUR, RULE 3 (spec 2026-09-06-skin-round-four-his-
+    /// nets): the shape class UncoveredRegions above states it deliberately
+    /// does not cover (G3, the cap crescent), named here instead. One entry
+    /// per EMITTED cap whose own polygon (CapPolygonOutline's return) still
+    /// leaves more than the sliver floor's worth of plan area uncovered
+    /// against the FULL traced loop it was cut from -- the true shoelace
+    /// difference between the two, not a corner count a future, unrelated
+    /// change could move for the wrong reason. Fix 5 (round three, G3)
+    /// already bounds this PER CHORD inside CapPolygonOutline itself; this
+    /// is the first place the TOTAL is measured and NAMED on the engine's
+    /// own diagnostics, so a real, oversized cap -- his 2-sided vault's own
+    /// four-corner "diamond in a lens of white" -- gets more than the
+    /// generic "N crown caps ... above the maximum piece size" line to go
+    /// on (CapsOversized, which only ever named the girth, never the
+    /// shape). Empty on every cap fix 5's own corner budget already closes
+    /// below the floor, which is every fixture measured so far, his
+    /// 2-sided vault included.</summary>
+    public IReadOnlyList<string> CapCrescents { get; init; } =
+        Array.Empty<string>();
+
     /// <summary>ROUND THREE B, RULE 2 (G5): how many interior anchored rim
     /// groups this net's own field construction treated as an OBSTACLE
     /// rather than a coursing origin (SkinNet.InteriorRimObstacles, set by
@@ -2655,6 +2675,60 @@ internal static class SkinPatterns
             $"(field {F(low)} to {F(high)} m){where}";
     }
 
+    /// <summary>ROUND FOUR, RULE 3: a ring's own plan area by the centred
+    /// signed shoelace of rule 11.2, absolute -- the same measure
+    /// PlanInteriorPoint's degenerate-triangle guard uses, lifted to the
+    /// whole ring rather than one triangle of it, so the cap crescent below
+    /// is measured by the identical arithmetic the rest of this file
+    /// already trusts for plan area rather than a second formula that could
+    /// disagree with it by a sign or a centring convention.</summary>
+    private static double PlanArea(IReadOnlyList<double[]> ring)
+    {
+        int count = ring.Count;
+        if (count < 3)
+            return 0.0;
+        double cx = 0.0, cy = 0.0;
+        foreach (double[] point in ring)
+        {
+            cx += point[0];
+            cy += point[1];
+        }
+        cx /= count;
+        cy /= count;
+        double twice = 0.0;
+        for (int at = 0; at < count; at++)
+        {
+            double[] a = ring[at];
+            double[] b = ring[(at + 1) % count];
+            twice += ((a[0] - cx) * (b[1] - cy)) - ((b[0] - cx) * (a[1] - cy));
+        }
+        return Math.Abs(twice) / 2.0;
+    }
+
+    /// <summary>ROUND FOUR, RULE 3's own sentence for one named cap
+    /// crescent: the true plan area between the emitted polygon and the
+    /// full traced loop it was cut from, the corner count an author sees
+    /// on the model, the girth CapsOversized's own line already reports,
+    /// and where in plan it sits, so a real oversized cap gets the same
+    /// "area and location" FIX 4 already gives an uncovered slab or ridge
+    /// residue rather than the generic remark alone.</summary>
+    private static string FormatCapCrescent(
+        double area,
+        int course,
+        int corners,
+        double girth,
+        double centroidX,
+        double centroidY)
+    {
+        static string F(double value) =>
+            value.ToString("F4", CultureInfo.InvariantCulture);
+        string where = double.IsFinite(centroidX) && double.IsFinite(centroidY)
+            ? $", centred near plan ({centroidX:F2}, {centroidY:F2})"
+            : string.Empty;
+        return $"{F(area)} m2 at the {corners}-corner cap, course " +
+            $"{course} (girth {girth:F3} m){where}";
+    }
+
     /// <summary>The chord from an open strip's first point to its last,
     /// in plan: the direction the strip runs, reduced to one vector.
     /// </summary>
@@ -4619,6 +4693,12 @@ internal static class SkinPatterns
         // every call site answers to the same number.
         double sliverFloor = SliverFloor(minimumPiece, courseHeight);
         var uncoveredRegions = new List<string>();
+        // ROUND FOUR, RULE 3: one entry per emitted cap whose own polygon
+        // leaves more than sliverFloor's worth of the traced loop it came
+        // from uncovered (the crescent G3 names but UncoveredRegions above
+        // deliberately does not audit). See CapPolygonOutline below and its
+        // FormatCapCrescent counterpart.
+        var capCrescents = new List<string>();
 
         // THE SEAM CURVES (spec 2026-09-04 rule 1.1), found once per pattern
         // off the net's own seed identity. WHAT THEY ARE AND ARE NOT, stated
@@ -5658,6 +5738,34 @@ internal static class SkinPatterns
                     {
                         capGirths.Add(outer.Length);
                         capWedges.Add(loop.Count);
+                        // ROUND FOUR, RULE 3 (spec 2026-09-06-skin-round-
+                        // four-his-nets): the audit was blind to exactly
+                        // this shape class. CapPolygonOutline's own chords
+                        // stay INSIDE the loop by construction (its own
+                        // comment, "the polygon stays within the loop"), so
+                        // the crescent is simply the traced loop's own plan
+                        // area less the emitted polygon's, never negative
+                        // in principle; the Max guards the one case that
+                        // could still read a hair negative, float noise on
+                        // a near-degenerate loop. Named above the SAME
+                        // sliver floor everything else this pattern reports
+                        // answers to, not a second, invented threshold.
+                        double crescentArea = Math.Max(
+                            0.0, PlanArea(outer.Points) - PlanArea(loop));
+                        if (crescentArea > sliverFloor)
+                        {
+                            double cx = 0.0, cy = 0.0;
+                            foreach (double[] point in outer.Points)
+                            {
+                                cx += point[0];
+                                cy += point[1];
+                            }
+                            cx /= outer.Points.Count;
+                            cy /= outer.Points.Count;
+                            capCrescents.Add(FormatCapCrescent(
+                                crescentArea, band.Course, loop.Count,
+                                outer.Length, cx, cy));
+                        }
                         keyed.Add((
                             band.Course, rank, band.Mid,
                             new SkinCell(
@@ -5905,6 +6013,7 @@ internal static class SkinPatterns
             CloserUndersized = closerUndersized,
             SeamBandsRemapped = seamBandsRemapped,
             UncoveredRegions = uncoveredRegions,
+            CapCrescents = capCrescents,
             InteriorRimObstacles = net.InteriorRimObstacles
         };
     }

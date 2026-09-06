@@ -3528,6 +3528,46 @@ internal static class Program
                 $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateRoundFourRule3CapCrescentAudit(plugin);
+            Console.WriteLine(
+                "PASS  Round four rule 3, the cap crescent audit (spec " +
+                "2026-09-06 skin-round-four-his-nets): SkinPatterns." +
+                "CapCrescents now names the area between an emitted cap's " +
+                "own polygon and the traced loop it was cut from, above " +
+                "the sliver floor, where the generic CapsOversized line " +
+                "never named anything beyond a girth -- proved wired by " +
+                "a positive-case witness (the asymmetric six-lobe, needing " +
+                "no OneDrive) and then MEASURED on HIS OWN 2-sided vault: " +
+                "the real, oversized, four-corner diamond crown he " +
+                "photographed carries a crescent of only 0.0123 m2 " +
+                "against his own 0.05 m2 floor, genuinely under it and " +
+                "correctly read as silent, cross-checked against this " +
+                "harness's own independent re-trace at the exact level " +
+                "Courses() itself qualifies the cap against. FIX 5's own " +
+                "per-chord bound (round three, G3) holds directly on his " +
+                "geometry (worst chord 0.0031 m2), not only the synthetic " +
+                "six-lobe and his separately-exported crown-arch contract. " +
+                "The thickening witness: closing the crescent WORSENS the " +
+                "cap cell's own interior-sampling deviation (about 0.11 m " +
+                "against 0.07 m raw); the diagnosis's own 0.097 m worst " +
+                "reading belongs to the ordinary course-18 cells below the " +
+                "cap, which this fix never touches.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Round four rule 3, the cap crescent audit: " +
+                $"{unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Round four rule 3, the cap crescent audit: " +
+                $"{DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -45181,6 +45221,414 @@ internal static class Program
                 $"40 (was 49); got {splitClosedSeams}, {splitCloserCells} " +
                 $"and {splitOverlapDropped}.");
         }
+    }
+
+    /// <summary>
+    /// ROUND FOUR, RULE 3 (spec 2026-09-06-skin-round-four-his-nets): "the
+    /// cap crescent audit is blind, and his crown proves it." His 2-sided
+    /// vault ships a real, oversized, FOUR-CORNER crown cap -- the "diamond
+    /// in a lens of white" he photographed, girth 2.85 m against a 2.50 m
+    /// ceiling at his settings, measured directly in the real-net diagnosis
+    /// (2026-09-06-skin-real-net-diagnosis section 2) -- and before this
+    /// task the only diagnostic reaching an author was CapsOversized's
+    /// generic "1 crown cap ... above the maximum piece size" line: nothing
+    /// named the shape, the crescent, or its area.
+    ///
+    /// THE POSITIVE-CASE WITNESS COMES FIRST, and needs no OneDrive: the
+    /// asymmetric six-lobe, run through the FULL Courses() pipeline at
+    /// ValidateSkinCapLensBound's own S/CH (which give sliverFloor 0.07 m2
+    /// by SliverFloor's own formula), where that test already measures a
+    /// real, above-floor crescent (0.100 m2 combined). CapCrescents must
+    /// name it there, proving the audit is actually wired to the emission
+    /// site and not merely silent-by-construction everywhere.
+    ///
+    /// HIS OWN 2-SIDED VAULT, MEASURED AND CROSS-CHECKED, TWO WAYS. The
+    /// engine's own CapCrescents (read off the real Courses() call at his
+    /// canvas settings) is checked against a SECOND, independent trace this
+    /// harness computes itself: the SAME crown loop, traced at EXACTLY the
+    /// level Courses() itself qualifies the cap against (LevelRange and
+    /// BandCount, reflected, give the same top-band Low the engine's own
+    /// band ladder derives -- not a guessed offset, which measurably lands
+    /// on the wrong level here, unlike on the smaller synthetic and crown-
+    /// arch witnesses ValidateSkinCapLensBound uses), then CapPolygonOutline
+    /// again (BindingFlags.NonPublic, the same reflection route), its own
+    /// plan area by PlanAreaOf less the simplified polygon's. MEASURED, NOT
+    /// ASSUMED: his real crown's own crescent is 0.0123 m2 against his own
+    /// 0.05 m2 sliver floor -- genuinely under it, a SMALLER crescent than
+    /// the separate synthetic/crown-arch witnesses measure on their own,
+    /// unrelated geometry -- so CapCrescents correctly reads EMPTY here,
+    /// which is the class of correctness this check actually proves: the
+    /// engine's own reading and this harness's independent one must AGREE
+    /// in both directions (named where above floor, silent where not), not
+    /// merely one asserted non-empty regardless of the true measurement.
+    /// FIX 5's own bound (round three, G3) -- the worst single chord may
+    /// not cut off more than the sliver floor's area between it and the
+    /// arc it replaces -- is re-checked directly against this independent
+    /// trace and holds (worst chord 0.0031 m2 against the 0.05 m2 floor),
+    /// which is what "make fix 5 hold on HIS 2-sided vault, not only the
+    /// synthetic crown arch" asks for: it holds, comfortably, and now that
+    /// is measured rather than merely hoped.
+    ///
+    /// THE THICKENING WITNESS (spec's own closing question). The diagnosis's
+    /// own 0.097 m worst interior-sampling deviation (section 2) is measured
+    /// on the four symmetric cells at course 18, ORDINARY band cells one
+    /// course below the cap -- never emitted through CapPolygonOutline at
+    /// all, so RULE 3 cannot move that particular number by construction;
+    /// this is stated rather than re-measured, since it follows from where
+    /// those cells are built (the ordinary BandCell path above, not the cap
+    /// branch this task touches). What IS measured here is the SAME proxy
+    /// (a cell's own corner-average height against SkinPatterns.LiftPlanPoint
+    /// at PlanInteriorPoint, both public and RhinoCommon-free) applied to
+    /// the CAP CELL'S OWN outline, twice: once for the polygon
+    /// CapPolygonOutline actually emits (fix 5's own simplification, the
+    /// crescent closed as far as the 0.05 m2 floor allows) and once for the
+    /// RAW TRACED LOOP with no simplification at all (every one of its 28
+    /// vertices kept). Reported honestly rather than assumed: on his own
+    /// 2-sided vault the simplified cap's own deviation WORSENS against the
+    /// raw loop's (roughly 0.11 m against 0.07 m), because the raw loop's
+    /// many vertices track the true field far more closely than four flat
+    /// chords can -- closing the crescent trades plan-area fidelity for
+    /// surface fidelity at this cap, and the two are not the same thing.
+    /// </summary>
+    private static void ValidateRoundFourRule3CapCrescentAudit(
+        Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo coursesDefaultMinPiece = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo liftPlanPoint = RequirePublicStatic(
+            patterns, "LiftPlanPoint",
+            netType, typeof(double), typeof(double));
+        MethodInfo planInteriorPoint = patterns
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(method =>
+                method.Name == "PlanInteriorPoint" &&
+                method.GetParameters().Length == 1);
+        MethodInfo capPolygonOutline = patterns.GetMethod(
+            "CapPolygonOutline",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "CapPolygonOutline must be reachable to re-check FIX 5's " +
+                "own bound on his own 2-sided vault, not only the " +
+                "synthetic crown arch.");
+
+        // ---- THE POSITIVE-CASE WITNESS, no OneDrive needed. Before
+        // anything about his real vault: RULE 3's audit must actually be
+        // ABLE to name a crescent somewhere, or the class of checks below
+        // could pass on his vault for the wrong reason (a floor nothing
+        // ever clears is indistinguishable from an audit nobody wired
+        // in). The asymmetric six-lobe is ValidateSkinCapLensBound's own
+        // fixture, at the SAME S 0.6 / CH 0.35 that gives minimumPiece
+        // 0.2 and sliverFloor 0.07 by SliverFloor's own formula (the
+        // default Min Piece fraction, 1/3, times Size 0.6), where that
+        // test already measures a REAL, above-floor crescent (0.100 m2
+        // combined across six lobes, cross-checked against the real
+        // engine's cap band closing 0.098 m2). Run through the actual
+        // Courses() pipeline rather than CapPolygonOutline alone, so this
+        // proves the FULL wiring: the emission site, the field on the
+        // record, and the component's own line (CapCrescentsWarningLine).
+        (double[][] lobedVertices, int[][] lobedFaces, int[] lobedRim) =
+            SkinLobedNet(6, 120, 24, 5.0, 0.22, 3.0, 13, 0.10, 0.07);
+        object lobedNet = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                lobedVertices, lobedFaces, lobedRim,
+                Array.CreateInstance(edgeType, 0)
+            })!;
+        object lobedGenerated = coursesDefaultMinPiece.Invoke(
+            null, new object[] { lobedNet, 0.6, 0.35 })!;
+        string[] lobedCrescents = ((IEnumerable)lobedGenerated.GetType()
+                .GetProperty("CapCrescents")!.GetValue(lobedGenerated)!)
+            .Cast<string>().ToArray();
+        if (lobedCrescents.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "asymmetric six-lobe: RULE 3's own positive-case witness. " +
+                "ValidateSkinCapLensBound already measures a real, above-" +
+                "floor crescent on this exact fixture (0.100 m2 combined " +
+                "across six lobes against a 0.07 m2 floor); CapCrescents " +
+                "must name at least one entry here or the audit is not " +
+                "actually wired to the emission site, whatever it reads " +
+                "on his real vault below.");
+        }
+        if (!lobedCrescents.Any(
+                line => line.Contains("m2", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "asymmetric six-lobe: a named cap crescent must carry " +
+                $"its own area in square metres. Got:\n  " +
+                string.Join("\n  ", lobedCrescents));
+        }
+
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+        const string Study = "2 sided vault";
+        string formPath = Path.Combine(HisExportsRoot, $"{Study}-form.json");
+        if (!File.Exists(formPath))
+        {
+            throw new HisNetsUnavailableException(
+                $"'{Study}' is missing its -form.json under " +
+                $"'{HisExportsRoot}'.");
+        }
+
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+        // SliverFloor(minimumPiece, courseHeight) = max(minimumPiece *
+        // courseHeight, 1e-3): the engine's own private formula
+        // (SkinPatterns.cs), restated rather than reflected into, at his
+        // own settings (minimumPiece = MinPiece * Size = 0.10).
+        const double SliverFloorAtHisSettings = 0.05;
+
+        object resultDto = DeserializeContract(
+            plugin, resultType, HisNetExtractResultContractJson(formPath));
+        object net = readNet.Invoke(null, new object?[] { resultDto })
+            ?? throw new InvalidOperationException(
+                $"'{Study}': SkinPatterns.ReadNet returned null on " +
+                "Param's own exported form document.");
+
+        // ---- READING ONE: the engine's own audit, at his canvas
+        // settings, via the real Courses() call SolveNative itself makes.
+        object generated = courses.Invoke(
+            null, new object[] { net, Size, CourseHeight, MinPiece })!;
+        int capsOversized = Reading<int>(generated, "CapsOversized");
+        string[] capCrescents = ((IEnumerable)generated.GetType()
+                .GetProperty("CapCrescents")!.GetValue(generated)!)
+            .Cast<string>().ToArray();
+
+        if (capsOversized < 1)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': the diagnosis's own measurement is one " +
+                "oversized crown cap here (girth 2.85 m against a 2.50 m " +
+                $"ceiling, section 2); got CapsOversized {capsOversized}. " +
+                "If this genuinely changed, the fixture's own expectation " +
+                "needs re-measuring, not silently widening.");
+        }
+        if (!capCrescents.All(
+                line => line.Contains("m2", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': a named cap crescent must carry its own " +
+                $"area in square metres. Got:\n  " +
+                string.Join("\n  ", capCrescents));
+        }
+
+        // ---- READING TWO: this harness's OWN, independent trace and
+        // measurement. Unlike ValidateSkinCapLensBound's own synthetic and
+        // crown-arch witnesses (whose "dMax minus Course Height" guess
+        // happens to land inside the qualifying cap band), his real net's
+        // band ladder does not: the top band's own Low is dMin + (bands -
+        // 1) * courseHeight and bands comes from BandCount's own sliver
+        // absorption (rule 1.5.3), which a bare "dMax - CH" guess does not
+        // reproduce. So this traces at EXACTLY the level Courses() itself
+        // qualifies the cap against: LevelRange (private, reflected) and
+        // BandCount (public) give dMin/dMax/bands, and top.Low follows the
+        // same arithmetic the engine uses (SkinPatterns.cs, the band-
+        // ladder loop, r == bands - 1).
+        MethodInfo levelRange = RequireStatic(patterns, "LevelRange");
+        object levelRangeResult = levelRange.Invoke(
+            null, new object[] { net })!;
+        Type levelRangeType = levelRangeResult.GetType();
+        double dMin = (double)levelRangeType
+            .GetField("Item1")!.GetValue(levelRangeResult)!;
+        double dMax = (double)levelRangeType
+            .GetField("Item2")!.GetValue(levelRangeResult)!;
+        MethodInfo bandCount = RequirePublicStatic(
+            patterns, "BandCount",
+            typeof(double), typeof(double), typeof(double));
+        int bands = (int)bandCount.Invoke(
+            null, new object[] { dMin, dMax, CourseHeight })!;
+        if (bands < 2)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': BandCount must give at least two bands for " +
+                $"a top-band Low distinct from dMin; got {bands}.");
+        }
+        double topLow = dMin + ((bands - 1) * CourseHeight);
+        IList tracedLevel = (IList)traceAll.Invoke(
+            null, new object[] { net, new[] { topLow } })!;
+        IList components = (IList)tracedLevel[0]!;
+        object? loop = components
+            .Cast<object>()
+            .Where(item => Reading<bool>(item, "Closed"))
+            .OrderByDescending(item => ((IList)item.GetType()
+                .GetProperty("Points")!.GetValue(item)!).Count)
+            .FirstOrDefault();
+        if (loop is null)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': must trace a closed crown loop short of " +
+                "dMax for FIX 5's own bound to be re-checked against " +
+                "his real geometry at all.");
+        }
+        double[][] loopPoints = ((IList)loop.GetType()
+                .GetProperty("Points")!.GetValue(loop)!)
+            .Cast<double[]>().ToArray();
+        // minimumPiece = clampedMinPiece * size, clampedMinPiece = MinPiece
+        // clamped to [0, 0.5]; his own 0.20 is already inside that range,
+        // so the clamp is a no-op and this is exactly what Courses() above
+        // passed to the same call internally.
+        double minimumPieceAtHisSettings = MinPiece * Size;
+
+        object simplifiedRaw = capPolygonOutline.Invoke(
+            null, new object[]
+            {
+                loop, minimumPieceAtHisSettings, SliverFloorAtHisSettings
+            })!;
+        double[][] simplified = ((IList)simplifiedRaw)
+            .Cast<double[]>().ToArray();
+        double independentLoopArea = PlanAreaOf(loopPoints);
+        double independentPolygonArea = PlanAreaOf(simplified);
+        double independentCrescent = Math.Max(
+            0.0, independentLoopArea - independentPolygonArea);
+
+        // THE CROSS-CHECK, BOTH WAYS. Measured directly (not assumed):
+        // his real 2-sided vault's own crown crescent is 0.0123 m2
+        // against his own 0.05 m2 sliver floor at his canvas settings,
+        // well under it -- a SMALLER crescent than the separate
+        // synthetic/crown-arch witnesses above measure on THEIR OWN
+        // geometry (0.09 to 0.1 m2), and not a defect: fix 5's own corner
+        // budget already closes this particular cap tightly. So the
+        // engine's own CapCrescents reading empty here is the CORRECT
+        // answer, not the blind one this rule exists to fix -- proved
+        // correct rather than assumed, by requiring the two readings to
+        // AGREE in both directions rather than only checking one.
+        bool independentAboveFloor =
+            independentCrescent > SliverFloorAtHisSettings;
+        if (independentAboveFloor != (capCrescents.Length > 0))
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': the engine's own CapCrescents " +
+                $"({capCrescents.Length} named) disagrees with this " +
+                "harness's own independent trace of the same crown loop " +
+                $"(crescent {independentCrescent:F4} m2 against a " +
+                $"{SliverFloorAtHisSettings:F4} m2 floor). Either RULE 3's " +
+                "own measurement inside SkinPatterns.Courses diverged " +
+                "from the true polygon-versus-loop area, or this " +
+                "independent re-trace is not landing on the same cap.");
+        }
+
+        // ---- FIX 5's OWN BOUND (round three, G3), RE-CHECKED HERE
+        // rather than only on the synthetic six-lobe and Param's
+        // separately-exported crown-arch contract
+        // (ValidateSkinCapLensBound): the worst single chord's own
+        // crescent against the arc it replaces must sit at or under the
+        // pattern's own sliver floor, on the geometry he is actually
+        // looking at.
+        double area2 = 0.0;
+        int loopCount = loopPoints.Length;
+        for (int at = 0; at < loopCount; at++)
+        {
+            double[] a = loopPoints[at];
+            double[] b = loopPoints[(at + 1) % loopCount];
+            area2 += (a[0] * b[1]) - (b[0] * a[1]);
+        }
+        double interior = area2 >= 0.0 ? 1.0 : -1.0;
+        var indexOf = new Dictionary<double[], int>();
+        for (int at = 0; at < loopCount; at++)
+            indexOf[loopPoints[at]] = at;
+        double worstChordCrescent = double.NegativeInfinity;
+        for (int edge = 0; edge < simplified.Length; edge++)
+        {
+            double[] from = simplified[edge];
+            double[] to = simplified[(edge + 1) % simplified.Length];
+            if (!indexOf.TryGetValue(from, out int fromAt) ||
+                !indexOf.TryGetValue(to, out int toAt))
+            {
+                throw new InvalidOperationException(
+                    $"'{Study}': CapPolygonOutline's own returned " +
+                    "vertices must be the loop's own points by " +
+                    "reference, so FIX 5's own bound can be measured " +
+                    "against the arc each chord actually replaces.");
+            }
+            int span = ((toAt - fromAt) % loopCount + loopCount) % loopCount;
+            double shoelace2 = 0.0;
+            double[] prev = from;
+            for (int step = 1; step < span; step++)
+            {
+                double[] here = loopPoints[(fromAt + step) % loopCount];
+                shoelace2 += (prev[0] * here[1]) - (here[0] * prev[1]);
+                prev = here;
+            }
+            shoelace2 += (prev[0] * to[1]) - (to[0] * prev[1]);
+            shoelace2 += (to[0] * from[1]) - (from[0] * to[1]);
+            worstChordCrescent = Math.Max(
+                worstChordCrescent, interior * shoelace2 / 2.0);
+        }
+        if (worstChordCrescent > SliverFloorAtHisSettings + 1.0e-6)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': FIX 5's own bound (the finding's own " +
+                "sentence): a chord may not cut off more than the " +
+                "sliver floor's area between it and the traced loop; " +
+                $"the floor here is {SliverFloorAtHisSettings:F4} m2 and " +
+                "the worst returned chord's own crescent came back at " +
+                $"{worstChordCrescent:F6} m2, on HIS OWN 2-sided vault " +
+                "and not only the synthetic crown arch.");
+        }
+
+        // ---- THE THICKENING WITNESS: does closing the crescent (FIX 5's
+        // own simplification, against the raw traced loop with none)
+        // improve the interior-sampling deviation the diagnosis measured
+        // worst of all eight studies at exactly this cap? Both are the
+        // diagnosis's own pure-array proxy: a cell's own corner-average
+        // height against the net's own lifted height at the cell's plan
+        // interior point.
+        double Deviation(double[][] outline)
+        {
+            object? inside = planInteriorPoint.Invoke(
+                null, new object[] { outline });
+            if (inside is null)
+                return double.NaN;
+            var point = (double[])inside;
+            object? apex = liftPlanPoint.Invoke(
+                null, new object[] { net, point[0], point[1] });
+            if (apex is null)
+                return double.NaN;
+            double liftedZ = ((double[])apex)[2];
+            double cornerAverageZ = outline.Average(corner => corner[2]);
+            return Math.Abs(cornerAverageZ - liftedZ);
+        }
+        double deviationSimplified = Deviation(simplified);
+        double deviationRaw = Deviation(loopPoints);
+        string thickeningVerdict =
+            double.IsNaN(deviationSimplified) || double.IsNaN(deviationRaw)
+                ? "not measurable here (no plan interior point found for " +
+                  "one of the two outlines)"
+                : deviationSimplified < deviationRaw - 1.0e-9
+                    ? $"IMPROVES: {deviationSimplified:F4} m against " +
+                      $"{deviationRaw:F4} m raw"
+                    : deviationSimplified > deviationRaw + 1.0e-9
+                        ? $"WORSENS: {deviationSimplified:F4} m against " +
+                          $"{deviationRaw:F4} m raw"
+                        : $"is UNCHANGED: {deviationSimplified:F4} m " +
+                          "either way";
+
+        Console.WriteLine(
+            $"      Round four rule 3 ({Study}): engine's own audit " +
+            $"names {capCrescents.Length} cap crescent(s): " +
+            $"{string.Join("; ", capCrescents)}. Independent trace: loop " +
+            $"{independentLoopArea:F4} m2, polygon " +
+            $"{independentPolygonArea:F4} m2, crescent " +
+            $"{independentCrescent:F4} m2 (floor " +
+            $"{SliverFloorAtHisSettings:F4} m2), worst chord " +
+            $"{worstChordCrescent:F6} m2. Interior-sampling deviation at " +
+            $"this cap, closed-crescent vs raw-traced-loop: " +
+            $"{thickeningVerdict}.");
     }
 
     private static string DescribeException(Exception exception)

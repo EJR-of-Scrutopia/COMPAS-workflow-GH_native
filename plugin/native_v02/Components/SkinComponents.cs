@@ -407,6 +407,23 @@ public sealed class SkinComponent : NativeComponentBase
                     "larger Min Piece for bigger stones, is the remedy.");
             }
 
+            // ROUND FOUR, RULE 3 (spec 2026-09-06-skin-round-four-his-
+            // nets): the cap audit was blind to the crescent between an
+            // emitted cap's own polygon and the traced loop it came from
+            // (G3, which UncoveredRegions below deliberately does not
+            // audit -- its own doc comment states so). CapsOversized's
+            // line above names a girth; this names an AREA, above the same
+            // sliver floor everything else in this pattern answers to, so
+            // his own oversized, four-corner crown cap is more than "your
+            // cap is big" on the canvas.
+            string? capCrescentLine = CapCrescentsWarningLine(
+                generated.CapCrescents);
+            if (capCrescentLine is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning, capCrescentLine);
+            }
+
             // A SEAM, where the level curves change component count and the
             // two course families stop corresponding. It used to be a HOLE
             // and always a Warning; where the closer band of the seam spec
@@ -1107,6 +1124,35 @@ public sealed class SkinComponent : NativeComponentBase
             ". A hole this size is named rather than shipped silent; a " +
             "smaller Course Height or Min Piece, or a different Result, " +
             "is the remedy.";
+    }
+
+    /// <summary>
+    /// ROUND FOUR, RULE 3 (spec 2026-09-06-skin-round-four-his-nets): the
+    /// cap audit's own blind spot named. SkinPatterns.CapCrescents already
+    /// carries one line per emitted cap whose own polygon leaves more than
+    /// the sliver floor's worth of the traced loop it came from uncovered
+    /// (G3, the crescent CapsOversized's generic "above the maximum piece
+    /// size" line never named); this only joins them into the one sentence
+    /// the canvas shows, at Warning, the same discipline
+    /// UncoveredRegionsWarningLine keeps for the residues it can see. Null
+    /// where the list is empty, which is every cap fix 5's own corner
+    /// budget already closes below the floor.
+    /// </summary>
+    internal static string? CapCrescentsWarningLine(
+        IReadOnlyList<string> capCrescents)
+    {
+        if (capCrescents.Count == 0)
+            return null;
+        return $"{capCrescents.Count} crown cap" +
+            (capCrescents.Count == 1 ? string.Empty : "s") +
+            " own polygon" +
+            (capCrescents.Count == 1 ? string.Empty : "s") +
+            " leave" + (capCrescents.Count == 1 ? "s" : string.Empty) +
+            " a CRESCENT uncovered against the traced loop it was cut " +
+            "from, above the sliver floor: " +
+            string.Join("; ", capCrescents) +
+            ". A smaller Course Height, or a larger Min Piece for bigger " +
+            "stones, is the remedy.";
     }
 
     /// <summary>
