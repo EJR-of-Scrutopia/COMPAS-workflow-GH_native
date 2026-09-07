@@ -4787,6 +4787,26 @@ internal static class SkinPatterns
 
             bool[] onBoundary = FacesOnBoundary(net);
 
+            // PARAM'S RULING, 2026-09-07: a DIFFERENT message from
+            // RidgeGateMessage below (the open-strip refusal), and
+            // deliberately so -- ridgeGated's own bisection rescue (below)
+            // only re-tries a crown refused for THAT exact reason, because
+            // a hole near an otherwise-genuine dome apex can falsely read
+            // as an open strip at one level while a real disc waits a
+            // little higher (round three B's own G7 fix). A closed loop
+            // refused for BEING A RIDGE has no such disc waiting above it
+            // to be found by climbing further: this vault's crest is
+            // ridge-shaped at every level near its own peak, so a search
+            // that kept climbing would only ever find a smaller ridge
+            // loop, never a true apex. This message therefore never
+            // satisfies ridgeGated's own all-messages-match test, and the
+            // rescue correctly never fires for it.
+            const string RidgeCrestMessage =
+                "the crown loop closes, but its own points swing through " +
+                "too much world Z for one course to be a true apex -- a " +
+                "ridge with its own local crest, not a dome, so it takes " +
+                "ridge stones and no cap";
+
             List<SkinCapPlan> QualifyAt(
                 double level,
                 IReadOnlyList<SkinLevelCurve> curves,
@@ -4803,7 +4823,69 @@ internal static class SkinPatterns
                             refusalsOut.Add(refusedBy);
                         continue;
                     }
+                    // PARAM'S RULING, 2026-09-07 (docs/superpowers/specs/
+                    // 2026-09-07-two-sided-vault-deadline.md, "HIS RULING
+                    // ON THE CROWN"): a closed loop is not by itself proof
+                    // of a true apex. A RIDGE with its own small local
+                    // crest closes a loop too, and the tell is in the
+                    // loop's OWN points: every one shares a single field
+                    // LEVEL by construction (that is what a level curve
+                    // is), but the field is a rim distance, not world Z
+                    // (SkinLevelCurve.Level's own doc comment), so a
+                    // ridge's own level loop swings through a real RANGE
+                    // of world Z -- high where the loop runs alongside
+                    // the ridge's own length, low where it cuts across
+                    // it -- while a true apex's level loop stays close to
+                    // ONE world Z all the way round, an isotropic peak's
+                    // own level sets being close to horizontal near the
+                    // top.
+                    //
+                    // NORMALISED BY THE LOOP'S OWN GIRTH, not by Course
+                    // Height: a bigger loop samples further from centre
+                    // and reads more absolute Z spread at the SAME
+                    // underlying anisotropy, which conflated "large cap"
+                    // with "ridge" against a Course-Height floor (measured
+                    // catching check 12.2(g)'s own elliptical dome, a
+                    // genuine, deliberately-oversized APEX, as a false
+                    // ridge). Girth is the right yardstick because it is
+                    // exactly the scale CapsOversized itself already
+                    // measures a cap against (rule 2.6.6).
+                    //
+                    // MEASURED: his 2-sided vault 0.4208 m spread / 2.855 m
+                    // girth = 14.7%; the elliptical dome (12.2(g), a real,
+                    // deliberately oversized but genuine apex) 0.256 m /
+                    // 3.855 m = 6.6%; his OWN other four studies (3/4/5/6
+                    // sided vaults) all under 0.7%; "Param's crown arch"
+                    // (an ARCH, i.e. also genuinely ridge-shaped, at both
+                    // its own settings) 12.5% and 16.2%. A 10% floor sits
+                    // with real margin above the one genuine-apex fixture
+                    // that reads highest (the ellipse) and below every
+                    // genuine ridge measured, including a second, unrelated
+                    // fixture this task did not set out to change but
+                    // which the discriminator is right to catch too --
+                    // Param's own words: "any other true ridge form in the
+                    // fixtures, the barrel fixtures included."
+                    double worldZSpread =
+                        curves[at].Points.Max(point => point[2]) -
+                        curves[at].Points.Min(point => point[2]);
                     double girth = curves[at].Length;
+                    double ridgeRatio =
+                        girth > 1.0e-9 ? worldZSpread / girth : 0.0;
+                    if (Environment.GetEnvironmentVariable(
+                            "SKIN_RIDGE_DEBUG") == "1")
+                    {
+                        Console.Error.WriteLine(
+                            $"RIDGEDEBUG worldZSpread={worldZSpread:0.######} " +
+                            $"courseHeight={courseHeight:0.######} " +
+                            $"girth={girth:0.######} " +
+                            $"ridgeRatio={ridgeRatio:0.######} " +
+                            $"level={level:0.######}");
+                    }
+                    if (ridgeRatio > 0.10)
+                    {
+                        refusalsOut.Add(RidgeCrestMessage);
+                        continue;
+                    }
                     bool oversized = girth > maximumPiece + 1.0e-9;
                     qualified.Add(new SkinCapPlan(
                         at, level, curves[at], girth, 0, double.NaN,

@@ -23262,12 +23262,30 @@ internal static partial class Program
         // and ordering check) is unaffected, proved by the rest of this
         // suite staying green: only the Sections field this one metric
         // reads moved.
+        // WIDTH EXEMPTION RETIRED AND BOND RE-MEASURED, TWO-SIDED VAULT
+        // DEADLINE, PARAM'S RULING ON THE CROWN (spec 2026-09-07): "Param's
+        // crown arch" is, by its own name, an ARCH -- genuinely ridge-
+        // shaped by the SAME discriminator Param's ruling names ("any
+        // other true ridge form in the fixtures, the barrel fixtures
+        // included"), so this fixture's own crown cap is now retired too,
+        // exactly as his 2-sided vault's is. Its closer stones no longer
+        // fan out wide to meet an oversized cap that is not there any
+        // more: measured width excursion is now 0.00%, comfortably
+        // inside the ordinary bar, so the named exemption this fixture
+        // used to need is gone, not merely re-numbered. The worst head-
+        // joint bond moved with it, 0.0492 -> 0.0990 m: the closer band
+        // now meets ridge stones running along the retired cap's own
+        // former footprint instead of a single polygon's own fixed
+        // corners, a different (and still real) meeting geometry, not a
+        // regression -- the rest of this fixture's own numbers (stone
+        // count, seam chords, span excursion, the 0.9 width floor) are
+        // UNCHANGED, proving the closer band's own basic construction is
+        // not what moved.
         SeamFixture(
             "Param's crown arch", crown, 0.10, 0.30,
             expectedStones: 68, dropsAllowed: 0,
-            expectedSeamChords: 32, expectedBond: 0.0492,
+            expectedSeamChords: 32, expectedBond: 0.0990,
             expectedSpanExcursion: 0.0276,
-            widthExemption: 0.8797,
             widthFloorFraction: 0.9);
         // CH 0.375 KEEPS its coverage exemption at the same number, and
         // the reason is now a construction fact rather than a hole class:
@@ -23279,16 +23297,22 @@ internal static partial class Program
         // six-lobe carries at its seam tips, each piece under the sliver
         // floor. At CH 0.30 the same crotches DO leave an arc and the
         // end-stones close them to 100.05 per cent.
-        // WIDTH EXEMPTION RE-MEASURED, TWO-SIDED VAULT DEADLINE, CORRECTION
-        // 1 (spec 2026-09-07): 0.9345 -> 0.9475, same reason as the CH
-        // 0.30 fixture above (CellWidthAcross is a sampling-density-
-        // weighted average over Sections, which the rail-parity fix
-        // deliberately changes; the outline, and so this fixture's own
-        // coverage exemption a few lines up, is untouched).
+        // WIDTH EXEMPTION RE-MEASURED (CORRECTION 1) AND BOND RE-MEASURED
+        // (PARAM'S RULING ON THE CROWN), TWO-SIDED VAULT DEADLINE (spec
+        // 2026-09-07): width exemption 0.9345 -> 0.9475, same reason as
+        // the CH 0.30 fixture above (CellWidthAcross is a sampling-
+        // density-weighted average over Sections, which the rail-parity
+        // fix deliberately changes; the outline, and so this fixture's
+        // own coverage exemption a few lines up, is untouched). Bond
+        // 0.0871 -> 0.1644, same reason as the CH 0.30 fixture's own
+        // bond move: this crown is ridge-shaped too and now retires its
+        // cap, so the closer band meets ridge stones running along the
+        // former cap's own footprint instead of one polygon's fixed
+        // corners.
         SeamFixture(
             "Param's crown arch at CH 0.375", crown, 0.17, 0.375,
             expectedStones: 34, dropsAllowed: 0,
-            expectedSeamChords: 28, expectedBond: 0.0871,
+            expectedSeamChords: 28, expectedBond: 0.1644,
             expectedSpanExcursion: 0.0037,
             coverageExemption: 0.9734,
             widthExemption: 0.9475,
@@ -45452,10 +45476,12 @@ internal static partial class Program
             // (now-stale) sidecar tally still read and reported alongside
             // it so the divergence stays on the record rather than silent.
             bool isHex = fixture.Pattern == 1;
-            Dictionary<int, int>? hexPin = isHex
+            bool hasOwnPin =
+                isHex || HexReproductionPins.ContainsKey(fixture.Study);
+            Dictionary<int, int>? ownPin = hasOwnPin
                 ? HexReproductionPins[fixture.Study]
                 : null;
-            Dictionary<int, int> expectedTally = hexPin ?? sidecarTally;
+            Dictionary<int, int> expectedTally = ownPin ?? sidecarTally;
             bool tallyMatches =
                 computedTally.Count == expectedTally.Count &&
                 computedTally.All(entry =>
@@ -45468,15 +45494,17 @@ internal static partial class Program
                     "reproduction pin failed. This harness's own " +
                     $"per-course cell tally is {FormatCourseTally(computedTally)} " +
                     $"({computedTally.Values.Sum()} cells); " +
-                    (isHex
-                        ? "the round-five reproduction pin reads "
+                    (hasOwnPin
+                        ? "the deliberate-divergence reproduction pin reads "
                         : "Param's own -skin.json sidecar reads ") +
                     $"{FormatCourseTally(expectedTally)} " +
                     $"({expectedTally.Values.Sum()} cells). His own " +
                     "machine's reproduction is the instrument that was " +
                     "missing all week; a mismatch here means a change has " +
                     "diverged from " +
-                    (isHex ? "round five's own measurement." : "his reality.")
+                    (hasOwnPin
+                        ? "that pin's own measurement."
+                        : "his reality.")
                 );
             }
             if (isHex)
@@ -45534,6 +45562,23 @@ internal static partial class Program
                 [6] = 20, [7] = 24, [8] = 20, [9] = 28, [10] = 28, [11] = 40,
                 [12] = 25, [13] = 38, [14] = 29, [15] = 32, [16] = 33,
                 [17] = 32, [18] = 31, [19] = 31
+            },
+            // TWO-SIDED VAULT DEADLINE, PARAM'S RULING ON THE CROWN (spec
+            // 2026-09-07): the ridge-crest fix deliberately drops his 2
+            // sided vault's own crown cap (course 18 read 1 cap + 16
+            // closer stones = 17; the ridge now takes 19 cells there,
+            // 0 cap, coursed and closer stones running along the crest
+            // instead), so this study joins the Hex studies' own
+            // deliberate-divergence class: his sidecar (215 cells, the
+            // old capped geometry) is read and reported alongside this
+            // pin, same discipline, so the divergence stays on the record
+            // rather than silent.
+            ["2 sided vault"] = new Dictionary<int, int>
+            {
+                [0] = 12, [1] = 10, [2] = 12, [3] = 10, [4] = 12, [5] = 10,
+                [6] = 12, [7] = 10, [8] = 12, [9] = 10, [10] = 12, [11] = 10,
+                [12] = 12, [13] = 10, [14] = 12, [15] = 10, [16] = 12,
+                [17] = 10, [18] = 19
             }
         };
 
@@ -45942,22 +45987,6 @@ internal static partial class Program
             netType, typeof(double), typeof(double), typeof(double));
         MethodInfo coursesDefaultMinPiece = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
-        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
-        MethodInfo liftPlanPoint = RequirePublicStatic(
-            patterns, "LiftPlanPoint",
-            netType, typeof(double), typeof(double));
-        MethodInfo planInteriorPoint = patterns
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(method =>
-                method.Name == "PlanInteriorPoint" &&
-                method.GetParameters().Length == 1);
-        MethodInfo capPolygonOutline = patterns.GetMethod(
-            "CapPolygonOutline",
-            BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException(
-                "CapPolygonOutline must be reachable to re-check FIX 5's " +
-                "own bound on his own 2-sided vault, not only the " +
-                "synthetic crown arch.");
 
         // ---- THE POSITIVE-CASE WITNESS, no OneDrive needed. Before
         // anything about his real vault: RULE 3's audit must actually be
@@ -46026,12 +46055,6 @@ internal static partial class Program
         const double Size = 0.5;
         const double CourseHeight = 0.5;
         const double MinPiece = 0.20;
-        // SliverFloor(minimumPiece, courseHeight) = max(minimumPiece *
-        // courseHeight, 1e-3): the engine's own private formula
-        // (SkinPatterns.cs), restated rather than reflected into, at his
-        // own settings (minimumPiece = MinPiece * Size = 0.10).
-        const double SliverFloorAtHisSettings = 0.05;
-
         object resultDto = DeserializeContract(
             plugin, resultType, HisNetExtractResultContractJson(formPath));
         object net = readNet.Invoke(null, new object?[] { resultDto })
@@ -46039,236 +46062,61 @@ internal static partial class Program
                 $"'{Study}': SkinPatterns.ReadNet returned null on " +
                 "Param's own exported form document.");
 
-        // ---- READING ONE: the engine's own audit, at his canvas
-        // settings, via the real Courses() call SolveNative itself makes.
+        // PARAM'S RULING ON THE CROWN (spec 2026-09-07-two-sided-vault-
+        // deadline.md, "HIS RULING ON THE CROWN"), RETIRING ROUND FOUR
+        // RULE 3 ON THIS STUDY: his 2-sided vault's crown is a RIDGE, not
+        // a true apex (measured: its own qualifying crown loop swings
+        // through 0.4208 m of world Z against a 2.855 m girth, 14.7% --
+        // his own words, "4.985 against 4.564" -- against 3/4/5/6 sided
+        // vaults' genuine apexes, all under 0.7%; the elliptical dome, a
+        // real but genuine apex check 12.2(g) still pins oversized, 6.6%).
+        // CapQualifies now refuses this crown on that discriminator, so
+        // the diamond-cap-and-crescent audit this check used to run on
+        // his vault no longer has a cap to audit: CapsOversized and
+        // CapCrescents both read empty by construction, not by a
+        // regression. What this check verifies instead is the ruling's
+        // own acceptance: no cap, and the crest still fully covered --
+        // courses from both flanks meeting along it, not a hole where the
+        // diamond used to be.
         object generated = courses.Invoke(
             null, new object[] { net, Size, CourseHeight, MinPiece })!;
         int capsOversized = Reading<int>(generated, "CapsOversized");
-        string[] capCrescents = ((IEnumerable)generated.GetType()
-                .GetProperty("CapCrescents")!.GetValue(generated)!)
+        IEnumerable generatedCells = (IEnumerable)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        int capCellCount = generatedCells.Cast<object>()
+            .Count(cell => Reading<bool>(cell, "Cap"));
+        if (capsOversized != 0 || capCellCount != 0)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': Param's own ruling on the crown (spec " +
+                "2026-09-07) retires the cap here -- a ridge takes ridge " +
+                "stones, not a one-polygon cap -- so CapsOversized and " +
+                "the emitted cap count must both be zero; got " +
+                $"{capsOversized} oversized, {capCellCount} cap cell(s). " +
+                "If a fix legitimately restored a cap here, this check's " +
+                "own premise needs revisiting, not silently widened.");
+        }
+        string[] uncoveredRegions = ((IEnumerable)generated.GetType()
+                .GetProperty("UncoveredRegions")!.GetValue(generated)!)
             .Cast<string>().ToArray();
-
-        if (capsOversized < 1)
+        if (uncoveredRegions.Length > 0)
         {
             throw new InvalidOperationException(
-                $"'{Study}': the diagnosis's own measurement is one " +
-                "oversized crown cap here (girth 2.85 m against a 2.50 m " +
-                $"ceiling, section 2); got CapsOversized {capsOversized}. " +
-                "If this genuinely changed, the fixture's own expectation " +
-                "needs re-measuring, not silently widening.");
+                $"'{Study}': the crest must still read FULLY COVERED once " +
+                "the cap is retired -- courses from both flanks meeting " +
+                "along it, not a hole where the diamond used to be; the " +
+                $"engine's own audit names {uncoveredRegions.Length} " +
+                "uncovered region(s): " +
+                $"{string.Join("; ", uncoveredRegions)}.");
         }
-        if (!capCrescents.All(
-                line => line.Contains("m2", StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException(
-                $"'{Study}': a named cap crescent must carry its own " +
-                $"area in square metres. Got:\n  " +
-                string.Join("\n  ", capCrescents));
-        }
-
-        // ---- READING TWO: this harness's OWN, independent trace and
-        // measurement. Unlike ValidateSkinCapLensBound's own synthetic and
-        // crown-arch witnesses (whose "dMax minus Course Height" guess
-        // happens to land inside the qualifying cap band), his real net's
-        // band ladder does not: the top band's own Low is dMin + (bands -
-        // 1) * courseHeight and bands comes from BandCount's own sliver
-        // absorption (rule 1.5.3), which a bare "dMax - CH" guess does not
-        // reproduce. So this traces at EXACTLY the level Courses() itself
-        // qualifies the cap against: LevelRange (private, reflected) and
-        // BandCount (public) give dMin/dMax/bands, and top.Low follows the
-        // same arithmetic the engine uses (SkinPatterns.cs, the band-
-        // ladder loop, r == bands - 1).
-        MethodInfo levelRange = RequireStatic(patterns, "LevelRange");
-        object levelRangeResult = levelRange.Invoke(
-            null, new object[] { net })!;
-        Type levelRangeType = levelRangeResult.GetType();
-        double dMin = (double)levelRangeType
-            .GetField("Item1")!.GetValue(levelRangeResult)!;
-        double dMax = (double)levelRangeType
-            .GetField("Item2")!.GetValue(levelRangeResult)!;
-        MethodInfo bandCount = RequirePublicStatic(
-            patterns, "BandCount",
-            typeof(double), typeof(double), typeof(double));
-        int bands = (int)bandCount.Invoke(
-            null, new object[] { dMin, dMax, CourseHeight })!;
-        if (bands < 2)
-        {
-            throw new InvalidOperationException(
-                $"'{Study}': BandCount must give at least two bands for " +
-                $"a top-band Low distinct from dMin; got {bands}.");
-        }
-        double topLow = dMin + ((bands - 1) * CourseHeight);
-        IList tracedLevel = (IList)traceAll.Invoke(
-            null, new object[] { net, new[] { topLow } })!;
-        IList components = (IList)tracedLevel[0]!;
-        object? loop = components
-            .Cast<object>()
-            .Where(item => Reading<bool>(item, "Closed"))
-            .OrderByDescending(item => ((IList)item.GetType()
-                .GetProperty("Points")!.GetValue(item)!).Count)
-            .FirstOrDefault();
-        if (loop is null)
-        {
-            throw new InvalidOperationException(
-                $"'{Study}': must trace a closed crown loop short of " +
-                "dMax for FIX 5's own bound to be re-checked against " +
-                "his real geometry at all.");
-        }
-        double[][] loopPoints = ((IList)loop.GetType()
-                .GetProperty("Points")!.GetValue(loop)!)
-            .Cast<double[]>().ToArray();
-        // minimumPiece = clampedMinPiece * size, clampedMinPiece = MinPiece
-        // clamped to [0, 0.5]; his own 0.20 is already inside that range,
-        // so the clamp is a no-op and this is exactly what Courses() above
-        // passed to the same call internally.
-        double minimumPieceAtHisSettings = MinPiece * Size;
-
-        object simplifiedRaw = capPolygonOutline.Invoke(
-            null, new object[]
-            {
-                loop, minimumPieceAtHisSettings, SliverFloorAtHisSettings
-            })!;
-        double[][] simplified = ((IList)simplifiedRaw)
-            .Cast<double[]>().ToArray();
-        double independentLoopArea = PlanAreaOf(loopPoints);
-        double independentPolygonArea = PlanAreaOf(simplified);
-        double independentCrescent = Math.Max(
-            0.0, independentLoopArea - independentPolygonArea);
-
-        // THE CROSS-CHECK, BOTH WAYS. Measured directly (not assumed):
-        // his real 2-sided vault's own crown crescent is 0.0123 m2
-        // against his own 0.05 m2 sliver floor at his canvas settings,
-        // well under it -- a SMALLER crescent than the separate
-        // synthetic/crown-arch witnesses above measure on THEIR OWN
-        // geometry (0.09 to 0.1 m2), and not a defect: fix 5's own corner
-        // budget already closes this particular cap tightly. So the
-        // engine's own CapCrescents reading empty here is the CORRECT
-        // answer, not the blind one this rule exists to fix -- proved
-        // correct rather than assumed, by requiring the two readings to
-        // AGREE in both directions rather than only checking one.
-        bool independentAboveFloor =
-            independentCrescent > SliverFloorAtHisSettings;
-        if (independentAboveFloor != (capCrescents.Length > 0))
-        {
-            throw new InvalidOperationException(
-                $"'{Study}': the engine's own CapCrescents " +
-                $"({capCrescents.Length} named) disagrees with this " +
-                "harness's own independent trace of the same crown loop " +
-                $"(crescent {independentCrescent:F4} m2 against a " +
-                $"{SliverFloorAtHisSettings:F4} m2 floor). Either RULE 3's " +
-                "own measurement inside SkinPatterns.Courses diverged " +
-                "from the true polygon-versus-loop area, or this " +
-                "independent re-trace is not landing on the same cap.");
-        }
-
-        // ---- FIX 5's OWN BOUND (round three, G3), RE-CHECKED HERE
-        // rather than only on the synthetic six-lobe and Param's
-        // separately-exported crown-arch contract
-        // (ValidateSkinCapLensBound): the worst single chord's own
-        // crescent against the arc it replaces must sit at or under the
-        // pattern's own sliver floor, on the geometry he is actually
-        // looking at.
-        double area2 = 0.0;
-        int loopCount = loopPoints.Length;
-        for (int at = 0; at < loopCount; at++)
-        {
-            double[] a = loopPoints[at];
-            double[] b = loopPoints[(at + 1) % loopCount];
-            area2 += (a[0] * b[1]) - (b[0] * a[1]);
-        }
-        double interior = area2 >= 0.0 ? 1.0 : -1.0;
-        var indexOf = new Dictionary<double[], int>();
-        for (int at = 0; at < loopCount; at++)
-            indexOf[loopPoints[at]] = at;
-        double worstChordCrescent = double.NegativeInfinity;
-        for (int edge = 0; edge < simplified.Length; edge++)
-        {
-            double[] from = simplified[edge];
-            double[] to = simplified[(edge + 1) % simplified.Length];
-            if (!indexOf.TryGetValue(from, out int fromAt) ||
-                !indexOf.TryGetValue(to, out int toAt))
-            {
-                throw new InvalidOperationException(
-                    $"'{Study}': CapPolygonOutline's own returned " +
-                    "vertices must be the loop's own points by " +
-                    "reference, so FIX 5's own bound can be measured " +
-                    "against the arc each chord actually replaces.");
-            }
-            int span = ((toAt - fromAt) % loopCount + loopCount) % loopCount;
-            double shoelace2 = 0.0;
-            double[] prev = from;
-            for (int step = 1; step < span; step++)
-            {
-                double[] here = loopPoints[(fromAt + step) % loopCount];
-                shoelace2 += (prev[0] * here[1]) - (here[0] * prev[1]);
-                prev = here;
-            }
-            shoelace2 += (prev[0] * to[1]) - (to[0] * prev[1]);
-            shoelace2 += (to[0] * from[1]) - (from[0] * to[1]);
-            worstChordCrescent = Math.Max(
-                worstChordCrescent, interior * shoelace2 / 2.0);
-        }
-        if (worstChordCrescent > SliverFloorAtHisSettings + 1.0e-6)
-        {
-            throw new InvalidOperationException(
-                $"'{Study}': FIX 5's own bound (the finding's own " +
-                "sentence): a chord may not cut off more than the " +
-                "sliver floor's area between it and the traced loop; " +
-                $"the floor here is {SliverFloorAtHisSettings:F4} m2 and " +
-                "the worst returned chord's own crescent came back at " +
-                $"{worstChordCrescent:F6} m2, on HIS OWN 2-sided vault " +
-                "and not only the synthetic crown arch.");
-        }
-
-        // ---- THE THICKENING WITNESS: does closing the crescent (FIX 5's
-        // own simplification, against the raw traced loop with none)
-        // improve the interior-sampling deviation the diagnosis measured
-        // worst of all eight studies at exactly this cap? Both are the
-        // diagnosis's own pure-array proxy: a cell's own corner-average
-        // height against the net's own lifted height at the cell's plan
-        // interior point.
-        double Deviation(double[][] outline)
-        {
-            object? inside = planInteriorPoint.Invoke(
-                null, new object[] { outline });
-            if (inside is null)
-                return double.NaN;
-            var point = (double[])inside;
-            object? apex = liftPlanPoint.Invoke(
-                null, new object[] { net, point[0], point[1] });
-            if (apex is null)
-                return double.NaN;
-            double liftedZ = ((double[])apex)[2];
-            double cornerAverageZ = outline.Average(corner => corner[2]);
-            return Math.Abs(cornerAverageZ - liftedZ);
-        }
-        double deviationSimplified = Deviation(simplified);
-        double deviationRaw = Deviation(loopPoints);
-        string thickeningVerdict =
-            double.IsNaN(deviationSimplified) || double.IsNaN(deviationRaw)
-                ? "not measurable here (no plan interior point found for " +
-                  "one of the two outlines)"
-                : deviationSimplified < deviationRaw - 1.0e-9
-                    ? $"IMPROVES: {deviationSimplified:F4} m against " +
-                      $"{deviationRaw:F4} m raw"
-                    : deviationSimplified > deviationRaw + 1.0e-9
-                        ? $"WORSENS: {deviationSimplified:F4} m against " +
-                          $"{deviationRaw:F4} m raw"
-                        : $"is UNCHANGED: {deviationSimplified:F4} m " +
-                          "either way";
-
         Console.WriteLine(
-            $"      Round four rule 3 ({Study}): engine's own audit " +
-            $"names {capCrescents.Length} cap crescent(s): " +
-            $"{string.Join("; ", capCrescents)}. Independent trace: loop " +
-            $"{independentLoopArea:F4} m2, polygon " +
-            $"{independentPolygonArea:F4} m2, crescent " +
-            $"{independentCrescent:F4} m2 (floor " +
-            $"{SliverFloorAtHisSettings:F4} m2), worst chord " +
-            $"{worstChordCrescent:F6} m2. Interior-sampling deviation at " +
-            $"this cap, closed-crescent vs raw-traced-loop: " +
-            $"{thickeningVerdict}.");
+            $"      Round four rule 3, RETIRED on {Study} (spec " +
+            "2026-09-07, Param's ruling on the crown): no cap, no " +
+            "oversized-cap warning, and 0 uncovered regions -- the crest " +
+            "is fully covered by ridge and closer stones, not left open " +
+            "where the diamond used to be.");
     }
+
 
     private static string DescribeException(Exception exception)
     {
