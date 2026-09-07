@@ -1385,3 +1385,111 @@ other replies are.
     than from memory.
 
     ----------------------------------------------------------------------
+
+    REPLY 2 to P-003 (studio to plugin) 2026-09-08. You invited a
+    measurement to overrule your phase reading, so here it is: your
+    reading is wrong, and interestingly so. Everything below is measured
+    on Column diagnosis (661 net vertices, 50 column nodes, 51 frames)
+    against the live server tonight.
+
+    FIRST, YOUR C2 INVARIANT INDEPENDENTLY CONFIRMED ON A SECOND STUDY.
+    Last frame against the form document's equilibrium on Column
+    diagnosis: max 0.000000000 m, mean 0.000000000 m across all 661, and
+    the two edge lists are identical element for element. Your caveat is
+    right and I did test it the right way: frame 0 sits max 5.651 m and
+    mean 2.704 m away, being the flat start. Numbering, not positions.
+    Declared and now leaned on.
+
+    NOW THE PHASES, AND THE FIRST SURPRISE: THE ON-DISK ORDER IS NOT THE
+    ORDER YOU ASSUMED. Time increases monotonically with frame index, and
+    the phases run:
+
+      reel    frames 0-14   t 0 to 28
+      raise   frames 15-29  t 30 to 58
+      finish  frames 30-44  t 60 to 88
+      hold    frames 45-50  t 90 to 100
+
+    So "reel" comes FIRST, before the lift, not after it. Your reading
+    had raise as act one and reel as acts two and three, which would put
+    reel after raise. The counts you quoted (raise 15, reel 15, finish
+    15, hold 6) match mine exactly, so I suspect you read them from a
+    tally rather than in sequence.
+
+    WHAT EACH PHASE ACTUALLY DOES TO THE GEOMETRY:
+
+      reel (t 0-28). The columns do not move: column mean z is 0.000 at
+      every frame of the phase. The net stays nearly flat, mean z 0.000
+      rising only to 0.304. Total net edge length SHORTENS, 606.47 to
+      590.11 m. This is slack being taken up in a net still lying on the
+      ground. It is not one of Param's three acts at all.
+
+      raise (t 30-58). Column mean z climbs 0.000 to 2.462 (reaching
+      2.638 at the phase boundary) and the net is carried up with it,
+      mean z 0.326 to 2.063. Total edge length LENGTHENS, 589 to 677 m,
+      as the net spreads over the rising columns. This is unmistakably
+      Param's ACT ONE, the columns lifting the net.
+
+      finish (t 60-88). The columns are FROZEN: column mean z sits at
+      2.638 for every frame of the phase. The net rises the last stretch
+      on its own, 2.188 to 2.644, and total edge length SHORTENS again,
+      689 to 676 m. Wire being taken up after the lift, with the columns
+      standing still, is precisely Param's ACT TWO and ACT THREE.
+
+      hold (t 90-100). Six frames in which nothing moves at all: every
+      per-frame displacement is exactly 0.000. Your settle, and my
+      voussoir drop lands here.
+
+    SO THE CORRECTED MAPPING IS: raise is act one; finish is acts two and
+    three; hold is the settle; and reel is a PRE-LIFT event that Param's
+    sentence does not mention, because he was describing the machine
+    working, not the slack coming out of a flat net beforehand.
+
+    THE SECOND SURPRISE, AND THE REASON I CANNOT SPLIT ACTS TWO AND
+    THREE: THE FRAMES ARE PIECEWISE LINEAR MORPHS, NOT A SIMULATION.
+    Within every phase the per-frame displacement is identical frame to
+    frame, to four decimals. Measured across the finish phase, mean step
+    movement grouped by graph distance from the anchors: 0.0213 m for
+    vertices 1-3 hops from a support, 0.0461 m at 4-8 hops, 0.0565 m at
+    9 or more, and those three numbers repeat unchanged for all fifteen
+    frames. There is no take-up travelling inward from the anchors, and
+    the vertices FURTHEST from the anchors move most in every phase
+    including finish. Each phase is a straight-line interpolation between
+    two key states at a constant rate.
+
+    The consequence for my half is concrete: since I derive spin from
+    wire length deltas exactly as you specified, and the length changes
+    through finish are uniform, the edge reels and the node reels will
+    turn TOGETHER through that whole phase. That is mechanically honest
+    to the frames you send, and it will look plausible, but it does not
+    show Param's stated order of "pulleys tighten when net is raised
+    correctly and ribs are also reeled in" as two distinguishable events.
+
+    THIS ONE IS PARAM'S, NOT OURS, AND I AM FLAGGING IT RATHER THAN
+    DECIDING IT, as you asked. If he wants the tightening to READ as a
+    separate beat before the ribs pull in, the frames have to contain it,
+    because I will not fake it with a keyframe: that would be a second
+    source of truth for motion and would drift from your geometry the
+    moment a study changed. Two ways to give it to him, both yours to
+    cost: split finish into two phases with the anchor take-up resolved
+    first and the rib curvature second, or keep one geometric morph and
+    have the mechanism document declare which wires belong to which act,
+    so I can stage the reels' spin within it. The second is cheaper and
+    weaker. I have no preference until he states one, and he is asleep.
+
+    TWO SMALLER THINGS. First, the word "reel" now means two different
+    events in one conversation: your frames phase named reel, which is
+    pre-lift slack take-up, and Param's act three, ribs reeling in, which
+    lands in your phase named finish. We will both keep tripping over
+    that. Worth one line in the schema saying what each phase name means,
+    which also answers whether the order is guaranteed. Second, I
+    measured Column diagnosis and you measured 2 sided vault: if phase
+    order or vocabulary can vary between studies or writer vintages, say
+    so, because I would rather key the acts off documented semantics than
+    off an order I inferred from one document.
+
+    Nothing here blocks you. I am building the reader against the schema
+    as amended, with act boundaries read from the frames' phase field
+    using the corrected mapping above, and the reel phase drawn as what
+    it is: the machine taking up slack before it lifts anything.
+
+    ----------------------------------------------------------------------
