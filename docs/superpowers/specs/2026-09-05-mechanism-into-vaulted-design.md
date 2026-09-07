@@ -106,6 +106,48 @@ hands Export one mechanism payload. Export embeds it in the mechanism document w
 change key. Wire weight: the meshes travel once and then only on change, per the standing
 build-on-rest rules.
 
+## 3a. Port set settled 2026-09-08, against the BUILD RULING's item 5
+
+DESIGN-CHECK AMENDMENT. Section 3 above predates the BUILD RULING at the top of this document and
+did not move with it: the ruling has Param separating each mechanism's static body from its
+spinning parts and authoring each spinner's OWN rotation axis himself, but the port table above
+carries no axis at all, PU is one mesh per pulley type with nothing under it for a spinner to be,
+and SR's default reads off "the unit's bounding box" as though body and spinner were still one
+thing. That is section 3 contradicting the ruling it sits under, not the ruling contradicting the
+code; checked against the engine (MouldGeometry, MouldColumnsDto, the writer) everything else in
+this document stood up unchanged. Settled here, port set unchanged in count but two ports change
+shape and one is added:
+
+    PU  Pulley unit meshes (TREE, TWO-LEVEL PATH {type}{part}): {type} unchanged, 0 EDGE REEL,
+        1 NODE REEL. WITHIN a type branch, {part} 0 is ALWAYS THE STATIC BODY; {part} 1..N are the
+        SPINNERS, in order. A branch with only {part} 0 is a fully static unit, legal. A missing
+        {type} branch still means no reels of that kind.
+    AX  Spinner axes (NEW, tree, matches PU for {part} >= 1 ONLY): one plane per spinner, unit-local
+        space, plane origin a point on the axis and plane Z the axis direction. {part} 0 (the body)
+        has no entry and none is read. A spinner mesh in PU with no matching plane in AX is refused:
+        the axis is authored, never inferred, and this pairing is how that is enforced rather than
+        by convention alone.
+    PS  Unchanged, still matches PU's {type} only, not {part}: a unit's wire route is a property of
+        the whole unit, not of one spinner.
+    PR  Unchanged.
+    SR  Unchanged in shape (one number per {type}); DEFAULT NOW NAMES ITS SOURCE EXPLICITLY: the
+        {part} 1 spinner's (the spool's) bounding box smallest dimension over 4 when one is wired,
+        falling back to the body's own bounding box when a type has no spinner at all.
+    AT  Unchanged.
+    MT  Unchanged rule (tags per part, matched by position, missing tag falls back to the part's
+        name); shape widens to match PU's full two-level path plus one entry per AT row.
+
+WHICH SPINNER IS DRIVEN, flagged rather than assumed. SR and PR are one number per TYPE, not per
+spinner, which already presumes exactly one driven spool per unit: this settles that {part} 1 is
+that spool and the only spinner section 5's derived rotation ever turns; any {part} 2, 3, ... are
+cosmetic wheels, carried with mesh and axis but not rotated, squarely section 9's "cosmetic,
+later" scope. No eighth port for a spinner "kind" tag is added on this reading. If Param means more
+than one driven spinner per unit, this convention is wrong and needs a real port; put it to him
+before the collector is built rather than after.
+
+Full field-by-field detail (the bench.mechanism/1 document shape, the change key, and the wire-id
+confirmation against the frames document) is the implementer's brief, not repeated here.
+
 ## 4. Placements: the plugin's half, computed every solve
 
 The plugin computes, from the Result it already owns:
