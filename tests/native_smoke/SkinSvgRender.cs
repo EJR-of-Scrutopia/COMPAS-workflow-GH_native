@@ -56,6 +56,8 @@ internal static partial class Program
                 $"x {options.Size:0.###} size floor, " +
                 $"{summary.KnownImpossibleCount} known-impossible-to-close " +
                 "(lower bound; see the renderer's own doc comment), " +
+                $"{summary.RailMismatchedCount} with a rail-point-count " +
+                "mismatch (correction 1), " +
                 $"{summary.UncoveredRegionsCount} uncovered-region " +
                 "warning(s) from the engine's own audit.");
             return 0;
@@ -205,7 +207,8 @@ internal static partial class Program
         int CourseCount,
         int UndersizedCount,
         int KnownImpossibleCount,
-        int UncoveredRegionsCount);
+        int UncoveredRegionsCount,
+        int RailMismatchedCount);
 
     /// <summary>One emitted cell, read off the engine's own SkinCell by
     /// reflection, plus the per-cell defect signals this renderer can
@@ -233,7 +236,8 @@ internal static partial class Program
         double U1,
         bool Undersized,
         bool KnownImpossible,
-        double MinEffectiveWallHeight);
+        double MinEffectiveWallHeight,
+        bool RailMismatched);
 
     private static SvgRenderSummary RenderSkinSvg(SvgRenderOptions options)
     {
@@ -389,6 +393,13 @@ internal static partial class Program
 
             bool undersized =
                 !cap && Math.Abs(u1 - u0) < minimumPiece - 1.0e-9;
+            // CORRECTION 1 (spec 2026-09-07): a loft-route cell's own
+            // Sections rails, mismatched in point count before this
+            // task's rail-parity fix -- kept as its own colour so a
+            // before/after pair of renders shows the bands clearing
+            // rather than only a number changing.
+            bool railMismatched = sections is not null &&
+                sections.Select(rail => rail.Count).Distinct().Count() > 1;
 
             bool impossible = false;
             double minEffectiveWallHeight = double.PositiveInfinity;
@@ -448,7 +459,7 @@ internal static partial class Program
 
             cells.Add(new RenderCell(
                 course, outline, cap, closer, clipped, u0, u1, undersized,
-                impossible, minEffectiveWallHeight));
+                impossible, minEffectiveWallHeight, railMismatched));
         }
 
         List<double[]> netVertices = ((IEnumerable)netType
@@ -574,7 +585,8 @@ internal static partial class Program
             cells.Count, courseCount,
             cells.Count(c => c.Undersized),
             cells.Count(c => c.KnownImpossible),
-            uncoveredRegionsCount);
+            uncoveredRegionsCount,
+            cells.Count(c => c.RailMismatched));
     }
 
     private static string BuildLegendText(
@@ -683,15 +695,19 @@ internal static partial class Program
             $"<text x=\"{Fmt(Margin)}\" y=\"{Fmt(legendY + (line * 16) + 10)}\" " +
             "font-size=\"12\" fill=\"#333\">colour key: pale blue = " +
             "ordinary course cell, amber = crown cap, pale green = " +
-            "closer/seam stone, YELLOW = below the size floor, RED = " +
-            "known-impossible-to-close (CellOffsetImpossible, a Gaps-0 " +
-            "lower bound proxy, see report), DASHED OUTLINE = a boundary-" +
-            "clipped cell (an open band's own end piece, SkinCell." +
-            "Clipped) -- round three's own diagnosis says his thickening " +
-            "failures concentrate here, light grey backdrop = the net's " +
-            "own triangulated surface (true uncovered area is grey " +
-            "showing through no cell at all; pure page-white outside the " +
-            "grey is simply off the vault).</text>\n");
+            "closer/seam stone, YELLOW = below the size floor, PURPLE = " +
+            "a rail-point-count mismatch between this cell's own loft " +
+            "Sections (correction 1's own defect; fixed as of the " +
+            "commit named in the report, so an 'after' render should " +
+            "show none), RED = known-impossible-to-close " +
+            "(CellOffsetImpossible, a Gaps-0 lower bound proxy, see " +
+            "report), DASHED OUTLINE = a boundary-clipped cell (an open " +
+            "band's own end piece, SkinCell.Clipped) -- round three's " +
+            "own diagnosis says his thickening failures concentrate " +
+            "here, light grey backdrop = the net's own triangulated " +
+            "surface (true uncovered area is grey showing through no " +
+            "cell at all; pure page-white outside the grey is simply " +
+            "off the vault).</text>\n");
         sb.Append("</svg>\n");
         return sb.ToString();
     }
@@ -752,11 +768,13 @@ internal static partial class Program
                 ? "#e63946"
                 : cell.Undersized
                     ? "#ffe14d"
-                    : cell.Cap
-                        ? "#f4d9a0"
-                        : cell.Closer
-                            ? "#cde8d5"
-                            : "#cfe3f7";
+                    : cell.RailMismatched
+                        ? "#a45ee5"
+                        : cell.Cap
+                            ? "#f4d9a0"
+                            : cell.Closer
+                                ? "#cde8d5"
+                                : "#cfe3f7";
             string stroke =
                 cell.KnownImpossible || cell.Undersized ? "#000000" : "#1c2733";
             string strokeWidth =
