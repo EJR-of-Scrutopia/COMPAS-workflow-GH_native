@@ -123,6 +123,48 @@ SELFWEIGHT_REFINEMENT_MAX_ROUNDS = 100
 # widens to capture the slow mode once enough rounds exist to reveal it.
 SELFWEIGHT_ANDERSON_WINDOW = 4
 
+# 2026-09-07, round five's own follow-up. Converging faster is not the same
+# as converging to something usable: a 907-round, 1e-10 reference solve on
+# the 6-sided vault found its TRUE fixed point buries 183 of 1321 vertices
+# below z=-5 (worst -872.85) against a 5 m target crown, and the faster
+# loop above lands measurably CLOSER to that degenerate point than the old
+# 75-round loop did. So this net's own tolerance crossing is not proof of a
+# usable shape, and the loop needs its own sense of "usable" that is not
+# the round-to-round drift gate.
+#
+# Plausibility is read off the FORM'S OWN round-one geometry, never a fixed
+# constant: round one's rise above its own support plane (the target crown
+# height, which every round re-solves to exactly, so this is a property of
+# the request, not of the load) and its own plan span (fixed for the whole
+# loop, since the vertical solve never moves x or y). Round one's OWN depth
+# is never itself judged against these ratios: it is the crudest possible
+# estimate (plan-area weight, before any refinement) and overshoots just as
+# readily on a net that goes on to settle sensibly as on one that does not
+# -- measured directly, one of his real nets reads 4.95x its own span deep
+# at round one and settles at 0.23x by round sixteen. The check therefore
+# starts at round two, exactly where the round-cap fence's own "round one
+# always exists" fallback already puts its floor.
+#
+# Measured by replaying all eight of Param's real exported nets through
+# this exact loop (commit bf7f7a2, docs/superpowers/specs/2026-09-06-skin-
+# round-five-honeycomb-and-convergence.md's own follow-up): the seven nets
+# that settle sensibly never exceed 0.72x their own span or 2.63x their own
+# round-one rise in depth below the supports, AT ANY ROUND, including the
+# early Anderson transient. The 6-sided vault exceeds both thresholds at
+# every round from round two on, including its single best (lowest) round:
+# 13.8x its own span, 61.1x its own rise -- a 19-23x margin over the good
+# nets' own worst case, on both measures, with no overlap at any round
+# measured. A total-load-growth trigger (round total against round one's
+# own total) was also measured and rejected: a good net's own round-two
+# Anderson transient reads 54.5x its round-one total, which is ABOVE the
+# 6-sided vault's own best-round ratio of 24.6x, so no single per-round
+# load threshold separates the two without either missing the bad net's
+# best round or firing on the good net's own transient. The depth-based
+# checks below carry no such overlap at any round measured, so they are
+# what fires.
+SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_SPAN = 5.0
+SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_RISE = 10.0
+
 
 class TNAError(RuntimeError):
     """Base exception for the headless TNA workflow."""
@@ -156,6 +198,22 @@ class TNASelfweightRefinementWarning(UserWarning):
 
     The result then carries the last converged round's weight rather than
     an unsettled one, and this warning names the drift it stopped at.
+    """
+
+
+class TNASelfweightDegenerateWarning(UserWarning):
+    """Warned when the self-weight refinement is marching toward a shape
+    that is not usable, whether or not it also crosses its own tolerance.
+
+    Round five's own finding: the round-to-round drift gate can be
+    satisfied on the way to a real fixed point that is degenerate (a
+    907-round reference solve on one of Param's own nets found its true
+    settled shape buries 183 of 1321 vertices below z=-5). This fires
+    DURING the round loop, on the round whose own depth first reads
+    implausible against the form's round-one span and rise, and the
+    result carries the last round that still read plausible rather than
+    the round that crossed the line, or round one if no later round ever
+    qualified.
     """
 
 
@@ -3364,6 +3422,83 @@ def solve_tna_problem(
             for key, value in zip(vertex_order, vector):
                 form.vertex_attribute(key, "pz", float(value))
 
+        def _support_plane_z() -> float:
+            return sum(
+                float(form.vertex_attribute(key, "z"))
+                for key in support_form_keys
+            ) / max(len(support_form_keys), 1)
+
+        def _plan_span() -> float:
+            xs = [float(form.vertex_attribute(key, "x")) for key in vertex_order]
+            ys = [float(form.vertex_attribute(key, "y")) for key in vertex_order]
+            return sqrt((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2)
+
+        # Round five's own follow-up (see SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_SPAN
+        # above for the measurement this reads): the reference scale is
+        # read off round one's own geometry once, then every round from
+        # round two on is measured against it. ``last_plausible_*`` is the
+        # same snapshot-and-restore shape the round-cap fence below already
+        # uses, generalised to whichever round was last plausible rather
+        # than always round one.
+        plausible_support_plane = 0.0
+        plausible_span = 1.0
+        plausible_rise = 1.0
+        last_plausible_state = None
+        last_plausible_scale = 1.0
+        last_plausible_round = 0
+
+        def _plausibility_failure():
+            """``None`` when this round's own depth below the supports is
+            a sane multiple of round one's own span and rise; otherwise
+            the ``(depth, span_ratio, rise_ratio)`` that failed it, read
+            fresh off the form's CURRENT state."""
+            depth = plausible_support_plane - min(
+                float(form.vertex_attribute(key, "z")) for key in vertex_order
+            )
+            span_ratio = depth / max(plausible_span, 1.0e-9)
+            rise_ratio = depth / max(plausible_rise, 1.0e-9)
+            if (
+                span_ratio <= SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_SPAN
+                and rise_ratio <= SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_RISE
+            ):
+                return None
+            return depth, span_ratio, rise_ratio
+
+        def _degenerate_result(round_number: int, depth: float):
+            """Rule of this round-five follow-up: keep the last round that
+            still read plausible, and name what happened in the same
+            terms the round-cap fence already uses -- which round, and
+            the drift and depth at the point it stopped."""
+            _restore_vertical(last_plausible_state)
+            warnings.warn(
+                "the selfweight refinement on this net does not settle to "
+                "a usable shape; round {} stayed within a sane depth of "
+                "its own span and rise, but round {} does not (depth "
+                "{:.2f} m below the springing plane, drift {:.1f} per "
+                "cent); the result carries round {}'s weight instead. "
+                "This is a limit of this refinement pass on this net, "
+                "not a reading on the design.".format(
+                    last_plausible_round,
+                    round_number,
+                    depth,
+                    drift * 100.0,
+                    last_plausible_round,
+                ),
+                TNASelfweightDegenerateWarning,
+                stacklevel=3,
+            )
+            return (
+                last_plausible_scale,
+                tuple(totals),
+                drift,
+                False,
+                True,
+                accelerated_rounds,
+                True,
+                last_plausible_round,
+                depth,
+            )
+
         x_history: List[Any] = []
         f_history: List[Any] = []
         held_vector = None
@@ -3398,6 +3533,23 @@ def solve_tna_problem(
             if round_number == 1:
                 first_round_state = _snapshot_vertical()
                 first_round_scale = cumulative_scale
+                # Round one is the reference scale, never a candidate the
+                # plausibility check judges (see the constants' own
+                # comment): its own depth is the crudest possible
+                # estimate and is exactly as likely to overshoot on a net
+                # that goes on to settle sensibly as on one that does not.
+                plausible_support_plane = _support_plane_z()
+                plausible_span = _plan_span()
+                plausible_rise = (
+                    max(
+                        float(form.vertex_attribute(key, "z"))
+                        for key in vertex_order
+                    )
+                    - plausible_support_plane
+                )
+                last_plausible_state = first_round_state
+                last_plausible_scale = first_round_scale
+                last_plausible_round = 1
             # THE PHYSICAL residual, not merely "did the chosen load
             # sequence stop moving": evaluate the map once more on the
             # geometry THIS round's solve produced and compare it against
@@ -3419,6 +3571,14 @@ def solve_tna_problem(
             naive_total = float(naive_next.sum())
             previous_drift = drift
             drift = _relative_load_change(naive_total, total)
+            if round_number > 1:
+                failure = _plausibility_failure()
+                if failure is not None:
+                    depth, _span_ratio, _rise_ratio = failure
+                    return _degenerate_result(round_number, depth)
+                last_plausible_state = _snapshot_vertical()
+                last_plausible_scale = cumulative_scale
+                last_plausible_round = round_number
             if drift < SELFWEIGHT_REFINEMENT_TOLERANCE:
                 # Rule 2.2's identity bar: the un-accelerated loop never
                 # stops on "this round's load was close to last round's"
@@ -3442,6 +3602,10 @@ def solve_tna_problem(
                 rounds_run = round_number + 1
                 _assert_round_is_finite(rounds_run, round_scale)
                 cumulative_scale *= float(round_scale)
+                failure = _plausibility_failure()
+                if failure is not None:
+                    depth, _span_ratio, _rise_ratio = failure
+                    return _degenerate_result(rounds_run, depth)
                 converged = True
                 break
             if round_number > 1 and drift > previous_drift:
@@ -3490,6 +3654,9 @@ def solve_tna_problem(
                 True,
                 False,
                 accelerated_rounds,
+                False,
+                0,
+                0.0,
             )
         # The cap ran out. Measure what the load would still move by, so
         # the warning carries a number rather than an adjective, then fall
@@ -3512,6 +3679,9 @@ def solve_tna_problem(
             False,
             True,
             accelerated_rounds,
+            False,
+            0,
+            0.0,
         )
 
     # Geometry-dependent selfweight fed straight to the library is a
@@ -3538,6 +3708,9 @@ def solve_tna_problem(
     selfweight_converged = True
     selfweight_fenced = False
     selfweight_accelerated_rounds = 0
+    selfweight_degenerate = False
+    selfweight_degenerate_kept_round = 0
+    selfweight_degenerate_depth = 0.0
     try:
         if mode == "zmax":
             zmax = float(zmax)
@@ -3556,6 +3729,9 @@ def solve_tna_problem(
                     selfweight_converged,
                     selfweight_fenced,
                     selfweight_accelerated_rounds,
+                    selfweight_degenerate,
+                    selfweight_degenerate_kept_round,
+                    selfweight_degenerate_depth,
                 ) = _refined_zmax_solve(zmax)
                 selfweight_rounds_run = len(selfweight_totals)
             else:
@@ -3828,6 +4004,17 @@ def solve_tna_problem(
                 "selfweight_converged": selfweight_converged,
                 "selfweight_fenced": selfweight_fenced,
                 "selfweight_accelerated_rounds": selfweight_accelerated_rounds,
+                # Round five's own follow-up: the fence above can also
+                # fire mid-loop, before the round cap, because the round
+                # it just solved reads implausible against the form's own
+                # round-one span and rise, not because rounds ran out.
+                # Always present (like converged/fenced) so a reader with
+                # numbers alone can tell the two fence reasons apart.
+                "selfweight_degenerate": selfweight_degenerate,
+                "selfweight_degenerate_kept_round": float(
+                    selfweight_degenerate_kept_round
+                ),
+                "selfweight_degenerate_depth": selfweight_degenerate_depth,
             }
         )
     diagnostics.update(algebraic_diagnostics)

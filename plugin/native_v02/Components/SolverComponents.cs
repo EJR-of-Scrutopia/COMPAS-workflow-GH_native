@@ -1361,7 +1361,12 @@ public class TnaSolveComponent :
     /// <summary>
     /// Rule 2.5 of the 2026-09-04 selfweight design: the chin line a
     /// refined selfweight solve carries, and the sentence a FENCED one
-    /// owes the canvas.
+    /// owes the canvas. Round five's own follow-up (2026-09-07) adds a
+    /// third reading: the fence can also fire because the round it just
+    /// solved reads implausible against the form's own round-one span and
+    /// rise (a real, converging fixed point that is nonetheless not a
+    /// usable shape -- see SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_SPAN in
+    /// tna.py), not because the round cap ran out.
     ///
     /// Every number here is the worker's own. A solve that ran no
     /// refinement (no surface load, or a natural height, where the weight
@@ -1392,6 +1397,30 @@ public class TnaSolveComponent :
                 $"self-weight settled in {rounds} {plural} " +
                 $"(drift {percent} per cent)",
                 null);
+        }
+        bool degenerate =
+            metrics.TryGetValue(
+                "selfweight_degenerate", out double degenerateFlag) &&
+            degenerateFlag >= 0.5;
+        if (degenerate)
+        {
+            metrics.TryGetValue(
+                "selfweight_degenerate_kept_round", out double keptRoundValue);
+            metrics.TryGetValue(
+                "selfweight_degenerate_depth", out double depth);
+            int keptRound = (int)Math.Round(keptRoundValue);
+            string keptPlural = keptRound == 1 ? "round" : "rounds";
+            string depthText = depth.ToString(
+                "F2", CultureInfo.InvariantCulture);
+            return (
+                $"self-weight did not settle to a usable shape; kept " +
+                $"{keptRound} {keptPlural} (depth {depthText} m)",
+                "The self-weight refinement on this net does not settle " +
+                $"to a usable shape: continuing past round {keptRound} " +
+                $"drives the surface {depthText} m below the springing " +
+                $"plane. The result carries round {keptRound}'s weight " +
+                "instead. This is a limit of this refinement pass on " +
+                "this net, not a reading on the design.");
         }
         return (
             $"self-weight fenced at {rounds} {plural} " +

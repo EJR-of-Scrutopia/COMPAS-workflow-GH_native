@@ -986,6 +986,89 @@ def test_the_refinement_cap_fences_back_to_round_one_and_names_the_drift(
     )
 
 
+def test_a_degenerate_round_is_fenced_to_the_last_plausible_one(monkeypatch):
+    """Round five's own follow-up (2026-09-07 spec, part two's own
+    convergence work).
+
+    Converging faster is not the same as converging to something usable:
+    on Param's own 6-sided vault, the accelerated loop crosses its own
+    1e-3 tolerance while landing measurably CLOSER to a real, fully-
+    converged fixed point that is itself degenerate (a 907-round, 1e-10
+    reference solve buries 183 of 1321 vertices below z=-5, worst
+    -872.85, against a 5 m target crown). SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_
+    SPAN/RISE read the sane-depth ceiling off the form's OWN round-one
+    span and rise rather than a fixed constant, and are measured (see
+    their own comment in tna.py) to clear all seven of his other real
+    nets with an order-of-magnitude margin while catching that one.
+
+    This fixture (the deep meshgrid, corners supported, crown far above
+    its own span) never dips below its own supports at any round -- its
+    min z is exactly 0.0 throughout, confirmed directly -- so it cannot
+    reproduce his degenerate net's own numbers. What it CAN do, without
+    inventing a second geometry, is prove the FENCING MACHINERY itself:
+    driving both thresholds negative makes even a depth of 0.0 read as
+    implausible from round two on, so the loop must stop there and keep
+    round one's own weight, exactly the shape the round-cap fence already
+    proves for its own trigger below.
+    """
+
+    monkeypatch.setattr(tna_module, "SELFWEIGHT_REFINEMENT_MAX_ROUNDS", 1)
+    with pytest.warns(tna_module.TNASelfweightRefinementWarning):
+        round_one = solve_selfweight_meshgrid()
+    monkeypatch.undo()
+
+    monkeypatch.setattr(
+        tna_module, "SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_SPAN", -1.0
+    )
+    monkeypatch.setattr(
+        tna_module, "SELFWEIGHT_PLAUSIBLE_DEPTH_OVER_RISE", -1.0
+    )
+    with pytest.warns(
+        tna_module.TNASelfweightDegenerateWarning,
+        match=(
+            r"does not settle to a usable shape; round 1 stayed within "
+            r"a sane depth of its own span and rise, but round 2 does not"
+        ),
+    ):
+        fenced = solve_selfweight_meshgrid()
+
+    assert fenced.diagnostics["selfweight_converged"] is False
+    assert fenced.diagnostics["selfweight_fenced"] is True
+    assert fenced.diagnostics["selfweight_degenerate"] is True
+    assert fenced.diagnostics["selfweight_degenerate_kept_round"] == 1.0
+    assert fenced.diagnostics["selfweight_degenerate_depth"] == pytest.approx(
+        0.0, abs=1e-9
+    )
+    assert fenced.diagnostics["selfweight_rounds_run"] == 2
+
+    # The fenced result IS round one, vertex for vertex, edge for edge --
+    # the same identity the round-cap fence's own test proves for its own
+    # trigger, reused here for this one rather than invented twice.
+    assert fenced.diagnostics["vertical_scale"] == pytest.approx(
+        round_one.diagnostics["vertical_scale"], rel=1e-12
+    )
+    assert fenced.diagnostics["effective_total_pz"] == pytest.approx(
+        round_one.diagnostics["effective_total_pz"], rel=1e-12
+    )
+    for key in fenced.form.vertices():
+        assert fenced.form.vertex_attribute(key, "z") == pytest.approx(
+            round_one.form.vertex_attribute(key, "z"), rel=1e-12, abs=1e-12
+        )
+        assert fenced.form.vertex_attribute(key, "pz") == pytest.approx(
+            round_one.form.vertex_attribute(key, "pz"), rel=1e-12, abs=1e-12
+        )
+    for edge, force_density in fenced.edge_q.items():
+        assert force_density == pytest.approx(
+            round_one.edge_q[edge], rel=1e-12
+        )
+
+    # A solve that never trips the gate reports no degeneracy at all.
+    monkeypatch.undo()
+    settled = solve_selfweight_meshgrid()
+    assert settled.diagnostics["selfweight_degenerate"] is False
+    assert settled.diagnostics["selfweight_converged"] is True
+
+
 def test_a_non_finite_round_is_named_with_its_vertex_and_its_round(
     monkeypatch,
 ):
