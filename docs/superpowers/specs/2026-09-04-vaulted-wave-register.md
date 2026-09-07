@@ -975,3 +975,65 @@ shipped the real thing:
   suite 731 green. Crown-seam pin repointed to the destructured loop.
 - NOTE: the act's moving net does not draw principal dressing (the
   machine animation stays uniform) -- flag if he wants it there too.
+
+## 2026-09-08 -- THE FRAMES' PHASES, MEASURED (P-003 groundwork)
+
+The plugin session opened P-003 (the reeling machine comes to Vaulted)
+and asked the studio for the SEQUENCE and the MATERIALS. Two rounds of
+schema review are in REQUESTS-for-plugin-session.md (commits ee48c81
+and 51c27ac); all nine studio corrections were accepted as binding on
+their writer. What belongs in this register is the MEASUREMENT, because
+it describes frames the studio already replays today.
+
+THE PHASE FIELD EXISTS AND THE STUDIO IGNORES IT. Every frame in the
+formwork document carries "phase". studio.js reads it nowhere; the act
+is a linear map, machineTime(t, seconds) = t / FORMWORK_SECONDS * 100.
+
+MEASURED ON COLUMN DIAGNOSIS (661 vertices, 50 column nodes, 51 frames;
+confirmed in character by the plugin session on 2 sided vault):
+
+  reel    t   0-28   columns MOTIONLESS (mean z 0.000 throughout), net
+                     nearly flat (0.000 -> 0.304), net edge length
+                     SHORTENS 606.47 -> 590.11. Slack coming out of a
+                     net still on the ground. NOT one of Param's acts.
+  raise   t  30-58   columns climb 0.000 -> 2.638, net carried up
+                     0.326 -> 2.063, edges LENGTHEN 589 -> 677.
+                     = Param's ACT ONE (the columns lift the net).
+  finish  t  60-88   columns FROZEN at 2.638, net rises 2.188 -> 2.644
+                     alone, edges SHORTEN 689 -> 676. = his ACTS TWO
+                     AND THREE (pulleys tighten, ribs reel in).
+  hold    t  90-100  nothing moves; every displacement exactly 0.000.
+
+Note the trap in the names: the frames' "reel" is a PRE-LIFT event and
+is not Param's "ribs reel in", which lands in "finish". Both sessions
+misread this at first.
+
+THE FRAMES ARE PIECEWISE-LINEAR MORPHS, NOT A SIMULATION. Per-frame
+displacement is identical frame to frame within each phase (finish:
+0.0213 / 0.0461 / 0.0565 m for vertices 1-3, 4-8, 9+ hops from an
+anchor, unchanged across all fifteen frames), and the vertices
+FURTHEST from the anchors move most in every phase. There is no
+take-up propagating inward from the anchor lines, so acts two and
+three are NOT separable in the current frames. Consequence for the
+machine view: a wire-length-driven spin turns the edge reels and the
+node reels together through finish. Do not fake the separation with a
+keyframe -- that is a second source of truth for motion. PENDING
+PARAM'S CALL: either the plugin splits finish into two phases, or the
+mechanism document declares per-wire act membership.
+
+TIMING CONSEQUENCE ALREADY ON SCREEN TODAY, no mechanism document
+needed. FORMWORK_SECONDS is 12 and the drop begins at
+openingSeconds() = 12 s, i.e. when the frames reach time 100. But the
+machine stops moving at frame time 90. So the current take spends its
+last 1.2 SECONDS showing a completely motionless machine before the
+first voussoir falls. Evenly split by frame count the 12 s act is
+3.4 s reel + 3.4 s raise + 3.4 s finish + 1.2 s hold, while the
+visually dramatic content (the columns actually rising) is the raise
+alone. NOT CHANGED: the drop's rhythm is Param's aesthetic call and he
+was asleep. Offered to him for a morning ruling. Worth knowing that
+once the reels and wires are drawn, the quiet phases earn their time
+(you will see the spools turning while the net barely moves), which is
+exactly why he expected the machine to make the animation "more
+consistent".
+
+----------------------------------------------------------------------
