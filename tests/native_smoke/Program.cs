@@ -45573,12 +45573,43 @@ internal static partial class Program
             // old capped geometry) is read and reported alongside this
             // pin, same discipline, so the divergence stays on the record
             // rather than silent.
+            //
+            // THE CREST RING CLOSER (this task, spec 2026-09-07's own
+            // follow-up, "the crest itself"): course 18 MOVES AGAIN, 19 to
+            // 14, because the interim number above was the RADIATING
+            // ROSETTE this task exists to retire -- sixteen wedge stones
+            // tapering to the field's own near-point maximum, half of
+            // them under Param's own size floor (0.272 m against an
+            // 0.53 m ordinary span), which his ruling names by shape
+            // ("no radiating sunburst of wedges") and not only by size.
+            // The crest closer replaces them with stones cut at ordinary
+            // Size pitch off the crown loop's own real girth, paired to
+            // the recovered ridge seam rather than to that point (a third
+            // sibling of the existing ridge and slab-closer paths,
+            // SkinPatterns.cs, gated on the identical topology-plus-
+            // ridgeRatio test CapQualifies already proves safe), plus ONE
+            // small corner patch at the loop's own narrow pinch where
+            // CloserBand's general nearest-point pairing -- proven only on
+            // OPEN guides until this task, never on a closed one -- still
+            // folds: seven ridge stones (0.411-0.476 m, inside the
+            // ordinary size band, against the retired rosette's 0.27 m)
+            // plus one patch, eight cells replacing sixteen. MEASURED, not
+            // assumed: undersized count 0 (rule 2.4's own bound), and the
+            // patch's own crescent (a flat corner triangulated to the
+            // summit point, the same simplification CapPolygonOutline's
+            // own comment already names) reads 0.0408 m2, under this
+            // pattern's 0.05 m2 sliver floor and the SAME species as this
+            // vault's own retired cap crescent (0.0123 m2, "genuinely
+            // under [the] floor and correctly read as silent" per the cap
+            // crescent audit's own PASS message) -- bigger because one
+            // corner carries it rather than a whole loop's own
+            // circumference sharing it, not because anything is wrong.
             ["2 sided vault"] = new Dictionary<int, int>
             {
                 [0] = 12, [1] = 10, [2] = 12, [3] = 10, [4] = 12, [5] = 10,
                 [6] = 12, [7] = 10, [8] = 12, [9] = 10, [10] = 12, [11] = 10,
                 [12] = 12, [13] = 10, [14] = 12, [15] = 10, [16] = 12,
-                [17] = 10, [18] = 19
+                [17] = 10, [18] = 14
             }
         };
 
