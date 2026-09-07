@@ -8706,16 +8706,38 @@ internal static class SkinPatterns
                     }
                 }
             }
+            // TWO-SIDED VAULT DEADLINE, CORRECTION 1 (spec 2026-09-07): the
+            // same independent-tracing mismatch BandCell's own call site
+            // fixes also reaches a staged closer stone's Sections (along,
+            // upper, and where a slab carries an intermediate rail (fix
+            // 4), midRun too -- each an independently-traced run of its
+            // own). Same fix, same discipline: a SEPARATE, arc-length-
+            // resampled set for the loft alone, all matched to the
+            // WIDEST rail's own count, never touching `ring` (the
+            // outline, already finalised above this point, so walls stay
+            // byte-identical).
+            IReadOnlyList<double[]> loftAlong = along;
+            IReadOnlyList<double[]> loftUpper = upper;
+            IReadOnlyList<double[]>? loftMid = midRun;
+            int railTarget = midRun is null
+                ? Math.Max(along.Count, upper.Count)
+                : Math.Max(along.Count, Math.Max(midRun.Count, upper.Count));
+            if (along.Count != railTarget)
+                loftAlong = ResampleByArcLength(along, railTarget);
+            if (upper.Count != railTarget)
+                loftUpper = ResampleByArcLength(upper, railTarget);
+            if (midRun is not null && midRun.Count != railTarget)
+                loftMid = ResampleByArcLength(midRun, railTarget);
             closers.Add((stone.Guide, new SkinCell(
                 course, ring, stone.Clipped, stone.U0, stone.U1, false,
-                Sections: midRun is null
+                Sections: loftMid is null
                     ? new[]
                     {
-                        (IReadOnlyList<double[]>)along, upper
+                        loftAlong, loftUpper
                     }
                     : new[]
                     {
-                        (IReadOnlyList<double[]>)along, midRun, upper
+                        loftAlong, loftMid, loftUpper
                     },
                 Closer: true)));
         }
@@ -8936,9 +8958,105 @@ internal static class SkinPatterns
         // 5.2.1): recovering four chains from the concatenated ring
         // afterwards means re-detecting the joint corners, which Dedupe has
         // already made ambiguous.
+        //
+        // TWO-SIDED VAULT DEADLINE, CORRECTION 1 (spec 2026-09-07): lower
+        // and upper are two INDEPENDENTLY-traced curves, each returning
+        // however many points its own curve's native trace density
+        // happens to carry over [u0, u1] -- measured before this fix,
+        // roughly half of every courses-pattern study's loft-route cells
+        // carried a mismatch between them. ThickenCellSurface's own TOP is
+        // a loft ACROSS these two lists (CellTopPieces -> LoftSections ->
+        // Brep.CreateFromLoft); LoftRailPair below gives the LOFT its own
+        // matched-count, arc-fraction-corresponding pair, resampled from
+        // lower/upper but built as SEPARATE lists.
+        //
+        // DELIBERATELY NOT the same lists the outline above already used.
+        // The first two attempts at this fix (both reverted; both fully
+        // measured against the whole suite, not asserted) resampled
+        // lower/upper THEMSELVES before outline was built from them, on
+        // the reading that walls and top should read the identical
+        // points. Both broke real, unrelated fixtures: uniform arc-length
+        // resampling of an ALREADY-matching rail still relocates its own
+        // interior points (Run's own point density is not uniform, so
+        // recomputing "the same count" at uniform fractions is not a
+        // no-op), which measurably changed self-crossing/overlap outcomes
+        // on synthetic edge-case fixtures built to sit exactly on that
+        // boundary; insertion-only (never moving an existing point) was
+        // safer on that front but still changed the outline's own point
+        // COUNT, which several existing checks read distances or run
+        // indices off assuming the original density (CellWidthAcross's
+        // own per-point average, in particular, is a sampling-density-
+        // weighted mean and shifts when a rail gains a point, whatever its
+        // position). Only a Sections-local pair, entirely apart from
+        // outline, touches neither: the walls (built from outline) are
+        // BYTE-IDENTICAL to before this fix, on every fixture, always.
+        IReadOnlyList<double[]> loftLower = lower;
+        IReadOnlyList<double[]> loftUpper = upper;
+        if (lower.Count != upper.Count)
+        {
+            int target = Math.Max(lower.Count, upper.Count);
+            loftLower = ResampleByArcLength(lower, target);
+            loftUpper = ResampleByArcLength(upper, target);
+        }
         return new SkinCell(
             course, Dedupe(outline), clipped, u0, u1, false,
-            Sections: new[] { (IReadOnlyList<double[]>)lower, upper });
+            Sections: new[] { loftLower, loftUpper });
+    }
+
+    /// <summary>
+    /// TWO-SIDED VAULT DEADLINE, CORRECTION 1: a polyline's own points,
+    /// resampled to exactly <paramref name="count"/> points at uniform
+    /// fractions of its own travelled arc length. Point 0 and point
+    /// (count - 1) are exactly the input's own first and last points (arc
+    /// fraction 0 and 1); every point in between is a linear interpolation
+    /// within whichever original segment its target arc length falls in --
+    /// the same construction <see cref="Run"/> itself already uses to
+    /// place a point at an arbitrary arc position on a traced curve,
+    /// applied here to a standalone run rather than a whole
+    /// SkinLevelCurve. Used ONLY to build a LOFT-local rail pair (see
+    /// BandCell's own call site for why this never touches the outline
+    /// lower/upper themselves): point i of a resampled lower and point i
+    /// of a resampled upper both sit at fraction i / (count - 1) along
+    /// their own respective lengths, which is what "corresponds along the
+    /// span" means for a loft between two rails of different native
+    /// density.
+    /// </summary>
+    private static List<double[]> ResampleByArcLength(
+        IReadOnlyList<double[]> points, int count)
+    {
+        if (count <= 1 || points.Count <= 1)
+            return new List<double[]> { points[0] };
+        var cumulative = new double[points.Count];
+        for (int at = 1; at < points.Count; at++)
+        {
+            cumulative[at] =
+                cumulative[at - 1] + Distance(points[at - 1], points[at]);
+        }
+        double total = cumulative[^1];
+        var resampled = new List<double[]>(count);
+        if (!(total > 1.0e-12))
+        {
+            for (int at = 0; at < count; at++)
+                resampled.Add(points[0]);
+            return resampled;
+        }
+        int segment = 0;
+        for (int at = 0; at < count; at++)
+        {
+            double target = total * at / (count - 1);
+            while (segment < points.Count - 2 &&
+                   cumulative[segment + 1] < target)
+            {
+                segment++;
+            }
+            double segmentStart = cumulative[segment];
+            double segmentEnd = cumulative[segment + 1];
+            double t = segmentEnd - segmentStart > 1.0e-12
+                ? (target - segmentStart) / (segmentEnd - segmentStart)
+                : 0.0;
+            resampled.Add(Lerp(points[segment], points[segment + 1], t));
+        }
+        return resampled;
     }
 
     /// <summary>

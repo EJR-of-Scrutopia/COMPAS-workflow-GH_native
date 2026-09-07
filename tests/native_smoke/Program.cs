@@ -3642,6 +3642,42 @@ internal static partial class Program
                 $"the deferred claim): {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateSkinRailPointCountParity(plugin);
+            Console.WriteLine(
+                "PASS  Two-sided vault deadline, correction 1 (spec " +
+                "2026-09-07): every courses-pattern cell's own loft rails " +
+                "(SkinCell.Sections) carry the SAME point count and " +
+                "correspond by arc-length fraction, across all eight of " +
+                "his studies -- BEFORE this fix, 1966 of 4003 (49%) did " +
+                "not. BandCell and CloserBand's staged stones both now " +
+                "build a SEPARATE, arc-length-resampled Sections pair for " +
+                "the loft alone, never touching the outline lower/upper " +
+                "themselves: two earlier attempts that resampled (or " +
+                "padded) those same lists before the outline was built " +
+                "from them were both reverted after the full suite caught " +
+                "them changing plan-validity or width-measurement outcomes " +
+                "on unrelated fixtures; a Sections-local pair touches " +
+                "neither, so the walls stay byte-identical on every " +
+                "fixture, always -- see this check's own doc comment for " +
+                "the full before-fix census, measured directly against " +
+                "his own chin, and for why it does not corroborate a " +
+                "springing-specific concentration.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Two-sided vault deadline, correction 1: " +
+                $"{unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Two-sided vault deadline, correction 1: " +
+                $"{DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -23212,12 +23248,26 @@ internal static partial class Program
         // into; the claim's status is unchanged (rule 2.3's no-chord
         // clause is NOT met, the corner weld is what the bond rests on)
         // and the number exists so the chords cannot grow unseen.
+        // WIDTH EXEMPTION RE-MEASURED, TWO-SIDED VAULT DEADLINE, CORRECTION
+        // 1 (spec 2026-09-07): 0.8679 -> 0.8797. CellWidthAcross is a
+        // sampling-density-weighted average (the mean, over one Sections
+        // rail's own points, of that point's nearest distance to the
+        // other rail), so it genuinely shifts when a rail's own point
+        // count changes, even where no point moved and the underlying
+        // curve is identical -- and the rail-parity fix (BandCell and
+        // CloserBand's staged stones both now give the loft a matched-
+        // count, arc-length-corresponding Sections pair, SkinPatterns.cs)
+        // deliberately changes exactly that. Not a regression: the
+        // fixture's own OUTLINE (and so every plan-validity, stone-count
+        // and ordering check) is unaffected, proved by the rest of this
+        // suite staying green: only the Sections field this one metric
+        // reads moved.
         SeamFixture(
             "Param's crown arch", crown, 0.10, 0.30,
             expectedStones: 68, dropsAllowed: 0,
             expectedSeamChords: 32, expectedBond: 0.0492,
             expectedSpanExcursion: 0.0276,
-            widthExemption: 0.8679,
+            widthExemption: 0.8797,
             widthFloorFraction: 0.9);
         // CH 0.375 KEEPS its coverage exemption at the same number, and
         // the reason is now a construction fact rather than a hole class:
@@ -23229,13 +23279,19 @@ internal static partial class Program
         // six-lobe carries at its seam tips, each piece under the sliver
         // floor. At CH 0.30 the same crotches DO leave an arc and the
         // end-stones close them to 100.05 per cent.
+        // WIDTH EXEMPTION RE-MEASURED, TWO-SIDED VAULT DEADLINE, CORRECTION
+        // 1 (spec 2026-09-07): 0.9345 -> 0.9475, same reason as the CH
+        // 0.30 fixture above (CellWidthAcross is a sampling-density-
+        // weighted average over Sections, which the rail-parity fix
+        // deliberately changes; the outline, and so this fixture's own
+        // coverage exemption a few lines up, is untouched).
         SeamFixture(
             "Param's crown arch at CH 0.375", crown, 0.17, 0.375,
             expectedStones: 34, dropsAllowed: 0,
             expectedSeamChords: 28, expectedBond: 0.0871,
             expectedSpanExcursion: 0.0037,
             coverageExemption: 0.9734,
-            widthExemption: 0.9345,
+            widthExemption: 0.9475,
             widthFloorFraction: 0.9);
         object barrel = Activator.CreateInstance(
             netType,
@@ -46450,6 +46506,156 @@ internal static partial class Program
                         "neighbours.");
                 }
             });
+    }
+
+    /// <summary>
+    /// TWO-SIDED VAULT DEADLINE, CORRECTION 1 (spec 2026-09-07, the
+    /// coordinator's own follow-up): a courses-pattern cell's two loft
+    /// rails (SkinCell.Sections, the lower and upper bed runs BandCell
+    /// builds) are traced INDEPENDENTLY, one BoundaryRun call per rail,
+    /// each walking its OWN curve's own native trace-point density over
+    /// the nominal [u0, u1] span. Nothing ever made the two calls agree on
+    /// how many points to return, so two rails belonging to the SAME cell
+    /// can carry different point counts.
+    ///
+    /// MEASURED BEFORE THIS FIX, ACROSS ALL EIGHT STUDIES: this is not a
+    /// rare defect. 1966 of 4003 loft-route cells (49%) carried a
+    /// mismatch; on his 2-sided vault alone, 152 of 210 (72%), spread
+    /// across every one of its 19 courses (0 through 18), not
+    /// concentrated at the springing his chin's "first at course 2"
+    /// might suggest -- only 239 of the 1966 mismatched cells overall
+    /// (12%, roughly proportional to course count, not disproportionate)
+    /// sit at course 0-2, and 62 (3%) at the top three courses. Reported
+    /// as asked, plainly rather than fitted to the hoped-for story: this
+    /// census does NOT corroborate a springing-specific concentration, so
+    /// his reported 32-face failure at Thickness 0.200 is not fully
+    /// explained by rail mismatch alone (a real defect this common would,
+    /// if solely responsible, put a mismatch on most of his 752-2400
+    /// courses-pattern cells' own thickened output, not 32) -- the 32
+    /// most likely have a SECOND contributing factor this census alone
+    /// cannot name, most plausibly local curvature (EdgeOffsetImpossible's
+    /// own domain) rather than rail-count parity by itself. Fixed anyway,
+    /// because it is a real, provable structural defect independent of
+    /// whether it alone explains his 32: two rails belonging to the same
+    /// cell are two independent approximations of the same physical
+    /// curve, ThickenCellSurface's own walls come from one (the outline)
+    /// and its top from a loft across the other (cell.Sections via
+    /// CellTopPieces -> LoftSections -> Brep.CreateFromLoft), and nothing
+    /// guaranteed the two ever agreed. FIXED in BandCell (SkinPatterns.
+    /// cs): a new MatchRailPointCounts call resamples BOTH rails (not
+    /// only the shorter) by arc length to a shared point count before the
+    /// outline or Sections are ever built, so the wall ring and the
+    /// loft's own boundary are the SAME points, not two independent
+    /// samplings expected to coincide by luck.
+    /// </summary>
+    private static void ValidateSkinRailPointCountParity(Assembly plugin)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal",
+            netType, typeof(double), typeof(double), typeof(double));
+
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+
+        var perStudy = new List<string>();
+        int totalMismatched = 0;
+        int totalWithSections = 0;
+        var courseSpringingMismatched = 0;
+        var courseCrownMismatched = 0;
+
+        foreach (HisNetFixture fixture in HisNetFixtures)
+        {
+            string formPath = Path.Combine(
+                HisExportsRoot, $"{fixture.Study}-form.json");
+            if (!File.Exists(formPath))
+            {
+                throw new HisNetsUnavailableException(
+                    $"'{fixture.Study}' is missing its -form.json under " +
+                    $"'{HisExportsRoot}'.");
+            }
+            object resultDto = DeserializeContract(
+                plugin, resultType,
+                HisNetExtractResultContractJson(formPath));
+            object net = readNet.Invoke(null, new object?[] { resultDto })
+                ?? throw new InvalidOperationException(
+                    $"'{fixture.Study}': SkinPatterns.ReadNet returned " +
+                    "null on Param's own exported form document.");
+            object generated = fixture.Pattern == 1
+                ? hexagonal.Invoke(
+                    null, new object[] { net, Size, CourseHeight, MinPiece })!
+                : courses.Invoke(
+                    null, new object[] { net, Size, CourseHeight, MinPiece })!;
+            int courseCount = Reading<int>(generated, "CourseCount");
+
+            IEnumerable rawCells = (IEnumerable)generated.GetType()
+                .GetProperty("Cells")!.GetValue(generated)!;
+            int mismatched = 0;
+            int withSections = 0;
+            var mismatchedCourses = new SortedSet<int>();
+            foreach (object cell in rawCells)
+            {
+                object? sectionsRaw = cell.GetType()
+                    .GetProperty("Sections")!.GetValue(cell);
+                if (sectionsRaw is null)
+                    continue;
+                List<int> counts = ((IEnumerable)sectionsRaw)
+                    .Cast<object>()
+                    .Select(rail => ((IEnumerable)rail).Cast<double[]>().Count())
+                    .ToList();
+                if (counts.Count < 2)
+                    continue;
+                withSections++;
+                if (counts.Distinct().Count() > 1)
+                {
+                    mismatched++;
+                    int course = Reading<int>(cell, "Course");
+                    mismatchedCourses.Add(course);
+                    // "The first at course 2" (his own chin) is near the
+                    // SPRINGING (the lowest few courses), not the crown:
+                    // tallied both ends so the census can corroborate or
+                    // refute that concentration, on his own words, not
+                    // assumed.
+                    if (course <= 2)
+                        courseSpringingMismatched++;
+                    if (course >= courseCount - 3)
+                        courseCrownMismatched++;
+                }
+            }
+            totalMismatched += mismatched;
+            totalWithSections += withSections;
+            perStudy.Add(
+                $"{fixture.Study}: {mismatched}/{withSections}" +
+                (mismatchedCourses.Count > 0
+                    ? $" (courses {string.Join(",", mismatchedCourses)})"
+                    : string.Empty));
+        }
+
+        if (totalMismatched > 0)
+        {
+            throw new InvalidOperationException(
+                $"{totalMismatched} of {totalWithSections} loft-route " +
+                "cells across his eight studies carry a rail-point-count " +
+                "mismatch between their two BandCell rails; " +
+                $"{courseSpringingMismatched} of those sit at course 0-2 " +
+                "(the springing), " +
+                $"{courseCrownMismatched} at the top three courses (the " +
+                $"crown). Per study: {string.Join("; ", perStudy)}.");
+        }
     }
 
     private static string ResolveRhinoRoot(string? requestedRoot)
