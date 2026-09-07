@@ -5631,6 +5631,27 @@ internal static class SkinPatterns
             // short-circuiting fix 2's isRidge to false, below, changes
             // NOTHING here, and ridgeOutlines stays empty, so this gate
             // still fires and the audit still measures a real hole.
+            if (Environment.GetEnvironmentVariable("SKIN_RIDGEGATE_DEBUG")
+                    == "1" && isCapBand)
+            {
+                Console.Error.WriteLine(
+                    $"RIDGEGATEDEBUG course={band.Course} depth={band.Depth} " +
+                    $"uppersCount={uppers.Count} " +
+                    string.Join(
+                        " ",
+                        uppers.Select((u, i) =>
+                            $"upper{i}.Closed={u.Closed}.Length={u.Length:0.###}")) +
+                    $" seamsCount={seams.Count} lowersCount={lowers.Count} " +
+                    string.Join(
+                        " ",
+                        lowers.Select((l, i) =>
+                            $"lower{i}.Closed={l.Closed}.Length={l.Length:0.###}")) +
+                    $" midsCount={mids.Count} " +
+                    string.Join(
+                        " ",
+                        mids.Select((m, i) =>
+                            $"mid{i}.Closed={m.Closed}.Length={m.Length:0.###}")));
+            }
             bool ridgeCandidate =
                 isCapBand &&
                 band.Depth == 0 &&

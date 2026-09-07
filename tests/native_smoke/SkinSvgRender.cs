@@ -365,7 +365,7 @@ internal static partial class Program
                     .ToList();
             if (Environment.GetEnvironmentVariable("SKIN_SVG_SECTIONS_DUMP")
                     == "1" &&
-                course <= 4)
+                (course <= 4 || course >= 15))
             {
                 string shape = sections is null
                     ? "SECTIONS NULL (fan route)"
@@ -498,11 +498,24 @@ internal static partial class Program
                          .GroupBy(c => c.Course)
                          .OrderBy(g => g.Key))
             {
+                var clipped = group.Where(c => c.Clipped).ToList();
+                var unclipped = group.Where(c => !c.Clipped).ToList();
                 Console.Error.WriteLine(
                     $"course={group.Key} n={group.Count()} " +
                     "worstWallHeight=" +
                     $"{group.Min(c => c.MinEffectiveWallHeight):0.######} m " +
-                    $"knownImpossible={group.Count(c => c.KnownImpossible)}");
+                    $"knownImpossible={group.Count(c => c.KnownImpossible)} " +
+                    $"clippedWorst=" +
+                    (clipped.Count > 0
+                        ? clipped.Min(c => c.MinEffectiveWallHeight)
+                            .ToString("0.######")
+                        : "n/a") +
+                    $" ({clipped.Count}) unclippedWorst=" +
+                    (unclipped.Count > 0
+                        ? unclipped.Min(c => c.MinEffectiveWallHeight)
+                            .ToString("0.######")
+                        : "n/a") +
+                    $" ({unclipped.Count})");
             }
             Console.Error.WriteLine("--- highest 40 cells (crown region) ---");
             foreach (RenderCell cell in cells
