@@ -33,6 +33,29 @@ solid of sensible size, and there are no holes, no slivers, and no flat plates.
    still there after two rounds aimed at it. Root-cause it on HIS 2-sided net specifically,
    the way the honeycomb was root-caused, rather than reasoning from the synthetic fixtures.
 
+## HIS RULING ON THE CROWN, 2026-09-07: ridge stones, no cap
+
+Put to him with the render in front of him, because the cap gate was measured to fire CORRECTLY
+by its own literal rule (it refuses an open strip; this crown genuinely traces a small closed
+loop, since the crest has its own local high point: heights fall about four times faster across
+the ridge than along it, and the diamond's own corners read 4.985 against 4.564). The rule's
+premise, that a closed loop means a dome apex, simply does not anticipate a ridge whose crest
+closes a small loop. That made it a design decision, and his answer is:
+
+THE CROWN OF A RIDGE VAULT TAKES RIDGE STONES AND NO CAP. Courses from both flanks meet along
+the crest and interlock there, the way a barrel or groin vault is built. No cap stone, no
+radiating sunburst of wedges. This also retires the two defects that sit downstream of the cap
+on this form: the oversized diamond (girth 2.855 m against a maximum piece of 1.5 m) and the
+eight undersized wedges (0.27 m against an ordinary 0.53 m span).
+
+IMPLEMENTATION NOTE, so the gate is not simply disabled: the distinction to encode is RIDGE
+versus APEX, not open versus closed. A crest whose height falls much faster across than along
+is a ridge however small the loop it closes; round three's ridge machinery (cross-ridge stones,
+docs/superpowers/specs/2026-09-05-skin-round-three-findings.md finding 2, built in commit
+3cb1371) is what should serve it. A genuine dome apex keeps the one-polygon cap of round two.
+The measurement above is the discriminator and it must be checked on the OTHER studies too: the
+3, 4, 5 and 6 sided vaults have real apexes and must keep capping.
+
 ## How the work is done
 
 RULE A. HIS NET, START TO FINISH. All measurement on "2 sided vault-form.json" from
