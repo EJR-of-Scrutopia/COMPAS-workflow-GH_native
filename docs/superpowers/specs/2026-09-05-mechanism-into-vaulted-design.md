@@ -1,5 +1,42 @@
 # The machine goes to Vaulted: the mechanism document and the rig player
 
+## BUILD RULING, 2026-09-08: this is now being built, and his inputs are firmer
+
+His words: "can we work on the exporter that will then go to the vaulted app we have, so the
+animation will be more consistent ... I need a foundation anchor, tension tie / column slider
+rail, mechanism, wire routing for the mechanism. the rotating parts on the mechanism and the
+wire movement as it happens. we already decided i can provide you frame and i can seperate the
+moving parts from the mechanism even give you to rotational axis etc. we just need the sequence
+and materials right on the other app after that." Coordination with the Vaulted session is
+authorised by the same message, so P-003 goes to the channel.
+
+THE PART LIST IS NOW HIS, and supersedes section 3's working names where they differ. Five
+kinds travel:
+  1. FOUNDATION ANCHOR. The ground fixing the tie pulls against.
+  2. TENSION TIE / COLUMN SLIDER RAIL. His 2026-09-05 ruling stands: the sliding bar and the
+     anchor are ONE authored mesh, because the column piece is the tension tie. Authored in
+     place, exported in world coordinates, validated against the anchor rows, never placed by
+     the plugin.
+  3. THE MECHANISM. The pulley unit, in its two types: the EDGE REEL on the anchor lines and
+     the NODE REEL under each principal node.
+  4. WIRE ROUTING. His "series of frames" through the unit: an ordered list of planes in the
+     unit's own local space, the path a wire takes around its wheels.
+  5. THE ROTATING PARTS. NEW AND FIRMER: he now separates the moving parts from the body of the
+     mechanism and supplies each part's ROTATION AXIS himself, rather than the plugin inferring
+     one from a bounding box. So a mechanism arrives as a static body plus a list of spinners,
+     each spinner carrying its own mesh, its own axis (a line or a plane in unit-local space)
+     and its own kind.
+
+WHAT STAYS DERIVED, because it must follow the physics rather than be animated by hand: the
+ROTATION ANGLE of each spinner per frame, from the wire-length arithmetic of section 5. He
+gives the axis; the frames give the motion. Nothing about the reeling is keyframed.
+
+WHAT THE STUDIO OWES, his closing sentence "we just need the sequence and materials right on the
+other app after that": the SEQUENCE is his three-act lifting order of section 5a (columns lift,
+then pulleys tighten, then ribs reel in), and the MATERIALS are the tag vocabulary of section 7.
+Both are asked of the Vaulted session in the channel note, since the writer side only supplies
+tags and frames.
+
 Written 2026-09-05 from the brainstorm with Param, his mechanism explanation and his two
 refinements. FOR HIS READ: nothing here is built until he approves this document and the
 companion channel note at docs/superpowers/notes/2026-09-05-note-to-vaulted-P-003.md. His
