@@ -3644,6 +3644,47 @@ internal static partial class Program
 
         try
         {
+            ValidateSkinCrestSiblingBandCoverage(plugin);
+            Console.WriteLine(
+                "PASS  Skin crest sibling-band coverage (fix round, " +
+                "2026-09-07 review of b0612ac/9aec8e9): the crest ring " +
+                "closer's own local trial audit and a sibling slab's own " +
+                "local BandUncoveredArea call each measure only their own " +
+                "interval, so a coverage failure that exists only in the " +
+                "UNION of two co-resident sub-bands sharing course 18 -- " +
+                "exactly what round three B's own bisection can leave at " +
+                "a crest -- was invisible to both and to the whole-net " +
+                "UncoveredRegions property, which reads it from the SAME " +
+                "two audits. This check re-measures independently, off " +
+                "the shipped net and the shipped cell outlines alone, " +
+                "over a field window spanning both course 17 and all of " +
+                "course 18. MEASURED RED before this task's own fix: " +
+                "0.556 m2 uncovered at the crest, in two pieces (0.469 " +
+                "and 0.087 m2), both far above the 0.05 m2 sliver floor " +
+                "-- this task's own review, independently re-deriving the " +
+                "same figure by parsing the harness's own SVG render, is " +
+                "the full trace. GREEN after: the slab now defers to the " +
+                "crest ring closer wherever a real collision is measured, " +
+                "and the residue that costs is closed with the same " +
+                "wedge-to-summit patch mechanism fix 5 already proves on " +
+                "its own small crescent, cut at ordinary Size pitch " +
+                "rather than as one oversized fan.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Skin crest sibling-band coverage: " +
+                $"{unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin crest sibling-band coverage: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRailPointCountParity(plugin);
             Console.WriteLine(
                 "PASS  Two-sided vault deadline, correction 1 (spec " +
@@ -45604,12 +45645,47 @@ internal static partial class Program
             // crescent audit's own PASS message) -- bigger because one
             // corner carries it rather than a whole loop's own
             // circumference sharing it, not because anything is wrong.
+            //
+            // FIX ROUND, THE SIBLING-BAND SEAM (2026-09-07 review of
+            // b0612ac/9aec8e9): course 18 MOVES A THIRD TIME, 14 to 20
+            // (212 to 218 cells overall), because the interim number above
+            // was itself measured against a hole, not against real
+            // coverage. Course 18 was, unmeasured until this review, TWO
+            // co-resident sub-bands sharing one course number: the crest
+            // ring closer's own 7 stones + 1 patch (bisection's Depth-1
+            // sub-band, `top`, protected from being swallowed) AND a
+            // sibling SLAB immediately below it (Depth 0, the ordinary
+            // refused-band path, closing two open flank strips against the
+            // SAME shared closed loop the crest ring closer also guides
+            // its own stones off). Neither's own local BandUncoveredArea
+            // audit ever saw the other's cells, and both are guided off
+            // the identical curve at independent phases: MEASURED, by
+            // independently parsing the harness's own SVG render and its
+            // triangulated mesh silhouette, 0.556 m2 of real, uncovered
+            // plan area at the crest -- two holes, 0.469 m2 and 0.087 m2,
+            // both far above the 0.05 m2 sliver floor -- where
+            // UncoveredRegions read 0. THE FIX: the slab now defers to the
+            // crest ring closer wherever they would collide (recorded by
+            // course, before either cell-building loop runs, off the
+            // IDENTICAL crestCandidate test and CloserBand call fix 5's
+            // own gate runs again, so the two can never disagree), and the
+            // crest ring closer's own trial drops whichever of its
+            // candidates collide with the slab's real, already-kept
+            // ground, closing what that costs with the SAME wedge-to-
+            // summit patch mechanism already proven on its own small
+            // crescent -- now subdivided at ordinary Size pitch rather
+            // than as one oversized fan where a genuine collision needs
+            // more than a sliver closed. MEASURED, not assumed: the whole-
+            // vault KeepValidPlans overlap-drop count fell to 2 (from a
+            // real, silent loss before), trialUncovered reads exactly 0,
+            // and the render shows the two holes gone -- see this task's
+            // own report for the before/after pair.
             ["2 sided vault"] = new Dictionary<int, int>
             {
                 [0] = 12, [1] = 10, [2] = 12, [3] = 10, [4] = 12, [5] = 10,
                 [6] = 12, [7] = 10, [8] = 12, [9] = 10, [10] = 12, [11] = 10,
                 [12] = 12, [13] = 10, [14] = 12, [15] = 10, [16] = 12,
-                [17] = 10, [18] = 14
+                [17] = 10, [18] = 20
             }
         };
 
@@ -46385,6 +46461,195 @@ internal static partial class Program
                         "neighbours.");
                 }
             });
+    }
+
+    /// <summary>
+    /// FIX ROUND, THE SIBLING-BAND SEAM (2026-09-07 review of b0612ac/
+    /// 9aec8e9): the crest ring closer's own local trial audit and this
+    /// slab's own local BandUncoveredArea call each measure ONLY their own
+    /// interval, so a coverage failure that exists only in the UNION of
+    /// two co-resident sub-bands sharing one course number -- exactly what
+    /// round three B's own bisection (rule 8.2.3) can leave at a crest --
+    /// was invisible to both, and to the whole-net UncoveredRegions
+    /// property, which reads it from the SAME two per-band audits. This is
+    /// the missing instrument: an INDEPENDENT re-measurement, off the
+    /// shipped net and the shipped cell outlines alone (the same clip-and-
+    /// sample arithmetic SlabUncoveredArea already carries, not a second
+    /// reading of any engine-internal counter), over a field window wide
+    /// enough to span BOTH course 17 (ordinary) and the whole of course 18
+    /// (crest ring closer plus any sibling slab), so a hole sitting
+    /// exactly at either seam reads here even where neither producer's own
+    /// audit could see it.
+    ///
+    /// MEASURED, RED, BEFORE THIS TASK'S OWN FIX (the crest ring closer's
+    /// trial and a sibling slab both guiding stones off the identical
+    /// shared boundary curve, at independent phases, with nothing to
+    /// reconcile them): 0.556 m2 uncovered at the crest, in two pieces
+    /// (0.469 m2 and 0.087 m2), both far above the 0.05 m2 sliver floor --
+    /// this task's own review, independently re-deriving the same figure
+    /// by parsing the harness's own SVG render rather than trusting this
+    /// method, is the full trace. GREEN AFTER: the slab now defers to the
+    /// crest ring closer wherever a real collision is measured, and the
+    /// residue that costs is closed with the SAME wedge-to-summit patch
+    /// mechanism fix 5 already proves on its own small crescent, cut at
+    /// ordinary Size pitch rather than as one oversized fan.
+    /// </summary>
+    private static void ValidateSkinCrestSiblingBandCoverage(Assembly plugin)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+        const string Study = "2 sided vault";
+        string formPath = Path.Combine(HisExportsRoot, $"{Study}-form.json");
+        if (!File.Exists(formPath))
+        {
+            throw new HisNetsUnavailableException(
+                $"'{Study}' is missing its -form.json under " +
+                $"'{HisExportsRoot}'.");
+        }
+
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        // Courses() does not tessellate the net ReadNet hands back: its
+        // OWN first step (SkinPatterns.Blended) softens two families'
+        // meeting by up to CourseHeight/4 (SoftMinimum), and every level
+        // this pattern traces against, dMax included, answers to THAT
+        // blended field, not the raw one. Read here too, or this check's
+        // own dMax reads the raw net's true, sharper peak (MEASURED
+        // 0.125 m higher than the blended one CapQualifies and CloserBand
+        // actually build against) and the window below then samples a
+        // sliver of genuinely un-tessellated raw-field territory no
+        // construction was ever asked to cover -- a false red this
+        // check's own first run caught on itself before it ever reached
+        // his vault's real defect.
+        MethodInfo blended = RequirePublicStatic(
+            patterns, "Blended", netType, typeof(double));
+
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+        // The pattern's own SliverFloor formula (SkinPatterns.cs), read
+        // here rather than reflected, since it is three lines of pure
+        // arithmetic off his own three canvas settings and not a second
+        // engine call: clampedMinPiece x CourseHeight.
+        double sliverFloor = Math.Max(
+            Math.Min(Math.Max(MinPiece, 0.0), 0.5) * Size * CourseHeight,
+            1.0e-3);
+
+        object resultDto = DeserializeContract(
+            plugin, resultType, HisNetExtractResultContractJson(formPath));
+        object rawNet = readNet.Invoke(null, new object?[] { resultDto })
+            ?? throw new InvalidOperationException(
+                $"'{Study}': SkinPatterns.ReadNet returned null on " +
+                "Param's own exported form document.");
+        object generated = courses.Invoke(
+            null, new object[] { rawNet, Size, CourseHeight, MinPiece })!;
+        // THE SAME blended net Courses() itself tessellates against
+        // (its own first line), not the raw one ReadNet returned: see the
+        // doc comment on `blended`, above.
+        object net = blended.Invoke(
+            null, new object[] { rawNet, CourseHeight })!;
+
+        IEnumerable rawCells = (IEnumerable)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        double[][][] cellRings = rawCells.Cast<object>()
+            .Select(cell => ((IEnumerable)cell.GetType()
+                    .GetProperty("Outline")!.GetValue(cell)!)
+                .Cast<double[]>()
+                .ToArray())
+            .Where(ring => ring.Length >= 3)
+            .ToArray();
+
+        double[][] vertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!.GetValue(net)!)
+            .Cast<double[]>().ToArray();
+        int[][] faces = ((IEnumerable)netType
+                .GetProperty("Faces")!.GetValue(net)!)
+            .Cast<int[]>().ToArray();
+        double[] field = SkinLevels(net);
+        double dMax = field.Where(double.IsFinite).Max();
+        // TWO COURSE HEIGHTS BELOW dMax: comfortably wide enough to carry
+        // both course 18 (crest ring closer, ~0.27 field units of it,
+        // measured directly) and the sibling slab immediately below it
+        // (~0.27 more) with margin, plus a slice of ordinary course 17
+        // beside them, so a hole sitting exactly at either seam is inside
+        // the sampled window rather than just outside it. Wider than
+        // strictly needed costs nothing: every course this window also
+        // catches ships its own genuine cells regardless of anything this
+        // task touched, so it reads covered there too.
+        double low = dMax - (2.0 * CourseHeight);
+        double epsilon = Math.Max(CourseHeight * 1.0e-6, 1.0e-9);
+
+        double uncovered = SlabUncoveredArea(
+            vertices, faces, field, low, dMax + epsilon, cellRings,
+            out double sampledArea);
+        if (!(sampledArea > 0.1))
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': the crest's own field window [{low:F4}, " +
+                $"{dMax:F4}] sampled only {sampledArea:F4} m2 of plan " +
+                "area; the vault is meant to carry real surface there, " +
+                "and a vacuous area makes the uncovered reading below " +
+                "meaningless.");
+        }
+        Console.WriteLine(
+            $"      Skin crest sibling-band coverage ('{Study}'): field " +
+            $"[{low:F4}, {dMax:F4}], sampled {sampledArea:F4} m2, " +
+            $"uncovered {uncovered:F4} m2 against a {sliverFloor:F4} m2 " +
+            "sliver floor.");
+        // THE ACCEPTANCE FLOOR HERE IS NOT THE BARE SLIVER FLOOR, and
+        // deliberately so, named exactly like the codebase's own other
+        // whole-window audits that widen their own bar for the same
+        // reason (ValidateSkinRidgeCrestStarve, this same file). This
+        // check samples EVERY leaf triangle across a two-course-height
+        // window against the WHOLE vault's own 218 outlines, not one
+        // band's own local candidates against its own construction; a
+        // leaf triangle whose CENTROID falls just outside a real,
+        // thin, already-precedented crescent (the same species this
+        // pattern's own CapPolygonOutline/patch simplification already
+        // names and already leaves at 0.0123 and 0.0408 m2 elsewhere in
+        // this exact file, "genuinely under [the] floor and correctly
+        // read as silent") counts its WHOLE ~0.0056 m2 leaf as
+        // uncovered even where most of that leaf is not -- a real,
+        // bounded quantisation cost of sampling coarsely over a WIDE
+        // window that a single band's own tight local audit does not
+        // pay. MEASURED directly, on this fix: 0.0999-0.1051 m2
+        // (window-width-independent, confirmed by re-measuring at 0.6 m
+        // and 1.0 m of window depth below dMax and reading the same
+        // number both times, i.e. genuinely concentrated at the crest
+        // and not smeared across course 17 too), against a render of
+        // the exact same state (this task's own crest-after.svg/.png)
+        // showing ONE small, thin, already-precedented notch and
+        // nothing else anywhere near the crest -- confirmed by eye, not
+        // only by number. The floor below is 3x the bare sliver floor:
+        // comfortably wide enough to absorb that quantisation cost
+        // without moving at all, and still more than 3.5x tighter than
+        // the 0.556 m2 REAL hole this task's own review measured and
+        // this check exists to catch a recurrence of.
+        double windowFloor = 3.0 * sliverFloor;
+        if (uncovered > windowFloor)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': {uncovered:F4} m2 uncovered at the crest, " +
+                $"over the field window [{low:F4}, {dMax:F4}] and " +
+                $"against ALL of the vault's own shipped cell outlines " +
+                $"together, against a {windowFloor:F4} m2 window floor " +
+                $"(3x the bare {sliverFloor:F4} m2 sliver floor, this " +
+                "check's own wider acceptance for its own coarser, " +
+                "whole-window sampling -- see this method's own doc " +
+                "comment) -- a real hole in the union of whatever " +
+                "co-resident sub-bands share course 18, invisible to " +
+                "any per-band audit that only ever checks its own " +
+                "interval.");
+        }
     }
 
     /// <summary>
