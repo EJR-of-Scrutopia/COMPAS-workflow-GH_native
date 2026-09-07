@@ -5741,6 +5741,388 @@ internal static class SkinPatterns
                         band.High, dMax, ridgeCx, ridgeCy));
                 }
             }
+
+            // FIX 5, THE CREST RING CLOSER (design 2026-09-07, "The crest
+            // of the two-sided vault: what closes the last small loop").
+            // Neither fix 2 (`ridgeCandidate`, uppers.Count==2 both open --
+            // a plateau ridge whose correspondence never fails) nor fix 3
+            // (a REFUSED slab's guide family two open strips) fits a band
+            // whose flanks have already MERGED into one closed loop right
+            // at the crest's own local high point: TOPOLOGICALLY a
+            // shrinking closed loop (uppers.Count==1, closed, shrinking
+            // toward the field's own point maximum) but GEOMETRICALLY
+            // still a ridge, which is exactly what the ridgeRatio test
+            // below measures on the loop that actually carries the
+            // shape -- lowers[0], the band's OWN low boundary, not the
+            // near-point uppers[0] a level or two above it.
+            //
+            // CapQualifies already refuses this band a cap for being a
+            // ridge (his 2026-09-07 ruling: "a ridge with its own local
+            // crest ... takes ridge stones and no cap"), and it falls
+            // through to here with capPlans empty; absent this path the
+            // generic per-component loop below tapers ordinary-pitch
+            // wedges from lowers[0] down to the shared near-point
+            // uppers[0] -- a radiating rosette, his own first complaint
+            // this round, measured sixteen stones at roughly half the
+            // ordinary span. Guarded to the identical shape fix 2 and
+            // fix 3 already gate on -- exactly one closed component each
+            // side, a seam recovered -- plus the same 10% ridgeRatio
+            // floor CapQualifies already proves against every true-apex
+            // study (0.18-0.68% on the 3/4/5/6-sided vaults, nowhere
+            // near this test; this vault's own crest reads 14.7%).
+            //
+            // RECOMPUTED, NOT SHARED: capRefusals is a flat, unkeyed
+            // list, and threading a per-band lookup through it is the
+            // kind of shared-state coupling that made two earlier,
+            // reverted attempts in this area fragile. The three lines
+            // below are the same formula CapQualifies already runs
+            // (SkinPatterns.cs, the girth-normalised ridgeRatio near line
+            // 4868), read again off THIS band's own lowers[0] rather than
+            // trusted to stay in sync with a pass that ran once, earlier,
+            // possibly against a different band instance (round three B's
+            // own bisection can carry several sub-bands sharing this
+            // course).
+            bool crestCandidate =
+                isCapBand &&
+                uppers.Count == 1 && uppers[0].Closed &&
+                lowers.Count == 1 && lowers[0].Closed &&
+                seams.Count > 0;
+            if (crestCandidate)
+            {
+                double crestZSpread =
+                    lowers[0].Points.Max(point => point[2]) -
+                    lowers[0].Points.Min(point => point[2]);
+                double crestGirth = lowers[0].Length;
+                double crestRidgeRatio =
+                    crestGirth > 1.0e-9 ? crestZSpread / crestGirth : 0.0;
+                crestCandidate = crestRidgeRatio > 0.10;
+            }
+            // FIX 4's OWN GATE, READ INDEPENDENTLY, exactly as fix 2's
+            // own copy above: crestOutlines is populated only where the
+            // closer below actually keeps a stone, so the audit measures
+            // what was built rather than assuming construction ran.
+            var crestOutlines = new List<IReadOnlyList<double[]>>();
+            if (crestCandidate)
+            {
+                // The closer covers the WHOLE band here, band.Low to
+                // dMax, and not merely a residual strip above a top cut:
+                // unlike fix 2's genuine plateau, there is no separate
+                // open-strip ordinary tiling below to leave in place --
+                // lowers, mids and uppers all degenerate together on this
+                // shape, so the generic per-component loop is skipped for
+                // this band entirely, below, rather than run alongside
+                // this closer over the same ground.
+                double crestThickness = dMax - band.Low;
+                bool crestFullCourse =
+                    crestThickness >= courseHeight - 1.0e-9;
+                List<SkinLevelCurve>? crestMidRails = null;
+                // THE SEAM STANDS IN FOR THE POINT ENTIRELY, not beside
+                // it. uppers[0] is a near-zero-girth loop by this gate's
+                // own construction (that near-degeneracy is what makes
+                // this a crest and not an ordinary merge), and offering
+                // it to CloserBand ALONGSIDE the seam as two separate
+                // "other" family members would let CloserBand's per-stone
+                // "nearest curve" choice (StageSpan, SkinPatterns.cs
+                // ~8295) send some guide segments to the seam and others
+                // to the lone point, whose own pinch-out coverage then
+                // closes gaps WITHIN each other-curve's own arc record
+                // only (it groups staged stones by `stone => stone.Other`)
+                // -- never across the boundary between two such groups.
+                // MEASURED, not merely reasoned: on THIS fixture the point
+                // is far enough from every guide segment that the seam
+                // alone always won the nearest-curve contest anyway (the
+                // trial's own stones read bit-identical with uppers[0]
+                // included or dropped), so it is not what this fixture's
+                // own notch traced back to; but a point carries no length
+                // and no direction to pair against in the first place, so
+                // nothing is lost by dropping it, and a fixture where the
+                // point genuinely IS nearer for some stretch of the guide
+                // would hit exactly the split-coverage failure above.
+                // Every guide segment maps against the SAME one curve
+                // this way, and CloserBand's own pinch-out coverage closes
+                // every gap in it, the mechanism already proven on fix 2
+                // and fix 3's own closers. Where no seam curve exists near
+                // this loop (Finish produced nothing usable), there is no
+                // rescue to offer and the trial below is not attempted.
+                SkinLevelCurve? nearestSeam = NearestCurveToPoint(
+                    PointAt(lowers[0], lowers[0].Length / 2.0),
+                    finishedSeams);
+                if (crestFullCourse && nearestSeam is not null)
+                {
+                    crestMidRails = new List<SkinLevelCurve>
+                    {
+                        nearestSeam
+                    };
+                }
+                // MEASURED, NOT ASSUMED: offering the seam as a pairing
+                // partner is exactly what turns the guide's own taper
+                // from "wedges to a shared hub" into "stones running
+                // along the crest, joints crossing it" -- and it is also
+                // exactly what breaks Param's own crown arch, whose crest
+                // at both its settings passes every gate above (one
+                // closed loop each side, a seam recovered, ridgeRatio
+                // 12.5% and 16.2%) but explodes when the seam is offered
+                // (and uppers[0] left in the mix beside it): 37 to 154 of
+                // its stones land under Min Piece's own bound, rule 2.4's
+                // exact test, because the arch's own seam runs the crest
+                // ASYMMETRICALLY (it springs from TWO anchor lines, not
+                // one straight ridge) and a small closed loop encircling
+                // the seam's own far end pairs most of its far side to
+                // that one point rather than spreading along the seam's
+                // own length. The two shapes are the same TOPOLOGY (this
+                // gate's own test) but not the same GEOMETRY, and nothing
+                // short of building the stones and measuring tells the
+                // two apart -- so this is BUILT, ONCE, into a trial with
+                // its own LOCAL counters, and kept only where it clears
+                // TWO measured bars: rule 2.4's own bound (undersized ==
+                // 0, the identical test the harness already enforces on
+                // every other closer) AND full plan coverage over its own
+                // band (BandUncoveredArea, the same audit fix 2 and fix 3
+                // already run beside their own closers) -- proved
+                // necessary on this very fixture, where the first bar
+                // alone passed clean while a real 0.075 m2 notch stood
+                // open at the seam-family boundary until this second bar
+                // was added. Where either bar is missed, nothing is kept,
+                // nothing committed to the real counters, and
+                // crestCandidate itself is stood back down: the band
+                // falls through to the untouched generic per-component
+                // loop below, exactly as it did before this fix existed,
+                // rather than shipping a construction that measurably
+                // breaks either of its own governing rules.
+                List<(SkinLevelCurve Guide, SkinCell Cell)> trial = new();
+                int trialMergedPieces = 0;
+                int trialMergedShortKept = 0;
+                int trialMergedStillShort = 0;
+                int trialWeldCollapsed = 0;
+                int trialRefused = 0;
+                int trialUndersized = 0;
+                double trialUncovered = double.NaN;
+                double trialSampled = 0.0;
+                if (nearestSeam is not null)
+                {
+                    trial = CloserBand(
+                        new[] { lowers[0] },
+                        new[] { nearestSeam },
+                        band.Course,
+                        size,
+                        minimumPiece,
+                        crestThickness,
+                        crestFullCourse,
+                        true,
+                        crestMidRails,
+                        // FIX 3'S OWN CORNER-CLOSING FALLBACK (SkinPatterns.cs
+                        // ~8934) is gated on `seamRescue.Contains(other)`,
+                        // a SEPARATE mechanism from "others" and not a
+                        // duplicate of it: it is what rescues a stone whose
+                        // paired run FOLDS because the closed guide passes
+                        // both sides of the seam's own nearest-point turning
+                        // point (measured directly on this fixture: the
+                        // guide's own arc-to-seam mapping is non-monotonic
+                        // around the loop, 2.002 down to 0.825 then back up
+                        // to 2.002 -- exactly the "seam threads past a
+                        // genuine crest cusp" case this fallback's own
+                        // comment names). Leaving this null (tried once,
+                        // measured) is what produced the 0.075 m2 notch;
+                        // offering the SAME single curve here that already
+                        // stands as the sole "other" family costs nothing
+                        // new and switches the fallback on.
+                        new[] { nearestSeam },
+                        ref trialMergedPieces,
+                        ref trialMergedShortKept,
+                        ref trialMergedStillShort,
+                        ref trialWeldCollapsed,
+                        ref trialRefused,
+                        ref trialUndersized);
+                    trialUncovered = BandUncoveredArea(
+                        net, band.Low, dMax + 1.0e-6,
+                        trial.Select(t => t.Cell.Outline).ToList(),
+                        out trialSampled, out _, out _);
+                }
+                // THE PINCH PATCH. MEASURED, not assumed: the notch that
+                // stands open on his own vault is not a starved family or
+                // an oversized joint, both of which CloserBand already
+                // guards -- it is a FOLD, at the guide's own two narrow
+                // ends (a stretched, elongated loop's short sides, the
+                // shape ridgeRatio itself measures), where the ordinary
+                // paired run's own far corner sits honestly ~0.3 m from
+                // its "back" partner on the seam (ring debugged directly:
+                // jointA 0.004 m, jointB 0.369 m, both well under
+                // maximumJoint, yet the resulting quad still crosses
+                // itself) and the corner-closing fallback degenerates to
+                // the identical two points, so neither of CloserBand's own
+                // two constructions can carry this exact corner. Rather
+                // than teach CloserBand a THIRD construction for a shape
+                // it has never been asked to close before (closed guide,
+                // open other, non-monotonic nearest-point turn -- the
+                // review gate this task itself was warned to respect),
+                // the residue is read directly off what `trial` actually
+                // kept -- the guide's own uncovered arc, on lowers[0], the
+                // one curve every construction here already agrees on --
+                // and closed with the SAME wedge-to-the-summit shape the
+                // generic fallback already builds safely everywhere else,
+                // scoped to ONLY the small residue rather than the whole
+                // loop: a corner infill beside proper ridge stones, not a
+                // rosette in their place.
+                //
+                // A STRAIGHT CHORD IS NOT A LOFT, and this patch is one:
+                // its two radial edges run corner to apex directly, the
+                // same simplification CapPolygonOutline's own comment
+                // already names and already leaves a small CRESCENT of
+                // true surface outside a flat polygon cut near a curved
+                // summit -- measured directly on this vault's own retired
+                // cap at 0.0123 m2, "genuinely under [the sliver] floor
+                // and correctly read as silent." This patch's own
+                // crescent, MEASURED on his real net, reads 0.0408 m2:
+                // bigger (one corner rather than the whole loop's own
+                // circumference sharing it), same species, same floor,
+                // still silent by it. Where a future fixture's own pinch
+                // leaves a crescent ABOVE that floor, the coverage bar
+                // below refuses it outright rather than shipping a real
+                // hole.
+                var patches = new List<SkinCell>();
+                if (trial.Count > 0 &&
+                    trialSampled > 1.0e-9 && trialUncovered > sliverFloor)
+                {
+                    double length = lowers[0].Length;
+                    // CANONICALISED FIRST. A closer stone's own U0/U1 is
+                    // an arc offset PointAt/Run wrap through the guide's
+                    // own modulo, not a value CloserBand ever normalises
+                    // back into one turn of the loop -- its own pinch-out
+                    // extension (TryExtendCloser) can and does hand back a
+                    // stone reading e.g. [2.413, 2.824] on a guide whose
+                    // own canonical turn is [-1.427, 1.427), the SAME
+                    // ground as [-0.442, -0.031] one turn earlier, MEASURED
+                    // directly on this fixture. Sorting raw values treated
+                    // that stone as covering ground far past the guide's
+                    // own far end, reading a spurious ~1.5 m "gap" where a
+                    // real one was under 0.5 m, and stretched the patch
+                    // itself the long way round the loop to close it.
+                    // Wrapping every interval into ONE canonical turn
+                    // before merging is what a closed guide's own
+                    // coverage scan always needed and never had here.
+                    double half = length / 2.0;
+                    double Canonicalise(double u) =>
+                        (((u + half) % length) + length) % length - half;
+                    var covered = trial
+                        .Select(t => (U0: t.Cell.U0, U1: t.Cell.U1))
+                        .Where(iv => iv.U1 > iv.U0 + 1.0e-9)
+                        .Select(iv =>
+                        {
+                            double u0 = Canonicalise(iv.U0);
+                            return (U0: u0, U1: u0 + (iv.U1 - iv.U0));
+                        })
+                        .OrderBy(iv => iv.U0)
+                        .ToList();
+                    var merged = new List<(double U0, double U1)>();
+                    foreach ((double u0, double u1) in covered)
+                    {
+                        if (merged.Count > 0 && u0 <= merged[^1].U1 + 1.0e-6)
+                        {
+                            if (u1 > merged[^1].U1)
+                                merged[^1] = (merged[^1].U0, u1);
+                        }
+                        else
+                        {
+                            merged.Add((u0, u1));
+                        }
+                    }
+                    for (int at = 0; at < merged.Count; at++)
+                    {
+                        bool wraps = at + 1 == merged.Count;
+                        double gapStart = merged[at].U1;
+                        double gapEnd = wraps
+                            ? merged[0].U0 + length
+                            : merged[at + 1].U0;
+                        if (gapEnd - gapStart < 1.0e-6)
+                            continue;
+                        List<double[]> arc = Run(lowers[0], gapStart, gapEnd);
+                        // PointAt(uppers[0], .) divides by uppers[0].Length
+                        // internally (PointAtArc's own arc-modulo), and
+                        // that length is EXACTLY 0 by this whole gate's
+                        // own construction -- a true point, not merely a
+                        // short curve. Read the raw traced point directly
+                        // rather than through an arc parametrisation that
+                        // has nothing to divide by.
+                        double[] apex = uppers[0].Points[0];
+                        List<double[]> ring = Dedupe(
+                            new List<double[]>(arc) { apex });
+                        if (ring.Count < 3 ||
+                            PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+                        {
+                            continue;
+                        }
+                        patches.Add(new SkinCell(
+                            band.Course, ring, false, gapStart, gapEnd,
+                            Closer: true));
+                    }
+                    if (patches.Count > 0)
+                    {
+                        trialUncovered = BandUncoveredArea(
+                            net, band.Low, dMax + 1.0e-6,
+                            trial.Select(t => t.Cell.Outline)
+                                .Concat(patches.Select(p => p.Outline))
+                                .ToList(),
+                            out trialSampled, out _, out _);
+                    }
+                }
+                bool trialClean =
+                    nearestSeam is not null &&
+                    trialUndersized == 0 && trial.Count > 0 &&
+                    !(trialSampled > 1.0e-9 && trialUncovered > sliverFloor);
+                if (Environment.GetEnvironmentVariable(
+                        "SKIN_RIDGEGATE_DEBUG") == "1")
+                {
+                    Console.Error.WriteLine(
+                        $"CRESTGATEDEBUG course={band.Course} " +
+                        $"girth={lowers[0].Length:0.###} " +
+                        $"seamsCount={seams.Count} " +
+                        $"trialStones={trial.Count} " +
+                        $"trialUndersized={trialUndersized} " +
+                        $"trialRefused={trialRefused} " +
+                        $"trialUncovered={trialUncovered:0.####} " +
+                        $"patches={patches.Count} " +
+                        $"accepted={trialClean} " +
+                        $"spans=" +
+                        string.Join(
+                            "|",
+                            trial.Select(t =>
+                                (t.Cell.U1 - t.Cell.U0).ToString("0.###"))));
+                }
+                if (trialClean)
+                {
+                    mergedPieces += trialMergedPieces;
+                    mergedShortKept += trialMergedShortKept;
+                    mergedStillShort += trialMergedStillShort;
+                    weldCollapsed += trialWeldCollapsed;
+                    closerRefused += trialRefused;
+                    closerUndersized += trialUndersized;
+                    foreach ((SkinLevelCurve guide, SkinCell cell) in trial)
+                    {
+                        closerCells++;
+                        keyed.Add((
+                            cell.Course, RankOf(guide), guide.Level, cell));
+                        crestOutlines.Add(cell.Outline);
+                    }
+                    foreach (SkinCell patch in patches)
+                    {
+                        closerCells++;
+                        keyed.Add((
+                            patch.Course, RankOf(lowers[0]), lowers[0].Level,
+                            patch));
+                        crestOutlines.Add(patch.Outline);
+                    }
+                    // No re-audit needed here: trialClean already required
+                    // trialUncovered to clear sliverFloor (or the sample
+                    // to be vacuous) before this branch was ever reached,
+                    // against the identical outlines now kept.
+                }
+                else
+                {
+                    crestCandidate = false;
+                }
+            }
+            if (crestCandidate)
+                continue;
             for (int component = 0; component < mids.Count; component++)
             {
                 SkinLevelCurve mid = mids[component];
