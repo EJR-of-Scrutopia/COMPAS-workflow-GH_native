@@ -5387,6 +5387,46 @@ internal static class SkinPatterns
         List<SkinLevelCurve> finishedSeams = seams
             .Select(seam => Finish(seam.ToList(), dMax, false))
             .ToList();
+        // FIX 6, THE SIBLING-BAND SEAM (crest fix-round review, 2026-09-07,
+        // findings 1 to 3). Round three B's own bisection (rule 8.2.3) can
+        // leave TWO independently-built constructions sharing one course
+        // number at the crest: a slab, closed here by ordinary CloserBand
+        // (its own pinch-out coverage bridging two open flank strips
+        // against the one closed loop they merge into), and the crest ring
+        // closer (FIX 5, further down), cutting its own ridge stones off
+        // that SAME closed loop wherever the slab's own `high` meets a
+        // `crestCandidate` band's own `Low`. Neither construction knows the
+        // other exists, and MEASURED directly on his vault, some of the
+        // slab's own bridging stones and some of the crest's own stones
+        // genuinely overlap in plan (both guided off the identical curve,
+        // at two independent phases). KeepValidPlans (the one global,
+        // order-dependent overlap filter every course's cells pass
+        // through) drops whichever side sorts second, with nothing to
+        // re-fill what is lost -- exactly the silent hole this review
+        // measured; neither side's own local BandUncoveredArea call ever
+        // sees the other's cells, so both report clean.
+        //
+        // FIX 5 IS THE CONSTRUCTION PARAM'S OWN RULING ASKED FOR, built
+        // specifically so "courses from both flanks meet along the crest
+        // and interlock there" -- a slab's own bridging stones over the
+        // identical seam are the OLD, pre-fix5 leftover species (this
+        // review's own finding 2), not a second legitimate layer. So the
+        // slab defers: recorded here, by course, once fix 5's own trial for
+        // that course is built (below, unmodified), so the slab can drop
+        // only the specific candidates of its OWN that collide with real,
+        // already-decided crest ground, rather than retreating wholesale
+        // (which measured WORSE: it costs the slab's own ordinary,
+        // uncontested stones too, since `coverPinchOuts` is not scoped to
+        // only the contested bridge). Where fix 5's own trial leaves real
+        // residue after dropping what it must (a genuine collision, not
+        // merely touching a shared edge), that residue is closed the SAME
+        // way fix 5 already closes its own small crescent: canonicalised
+        // gaps on the shared guide, wedged to the true summit, cut at
+        // ordinary Size pitch rather than as one oversized fan -- so what
+        // survives reads as more coursed stones, not a single sliver
+        // covering half the loop.
+        var slabOutlinesByCourse =
+            new Dictionary<int, List<IReadOnlyList<double[]>>>();
         // The slabs themselves were built above, before the level index was
         // taken, because a sub-band bite can leave a remainder band whose
         // new mid needs tracing; what happens HERE is only the cutting.
@@ -5521,6 +5561,22 @@ internal static class SkinPatterns
                     cell.Course, RankOf(guide), guide.Level, cell));
                 slabOutlines.Add(cell.Outline);
             }
+            // FIX 6: this slab's own kept outlines, recorded by the course
+            // it ships against, so the crest ring closer (below, if it
+            // reaches this same course) can measure ITS OWN candidates
+            // against real, already-built ground rather than assuming empty
+            // space. A slab absorbed under `Math.Min(course, ...)` (the
+            // orphan-swallow, above) can still collide with a course it
+            // does not itself carry the number of; recording by the FINAL
+            // `refusedCourse` matches what `cell.Course` was just keyed
+            // against, three lines up, so the two stay in step.
+            if (!slabOutlinesByCourse.TryGetValue(
+                    refusedCourse, out List<IReadOnlyList<double[]>>? bucket))
+            {
+                bucket = new List<IReadOnlyList<double[]>>();
+                slabOutlinesByCourse[refusedCourse] = bucket;
+            }
+            bucket.AddRange(slabOutlines);
             // FIX 4 ITSELF: the slab's own uncovered plan area, over
             // exactly the field range this slab absorbed (rule 3.1's
             // coalesce, not the ordinary band ladder), against exactly
@@ -5933,6 +5989,55 @@ internal static class SkinPatterns
                         ref trialWeldCollapsed,
                         ref trialRefused,
                         ref trialUndersized);
+                    // FIX 6, THE SIBLING-BAND SEAM (see the doc comment on
+                    // `slabOutlinesByCourse`, above the slabs loop). Drop
+                    // any of THIS trial's own candidates that collide, in
+                    // real plan, with a sibling slab's already-kept
+                    // stones -- ground the slab won first, guided off the
+                    // SAME shared curve at its own, independent phase.
+                    // Filtered BEFORE trialUncovered is measured, so this
+                    // gate's own acceptance test answers against what will
+                    // actually survive rather than an optimistic union; the
+                    // gap-closing patch pass two paragraphs down -- already
+                    // proven, already scoped to whatever `trial` actually
+                    // kept -- picks up whatever this costs, subdivided at
+                    // ordinary Size pitch rather than as one fan (below), so
+                    // a genuine sibling collision reads as more coursed
+                    // stones and not a single oversized sliver.
+                    if (slabOutlinesByCourse.TryGetValue(
+                            band.Course,
+                            out List<IReadOnlyList<double[]>>? siblingSlab))
+                    {
+                        var priorOutlines =
+                            new List<IReadOnlyList<double[]>>(siblingSlab);
+                        var priorInteriors = priorOutlines
+                            .Select(outline => PlanInteriorPoint(outline))
+                            .ToList();
+                        var filteredTrial =
+                            new List<(SkinLevelCurve Guide, SkinCell Cell)>();
+                        foreach ((SkinLevelCurve guide, SkinCell cell)
+                                 in trial)
+                        {
+                            double[]? inside =
+                                PlanInteriorPoint(cell.Outline);
+                            bool cedesToSlab = false;
+                            for (int at = 0;
+                                 at < priorOutlines.Count && !cedesToSlab;
+                                 at++)
+                            {
+                                cedesToSlab = PlansOverlapWithInteriors(
+                                    cell.Outline, inside,
+                                    priorOutlines[at], priorInteriors[at]);
+                            }
+                            if (cedesToSlab)
+                            {
+                                trialRefused++;
+                                continue;
+                            }
+                            filteredTrial.Add((guide, cell));
+                        }
+                        trial = filteredTrial;
+                    }
                     trialUncovered = BandUncoveredArea(
                         net, band.Low, dMax + 1.0e-6,
                         trial.Select(t => t.Cell.Outline).ToList(),
@@ -6035,25 +6140,54 @@ internal static class SkinPatterns
                             : merged[at + 1].U0;
                         if (gapEnd - gapStart < 1.0e-6)
                             continue;
-                        List<double[]> arc = Run(lowers[0], gapStart, gapEnd);
-                        // PointAt(uppers[0], .) divides by uppers[0].Length
-                        // internally (PointAtArc's own arc-modulo), and
-                        // that length is EXACTLY 0 by this whole gate's
-                        // own construction -- a true point, not merely a
-                        // short curve. Read the raw traced point directly
-                        // rather than through an arc parametrisation that
-                        // has nothing to divide by.
-                        double[] apex = uppers[0].Points[0];
-                        List<double[]> ring = Dedupe(
-                            new List<double[]>(arc) { apex });
-                        if (ring.Count < 3 ||
-                            PlanSelfCrosses(ring) || PlanVertexOnEdge(ring))
+                        // FIX 6: a gap this gate must now close can be wider
+                        // than the small crescent it was designed for (a
+                        // genuine sibling-slab collision, above, can cede
+                        // several stones' worth of guide arc at once, not
+                        // only a sliver). ONE wedge spanning the whole gap
+                        // would read as a single oversized fan -- his own
+                        // "no radiating sunburst" complaint again, on a
+                        // second construction -- so a gap wider than one
+                        // ordinary Size pitch is cut into `pieces` equal
+                        // sub-wedges instead, the SAME ceiling-free rounding
+                        // CourseSpans itself uses for an ordinary span, each
+                        // one still a genuine corner infill against the
+                        // guide and the true summit, only narrower.
+                        int pieces = Math.Max(
+                            1,
+                            (int)Math.Round(
+                                (gapEnd - gapStart) / size,
+                                MidpointRounding.AwayFromZero));
+                        double pieceWidth = (gapEnd - gapStart) / pieces;
+                        for (int piece = 0; piece < pieces; piece++)
                         {
-                            continue;
+                            double pieceStart = gapStart + piece * pieceWidth;
+                            double pieceEnd = piece == pieces - 1
+                                ? gapEnd
+                                : pieceStart + pieceWidth;
+                            List<double[]> arc =
+                                Run(lowers[0], pieceStart, pieceEnd);
+                            // PointAt(uppers[0], .) divides by
+                            // uppers[0].Length internally (PointAtArc's own
+                            // arc-modulo), and that length is EXACTLY 0 by
+                            // this whole gate's own construction -- a true
+                            // point, not merely a short curve. Read the raw
+                            // traced point directly rather than through an
+                            // arc parametrisation that has nothing to
+                            // divide by.
+                            double[] apex = uppers[0].Points[0];
+                            List<double[]> ring = Dedupe(
+                                new List<double[]>(arc) { apex });
+                            if (ring.Count < 3 ||
+                                PlanSelfCrosses(ring) ||
+                                PlanVertexOnEdge(ring))
+                            {
+                                continue;
+                            }
+                            patches.Add(new SkinCell(
+                                band.Course, ring, false, pieceStart,
+                                pieceEnd, Closer: true));
                         }
-                        patches.Add(new SkinCell(
-                            band.Course, ring, false, gapStart, gapEnd,
-                            Closer: true));
                     }
                     if (patches.Count > 0)
                     {
