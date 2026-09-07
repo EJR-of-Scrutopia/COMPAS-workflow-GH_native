@@ -89,6 +89,7 @@ internal static partial class Program
         double CourseHeight,
         double MinPiece,
         double Thickness,
+        double Gaps,
         string? RhinoRoot,
         string ExportsRoot)
     {
@@ -101,7 +102,21 @@ internal static partial class Program
             double size = 0.5;
             double courseHeight = 0.5;
             double minPiece = 0.20;
-            double thickness = 0.05;
+            // His actual canvas (spec 2026-09-07 correction 1, his own
+            // Grasshopper chin verbatim): Thickness 0.200, not the earlier
+            // 0.05 stand-in this renderer first shipped with -- that
+            // earlier default could not show what he actually sees.
+            double thickness = 0.200;
+            // His canvas's own Gaps slider (spec 2026-09-07 correction 1):
+            // ThicknessOffsetFrom blends the point's own field normal
+            // (Gaps 0) toward the CELL's single normal (Gaps 1). The pure-
+            // math CellOffsetImpossible/EdgeOffsetImpossible guard tests
+            // the Gaps 0 case only (it never reads a cell normal at all),
+            // so it answers a different question from what his canvas
+            // actually offsets at. Defaulting to his own setting rather
+            // than 0 so this renderer's "known impossible" and its new
+            // near-degenerate-wall reading answer HIS question.
+            double gaps = 0.95;
             string? rhinoRoot = null;
             string exportsRoot = HisExportsRoot;
 
@@ -142,6 +157,9 @@ internal static partial class Program
                     case "--thickness":
                         thickness = NextDouble("--thickness");
                         break;
+                    case "--gaps":
+                        gaps = NextDouble("--gaps");
+                        break;
                     case "--rhino-root":
                         rhinoRoot = NextString("--rhino-root");
                         break;
@@ -177,7 +195,8 @@ internal static partial class Program
 
             return new SvgRenderOptions(
                 pluginPath, study, pattern.Value, outputPath, size,
-                courseHeight, minPiece, thickness, rhinoRoot, exportsRoot);
+                courseHeight, minPiece, thickness, gaps, rhinoRoot,
+                exportsRoot);
         }
     }
 
@@ -189,17 +208,32 @@ internal static partial class Program
         int UncoveredRegionsCount);
 
     /// <summary>One emitted cell, read off the engine's own SkinCell by
-    /// reflection, plus the two per-cell defect flags this renderer can
-    /// compute headlessly.</summary>
+    /// reflection, plus the per-cell defect signals this renderer can
+    /// compute headlessly. KnownImpossible is CellOffsetImpossible's own
+    /// answer, which is a Gaps-0 question (it never reads a cell normal).
+    /// MinEffectiveWallHeight is this renderer's OWN reading, at the
+    /// study's real Gaps: the smallest, over the cell's own walls, of
+    /// SkinComponent.WallQuadArea (after offsetting every corner by the
+    /// SAME blended direction ThickenCellSurface's walls actually use,
+    /// SkinComponent.OffsetPointsFrom at the real extrude/Gaps) divided by
+    /// that wall's own base edge length -- an EFFECTIVE HEIGHT in metres,
+    /// which reads near Thickness for a healthy wall and only collapses
+    /// toward 0 for a genuinely near-collinear one, unlike the raw area,
+    /// which a merely SHORT traced-arc edge already makes small for no
+    /// defect at all. A small-but-nonzero reading is a real, provable
+    /// near-degenerate wall the Gaps-0-only CellOffsetImpossible guard
+    /// cannot see at all.</summary>
     private sealed record RenderCell(
         int Course,
         List<double[]> Outline,
         bool Cap,
         bool Closer,
+        bool Clipped,
         double U0,
         double U1,
         bool Undersized,
-        bool KnownImpossible);
+        bool KnownImpossible,
+        double MinEffectiveWallHeight);
 
     private static SvgRenderSummary RenderSkinSvg(SvgRenderOptions options)
     {
@@ -251,6 +285,12 @@ internal static partial class Program
             RequireStatic(componentsType, "CornerNormals");
         MethodInfo cellOffsetImpossible =
             RequireStatic(componentsType, "CellOffsetImpossible");
+        MethodInfo cellNormalFrom =
+            RequireStatic(componentsType, "CellNormalFrom");
+        MethodInfo offsetPointsFrom =
+            RequireStatic(componentsType, "OffsetPointsFrom");
+        MethodInfo wallQuadArea =
+            RequireStatic(componentsType, "WallQuadArea");
 
         string formPath = Path.Combine(
             options.ExportsRoot, $"{options.Study}-form.json");
@@ -306,14 +346,52 @@ internal static partial class Program
                 .ToList();
             bool cap = Reading<bool>(cell, "Cap");
             bool closer = Reading<bool>(cell, "Closer");
+            bool clipped = Reading<bool>(cell, "Clipped");
             double u0 = Reading<double>(cell, "U0");
             double u1 = Reading<double>(cell, "U1");
             int course = Reading<int>(cell, "Course");
+            object? sectionsRaw = cell.GetType()
+                .GetProperty("Sections")!.GetValue(cell);
+            List<List<double[]>>? sections = sectionsRaw is null
+                ? null
+                : ((IEnumerable)sectionsRaw)
+                    .Cast<object>()
+                    .Select(rail => ((IEnumerable)rail)
+                        .Cast<double[]>().ToList())
+                    .ToList();
+            if (Environment.GetEnvironmentVariable("SKIN_SVG_SECTIONS_DUMP")
+                    == "1" &&
+                course <= 4)
+            {
+                string shape = sections is null
+                    ? "SECTIONS NULL (fan route)"
+                    : $"{sections.Count} rail(s), points [" +
+                      string.Join(",", sections.Select(r => r.Count)) + "]";
+                Console.Error.WriteLine(
+                    $"course={course} cap={cap} closer={closer} " +
+                    $"outlineCorners={outline.Count} u0={u0:0.####} " +
+                    $"u1={u1:0.####} sections: {shape}");
+                if (sections is not null)
+                {
+                    for (int r = 0; r < sections.Count; r++)
+                    {
+                        Console.Error.WriteLine(
+                            $"  rail {r}: [" +
+                            string.Join(
+                                " ",
+                                sections[r].Select(
+                                    p => $"({p[0]:0.###},{p[1]:0.###}," +
+                                        $"{p[2]:0.###})")) +
+                            "]");
+                    }
+                }
+            }
 
             bool undersized =
                 !cap && Math.Abs(u1 - u0) < minimumPiece - 1.0e-9;
 
             bool impossible = false;
+            double minEffectiveWallHeight = double.PositiveInfinity;
             if (outline.Count >= 3)
             {
                 object normals = cornerNormals.Invoke(
@@ -322,11 +400,55 @@ internal static partial class Program
                     { outline, normals, options.Thickness, null, null };
                 impossible = (bool)cellOffsetImpossible.Invoke(
                     null, callArgs)!;
+
+                // CORRECTION 1 (spec 2026-09-07): CellOffsetImpossible
+                // never reads a cell normal, so it is a Gaps-0 answer
+                // whatever Gaps his canvas actually runs. This is the
+                // SAME wall-quad reading ThickenCellSurface's own walls
+                // use, at his REAL Gaps (extrude), so a near-zero area
+                // here is a real, provable near-degenerate wall that
+                // guard cannot see.
+                object cellNormal = cellNormalFrom.Invoke(
+                    null, new object[] { outline, normals })!;
+                object moved = offsetPointsFrom.Invoke(
+                    null,
+                    new object[]
+                    {
+                        outline, normals, cellNormal, options.Thickness,
+                        options.Gaps
+                    })!;
+                var movedList = ((IEnumerable)moved).Cast<double[]>()
+                    .ToList();
+                for (int at = 0; at < outline.Count; at++)
+                {
+                    int next = (at + 1) % outline.Count;
+                    double[] a = outline[at];
+                    double[] b = outline[next];
+                    double area = (double)wallQuadArea.Invoke(
+                        null,
+                        new object[] { a, b, movedList[next], movedList[at] })!;
+                    // NORMALISED, not raw area: a short traced-arc edge (the
+                    // "Run" points along a course are densely sampled, some
+                    // segments a fraction of a millimetre) gives a small-
+                    // area wall that is perfectly healthy -- a short,
+                    // correctly-shaped rectangle, not a fold. Dividing by
+                    // the edge's own length gives an EFFECTIVE WALL HEIGHT
+                    // (area = height x length x sin(skew)), which reads
+                    // near Thickness for a healthy wall and collapses
+                    // toward 0 only for genuine near-collinearity,
+                    // independent of how short the edge happens to be.
+                    double edgeLength = Distance3(a, b);
+                    double effectiveHeight = edgeLength > 1.0e-9
+                        ? area / edgeLength
+                        : area;
+                    if (effectiveHeight < minEffectiveWallHeight)
+                        minEffectiveWallHeight = effectiveHeight;
+                }
             }
 
             cells.Add(new RenderCell(
-                course, outline, cap, closer, u0, u1, undersized,
-                impossible));
+                course, outline, cap, closer, clipped, u0, u1, undersized,
+                impossible, minEffectiveWallHeight));
         }
 
         List<double[]> netVertices = ((IEnumerable)netType
@@ -342,6 +464,36 @@ internal static partial class Program
         // asks. SKIN_SVG_DEBUG_DUMP=1 in the environment turns it on.
         if (Environment.GetEnvironmentVariable("SKIN_SVG_DEBUG_DUMP") == "1")
         {
+            Console.Error.WriteLine(
+                $"--- worst (smallest) EFFECTIVE WALL HEIGHT, at Gaps " +
+                $"{options.Gaps:0.###}, Th {options.Thickness:0.###}, " +
+                "bottom 30 of " + cells.Count(c => c.Outline.Count >= 3) +
+                " cells with walls (a healthy wall reads near Th) ---");
+            foreach (RenderCell cell in cells
+                         .Where(c => c.Outline.Count >= 3)
+                         .OrderBy(c => c.MinEffectiveWallHeight)
+                         .Take(30))
+            {
+                Console.Error.WriteLine(
+                    $"course={cell.Course} cap={cell.Cap} " +
+                    $"closer={cell.Closer} minEffectiveWallHeight=" +
+                    $"{cell.MinEffectiveWallHeight:0.######} m u0=" +
+                    $"{cell.U0:0.####} u1={cell.U1:0.####}");
+            }
+            Console.Error.WriteLine(
+                "--- by course, count and worst effective wall height ---");
+            foreach (var group in cells
+                         .Where(c => c.Outline.Count >= 3)
+                         .GroupBy(c => c.Course)
+                         .OrderBy(g => g.Key))
+            {
+                Console.Error.WriteLine(
+                    $"course={group.Key} n={group.Count()} " +
+                    "worstWallHeight=" +
+                    $"{group.Min(c => c.MinEffectiveWallHeight):0.######} m " +
+                    $"knownImpossible={group.Count(c => c.KnownImpossible)}");
+            }
+            Console.Error.WriteLine("--- highest 40 cells (crown region) ---");
             foreach (RenderCell cell in cells
                          .OrderByDescending(c => c.Outline.Max(p => p[2]))
                          .Take(40))
@@ -361,6 +513,16 @@ internal static partial class Program
             }
             double netMaxZ = netVertices.Max(p => p[2]);
             Console.Error.WriteLine($"net own max Z = {netMaxZ:0.######}");
+            Console.Error.WriteLine(
+                "--- net vertices within 0.15 m of the true max Z, by (x,y) " +
+                "-- a cluster is a true apex, a line is a ridge ---");
+            foreach (double[] p in netVertices
+                         .Where(p => p[2] > netMaxZ - 0.15)
+                         .OrderByDescending(p => p[2]))
+            {
+                Console.Error.WriteLine(
+                    $"x={p[0]:0.###} y={p[1]:0.###} z={p[2]:0.######}");
+            }
         }
 
         int courseCount = Reading<int>(generated, "CourseCount");
@@ -522,11 +684,14 @@ internal static partial class Program
             "font-size=\"12\" fill=\"#333\">colour key: pale blue = " +
             "ordinary course cell, amber = crown cap, pale green = " +
             "closer/seam stone, YELLOW = below the size floor, RED = " +
-            "known-impossible-to-close (lower bound proxy, see report), " +
-            "light grey backdrop = the net's own triangulated surface " +
-            "(true uncovered area is WHITE grey, i.e. grey showing " +
-            "through no cell at all; pure page-white outside the grey " +
-            "is simply off the vault).</text>\n");
+            "known-impossible-to-close (CellOffsetImpossible, a Gaps-0 " +
+            "lower bound proxy, see report), DASHED OUTLINE = a boundary-" +
+            "clipped cell (an open band's own end piece, SkinCell." +
+            "Clipped) -- round three's own diagnosis says his thickening " +
+            "failures concentrate here, light grey backdrop = the net's " +
+            "own triangulated surface (true uncovered area is grey " +
+            "showing through no cell at all; pure page-white outside the " +
+            "grey is simply off the vault).</text>\n");
         sb.Append("</svg>\n");
         return sb.ToString();
     }
@@ -596,12 +761,20 @@ internal static partial class Program
                 cell.KnownImpossible || cell.Undersized ? "#000000" : "#1c2733";
             string strokeWidth =
                 cell.KnownImpossible || cell.Undersized ? "1.6" : "0.6";
+            // CORRECTION 1 (spec 2026-09-07): round three's own diagnosis
+            // (docs/superpowers/specs/2026-09-05-skin-round-three-
+            // findings.md, live witness 2) says the thickening failure
+            // his chin reports concentrates on BOUNDARY-CLIPPED cells (an
+            // open band's own end piece, SkinCell.Clipped) -- flagged with
+            // a dashed outline here regardless of fill colour, so that
+            // class is visible without guessing which polygon is which.
+            string dashArray = cell.Clipped ? " stroke-dasharray=\"3,2\"" : "";
             sb.Append(
                 "<polygon points=\"" +
                 string.Join(
                     " ", pts.Select(p => $"{Fmt(p.Item1)},{Fmt(p.Item2)}")) +
                 $"\" fill=\"{fill}\" fill-opacity=\"0.9\" stroke=\"{stroke}\" " +
-                $"stroke-width=\"{strokeWidth}\"/>\n");
+                $"stroke-width=\"{strokeWidth}\"{dashArray}/>\n");
         }
         sb.Append("</g>\n");
     }
