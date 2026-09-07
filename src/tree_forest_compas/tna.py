@@ -97,8 +97,31 @@ SELFWEIGHT_REFINEMENT_TOLERANCE = 1.0e-3
 # there. A genuinely unstable case still never reaches this cap at all: it
 # raises TNANonFiniteError out of _assert_round_is_finite on the round the
 # geometry actually overflows, independently of how high this is set. 100
-# gives a 25-round margin over the worst measured case.
+# gives a 25-round margin over the worst measured case. 2026-09-07: the cap
+# stays at 100 as the pathology fence (rule 2.3); the round count that
+# actually gets PAID on real geometry is now bounded by the vector Aitken
+# acceleration below, not by this number.
 SELFWEIGHT_REFINEMENT_MAX_ROUNDS = 100
+
+# 2026-09-07, round five part two. The measured drift on the 6-sided vault
+# is a multi-mode linear recurrence, not a single geometric decay: an
+# early, fast transient (round-to-round drift RATIO swinging 0.06-0.9
+# through rounds 2-9) sits on top of a slow mode whose own ratio settles to
+# ~0.975 by round ~20 and holds there, which is why the plain loop needs
+# 75 rounds to cross tolerance one slow-mode step at a time. Two cheaper
+# accelerations were tried and measured worse before this window: a single
+# vector-Aitken jump as soon as three consecutive rounds were available
+# overshot badly while the transient still mixed more than one mode (one
+# candidate flipped the total load's own sign); gating that jump on the
+# last three rounds' own drift being strictly decreasing avoided the sign
+# flip but still needed 39 rounds on this net, because a "clean-looking"
+# triple is not proof the sequence is genuinely single-mode yet. Anderson
+# acceleration's own window is what actually solves this: it grows from 0
+# (plain iteration) up to this many residual differences as rounds
+# accumulate, so it degrades gracefully during the early multi-mode
+# transient instead of asserting a single mode it cannot yet see, and
+# widens to capture the slow mode once enough rounds exist to reveal it.
+SELFWEIGHT_ANDERSON_WINDOW = 4
 
 
 class TNAError(RuntimeError):
@@ -3273,7 +3296,8 @@ def solve_tna_problem(
             )
 
     def _refined_zmax_solve(target: float):
-        """Rule 2.2 of the 2026-09-04 selfweight design.
+        """Rule 2.2 of the 2026-09-04 selfweight design, accelerated per
+        rule 2.1 of the 2026-09-06 round-five design.
 
         Evaluate the selfweight on the current geometry, solve to the
         target height at that HELD load, re-evaluate on the geometry the
@@ -3281,20 +3305,79 @@ def solve_tna_problem(
         The library never sees a density on this path, so its height
         search runs against a constant right-hand side and lands in one
         step instead of orbiting a moving one.
+
+        Every round is still exactly one held-load solve; nothing here
+        changes WHAT round N means, only where round N's held load comes
+        from. Two cheaper accelerations were measured and rejected before
+        this one (both left in the round-five report, not in this
+        docstring): a single vector-Aitken jump overshot badly once the
+        history it was built from still mixed more than one decay mode
+        (on his 6-sided vault it flipped the total load's own sign), and
+        gating the jump on the last three rounds' own drift being
+        strictly decreasing fixed the overshoot but still needed 39
+        rounds on that net -- a single "clean" triple is not the same as
+        the sequence being genuinely single-mode yet.
+
+        This is Anderson acceleration (Walker & Ni 2011, Type-II) on the
+        per-vertex held-load sequence, applied every round from the
+        second one on rather than as an occasional jump. Writing g(x) for
+        "persist the selfweight on the geometry x's solve produced", the
+        residual f_k = g(x_k) - x_k is the round's own load correction; a
+        small least-squares fit of the CURRENT residual against a sliding
+        window of past residual differences (``SELFWEIGHT_ANDERSON_WINDOW``
+        columns at most) chooses the mixing that most cancels it, which
+        recovers a linear recurrence's fixed point once the window
+        spans as many terms as the recurrence has active modes -- it
+        needs no assumption about which round the transient has settled
+        by, because an under-sized window (early rounds) degrades
+        gracefully to ordinary least squares rather than a single
+        ill-conditioned division. A residual that ever produces a
+        non-finite mix is discarded for that round only, falling back to
+        the plain evaluated load, exactly as a genuinely singular
+        component was handled in the rejected designs above.
         """
         cap = max(1, int(SELFWEIGHT_REFINEMENT_MAX_ROUNDS))
         totals: List[float] = []
         drift = 0.0
         converged = False
         rounds_run = 0
+        accelerated_rounds = 0
         cumulative_scale = 1.0
         first_round_state = None
         first_round_scale = 1.0
+        vertex_order = tuple(form.vertices())
+
+        from numpy import array as _pz_array
+        from numpy import column_stack as _column_stack
+        from numpy.linalg import lstsq as _lstsq
+
+        def _pz_vector():
+            return _pz_array(
+                [
+                    float(form.vertex_attribute(key, "pz") or 0.0)
+                    for key in vertex_order
+                ],
+                dtype=float,
+            )
+
+        def _apply_pz(vector) -> None:
+            for key, value in zip(vertex_order, vector):
+                form.vertex_attribute(key, "pz", float(value))
+
+        x_history: List[Any] = []
+        f_history: List[Any] = []
+        held_vector = None
+        window_cap = max(1, int(SELFWEIGHT_ANDERSON_WINDOW))
+
         for round_number in range(1, cap + 1):
-            _persist_selfweight_loads()
-            total = _total_effective_pz()
-            if totals:
-                drift = _relative_load_change(total, totals[-1])
+            if held_vector is None:
+                # Round 1: the plan-frozen load, exactly as before -- there
+                # is no history yet to mix against.
+                _persist_selfweight_loads()
+                held_vector = _pz_vector()
+            else:
+                _apply_pz(held_vector)
+            total = float(held_vector.sum())
             totals.append(total)
             _, round_scale = vertical_from_zmax(
                 form,
@@ -3315,11 +3398,99 @@ def solve_tna_problem(
             if round_number == 1:
                 first_round_state = _snapshot_vertical()
                 first_round_scale = cumulative_scale
-            if len(totals) > 1 and drift < SELFWEIGHT_REFINEMENT_TOLERANCE:
+            # THE PHYSICAL residual, not merely "did the chosen load
+            # sequence stop moving": evaluate the map once more on the
+            # geometry THIS round's solve produced and compare it against
+            # the load that was held to get here. A mixed load sequence
+            # can stop changing round to round without either value being
+            # anywhere near a genuine g(x)=x fixed point -- measured
+            # directly on his 6-sided vault, where comparing consecutive
+            # HELD loads (the first design tried here) reported converged
+            # 63 rounds early, at an answer roughly 600 units of total
+            # load and up to 156 m of vertex z away from the slow loop's
+            # own ground truth. Checking g(held)-held instead is exactly
+            # what the un-accelerated loop was already equivalent to (its
+            # x_n was always g(x_{n-1}), so comparing x_n to x_{n-1} was
+            # already this same check one round late); mixing broke that
+            # equivalence, so the check has to stop assuming it.
+            _persist_selfweight_loads()
+            naive_next = _pz_vector()
+            residual = naive_next - held_vector
+            naive_total = float(naive_next.sum())
+            previous_drift = drift
+            drift = _relative_load_change(naive_total, total)
+            if drift < SELFWEIGHT_REFINEMENT_TOLERANCE:
+                # Rule 2.2's identity bar: the un-accelerated loop never
+                # stops on "this round's load was close to last round's"
+                # alone -- it always goes on to SOLVE with the freshly
+                # evaluated load first, and keeps THAT solve. Matching it
+                # here (one confirming solve at the plain evaluation,
+                # never at an unconfirmed mixed guess) is what keeps a
+                # net that never needed any mixing bit-identical to the
+                # un-accelerated answer, rather than one round short of it.
+                _apply_pz(naive_next)
+                totals.append(naive_total)
+                _, round_scale = vertical_from_zmax(
+                    form,
+                    zmax=target,
+                    kmax=int(vertical_kmax),
+                    xtol=vertical_tolerance,
+                    rtol=vertical_tolerance,
+                    density=0.0,
+                    display=bool(display),
+                )
+                rounds_run = round_number + 1
+                _assert_round_is_finite(rounds_run, round_scale)
+                cumulative_scale *= float(round_scale)
                 converged = True
                 break
+            if round_number > 1 and drift > previous_drift:
+                # This round's own TRUE residual grew rather than shrank:
+                # whatever window produced this round's held load was
+                # fitted against a regime that no longer applies.
+                # Restarting the window rather than compounding a bad fit
+                # costs at most the rounds already spent rebuilding it.
+                x_history = []
+                f_history = []
+            x_history.append(held_vector)
+            f_history.append(residual)
+            if len(x_history) > window_cap + 1:
+                x_history.pop(0)
+                f_history.pop(0)
+            mixed = None
+            if len(f_history) >= 2:
+                delta_f = _column_stack(
+                    [
+                        f_history[index] - f_history[index - 1]
+                        for index in range(1, len(f_history))
+                    ]
+                )
+                delta_x = _column_stack(
+                    [
+                        x_history[index] - x_history[index - 1]
+                        for index in range(1, len(x_history))
+                    ]
+                )
+                current_residual = f_history[-1]
+                gamma, _residuals, _rank, _singular = _lstsq(
+                    delta_f, current_residual, rcond=None
+                )
+                candidate = held_vector + current_residual - (
+                    delta_x + delta_f
+                ).dot(gamma)
+                if all(isfinite(float(value)) for value in candidate):
+                    mixed = candidate
+                    accelerated_rounds += 1
+            held_vector = mixed if mixed is not None else naive_next
         if converged:
-            return cumulative_scale, tuple(totals), drift, True, False
+            return (
+                cumulative_scale,
+                tuple(totals),
+                drift,
+                True,
+                False,
+                accelerated_rounds,
+            )
         # The cap ran out. Measure what the load would still move by, so
         # the warning carries a number rather than an adjective, then fall
         # back to the last converged round. Round 1, the plan-frozen
@@ -3334,7 +3505,14 @@ def solve_tna_problem(
             TNASelfweightRefinementWarning,
             stacklevel=2,
         )
-        return first_round_scale, tuple(totals), drift, False, True
+        return (
+            first_round_scale,
+            tuple(totals),
+            drift,
+            False,
+            True,
+            accelerated_rounds,
+        )
 
     # Geometry-dependent selfweight fed straight to the library is a
     # positive feedback loop: a taller surface carries more tributary
@@ -3359,6 +3537,7 @@ def solve_tna_problem(
     selfweight_drift = 0.0
     selfweight_converged = True
     selfweight_fenced = False
+    selfweight_accelerated_rounds = 0
     try:
         if mode == "zmax":
             zmax = float(zmax)
@@ -3376,6 +3555,7 @@ def solve_tna_problem(
                     selfweight_drift,
                     selfweight_converged,
                     selfweight_fenced,
+                    selfweight_accelerated_rounds,
                 ) = _refined_zmax_solve(zmax)
                 selfweight_rounds_run = len(selfweight_totals)
             else:
@@ -3647,6 +3827,7 @@ def solve_tna_problem(
                 "selfweight_final_drift": selfweight_drift,
                 "selfweight_converged": selfweight_converged,
                 "selfweight_fenced": selfweight_fenced,
+                "selfweight_accelerated_rounds": selfweight_accelerated_rounds,
             }
         )
     diagnostics.update(algebraic_diagnostics)

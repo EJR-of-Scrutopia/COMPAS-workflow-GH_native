@@ -1049,7 +1049,14 @@ def test_the_zmax_branch_never_hands_the_library_a_density():
         calls.append(source[start:cursor])
         start = source.find(marker, cursor)
 
-    assert len(calls) == 2, (
+    # 2026-09-07: 2 -> 3. The refinement loop's own accelerated design
+    # (round five, part two) added a THIRD call site: a confirming solve
+    # at the plain (un-mixed) evaluated load, used only when the loop is
+    # about to declare convergence, so an accelerated answer never ships
+    # one round short of what the un-accelerated loop would have kept.
+    # Still a literal zero density at every site, which is the invariant
+    # this check actually exists to guard.
+    assert len(calls) == 3, (
         "the zmax call sites moved; this check must be pointed at all of "
         "them, and it found {}".format(len(calls))
     )
