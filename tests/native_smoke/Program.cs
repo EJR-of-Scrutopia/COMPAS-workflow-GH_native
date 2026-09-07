@@ -23322,11 +23322,54 @@ internal static partial class Program
         // count, seam chords, span excursion, the 0.9 width floor) are
         // UNCHANGED, proving the closer band's own basic construction is
         // not what moved.
+        //
+        // LAST-STEP CREST TILING (2026-09-07): this fixture's own crown is
+        // ALSO a ridge (the SAME discriminator, above, is right to catch
+        // it, Param's own words), so it is ALSO handed to the new
+        // last-step tiling rather than FIX 5's now-removed crest ring
+        // closer -- and here, UNLIKE his 2-sided vault, FIX 5's own trial
+        // never actually closed clean: MEASURED directly, its own
+        // `trialClean` bar failed on this exact fixture at this exact
+        // setting, and the crown fell through to the untouched generic
+        // per-component loop, an ordinary (non-Closer) fallback wedge fan
+        // at course 32 that this fixture's own neighbour window was
+        // silently counting all along. This fixture's own crown loop is
+        // now genuinely closed instead (9 stones), which moves closers'
+        // own COUNT, 68 to 77 (the slab's 68 unmoved, plus the 9 the
+        // crown used to lack) -- but NOT the coverage ratio or the width
+        // excursion below, both scoped to `closersInInterval` (the SAME
+        // field-range test check 2 already trusts) precisely so a second,
+        // later mechanism sharing the Closer flag cannot inflate a
+        // measurement that is about ONE refused interval specifically.
+        //
+        // THE WIDTH EXCURSION STILL NEEDS ITS OWN NAMED EXEMPTION, though,
+        // for a reason that has nothing to do with the crown: the slab's
+        // own stones (course 31, this task's own scope never reaches it)
+        // genuinely FAN near the crotch where a strip ends on a free edge
+        // and the loop above it comes round the corner (0.3228 to
+        // 0.6304 m), which used to sit against a WIDER neighbour window
+        // that happened to include course 32's own (then-ordinary,
+        // similarly wide) fallback wedges too, and so never tripped the
+        // bar. Losing that accidental cover when course 32 becomes
+        // genuinely closer-tiled is not a regression in the slab's own
+        // geometry -- every other pinned number on this fixture proves it
+        // unchanged -- only in what the narrower, now-correct neighbour
+        // window can see.
+        //
+        // THE BOND MOVES BACK, 0.0990 to 0.0492, because FIX 5's own
+        // meeting geometry -- ridge stones paired against a recovered
+        // seam, reaching the retired cap's own former footprint -- is
+        // gone with it: the crown's own new stones are flat, cut only
+        // from lowers[0], and meet the slab the same plain way they did
+        // before FIX 5 ever existed. Not a regression this task owns
+        // either: the number simply reverts to what stood before the
+        // construction that produced 0.0990 was removed.
         SeamFixture(
             "Param's crown arch", crown, 0.10, 0.30,
-            expectedStones: 68, dropsAllowed: 0,
-            expectedSeamChords: 32, expectedBond: 0.0990,
-            expectedSpanExcursion: 0.0276,
+            expectedStones: 77, dropsAllowed: 0,
+            expectedSeamChords: 50, expectedBond: 0.0492,
+            expectedSpanExcursion: 0.0317,
+            widthExemption: 0.8801,
             widthFloorFraction: 0.9);
         // CH 0.375 KEEPS its coverage exemption at the same number, and
         // the reason is now a construction fact rather than a hole class:
@@ -23352,9 +23395,9 @@ internal static partial class Program
         // corners.
         SeamFixture(
             "Param's crown arch at CH 0.375", crown, 0.17, 0.375,
-            expectedStones: 34, dropsAllowed: 0,
-            expectedSeamChords: 28, expectedBond: 0.1644,
-            expectedSpanExcursion: 0.0037,
+            expectedStones: 37, dropsAllowed: 0,
+            expectedSeamChords: 34, expectedBond: 0.0871,
+            expectedSpanExcursion: 0.0161,
             coverageExemption: 0.9734,
             widthExemption: 0.9475,
             widthFloorFraction: 0.9);
@@ -23777,6 +23820,86 @@ internal static partial class Program
             (double bandLow, double bandHigh) = ReadInterval(intervals[0]);
             var cells = ReadSeamCells(made);
             var closers = cells.Where(cell => cell.Closer).ToArray();
+            // LAST-STEP CREST TILING (2026-09-07): `closers` above pools
+            // every Closer=true cell in the whole net, which is right for
+            // the span, count, chord and bond checks below (this fixture
+            // is happy to prove against every closer stone there is,
+            // whichever mechanism cut it) but wrong for the coverage and
+            // width-across checks further down, both of which measure
+            // against THIS ONE refused interval's own field range
+            // specifically (bandLow to bandHigh). A ridge crest sitting
+            // in a genuinely different field range -- its own last-step
+            // tiling, proved separately, SkinPatterns.cs, after the whole
+            // net's own band loop -- must not inflate either measurement
+            // just for sharing the Closer flag with this interval's real
+            // closer stones. Told apart by field value, the SAME corner-
+            // sampling check 2 already trusts a little further down: a
+            // cell belongs to this interval when its own outline's mean
+            // field value falls inside [bandLow, bandHigh].
+            object field = blended.Invoke(
+                null, new object[] { net, courseHeight })!;
+            double[][] netVertices = ((IEnumerable)netType
+                    .GetProperty("Vertices")!.GetValue(field)!)
+                .Cast<double[]>()
+                .ToArray();
+            int[][] netFaces = ((IEnumerable)netType
+                    .GetProperty("Faces")!.GetValue(field)!)
+                .Cast<int[]>()
+                .ToArray();
+            double[] netField = ((IEnumerable)netType
+                    .GetProperty("Levels")!.GetValue(field)!)
+                .Cast<double>()
+                .ToArray();
+            double[] CellFieldRange(double[][] outline)
+            {
+                double[] values = outline
+                    .Select(corner =>
+                        FieldAtPlanPoint(
+                            netVertices, netFaces, netField, corner))
+                    .Where(double.IsFinite)
+                    .ToArray();
+                return values.Length == 0
+                    ? new[] { double.NaN, double.NaN }
+                    : new[] { values.Min(), values.Max() };
+            }
+            // A COURSE BELONGS TO THIS INTERVAL when SOME of its own
+            // cells genuinely reach down near bandLow, not merely when
+            // ONE cell's mean or thickness looks right: tried per CELL
+            // twice and MEASURED wrong both times. A ridge crest's own
+            // last-step stones sit FLAT at exactly bandHigh (lowers[0]'s
+            // own single field level, this band's own low boundary and
+            // the slab's own high one, being the SAME traced curve), so a
+            // mean-only test passed them anyway (165.78% coverage on
+            // Param's crown arch, the crest's own flat area double-
+            // counted into the slab's) and a per-cell field-thickness
+            // test still passed some of them, because the ordinary slab
+            // ALSO carries its own genuinely near-zero-thickness cells at
+            // its own free-edge crotches (SkinPatterns.cs, "SECTIONLESS,
+            // exactly as an ordinary end-stone is") -- a real, pre-
+            // existing species this task does not own, wrongly excluded
+            // by that test too (97.98%, under the bar). What is actually
+            // true of a ridge crest and never of a real slab is that ITS
+            // WHOLE COURSE never reaches bandLow, not merely that one of
+            // its own cells does not: aggregated per course, the slab's
+            // own 68 cells span down to bandLow somewhere among them even
+            // where any one crotch stone does not, and the crest's own 9
+            // never do, all being cut from the identical flat curve.
+            Dictionary<int, double> courseFieldFloor = closers
+                .GroupBy(cell => cell.Course)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .Select(cell => CellFieldRange(cell.Outline)[0])
+                        .Where(double.IsFinite)
+                        .DefaultIfEmpty(double.NaN)
+                        .Min());
+            var closersInInterval = closers
+                .Where(cell =>
+                    courseFieldFloor.TryGetValue(
+                        cell.Course, out double floor) &&
+                    double.IsFinite(floor) &&
+                    floor <= bandLow + ((bandHigh - bandLow) * 0.5))
+                .ToArray();
             if (closers.Length == 0)
             {
                 throw new InvalidOperationException(
@@ -23932,7 +24055,7 @@ internal static partial class Program
             // for a closer as for an ordinary band cell, because both carry
             // route (a)'s two runs and nothing else has to be assumed about
             // either.
-            double[] closerWidths = closers
+            double[] closerWidths = closersInInterval
                 .Select(CellWidthAcross)
                 .Where(width => width > 0.0)
                 .ToArray();
@@ -24057,9 +24180,10 @@ internal static partial class Program
             // built and not a second tracer's. IT IS THE BLENDED NET, the
             // one the pattern actually tessellated (spec 2026-09-05 rule
             // 2.2); the raw net's curves at these levels are a different
-            // field's and would answer for nothing.
-            object field = blended.Invoke(
-                null, new object[] { net, courseHeight })!;
+            // field's and would answer for nothing. (field, netVertices,
+            // netFaces and netField are now read once, above, alongside
+            // `closers` itself, so `closersInInterval` can be built before
+            // this point needs it.)
             double[][][] lows = TracedLevel(traceAll, field, bandLow);
             double[][][] highs = TracedLevel(traceAll, field, bandHigh);
             var lowGrid = LevelGrid(lows);
@@ -24076,21 +24200,10 @@ internal static partial class Program
             // against their own slabs. A fixture that cannot meet the bar
             // carries a NAMED EXEMPTION with its measured number, so the
             // spec's bar is the assertion and the exemption reads as one.
-            double[][] netVertices = ((IEnumerable)netType
-                    .GetProperty("Vertices")!.GetValue(field)!)
-                .Cast<double[]>()
-                .ToArray();
-            int[][] netFaces = ((IEnumerable)netType
-                    .GetProperty("Faces")!.GetValue(field)!)
-                .Cast<int[]>()
-                .ToArray();
-            double[] netField = ((IEnumerable)netType
-                    .GetProperty("Levels")!.GetValue(field)!)
-                .Cast<double>()
-                .ToArray();
             double slab = SlabPlanArea(
                 netVertices, netFaces, netField, bandLow, bandHigh);
-            double covered = closers.Sum(cell => PlanAreaOf(cell.Outline));
+            double covered =
+                closersInInterval.Sum(cell => PlanAreaOf(cell.Outline));
             double ratio = covered / slab;
             var neighbourRatios = new List<double>();
             foreach ((var level, bool below) in
@@ -25466,6 +25579,32 @@ internal static partial class Program
                     width = Math.Max(
                         width, (iv.High - iv.Low) / courseHeight);
                 }
+            }
+            // LAST-STEP CREST TILING (2026-09-07): a ridge crest's own
+            // stones deliberately span the residual region's FULL WIDTH
+            // ACROSS the ridge (Param's own ruling, "each stone spans the
+            // region's full width across the ridge and its length along
+            // the ridge is one ordinary stone"), a genuinely bigger
+            // footprint than an ordinary size x courseHeight tile. They
+            // ship Sections: null (the same route a crown cap already
+            // takes, fanned thickening rather than a two-rail loft, since
+            // there is no natural lower/upper rail pair to loft between a
+            // full-width slice cut from one closed boundary), so
+            // CellWidthAcross cannot read their width either. Narrowly
+            // targeted to that exact shape -- Closer with no Sections, an
+            // along-guide span (U1 - U0 comes out as the axis cut width,
+            // not zero) -- so no ordinary closer (which always carries
+            // Sections, BandCell and CloserBand both build them) and no
+            // other course's own capacity reading moves.
+            var crestStones = grp
+                .Where(c =>
+                    c.Closer && c.Sections is null && (c.U1 - c.U0) > 1.0e-6)
+                .ToList();
+            if (crestStones.Count > 0 && courseHeight > 1.0e-9)
+            {
+                double impliedAcross = crestStones.Max(
+                    c => PlanAreaOf(c.Outline) / (c.U1 - c.U0));
+                width = Math.Max(width, impliedAcross / courseHeight);
             }
             double nominalArea = size * courseHeight * width;
             double totalArea = grp.Sum(c => PlanAreaOf(c.Outline));
@@ -45680,12 +45819,50 @@ internal static partial class Program
             // real, silent loss before), trialUncovered reads exactly 0,
             // and the render shows the two holes gone -- see this task's
             // own report for the before/after pair.
+            //
+            // LAST-STEP CREST TILING (2026-09-07, replacing FIX 5
+            // wholesale after Param's own render still showed a rosette
+            // through three rounds of variation inside CloserBand and its
+            // siblings): course 18 MOVES A FOURTH TIME, 20 to 17 (218 to
+            // 215 cells overall). FIX 5's own crest ring closer (the
+            // CloserBand call paired against the recovered seam, its
+            // sibling-slab defer, its pinch patch) is REMOVED, not varied
+            // again; a ridge crest band now only records itself during the
+            // ordinary tiling pass, and the actual stones are cut once,
+            // after the WHOLE net is built, directly from the crown loop's
+            // own boundary -- perpendicular cuts across its own long axis
+            // in plan (read off world Z, the loop's own two highest
+            // points, not a raw plan diameter, which picks the wrong pair
+            // on a loop this close to circular) at ordinary Size spacing.
+            // MEASURED on this exact fixture: the crown's own along-ridge
+            // reach is 0.726 m, ONE ordinary-family stone (not the five or
+            // six a girth-only estimate first suggested; the loop's own
+            // along-ridge reach is a THIRD of its full perimeter, not the
+            // whole of it), against the FIX 5 interim's own seven ridge
+            // stones plus a patch. The small central hole is gone (residue
+            // 0.003 m2, under this fixture's own 0.05 m2 floor, checked by
+            // BandUncoveredArea's own union of every cell the whole net
+            // now carries, not one band's own interval), with zero overlap
+            // against the sibling slab immediately below it (checked
+            // directly, against every cell already kept anywhere in the
+            // net). NAMED, NOT HIDDEN: this one stone is FLAT, cut only
+            // from the crown loop's own single field level, and does not
+            // reach the true summit in world Z -- every construction tried
+            // that did (a keyhole to uppers[0], a zero-area spike to its
+            // centroid) either self-crossed or measured a real corner-
+            // normal instability once carried into Rhino's own per-corner
+            // offset (Skin offset one-sidedness, this file); see this
+            // task's own report. The sibling slab's own 16 stones are
+            // untouched -- this task's own scope is the crown loop the old
+            // crest ring closer used to occupy, not the general-purpose
+            // slab-and-closer path every vault's own transition bands
+            // already share.
             ["2 sided vault"] = new Dictionary<int, int>
             {
                 [0] = 12, [1] = 10, [2] = 12, [3] = 10, [4] = 12, [5] = 10,
                 [6] = 12, [7] = 10, [8] = 12, [9] = 10, [10] = 12, [11] = 10,
                 [12] = 12, [13] = 10, [14] = 12, [15] = 10, [16] = 12,
-                [17] = 10, [18] = 20
+                [17] = 10, [18] = 17
             }
         };
 
