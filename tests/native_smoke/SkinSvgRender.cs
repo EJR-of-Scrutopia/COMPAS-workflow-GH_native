@@ -31,7 +31,7 @@ namespace Ananke.COMPAS.NativeSmoke;
 /// which needs RhinoCommon's native core and cannot run in this console
 /// process (confirmed elsewhere in this suite: DllNotFoundException outside
 /// Rhino). The one pure-math, PROVEN-EXACT guard that predicts one class of
-/// that failure without Rhino is SkinComponents.CellOffsetImpossible (the
+/// that failure without Rhino is SkinComponent.CellOffsetImpossible (the
 /// concave-fold self-intersection under offset); this renderer calls it, by
 /// reflection, at the given --thickness. It is a LOWER BOUND, not a proof:
 /// a cell this guard passes can still fail Rhino's own wall build or its
