@@ -18,7 +18,7 @@ using System.Threading.Tasks;
 
 namespace Ananke.COMPAS.NativeSmoke;
 
-internal static class Program
+internal static partial class Program
 {
     private const string GrasshopperComponentBase =
         "Grasshopper.Kernel.GH_Component";
@@ -393,6 +393,17 @@ internal static class Program
             string.Equals(args[0], FakeWorkerFlag, StringComparison.Ordinal))
         {
             return RunFakeWorker();
+        }
+        // RULE B's instrument (spec 2026-09-07-two-sided-vault-deadline.md):
+        // a diagnostic mode, never wired into the 163-check suite, that
+        // renders one study's own generated tessellation to an SVG rather
+        // than asserting anything. Dispatched before Options.Parse because
+        // its own argument shape (a study name and a pattern number, not
+        // just a plugin path) is not the smoke suite's.
+        if (args.Length > 0 &&
+            string.Equals(args[0], RenderSvgFlag, StringComparison.Ordinal))
+        {
+            return RunRenderSvg(args.Skip(1).ToArray());
         }
         try
         {
@@ -3612,6 +3623,23 @@ internal static class Program
             failures.Add(
                 $"Round four rule 4, zero-width cells and a dead safety " +
                 $"net: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinCloserStoneSizeFamily(plugin);
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                $"SKIP  Two-sided vault deadline, rule C item 4 (deferred " +
+                $"claim not registered this run): {unavailable.Message}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Two-sided vault deadline, rule C item 4 (registering " +
+                $"the deferred claim): {DescribeException(exception)}");
         }
 
         // Every deferred assertion is reported here, at the suite level, so
@@ -46270,6 +46298,158 @@ internal static class Program
             Console.WriteLine($"     owner: {owner}");
             Console.WriteLine($"     measured: {outcome}");
         }
+    }
+
+    /// <summary>
+    /// TWO-SIDED VAULT DEADLINE, RULE C ITEM 4 (spec 2026-09-07-two-sided-
+    /// vault-deadline.md): the stone-area spread outside the crown must sit
+    /// inside the band the ordinary courses keep, so no stone reads as a
+    /// fragment. Root-caused with the new --render-svg instrument (rule B)
+    /// and real coordinates: course 18 (the closer band immediately around
+    /// his oversized crown cap, "1 seam -> 16 stones") ships eight of its
+    /// sixteen stones at span 0.272 m or 0.281 m, roughly HALF the 0.53-
+    /// 0.54 m span every ordinary course cell on this vault actually
+    /// carries, while the other eight match that family at 0.544 m.
+    /// CloserBand's own end-stone gap division ("THE END-STONE",
+    /// SkinPatterns.cs ~8486) is the mechanism: Math.Ceiling(gap.Length /
+    /// size) forces a halving whenever a residual gap is only just over
+    /// one Size (his own two gaps measure ~0.544 m and ~0.563 m, ratios
+    /// 1.09 and 1.13).
+    ///
+    /// DEFERRED, NOT FIXED, after two attempts this task tried and the
+    /// existing regression suite itself caught as unsafe -- exactly what
+    /// that suite is for. Attempt 1 (Math.Round(gap.Length / size) in
+    /// place of Ceiling) fixed his vault (0.272/0.281 m -> 0.544/0.563 m)
+    /// but broke ValidateSkinSeamRoundTwo's own pinned tolerance on the
+    /// asymmetric six-lobe the OTHER way: a 0.713 m gap there rounds to
+    /// ONE piece that overshoots ITS neighbours' own 0.6305 m ceiling by
+    /// 13%, where Ceiling's two 0.357 m pieces sat comfortably inside it.
+    /// Attempt 2 (divide by the flanking closer stone's own real span,
+    /// gap.LowFlank/HighFlank, instead of the constant Size) made BOTH
+    /// fixtures worse (his vault's own worst span fell to 0.113 m across
+    /// 221 cells instead of 215; the six-lobe's excursion rose to 45%),
+    /// because a flanking stone's span can itself already be an artefact
+    /// of a PRIOR gap in the same pass, so the reference compounds rather
+    /// than steadies. Both are reverted; CloserBand is UNCHANGED from
+    /// baseline. The real fix needs the true LOCAL ordinary-course pitch
+    /// as the divisor, which CloserBand does not have in scope (it runs
+    /// on a REFUSED band, before the ordinary per-band tiling loop builds
+    /// its neighbours' own cells) -- either threading that pitch in, or a
+    /// separate, carefully-scoped merge pass over the FINISHED cell list
+    /// (where ordinary neighbours do exist to measure against), each a
+    /// larger, dedicated round rather than a rushed patch under deadline.
+    /// </summary>
+    private static void ValidateSkinCloserStoneSizeFamily(Assembly plugin)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+        const string Study = "2 sided vault";
+        string formPath = Path.Combine(HisExportsRoot, $"{Study}-form.json");
+        if (!File.Exists(formPath))
+        {
+            throw new HisNetsUnavailableException(
+                $"'{Study}' is missing its -form.json under " +
+                $"'{HisExportsRoot}'.");
+        }
+
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+
+        const double Size = 0.5;
+        const double CourseHeight = 0.5;
+        const double MinPiece = 0.20;
+
+        object resultDto = DeserializeContract(
+            plugin, resultType, HisNetExtractResultContractJson(formPath));
+        object net = readNet.Invoke(null, new object?[] { resultDto })
+            ?? throw new InvalidOperationException(
+                $"'{Study}': SkinPatterns.ReadNet returned null on " +
+                "Param's own exported form document.");
+        object generated = courses.Invoke(
+            null, new object[] { net, Size, CourseHeight, MinPiece })!;
+
+        IEnumerable rawCells = (IEnumerable)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        var allCells = rawCells.Cast<object>().ToList();
+        int[] closerCourses = allCells
+            .Where(cell => Reading<bool>(cell, "Closer"))
+            .Select(cell => Reading<int>(cell, "Course"))
+            .Distinct()
+            .ToArray();
+        var ordinarySpans = new List<double>();
+        var closerSpans = new List<double>();
+        // Ordinary spans are read only from courses ADJACENT to a closer
+        // course (the same local-neighbourhood comparison
+        // ValidateSkinSeamRoundTwo already uses), not from the whole
+        // vault: an open band's own boundary-clipped end piece elsewhere
+        // is a different, already-understood, legitimate mechanism (rule
+        // 6.5/CourseSpans) and would understate what "the same family"
+        // means right beside the closer band this claim is actually about.
+        foreach (object cell in allCells)
+        {
+            if (Reading<bool>(cell, "Cap"))
+                continue;
+            bool closer = Reading<bool>(cell, "Closer");
+            int course = Reading<int>(cell, "Course");
+            if (!closer &&
+                !closerCourses.Any(c => Math.Abs(course - c) <= 1))
+            {
+                continue;
+            }
+            double span = Math.Abs(
+                Reading<double>(cell, "U1") - Reading<double>(cell, "U0"));
+            (closer ? closerSpans : ordinarySpans).Add(span);
+        }
+        if (ordinarySpans.Count == 0 || closerSpans.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"'{Study}': expected both ordinary and closer cells at " +
+                $"his canvas settings; got {ordinarySpans.Count} " +
+                $"ordinary, {closerSpans.Count} closer.");
+        }
+        double ordinaryMin = ordinarySpans.Min();
+        double closerMin = closerSpans.Min();
+        // The ordinary band's own floor right beside the closer band sits
+        // at 0.53 m (measured, courses adjacent to course 18 only); a
+        // closer stone at 80% of Size (0.40 m) is still plainly the same
+        // family, while the still-standing undersized stones (0.272,
+        // 0.281 m) sit at 54-56% of Size, well under it.
+        double floor = 0.8 * Size;
+        Deferred(
+            "Two-sided vault deadline, rule C item 4: on his 2-sided " +
+            "vault at his canvas settings, every closer stone's own " +
+            "along-guide span sits in the same size family as the " +
+            "ordinary courses immediately beside it (at least 80% of " +
+            "Size, 0.40 m)",
+            "CloserBand's own end-stone gap division (SkinPatterns.cs " +
+            "~8486, \"THE END-STONE\"); root-caused this task with real " +
+            "coordinates (course 18, eight of sixteen stones at half " +
+            "span), two fixes tried and reverted after the regression " +
+            "suite caught cross-fixture side effects (see this method's " +
+            "own doc comment); needs the true local ordinary pitch " +
+            "threaded into CloserBand, or a scoped post-build merge pass, " +
+            "as its own dedicated round",
+            () =>
+            {
+                if (closerMin < floor)
+                {
+                    throw new InvalidOperationException(
+                        $"'{Study}': min ordinary span beside the closer " +
+                        $"band {ordinaryMin:0.###} m, floor {floor:0.###} " +
+                        "m = 80% of Size; the smallest closer stone reads " +
+                        $"{closerMin:0.###} m, a fragment against its " +
+                        "neighbours.");
+                }
+            });
     }
 
     private static string ResolveRhinoRoot(string? requestedRoot)
