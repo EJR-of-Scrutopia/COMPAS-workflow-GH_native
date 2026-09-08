@@ -203,6 +203,24 @@ internal static class MechanismCollector
     public const double MinimumReelExtentRadius = 1.0e-6;
 
     /// <summary>
+    /// THE CABLE'S OWN THICKNESS, his ruling 2026-09-09, verbatim: "the
+    /// routing for the spool via framing is its center line. the defualt
+    /// cable thickness is 0.01".
+    ///
+    /// Read as a DIAMETER, so the drawn wire's radius is half of it. It is
+    /// carried in the document because a consumer that has to guess will
+    /// guess wrongly and cannot know it has: the studio drew this wire at a
+    /// 0.02 m RADIUS, four times over, and the drum's own 0.0267 m helix
+    /// pitch then read as adjacent turns overlapping by 12 mm -- a modelling
+    /// fault that did not exist. At 0.01 m thick the same pitch clears
+    /// comfortably.
+    ///
+    /// A DEFAULT, not authored per study: there is no port for it yet, and
+    /// the chin says so every time rather than letting it pass as measured.
+    /// </summary>
+    public const double DefaultCableThicknessMetres = 0.01;
+
+    /// <summary>
     /// How close a frame's own distance-to-axis, relative to that reel's
     /// own radius, may sit to the 1.0 ownership boundary -- or how close a
     /// SECOND reel's own ratio may also sit at or under it -- before the
@@ -360,6 +378,7 @@ internal static class MechanismCollector
                 "build: every reel here is driven by its own axis.");
         }
 
+        string? spoolRadiusFallbackNote = null;
         Dictionary<string, object?>? mechanismOut = null;
         if (anyAssetPart)
         {
@@ -464,18 +483,22 @@ internal static class MechanismCollector
             double spoolRadius = spoolSource is not null
                 ? Math.Max(SmallestBoundingDimension(spoolSource) / 4.0, MinimumSpoolRadius)
                 : MinimumSpoolRadius;
-            notes.Add(
+            // HELD, NOT SAID YET: the routing frames below can MEASURE a
+            // real winding radius, and a measurement supersedes this guess
+            // rather than arguing with it in the chin.
+            spoolRadiusFallbackNote =
                 "mechanism: spoolRadius defaulted to " +
                 spoolRadius.ToString("0.####", CultureInfo.InvariantCulture) +
                 (reels.Count > 0
                     ? " from reel[0]'s own bounding box (smallest " +
-                      "dimension over 4)."
+                      "dimension over 4), since no routing frame rides a " +
+                      "reel to measure a real winding radius from."
                     : spoolSource is not null
                         ? " from the frame/motors/tie's own bounding box " +
                           "(smallest dimension over 4), since no reel " +
                           "resolved."
                         : " from the floor value, since no geometry was " +
-                          "wired to derive it from."));
+                          "wired to derive it from.");
 
             // THE REEVE FACTOR IS PROVISIONAL (his ruling, verbatim: "i
             // dont [want] it to be accurate righ tnow"). Fixed at 1.0, no
@@ -486,6 +509,20 @@ internal static class MechanismCollector
                 "wanted right now; every reel's spin RATE is likely wrong " +
                 "until a real reeve factor is authored.");
 
+            // THE ROUTING FRAMES ARE THE CABLE'S CENTRELINE, his ruling,
+            // said in the document so no consumer has to infer it from
+            // where the frames happen to sit against a drum mesh.
+            notes.Add(
+                "mechanism: the routing frames are the cable's CENTRELINE " +
+                "(his ruling), and cableThickness is his stated default " +
+                DefaultCableThicknessMetres.ToString("0.####", CultureInfo.InvariantCulture) +
+                " m read as a DIAMETER -- a default, not authored per " +
+                "study, and not measured from anything. Draw the wire on " +
+                "the frames as they are: do NOT offset them by a wire " +
+                "radius.");
+
+            mechanismOut["cableThickness"] = DefaultCableThicknessMetres;
+            mechanismOut["routingFrameMeaning"] = "centreline";
             mechanismOut["reeveFactor"] = 1.0;
             mechanismOut["spoolRadius"] = spoolRadius;
         }
@@ -558,6 +595,7 @@ internal static class MechanismCollector
         // only the case where the answer is genuinely undecided and would
         // move different geometry: two reels reaching the same frame.
         var contested = new Dictionary<(int First, int Second), (int Count, int Wire, int Frame, double FirstRatio, double SecondRatio)>();
+        var ownedRadii = new Dictionary<int, List<double>>();
         int rideCount = 0;
         int justOutsideCount = 0;
         int beyondTheFacesCount = 0;
@@ -611,6 +649,20 @@ internal static class MechanismCollector
                 if (ownedByReel && verdict.NearestRatio >= 1.0 - RouteOwnerAmbiguityMargin)
                     rideCount++;
 
+                // THE WINDING RADIUS, MEASURED. Every frame a reel owns
+                // sits at the radius the wire actually runs at on that
+                // reel, so the reel's own frames say what a bounding box
+                // can only guess at.
+                if (ownedByReel)
+                {
+                    if (!ownedRadii.TryGetValue(verdict.OwnerReel, out List<double>? radii))
+                    {
+                        radii = new List<double>();
+                        ownedRadii[verdict.OwnerReel] = radii;
+                    }
+                    radii.Add(verdict.NearestDistance);
+                }
+
                 classified.Add((frame, verdict.Owner, verdict.OwnerReel));
             }
             classifiedRoutes[w] = classified;
@@ -630,6 +682,49 @@ internal static class MechanismCollector
                 entry.Value.SecondRatio.ToString("0.###", CultureInfo.InvariantCulture) +
                 $"); assigned reel {entry.Key.First} as the nearer, never " +
                 "picked silently.");
+        }
+
+        // EACH REEL'S OWN WINDING RADIUS, and the mechanism's own spool
+        // radius with it (2026-09-09, measured on his real file by the
+        // studio session and true: the defaulted 0.03 matched nothing in
+        // the document -- his spool barrels read 0.05 and his pulleys
+        // 0.17, 0.20 and 0.30, so a bounding box over four was a guess
+        // that happened to be wrong). A reel's own routing frames sit at
+        // the radius the wire actually runs at on it, so they are the
+        // measurement, and the guess is only kept where there is nothing
+        // to measure.
+        var measuredRadii = new List<double>();
+        if (mechanismOut is not null &&
+            mechanismOut.TryGetValue("reels", out object? reelsObject) &&
+            reelsObject is List<Dictionary<string, object?>> reelsPayload)
+        {
+            for (int r = 0; r < reelsPayload.Count; r++)
+            {
+                double? measured =
+                    ownedRadii.TryGetValue(r, out List<double>? radii) && radii.Count > 0
+                        ? MedianOf(radii)
+                        : null;
+                reelsPayload[r]["windingRadius"] = measured;
+                if (measured is not null)
+                    measuredRadii.Add(measured.Value);
+            }
+        }
+        if (measuredRadii.Count > 0 && mechanismOut is not null)
+        {
+            double measuredSpool = MedianOf(measuredRadii);
+            mechanismOut["spoolRadius"] = measuredSpool;
+            notes.Add(
+                "mechanism: spoolRadius MEASURED at " +
+                measuredSpool.ToString("0.####", CultureInfo.InvariantCulture) +
+                $" m from the routing frames themselves, across " +
+                $"{measuredRadii.Count} reel(s) that carry wire, not " +
+                "guessed from a bounding box; each reel also carries its " +
+                "own windingRadius, which is the one to prefer per reel " +
+                "since a pulley and a spool do not share a radius.");
+        }
+        else if (spoolRadiusFallbackNote is not null)
+        {
+            notes.Add(spoolRadiusFallbackNote);
         }
 
         if (classifiedRoutes.Count > 0)
@@ -1766,6 +1861,21 @@ internal static class MechanismCollector
 
     /// <summary>The world's own up, the one direction a machine standing on a foundation does not have to be told.</summary>
     internal static readonly double[] WorldUp = { 0.0, 0.0, 1.0 };
+
+    /// <summary>
+    /// The MEDIAN of a set of values, which is what a winding radius wants
+    /// rather than a mean: a wire's frames are nearly all at the drum's own
+    /// radius and a handful sit on the run in and out, and a median ignores
+    /// those where a mean would be dragged by them.
+    /// </summary>
+    internal static double MedianOf(IReadOnlyList<double> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        int middle = sorted.Count / 2;
+        return sorted.Count % 2 == 1
+            ? sorted[middle]
+            : (sorted[middle - 1] + sorted[middle]) / 2.0;
+    }
 
     /// <summary>The mean of a set of points; the origin for an empty set.</summary>
     internal static double[] CentroidOf(IReadOnlyList<double[]> points)
