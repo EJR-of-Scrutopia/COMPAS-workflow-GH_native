@@ -696,6 +696,11 @@ internal static class MechanismCollector
             // rather than left looking like broken geometry.
             var sourceFirstOrigins = new List<double[]?>(PlacementGroupSize);
             var sourceLastOrigins = new List<double[]?>(PlacementGroupSize);
+
+            // Their AXES travel with them, for the one degree of freedom
+            // collinear anchors cannot supply (see
+            // FitTransformAboutAnchorLine): the spin about the anchor line.
+            var sourceFirstAxes = new List<double[][]?>(PlacementGroupSize);
             for (int i = 0; i < PlacementGroupSize; i++)
             {
                 bool present =
@@ -703,6 +708,9 @@ internal static class MechanismCollector
                     wireI.Route.Count > 0;
                 sourceFirstOrigins.Add(present ? wireI!.Route[0].Origin : null);
                 sourceLastOrigins.Add(present ? wireI!.Route[wireI.Route.Count - 1].Origin : null);
+                sourceFirstAxes.Add(present
+                    ? new[] { wireI!.Route[0].XAxis, wireI.Route[0].YAxis }
+                    : null);
             }
 
             foreach (MechanismPlacementBranch branch in placements
@@ -793,8 +801,12 @@ internal static class MechanismCollector
                         // and sorted they separate a reordering from a
                         // genuine shape difference.
                         var targetOrigins = new List<double[]?>(PlacementGroupSize);
+                        var targetAxes = new List<double[][]?>(PlacementGroupSize);
                         foreach (MechanismPlacementPlane plane in branch.Planes)
+                        {
                             targetOrigins.Add(plane.Origin);
+                            targetAxes.Add(new[] { plane.XAxis, plane.YAxis });
+                        }
 
                         double ordered = OrderedShapeMismatch(sourceFirstOrigins, targetOrigins);
                         double unordered = UnorderedShapeMismatch(sourceFirstOrigins, targetOrigins);
@@ -806,6 +818,16 @@ internal static class MechanismCollector
                         {
                             (double[][] Linear, double[] Translation, double Residual)? fitted =
                                 FitTransformFromOrigins(sourceFirstOrigins, targetOrigins);
+
+                            // COLLINEAR ANCHORS ARE NOT A DEAD END, they are
+                            // two thirds of an answer: the line is exact and
+                            // only the spin about it wants another source.
+                            (double[][] Linear, double[] Translation, double Residual, double AxisDisagreementDegrees)? alongLine =
+                                fitted is null
+                                    ? FitTransformAboutAnchorLine(
+                                        sourceFirstOrigins, targetOrigins, sourceFirstAxes, targetAxes)
+                                    : null;
+
                             if (fitted is not null && fitted.Value.Residual < maxResidual)
                             {
                                 warnings.Add(
@@ -830,6 +852,41 @@ internal static class MechanismCollector
                                 det = Determinant3(linear);
                                 reflected = det < 0.0;
                             }
+                            else if (alongLine is not null && alongLine.Value.Residual < maxResidual)
+                            {
+                                warnings.Add(
+                                    $"Placement (PL) {label}: the seven wire " +
+                                    "first-frames and the seven placement planes " +
+                                    "ARE THE SAME SHAPE (worst edge disagreement " +
+                                    Metres(ordered) + " m), and the seven anchors " +
+                                    "sit IN A LINE. A line pins which way it " +
+                                    "points but not the SPIN about it, so the job " +
+                                    "splits. THE TRANSFORM WAS REFITTED: the " +
+                                    "origins carry the line, so every anchor now " +
+                                    "lands on its own plane (residual " +
+                                    Metres(alongLine.Value.Residual) + " m, was " +
+                                    Metres(maxResidual) + " m), and the spin about " +
+                                    "that line is taken from ALL SEVEN planes' own " +
+                                    "axes against all seven routing frames' own " +
+                                    "axes rather than from plane [0] alone. After " +
+                                    "the best spin those axes still disagree by " +
+                                    alongLine.Value.AxisDisagreementDegrees
+                                        .ToString("0.##", CultureInfo.InvariantCulture) +
+                                    " degrees on average: near zero means the spin " +
+                                    "is as well founded as the rest, and a large " +
+                                    "figure means your plane axes do not agree " +
+                                    "with your routing frames, so the mechanism " +
+                                    "may be ROLLED about the anchor line even " +
+                                    "though every anchor is exactly placed. Give " +
+                                    "your placement planes the same X/Y " +
+                                    "convention as your routing frames to settle " +
+                                    "that last degree of freedom.");
+                                linear = alongLine.Value.Linear;
+                                translation = alongLine.Value.Translation;
+                                maxResidual = alongLine.Value.Residual;
+                                det = Determinant3(linear);
+                                reflected = det < 0.0;
+                            }
                             else
                             {
                                 warnings.Add(
@@ -840,10 +897,11 @@ internal static class MechanismCollector
                                     "the " + Metres(maxResidual) + " m residual " +
                                     "is orientation alone -- but no better " +
                                     "transform could be fitted from the origins " +
-                                    "(they are collinear, or too few wires " +
-                                    "carry frames). Plane [0]'s own axes still " +
-                                    "place this instance; give plane [0] the " +
-                                    "same X/Y as Routing (RT)[0] frame [0].");
+                                    "at all (fewer than two wires carry frames, " +
+                                    "or every anchor sits on the same point). " +
+                                    "Plane [0]'s own axes still place this " +
+                                    "instance; give plane [0] the same X/Y as " +
+                                    "Routing (RT)[0] frame [0].");
                             }
                         }
                         else if (unordered <= ShapeCongruenceToleranceMetres)
@@ -1411,6 +1469,230 @@ internal static class MechanismCollector
     };
 
     internal static double[] Column3(double[][] m, int col) => new[] { m[0][col], m[1][col], m[2][col] };
+
+    /// <summary>A rotation of <paramref name="angle"/> radians about a UNIT axis, Rodrigues, with X/Y/Z as its COLUMNS.</summary>
+    internal static double[][] RotationAboutAxis(double[] axisUnit, double angle)
+    {
+        double c = Math.Cos(angle);
+        double s = Math.Sin(angle);
+        double t = 1.0 - c;
+        double x = axisUnit[0];
+        double y = axisUnit[1];
+        double z = axisUnit[2];
+        return new[]
+        {
+            new[] { (t * x * x) + c, (t * x * y) - (s * z), (t * x * z) + (s * y) },
+            new[] { (t * x * y) + (s * z), (t * y * y) + c, (t * y * z) - (s * x) },
+            new[] { (t * x * z) - (s * y), (t * y * z) + (s * x), (t * z * z) + c },
+        };
+    }
+
+    /// <summary>Any unit vector perpendicular to a UNIT vector, chosen off its own smallest component so the cross product never degenerates.</summary>
+    internal static double[] AnyPerpendicular(double[] unit)
+    {
+        double[] candidate = Math.Abs(unit[0]) <= Math.Abs(unit[1]) && Math.Abs(unit[0]) <= Math.Abs(unit[2])
+            ? new[] { 1.0, 0.0, 0.0 }
+            : Math.Abs(unit[1]) <= Math.Abs(unit[2])
+                ? new[] { 0.0, 1.0, 0.0 }
+                : new[] { 0.0, 0.0, 1.0 };
+        return NormalizeOrZ(CrossProduct(unit, candidate));
+    }
+
+    /// <summary>The SHORTEST rotation carrying one unit vector onto another; the identity when they already agree, and a half turn about any perpendicular when they oppose.</summary>
+    internal static double[][] MinimalRotation(double[] from, double[] to)
+    {
+        double[] cross = CrossProduct(from, to);
+        double sine = Math.Sqrt((cross[0] * cross[0]) + (cross[1] * cross[1]) + (cross[2] * cross[2]));
+        double cosine = (from[0] * to[0]) + (from[1] * to[1]) + (from[2] * to[2]);
+        if (sine < 1.0e-12)
+        {
+            return cosine > 0.0
+                ? BasisFromColumns(new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 })
+                : RotationAboutAxis(AnyPerpendicular(from), Math.PI);
+        }
+        return RotationAboutAxis(
+            new[] { cross[0] / sine, cross[1] / sine, cross[2] / sine },
+            Math.Atan2(sine, cosine));
+    }
+
+    /// <summary>
+    /// THE PLACEMENT FIT WHEN THE ANCHORS SIT IN A LINE (2026-09-08, third
+    /// pass, and what his own machine turns out to need: his seven anchors
+    /// per mechanism are collinear to within a thousandth of their own
+    /// spread).
+    ///
+    /// Seven points on a line pin only TWO of the three rotational degrees
+    /// of freedom. They fix which way the line points; they say nothing
+    /// about the spin ABOUT that line, so a fit that demands all three from
+    /// the origins refuses and throws away the two it could have had. Note
+    /// what collinearity also means: a wrong spin about the anchor line
+    /// moves those anchors not at all, so a large residual on collinear
+    /// anchors is never a roll error -- it is the LINE ITSELF pointed
+    /// wrongly, which the origins can fix exactly.
+    ///
+    /// So the job splits. The origins carry the line, exactly: every anchor
+    /// lands on its own plane's origin, residual to zero. The remaining
+    /// spin is taken from the AUTHORED AXES of all seven planes against all
+    /// seven routing frames, by a closed-form circular least squares, not
+    /// from plane [0] alone. Both handednesses are tried, because collinear
+    /// origins cannot tell a mirrored side from a turned one either; the
+    /// axes decide that too.
+    ///
+    /// The returned AxisDisagreementDegrees is how far the authored axes
+    /// still disagree after the best spin, and it is the honest measure of
+    /// how much to trust the one degree of freedom the origins could not
+    /// supply. The caller says it out loud.
+    /// </summary>
+    internal static (double[][] Linear, double[] Translation, double Residual, double AxisDisagreementDegrees)? FitTransformAboutAnchorLine(
+        IReadOnlyList<double[]?> source,
+        IReadOnlyList<double[]?> target,
+        IReadOnlyList<double[][]?> sourceAxes,
+        IReadOnlyList<double[][]?> targetAxes)
+    {
+        var shared = new List<int>();
+        int count = Math.Min(source.Count, target.Count);
+        for (int i = 0; i < count; i++)
+        {
+            if (source[i] is not null && target[i] is not null)
+                shared.Add(i);
+        }
+        if (shared.Count < 2)
+            return null;
+
+        int baseIndex = shared[0];
+        double[] sourceBase = source[baseIndex]!;
+        double[] targetBase = target[baseIndex]!;
+
+        int farIndex = -1;
+        double spread = 0.0;
+        foreach (int i in shared)
+        {
+            double length = Distance(source[i]!, sourceBase);
+            if (length > spread)
+            {
+                spread = length;
+                farIndex = i;
+            }
+        }
+        if (farIndex < 0 || spread <= 0.0)
+            return null;
+
+        double[] sourceLine = NormalizeOrZ(new[]
+        {
+            source[farIndex]![0] - sourceBase[0],
+            source[farIndex]![1] - sourceBase[1],
+            source[farIndex]![2] - sourceBase[2],
+        });
+        double[] targetLine = NormalizeOrZ(new[]
+        {
+            target[farIndex]![0] - targetBase[0],
+            target[farIndex]![1] - targetBase[1],
+            target[farIndex]![2] - targetBase[2],
+        });
+
+        // The spin is measured in a frame across the target line, right
+        // handed with it, so the closed form below reads as an ordinary
+        // rotation by theta in that plane.
+        double[] across1 = AnyPerpendicular(targetLine);
+        double[] across2 = CrossProduct(targetLine, across1);
+
+        (double[][] Linear, double[] Translation, double Residual, double AxisDisagreementDegrees)? best = null;
+        foreach (bool mirrored in new[] { false, true })
+        {
+            double[][] aligned = MinimalRotation(sourceLine, targetLine);
+            if (mirrored)
+            {
+                // A reflection through a plane CONTAINING the source line,
+                // so the line still lands on the target line and only the
+                // handedness changes. Which perpendicular it is chosen
+                // across does not matter: the spin below absorbs it.
+                double[] normal = AnyPerpendicular(sourceLine);
+                double[][] reflection =
+                {
+                    new[] { 1.0 - (2.0 * normal[0] * normal[0]), -2.0 * normal[0] * normal[1], -2.0 * normal[0] * normal[2] },
+                    new[] { -2.0 * normal[1] * normal[0], 1.0 - (2.0 * normal[1] * normal[1]), -2.0 * normal[1] * normal[2] },
+                    new[] { -2.0 * normal[2] * normal[0], -2.0 * normal[2] * normal[1], 1.0 - (2.0 * normal[2] * normal[2]) },
+                };
+                aligned = Multiply3(aligned, reflection);
+            }
+
+            double sumSin = 0.0;
+            double sumCos = 0.0;
+            foreach (int i in shared)
+            {
+                double[][]? fromAxes = i < sourceAxes.Count ? sourceAxes[i] : null;
+                double[][]? toAxes = i < targetAxes.Count ? targetAxes[i] : null;
+                if (fromAxes is null || toAxes is null)
+                    continue;
+                for (int a = 0; a < fromAxes.Length && a < toAxes.Length; a++)
+                {
+                    double[] turned = MultiplyVector3(aligned, fromAxes[a]);
+                    double p = Dot3(turned, across1);
+                    double q = Dot3(turned, across2);
+                    double r = Dot3(toAxes[a], across1);
+                    double s = Dot3(toAxes[a], across2);
+                    sumCos += (p * r) + (q * s);
+                    sumSin += (p * s) - (q * r);
+                }
+            }
+
+            double spin = Math.Abs(sumSin) < 1.0e-12 && Math.Abs(sumCos) < 1.0e-12
+                ? 0.0
+                : Math.Atan2(sumSin, sumCos);
+            double[][] linear = Multiply3(RotationAboutAxis(targetLine, spin), aligned);
+            double[] mapped = MultiplyVector3(linear, sourceBase);
+            double[] translation =
+            {
+                targetBase[0] - mapped[0],
+                targetBase[1] - mapped[1],
+                targetBase[2] - mapped[2],
+            };
+
+            double residual = 0.0;
+            foreach (int i in shared)
+            {
+                double[] predicted = MultiplyVector3(linear, source[i]!);
+                predicted[0] += translation[0];
+                predicted[1] += translation[1];
+                predicted[2] += translation[2];
+                double gap = Distance(predicted, target[i]!);
+                if (gap > residual)
+                    residual = gap;
+            }
+
+            double totalAngle = 0.0;
+            int angleCount = 0;
+            foreach (int i in shared)
+            {
+                double[][]? fromAxes = i < sourceAxes.Count ? sourceAxes[i] : null;
+                double[][]? toAxes = i < targetAxes.Count ? targetAxes[i] : null;
+                if (fromAxes is null || toAxes is null)
+                    continue;
+                for (int a = 0; a < fromAxes.Length && a < toAxes.Length; a++)
+                {
+                    double alignment = Dot3(MultiplyVector3(linear, fromAxes[a]), toAxes[a]);
+                    totalAngle += Math.Acos(Math.Clamp(alignment, -1.0, 1.0));
+                    angleCount++;
+                }
+            }
+            double disagreement = angleCount > 0
+                ? totalAngle / angleCount * (180.0 / Math.PI)
+                : double.NaN;
+
+            bool better = best is null ||
+                residual < best.Value.Residual - 1.0e-12 ||
+                (Math.Abs(residual - best.Value.Residual) <= 1.0e-12 &&
+                 !double.IsNaN(disagreement) &&
+                 (double.IsNaN(best.Value.AxisDisagreementDegrees) ||
+                  disagreement < best.Value.AxisDisagreementDegrees));
+            if (better)
+                best = (linear, translation, residual, disagreement);
+        }
+        return best;
+    }
+
+    internal static double Dot3(double[] a, double[] b) =>
+        (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 
     /// <summary>
     /// Move everything added from <paramref name="from"/> onwards to the
