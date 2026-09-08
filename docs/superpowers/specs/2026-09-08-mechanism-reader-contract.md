@@ -9,6 +9,19 @@ messages. The plugin's binding spec is their commit c90bf64.
 Nothing here is built yet. The first real document arrives when Param
 installs the rebuilt plugin, which is his call.
 
+> **PROVISIONAL, and a further change is already known.** Late on
+> 2026-09-08 Param redescribed the mechanism in more detail: five parts
+> rather than the shape below, **ten reels per unit of which seven move
+> as one group**, and **placement derived from the first wire frame
+> rather than a separate placement port**. The plugin is deliberately
+> shipping the current exporter for him to test against real geometry
+> before specifying the new shape, rather than churning this page twice
+> more in one night, which is the right call. So: the invariants, the
+> wire construction, the spin and the sequence below are settled and
+> hard-won; the KEY LAYOUT should be expected to move again. Do not
+> start the reader against this page without checking for a newer
+> shape first.
+
 ## What the document is
 
 `<study>-mechanism.json`, schema `bench.mechanism/1`, a fourth sibling
@@ -170,20 +183,22 @@ message:
 
 So the studio multiplies by 2 pi for radians, as expected.
 
-**The formula and the sign sentence disagree, and it is unresolved.**
-The sentence says positive turns take up wire and that taking up makes
-the wire's routed length SHORTEN. The formula takes
-`length_at(t) - length_at(frame0)`, so a shortening length yields a
-NEGATIVE number, which the same sentence calls paying out. Both cannot
-be right. Either `length_at` means the wire wound ON the spool, which
-grows as you take up and makes the two agree, or it means the net-side
-run named in the original P-003 wording, in which case the formula
-needs its sign inverted. Until the document says which quantity
-`length_at` is, a reader implementing it literally has an even chance
-of turning every reel backwards through the entire animation -- the
-same failure class as the turns-versus-radians ambiguity, and just as
-invisible in a single still frame. **Do not implement the spin until
-this is answered.**
+**The formula's sign was inverted, and is fixed** (plugin `29da394`).
+It briefly read `length_at(t) - length_at(frame0)` while the sign
+sentence called take-up positive, which are opposite claims: reeling in
+SHORTENS the free span, so that subtraction went negative exactly when
+the sentence said positive. The sentence was right and the arithmetic
+was wrong, so the subtraction was inverted rather than the wording
+rewritten:
+
+    turns = (length_at(frame0) - length_at(t))
+            * reeveFactor / (2 * pi * spoolRadius)
+
+with `length_at(t)` defined explicitly as the wire's **free span** at
+frame t -- from its net vertex to where it first meets the machine,
+the wrapped portion excluded because it is constant. That is also the
+quantity the studio already computes in order to draw the free span,
+so nothing has to be derived that the scene does not give directly.
 
 The **frame 0 reference** is the load-bearing part: the studio's timeline is
 a pure function of t by construction, so an incremental per-frame delta
@@ -385,13 +400,14 @@ taken away" view reads off the port name.
   spin. **Two numbers settle it, both Param's: how far the authored
   wrap subtends, and the drum radius.**
 
-  The plugin concedes the argument and expects case one on evidence:
-  his renders show drums reading as many parallel turns, the ridged
-  look of a fully wound spool, and his own description was "the wire
-  can reel and it gets stacked further on top of itself". Stacking in
-  layers implies many turns rather than a part wrap. Awaiting his
-  confirmation, but the reader should plan for STATIC reel-owned
-  frames. The `owner` fields stay regardless: they are what lets the
+  **CLOSED, in Param's own words:** "yes the wires are already fully
+  wound in the image and my model, you can use the frames to tighten
+  and losen along the frames as long as it stays spooled enough for
+  now." So it is a multi-turn wrap, **reel-owned frames stay static**,
+  and no tangent-point construction is needed. Read his second clause
+  as licence rather than instruction: the visible wire may slacken and
+  pull taut along its authored path, and the wrap itself need not grow
+  or shrink. The `owner` fields stay regardless: they are what lets the
   wrap be drawn once and the free span per frame without re-deriving
   which is which, and if the geometry ever does need the tangent-point
   construction the classification is already in the document rather
