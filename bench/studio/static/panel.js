@@ -77,7 +77,14 @@ function makeValueTypable(input, value) {
     const shown = parseFloat(
       (value.textContent.match(/-?\d+(?:\.\d+)?/) || [])[0]);
     const raw = +input.value;
-    const scale = Number.isFinite(shown) && raw !== 0 ? shown / raw : 1;
+    // A slider resting AT ZERO cannot say what its unit is: 0 mm and 0 m
+    // read the same, the derivation gives up, and a typed 20 lands as a
+    // raw 20 instead of 20 mm. Any slider that can sit at zero declares
+    // its factor instead -- data-unit="1000" meaning the reading is
+    // millimetres of a value held in metres.
+    const declared = parseFloat(input.dataset.unit);
+    const scale = Number.isFinite(declared) ? declared
+      : (Number.isFinite(shown) && raw !== 0 ? shown / raw : 1);
     const hidden = [];
     for (const node of Array.from(value.childNodes)) {
       if (node.nodeType === 1) {

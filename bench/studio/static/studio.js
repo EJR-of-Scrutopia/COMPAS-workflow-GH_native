@@ -222,6 +222,7 @@ const state = {
     variation: 1, uvSeed: 0, grain: false },
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
+  outline: 0,            // the dark line inked round each voussoir, in metres
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the SKIN index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
@@ -2231,6 +2232,12 @@ function disposeShell() {
   // textures that clone points at are shared with the registry, and
   // Material.dispose does not touch them.
   for (const segment of shell.children) {
+    // The inked outline is a child of its casting and owns its own
+    // buffers; its MATERIAL is shared by every piece on the vault and
+    // lives as long as the page, so it is not freed here.
+    for (const child of segment.children) {
+      if (child.geometry) child.geometry.dispose();
+    }
     segment.geometry.dispose();
     segment.material.dispose();
   }
@@ -2439,6 +2446,7 @@ function collectScene() {
     backgroundTone: +control("background-tone").value,
     brightness: state.brightness,
     contrast: state.contrast,
+    outline: state.outline,
     hdri: {
       name: state.hdriName, projection: state.hdriProjection,
       scale: state.hdriScale, height: state.hdriHeight, rotation: state.hdriRotation,
@@ -2601,6 +2609,13 @@ async function applyScene(record) {
   }
   if (typeof scene_.contrast === "number") {
     state.contrast = scene_.contrast; control("contrast").value = scene_.contrast;
+  }
+  // After loadStudy, which rebuilt the pieces: the ribbons this turns on
+  // have to exist before they can be shown.
+  if (typeof scene_.outline === "number") {
+    state.outline = scene_.outline;
+    control("outline-width").value = scene_.outline;
+    applyOutline();
   }
   const hdri = scene_.hdri || {};
   if (hdri.projection) {
@@ -4536,7 +4551,12 @@ function paintMaterialSwatches() {
 // a server value blindly is exactly how a poisoned value like the old
 // authored-cut sentinel reaches the screen; this is the defence in depth
 // for that class of bug, not the fix for it.
-const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
+// 0.1, not the old 0.3: when the floor moved to 100 mm this mirror was
+// left behind, so a bundle cut at 100 or 200 mm failed the range test
+// here and the slider and its reading kept the PREVIOUS number while the
+// vault on screen was cut finer. A mirror that drifts is worse than no
+// mirror, so a test now holds the two files to the same pair.
+const SIZE_MIN = 0.1, SIZE_MAX = 3.0;
 
 function applyCut(preserve) {
   paintMaterialSwatches();
@@ -6879,6 +6899,11 @@ document.getElementById("sun-colour").addEventListener("input", (e) => {
   sun.color.set(e.target.value);
 });
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+// The inked outline. Only a uniform moves, so this is free to drag.
+document.getElementById("outline-width").addEventListener("input", (e) => {
+  state.outline = Math.max(0, +e.target.value);
+  applyOutline();
+});
 document.getElementById("brightness").addEventListener("input", (e) => {
   state.brightness = +e.target.value;
   applyGrade();
@@ -7843,6 +7868,129 @@ function taperAt(course) {
   return 1 - state.taper * Math.min(1, course / courses);
 }
 
+// ---------- the inked outline ----------
+// Param: "a outline slider... it will just add a dark line around the
+// vault voussoirs as an outline. the slider goes from a 0 line to
+// thicker line."
+//
+// Drawn as geometry rather than as lines, because WebGL ignores
+// linewidth on every desktop driver: a LineSegments outline is one pixel
+// wide for ever, and a slider that cannot thicken is not the feature he
+// asked for. So each voussoir gets a ribbon round its own top boundary,
+// lying just off the face and running INWARD from the edge. Inward
+// matters twice: the line never bleeds across a joint on to its
+// neighbour, and at corners the two ribbons overlap instead of leaving a
+// notch.
+//
+// The width is a UNIFORM, not geometry: the ribbon is built once per cut
+// with a side vector per vertex, and the slider only moves a number. So
+// dragging it is free even on a 1500-piece vault.
+const OUTLINE_LIFT = 0.0015;         // metres off the face, against z-fighting
+const outlineWidth = { value: 0 };
+const outlineMaterial = new THREE.MeshBasicMaterial({
+  color: 0x15120f, side: THREE.DoubleSide });
+outlineMaterial.onBeforeCompile = (shader) => {
+  shader.uniforms.outlineWidth = outlineWidth;
+  shader.vertexShader = "attribute vec3 outlineSide;\n"
+    + "uniform float outlineWidth;\n"
+    + shader.vertexShader.replace("#include <begin_vertex>",
+      "#include <begin_vertex>\n  transformed += outlineSide * outlineWidth;");
+};
+
+// Which edges of the top face are the piece's OUTLINE. Not the order the
+// corners arrive in: pieces.py emits "mid" as the cell's used corners,
+// which is a list, not a loop, and joining it corner by corner drew long
+// chords wandering across the vault -- it looked like a fishing net, not
+// like voussoirs. The boundary is derived instead, the way a boundary
+// always is: take every edge of every TOP face, and keep the ones exactly
+// one face uses. An edge two faces share is an interior seam of the
+// triangulation and no part of the piece's outline.
+function topBoundaryEdges(faces, count) {
+  const seen = new Map();
+  for (const face of faces) {
+    let top = true;
+    for (const index of face) {
+      if (index >= count) { top = false; break; }
+    }
+    if (!top) continue;                // a bottom face or a side wall
+    for (let i = 0; i < face.length; i++) {
+      const a = face[i], b = face[(i + 1) % face.length];
+      const key = a < b ? a + ":" + b : b + ":" + a;
+      const already = seen.get(key);
+      if (already) already.uses += 1;
+      else seen.set(key, { a, b, uses: 1 });
+    }
+  }
+  const edges = [];
+  for (const edge of seen.values()) {
+    if (edge.uses === 1) edges.push(edge);
+  }
+  return edges;
+}
+
+// The ribbon for one piece: its top corners (already shrunk the way the
+// casting was), the surface normal at each, and the centroid that says
+// which way "inward" is.
+function outlineRibbon(loop, normals, centre, edges) {
+  const positions = [], sides = [];
+  for (const edge of edges) {
+    const a = loop[edge.a], b = loop[edge.b];
+    const na = normals[edge.a], nb = normals[edge.b];
+    let nx = na[0] + nb[0], ny = na[1] + nb[1], nz = na[2] + nb[2];
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    let ex = b[0] - a[0], ey = b[1] - a[1], ez = b[2] - a[2];
+    const el = Math.hypot(ex, ey, ez);
+    if (el < 1e-9) continue;          // a repeated corner draws nothing
+    ex /= el; ey /= el; ez /= el;
+    // Square to the edge, IN the surface: normal cross edge.
+    let sx = ny * ez - nz * ey;
+    let sy = nz * ex - nx * ez;
+    let sz = nx * ey - ny * ex;
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    sx /= sl; sy /= sl; sz /= sl;
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, mz = (a[2] + b[2]) / 2;
+    if (sx * (centre[0] - mx) + sy * (centre[1] - my)
+        + sz * (centre[2] - mz) < 0) {
+      sx = -sx; sy = -sy; sz = -sz;
+    }
+    const A = [a[0] + nx * OUTLINE_LIFT, a[1] + ny * OUTLINE_LIFT,
+               a[2] + nz * OUTLINE_LIFT];
+    const B = [b[0] + nx * OUTLINE_LIFT, b[1] + ny * OUTLINE_LIFT,
+               b[2] + nz * OUTLINE_LIFT];
+    // Two triangles, the outer pair of corners carrying the side vector
+    // that the width uniform stretches along. At width 0 all four sit on
+    // the boundary, the quad has no area, and nothing is drawn.
+    for (const [point, out] of [[A, 0], [B, 0], [B, 1], [A, 0], [B, 1], [A, 1]]) {
+      positions.push(point[0], point[1], point[2]);
+      sides.push(out * sx, out * sy, out * sz);
+    }
+  }
+  return { positions, sides };
+}
+
+// Zero costs nothing. A vault is one draw call per casting already, and
+// drawing 1500 more ribbons with no width in them would double that for
+// an invisible result -- so at zero they stop being drawn at all.
+function setOutlineVisible(on) {
+  if (!state.objects.shell) return;
+  for (const segment of state.objects.shell.children) {
+    for (const child of segment.children) {
+      if (child.userData.outline) child.visible = on;
+    }
+  }
+}
+
+function applyOutline() {
+  outlineWidth.value = state.outline;
+  document.getElementById("outline-value").textContent =
+    Math.round(state.outline * 1000);
+  // A restored scene writes the slider straight, which leaves the row's
+  // fill behind unless it is repainted here.
+  paintScrub(document.getElementById("outline-width"));
+  setOutlineVisible(state.outline > 0);
+}
+
 function buildPieceMeshes() {
   disposeShell();
   const tile = activeTileMetres();
@@ -7898,7 +8046,19 @@ function buildPieceMeshes() {
         }
       }
     }
-    built.push({ piece, positions, weights, surface, centre });
+    // The top corners, shrunk exactly as the casting was: the path the
+    // inked outline runs along, once the boundary edges are known.
+    const loop = [];
+    for (let i = 0; i < count; i++) {
+      const p = points[i];
+      loop.push(shrink === 1 ? [p[0], p[1], p[2]] : [
+        centre[0] + (p[0] - centre[0]) * shrink,
+        centre[1] + (p[1] - centre[1]) * shrink,
+        centre[2] + (p[2] - centre[2]) * shrink]);
+    }
+    built.push({ piece, positions, weights, surface, centre,
+      outline: outlineRibbon(loop, piece.normals, centre,
+        topBoundaryEdges(piece.faces, count)) });
   }
   // Sprayed concrete is one continuous surface: the joint gap is zero,
   // the shrink factor is exactly 1 and shared boundary points are
@@ -8000,10 +8160,28 @@ function buildPieceMeshes() {
     // The welded normal, stored so a deflection reset can restore it
     // rather than recompute it: see recolourSegments.
     mesh.userData.baseNormals = normals;
+    // The outline rides as a CHILD of its own casting, which is what makes
+    // it follow the build: applySceneAtTime moves, scales and hides each
+    // casting and nothing else, so a child inherits the drop, the sprayed
+    // growth and the not-yet-placed invisibility for free.
+    const ribbon = entry.outline;
+    if (ribbon.positions.length) {
+      const inked = new THREE.BufferGeometry();
+      inked.setAttribute("position", new THREE.BufferAttribute(
+        new Float32Array(ribbon.positions), 3));
+      inked.setAttribute("outlineSide", new THREE.BufferAttribute(
+        new Float32Array(ribbon.sides), 3));
+      const line = new THREE.Mesh(inked, outlineMaterial);
+      line.castShadow = line.receiveShadow = false;
+      line.userData.outline = true;
+      line.visible = state.outline > 0;
+      mesh.add(line);
+    }
     group.add(mesh);
   }
   state.objects.shell = group;
   scene.add(group);
+  applyOutline();
 }
 
 function sprayedMaterial() {

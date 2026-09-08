@@ -161,9 +161,9 @@
     </select>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
     <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
-    <label>Relief <input id="material-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
-    <label>Occlusion <input id="material-occlusion" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
-    <label>Variation <input id="material-variation" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
+    <label>Relief <input id="material-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
+    <label>Occlusion <input id="material-occlusion" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
+    <label>Variation <input id="material-variation" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
     <label title="Run the picture's grain up the slope of each voussoir, the way boards would be laid along each leg"><input id="material-grain" type="checkbox"> Match grain</label>
     <button id="uv-randomise" title="Re-deal every voussoir's window of the sheet so no two wear the same patch">Randomise texture</button>
     <button id="material-reset">Reset appearance</button>
@@ -276,6 +276,13 @@
            Skies drawer: they belong beside the pictures they tune. -->
     </div>
     <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
+    <!-- Param: "a outline slider... it will just add a dark line around
+         the vault voussoirs as an outline. the slider goes from a 0 line
+         to thicker line". It rests at zero, which is why it declares its
+         own unit: a slider sitting at 0 cannot say whether its reading is
+         millimetres or metres, so the typed-value factor cannot be
+         derived from it. -->
+    <label id="outline-row">Outline <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000"> <span id="outline-value">0</span> mm</label>
 
     <!-- Brightness and contrast moved to the Camera section: they are
          the grade on the lens, not the light in the scene. -->
@@ -295,7 +302,7 @@
     </select></label>
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
     <label>Scale <input id="ground-scale" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-value">100</span>%</label>
-    <label>Relief <input id="ground-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
+    <label>Relief <input id="ground-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
     <button id="ground-randomise" title="Turn and slide the floor pattern to a fresh lay angle">Randomise floor</button>
 
     <span class="row-heading">Props</span>

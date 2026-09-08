@@ -934,7 +934,7 @@ def test_a_slider_reading_can_be_typed_into():
     assert "makeValueTypable(input, value);" in panel
     # The unit factor is DERIVED from what is on screen, so no table of
     # thirty sliders has to be kept in step with their labels.
-    assert "const scale = Number.isFinite(shown) && raw !== 0 ? shown / raw : 1;" in panel
+    assert "(Number.isFinite(shown) && raw !== 0 ? shown / raw : 1);" in panel
     assert "typed / (scale || 1)" in panel
     # Children are hidden and restored, never replaced: handlers write
     # into spans in there by id.
@@ -955,6 +955,118 @@ def test_a_slider_reading_can_be_typed_into():
     typable = css[css.index(".scrub .scrub-value.typable {"):]
     typable = typable[:typable.index("}")]
     assert "position: relative" in typable and "z-index: 3" in typable
+
+
+def test_the_voussoirs_can_be_inked_with_an_outline():
+    """Param: "a outline slider. put it in the scene menu banner. it will
+    just add a dark line around the vault voussoirs as an outline. the
+    slider goes from a 0 line to thicker line."
+
+    Drawn as geometry, not as lines: WebGL ignores linewidth on every
+    desktop driver, so a LineSegments outline is one pixel wide for ever
+    and a slider that cannot thicken is not the feature. Each casting
+    carries a ribbon round its own top boundary, and the width is a
+    UNIFORM, so dragging the slider moves one number rather than
+    rebuilding 1500 pieces of geometry."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    # In the Scene section, where he asked for it.
+    scene = html[html.index('<details id="scene-section">'):]
+    scene = scene[:scene.index("</details>")]
+    assert 'id="outline-width"' in scene, "the slider lives in the Scene menu"
+    row = scene[scene.index('id="outline-width"'):]
+    row = row[:row.index(">")]
+    assert 'min="0"' in row, "zero is a real setting: no line at all"
+
+    # THE BOUNDARY. pieces.py emits "mid" as the cell's used corners --
+    # a list, not a loop -- and the first cut of this joined corner to
+    # corner in arrival order, which drew long chords wandering across
+    # the vault: a fishing net, not voussoirs. The boundary is derived
+    # instead, and it was checked against the server's own side walls on
+    # a live 1501-piece cut: 24 edges per piece, both ways, no mismatch.
+    edges = _js_function(js, "function topBoundaryEdges(faces, count)")
+    assert "if (index >= count) { top = false; break; }" in edges, (
+        "a face touching the underside is not a top face")
+    assert "if (edge.uses === 1) edges.push(edge);" in edges, (
+        "an edge two faces share is an interior seam, not an outline")
+    assert "topBoundaryEdges(piece.faces, count)" in js
+
+    # The width is a uniform on a side vector, so zero has no area and
+    # the slider costs nothing to drag.
+    ribbon = _js_function(js, "function outlineRibbon(loop, normals, centre, edges)")
+    assert "sides.push(out * sx, out * sy, out * sz);" in ribbon
+    assert "transformed += outlineSide * outlineWidth;" in js
+    assert "const outlineWidth = { value: 0 };" in js
+    # Inward from the edge: never across a joint on to the neighbour.
+    assert "sx = -sx; sy = -sy; sz = -sz;" in ribbon
+
+    # A child of its own casting, which is what makes it follow the build:
+    # applySceneAtTime moves, scales and hides castings and nothing else.
+    assert "line.userData.outline = true;" in js
+    assert "mesh.add(line);" in js
+    # At zero they are not drawn at all. On a 1500-piece vault, drawing
+    # 1500 ribbons with no width in them doubles the draw calls for an
+    # invisible result.
+    visible = _js_function(js, "function setOutlineVisible(on)")
+    assert "if (child.userData.outline) child.visible = on;" in visible
+    assert "setOutlineVisible(state.outline > 0);" in js
+    # Freed with the shell: the geometry is per piece, the material shared.
+    dispose = _js_function(js, "function disposeShell()")
+    assert "for (const child of segment.children) {" in dispose
+    assert "if (child.geometry) child.geometry.dispose();" in dispose
+    # And a scene remembers it.
+    assert "outline: state.outline," in js
+    assert 'if (typeof scene_.outline === "number") {' in js
+
+
+def test_a_slider_that_rests_at_zero_declares_its_unit():
+    """The typable reading works out its unit by dividing what is shown by
+    what the slider holds -- which is exactly the one thing a slider
+    sitting at ZERO cannot tell it: 0 mm and 0 m read the same. Typing 20
+    into such a slider wrote a raw 20, clamped to the maximum. Every
+    slider that can rest at zero and shows a scaled reading declares its
+    factor instead."""
+
+    panel = (REPO / "bench" / "studio" / "static" / "panel.js").read_text(
+        encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    assert "const declared = parseFloat(input.dataset.unit);" in panel
+    assert "const scale = Number.isFinite(declared) ? declared\n"\
+        "      : (Number.isFinite(shown) && raw !== 0 ? shown / raw : 1);" in panel
+
+    # The five that can sit at zero: four relief/percentage dials and the
+    # new outline. A declared unit on each, or typing into it lies.
+    for slider, unit in (("material-relief", "10"), ("material-occlusion", "100"),
+                         ("material-variation", "100"), ("ground-relief", "10"),
+                         ("outline-width", "1000")):
+        mark = html[html.index('id="%s"' % slider):]
+        mark = mark[:mark.index(">")]
+        assert 'min="0"' in mark, slider
+        assert 'data-unit="%s"' % unit in mark, slider
+
+
+def test_the_client_size_floor_still_mirrors_the_server():
+    """The floor moved to 100 mm on the server and this mirror was left at
+    300, so a bundle cut at 100 or 200 mm failed the range test in
+    applyCut: the slider and its reading kept the PREVIOUS number while
+    the vault on screen was cut finer. A mirror that drifts is worse than
+    no mirror, so the two files are held to the same pair here."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    app = (REPO / "bench" / "studio" / "app.py").read_text(encoding="utf-8")
+    import re
+    client = re.search(r"const SIZE_MIN = ([\d.]+), SIZE_MAX = ([\d.]+);", js)
+    assert client, "the client mirror is gone"
+    server_min = re.search(r"^SIZE_MIN = ([\d.]+)", app, re.M)
+    server_max = re.search(r"^SIZE_MAX = ([\d.]+)", app, re.M)
+    assert float(client.group(1)) == float(server_min.group(1)), (
+        "the client would refuse a size the server happily cuts")
+    assert float(client.group(2)) == float(server_max.group(1))
 
 
 def test_the_entry_box_is_torn_down_exactly_once():

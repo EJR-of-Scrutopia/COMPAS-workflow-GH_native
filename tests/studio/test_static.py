@@ -681,7 +681,13 @@ def test_applycut_only_adopts_a_usable_size_in_range():
     # must only adopt a usable number in the API's own range, as a second
     # line of defence independent of the server side fix.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "SIZE_MIN = 0.3" in js and "SIZE_MAX = 3.0" in js
+    # The PAIR exists; what the numbers are is not this test's business.
+    # It used to assert "SIZE_MIN = 0.3" as a literal, which is why the
+    # floor could move to 100 mm on the server while this mirror stayed
+    # at 300 and the suite stayed green: a pinned number cannot notice
+    # the other file. test_the_client_size_floor_still_mirrors_the_server
+    # (test_remote_access.py) holds the two files to each other instead.
+    assert "SIZE_MIN = " in js and "SIZE_MAX = " in js
     start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     guard_start = body.index("if (typeof size")
