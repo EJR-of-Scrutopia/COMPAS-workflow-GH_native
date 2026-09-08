@@ -939,6 +939,10 @@ body.panel-collapsed #legend { right: var(--s4); }
   border: 1px solid var(--line); border-radius: var(--radius); }
 #shelf-actions button:hover:not(:disabled) { border-color: var(--line-lit); }
 #shelf-actions button:disabled { color: var(--ink-3); cursor: default; }
+/* The drawer's Edit toggle lights the same way the panel's does, since
+   it is the same mode wearing two faces. */
+#shelf-actions #shelf-prop-edit.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
 /* Scenes in the shelf: the same drawer grid, 16:9 pictures of moments. */
 #shelf-body #scene-list { display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 10px; padding: 12px; max-height: 42vh; overflow-y: auto; }

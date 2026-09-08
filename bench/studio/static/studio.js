@@ -3469,6 +3469,10 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("scene-save").classList
     .toggle("hidden", shelfKind !== "scenes");
+  const shelfEdit = document.getElementById("shelf-prop-edit");
+  shelfEdit.classList.toggle("hidden", shelfKind !== "layers");
+  // Opened afresh, it must show the mode the scene is actually in.
+  shelfEdit.classList.toggle("active", state.propEdit);
   document.getElementById("stamp-group").classList
     .toggle("hidden", shelfKind !== "layers");
   document.getElementById("layer-group").classList
@@ -3534,7 +3538,7 @@ function renderShelfLayers(grid) {
     tile.classList.toggle("active", gatheredProps.has(record));
     tile.title = propLabel(record)
       + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
-      + " -- click to select or unselect";
+      + " -- click to select: drag it in the viewport, Delete removes";
     tile.addEventListener("click", () => {
       // A tile toggles membership of the working selection; the last one
       // picked is also the viewport's selected object.
@@ -3543,6 +3547,13 @@ function renderShelfLayers(grid) {
         if (state.selectedProp === record) selectProp(null);
       } else {
         gatheredProps.add(record);
+        // Picking a prop here IS asking to work on it (Param: "I should
+        // be able to select delete and move any of the props ... instead
+        // of having to find the edit button and press it"), so edit mode
+        // comes on with the selection rather than being hunted for.
+        // Quietly, because the mode change is a consequence of the click
+        // and not a thing he asked for in its own right.
+        setPropEdit(true, true);
         selectProp(record);
       }
       tile.classList.toggle("active", gatheredProps.has(record));
@@ -6810,6 +6821,9 @@ function dropCarriedProp() {
   // outline lingers, and no key can quietly move it afterwards.
   if (!state.propEdit) selectProp(null);
   saveProps();
+  // A prop arriving on the open layer earns its tile at once, and a moved
+  // one refreshes the coordinates its tile carries in its tooltip.
+  refreshLayersShelf();
 }
 
 function cancelCarry() {
@@ -6836,21 +6850,38 @@ document.getElementById("prop-browse").addEventListener("click", () => {
   openShelf("props");
 });
 
-document.getElementById("prop-edit").addEventListener("click", (e) => {
-  state.propEdit = !state.propEdit;
-  e.target.classList.toggle("active", state.propEdit);
-  canvas.style.cursor = state.propEdit ? "pointer" : "";
-  if (state.propEdit) {
-    logStudio("prop edit on: click a prop to pick it up and drag or click to place; "
-      + "R and Shift+R rotate, + and - scale, Delete removes, Escape cancels");
-  } else {
+// Edit mode has two buttons now, one on the panel and one in the layers
+// drawer where the props are actually being chosen. Both drive this, so
+// the two faces can never disagree about which mode the scene is in.
+// `quietly` skips the log line for the automatic turn-on that follows
+// picking a prop from a layer tile, where the mode change is a
+// consequence of what the user did rather than something they asked for.
+function setPropEdit(on, quietly = false) {
+  const was = state.propEdit;
+  state.propEdit = on;
+  for (const id of ["prop-edit", "shelf-prop-edit"]) {
+    const button = document.getElementById(id);
+    if (button) button.classList.toggle("active", on);
+  }
+  canvas.style.cursor = on ? "pointer" : "";
+  if (on) {
+    if (!quietly && !was) {
+      logStudio("prop edit on: click a prop to pick it up and drag or click to place; "
+        + "R and Shift+R rotate, + and - scale, Delete removes, Escape cancels");
+    }
+  } else if (was) {
     // Leaving edit mode drops any carry and clears the selection: the
     // scene goes back to being all camera.
     if (state.carrying) dropCarriedProp();
     selectProp(null);
     logStudio("prop edit off");
   }
-});
+}
+
+for (const id of ["prop-edit", "shelf-prop-edit"]) {
+  document.getElementById(id).addEventListener("click",
+    () => setPropEdit(!state.propEdit));
+}
 
 document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
@@ -6858,6 +6889,7 @@ document.getElementById("props-clear").addEventListener("click", () => {
   state.props = [];
   selectProp(null);
   saveProps();
+  refreshLayersShelf();
 });
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state.bundle) return;
@@ -7043,6 +7075,9 @@ window.addEventListener("keydown", (event) => {
       again.layer = gone.layer;
       again.object.visible = layerVisible(again.layer);
       saveProps();
+      // Undoing a delete must give the tile back too, or the drawer
+      // shows one fewer prop than the scene holds.
+      refreshLayersShelf();
     });
     // removePropRecord also puts a carried corpse down, or the outline
     // keeps following the cursor and the camera stays locked.
@@ -8584,6 +8619,19 @@ function removePropRecord(record) {
   state.props = state.props.filter((p) => p !== record);
   if (state.selectedProp === record) selectProp(null);
   saveProps();
+  // The drawer is a picture of state.props, so a prop leaving has to
+  // reach it: deleting one in the viewport used to leave its tile behind
+  // (Param: "when i deleted a prop via edit, it didnt remove that prop
+  // from the layers tile"), and the orphan tile then pointed at a record
+  // nothing else in the scene still held.
+  refreshLayersShelf();
+}
+
+// Re-render the layers drawer, but only when it is the thing on screen.
+// Called by every writer of state.props, since the drawer draws that
+// list and cannot know on its own when it has gone stale.
+function refreshLayersShelf() {
+  if (shelfKind === "layers") renderShelf();
 }
 
 document.getElementById("shelf-play").addEventListener("click", () => {

@@ -33,6 +33,11 @@
         <button id="shelf-assign-skin" class="hidden" title="Wear this material on the vault">Assign to skin</button>
         <button id="shelf-assign-ground" class="hidden" title="Lay this material on the floor">Assign to ground</button>
         <button id="scene-save" class="hidden" title="Save the viewport, the floor, the light and everything placed">Save scene</button>
+        <!-- The same toggle as the panel's Edit, put where the props are
+             actually being chosen (Param: "we should also put the edit
+             button on the layers tile too"). Both buttons drive
+             setPropEdit, so they can never disagree. -->
+        <button id="shelf-prop-edit" class="hidden" title="Move, rotate and scale the placed props: click one to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
         <button id="stamp-group" class="hidden" title="Pick up the selected objects as one stamp: every click places a copy, Escape lets go" disabled>Place copies</button>
         <button id="layer-group" class="hidden" title="Move the selected objects onto a fresh layer of their own" disabled>Group to new layer</button>
       </div>

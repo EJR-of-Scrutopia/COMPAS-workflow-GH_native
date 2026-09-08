@@ -685,6 +685,73 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "syncNetShadow(bars)" in act
 
 
+def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
+    """Param's three asks on the Layers drawer: "I should be able to
+    select delete and move any of the props if i have them selected from
+    the layer tab. instead of having to find the edit button and press
+    it. we should also put the edit button on the layers tile too. i
+    noticed when i deleted a prop via edit, it didnt remove that prop
+    from the layers tile."
+
+    So: one edit mode with two faces that cannot disagree, a tile click
+    that grants the edit powers rather than requiring a hunt for the
+    button, and a drawer that hears about every prop leaving or
+    arriving."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    # The second face, in the drawer, lighting like the first.
+    assert 'id="shelf-prop-edit"' in html
+    assert "#shelf-actions #shelf-prop-edit.active" in css
+
+    # One toggle drives both, so they can never disagree about the mode.
+    # Anchored on the painting loop's own two lines rather than on the id
+    # list alone: _js_function slices to the next top-level declaration,
+    # which here runs past the end of setPropEdit into the listener loop
+    # below, so a bare id-list assertion passes on the wrong loop.
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit"]) {\n'\
+        "    const button = document.getElementById(id);" in js
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit"]) {\n'\
+        '  document.getElementById(id).addEventListener("click",\n'\
+        "    () => setPropEdit(!state.propEdit));" in js
+    # And a freshly opened drawer shows the mode the scene is in.
+    shelf = _js_function(js, "function renderShelf()")
+    assert 'shelfEdit.classList.toggle("active", state.propEdit)' in shelf
+
+    # Picking from a tile grants the powers, quietly.
+    tiles = _js_function(js, "function renderShelfLayers(grid)")
+    assert "setPropEdit(true, true);" in tiles
+    assert "selectProp(record);" in tiles
+
+    # The ghost tile: every writer of state.props tells the drawer, and
+    # the call is pinned CONTIGUOUS with the save above it, so an early
+    # return slipped in between cannot leave the text standing while the
+    # behaviour goes.
+    assert "  saveProps();\n"\
+        "  // The drawer is a picture of state.props" in js
+    assert "  saveProps();\n"\
+        "  // A prop arriving on the open layer earns its tile" in js
+    remove = _js_function(js, "function removePropRecord(record)")
+    assert "refreshLayersShelf();" in remove
+    # The undo path too: putting a deleted prop back must give its tile
+    # back. Pinned contiguously because OneDrive reverted exactly this
+    # line once while the rest of the wave survived, and the suite stayed
+    # green because nothing watched it.
+    assert "      saveProps();\n"\
+        "      // Undoing a delete must give the tile back too" in js
+    refresh = _js_function(js, "function refreshLayersShelf()")
+    assert 'if (shelfKind === "layers") renderShelf();' in refresh, (
+        "the drawer redraws only when it is the thing on screen")
+    # Clear empties the scene, so it must empty the drawer too.
+    clear = js[js.index('getElementById("props-clear")'):]
+    clear = clear[:clear.index("});")]
+    assert "refreshLayersShelf();" in clear
+
+
 def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
     """His correction of the first attempt: "those arent the principle
     lines. they are one per leg. they run up the middle and its the row
