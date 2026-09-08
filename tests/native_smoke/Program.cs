@@ -859,6 +859,50 @@ internal static partial class Program
 
         try
         {
+            ValidateSkinFreeEdgeChains(plugin);
+            Console.WriteLine(
+                "PASS  Skin free edge chains (task 3, plan 2026-09-03-" +
+                "skin-defects-and-free-edge): a boundary edge is FREE " +
+                "unless BOTH its ends are anchors, so an edge with one " +
+                "anchored end still counts as free; on the barrel fixture " +
+                "(anchored at its two end rows alone) the free boundary is " +
+                "the two side columns, chained into exactly TWO open " +
+                "polylines of five vertices each running the barrel's own " +
+                "length; on a hemisphere anchored round its whole base " +
+                "ring the free boundary is EMPTY; and this task changes no " +
+                "other output at all, courses and force-aligned patterns " +
+                "built on the same barrel net giving the exact cell, " +
+                "course and clipped counts they gave before it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin free edge chains: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinFreeEdgeTermination(plugin);
+            Console.WriteLine(
+                "PASS  Skin free-edge termination (task 4, plan 2026-09-" +
+                "03-skin-defects-and-free-edge): a courses cell whose end " +
+                "sits on the mesh's own free boundary (the rimmed " +
+                "barrel's own stepped side columns, a genuine V and not " +
+                "a straight line) runs ALONG it between the lower and " +
+                "upper curves' own endpoints, rather than chording " +
+                "straight across it: at Course Height 0.3 some clipped " +
+                "cell carries more than the four corners a chord would " +
+                "give it, and its outline carries one of the free edge's " +
+                "own INTERIOR mesh vertices, not an interpolation of it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin free-edge termination: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSolveCache(plugin);
             Console.WriteLine(
                 "PASS  Skin solve cache: the SkinNet is keyed on the " +
@@ -20313,6 +20357,197 @@ internal static partial class Program
     }
 
     /// <summary>
+    /// TASK 3 (plan 2026-09-03-skin-defects-and-free-edge): SkinNet.
+    /// FreeEdgeChains, a public property derived from Vertices, Faces and
+    /// Rim alone (SkinPatterns.FreeEdgeChainsOf's own doc comment carries
+    /// the SUPPORTED/FREE rule), so it answers correctly on a net built
+    /// straight from arrays and not only on one ReadNet built.
+    ///
+    /// THE BARREL (SkinBarrelNet, rimmed at its two end rows alone by
+    /// SkinBarrelRim): the side columns i=0 and i=6, five vertices each
+    /// (j 0 to 4), have only their two CORNERS anchored, and a boundary
+    /// edge is free unless BOTH its ends are anchors, so every edge along
+    /// each column is free and the free boundary is exactly the two
+    /// columns, chained corner to corner.
+    ///
+    /// THE HEMISPHERE (SkinHemisphereNet), rimmed and unrimmed. Rimmed
+    /// round its whole base ring, the mesh's only boundary, every boundary
+    /// edge is supported and the free boundary is EMPTY. Built through the
+    /// two-argument constructor instead (an empty Rim), no vertex anchors
+    /// anything, so the whole base ring is free with no anchor to split
+    /// it: ONE CLOSED loop of all 48 ring vertices, the chaining's own
+    /// closed-loop pass, which the barrel and the rimmed hemisphere never
+    /// exercise.
+    /// </summary>
+    private static void ValidateSkinFreeEdgeChains(Assembly plugin)
+    {
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        var noForces = Array.Empty<(int A, int B, double Force)>();
+
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrelRimmed = SkinNetWith(
+            netType, edgeType, barrelVertices, barrelFaces,
+            SkinBarrelRim(), noForces);
+        var barrelChains = Reading<IReadOnlyList<IReadOnlyList<int>>>(
+            barrelRimmed, "FreeEdgeChains");
+        if (barrelChains.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "The barrel anchored at its two end rows alone has a " +
+                "free boundary of TWO open chains, its side columns; " +
+                $"got {barrelChains.Count}.");
+        }
+        foreach (IReadOnlyList<int> chain in barrelChains)
+        {
+            if (chain.Count != 5)
+            {
+                throw new InvalidOperationException(
+                    "Each side column carries 5 vertices (j 0 to 4); " +
+                    $"got a chain of {chain.Count}: [" +
+                    string.Join(",", chain) + "].");
+            }
+        }
+        bool sawColumn0 = barrelChains.Any(chain =>
+            (chain[0] == 0 && chain[^1] == 28) ||
+            (chain[0] == 28 && chain[^1] == 0));
+        bool sawColumn6 = barrelChains.Any(chain =>
+            (chain[0] == 6 && chain[^1] == 34) ||
+            (chain[0] == 34 && chain[^1] == 6));
+        if (!sawColumn0 || !sawColumn6)
+        {
+            throw new InvalidOperationException(
+                "The two chains must be column i=0 (corners 0 and 28) " +
+                "and column i=6 (corners 6 and 34), one each; got " +
+                string.Join(
+                    " / ",
+                    barrelChains.Select(c => $"({c[0]},{c[^1]})")) +
+                ".");
+        }
+
+        (double[][] hemiVertices, int[][] hemiFaces, int[] hemiRim) =
+            SkinHemisphereNet();
+        object hemisphereRimmed = SkinNetWith(
+            netType, edgeType, hemiVertices, hemiFaces, hemiRim, noForces);
+        var hemisphereChains = Reading<IReadOnlyList<IReadOnlyList<int>>>(
+            hemisphereRimmed, "FreeEdgeChains");
+        if (hemisphereChains.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A hemisphere anchored round its whole base ring has no " +
+                $"free boundary at all; got {hemisphereChains.Count} " +
+                "chain(s).");
+        }
+
+        object hemisphereBare = Activator.CreateInstance(
+            netType, new object[] { hemiVertices, hemiFaces })!;
+        var hemisphereBareChains =
+            Reading<IReadOnlyList<IReadOnlyList<int>>>(
+                hemisphereBare, "FreeEdgeChains");
+        if (hemisphereBareChains.Count != 1 ||
+            hemisphereBareChains[0].Count != 48)
+        {
+            throw new InvalidOperationException(
+                "An UNANCHORED hemisphere's whole base ring is one " +
+                "CLOSED free-edge loop of 48 vertices, the chaining's " +
+                "own closed-loop pass; got " +
+                $"{hemisphereBareChains.Count} chain(s)" +
+                (hemisphereBareChains.Count > 0
+                    ? $", first {hemisphereBareChains[0].Count} vertices"
+                    : "") +
+                ".");
+        }
+    }
+
+    /// <summary>
+    /// TASK 4 (plan 2026-09-03-skin-defects-and-free-edge): a courses
+    /// cell whose end sits on the mesh's own free boundary runs ALONG
+    /// the free edge between the lower and upper curves' own endpoints,
+    /// instead of chording straight across it.
+    ///
+    /// THE FIXTURE. The rimmed barrel (SkinBarrelNet + SkinBarrelRim):
+    /// its free edges are the two side columns i=0 and i=6, whose own
+    /// mesh vertices step (0,0,0) -&gt; (0,1,1) -&gt; (0,2,2) -&gt; (0,3,1)
+    /// -&gt; (0,4,0) (and the same profile at i=6), a genuine V, not a
+    /// straight line. At a Course Height fine enough that a band's own
+    /// end can span more than one of those steps, the free-edge run must
+    /// pass through an INTERIOR free-edge vertex (j=1, 2 or 3) that no
+    /// two-point chord between the lower and upper curves' own endpoints
+    /// would ever place on the cell's own outline.
+    ///
+    /// THE PROOF. Two independent readings of the same fact: at least one
+    /// clipped cell carries MORE than the four corners a chorded end
+    /// would give it (the free-edge run added real points), and at least
+    /// one clipped cell's own outline carries a point matching one of the
+    /// free edge's own INTERIOR vertices (j 1 to 3, excluding the curve
+    /// endpoints themselves) to 1e-9 -- not merely more points, but the
+    /// mesh's own boundary points.
+    /// </summary>
+    private static void ValidateSkinFreeEdgeTermination(Assembly plugin)
+    {
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        var noForces = Array.Empty<(int A, int B, double Force)>();
+
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(), noForces);
+
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        const double Size = 0.5;
+        const double CourseHeight = 0.3;
+        object built = courses.Invoke(
+            null, new object[] { net, Size, CourseHeight })!;
+        var cells = SkinCells(built);
+        var clippedCells = cells.Where(cell => cell.Clipped).ToArray();
+        if (clippedCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The rimmed barrel at Size 0.5, Course Height 0.3 must " +
+                "carry at least one boundary-clipped cell (its every " +
+                "course band ends on the free edge columns i=0 and " +
+                "i=6); got none, so this check measures nothing.");
+        }
+
+        bool anyExtraCorner = clippedCells.Any(
+            cell => cell.Outline.Length > 4);
+        if (!anyExtraCorner)
+        {
+            throw new InvalidOperationException(
+                "At Course Height 0.3, some clipped cell's own end must " +
+                "span more than one step of the free edge's own V " +
+                "profile ((0,0,0)-(0,1,1)-(0,2,2)-(0,3,1)-(0,4,0) at " +
+                "i=0, the same at i=6), so its outline must carry MORE " +
+                "than the four corners a straight chord would give it. " +
+                "Every clipped cell here has exactly 4.");
+        }
+
+        double[][] interiorFreeEdgeVertices =
+        {
+            new double[] { 0, 1, 1 }, new double[] { 0, 2, 2 },
+            new double[] { 0, 3, 1 },
+            new double[] { 6, 1, 1 }, new double[] { 6, 2, 2 },
+            new double[] { 6, 3, 1 }
+        };
+        bool anyOnMesh = clippedCells.Any(cell => cell.Outline.Any(
+            point => interiorFreeEdgeVertices.Any(mesh =>
+                Math.Abs(point[0] - mesh[0]) < 1.0e-9 &&
+                Math.Abs(point[1] - mesh[1]) < 1.0e-9 &&
+                Math.Abs(point[2] - mesh[2]) < 1.0e-9)));
+        if (!anyOnMesh)
+        {
+            throw new InvalidOperationException(
+                "Some clipped cell's outline must carry one of the free " +
+                "edge's own INTERIOR mesh vertices, (0 or 6, 1, 1), " +
+                "(0 or 6, 2, 2) or (0 or 6, 3, 1): the run follows the " +
+                "mesh's own boundary and not an interpolation of it. " +
+                "None of the clipped cells' outlines carry any of them.");
+        }
+    }
+
+    /// <summary>
     /// Check 12.1(h). A Result whose FORM and EQUILIBRIUM vertex counts are
     /// EQUAL but whose orderings differ must still seed the right vertices.
     /// This is the trap at VisualiseComponents.cs:196-206 against
@@ -22291,11 +22526,24 @@ internal static partial class Program
                 bool[] clippedFlags =
                     group.Select(cell => cell.Clipped).ToArray();
                 int endPieces = clippedFlags.Count(flag => flag);
-                if (course % 2 == 0 ? endPieces != 0 : endPieces != 2)
+                // RE-PINNED (task 4, plan 2026-09-03-skin-defects-and-
+                // free-edge, step 3): every strip runs its own full
+                // width, i=0 to i=6, on EVERY course regardless of
+                // parity, so BOTH its own end pieces touch the free
+                // boundary on every course, not only the odd ones.
+                // Before this task Clipped meant "this piece is SHORTER
+                // than the pitch", which only an odd course's phase-
+                // shifted end absorbed; an even course's end piece
+                // happened to come out exactly one pitch long (no phase
+                // to absorb) and so went unflagged even though it, too,
+                // ends on the free edge. TouchesFreeEdge tests the free
+                // edge itself and not a symptom of it, so it flags both
+                // ends on every course alike.
+                if (endPieces != 2)
                 {
                     throw new InvalidOperationException(
-                        "On this fixture only the odd courses' two end " +
-                        $"pieces are clipped; course {course} flags " +
+                        "On this fixture every course's two end pieces " +
+                        $"are clipped; course {course} flags " +
                         $"{endPieces}.");
                 }
             }
@@ -22328,13 +22576,18 @@ internal static partial class Program
             .GetProperty("Diagnostics")!.GetValue(generated)!;
         if (!diagnostics.Contains("Pattern: courses",
                 StringComparison.Ordinal) ||
-            !diagnostics.Contains("Boundary-clipped cells: 8",
+            !diagnostics.Contains("Boundary-clipped cells: 16",
                 StringComparison.Ordinal))
         {
+            // RE-PINNED (task 4, plan 2026-09-03-skin-defects-and-free-
+            // edge, step 3): every course now flags both its own end
+            // pieces, not only the odd ones (this file's own count-of-
+            // clipped-pieces pin above carries the reason). Four courses,
+            // two strips, two end pieces each: 16.
             throw new InvalidOperationException(
                 "Diagnostics name the pattern and count the clipped " +
-                "cells (two odd courses, two strips, two end pieces " +
-                $"each: 8); got '{diagnostics}'.");
+                "cells (four courses, two strips, two end pieces " +
+                $"each: 16); got '{diagnostics}'.");
         }
 
         (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
@@ -25940,67 +26193,46 @@ internal static partial class Program
         // the exact same course and run length. This is the residual
         // becoming HONEST, not a new defect G5's fix introduced.
         //
-        // STILL RED ON TWO: "one hole, off-seam, free rim" AND "one hole,
-        // off-seam, anchored rim" both now measure 4.4563 m at course 14
-        // (free rim was 5.5667 at course 13 before the G6 fix above), but
-        // the offending cell is PROVED NOT G6 -- Closer=false, an ordinary
-        // absorbed band cell, and a SEPARATE crown cap at course 15
-        // independently fails PlanSelfCrosses (measured true before any
-        // overlap test runs), matching the diagnosis's own words for this
-        // symptom, "the true crown cap itself, which independently self-
-        // crosses". Both point at BoundaryRun's own nearest-point mapping
-        // and the level-curve trace beside a hole, neither of which
-        // CloserBand, TryExtendCloser, KeepValidPlans's tie-break or G5's
-        // own field-seed exclusion touch -- a mechanism no task in this
-        // wave owns or fixes. DEFERRED to whichever task takes that one up
-        // (a ninth mechanism, or G1's own re-verification on a holed
-        // fixture the diagnosis flagged as unproven): the claim is the
-        // real, ungated assertion, so it goes stale and must be inlined
-        // the day it is fixed too.
-        Deferred(
-            "Round three B rule 1(a): no emitted course or closer stone " +
-            "on any of the six permanent holed-net variants exceeds the " +
-            "maximum piece bound (3 x Size) the ordinary courses obey",
-            "an ordinary (non-closer) absorbed band cell and the crown " +
-            "cap's own independent PlanSelfCrosses failure beside a " +
-            "hole, measured identically on \"one hole, off-seam, free " +
-            "rim\" and (since G5's own fix, round three B rule 2, forces " +
-            "its field bit-identical to the free-rim sibling) \"one " +
-            "hole, off-seam, anchored rim\" too, course 14 (Closer=false) " +
-            "and course 15 (the cap) -- NOT CloserBand, TryExtendCloser " +
-            "or KeepValidPlans's tie-break (G6, SkinPatterns.cs:7204," +
-            "8008, CLOSED by an earlier task) and not " +
-            "RimDistanceFieldWithSeeds/SeedGroupsOf (G5, SkinPatterns." +
-            "cs:958,1092, CLOSED by this task: ValidateSkinHoledNet" +
-            "FieldCapture asserts the bit-identity directly, ungated); " +
-            "likely BoundaryRun's own nearest-point mapping " +
-            "(SkinPatterns.cs) and the level-curve trace near a hole, " +
-            "docs/superpowers/specs/2026-09-06-skin-holed-net-diagnosis." +
-            "md's own G1 re-verification caveat; not fixed by this task",
-            () =>
+        // RULE 1(a) IS NOW CLOSED TOO, and by a THIRD task's fix, not by
+        // the "ninth mechanism" this comment used to be deferred toward.
+        // "One hole, off-seam, free rim" and "one hole, off-seam, anchored
+        // rim" both used to measure 4.4563 m at course 14, an ordinary
+        // (non-closer) absorbed band cell whose own end chorded straight
+        // across the net's free boundary instead of running along it --
+        // exactly the defect task 4 of plan 2026-09-03-skin-defects-and-
+        // free-edge fixes, on this fixture as much as on the barrel it was
+        // built and proved against. BoundaryRun's own nearest-point
+        // mapping and the level-curve trace, the mechanisms this deferral
+        // used to name as the likely cause, were RIGHT about WHERE the
+        // defect lived (a curve's own end near a hole) but not about WHAT
+        // was wrong there: not the mapping itself, the CHORD across the
+        // gap it mapped to. Re-measured directly rather than assumed: all
+        // six variants now read comfortably under the 3 x Size bound, so
+        // this is asserted DIRECTLY rather than deferred, Deferred's own
+        // rule (a claim that never fails is stale and must be inlined).
+        {
+            var failing = new List<string>();
+            foreach (var v in variants)
             {
-                var failing = new List<string>();
-                foreach (var v in variants)
+                var worst = WorstOversizedStone(
+                    cellsByLabel[v.Label], maximumPiece);
+                if (worst is { } w)
                 {
-                    var worst = WorstOversizedStone(
-                        cellsByLabel[v.Label], maximumPiece);
-                    if (worst is { } w)
-                    {
-                        failing.Add(
-                            $"{v.Label}: course {w.Course} at " +
-                            $"{w.Run:F4} m");
-                    }
+                    failing.Add(
+                        $"{v.Label}: course {w.Course} at " +
+                        $"{w.Run:F4} m");
                 }
-                if (failing.Count > 0)
-                {
-                    throw new InvalidOperationException(
-                        "No emitted stone on any permanent holed-net " +
-                        $"variant may exceed {maximumPiece:F4} m (3 x " +
-                        $"Size); {failing.Count} of {variants.Length} " +
-                        "variants carry one: " +
-                        string.Join("; ", failing) + ".");
-                }
-            });
+            }
+            if (failing.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "No emitted stone on any permanent holed-net " +
+                    $"variant may exceed {maximumPiece:F4} m (3 x " +
+                    $"Size); {failing.Count} of {variants.Length} " +
+                    "variants carry one: " +
+                    string.Join("; ", failing) + ".");
+            }
+        }
 
         // ---- RULE 1(b), G6 CLOSED (round three B): was RED on the three
         // FREE-rim variants alone (0.683 one hole, 0.864 six-hole ring,
