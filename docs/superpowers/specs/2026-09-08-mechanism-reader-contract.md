@@ -9,18 +9,14 @@ messages. The plugin's binding spec is their commit c90bf64.
 Nothing here is built yet. The first real document arrives when Param
 installs the rebuilt plugin, which is his call.
 
-> **PROVISIONAL, and a further change is already known.** Late on
-> 2026-09-08 Param redescribed the mechanism in more detail: five parts
-> rather than the shape below, **ten reels per unit of which seven move
-> as one group**, and **placement derived from the first wire frame
-> rather than a separate placement port**. The plugin is deliberately
-> shipping the current exporter for him to test against real geometry
-> before specifying the new shape, rather than churning this page twice
-> more in one night, which is the right call. So: the invariants, the
-> wire construction, the spin and the sequence below are settled and
-> hard-won; the KEY LAYOUT should be expected to move again. Do not
-> start the reader against this page without checking for a newer
-> shape first.
+> **NO LONGER PROVISIONAL: BUILT AND MEASURED 2026-09-08.** The reader
+> exists, and it was built against Param's real
+> `2 Sided Vault-mechanism.json` (10.1 MB, six instances, 42 wires),
+> not against this page. Where the two disagreed the FILE won, and the
+> disagreements are recorded under "What the real document actually
+> looks like" at the foot of this page. Read that section before this
+> one: the key layout below is the negotiated shape, and the writer
+> moved three parts of it.
 
 ## What the document is
 
@@ -457,3 +453,71 @@ to fix.
 Still open and NOT to be decided without Param: placement derived from
 the first wire frame moves the key layout. That is a design decision, it
 is his, and it gets raised with him directly when the reader reaches it.
+
+
+## What the real document actually looks like, measured 2026-09-08
+
+Read off `2 Sided Vault-mechanism.json` as written at 22:57, with the
+reader that now ships. Where this section and the negotiated shape above
+disagree, THIS is what the writer emits.
+
+Top level: `schema, study, units, lengthUnitToMetres, vertexCount,
+columnNodeCount, numbering, rotation, principalRows, mechanism,
+instances, anchors, tensionTies, wires`.
+
+Three differences from the shape agreed above, each of which the reader
+had to be changed for:
+
+1. **The parts live INSIDE `mechanism`, under named keys**, not on
+   top-level ports. `mechanism.frame1` is one part; `mechanism.frame2`
+   is a LIST of three; `mechanism.motors` is one; `mechanism.tensionTie`
+   is one; `mechanism.reels` is a list of ten, each carrying `reel` (its
+   own number, which `ownerReel` points at), `mesh`, `axis` and
+   `driven`. So a key holds either one part or a list, and both are read.
+2. **Permanence is DECLARED**, as a `permanence` string on each part,
+   rather than being inferred from which port a part arrived on. The
+   reader reads it. The port-based inference in the negotiated shape was
+   a good idea that the writer improved on.
+3. **An instance carries `frame` for its frame and `placement` for a
+   LABEL.** Reading `placement` first finds a string and reports six
+   unreadable placements on a document whose placements are all present.
+   An instance also carries `wireIds`, which names the wires it carries
+   exactly and is better than matching a wire's `path` back to a side
+   and a mechanism number.
+
+Also measured, and agreeing with the writer's own numbers: 6 instances
+of which 3 are reflections; 42 wires each carrying its own `net_vertex`,
+42 distinct values; 201 route frames per wire; owners 4530 reel and 3912
+body; `reeveFactor` 1 and `spoolRadius` 0.03, BOTH ON THE BODY rather
+than per wire, so the body's values stand in.
+
+`zAxis` is present on every frame -- instance frames, reel axes and all
+8,442 routing frames -- written from the fitted transform and never
+derived. That is load bearing: a determinant -1 reflection CANNOT
+survive a frame of origin plus x and y with z derived, because x cross y
+is right-handed by construction for any pair of axes. Do not re-derive z
+anywhere.
+
+**Param has since ruled that placement will become DERIVED, and that the
+far side is then always a rotation and never a mirror.** Keep the
+explicit-z handling regardless, because it costs nothing and this file
+needs it, but build nothing that assumes or requires a mirrored far
+side.
+
+### The check that cried wolf
+
+The contract asks the reader to re-check the writer's derived
+`net_vertex` against the vertices nearest each wire's first routing
+plane. Built as asked, it fired on 35 of 42 wires, each apparently
+naming a vertex 1.05 m away while another sat at 0.00 m.
+
+Every one was false. The routing frames are in the authored body's LOCAL
+space, so comparing them with the net compares across a placement --
+16.1 m of it here. With the instance frame applied the worst gap is
+0.0000 m on all 42 and the declared vertex is the nearest in every case,
+reproducing the writer's own measurement independently.
+
+The lesson is about checks, not about this bug: **a check that cries
+wolf is worse than no check, because the one time it is right nobody
+looks.** Verify a complaint in the frame the data lives in before
+reporting it to anybody.

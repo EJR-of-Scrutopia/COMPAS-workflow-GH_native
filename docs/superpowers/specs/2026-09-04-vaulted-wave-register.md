@@ -1275,3 +1275,96 @@ server floor moved to 0.1, so a bundle cut at 100 or 200 mm failed the
 range test in applyCut and the slider kept the previous number while the
 vault was cut finer. The old test pinned the literal 0.3, which is why it
 stayed green; it now pins the RELATIONSHIP between the two files.
+
+----------------------------------------------------------------------
+
+## 2026-09-08 -- THE MACHINE ARRIVES
+
+Param: "i must have that mechanism json working in this vaulted app
+asap." It does. His real 2 Sided Vault machine draws in the studio: 16
+parts, 6 instances, 42 wires of 201 routing frames each, read from his
+own 10.1 MB export.
+
+THE READER IS TWO PIECES AND THAT IS THE DESIGN. bench/studio/
+mechanism.py checks the schema and the scale and NOTHING ELSE, passing
+the document through verbatim; static/mechanism.js does all the shaping
+and is pure, node-tested, no three.js and no DOM. The reason is that the
+key layout was known to be moving: a server that understood the part
+keys would need editing and RESTARTING every time they moved, in the
+middle of a session where he is exporting and looking. It moved three
+times in one evening and cost a browser refresh each time.
+
+WHAT THE FILE TAUGHT THAT THE CONTRACT PAGE DID NOT. Parts live inside
+`mechanism` under named keys, one part or a list per key; permanence is
+DECLARED on each part rather than inferred from its port; an instance
+carries `frame` for its frame and `placement` for a LABEL, so reading
+placement first found a string and reported six unreadable placements on
+a document whose placements are all present. reeveFactor and spoolRadius
+ride on the body, not per wire. All recorded on the contract page, which
+is no longer marked provisional.
+
+THREE DEFECTS, ONLY ONE OF THEM IN THE NEW CODE:
+
+1. THE FORMWORK SCHEMA RENAME, and this is the one worth remembering.
+   When the exporter moved to the three-document set, -frames.json
+   became -formwork.json AND ITS SCHEMA STRING CHANGED WITH IT, to
+   "bench.formwork/1". The studio knew only "bench.frames/1", so it had
+   been refusing EVERY formwork document written since, with a 404
+   reading "this study carries no formwork frames" -- which sounds like
+   a missing file rather than an unrecognised name. Every recent export
+   had silently been arriving with no build animation. The plugin
+   session grepped their writer and confirmed "bench.frames/1" appears
+   nowhere in it: one rename, not two writers disagreeing. Both names
+   are accepted at version 1 now, and they are deliberately NOT adding
+   an alias, so one live name is the end state.
+
+   THE HABIT THIS EARNS: when a document is renamed, check whether its
+   SCHEMA STRING was renamed too. A 404 that names a missing thing can
+   be a reader that does not recognise a present one.
+
+2. A REFUSED CUT MADE THE WHOLE STUDY UNOPENABLE. A plan no polar
+   generator can cover was a 400. That is the wrong failure: the net,
+   the formwork and the machine are all independent of the voussoirs,
+   and a barrel-like vault is exactly the case where the machine is the
+   point. The cut now comes back EMPTY carrying the generator's own
+   message, the study opens, and a banner says why there are no pieces.
+   His 2 Sided Vault is not star shaped about its axis (the rim turns
+   back on itself at vertex 1, 12 times, 5.44 degrees) so no polar
+   pattern covers it; that is a stated limit of a polar generator, not a
+   defect to fix tonight.
+
+3. THE CHECK THAT CRIED WOLF, mine. The contract asks the reader to
+   re-check the writer's derived net_vertex against the nearest
+   vertices. Built as asked it fired on 35 of 42 wires. Every one was
+   false: the routing frames are in the body's LOCAL space, so the
+   comparison ran across 16.1 m of placement. With the instance frame
+   applied the worst gap is 0.0000 m on all 42 and the declared vertex
+   is the nearest every time. Caught before it was reported as a writer
+   bug. A CHECK THAT CRIES WOLF IS WORSE THAN NO CHECK, because the one
+   time it is right nobody looks.
+
+HIS RULINGS TONIGHT, all implemented or recorded:
+- The machine rides with the formwork, with its own toggle.
+- Mill steel frames, black motors, birch reels, anchor and tie in one
+  dark anodised family.
+- The reels spin with each reel's radius MEASURED from its own geometry,
+  and the studio says in the log that the rate is unverified while
+  reeveFactor is fixed at 1.0.
+- "the reel actually still happens slightly as the pieces drop adding
+  prestress to cope with the added load... it goes away with the columns
+  and formwork. the tension tie / anchor stays." So the drop begins in
+  hold, the reels keep taking up as load lands (a studio-side model at
+  4% of the take-up already done, not something in the frames), the
+  machine strikes with the columns, and the permanent works remain.
+- Placement will become DERIVED, and the far side is then always a
+  ROTATION, never a mirror. Keep explicit-z handling anyway.
+
+SETTLED WITH THE PLUGIN SESSION, for when derived placement ships:
+mechanism ASSETS are files in a folder he picks, never studio-stored
+(every library in this app is a folder he picks; his assets live in
+OneDrive and follow him between desktop and laptop; and an imported copy
+is a second copy that can drift from the authored one). Assets get their
+own suffix, "<name>-machine.json", so a folder scan need not open a
+10 MB document to learn what it is. An asset whose wire count does not
+divide the anchor row leaves the short group UNPLACED and says so, which
+is also his own ruling.
