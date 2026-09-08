@@ -187,6 +187,16 @@ internal static class MechanismCollector
     public const double MinimumSpoolRadius = 1.0e-6;
 
     /// <summary>
+    /// How far another mechanism's own driven-spool bounding dimension may
+    /// relatively disagree with the ONE spoolRadius the document carries
+    /// before it is named (finding 4): loose enough that ordinary meshing
+    /// noise between two nominally-identical reels stays quiet, tight
+    /// enough that a genuinely different reel (a mirrored side with a
+    /// different drum, say) is not.
+    /// </summary>
+    public const double SpoolRadiusDisagreementFactor = 0.05;
+
+    /// <summary>
     /// The note said whenever a mesh-or-brep port meshed a Brep itself
     /// rather than being handed an authored mesh: he cannot see the
     /// settings once it is meshed, so the settings are named here (spec's
@@ -264,10 +274,15 @@ internal static class MechanismCollector
 
             var reelsOut = new List<Dictionary<string, object?>>();
             List<MechanismReelEntry>? boundingGroup = null;
+            MechanismInstanceId? boundingGroupId = null;
             foreach (KeyValuePair<MechanismInstanceId, List<MechanismReelEntry>> group in
                 resolvedReels.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
             {
-                boundingGroup ??= group.Value;
+                if (boundingGroup is null)
+                {
+                    boundingGroup = group.Value;
+                    boundingGroupId = group.Key;
+                }
                 for (int i = 0; i < group.Value.Count; i++)
                 {
                     MechanismReelEntry entry = group.Value[i];
@@ -315,6 +330,57 @@ internal static class MechanismCollector
                     : " from the body's own bounding box (smallest " +
                       "dimension over 4), since this mechanism carries no " +
                       "spinner."));
+
+            // SPOOL RADIUS IS ONE DOCUMENT-LEVEL VALUE, applied to every
+            // mechanism's rotation, but per-mechanism reel authoring is an
+            // explicitly supported style (ResolveReelAuthoring above,
+            // "for when a mechanism's reels genuinely differ"). Never
+            // reshaped to per-mechanism here -- the reader's own contract
+            // states spoolRadius as one document-level field, and that is
+            // not this audit's to change -- but the moment two
+            // mechanisms' own driven spools disagree in size, the default
+            // taken from whichever sorts first is named, so a mismatch he
+            // wired on purpose is visible rather than a confident-looking
+            // number quietly wrong for every mechanism but one.
+            if (boundingGroup is { Count: > 0 } && resolvedReels.Count > 1)
+            {
+                var disagreements = new List<string>();
+                foreach (KeyValuePair<MechanismInstanceId, List<MechanismReelEntry>> group in
+                    resolvedReels.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
+                {
+                    if (group.Value.Count == 0 ||
+                        (boundingGroupId.HasValue && group.Key.Equals(boundingGroupId.Value)))
+                    {
+                        continue;
+                    }
+                    double thisRadius = Math.Max(
+                        SmallestBoundingDimension(group.Value[0].Mesh) / 4.0,
+                        MinimumSpoolRadius);
+                    double relativeDelta =
+                        Math.Abs(thisRadius - spoolRadius) /
+                        Math.Max(spoolRadius, MinimumSpoolRadius);
+                    if (relativeDelta > SpoolRadiusDisagreementFactor)
+                    {
+                        disagreements.Add(
+                            $"{group.Key.Label}'s own driven spool implies " +
+                            thisRadius.ToString("0.####", CultureInfo.InvariantCulture) +
+                            " (" +
+                            (relativeDelta * 100.0).ToString("0", CultureInfo.InvariantCulture) +
+                            "% off)");
+                    }
+                }
+                if (disagreements.Count > 0)
+                {
+                    warnings.Add(
+                        "mechanism: spoolRadius is ONE document-level " +
+                        $"value, taken from {boundingGroupId!.Value.Label}'s " +
+                        "own driven spool, but every mechanism's rotation " +
+                        "uses it: " + string.Join("; ", disagreements) +
+                        " -- if these reels genuinely differ in size " +
+                        "(a mirrored side, say), the rotation formula is " +
+                        "wrong for them.");
+                }
+            }
 
             // THE REEVE FACTOR IS PROVISIONAL (his ruling, verbatim: "i
             // dont [want] it to be accurate righ tnow"). Fixed at 1.0, no

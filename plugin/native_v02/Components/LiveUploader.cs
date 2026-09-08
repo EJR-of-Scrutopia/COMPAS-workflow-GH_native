@@ -81,11 +81,26 @@ internal sealed class LiveUploader : IDisposable
     /// (a form document built without its thrust mesh is the remark, not a
     /// fault). Plain strings, because this crosses two threads and a
     /// Grasshopper object may not.
+    ///
+    /// <see cref="MechanismWarnings"/> and <see cref="MechanismNotes"/> are
+    /// kept OUT of <see cref="Warning"/>/<see cref="Note"/> deliberately
+    /// (audit finding 1): the mechanism document's own per-wire diagnostics
+    /// -- the "PRINTS ITS MATCHED DISTANCES" promise the studio negotiated
+    /// five rounds over -- used to be folded into the one joined,
+    /// space-separated Warning string every other kind's warnings also
+    /// share, which buries the one wire that is actually wrong under every
+    /// routine per-wire confirmation at identical visual weight. Kept as
+    /// their own lists so the owner can post each one its own
+    /// AddRuntimeMessage call, Warning level for warnings and Remark level
+    /// for notes, instead of one run-on sentence. Never null; empty when
+    /// the build carried no mechanism document.
     /// </summary>
     public sealed record Built(
         IReadOnlyList<(string Kind, string Json)> Payloads,
         string? Warning,
-        string? Note);
+        string? Note,
+        IReadOnlyList<string> MechanismWarnings,
+        IReadOnlyList<string> MechanismNotes);
 
     /// <summary>
     /// What a solve says it would build, and where it would go.
@@ -848,7 +863,12 @@ internal sealed class LiveUploader : IDisposable
                 .Append(DocumentKey(kind, json)).Append('\u001e');
         }
         builder.Append(built.Warning ?? string.Empty).Append('\u001f')
-            .Append(built.Note ?? string.Empty);
+            .Append(built.Note ?? string.Empty).Append('\u001e');
+        foreach (string mechanismWarning in built.MechanismWarnings)
+            builder.Append(mechanismWarning).Append('\u001e');
+        builder.Append('\u001f');
+        foreach (string mechanismNote in built.MechanismNotes)
+            builder.Append(mechanismNote).Append('\u001e');
         return builder.ToString();
     }
 
