@@ -3326,6 +3326,32 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismMirrorSurvivesDocument(plugin);
+            Console.WriteLine(
+                "PASS  A mirrored side stays MIRRORED all the way into the "
+                + "document (2026-09-08, the Vaulted session's own question "
+                + "while building its reader): if an instance frame were "
+                + "only origin plus X and Y, with Z derived as X cross Y, "
+                + "the basis would be right-handed by construction for every "
+                + "pair of axes that can be sent, a determinant -1 placement "
+                + "would be unsayable, and a mirrored half would arrive "
+                + "TURNED rather than mirrored with nothing about the "
+                + "numbers looking wrong. Seven sources reflected through "
+                + "the XY plane, against seven placement planes authored "
+                + "genuinely left-handed (Z = -(X cross Y)): the collector "
+                + "derives it as a REFLECTION, and the FINAL document's own "
+                + "instance frame carries an EXPLICIT zAxis that points "
+                + "AGAINST its own xAxis cross yAxis -- the one test a "
+                + "derived z cannot pass, asserted on the document rather "
+                + "than on the collector's intermediate payload.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismMirrorSurvivesDocument: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41021,6 +41047,202 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "Routing (RT)[0] carrying no frames must be named as " +
                 "fatal to every placement; warnings were: " + string.Join(" | ", f1Warnings));
+        }
+    }
+
+    /// <summary>
+    /// A MIRRORED SIDE STAYS MIRRORED ALL THE WAY INTO THE DOCUMENT
+    /// (2026-09-08, raised by the Vaulted session while building its
+    /// reader, and the right question to ask): if an instance frame is only
+    /// origin plus X and Y, and Z is DERIVED as X cross Y, then the basis
+    /// is right-handed by construction for every pair of axes that can be
+    /// sent. A determinant -1 placement is then unsayable, and a mirrored
+    /// half comes back TURNED rather than MIRRORED -- silently, because
+    /// nothing about the numbers looks wrong.
+    ///
+    /// The answer is that the frame carries an EXPLICIT zAxis, always, on
+    /// both sides, and this proves it end to end rather than by reading:
+    /// seven sources reflected through the XY plane, plane axes authored
+    /// genuinely LEFT-HANDED (Z = -(X cross Y)), through the collector AND
+    /// through MechanismDocument.Json's own re-parse and rebuild, with the
+    /// final document's own instance frame asserted left-handed by the one
+    /// test that cannot be fooled: its zAxis points AGAINST its own
+    /// xAxis cross yAxis.
+    /// </summary>
+    private static void ValidateMechanismMirrorSurvivesDocument(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "Build");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(
+                frameType,
+                origin,
+                x,
+                y,
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
+
+        double[] unitX = { 1.0, 0.0, 0.0 };
+        double[] unitY = { 0.0, 1.0, 0.0 };
+
+        // THE MIRROR: reflection through the XY plane, (x, y, z) -> (x, y, -z).
+        // Plane axes are its image too, which makes Z = (0, 0, -1) against an
+        // X cross Y of (0, 0, 1): genuinely left-handed, exactly what a plane
+        // he mirrors in Rhino carries.
+        double[] mirroredZ = { 0.0, 0.0, -1.0 };
+        double[][] sources =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 0.0, 1.0 },
+            new[] { 0.0, 1.0, 1.0 },
+        };
+
+        object[] wires = new object[7];
+        object[] planes = new object[7];
+        for (int i = 0; i < 7; i++)
+        {
+            wires[i] = Activator.CreateInstance(
+                routingWireType,
+                i,
+                MechanismListOf(frameType, FrameOf(sources[i], unitX, unitY)))!;
+            planes[i] = Activator.CreateInstance(
+                placementPlaneType,
+                new[] { sources[i][0], sources[i][1], -sources[i][2] },
+                unitX,
+                unitY,
+                mirroredZ)!;
+        }
+
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new double[] { 0, 0, 0 }, new double[] { 1, 0, 0 },
+                new double[] { 0, 1, 0 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            MechanismListOf(frameType))!;
+
+        object branch = Activator.CreateInstance(
+            placementBranchType,
+            Activator.CreateInstance(instanceIdType, 1, 0)!,
+            MechanismListOf(placementPlaneType, planes))!;
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                MechanismListOf(placementBranchType, branch),
+                warnings, notes,
+            });
+        if (payload is not string collectorJson)
+            throw new InvalidOperationException("The mirrored fixture must produce a payload.");
+
+        using (JsonDocument collected = JsonDocument.Parse(collectorJson))
+        {
+            JsonElement instance = collected.RootElement.GetProperty("instances")[0];
+            if (!instance.GetProperty("reflected").GetBoolean())
+            {
+                throw new InvalidOperationException(
+                    "A branch whose planes are genuinely left-handed must " +
+                    "derive as a REFLECTION in the collector; got " + collectorJson);
+            }
+        }
+
+        // AND NOW THE HALF THAT MATTERS TO A READER: the final document.
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo documentJson = RequirePublicStatic(documentType, "Json");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        Array anchorEdges = Array.CreateInstance(edgeType, 1);
+        anchorEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(P(0, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", anchorEdges);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces", new[] { 1.0 });
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        var documentWarnings = new List<string>();
+        var documentNotes = new List<string>();
+        string document = (string)documentJson.Invoke(
+            null,
+            new object?[] { result, "mirror fixture", 1.0, collectorJson, documentWarnings, documentNotes })!;
+
+        using JsonDocument finalDoc = JsonDocument.Parse(document);
+        JsonElement finalInstance = finalDoc.RootElement.GetProperty("instances")[0];
+        JsonElement finalFrame = finalInstance.GetProperty("frame");
+
+        double[] Axis(string name) => finalFrame.GetProperty(name)
+            .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+
+        if (!finalFrame.TryGetProperty("zAxis", out _))
+        {
+            throw new InvalidOperationException(
+                "The document's own instance frame MUST carry an explicit " +
+                "zAxis. Without it a reader can only derive z as x cross y, " +
+                "which is right-handed for every pair of axes that exists, " +
+                "so a mirrored side would arrive turned rather than " +
+                "mirrored; got " + document);
+        }
+
+        double[] x = Axis("xAxis");
+        double[] y = Axis("yAxis");
+        double[] z = Axis("zAxis");
+        double[] derived =
+        {
+            (x[1] * y[2]) - (x[2] * y[1]),
+            (x[2] * y[0]) - (x[0] * y[2]),
+            (x[0] * y[1]) - (x[1] * y[0]),
+        };
+        double handedness = (derived[0] * z[0]) + (derived[1] * z[1]) + (derived[2] * z[2]);
+        if (handedness >= 0.0)
+        {
+            throw new InvalidOperationException(
+                "The mirrored instance's own zAxis must point AGAINST its " +
+                "own xAxis cross yAxis in the FINAL document -- that is the " +
+                "whole content of 'this side is mirrored', and the one test " +
+                $"a derived z cannot pass. Got handedness {handedness}, " +
+                "frame " + finalFrame.GetRawText());
         }
     }
 
