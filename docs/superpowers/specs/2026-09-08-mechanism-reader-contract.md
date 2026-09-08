@@ -561,3 +561,32 @@ reader who trusts it will build the wrong thing twice.
 6. **The machine is lifted to the floor.** z = 0 in the file is the wire
    plane; the machine's lowest point (the tie's feet, -0.117) is placed
    on the studio floor, and the log names the lift.
+
+## Agreed with the writer, 2026-09-09, and what the next file will change
+
+- **The rib take-up is adopted on both sides.** The plugin will rewrite
+  the rotation block's formula text to describe the rib measure rather
+  than the free span, which on this machine yields zero by construction.
+  The studio does not parse that text, so the change needs nothing here.
+- **spoolRadius will be emitted per reel** from the median of that
+  reel's own route frames, replacing the bounding-box default (0.030,
+  which matched nothing). The studio already measures the same number
+  itself and prefers it; when the document's value agrees, either wins.
+- **Contact line or centreline is Param's ruling.** The frames sit at
+  the drum radius; the contract says centreline. The studio's
+  one-wire-radius offset stays until he says which he meant. Evidence
+  for the contact-line reading: the pulleys' frames sit exactly at the
+  groove-bottom mesh radius.
+- **Derived placement has landed in the plugin** (committed, not yet
+  installed). With nothing wired to PL the instances come off the net's
+  own anchor rows: rotation always, rows filled at seven wires a
+  machine, leftovers reported. On the real study it reproduces the
+  hand-authored side 0 exactly and lands all six instances' anchors to
+  0.000000 m. THE ONE VISIBLE CHANGE in the next file: side 1's
+  instances become a half turn rather than a reflection. The reader
+  needs no change for that -- it reads the explicit z verbatim either
+  way and flags DoubleSide only when a placement is mirrored -- and the
+  tie, stamped once and untransformed in body space, is unaffected.
+- His authoring, told to him by the plugin session: frame1 arriving as
+  a 55 mm block; one motor body; the 26.7 mm spool pitch against a
+  40 mm wire; the tie's lugs serving one machine.
