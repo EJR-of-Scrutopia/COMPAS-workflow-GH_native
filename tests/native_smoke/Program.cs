@@ -3303,6 +3303,58 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismSideAwareRowPairing(plugin);
+            Console.WriteLine(
+                "PASS  MechanismDocument side-aware row pairing (audit "
+                + "finding 3): an anchor row is paired to whichever SIDE's "
+                + "own placed instances sit nearest it in world space, "
+                + "never by the row's own discovery order -- proved on a "
+                + "two-row, two-side fixture where document order and "
+                + "physical order disagree, which a document-order rule "
+                + "would swap wholesale.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismSideAwareRowPairing: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismSpoolRadiusDisagreement(plugin);
+            Console.WriteLine(
+                "PASS  MechanismCollector spoolRadius disagreement (audit "
+                + "finding 4): spoolRadius stays ONE document-level value, "
+                + "taken from whichever mechanism sorts first, but the "
+                + "moment another mechanism's own driven reel disagrees by "
+                + "more than 5%, it is named by the mechanism's own label; "
+                + "two mechanisms whose driven reels genuinely agree stay "
+                + "silent.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismSpoolRadiusDisagreement: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportMechanismDiagnosticsSeparated(plugin);
+            Console.WriteLine(
+                "PASS  Export mechanism diagnostics kept separate (audit "
+                + "finding 1): the mechanism document's own per-wire "
+                + "warnings and notes never reach the shared, joined "
+                + "Export Warning string every other kind's warnings also "
+                + "share -- they land on Built's own MechanismWarnings and "
+                + "MechanismNotes fields, so the owner posts each one its "
+                + "own AddRuntimeMessage call instead of one run-on "
+                + "sentence.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ExportMechanismDiagnosticsSeparated: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateLiveUploader(plugin);
             Console.WriteLine(
                 "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
@@ -41321,6 +41373,18 @@ internal static partial class Program
             throw new InvalidOperationException($"wire 0-0-1's net_vertex must be 1; got {wire1["net_vertex"]}.");
         if ((string?)wire0["permanence"] != "temporary" || (string?)wire1["permanence"] != "temporary")
             throw new InvalidOperationException("Every wire's permanence must be \"temporary\".");
+
+        // AUDIT FINDING 5: reeveFactor is per wire, the resolved value
+        // (still 1.0, still provisional) stamped onto EVERY wire, never
+        // left for the reader to inherit from mechanism.reeveFactor alone.
+        if ((double?)wire0["reeveFactor"] != 1.0 || (double?)wire1["reeveFactor"] != 1.0)
+        {
+            throw new InvalidOperationException(
+                "Every wire must carry its own reeveFactor (the resolved "
+                + "1.0), per the spec's reeve-factor shape ruling; wire "
+                + "0-0-0's was " + wire0["reeveFactor"] + " and wire "
+                + "0-0-1's was " + wire1["reeveFactor"] + ".");
+        }
         if (wiresOut.Any(w => (int?)w!["wire"] == 2))
             throw new InvalidOperationException("Wire 2 must not appear in the output at all.");
         bool wire2Named = warnings.Any(w =>
@@ -41401,6 +41465,16 @@ internal static partial class Program
             throw new InvalidOperationException("rotation.sign must be a non-empty declaration in words.");
         if (string.IsNullOrWhiteSpace((string?)root["numbering"]))
             throw new InvalidOperationException("numbering must declare the shared-numbering guarantee, not be blank.");
+        // AUDIT FINDING 2's sub-issue: numbering must never promise a
+        // column_node field this writer does not emit on any wire, anchor
+        // or tension-tie row.
+        if (((string?)root["numbering"])!.Contains("column_node", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "numbering must not promise column_node numbering: no "
+                + "object this writer emits carries that key; got "
+                + root["numbering"]);
+        }
 
         if (root["mechanism"] is null || root["mechanism"]!["body"] is null)
             throw new InvalidOperationException("mechanism.body must pass through from the collector's payload.");
@@ -41418,6 +41492,367 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "The mechanism document must be byte-identical for the "
                 + "same Result and payload; two runs differ.");
+        }
+    }
+
+    /// <summary>
+    /// AUDIT FINDING 3: which anchor ROW is which authored SIDE is decided
+    /// by PHYSICAL PROXIMITY to that side's own placed instances, never by
+    /// the row's own discovery order (MouldGeometry.ConnectedGroups' own
+    /// "order of their lowest node index... arbitrary but STABLE", an
+    /// artefact of how the net happened to get numbered, with zero
+    /// relationship to his own authored `side` field).
+    ///
+    /// TWO disconnected anchor pairs: row [0, 1] (nodes 0 and 1, edge 0-1)
+    /// sits FAR, at x=100; row [2, 3] (nodes 2 and 3, edge 2-3) sits NEAR
+    /// the origin. Discovery order (lowest node index first) puts the FAR
+    /// row first regardless of where either side actually is. Side 0's
+    /// instance is placed at the origin (near row [2,3]); side 1's at
+    /// x=100 (near row [0,1]). Two wires per side, matching each row's own
+    /// two anchors, so the flatten stays within its matched row exactly as
+    /// designed (finding 3's own scope) and only the ROW-TO-SIDE pairing
+    /// is under test.
+    ///
+    /// The buggy positional rule (document order: row [0,1] then [2,3])
+    /// would hand side 0's two wires the FAR row's anchors -- exactly the
+    /// side-swap the finding describes, and provably so on this fixture,
+    /// which is the smallest topology a two-row, two-side vault can take.
+    /// </summary>
+    private static void ValidateMechanismSideAwareRowPairing(Assembly plugin)
+    {
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object[] nodes =
+        {
+            P(100, 0, 0), P(102, 0, 0), // 0, 1: the FAR row
+            P(0, 0, 0), P(2, 0, 0),     // 2, 3: the NEAR row
+        };
+        Array edges = Array.CreateInstance(edgeType, 2);
+        edges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        edges.SetValue(Activator.CreateInstance(edgeType, 2, 3), 1);
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edges);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces", new[] { 1.0, 1.0 });
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1, 2, 3 });
+
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        static string Frame(double x, double y, double z) =>
+            "{\"origin\":[" + x + "," + y + "," + z +
+            "],\"xAxis\":[1,0,0],\"yAxis\":[0,1,0]}";
+        static string InstanceAt(int side, double x, double y, double z) =>
+            "{\"side\":" + side + ",\"mechanism\":0,\"frame\":" + Frame(x, y, z) +
+            ",\"kind\":\"mechanism\",\"placement\":\"instance\"}";
+        static string WireAt(int side, int wire, double x, double y, double z) =>
+            "{\"side\":" + side + ",\"mechanism\":0,\"wire\":" + wire +
+            ",\"route\":[" + Frame(x, y, z) + "]}";
+
+        // Side 0 near the origin, side 1 at x=100 -- the SAME positions
+        // the two rows sit at, one apiece.
+        string instancesPayload =
+            "[" + InstanceAt(0, 0, 0, 0) + "," + InstanceAt(1, 100, 0, 0) + "]";
+        string wiresPayload =
+            "[" + WireAt(0, 0, 0, 0, 0) + "," + WireAt(0, 1, 0, 0, 0) + "," +
+            WireAt(1, 0, 100, 0, 0) + "," + WireAt(1, 1, 100, 0, 0) + "]";
+        string payload =
+            "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
+            "\"reels\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}," +
+            "\"instances\":" + instancesPayload + "," +
+            "\"wires\":" + wiresPayload + "," +
+            "\"anchors\":[],\"tensionTies\":[]}";
+
+        const string Study = "side-pairing fixture";
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)json.Invoke(
+            null, new object?[] { result, Study, 1.0, payload, warnings, notes })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The mechanism document did not parse.");
+
+        JsonArray wiresOut = root["wires"]!.AsArray();
+        if (wiresOut.Count != 4)
+        {
+            throw new InvalidOperationException(
+                "All four wires have an anchor to match (two rows of two); "
+                + "got " + wiresOut.Count + ": " + wiresOut.ToJsonString());
+        }
+        int[] side0Vertices = wiresOut
+            .Where(w => (int?)w!["path"]![0]!["side"] == 0)
+            .Select(w => (int)w!["net_vertex"]!)
+            .OrderBy(v => v)
+            .ToArray();
+        int[] side1Vertices = wiresOut
+            .Where(w => (int?)w!["path"]![0]!["side"] == 1)
+            .Select(w => (int)w!["net_vertex"]!)
+            .OrderBy(v => v)
+            .ToArray();
+        if (!side0Vertices.SequenceEqual(new[] { 2, 3 }))
+        {
+            throw new InvalidOperationException(
+                "Side 0's instance is placed at the origin, NEAR row "
+                + "[2, 3]; its wires must match net vertices 2 and 3, not "
+                + "row [0, 1], which sits at x=100 beside side 1's own "
+                + "instance instead. Got side 0 -> ["
+                + string.Join(",", side0Vertices)
+                + "]. A row-to-side pairing that goes by document "
+                + "discovery order rather than physical proximity would "
+                + "swap this on exactly this two-row, two-side topology.");
+        }
+        if (!side1Vertices.SequenceEqual(new[] { 0, 1 }))
+        {
+            throw new InvalidOperationException(
+                "Side 1's instance is placed at x=100, NEAR row [0, 1]; "
+                + "its wires must match net vertices 0 and 1. Got side 1 "
+                + "-> [" + string.Join(",", side1Vertices) + "].");
+        }
+    }
+
+    /// <summary>
+    /// AUDIT FINDING 4: spoolRadius is ONE document-level value, read
+    /// from whichever mechanism sorts first (side, mechanism ascending)
+    /// -- but per-mechanism reel authoring is an explicitly supported
+    /// style, "for when a mechanism's reels genuinely differ (a mirrored
+    /// side, say)". Two TREE-style mechanisms, {0}{0} and {0}{1}:
+    /// {0}{0}'s reel 0 is a small cube (bounding dimension 2, so
+    /// spoolRadius 0.5, the value actually taken); {0}{1}'s reel 0 is a
+    /// cube four times larger on every axis (bounding dimension 8, its
+    /// own implied radius 2.0) -- 300% off, far outside the 5%
+    /// disagreement floor. A warning must name the mismatch; two
+    /// mechanisms whose driven reels genuinely AGREE (both small cubes,
+    /// the negative half below) must stay silent.
+    /// </summary>
+    private static void ValidateMechanismSpoolRadiusDisagreement(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type meshBranchType = RequireComponentType(plugin, "MechanismMeshBranch");
+        Type axisBranchType = RequireComponentType(plugin, "MechanismAxisBranch");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type instanceType = RequireComponentType(plugin, "MechanismInstanceInput");
+        Type wireType = RequireComponentType(plugin, "MechanismWireInput");
+        Type rowPartType = RequireComponentType(plugin, "MechanismRowPartInput");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "Build");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        double[][] Cube(double size) => new[]
+        {
+            new double[] { 0, 0, 0 }, new double[] { size, 0, 0 },
+            new double[] { 0, size, 0 }, new double[] { 0, 0, size },
+        };
+        object smallCube = Mesh(Cube(2)); // bounding dim 2 -> radius 0.5
+        object bigCube = Mesh(Cube(8));   // bounding dim 8 -> radius 2.0
+
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(frameType, origin, x, y)!;
+        object IdentityAxis() => FrameOf(
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object MeshBranch(IReadOnlyList<int> path, object meshes, object fromBrep) =>
+            Activator.CreateInstance(meshBranchType, path, meshes, fromBrep)!;
+        object AxisBranch(IReadOnlyList<int> path, object axes) =>
+            Activator.CreateInstance(axisBranchType, path, axes)!;
+        object FourOf(object mesh) => MechanismListOf(meshType, mesh, mesh, mesh, mesh);
+        object FourNotBrep() => MechanismListOf(typeof(bool), false, false, false, false);
+        object FourIdentityAxes() => MechanismListOf(
+            frameType, IdentityAxis(), IdentityAxis(), IdentityAxis(), IdentityAxis());
+        object EmptyInstances() => MechanismListOf(instanceType);
+        object EmptyWires() => MechanismListOf(wireType);
+        object EmptyRowParts() => MechanismListOf(rowPartType);
+
+        object bodyOnlyAsset = Activator.CreateInstance(assetType, smallCube, false)!;
+        object axisBranches = MechanismListOf(
+            axisBranchType,
+            AxisBranch(new List<int> { 0, 0 }, FourIdentityAxes()),
+            AxisBranch(new List<int> { 0, 1 }, FourIdentityAxes()));
+
+        object mismatchedBranches = MechanismListOf(
+            meshBranchType,
+            MeshBranch(new List<int> { 0, 0 }, FourOf(smallCube), FourNotBrep()),
+            MeshBranch(new List<int> { 0, 1 }, FourOf(bigCube), FourNotBrep()));
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null,
+            new object?[]
+            {
+                bodyOnlyAsset, mismatchedBranches, axisBranches,
+                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
+                warnings, notes,
+            });
+        if (payload is not string)
+        {
+            throw new InvalidOperationException(
+                "Two mismatched tree-style mechanisms must still produce a payload.");
+        }
+        bool named = warnings.Any(w =>
+            w.Contains("spoolRadius", StringComparison.Ordinal) &&
+            w.Contains("side 0 mechanism 1", StringComparison.Ordinal));
+        if (!named)
+        {
+            throw new InvalidOperationException(
+                "Mechanism {0}{1}'s own driven spool implies a radius 4x "
+                + "mechanism {0}{0}'s, the ONE spoolRadius actually taken "
+                + "for every mechanism's rotation; this disagreement must "
+                + "be named. Warnings were: " + string.Join(" | ", warnings));
+        }
+
+        // THE NEGATIVE HALF: two mechanisms whose driven reels genuinely
+        // AGREE must not raise a disagreement warning.
+        object agreeingBranches = MechanismListOf(
+            meshBranchType,
+            MeshBranch(new List<int> { 0, 0 }, FourOf(smallCube), FourNotBrep()),
+            MeshBranch(new List<int> { 0, 1 }, FourOf(smallCube), FourNotBrep()));
+        var agreeingWarnings = new List<string>();
+        var agreeingNotes = new List<string>();
+        build.Invoke(
+            null,
+            new object?[]
+            {
+                bodyOnlyAsset, agreeingBranches, axisBranches,
+                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
+                agreeingWarnings, agreeingNotes,
+            });
+        if (agreeingWarnings.Any(w =>
+            w.Contains("spoolRadius", StringComparison.Ordinal) &&
+            w.Contains("% off)", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Two mechanisms whose driven reels genuinely AGREE must "
+                + "not raise a disagreement warning; warnings were: "
+                + string.Join(" | ", agreeingWarnings));
+        }
+    }
+
+    /// <summary>
+    /// AUDIT FINDING 1: the mechanism document's own per-wire warnings
+    /// and notes must never be merged into Export's shared, joined
+    /// Warning string -- they are carried on Built's own
+    /// MechanismWarnings/MechanismNotes fields instead, so the owner can
+    /// post each one its own AddRuntimeMessage call rather than one
+    /// run-on sentence. Driven through ExportComponent.BuildDocumentsAsync
+    /// itself: ONE anchor node, TWO wires authored on the one instance,
+    /// so wire 0 gets a note ("matched net_vertex 0...") and wire 1 is
+    /// dropped with a warning ("no anchor node left...") -- both must
+    /// land on the mechanism-specific fields and NEITHER may appear in
+    /// the shared Warning string.
+    /// </summary>
+    private static void ValidateExportMechanismDiagnosticsSeparated(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object[] nodes = { P(0, 0, 0) };
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", Array.CreateInstance(edgeType, 0));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces", Array.Empty<double>());
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0 });
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        const string instancePayload =
+            "{\"side\":0,\"mechanism\":0,\"frame\":{\"origin\":[0,0,0]," +
+            "\"xAxis\":[1,0,0],\"yAxis\":[0,1,0]},\"kind\":\"mechanism\"," +
+            "\"placement\":\"instance\"}";
+        static string Frame(double x, double y, double z) =>
+            "{\"origin\":[" + x + "," + y + "," + z +
+            "],\"xAxis\":[1,0,0],\"yAxis\":[0,1,0]}";
+        string wiresPayload =
+            "[{\"side\":0,\"mechanism\":0,\"wire\":0,\"route\":[" +
+            Frame(0, 0, 0) + "]}," +
+            "{\"side\":0,\"mechanism\":0,\"wire\":1,\"route\":[" +
+            Frame(1, 1, 1) + "]}]";
+        string mechanismPayload =
+            "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
+            "\"reels\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}," +
+            "\"instances\":[" + instancePayload + "]," +
+            "\"wires\":" + wiresPayload + "," +
+            "\"anchors\":[],\"tensionTies\":[]}";
+
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo buildMethod = exportType.GetMethod(
+            "BuildDocumentsAsync",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildDocumentsAsync was not found.");
+        Type inputsType = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ExportBuildInputs",
+            throwOnError: true)!;
+        var worker = new Func<string, object, CancellationToken, Task<JsonElement>>(
+            (command, requestPayload, token) =>
+                throw new InvalidOperationException(
+                    "No worker call is expected building form+mechanism "
+                    + "with no mesh wanted."));
+        object buildInputs = Activator.CreateInstance(
+            inputsType,
+            new object?[]
+            {
+                result, "mechanism diagnostics fixture", null, null, 1.0, 0.05,
+                mechanismPayload, worker, CancellationToken.None,
+            })!;
+        var task = (Task)buildMethod.Invoke(
+            null, new object?[] { buildInputs, new Func<string, bool>(_ => false) })!;
+        task.GetAwaiter().GetResult();
+        object built = task.GetType().GetProperty("Result")!.GetValue(task)!;
+        Type builtType = built.GetType();
+
+        string? warning = (string?)builtType.GetProperty("Warning")!.GetValue(built);
+        var mechanismWarnings =
+            (IReadOnlyList<string>)builtType.GetProperty("MechanismWarnings")!.GetValue(built)!;
+        var mechanismNotes =
+            (IReadOnlyList<string>)builtType.GetProperty("MechanismNotes")!.GetValue(built)!;
+
+        if (warning is not null &&
+            (warning.Contains("matched net_vertex", StringComparison.Ordinal) ||
+             warning.Contains("no anchor node left", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "The mechanism document's own per-wire diagnostics must "
+                + "never reach the SHARED, joined Export Warning string; "
+                + "got: " + warning);
+        }
+        if (!mechanismWarnings.Any(w => w.Contains("no anchor node left", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Wire 1 has no anchor left to match and must be named on "
+                + "Built.MechanismWarnings; got: "
+                + string.Join(" | ", mechanismWarnings));
+        }
+        if (!mechanismNotes.Any(n => n.Contains("matched net_vertex 0", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Wire 0's match must be printed on Built.MechanismNotes; "
+                + "got: " + string.Join(" | ", mechanismNotes));
         }
     }
 
@@ -41665,9 +42100,17 @@ internal static partial class Program
         internal object Built(
             IReadOnlyList<(string Kind, string Json)> payloads,
             string? warning = null,
-            string? note = null) =>
+            string? note = null,
+            IReadOnlyList<string>? mechanismWarnings = null,
+            IReadOnlyList<string>? mechanismNotes = null) =>
             Activator.CreateInstance(
-                BuiltType, new object?[] { payloads, warning, note })!;
+                BuiltType,
+                new object?[]
+                {
+                    payloads, warning, note,
+                    mechanismWarnings ?? Array.Empty<string>(),
+                    mechanismNotes ?? Array.Empty<string>(),
+                })!;
 
         internal object Pending(
             string studio,

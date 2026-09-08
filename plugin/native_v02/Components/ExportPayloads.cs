@@ -870,18 +870,6 @@ internal static class MechanismDocument
         int vertexCount = eq?.Vertices.Count ?? 0;
         int columnNodeCount = result.Mould?.Columns?.Nodes.Count ?? 0;
 
-        // NET VERTEX MATCHING, THE DEFAULT RULE (spec's own "STILL OPEN",
-        // a default left in place so nothing blocks): wire order (side,
-        // mechanism, wire -- his own tree order) matched against anchor
-        // order along the row, flattened row by row. R1's non-negotiable
-        // survives the named-port rebuild: every wire gets its OWN
-        // explicit net_vertex written into the document, never left to be
-        // inferred from tree position downstream.
-        List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
-        var anchorFlat = new List<int>();
-        foreach (List<int> row in rows)
-            anchorFlat.AddRange(row);
-
         var wireEntries = new List<(int Side, int Mechanism, int Wire, List<MechanismFrame> Route)>();
         if (wiresIn.ValueKind == JsonValueKind.Array)
         {
@@ -937,6 +925,113 @@ internal static class MechanismDocument
             }
         }
 
+        // NET VERTEX MATCHING, THE DEFAULT RULE (spec's own "STILL OPEN",
+        // a default left in place so nothing blocks): wire order (side,
+        // mechanism, wire -- his own tree order) matched against anchor
+        // order along the row, flattened row by row. R1's non-negotiable
+        // survives the named-port rebuild: every wire gets its OWN
+        // explicit net_vertex written into the document, never left to be
+        // inferred from tree position downstream.
+        //
+        // WHICH ROW IS WHICH SIDE'S is decided by PHYSICAL PROXIMITY (audit
+        // finding 3), never by row-discovery order:
+        // MouldGeometry.ConnectedGroups' own order is "the order of their
+        // lowest node index... arbitrary but STABLE", an artefact of how
+        // the net happened to get numbered, with zero relationship to his
+        // own authored `side` field. Each row is paired to whichever
+        // side's own instances sit nearest it in world space; the flatten
+        // WITHIN a matched row (wire order against anchor order along that
+        // row) is unchanged. Falls back to document order when the row
+        // count and the authored side count disagree, which this pairing
+        // cannot resolve unambiguously -- the same behaviour this file
+        // always had.
+        List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
+        List<List<int>> orderedRows = rows;
+        List<int> sideOrder = instanceFrames.Keys
+            .Select(k => k.Side)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToList();
+        if (eq is not null && rows.Count > 0 && rows.Count == sideOrder.Count)
+        {
+            List<double[]> rowCentres = rows
+                .Select(row => Centroid(row.Select(id =>
+                {
+                    Point3Dto p = eq.Vertices[id];
+                    return new[] { p.X, p.Y, p.Z };
+                }).ToList()))
+                .ToList();
+            var unassigned = Enumerable.Range(0, rows.Count).ToList();
+            var assignment = new int[sideOrder.Count];
+            for (int s = 0; s < sideOrder.Count; s++)
+            {
+                double[] sideCentre = Centroid(instanceFrames
+                    .Where(kv => kv.Key.Side == sideOrder[s])
+                    .Select(kv => kv.Value.Origin)
+                    .ToList());
+                int nearest = unassigned
+                    .OrderBy(r => MechanismCollector.Distance(rowCentres[r], sideCentre))
+                    .First();
+                assignment[s] = nearest;
+                unassigned.Remove(nearest);
+            }
+            orderedRows = assignment.Select(r => rows[r]).ToList();
+            bool swapped = false;
+            for (int i = 0; i < assignment.Length; i++)
+                swapped |= assignment[i] != i;
+            if (swapped)
+            {
+                notes.Add(
+                    "mechanism: anchor rows were paired to sides by " +
+                    "physical proximity to each side's own placed " +
+                    "instances, not by the net's own numbering, and the " +
+                    "two disagreed for this study: document-order " +
+                    "pairing would have matched every wire against the " +
+                    "wrong side's anchors.");
+            }
+        }
+        var anchorFlat = new List<int>();
+        foreach (List<int> row in orderedRows)
+            anchorFlat.AddRange(row);
+
+        // A PER-ROW TOLERANCE for the match-distance check below (finding
+        // 3's second half): the door-guard's own pattern
+        // (MechanismCollector.BuildRowParts), a multiple of the row's own
+        // characteristic anchor spacing, so a wire's printed distance is
+        // backed by a check rather than left for him to eyeball on a
+        // vault where a full side swap can print a distance the same
+        // order as a correctly matched wire's own free span.
+        var vertexRowSpacing = new Dictionary<int, double>();
+        if (eq is not null)
+        {
+            foreach (List<int> row in orderedRows)
+            {
+                IReadOnlyList<double[]> points = row.Select(id =>
+                {
+                    Point3Dto p = eq.Vertices[id];
+                    return new[] { p.X, p.Y, p.Z };
+                }).ToList();
+                double spacing = MechanismCollector.CharacteristicSpacing(points);
+                foreach (int id in row)
+                    vertexRowSpacing[id] = spacing;
+            }
+        }
+
+        // THE REEVE FACTOR'S OWN SHAPE (spec's "reeve factor, settled
+        // 2026-09-08 late", parallel to net_vertex): the document carries
+        // the RESOLVED value on every wire, so the studio never inherits or
+        // infers one. Read once off the collector's mechanism payload
+        // (fixed at 1.0 today, provisional, per his own ruling) and
+        // stamped onto every wire below -- the VALUE is unchanged and
+        // still not built accurately; only the shape moves to match the
+        // ruling.
+        double reeveFactor =
+            mechanismIn.ValueKind == JsonValueKind.Object &&
+            mechanismIn.TryGetProperty("reeveFactor", out JsonElement rf) &&
+            rf.ValueKind == JsonValueKind.Number
+                ? rf.GetDouble()
+                : 1.0;
+
         // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
         // instance participates but not what the wire IS". Every wire this
         // document declares is finished ONCE here and instances above
@@ -983,6 +1078,35 @@ internal static class MechanismDocument
                     "routing plane " +
                     distFirst.ToString("0.###", CultureInfo.InvariantCulture) +
                     " m from it.");
+
+                // THE MATCH-DISTANCE CHECK, PROMOTED (finding 3's second
+                // half): the note above is unconditional, "prints its
+                // distances" whatever the answer; this is the door-guard
+                // itself, a Warning the moment that distance exceeds a
+                // tolerance built the same way AN/TT's own is -- a
+                // multiple of the MATCHED row's own characteristic anchor
+                // spacing -- so a wire latched to the wrong anchor is
+                // named, not merely printed for him to notice by eye.
+                double tolerance = Math.Max(
+                    MechanismCollector.AnchorTieToleranceFactor *
+                        vertexRowSpacing.GetValueOrDefault(netVertex, 0.0),
+                    MechanismCollector.MinimumAnchorTieTolerance);
+                if (distFirst > tolerance)
+                {
+                    warnings.Add(
+                        $"wire {id}: matched net_vertex {netVertex} but " +
+                        "sits " +
+                        distFirst.ToString("0.###", CultureInfo.InvariantCulture) +
+                        " m from it, farther than the door-guard " +
+                        "tolerance of " +
+                        tolerance.ToString("0.###", CultureInfo.InvariantCulture) +
+                        " m (" +
+                        MechanismCollector.AnchorTieToleranceFactor.ToString(
+                            "0.#", CultureInfo.InvariantCulture) +
+                        "x the matched row's own anchor spacing): this " +
+                        "wire may be latched to the wrong anchor, or " +
+                        "authored against a different solve.");
+                }
                 if (route.Count > 1)
                 {
                     double[] lastWorld = TransformLocal(route[^1].Origin, instanceFrame);
@@ -1010,6 +1134,11 @@ internal static class MechanismDocument
             {
                 ["id"] = id,
                 ["net_vertex"] = netVertex,
+                // THE RESOLVED VALUE, PER WIRE, NEVER INHERITED (finding
+                // 5 above): the same principle already applied to
+                // net_vertex, applied here to the one other field the
+                // spec's own reeve-factor ruling names by name.
+                ["reeveFactor"] = reeveFactor,
                 // THE ORDERED PATH (A7): every wire this document derives
                 // visits exactly one instance, so the list is length one
                 // today; declared as a list rather than a single reference
@@ -1074,14 +1203,20 @@ internal static class MechanismDocument
             // measured true on two real exports, and now written into the
             // schema as a promise rather than left as a coincidence a
             // reader discovers by measuring a third one.
+            // THE column_node CLAIM WAS STRUCK (audit finding 2's own sub-
+            // issue): no object this writer ever emits carries a key named
+            // column_node -- it was leftover language from the earlier
+            // P-004 wire shape, which did not survive the INPUT MODEL's
+            // collapse to one generic wire shape. A promise this document
+            // does not keep is worse than no promise at all; the reader's
+            // own invariant 3, which still quotes it back, needs its own
+            // re-diff against this document on the studio side.
             ["numbering"] = "net_vertex indices are the same numbering as " +
                 "the form document's equilibrium.vertices and the " +
                 "formwork document's frames[].vertices for this study, by " +
                 "construction, in every frame including frame 0 (numbering, " +
                 "not position: only the LAST frame's positions equal the " +
-                "form document's equilibrium). column_node indices are the " +
-                "same numbering as the formwork document's columns.nodes " +
-                "and frames[].columnNodes.",
+                "form document's equilibrium).",
             // THE ROTATION DECLARATION (studio's C3/A3): the spin the
             // driven spinner turns, stated as unit, sign and reference
             // rather than left for the reader to guess from a bare
@@ -1126,6 +1261,27 @@ internal static class MechanismDocument
         ReadTripleRaw(element.GetProperty("origin")),
         ReadTripleRaw(element.GetProperty("xAxis")),
         ReadTripleRaw(element.GetProperty("yAxis")));
+
+    /// <summary>
+    /// The plain arithmetic mean of a set of world points: the row-to-side
+    /// pairing's own probe point (finding 3), for both an anchor row's
+    /// nodes and a side's own placed instances. The origin for an empty
+    /// set, which the caller never actually hands it (both call sites
+    /// guard the shapes that would).
+    /// </summary>
+    private static double[] Centroid(IReadOnlyList<double[]> points)
+    {
+        if (points.Count == 0)
+            return new double[] { 0.0, 0.0, 0.0 };
+        double x = 0.0, y = 0.0, z = 0.0;
+        foreach (double[] p in points)
+        {
+            x += p[0];
+            y += p[1];
+            z += p[2];
+        }
+        return new[] { x / points.Count, y / points.Count, z / points.Count };
+    }
 
     private static double[] ReadTripleRaw(JsonElement array) =>
         array.EnumerateArray().Select(e => e.GetDouble()).ToArray();

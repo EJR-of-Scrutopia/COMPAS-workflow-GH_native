@@ -744,6 +744,24 @@ public sealed class ExportComponent : NativeComponentBase
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Remark, built.Note);
             }
+            // EACH ITS OWN BALLOON (audit finding 1): the mechanism
+            // document's own warnings and notes never reached here folded
+            // into built.Warning/Note above, so the one wire that is
+            // actually wrong reads as its own Warning, not one clause in a
+            // multi-thousand-character run-on sentence with forty-one
+            // routine confirmations. RuntimeMessages(Warning) below still
+            // picks every one of these up for the Status (ST) line.
+            if (built is not null)
+            {
+                foreach (string mechanismWarning in built.MechanismWarnings)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Warning,
+                        "Export mechanism: " + mechanismWarning);
+                }
+                foreach (string mechanismNote in built.MechanismNotes)
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, mechanismNote);
+            }
 
             string uploaded;
             if (!inputs.Live)
@@ -1448,6 +1466,17 @@ public sealed class ExportComponent : NativeComponentBase
         var payloads = new List<(string Kind, string Json)>(kinds.Length);
         var warnings = new List<string>();
         string? note = null;
+        // KEPT OUT OF THE SHARED `warnings` LIST DELIBERATELY (audit
+        // finding 1): the mechanism document's own per-wire diagnostics --
+        // the "PRINTS ITS MATCHED DISTANCES" promise the studio spent five
+        // negotiation rounds on -- used to be merged into the one joined,
+        // space-separated Warning every other kind's warnings also share,
+        // which buries the one wire that is actually wrong under every
+        // routine per-wire confirmation at identical visual weight. Carried
+        // on Built's own fields instead, so the owner posts each one its
+        // own AddRuntimeMessage call.
+        var mechanismWarningsOut = new List<string>();
+        var mechanismNotesOut = new List<string>();
 
         // THE UNIT FACTOR IS DISCLOSED FOR THE WHOLE SET, not inside
         // one document, which is the whole-branch review's finding 16.
@@ -1592,8 +1621,18 @@ public sealed class ExportComponent : NativeComponentBase
                     // mechanism payload whose shape does not fit this
                     // Result (a node reel with no columns, an out-of-range
                     // wire) costs this document and nothing else.
+                    //
+                    // ITS OWN WARNINGS AND NOTES, KEPT SEPARATE (finding
+                    // 1): neither list is merged into the shared
+                    // `warnings` above -- a document-BUILD failure (the
+                    // catch below) still joins that shared line, since it
+                    // is a fault in the set and not a per-wire diagnostic,
+                    // but a real per-wire warning and a routine per-wire
+                    // match note are never smashed into one run-on
+                    // sentence with everything else the set has to say.
                     try
                     {
+                        var mechanismWarnings = new List<string>();
                         var mechanismNotes = new List<string>();
                         payloads.Add((
                             kind,
@@ -1602,9 +1641,10 @@ public sealed class ExportComponent : NativeComponentBase
                                 inputs.Study,
                                 inputs.UnitFactor,
                                 inputs.Mechanism,
-                                warnings,
+                                mechanismWarnings,
                                 mechanismNotes)));
-                        warnings.AddRange(mechanismNotes);
+                        mechanismWarningsOut.AddRange(mechanismWarnings);
+                        mechanismNotesOut.AddRange(mechanismNotes);
                     }
                     catch (Exception mechanismError)
                     {
@@ -1622,7 +1662,9 @@ public sealed class ExportComponent : NativeComponentBase
         return new LiveUploader.Built(
             payloads,
             warnings.Count == 0 ? null : string.Join(" ", warnings),
-            note);
+            note,
+            mechanismWarningsOut,
+            mechanismNotesOut);
     }
 
     /// <summary>
