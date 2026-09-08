@@ -970,7 +970,9 @@ internal static class MechanismDocument
             // than merely possible.
             if (eq is not null &&
                 route.Count > 0 &&
-                instanceFrames.TryGetValue((side, mechanism), out MechanismFrame instanceFrame))
+                instanceFrames.TryGetValue(
+                    (side, mechanism), out MechanismFrame? instanceFrame) &&
+                instanceFrame is not null)
             {
                 Point3Dto netPoint = eq.Vertices[netVertex];
                 double[] netWorld = { netPoint.X, netPoint.Y, netPoint.Z };
