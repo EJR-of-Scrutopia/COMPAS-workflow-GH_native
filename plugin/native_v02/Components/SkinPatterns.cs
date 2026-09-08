@@ -229,33 +229,6 @@ internal sealed record SkinNet(
         _planGrid ??= SkinPlanGrid.Build(Vertices, Faces);
 
     private SkinPlanGrid? _planGrid;
-
-    /// <summary>
-    /// TASK 3 (plan 2026-09-03-skin-defects-and-free-edge): THE MESH'S OWN
-    /// FREE BOUNDARY, chained by <see cref="SkinPatterns.FreeEdgeChainsOf"/>
-    /// (whose doc comment carries the SUPPORTED/FREE rule and the chaining
-    /// argument), as vertex-index polylines shaped like <see cref="Rim"/>
-    /// so a reader can tell the two apart: Rim is WHERE the net is held up,
-    /// this is WHERE it is not held up at all.
-    ///
-    /// A LAZY, DERIVED property and not an init one, deliberately: RimDropped
-    /// and EdgesDropped are init properties because only ReadNet ever has
-    /// an opinion about them (a net built straight from arrays, as every
-    /// fixture in this harness but ReadNet's own callers builds one, never
-    /// dropped anything to have one). The free boundary is different: it is
-    /// a property of the Vertices, Faces and Rim ALONE, exactly like
-    /// PlanGrid beside it, so a net the harness builds directly from raw
-    /// arrays (which is how both of task 3's own fixtures, and every real
-    /// net Task 4 terminates a course against, reach this file) must answer
-    /// it correctly with no help from ReadNet. Computed once and cached,
-    /// the same reasoning PlanGrid's own comment carries: no lock, because
-    /// a Grasshopper solve is single-threaded per instance and a race here
-    /// only ever computes the same answer twice.
-    /// </summary>
-    public IReadOnlyList<IReadOnlyList<int>> FreeEdgeChains =>
-        _freeEdgeChains ??= SkinPatterns.FreeEdgeChainsOf(this);
-
-    private IReadOnlyList<IReadOnlyList<int>>? _freeEdgeChains;
 }
 
 /// <summary>
@@ -4017,13 +3990,10 @@ internal static class SkinPatterns
             levels, traced, tileable, refused, extra, passes, capReached);
     }
 
-    /// <summary>Every undirected edge of the net's own triangulated Faces,
-    /// keyed A below B, against how many faces carry it: an edge belonging
-    /// to exactly one triangle is a MESH BOUNDARY edge. Shared arithmetic
-    /// (task 3, spec plan 2026-09-03-skin-defects-and-free-edge step 1):
-    /// <see cref="FacesOnBoundary"/> and <see cref="FreeEdgeChainsOf"/>
-    /// both need it and neither should write it twice.</summary>
-    private static Dictionary<(int, int), int> EdgeOwnerCounts(SkinNet net)
+    /// <summary>One flag per face: does this face carry a MESH BOUNDARY
+    /// EDGE, an edge belonging to exactly one triangle? Computed once per
+    /// net, because rule 2.2.1(b) asks it of two whole face sets.</summary>
+    private static bool[] FacesOnBoundary(SkinNet net)
     {
         var owners = new Dictionary<(int, int), int>();
         foreach (int[] face in net.Faces)
@@ -4038,15 +4008,6 @@ internal static class SkinPatterns
                     : 1;
             }
         }
-        return owners;
-    }
-
-    /// <summary>One flag per face: does this face carry a MESH BOUNDARY
-    /// EDGE, an edge belonging to exactly one triangle? Computed once per
-    /// net, because rule 2.2.1(b) asks it of two whole face sets.</summary>
-    private static bool[] FacesOnBoundary(SkinNet net)
-    {
-        Dictionary<(int, int), int> owners = EdgeOwnerCounts(net);
         var flagged = new bool[net.Faces.Count];
         for (int at = 0; at < net.Faces.Count; at++)
         {
@@ -4064,196 +4025,6 @@ internal static class SkinPatterns
             }
         }
         return flagged;
-    }
-
-    /// <summary>
-    /// TASK 3: THE MESH'S OWN FREE BOUNDARY, as open (or, where a hole
-    /// carries no anchor at all, closed) polylines of NET VERTEX INDICES,
-    /// parallel in shape to <see cref="SkinNet.Rim"/> so a reader can tell
-    /// the two apart at a glance.
-    ///
-    /// THE RULE, STATED: a mesh boundary edge (owner count 1, this file's
-    /// own <see cref="EdgeOwnerCounts"/>) is SUPPORTED when BOTH its ends
-    /// are anchors (<see cref="SkinNet.Rim"/>), and FREE otherwise. Stated
-    /// as a rule about the EDGE and not about either end alone, because a
-    /// boundary vertex that IS an anchor whose neighbour along the
-    /// boundary is NOT is exactly the case a reader needs written down: an
-    /// edge with one anchored end and one free end is FREE, not supported,
-    /// the anchor's own row still ends and the free edge that leaves it is
-    /// still free.
-    ///
-    /// CHAINING. Restricted to the free edges, an ordinary manifold mesh
-    /// boundary vertex has degree 0 (both its boundary edges supported),
-    /// 1 (one of the two is free: a chain END, where the boundary crosses
-    /// from anchored to free) or 2 (both free: a chain MIDDLE). A vertex
-    /// of degree 1 or higher-than-2 (the latter not expected on a manifold
-    /// boundary, and handled defensively here as an end all the same) is
-    /// walked as a chain start; whatever free edges remain once every
-    /// degree-1 start is exhausted must be a CLOSED loop with no anchor
-    /// on it anywhere (an unanchored design hole), and those are walked
-    /// too, so a net with such a hole does not silently lose it.
-    /// </summary>
-    internal static IReadOnlyList<IReadOnlyList<int>> FreeEdgeChainsOf(
-        SkinNet net)
-    {
-        Dictionary<(int, int), int> owners = EdgeOwnerCounts(net);
-        var rim = new HashSet<int>(net.Rim);
-        var neighbours = new Dictionary<int, List<int>>();
-        foreach (KeyValuePair<(int, int), int> pair in owners)
-        {
-            if (pair.Value != 1)
-                continue;
-            (int a, int b) = pair.Key;
-            if (rim.Contains(a) && rim.Contains(b))
-                continue;
-            if (!neighbours.TryGetValue(a, out List<int>? fromA))
-                neighbours[a] = fromA = new List<int>();
-            fromA.Add(b);
-            if (!neighbours.TryGetValue(b, out List<int>? fromB))
-                neighbours[b] = fromB = new List<int>();
-            fromB.Add(a);
-        }
-        if (neighbours.Count == 0)
-            return Array.Empty<IReadOnlyList<int>>();
-
-        static (int, int) Canon(int x, int y) => x < y ? (x, y) : (y, x);
-        var visited = new HashSet<(int, int)>();
-        var chains = new List<IReadOnlyList<int>>();
-
-        List<int> Walk(int start, int first)
-        {
-            var chain = new List<int> { start, first };
-            visited.Add(Canon(start, first));
-            int prev = start;
-            int current = first;
-            while (neighbours[current].Count == 2 && current != start)
-            {
-                int a0 = neighbours[current][0];
-                int a1 = neighbours[current][1];
-                int next = a0 == prev ? a1 : a0;
-                (int, int) key = Canon(current, next);
-                if (visited.Contains(key))
-                    break;
-                visited.Add(key);
-                chain.Add(next);
-                prev = current;
-                current = next;
-            }
-            return chain;
-        }
-
-        // PASS 1: every open chain, starting from each degree-1 (or
-        // stray higher-degree) vertex, lowest index first for a
-        // deterministic order.
-        foreach (int v in neighbours.Keys.OrderBy(x => x))
-        {
-            if (neighbours[v].Count == 2)
-                continue;
-            foreach (int first in neighbours[v].OrderBy(x => x))
-            {
-                if (visited.Contains(Canon(v, first)))
-                    continue;
-                chains.Add(Walk(v, first));
-            }
-        }
-
-        // PASS 2: whatever is left is entirely degree-2, so it is a
-        // CLOSED loop with no anchor on it anywhere. Walked with its own
-        // rule and not Walk's: Walk stops the moment it reaches a vertex
-        // that is not degree-2 OR equals its own start, which for a loop
-        // fires on the CLOSING edge and so appends the start vertex a
-        // second time (a 48-vertex ring becomes a 49-point chain). Every
-        // other polyline this file carries, SkinLevelCurve.Points chief
-        // among them (its own class comment: modulo indexing implies the
-        // wrap, nothing repeats it), closes a loop by a flag and an index
-        // that wraps, not by a duplicated point, and this chain is built
-        // to match: WalkClosed adds a vertex on ENTRY to each step of the
-        // loop and stops as soon as the walk is back at its own start,
-        // never appending that start a second time.
-        List<int> WalkClosed(int start, int first)
-        {
-            var chain = new List<int> { start };
-            visited.Add(Canon(start, first));
-            int prev = start;
-            int current = first;
-            while (current != start)
-            {
-                chain.Add(current);
-                int a0 = neighbours[current][0];
-                int a1 = neighbours[current][1];
-                int next = a0 == prev ? a1 : a0;
-                visited.Add(Canon(current, next));
-                prev = current;
-                current = next;
-            }
-            return chain;
-        }
-        foreach (int v in neighbours.Keys.OrderBy(x => x))
-        {
-            foreach (int first in neighbours[v].OrderBy(x => x))
-            {
-                if (visited.Contains(Canon(v, first)))
-                    continue;
-                chains.Add(WalkClosed(v, first));
-            }
-        }
-        return chains;
-    }
-
-    /// <summary>
-    /// TASK 4 (plan 2026-09-03-skin-defects-and-free-edge), step 1's own
-    /// data: <see cref="SkinNet.FreeEdgeChains"/> (task 3), wrapped as
-    /// SkinLevelCurve-shaped open polylines through their own 3D vertex
-    /// positions so BandCell can reuse Run, NearestArcInPlan and
-    /// NearestCurveToPoint -- the same machinery BoundaryRun and the
-    /// closer already use to map one curve's arc onto another -- rather
-    /// than a second, parallel set of point-chain helpers.
-    ///
-    /// LEVEL, CLOSED and DEPTH carry no meaning here and are set to their
-    /// harmless defaults (NaN, false, 0): nothing downstream of this
-    /// reads them off a free-edge curve, only Points, Cumulative, Length
-    /// and Seam (0, so PointAt's u IS the plain arc length). TREATED AS
-    /// OPEN REGARDLESS OF THE UNDERLYING CHAIN, even where task 3's own
-    /// chaining found a genuinely closed loop (an unanchored hole): the
-    /// one caller this task has, BandCell, only ever runs along a chain
-    /// between two points FreeEdgeEnds has already confirmed sit at an
-    /// OPEN course band's own extremity, and no fixture or real net this
-    /// task measures against has a band whose end lands on an unanchored
-    /// hole's own rim. Named rather than silently assumed: a future
-    /// caller that does reach a closed chain this way gets a slightly
-    /// wrong nearest-arc answer exactly at the chain's own unmarked wrap
-    /// seam, not a thrown exception.
-    /// </summary>
-    private static IReadOnlyList<SkinLevelCurve> FreeEdgeCurvesOf(
-        SkinNet net)
-    {
-        var curves = new List<SkinLevelCurve>();
-        foreach (IReadOnlyList<int> chain in net.FreeEdgeChains)
-        {
-            if (chain.Count < 2)
-                continue;
-            var points = new List<double[]>(chain.Count);
-            foreach (int index in chain)
-                points.Add(net.Vertices[index]);
-            var cumulative = new double[points.Count];
-            double total = 0.0;
-            for (int at = 1; at < points.Count; at++)
-            {
-                total += Distance(points[at - 1], points[at]);
-                cumulative[at] = total;
-            }
-            curves.Add(new SkinLevelCurve
-            {
-                Level = double.NaN,
-                Points = points,
-                Closed = false,
-                Cumulative = cumulative,
-                Length = total,
-                Seam = 0.0,
-                Depth = 0
-            });
-        }
-        return curves;
     }
 
     /// <summary>
@@ -4956,35 +4727,6 @@ internal static class SkinPatterns
         // boundary; both still let CloserBand's own machinery choose
         // whether the seam wins the span at all.
         IReadOnlyList<double[][]> seams = SeamCurves(net);
-
-        // TASK 4 (plan 2026-09-03-skin-defects-and-free-edge), step 1's
-        // own data: the net's free-edge chains (task 3), wrapped once as
-        // open SkinLevelCurve-shaped polylines through their own 3D
-        // positions so BandCell can reuse Run, NearestArcInPlan and
-        // NearestCurveToPoint, the same machinery BoundaryRun and the
-        // closer already use to map one curve's arc onto another. Built
-        // ONCE here and threaded through rather than rebuilt per cell: it
-        // is an O(chain length) cumulative sum every band's every cell
-        // would otherwise pay for again.
-        //
-        // GATED ON A REAL RIM, DELIBERATELY. On a net with NO rim at all
-        // (the two-argument constructor, world Z fallback: this file's
-        // own barrel and two-hump-barrel fixtures included) task 3's
-        // SUPPORTED/FREE rule finds no anchor anywhere, so the WHOLE mesh
-        // perimeter -- both springing rows as well as both side columns
-        // -- bundles into ONE free-edge loop with no anchor to break it
-        // apart. Run along THAT, matched by nearest arc, sends an end
-        // cell the long way round through rows an interior open strip
-        // never gets near, which folded the barrel and the two-hump
-        // barrel the first time this ran (measured RED, restored here).
-        // A net with a real rim never has this problem: its springing
-        // rows are anchored, so they are never part of any free-edge
-        // chain in the first place (task 3's own rule), and every one of
-        // Param's own real nets carries a real rim (task 3's own 42
-        // anchors, ALL on the boundary, plan's own measurement).
-        IReadOnlyList<SkinLevelCurve> freeEdges = net.Rim.Count > 0
-            ? FreeEdgeCurvesOf(net)
-            : Array.Empty<SkinLevelCurve>();
 
         int bands = BandCount(dMin, dMax, courseHeight);
         double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
@@ -6065,16 +5807,10 @@ internal static class SkinPatterns
                 foreach ((double u0, double u1) in
                          CourseSpans(mid, pieces, pitch, phase))
                 {
-                    // TASK 4 STEP 3 (plan 2026-09-03-skin-defects-and-
-                    // free-edge): Clipped means the cell's outline touches
-                    // the mesh's own FREE boundary (TouchesFreeEdge's own
-                    // comment carries why testing mid's own extremity IS
-                    // that test), replacing the pitch comparison this line
-                    // used to stand in for it: a full-pitch first or last
-                    // piece that happened to absorb no phase was an open
-                    // strip's own end all the same and was never flagged
-                    // by "shorter than the pitch" alone.
-                    spans.Add((u0, u1, TouchesFreeEdge(mid, u0, u1)));
+                    // Only an open strip's end piece is shorter than the
+                    // pitch: it absorbed the phase, and it is the
+                    // "boundary-clipped" cell of this pattern.
+                    spans.Add((u0, u1, u1 - u0 < pitch - 1.0e-9));
                 }
                 // The merge runs BEFORE KeepValidPlans (rule 6.6), so the
                 // filter sees and judges the cells the author is actually
@@ -6120,7 +5856,7 @@ internal static class SkinPatterns
                 {
                     SkinCell cell = BandCell(
                         band.Course, lowerCurve, mid, upperCurve,
-                        u0, u1, clipped, freeEdges);
+                        u0, u1, clipped);
                     laid.Add(cell);
                     folded |= cell.Outline.Count >= 3 &&
                         (PlanSelfCrosses(cell.Outline) ||
@@ -6134,7 +5870,7 @@ internal static class SkinPatterns
                     {
                         SkinCell cell = BandCell(
                             band.Course, lowerCurve, mid, upperCurve,
-                            u0, u1, clipped, freeEdges, true);
+                            u0, u1, clipped, true);
                         rebuilt.Add(cell);
                         stillFolded |= cell.Outline.Count >= 3 &&
                             (PlanSelfCrosses(cell.Outline) ||
@@ -6689,18 +6425,6 @@ internal static class SkinPatterns
 
                 // The spans, seam outward, then section 6's own merge, which
                 // rule 3.3.6 inherits whole rather than reimplementing.
-                //
-                // TASK 4 STEP 3 (plan 2026-09-03-skin-defects-and-free-
-                // edge): Clipped is FALSE here as a stated fact and not a
-                // placeholder. Every span this loop builds runs strictly
-                // BETWEEN two real head joints (onLower[at - 1] to
-                // onLower[at]), never from the bed's own outer end to its
-                // outermost head joint: that residual region, the one
-                // that WOULD touch the free edge, is never covered by an
-                // ordinary force-aligned cell at all (it is what FIX 2's
-                // pinch-out coverage and CloseFreeEdgeWedge exist for,
-                // neither of which this loop reaches), so no cell built
-                // here ever has a free-edge end to report.
                 var spans = new List<(double U0, double U1, bool Clipped)>();
                 for (int at = 1; at < onLower.Count; at++)
                     spans.Add((onLower[at - 1].U, onLower[at].U, false));
@@ -9189,81 +8913,6 @@ internal static class SkinPatterns
         return backwards;
     }
 
-    /// <summary>
-    /// TASK 4 (plan 2026-09-03-skin-defects-and-free-edge): does [u0, u1]
-    /// sit at one of MID's own two extremities, seam-relative -- -Seam
-    /// (the u0 end) or Length - Seam (the u1 end) -- and is mid an OPEN
-    /// strip at all? False on a closed loop, which has no end to sit at.
-    ///
-    /// THIS IS THE FREE-EDGE TEST, not a proxy for one. In this engine's
-    /// rim-distance field a SUPPORTED boundary edge sits at the field's
-    /// own MINIMUM (Rule stated on SkinNet.FreeEdgeChains: an edge is
-    /// supported only when both its ends are anchors), so an interior
-    /// level curve traced at any level above that minimum can never
-    /// reach it; the ONLY boundary a positive-level open strip's own two
-    /// ends can be traced up to is the FREE one. Testing the curve's own
-    /// extremity therefore tests the free edge exactly, without a
-    /// per-cell proximity scan against every one of the net's own
-    /// free-edge chains. Task 3's own FreeEdgeChains is still what task 4
-    /// step 1 runs ALONG once this test says an end qualifies; this is
-    /// only the WHETHER.
-    /// </summary>
-    private static (bool U0, bool U1) FreeEdgeEnds(
-        SkinLevelCurve mid, double u0, double u1)
-    {
-        if (mid.Closed)
-            return (false, false);
-        double tolerance = Math.Max(mid.Length * 1.0e-9, 1.0e-9);
-        return (
-            Math.Abs(u0 - (-mid.Seam)) <= tolerance,
-            Math.Abs(u1 - (mid.Length - mid.Seam)) <= tolerance);
-    }
-
-    /// <summary>TASK 4 STEP 3: Clipped means ONE thing -- this cell's
-    /// outline touches the mesh's own free boundary -- read off
-    /// <see cref="FreeEdgeEnds"/> rather than the pitch comparison this
-    /// pattern used to stand in for it (a full-pitch first or last piece
-    /// that absorbed no phase was never flagged before this).</summary>
-    private static bool TouchesFreeEdge(
-        SkinLevelCurve mid, double u0, double u1)
-    {
-        (bool u0Free, bool u1Free) = FreeEdgeEnds(mid, u0, u1);
-        return u0Free || u1Free;
-    }
-
-    /// <summary>TASK 4 STEP 1: the free edge's own run between two points
-    /// each already at (or a weld's tolerance from) it, by NEAREST ARC IN
-    /// PLAN on whichever of the net's free-edge chains lies nearest EACH
-    /// point in full 3D (<see cref="NearestCurveToPoint"/>, the same test
-    /// the closer band already runs to pick one family over another).
-    ///
-    /// BOTH ends are matched against the SAME chain, chosen from
-    /// <paramref name="from"/> alone: a course band spans one strip's own
-    /// width and does not cross from one springing to another, so on
-    /// every fixture and every one of Param's own nets this task
-    /// measures against the two points already sit on the one chain. A
-    /// net whose band genuinely spans two different free-edge chains is
-    /// not exercised here; it would cost a run that briefly leaves the
-    /// nearer chain instead of switching to the other one, named rather
-    /// than hidden. Falls back to the plain two-point chord, today's
-    /// behaviour, where no chain is found at all.</summary>
-    private static List<double[]> FreeEdgeRun(
-        IReadOnlyList<SkinLevelCurve> freeEdges,
-        double[] from,
-        double[] to)
-    {
-        SkinLevelCurve? chain = NearestCurveToPoint(from, freeEdges);
-        if (chain is null || chain.Points.Count < 2)
-            return new List<double[]> { from, to };
-        double arcFrom = NearestArcInPlan(chain, from);
-        double arcTo = NearestArcInPlan(chain, to);
-        if (arcTo >= arcFrom)
-            return Run(chain, arcFrom, arcTo);
-        List<double[]> backwards = Run(chain, arcTo, arcFrom);
-        backwards.Reverse();
-        return backwards;
-    }
-
     private static SkinCell BandCell(
         int course,
         SkinLevelCurve lowerCurve,
@@ -9272,31 +8921,16 @@ internal static class SkinPatterns
         double u0,
         double u1,
         bool clipped,
-        IReadOnlyList<SkinLevelCurve> freeEdges,
         bool byNearestPoint = false)
     {
         List<double[]> lower = BoundaryRun(
             lowerCurve, mid, u0, u1, byNearestPoint);
         List<double[]> upper = BoundaryRun(
             upperCurve, mid, u0, u1, byNearestPoint);
-        // TASK 4 STEP 1: an end that sits on the mesh's own free boundary
-        // (FreeEdgeEnds above) runs ALONG the free edge between the lower
-        // and upper curves' own endpoints there instead of chording
-        // straight across it; Dedupe below welds the run's own start onto
-        // lower's or upper's own last point, which is the same point to
-        // well inside its 1e-6 m floor since both are the SAME mesh
-        // boundary crossing read two different ways.
-        (bool u0Free, bool u1Free) = FreeEdgeEnds(mid, u0, u1);
-        bool runFreeEdge = freeEdges.Count > 0 &&
-            lower.Count > 0 && upper.Count > 0;
         var outline = new List<double[]>(lower);
-        if (u1Free && runFreeEdge)
-            outline.AddRange(FreeEdgeRun(freeEdges, lower[^1], upper[^1]));
         List<double[]> back = new List<double[]>(upper);
         back.Reverse();
         outline.AddRange(back);
-        if (u0Free && runFreeEdge)
-            outline.AddRange(FreeEdgeRun(freeEdges, upper[0], lower[0]));
         // The surface is derived from the two RUNS the cell was built from
         // and never re-derived from the finished closed polyline (rule
         // 5.2.1): recovering four chains from the concatenated ring
@@ -10294,21 +9928,6 @@ internal static class SkinPatterns
                         weldCollapsed++;
                         continue;
                     }
-                    // TASK 4 STEP 3 (plan 2026-09-03-skin-defects-and-
-                    // free-edge): "clipped" already meant the free edge
-                    // here, in this row's own [0, 1] parametrisation
-                    // rather than seam-relative arc: sideLeft or sideRight
-                    // running past here's own [0, 1] domain on an OPEN row
-                    // is the SAME fact TouchesFreeEdge tests on the
-                    // courses pattern (an open curve's own extremity is,
-                    // in this engine's rim-distance field, exactly where
-                    // the trace left the free boundary; see
-                    // SkinNet.FreeEdgeChains's own doc comment for the
-                    // rule this rests on and FreeEdgeEnds's own comment
-                    // for the argument stated at length). PointAt(here,
-                    // ArcOf(here, sideLeft/sideRight)) above clamps such a
-                    // corner to here's own end point, which is what makes
-                    // this test correct rather than a stand-in for one.
                     bool clipped = !here.Closed &&
                         (sideLeft < 0.0 || sideRight > 1.0);
                     int setoutCorners = bottom.Count + aboveVerts.Count + 2;
