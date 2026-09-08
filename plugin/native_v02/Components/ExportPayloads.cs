@@ -864,6 +864,11 @@ internal static class MechanismDocument
         var unitTypesOut = new Dictionary<string, object?>(StringComparer.Ordinal);
         var edgeInstances = new List<Dictionary<string, object?>>();
         var nodeInstances = new List<Dictionary<string, object?>>();
+        // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
+        // instance participates but not what the wire IS". Every wire this
+        // document declares is built ONCE here and instances above carry
+        // only the id, never a second copy of what it names.
+        var wiresOut = new List<Dictionary<string, object?>>();
         int columnNodeCount = 0;
 
         if (hasEdge)
@@ -882,29 +887,52 @@ internal static class MechanismDocument
             for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
             {
                 List<int> row = rows[rowIndex];
-                var wires = new List<Dictionary<string, object?>>();
+                var wireIds = new List<string>();
                 var seen = new HashSet<(int, int)>();
-                foreach (int anchorNode in row)
+                foreach (int anchorVertex in row)
                 {
-                    foreach (int neighbour in adjacency[anchorNode])
+                    foreach (int neighbour in adjacency[anchorVertex])
                     {
                         if (anchorSet.Contains(neighbour))
                             continue;
-                        if (!seen.Add((neighbour, anchorNode)))
+                        if (!seen.Add((neighbour, anchorVertex)))
                             continue;
-                        AssertInRange(neighbour, vertexCount, "wires[].netVertex");
-                        AssertInRange(anchorNode, vertexCount, "wires[].anchorNode");
-                        wires.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        // EVERY INDEX NAMES ITS SPACE (studio's C1/A1): both
+                        // ends of an edge-reel wire are net vertices --
+                        // "anchor node IS a net vertex" (mechanism spec
+                        // section 5) -- so both fields carry the
+                        // "_vertex" suffix; only the role differs.
+                        AssertInRange(neighbour, vertexCount, "wires[].net_vertex");
+                        AssertInRange(anchorVertex, vertexCount, "wires[].anchor_vertex");
+                        string id = $"edge-{rowIndex}-{neighbour}";
+                        wireIds.Add(id);
+                        wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                         {
-                            ["netVertex"] = neighbour,
-                            ["anchorNode"] = anchorNode,
+                            ["id"] = id,
+                            ["net_vertex"] = neighbour,
+                            ["anchor_vertex"] = anchorVertex,
+                            // THE ORDERED PATH (A7): every wire this
+                            // document derives visits exactly one instance
+                            // (mechanism spec section 5, "through ITS
+                            // instance's sockets"), so the list is length
+                            // one today; declared as a list rather than a
+                            // single reference so a future wire threaded
+                            // through more than one unit costs no reshape.
+                            ["path"] = new List<Dictionary<string, object?>>
+                            {
+                                new(StringComparer.Ordinal)
+                                {
+                                    ["type"] = "edge",
+                                    ["row"] = rowIndex,
+                                },
+                            },
                         });
                     }
                 }
                 // A row with no wire is not a reeling group (mechanism spec
                 // section 4): the edge reel exists on the anchor lines that
                 // actually carry a wire, not on every anchor row.
-                if (wires.Count == 0)
+                if (wireIds.Count == 0)
                     continue;
 
                 var points = new Point3d[row.Count];
@@ -917,11 +945,29 @@ internal static class MechanismDocument
                 edgeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["frame"] = frame,
+                    // ONE PLACEMENT CONVENTION (C5/A5): every reel instance
+                    // carries both a type (via unitTypes.edge/.node) and a
+                    // placement frame, unlike the anchor tie's "world" flag.
+                    ["placement"] = "instance",
                     ["row"] = rowIndex,
-                    ["wires"] = wires,
+                    ["wireIds"] = wireIds,
                 });
             }
         }
+
+        // DECLARE THE PRINCIPAL ROWS (studio's C6/A6): the ordered net
+        // vertices of each principal run, so their side can drop its own
+        // clustering/nearest-vertex derivation and treat this as the
+        // authority (their derivation stays their fallback for a study with
+        // no mechanism document). Emitted whenever the net solved at all;
+        // empty when there is nothing to walk, never omitted, so an absent
+        // node-reel type reads as "no rows" rather than "field missing".
+        List<List<int>> principalRuns = eq is null
+            ? new List<List<int>>()
+            : MouldGeometry.PrincipalRuns(eq, vertexCount);
+        var principalRowsOut = new List<IReadOnlyList<int>>(principalRuns.Count);
+        foreach (List<int> run in principalRuns)
+            principalRowsOut.Add(run);
 
         if (hasNode)
         {
@@ -935,37 +981,43 @@ internal static class MechanismDocument
             }
             unitTypesOut["node"] = unitTypesIn.GetProperty("node");
             columnNodeCount = columns.Nodes.Count;
-            List<List<int>> runs = eq is null
-                ? new List<List<int>>()
-                : MouldGeometry.PrincipalRuns(eq, vertexCount);
             for (int head = 0; head < columns.Heads.Count; head++)
             {
                 int principalNode = head < columns.HeadNode.Count
                     ? columns.HeadNode[head]
                     : -1;
-                AssertInRange(principalNode, vertexCount, "instances.node[].principalNode");
+                AssertInRange(principalNode, vertexCount, "instances.node[].net_vertex");
                 Point3Dto headPoint = eq!.Vertices[principalNode];
                 double groundZ = result.Mould?.Ground ?? headPoint.Z;
                 Point3d origin = new(headPoint.X, headPoint.Y, groundZ);
-                Vector3d tangent = RunTangentAt(runs, principalNode, eq);
+                Vector3d tangent = RunTangentAt(principalRuns, principalNode, eq);
                 Dictionary<string, object?> frame = FrameAt(origin, tangent);
 
                 int columnNode = head;
-                AssertInRange(principalNode, vertexCount, "wires[].netVertex");
-                AssertInRange(columnNode, columnNodeCount, "wires[].columnNode");
-                nodeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                AssertInRange(principalNode, vertexCount, "wires[].net_vertex");
+                AssertInRange(columnNode, columnNodeCount, "wires[].column_node");
+                string id = $"node-{head}";
+                wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["frame"] = frame,
-                    ["head"] = head,
-                    ["principalNode"] = principalNode,
-                    ["wires"] = new List<Dictionary<string, object?>>
+                    ["id"] = id,
+                    ["net_vertex"] = principalNode,
+                    ["column_node"] = columnNode,
+                    ["path"] = new List<Dictionary<string, object?>>
                     {
                         new(StringComparer.Ordinal)
                         {
-                            ["netVertex"] = principalNode,
-                            ["columnNode"] = columnNode,
+                            ["type"] = "node",
+                            ["head"] = head,
                         },
                     },
+                });
+                nodeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["frame"] = frame,
+                    ["placement"] = "instance",
+                    ["head"] = head,
+                    ["net_vertex"] = principalNode,
+                    ["wireIds"] = new List<string> { id },
                 });
             }
         }
@@ -991,9 +1043,42 @@ internal static class MechanismDocument
             ["lengthUnitToMetres"] = unitFactor,
             ["vertexCount"] = vertexCount,
             ["columnNodeCount"] = columnNodeCount,
+            // THE SHARED-NUMBERING GUARANTEE, DECLARED (studio's C2/A2):
+            // measured true on two real exports, and now written into the
+            // schema as a promise rather than left as a coincidence a
+            // reader discovers by measuring a third one.
+            ["numbering"] = "net_vertex indices are the same numbering as " +
+                "the form document's equilibrium.vertices and the " +
+                "formwork document's frames[].vertices for this study, by " +
+                "construction, in every frame including frame 0 (numbering, " +
+                "not position: only the LAST frame's positions equal the " +
+                "form document's equilibrium). column_node indices are the " +
+                "same numbering as the formwork document's columns.nodes " +
+                "and frames[].columnNodes.",
+            // THE ROTATION DECLARATION (studio's C3/A3): the spin each
+            // spinner marked driven:true turns, stated as unit, sign and
+            // reference rather than left for the reader to guess from a
+            // bare formula. The studio derives the angle; nothing here is
+            // per-frame.
+            ["rotation"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["unit"] = "turns",
+                ["reference"] = "frame0",
+                ["sign"] = "positive turns take up wire: the spool winds " +
+                    "in and the wire's routed length shortens. Negative " +
+                    "pays out.",
+                ["formula"] = "turns = (length_at(t) - length_at(frame0)) " +
+                    "* reeveFactor / (2 * pi * spoolRadius), where " +
+                    "length_at(t) is the wire's own net-side routed length " +
+                    "at frame t. The delta is always measured from frame " +
+                    "0, never the previous frame, so the result is a pure " +
+                    "function of t and safe to scrub or play out of order.",
+            },
+            ["principalRows"] = principalRowsOut,
             ["unitTypes"] = unitTypesOut,
             ["anchorTies"] = anchorTiesOut,
             ["instances"] = instances,
+            ["wires"] = wiresOut,
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
     }

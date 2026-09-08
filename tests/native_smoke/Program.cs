@@ -40901,14 +40901,36 @@ internal static partial class Program
         JsonNode edgeInstance = edgeInstances[0]!;
         if ((int?)edgeInstance["row"] != 0)
             throw new InvalidOperationException($"The single edge instance's row must be 0; got {edgeInstance["row"]}.");
-        JsonArray edgeWires = edgeInstance["wires"]!.AsArray();
-        if (edgeWires.Count != 1 ||
-            (int?)edgeWires[0]!["netVertex"] != 2 ||
-            (int?)edgeWires[0]!["anchorNode"] != 1)
+        if ((string?)edgeInstance["placement"] != "instance")
+            throw new InvalidOperationException($"An edge instance must declare placement \"instance\"; got {edgeInstance["placement"]}.");
+        JsonArray edgeWireIds = edgeInstance["wireIds"]!.AsArray();
+        if (edgeWireIds.Count != 1)
         {
             throw new InvalidOperationException(
-                "The edge reel's one wire must be (netVertex 2, anchorNode "
-                + "1); got " + edgeWires.ToJsonString());
+                "The edge instance must carry exactly one wire id; got "
+                + edgeWireIds.ToJsonString());
+        }
+        string edgeWireId = (string)edgeWireIds[0]!;
+
+        JsonArray topWires = root["wires"]!.AsArray();
+        JsonNode? edgeWire = topWires.FirstOrDefault(w => (string?)w!["id"] == edgeWireId);
+        if (edgeWire is null ||
+            (int?)edgeWire["net_vertex"] != 2 ||
+            (int?)edgeWire["anchor_vertex"] != 1)
+        {
+            throw new InvalidOperationException(
+                "The top-level wires array must carry the edge instance's "
+                + "id with (net_vertex 2, anchor_vertex 1); got "
+                + topWires.ToJsonString());
+        }
+        JsonArray edgePath = edgeWire["path"]!.AsArray();
+        if (edgePath.Count != 1 ||
+            (string?)edgePath[0]!["type"] != "edge" ||
+            (int?)edgePath[0]!["row"] != 0)
+        {
+            throw new InvalidOperationException(
+                "The edge wire's path must be exactly one entry, "
+                + "{type: edge, row: 0}; got " + edgePath.ToJsonString());
         }
         double[] origin = ReadTriple(edgeInstance["frame"]!["origin"]!.AsArray());
         double[] xAxis = ReadTriple(edgeInstance["frame"]!["xAxis"]!.AsArray());
@@ -40924,21 +40946,65 @@ internal static partial class Program
         if (nodeInstances.Count != 1)
             throw new InvalidOperationException($"instances.node must carry one head; got {nodeInstances.Count}.");
         JsonNode nodeInstance = nodeInstances[0]!;
-        if ((int?)nodeInstance["head"] != 0 || (int?)nodeInstance["principalNode"] != 2)
+        if ((int?)nodeInstance["head"] != 0 || (int?)nodeInstance["net_vertex"] != 2)
         {
             throw new InvalidOperationException(
                 "The node reel's one instance must be head 0 over "
-                + "principalNode 2; got " + nodeInstance.ToJsonString());
+                + "net_vertex 2; got " + nodeInstance.ToJsonString());
         }
-        JsonArray nodeWires = nodeInstance["wires"]!.AsArray();
-        if (nodeWires.Count != 1 ||
-            (int?)nodeWires[0]!["netVertex"] != 2 ||
-            (int?)nodeWires[0]!["columnNode"] != 0)
+        if ((string?)nodeInstance["placement"] != "instance")
+            throw new InvalidOperationException($"A node instance must declare placement \"instance\"; got {nodeInstance["placement"]}.");
+        JsonArray nodeWireIds = nodeInstance["wireIds"]!.AsArray();
+        if (nodeWireIds.Count != 1)
+            throw new InvalidOperationException("The node instance must carry exactly one wire id; got " + nodeWireIds.ToJsonString());
+        string nodeWireId = (string)nodeWireIds[0]!;
+        JsonNode? nodeWire = topWires.FirstOrDefault(w => (string?)w!["id"] == nodeWireId);
+        if (nodeWire is null ||
+            (int?)nodeWire["net_vertex"] != 2 ||
+            (int?)nodeWire["column_node"] != 0)
         {
             throw new InvalidOperationException(
-                "The node reel's one wire must be (netVertex 2, columnNode "
-                + "0); got " + nodeWires.ToJsonString());
+                "The top-level wires array must carry the node instance's "
+                + "id with (net_vertex 2, column_node 0); got "
+                + topWires.ToJsonString());
         }
+        JsonArray nodePath = nodeWire["path"]!.AsArray();
+        if (nodePath.Count != 1 ||
+            (string?)nodePath[0]!["type"] != "node" ||
+            (int?)nodePath[0]!["head"] != 0)
+        {
+            throw new InvalidOperationException(
+                "The node wire's path must be exactly one entry, "
+                + "{type: node, head: 0}; got " + nodePath.ToJsonString());
+        }
+
+        // C6/A6: the principal row [1, 2] declared verbatim, so the studio
+        // can drop its own clustering derivation for this leg.
+        JsonArray principalRows = root["principalRows"]!.AsArray();
+        if (principalRows.Count != 1 ||
+            principalRows[0]!.AsArray().Count != 2 ||
+            (int?)principalRows[0]![0] != 1 ||
+            (int?)principalRows[0]![1] != 2)
+        {
+            throw new InvalidOperationException(
+                "principalRows must declare exactly the run [1, 2] fed to "
+                + "the fixture's topology; got " + principalRows.ToJsonString());
+        }
+
+        // C3/A3: the rotation convention is declared, not left to be
+        // inferred from a bare formula.
+        if ((string?)root["rotation"]!["unit"] != "turns")
+            throw new InvalidOperationException($"rotation.unit must be \"turns\"; got {root["rotation"]!["unit"]}.");
+        if ((string?)root["rotation"]!["reference"] != "frame0")
+            throw new InvalidOperationException($"rotation.reference must be \"frame0\"; got {root["rotation"]!["reference"]}.");
+        if (string.IsNullOrWhiteSpace((string?)root["rotation"]!["sign"]))
+            throw new InvalidOperationException("rotation.sign must be a non-empty declaration in words.");
+
+        // C2/A2: the shared-numbering guarantee is a written promise, not a
+        // silent assumption a reader has to measure to trust.
+        if (string.IsNullOrWhiteSpace((string?)root["numbering"]))
+            throw new InvalidOperationException("numbering must declare the shared-numbering guarantee, not be blank.");
+
         double[] nodeOrigin = ReadTriple(nodeInstance["frame"]!["origin"]!.AsArray());
         if (!Close(nodeOrigin, new[] { 1.0, 0.0, -5.0 }))
         {
@@ -41111,14 +41177,16 @@ internal static partial class Program
                 + string.Join(",", expectedEdgeVector) + "; got origin="
                 + string.Join(",", edgeOrigin) + " xAxis=" + string.Join(",", edgeX));
         }
-        JsonArray edgeWires = edgeInstance["wires"]!.AsArray();
-        if (edgeWires.Count != 1 ||
-            (int?)edgeWires[0]!["netVertex"] != 2 ||
-            (int?)edgeWires[0]!["anchorNode"] != 1)
+        string edgeWireId = (string)edgeInstance["wireIds"]![0]!;
+        JsonArray topWires = root["wires"]!.AsArray();
+        JsonNode? edgeWire = topWires.FirstOrDefault(w => (string?)w!["id"] == edgeWireId);
+        if (edgeWire is null ||
+            (int?)edgeWire["net_vertex"] != 2 ||
+            (int?)edgeWire["anchor_vertex"] != 1)
         {
             throw new InvalidOperationException(
                 "A rotation must not change WHICH indices a wire names, "
-                + "only where their frame sits; got " + edgeWires.ToJsonString());
+                + "only where their frame sits; got " + topWires.ToJsonString());
         }
 
         JsonNode nodeInstance = root["instances"]!["node"]!.AsArray()[0]!;
@@ -41249,12 +41317,12 @@ internal static partial class Program
         catch (TargetInvocationException wrapped)
         {
             if (wrapped.InnerException is not InvalidOperationException inner ||
-                !inner.Message.Contains("principalNode", StringComparison.Ordinal) ||
+                !inner.Message.Contains("net_vertex", StringComparison.Ordinal) ||
                 !inner.Message.Contains("99", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     "Case A must refuse with a message naming "
-                    + "'principalNode' and the bad value 99; got "
+                    + "'net_vertex' and the bad value 99; got "
                     + $"{DescribeException(wrapped.InnerException ?? wrapped)}.");
             }
         }
@@ -41270,11 +41338,11 @@ internal static partial class Program
         catch (TargetInvocationException wrapped)
         {
             if (wrapped.InnerException is not InvalidOperationException inner ||
-                !inner.Message.Contains("columnNode", StringComparison.Ordinal) ||
+                !inner.Message.Contains("column_node", StringComparison.Ordinal) ||
                 !inner.Message.Contains("net/column set of 1", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "Case B must refuse with a message naming 'columnNode' "
+                    "Case B must refuse with a message naming 'column_node' "
                     + "cross-checked against 'net/column set of 1'; got "
                     + $"{DescribeException(wrapped.InnerException ?? wrapped)}.");
             }
