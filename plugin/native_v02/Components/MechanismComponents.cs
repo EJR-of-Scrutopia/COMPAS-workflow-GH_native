@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -40,25 +41,57 @@ internal sealed record MechanismMesh(
     IReadOnlyList<double[]> Vertices,
     IReadOnlyList<int[]> Faces);
 
-/// <summary>One spinner's rotation axis, unit-local: a point on it and its direction.</summary>
-internal sealed record MechanismAxis(double[] Origin, double[] Direction);
-
-/// <summary>One routing (or placement) frame: origin plus X and Y axes, Z derived.</summary>
+/// <summary>One routing (or placement, or reel axis) frame: origin plus X and Y axes, Z derived.</summary>
 internal sealed record MechanismFrame(double[] Origin, double[] XAxis, double[] YAxis);
 
 /// <summary>
-/// The ONE authored mechanism asset (his "one continuous body ... always
-/// place"): a body mesh (ME) plus the spinning parts (RE) each carrying its
-/// own axis (AX), matched to RE 1:1 by position. Authored ONCE regardless
-/// of how many places it is instanced -- never six copies of the mesh, the
-/// studio's own 8 GB iPad constraint (C4).
+/// The ONE authored mechanism BODY (his "one continuous body ... always
+/// place"). Authored ONCE regardless of how many places it is instanced --
+/// never six copies of the mesh, the studio's own 8 GB iPad constraint
+/// (C4). His REELS no longer travel here: his ruling of 2026-09-08 night
+/// (superseding this record's own earlier shape, which carried them
+/// alongside the body) moved them to per-mechanism data -- see <see
+/// cref="MechanismReelEntry"/> and its two branch types below -- since he
+/// authors their orientation deliberately, either per mechanism or once
+/// for the whole asset, never bundled with the body mesh itself.
 /// </summary>
 internal sealed record MechanismAssetInput(
     MechanismMesh? Body,
-    bool BodyFromBrep,
-    IReadOnlyList<MechanismMesh?> ReelMeshes,
-    IReadOnlyList<bool> ReelFromBrep,
-    IReadOnlyList<MechanismAxis?> ReelAxes);
+    bool BodyFromBrep);
+
+/// <summary>
+/// ONE ROTATING REEL: its mesh and its rotation-axis FRAME, unit-local
+/// space. His ruling, 2026-09-08 night, verbatim: "the plane, will be xy
+/// so rotation will go in that axis from z and i will always provide you
+/// the xy orientation so that it rotates in the correct way" -- the
+/// plane's Z is the rotation axis, but its X and Y are carried through
+/// UNCHANGED into the document rather than reduced to a bare
+/// origin-plus-direction, because they are how he encodes which way the
+/// reel spins. Never re-derived, never normalised away.
+/// </summary>
+internal sealed record MechanismReelEntry(
+    MechanismMesh Mesh,
+    bool FromBrep,
+    MechanismFrame Axis);
+
+/// <summary>
+/// One authored branch of Reel (RE): its raw tree path (empty, or
+/// length one, for the default path GH assigns a bare flat list; length
+/// TWO -- {side}{mechanism} -- for a genuine per-mechanism branch) and
+/// its meshes in branch order. Kept Rhino- and Grasshopper-free (the path
+/// is plain ints) so <see cref="MechanismCollector"/> can tell a flat
+/// list from a real tree, and drive that decision by reflection in the
+/// harness exactly as it runs live.
+/// </summary>
+internal sealed record MechanismMeshBranch(
+    IReadOnlyList<int> Path,
+    IReadOnlyList<MechanismMesh?> Meshes,
+    IReadOnlyList<bool> FromBrep);
+
+/// <summary>The same shape as <see cref="MechanismMeshBranch"/>, for Reel Axis (AX).</summary>
+internal sealed record MechanismAxisBranch(
+    IReadOnlyList<int> Path,
+    IReadOnlyList<MechanismFrame?> Axes);
 
 /// <summary>One instance address: side then mechanism, his own tree order ("mechanisms per side, sides").</summary>
 internal readonly record struct MechanismInstanceId(int Side, int Mechanism)
@@ -176,6 +209,8 @@ internal static class MechanismCollector
     /// </summary>
     public static string? Build(
         MechanismAssetInput asset,
+        IReadOnlyList<MechanismMeshBranch> reelMeshes,
+        IReadOnlyList<MechanismAxisBranch> reelAxes,
         IReadOnlyList<MechanismInstanceInput> instances,
         IReadOnlyList<MechanismWireInput> wires,
         IReadOnlyList<MechanismRowPartInput> anchors,
@@ -185,6 +220,8 @@ internal static class MechanismCollector
         List<string> notes)
     {
         ArgumentNullException.ThrowIfNull(asset);
+        ArgumentNullException.ThrowIfNull(reelMeshes);
+        ArgumentNullException.ThrowIfNull(reelAxes);
         ArgumentNullException.ThrowIfNull(instances);
         ArgumentNullException.ThrowIfNull(wires);
         ArgumentNullException.ThrowIfNull(anchors);
@@ -192,18 +229,14 @@ internal static class MechanismCollector
         ArgumentNullException.ThrowIfNull(warnings);
         ArgumentNullException.ThrowIfNull(notes);
 
+        bool anyReelMeshAuthored = reelMeshes.Any(b => b.Meshes.Count > 0);
         bool nothingWired =
-            asset.Body is null && asset.ReelMeshes.Count == 0 &&
+            asset.Body is null && !anyReelMeshAuthored &&
             instances.Count == 0 && wires.Count == 0 &&
             anchors.Count == 0 && tensionTies.Count == 0;
         if (nothingWired)
             return null;
 
-        // A SPINNER WITHOUT AN AXIS REFUSES ITS UNIT BY NAME. There is one
-        // authored mechanism now, not one per type, so "its unit" is the
-        // whole asset: any Reel (RE) entry with no matching Reel Axis (AX),
-        // by position, drops the whole mechanism rather than instancing a
-        // machine missing a declared rotation.
         bool assetOk = asset.Body is not null;
         if (!assetOk && (instances.Count > 0 || wires.Count > 0))
         {
@@ -212,40 +245,14 @@ internal static class MechanismCollector
                 "Mechanism (ME) carries no body mesh; nothing is " +
                 "instanced without a body.");
         }
-        if (asset.ReelMeshes.Count != asset.ReelAxes.Count)
-        {
-            warnings.Add(
-                $"Reel (RE) carries {asset.ReelMeshes.Count} spinner " +
-                $"mesh(es) but Reel Axis (AX) carries {asset.ReelAxes.Count}" +
-                " plane(s); a spinner without a matching axis refuses its " +
-                "unit, so the whole mechanism is refused: the axis is " +
-                "authored, never inferred.");
-            assetOk = false;
-        }
-        else
-        {
-            for (int i = 0; i < asset.ReelMeshes.Count; i++)
-            {
-                if (asset.ReelMeshes[i] is null)
-                {
-                    warnings.Add(
-                        $"Reel (RE)[{i}] did not resolve to a mesh or a " +
-                        "closed Brep; a spinner without a matching mesh " +
-                        "refuses its unit, so the whole mechanism is " +
-                        "refused.");
-                    assetOk = false;
-                }
-                else if (asset.ReelAxes[i] is null)
-                {
-                    warnings.Add(
-                        $"Reel (RE)[{i}] has no matching Reel Axis (AX)" +
-                        "[" + i + "]; a spinner without a matching axis " +
-                        "refuses its unit, so the whole mechanism is " +
-                        "refused: the axis is authored, never inferred.");
-                    assetOk = false;
-                }
-            }
-        }
+
+        // FOUR REELS PER MECHANISM, EITHER AUTHORING STYLE (his ruling,
+        // 2026-09-08 night): a tree keyed {side}{mechanism}, authored per
+        // instance, or a flat list of four authored once and replicated
+        // across every instance. See ResolveReelAuthoring below for how
+        // the two are told apart and what a mismatch refuses.
+        Dictionary<MechanismInstanceId, List<MechanismReelEntry>> resolvedReels =
+            ResolveReelAuthoring(reelMeshes, reelAxes, instances, warnings, notes);
 
         Dictionary<string, object?>? mechanismOut = null;
         if (assetOk && asset.Body is not null)
@@ -255,57 +262,78 @@ internal static class MechanismCollector
             if (asset.BodyFromBrep)
                 notes.Add($"Mechanism (ME) {BrepMeshingNote}");
 
-            var spinnerPayloads = new List<Dictionary<string, object?>>(asset.ReelMeshes.Count);
-            for (int i = 0; i < asset.ReelMeshes.Count; i++)
+            var reelsOut = new List<Dictionary<string, object?>>();
+            List<MechanismReelEntry>? boundingGroup = null;
+            foreach (KeyValuePair<MechanismInstanceId, List<MechanismReelEntry>> group in
+                resolvedReels.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
             {
-                MechanismMesh mesh = asset.ReelMeshes[i]!;
-                MechanismAxis axis = asset.ReelAxes[i]!;
-                spinnerPayloads.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                boundingGroup ??= group.Value;
+                for (int i = 0; i < group.Value.Count; i++)
                 {
-                    ["mesh"] = MeshPayload(mesh),
-                    ["axis"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                    MechanismReelEntry entry = group.Value[i];
+                    reelsOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        ["origin"] = axis.Origin,
-                        ["direction"] = axis.Direction,
-                    },
-                    // spinners[0] (RE's item 0) is the driven spool, the
-                    // one spinner section 5's derived rotation ever turns
-                    // (requirements doc section 1); anything after it is a
-                    // cosmetic wheel, carried but not rotated.
-                    ["driven"] = i == 0,
-                    [PermanenceField] = Temporary,
-                });
-                if (asset.ReelFromBrep[i])
-                    notes.Add($"Reel (RE)[{i}] {BrepMeshingNote}");
+                        ["side"] = group.Key.Side,
+                        ["mechanism"] = group.Key.Mechanism,
+                        // reel 0 within its own mechanism is the driven
+                        // spool, the one spinner section 5's derived
+                        // rotation ever turns (requirements doc section
+                        // 1); reels 1..3 are cosmetic wheels, carried but
+                        // not rotated.
+                        ["reel"] = i,
+                        ["mesh"] = MeshPayload(entry.Mesh),
+                        ["axis"] = FramePayload(entry.Axis),
+                        ["driven"] = i == 0,
+                        [PermanenceField] = Temporary,
+                    });
+                    if (entry.FromBrep)
+                    {
+                        notes.Add(
+                            $"Reel (RE)[{group.Key.Side}][{group.Key.Mechanism}]" +
+                            $"[{i}] {BrepMeshingNote}");
+                    }
+                }
             }
 
-            // SPOOL RADIUS AND REEVE FACTOR are no longer authored ports
-            // (settled port list: his six words plus routing/kind name
-            // eight ports, none of them PR or SR). Reeve factor is 1.0, a
-            // declared constant rather than an authored override. Spool
-            // radius defaults exactly as before: the driven spool's own
-            // bounding box smallest dimension over 4, falling back to the
-            // body's when the mechanism carries no spinner -- said in the
-            // chin so the default is never silent.
+            // SPOOL RADIUS: the driven spool's (reel 0's) own bounding box
+            // smallest dimension over 4, read off the first mechanism in
+            // document order when reels vary per instance, falling back to
+            // the body's own bounding box when the mechanism carries no
+            // spinner at all -- said in the chin so the default is never
+            // silent.
             MechanismMesh boundingSource =
-                spinnerPayloads.Count > 0 ? asset.ReelMeshes[0]! : asset.Body;
+                boundingGroup is { Count: > 0 } ? boundingGroup[0].Mesh : asset.Body;
             double spoolRadius = Math.Max(
                 SmallestBoundingDimension(boundingSource) / 4.0,
                 MinimumSpoolRadius);
             notes.Add(
                 "mechanism: spoolRadius defaulted to " +
                 spoolRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                (spinnerPayloads.Count > 0
+                (boundingGroup is { Count: > 0 }
                     ? " from the driven spool's own bounding box (smallest " +
                       "dimension over 4)."
                     : " from the body's own bounding box (smallest " +
                       "dimension over 4), since this mechanism carries no " +
                       "spinner."));
 
+            // THE REEVE FACTOR IS PROVISIONAL (his ruling, verbatim: "i
+            // dont [want] it to be accurate righ tnow"). Fixed at 1.0, no
+            // authored port, and said here EVERY time a mechanism is
+            // built so an inaccurate spin rate is a stated limitation
+            // rather than a mystery -- the spec's "reeve factor, settled
+            // 2026-09-08 late" records why 1.0 is very probably wrong on
+            // his four-wheel unit and what shape the real fix takes; not
+            // built now.
+            notes.Add(
+                "mechanism: reeveFactor is fixed at 1.0 -- PROVISIONAL, " +
+                "not accurate, per his own ruling that accuracy is not " +
+                "wanted right now; every reel's spin RATE is likely wrong " +
+                "until a real reeve factor is authored.");
+
             mechanismOut = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["body"] = bodyPayload,
-                ["spinners"] = spinnerPayloads,
+                ["reels"] = reelsOut,
                 ["reeveFactor"] = 1.0,
                 ["spoolRadius"] = spoolRadius,
             };
@@ -382,6 +410,170 @@ internal static class MechanismCollector
             ["tensionTies"] = tiesOut,
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
+    }
+
+    /// <summary>
+    /// FOUR REELS PER MECHANISM, EITHER AUTHORING STYLE (his ruling,
+    /// 2026-09-08 night): a TREE keyed {side}{mechanism}, matching the
+    /// shape his routing frames (RT) already use one level deeper
+    /// ({side}{mechanism}{wire}), with four reel entries per branch --
+    /// authored per instance, for when a mechanism's reels genuinely
+    /// differ (a mirrored side, say). OR a single FLAT list of four,
+    /// authored once on the asset and replicated across every declared
+    /// instance, for when they do not. Both cost him little and both are
+    /// accepted; which one was read is always said in <paramref
+    /// name="notes"/> (the chin), never left silent.
+    ///
+    /// A reel with no matching axis (by position within its own group)
+    /// refuses ITS UNIT: in tree style that is the one mechanism whose
+    /// branch failed, named and left with no reels while every other
+    /// mechanism proceeds; in flat style, since it is one set shared by
+    /// every instance, it is the whole reel set. Either way the axis is
+    /// authored, never inferred. Neither failure touches the body,
+    /// placements or wires -- only reels are ever refused here.
+    /// </summary>
+    private static Dictionary<MechanismInstanceId, List<MechanismReelEntry>> ResolveReelAuthoring(
+        IReadOnlyList<MechanismMeshBranch> meshBranches,
+        IReadOnlyList<MechanismAxisBranch> axisBranches,
+        IReadOnlyList<MechanismInstanceInput> instances,
+        List<string> warnings,
+        List<string> notes)
+    {
+        var resolved = new Dictionary<MechanismInstanceId, List<MechanismReelEntry>>();
+        bool anyMeshes = meshBranches.Any(b => b.Meshes.Count > 0);
+        if (!anyMeshes)
+        {
+            if (axisBranches.Any(b => b.Axes.Count > 0))
+            {
+                warnings.Add(
+                    "Reel Axis (AX) was authored but Reel (RE) carries no " +
+                    "reel mesh(es); a spinner without a matching mesh " +
+                    "refuses its unit, so no reels are produced.");
+            }
+            return resolved;
+        }
+
+        bool meshTree = meshBranches.All(b => b.Path.Count == 2);
+        bool axisTree = axisBranches.Count == 0 || axisBranches.All(b => b.Path.Count == 2);
+        bool meshFlat = meshBranches.Count == 1 && meshBranches[0].Path.Count <= 1;
+        bool axisFlat = axisBranches.Count <= 1 && axisBranches.All(b => b.Path.Count <= 1);
+
+        if (meshTree && axisTree)
+        {
+            foreach (MechanismMeshBranch branch in meshBranches)
+            {
+                int side = branch.Path[0];
+                int mechanism = branch.Path[1];
+                string label = $"[{side}][{mechanism}]";
+                MechanismAxisBranch? axisBranch = axisBranches.FirstOrDefault(
+                    b => b.Path.Count == 2 && b.Path[0] == side && b.Path[1] == mechanism);
+                IReadOnlyList<MechanismFrame?> axes = axisBranch?.Axes ?? Array.Empty<MechanismFrame?>();
+                if (!TryZipReels(branch.Meshes, branch.FromBrep, axes, out List<MechanismReelEntry>? zipped, out string? failure))
+                {
+                    warnings.Add(
+                        $"Reel (RE){label}: {failure} a spinner without a " +
+                        "matching axis refuses its unit, so mechanism " +
+                        $"{label}'s reels are refused: the axis is " +
+                        "authored, never inferred.");
+                    continue;
+                }
+                if (zipped.Count != 4)
+                {
+                    warnings.Add(
+                        $"Reel (RE){label} carries {zipped.Count} reel(s); " +
+                        "his machine is four reels per mechanism, so this " +
+                        "is unusual but used as authored.");
+                }
+                resolved[new MechanismInstanceId(side, mechanism)] = zipped;
+            }
+            notes.Add(
+                "mechanism: Reel (RE) / Reel Axis (AX) were read as a " +
+                "TREE, one branch per mechanism (path {side}{mechanism}); " +
+                $"{resolved.Count} of {meshBranches.Count} mechanism(s) " +
+                "carry reel data.");
+            return resolved;
+        }
+
+        if (meshFlat && axisFlat)
+        {
+            MechanismMeshBranch mb = meshBranches[0];
+            IReadOnlyList<MechanismFrame?> axesFlat =
+                axisBranches.Count == 1 ? axisBranches[0].Axes : Array.Empty<MechanismFrame?>();
+            if (!TryZipReels(mb.Meshes, mb.FromBrep, axesFlat, out List<MechanismReelEntry>? zipped, out string? failure))
+            {
+                warnings.Add(
+                    $"Reel (RE): {failure} a spinner without a matching " +
+                    "axis refuses its unit, so the whole reel set is " +
+                    "refused: the axis is authored, never inferred.");
+                return resolved;
+            }
+            if (zipped.Count != 4)
+            {
+                warnings.Add(
+                    $"Reel (RE) carries {zipped.Count} reel(s); his " +
+                    "machine is four reels per mechanism, so this is " +
+                    "unusual but used as authored.");
+            }
+            foreach (MechanismInstanceInput instance in instances)
+                resolved[instance.Id] = zipped;
+            notes.Add(
+                "mechanism: Reel (RE) / Reel Axis (AX) were read as a " +
+                $"FLAT list of {zipped.Count} reel(s), authored once on " +
+                $"the asset, and replicated across {instances.Count} " +
+                "instance(s).");
+            return resolved;
+        }
+
+        warnings.Add(
+            "Reel (RE) / Reel Axis (AX) paths are neither a clean " +
+            "{side}{mechanism} tree (one branch per mechanism) nor a " +
+            "single flat list (authored once on the asset); reels " +
+            "refused, since the two authoring styles could not be told " +
+            "apart.");
+        return resolved;
+    }
+
+    /// <summary>
+    /// Pairs a branch's meshes with its axes by position (reel 0 with
+    /// axis 0, and so on): the only place a mesh or axis actually going
+    /// missing is named. Returns false, with <paramref name="failure"/>
+    /// naming what went wrong, the moment either list runs a different
+    /// length or a single position fails to resolve on either side.
+    /// </summary>
+    private static bool TryZipReels(
+        IReadOnlyList<MechanismMesh?> meshes,
+        IReadOnlyList<bool> fromBrep,
+        IReadOnlyList<MechanismFrame?> axes,
+        [NotNullWhen(true)] out List<MechanismReelEntry>? zipped,
+        out string? failure)
+    {
+        zipped = null;
+        if (meshes.Count != axes.Count)
+        {
+            failure = $"carries {meshes.Count} reel mesh(es) but " +
+                $"{axes.Count} axis plane(s);";
+            return false;
+        }
+        var list = new List<MechanismReelEntry>(meshes.Count);
+        for (int i = 0; i < meshes.Count; i++)
+        {
+            if (meshes[i] is null)
+            {
+                failure = $"reel[{i}] did not resolve to a mesh or a " +
+                    "closed Brep;";
+                return false;
+            }
+            if (axes[i] is null)
+            {
+                failure = $"reel[{i}] has no matching Reel Axis (AX) " +
+                    "plane;";
+                return false;
+            }
+            list.Add(new MechanismReelEntry(meshes[i]!, fromBrep[i], axes[i]!));
+        }
+        zipped = list;
+        failure = null;
+        return true;
     }
 
     /// <summary>
@@ -719,21 +911,32 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "Reel",
             "RE",
             "The spinning parts' meshes (or closed Breps, meshed here " +
-            "and said so), unit-local space, authored once: item 0 is " +
-            "the driven spool, the rest are cosmetic wheels carried but " +
-            "not rotated.",
-            GH_ParamAccess.list);
+            "and said so), unit-local space: FOUR per mechanism (his " +
+            "machine, ruling of 2026-09-08 night), reel 0 the driven " +
+            "spool and reels 1..3 cosmetic wheels carried but not " +
+            "rotated. Tree path {side}{mechanism}, one branch of four " +
+            "per mechanism (matching Placement/PL and Routing/RT), OR a " +
+            "flat list of four authored once and replicated across " +
+            "every instance -- either is accepted, and Status (ST) says " +
+            "which was read.",
+            GH_ParamAccess.tree);
         parameters[5].Optional = true;
 
         parameters.AddPlaneParameter(
             "Reel Axis",
             "AX",
-            "One rotation-axis plane per Reel (RE) entry, matching it " +
-            "1:1 by position: plane origin a point on the axis, plane Z " +
-            "the axis direction, unit-local space. A Reel mesh with no " +
-            "matching axis here refuses the WHOLE mechanism: the axis " +
-            "is authored, never inferred.",
-            GH_ParamAccess.list);
+            "ONE PLANE PER ROTATING REEL, matching Reel (RE) 1:1 by " +
+            "position within its own mechanism, unit-local space: the " +
+            "plane's Z is the rotation axis, read from the plane's " +
+            "normal. Its X and Y are carried through into the document " +
+            "UNCHANGED -- his ruling, 2026-09-08 night -- because he " +
+            "authors them deliberately to fix the spin direction; never " +
+            "re-derived or normalised away. Same tree-or-flat shape as " +
+            "Reel (RE): {side}{mechanism}, or a flat four replicated " +
+            "across every instance. A reel with no matching axis here " +
+            "refuses its own mechanism's reels: the axis is authored, " +
+            "never inferred.",
+            GH_ParamAccess.tree);
         parameters[6].Optional = true;
 
         parameters.AddPlaneParameter(
@@ -797,17 +1000,21 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             MechanismAssetInput asset = ReadAsset(data, warnings);
             List<MechanismInstanceInput> instances = ReadInstances(data, warnings);
             List<MechanismWireInput> wires = ReadWires(data, warnings);
+            (List<MechanismMeshBranch> reelMeshes, List<MechanismAxisBranch> reelAxes) =
+                ReadReels(data, warnings);
 
             string? payload = MechanismCollector.Build(
-                asset, instances, wires, anchors, ties, rows, warnings, notes);
+                asset, reelMeshes, reelAxes, instances, wires, anchors, ties,
+                rows, warnings, notes);
 
+            int reelMeshCount = reelMeshes.Sum(b => b.Meshes.Count);
             var status = new List<string>
             {
                 payload is null
                     ? "received: nothing wired; no mechanism document."
                     : "received: mechanism body " +
                       (asset.Body is null ? "not authored" : "authored") +
-                      $", {asset.ReelMeshes.Count} reel(s), " +
+                      $", {reelMeshCount} reel(s), " +
                       $"{instances.Count} placement(s), {wires.Count} " +
                       $"wire(s), {anchors.Count} anchor(s), {ties.Count} " +
                       "tension tie(s), Result " +
@@ -886,42 +1093,75 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             }
         }
 
-        var reItems = new List<object>();
-        data.GetDataList(5, reItems);
-        var reelMeshes = new List<MechanismMesh?>(reItems.Count);
-        var reelFromBrep = new List<bool>(reItems.Count);
-        for (int i = 0; i < reItems.Count; i++)
+        return new MechanismAssetInput(body, bodyFromBrep);
+    }
+
+    /// <summary>
+    /// Reads Reel (RE) and Reel Axis (AX) as TREES, exactly as he
+    /// authors them: a genuine {side}{mechanism} branch per mechanism, or
+    /// GH's own default single-branch path for a bare flat list. Only the
+    /// raw shape is read here; the Rhino- and Grasshopper-free <see
+    /// cref="MechanismCollector.ResolveReelAuthoring"/> decides what it
+    /// means, so the same decision the harness drives by reflection is
+    /// exactly what runs live. The plane's X and Y are carried through
+    /// into <see cref="MechanismFrame"/> UNCHANGED (his ruling): only Z
+    /// is ever read as the rotation axis, and that reading happens
+    /// downstream, never here.
+    /// </summary>
+    private (List<MechanismMeshBranch> Meshes, List<MechanismAxisBranch> Axes) ReadReels(
+        IGH_DataAccess data, List<string> warnings)
+    {
+        data.GetDataTree(5, out GH_Structure<IGH_Goo> reTree);
+        var meshBranches = new List<MechanismMeshBranch>();
+        foreach (GH_Path path in reTree.Paths)
         {
-            if (!TryMeshOrBrep(reItems[i], out MechanismMesh? mesh, out bool fromBrep))
+            IList branch = reTree.get_Branch(path);
+            var meshes = new List<MechanismMesh?>(branch.Count);
+            var fromBrep = new List<bool>(branch.Count);
+            for (int i = 0; i < branch.Count; i++)
             {
-                warnings.Add(
-                    $"Reel (RE)[{i}] did not resolve to a mesh or a " +
-                    "closed Brep; treated as missing.");
-                reelMeshes.Add(null);
-                reelFromBrep.Add(false);
-                continue;
+                object? value = (branch[i] as IGH_Goo)?.ScriptVariable();
+                if (!TryMeshOrBrep(value, out MechanismMesh? mesh, out bool brep))
+                {
+                    warnings.Add(
+                        $"Reel (RE)[{string.Join("][", path.Indices)}]" +
+                        $"[{i}] did not resolve to a mesh or a closed " +
+                        "Brep; treated as missing.");
+                    meshes.Add(null);
+                    fromBrep.Add(false);
+                    continue;
+                }
+                meshes.Add(mesh);
+                fromBrep.Add(brep);
             }
-            reelMeshes.Add(mesh);
-            reelFromBrep.Add(fromBrep);
+            meshBranches.Add(new MechanismMeshBranch(path.Indices, meshes, fromBrep));
         }
 
-        var axItems = new List<GH_Plane>();
-        data.GetDataList(6, axItems);
-        var reelAxes = new List<MechanismAxis?>(axItems.Count);
-        foreach (GH_Plane? planeGoo in axItems)
+        data.GetDataTree(6, out GH_Structure<GH_Plane> axTree);
+        var axisBranches = new List<MechanismAxisBranch>();
+        foreach (GH_Path path in axTree.Paths)
         {
-            if (planeGoo is null)
+            var axes = new List<MechanismFrame?>();
+            foreach (GH_Plane planeGoo in axTree.get_Branch(path))
             {
-                reelAxes.Add(null);
-                continue;
+                if (planeGoo is null)
+                {
+                    axes.Add(null);
+                    continue;
+                }
+                Plane plane = planeGoo.Value;
+                // HIS RULING, 2026-09-08 night: X and Y survive unchanged
+                // -- they carry his intended spin direction -- never
+                // reduced to a bare origin+direction.
+                axes.Add(new MechanismFrame(
+                    new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                    new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
             }
-            Plane plane = planeGoo.Value;
-            reelAxes.Add(new MechanismAxis(
-                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
-                new[] { plane.Normal.X, plane.Normal.Y, plane.Normal.Z }));
+            axisBranches.Add(new MechanismAxisBranch(path.Indices, axes));
         }
 
-        return new MechanismAssetInput(body, bodyFromBrep, reelMeshes, reelFromBrep, reelAxes);
+        return (meshBranches, axisBranches);
     }
 
     private List<MechanismInstanceInput> ReadInstances(IGH_DataAccess data, List<string> warnings)
