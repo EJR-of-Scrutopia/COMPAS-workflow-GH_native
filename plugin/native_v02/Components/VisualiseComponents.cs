@@ -17,6 +17,17 @@ namespace Ananke.COMPAS.Native.Contracts
     /// scale multipliers Display layers on top of its own auto-scaling. This
     /// is deliberately thin; it carries no geometry and no solved data, only
     /// the presentation choices Display needs.
+    ///
+    /// The component that bundled these three fields, StyleComponent, is
+    /// retired (the display wave, 2026-09-08): its own Preset value list
+    /// moved to Display's own Preset input, which now reads its preset
+    /// directly and falls back to a wired Style's Preset only when its own
+    /// input is left blank. This DTO, StyleGoo and StyleParam are kept
+    /// alive rather than deleted with it, because Display's optional Style
+    /// input still accepts one, the way Weight and Vector Scale already
+    /// did before this wave; nothing in the plugin builds a StyleDto any
+    /// more, so a wire reaching Display's Style input now has to come from
+    /// a hand-built source (an Expression or Script component).
     /// </summary>
     public sealed record StyleDto : ContractDto
     {
@@ -958,113 +969,6 @@ namespace Ananke.COMPAS.Native.Components
     }
 
     /// <summary>
-    /// Bundles the display preset, weight scale, and vector scale that
-    /// Display consumes as <c>STY</c>, so a style choice can be authored
-    /// once and wired to several Display calls. Preset names are copied
-    /// from the deleted <c>GraphicDiagramDisplayComponent</c>'s own value
-    /// list, kept aligned with Display's own preset spellings.
-    /// </summary>
-    public sealed class StyleComponent : NativeComponentBase
-    {
-        private static readonly ComponentValueListSpec[] ValueLists =
-        {
-            new(
-                0,
-                "Preset",
-                new (string Label, string Value)[]
-                {
-                    ("Analysis", "analysis"),
-                    ("Classical GS", "classical"),
-                    ("Monochrome", "monochrome")
-                },
-                "analysis")
-        };
-
-        public StyleComponent()
-            : base(
-                "Style",
-                "Style",
-                "Bundle a display preset, weight scale, and vector scale " +
-                "for the Display component.",
-                ComponentCategories.Read,
-                "diagram_style")
-        {
-        }
-
-        public override Guid ComponentGuid =>
-            new("c3f8a2d6-4e9b-4071-8f5a-b1d7c9e3a250");
-
-        private protected override IReadOnlyList<ComponentValueListSpec>
-            SuggestedValueLists => ValueLists;
-
-        protected override void RegisterInputParams(
-            GH_InputParamManager parameters)
-        {
-            parameters.AddTextParameter(
-                "Preset",
-                "Preset",
-                "Analysis, Classical GS, or Monochrome viewport preset.",
-                GH_ParamAccess.item,
-                "analysis");
-            parameters.AddNumberParameter(
-                "Weight Scale",
-                "Weight",
-                "Display-only multiplier for force-responsive line weights.",
-                GH_ParamAccess.item,
-                1.0);
-            parameters.AddNumberParameter(
-                "Vector Scale",
-                "Vector",
-                "Display-only scale for load/reaction arrows; zero means " +
-                "automatic.",
-                GH_ParamAccess.item,
-                0.0);
-        }
-
-        protected override void RegisterOutputParams(
-            GH_OutputParamManager parameters)
-        {
-            parameters.AddParameter(
-                new StyleParam(),
-                "Style",
-                "STY",
-                "Bundled display preset, weight scale, and vector scale.",
-                GH_ParamAccess.item);
-        }
-
-        protected override void SolveInstance(IGH_DataAccess data)
-        {
-            string preset = "analysis";
-            double weightScale = 1.0;
-            double vectorScale = 0.0;
-            data.GetData(0, ref preset);
-            data.GetData(1, ref weightScale);
-            data.GetData(2, ref vectorScale);
-
-            var style = new StyleDto
-            {
-                Preset = StyleDto.NormalisePreset(preset),
-                WeightScale = weightScale,
-                VectorScale = vectorScale
-            };
-            IReadOnlyList<string> errors = style.Validate();
-            if (errors.Count > 0)
-            {
-                Message = "Invalid";
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Error,
-                    string.Join(" ", errors));
-                return;
-            }
-
-            string vector = vectorScale > 0.0 ? $"x{vectorScale:G4}" : "auto";
-            Message = $"{style.Preset} · weight x{weightScale:G4} · " +
-                $"vector {vector}";
-            data.SetData(0, new StyleGoo(style));
-        }
-    }
-
-    /// <summary>
     /// The one native viewport boundary for a solved Result: lifts the
     /// side-by-side reciprocal layout out of the deleted
     /// <c>TnaReciprocalComponent</c>, the styled line weights/colours out of
@@ -1073,6 +977,15 @@ namespace Ananke.COMPAS.Native.Components
     /// <c>EquilibriumPreviewComponent</c>, so drawing now happens in one
     /// current place. Each of those older display-capable components' logic
     /// was copied here, not called, before all three were deleted.
+    ///
+    /// The display wave (2026-09-08) retires StyleComponent and moves its
+    /// Preset value list here: Preset is APPENDED at input 7 rather than
+    /// replacing the Style input at 1, so no existing wire on Elements,
+    /// Metric, Weight, Vector Scale or Gap moves. Display's own Preset
+    /// input wins whenever it carries a value; a wired Style's Preset is
+    /// still honoured, but only as the fallback for when Preset is left
+    /// blank, matching the priority Weight and Vector Scale already gave
+    /// their own inputs over Style's fields.
     /// </summary>
     public sealed class DisplayComponent : NativePreviewComponentBase
     {
@@ -1101,7 +1014,23 @@ namespace Ananke.COMPAS.Native.Components
                     ("Horizontal Force H", "H"),
                     ("Axial Force F", "F")
                 },
-                "none")
+                "none"),
+            // APPENDED: StyleComponent's own Preset dropdown, retired along
+            // with the component itself. Placed under Preset's own input
+            // (index 7), not under Style's (index 1), so the fresh-vs-
+            // archive placement rule in SuggestedValueListPlacement.Create
+            // still keys off Preset's own pivot and this addition costs no
+            // existing wire its port; see the class doc comment above.
+            new(
+                7,
+                "Preset",
+                new (string Label, string Value)[]
+                {
+                    ("Analysis", "analysis"),
+                    ("Classical GS", "classical"),
+                    ("Monochrome", "monochrome")
+                },
+                "analysis")
         };
 
         private readonly List<DrawLine> _preview = new();
@@ -1186,6 +1115,20 @@ namespace Ananke.COMPAS.Native.Components
                 "larger diagram span.",
                 GH_ParamAccess.item,
                 0.15);
+            // APPENDED (the display wave, 2026-09-08), so no existing wire
+            // on the six inputs above moves: StyleComponent's own preset
+            // dropdown lands here now that component is retired. Blank
+            // means "use the wired Style's Preset, or Analysis if there is
+            // none", the same fallback shape Weight and Vector Scale
+            // already gave their own inputs over Style's fields.
+            parameters.AddTextParameter(
+                "Preset",
+                "Preset",
+                "Analysis, Classical GS, or Monochrome viewport preset; " +
+                "blank uses Style's preset, or Analysis when no Style is " +
+                "supplied.",
+                GH_ParamAccess.item,
+                string.Empty);
         }
 
         protected override void RegisterOutputParams(
@@ -1216,6 +1159,7 @@ namespace Ananke.COMPAS.Native.Components
             double weightInput = 0.0;
             double vectorScaleInput = 0.0;
             double gap = 0.15;
+            string presetInput = string.Empty;
 
             if (!data.GetData(0, ref resultGoo) ||
                 resultGoo?.Value is not ResultDto result)
@@ -1228,6 +1172,7 @@ namespace Ananke.COMPAS.Native.Components
             data.GetData(4, ref weightInput);
             data.GetData(5, ref vectorScaleInput);
             data.GetData(6, ref gap);
+            data.GetData(7, ref presetInput);
 
             try
             {
@@ -1235,6 +1180,10 @@ namespace Ananke.COMPAS.Native.Components
                 StyleDto? style = styleGoo?.Value;
                 if (style is not null)
                     errors.AddRange(style.Validate());
+
+                string preset = EffectivePreset(presetInput, style);
+                if (preset is not ("analysis" or "classical" or "monochrome"))
+                    errors.Add("Preset must be Analysis, Classical GS, or Monochrome.");
 
                 HashSet<string> elements = NormaliseElements(elementsInput);
                 elements.Remove("form");
@@ -1296,9 +1245,6 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                string preset = style is null
-                    ? "analysis"
-                    : StyleDto.NormalisePreset(style.Preset);
                 double effectiveWeight = weightInput > 0.0
                     ? weightInput
                     : style?.WeightScale ?? 1.0;
@@ -1559,6 +1505,21 @@ namespace Ananke.COMPAS.Native.Components
                     StringComparer.Ordinal)
                 : new HashSet<string>(tokens, StringComparer.Ordinal);
         }
+
+        /// <summary>
+        /// Display's own Preset input, retired StyleComponent's replacement,
+        /// takes priority whenever it carries anything after trimming; a
+        /// blank input falls back to a wired Style's Preset, and Analysis
+        /// when there is no Style either. The same shape as
+        /// <c>effectiveWeight</c> and <c>effectiveVectorScale</c> above:
+        /// Display's own input over Style's field over a hard default.
+        /// </summary>
+        private static string EffectivePreset(string? presetInput, StyleDto? style) =>
+            !string.IsNullOrWhiteSpace(presetInput)
+                ? StyleDto.NormalisePreset(presetInput)
+                : style is null
+                    ? "analysis"
+                    : StyleDto.NormalisePreset(style.Preset);
 
         private static string NormaliseMetric(string? value)
         {

@@ -212,12 +212,6 @@
       "filename": "frame.png"
     },
     {
-      "key": "diagram_style",
-      "label": "ST",
-      "category": "04 Read",
-      "filename": "diagram_style.png"
-    },
-    {
       "key": "graphic_diagram_display",
       "label": "DI",
       "category": "04 Read",
