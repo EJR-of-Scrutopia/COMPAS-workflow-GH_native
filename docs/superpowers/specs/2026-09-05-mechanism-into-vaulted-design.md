@@ -1,5 +1,53 @@
 # The machine goes to Vaulted: the mechanism document and the rig player
 
+## THE INPUT MODEL, settled with him 2026-09-08 night. THIS SUPERSEDES SECTION 3 AND 3a's PORTS
+
+Settled in conversation while he modelled the machine, and it replaces the tree-of-type-and-part
+port scheme entirely. He rejected that shape in favour of NAMED PORTS: "i think though we should
+turn it into another exporter, where it has the inputs, anchor, tension tie, mechanism, mechanism
+normal, mechanism reel, reel plane". Named ports are better here and carry a free benefit: the
+port a part arrives on IS its semantic tag, which is exactly what the studio asked for, so the
+material-tag port disappears.
+
+HIS MACHINE, from his renders and his description: each mechanism serves a fixed number of wires
+(7 in his current design), with 3 mechanisms a side and 2 sides, so 21 wires a side and 42 in
+all. The wires leave the net, pass through a guide plate, and wrap the drums of a framed reel.
+
+THE DATA SHAPE, his own words, "frames, wires per mechanism, mechanisms per side, sides":
+
+  1. MECHANISM MESH, once, in its OWN LOCAL SPACE, with the spinning parts separated out, each
+     carrying its ROTATION AXIS as a plane in that same local space. One asset, instanced six
+     times, never six copies (the studio's iPad constraint makes this binding, not preference).
+  2. PLACEMENT FRAMES, a tree of side then mechanism, ONE PLANE PER INSTANCE. HIS RULING, and it
+     resolves the two-sources-of-truth question in the plugin's favour of doing less: HE places
+     the mechanisms, the plugin no longer computes tangential placements. One authority.
+  3. WIRE ROUTING FRAMES, a tree of side then mechanism then wire, holding a LIST of planes per
+     wire in threading order, as many as he sees fit ("could be 100 to be safe"). LOCAL SPACE,
+     his ruling: "frames will absolutely be local space so you follow the z and you fill know
+     exactly where to place the wire". The plane's Z gives the wire's direction through that
+     point, so routing is unambiguous rather than inferred from neighbouring positions.
+  4. ANCHOR and TENSION TIE, authored in place in WORLD coordinates, since they are singular
+     pieces rather than instanced assets. The tie remains the fused sliding bar, anchor clamps
+     and column tension tie of his 2026-09-05 ruling.
+
+THE WIRE IS BUILT, NEVER EXPORTED. His construction: "create a circe on each frame and loft to
+make the wire". A circle on each routing frame, lofted in order, gives a tube that follows his Z
+around every turn instead of a line that cuts corners. Since the wire's shape changes on every
+frame of the animation, THE RULE TRAVELS AND THE RESULT DOES NOT: the document declares the
+construction, and the studio builds the tube at each time step from the net vertex, then through
+the transformed routing frames in order. The plugin uses the identical rule for its own Rhino
+preview so the canvas and the app cannot drift apart.
+
+THE WIRE RADIUS IS NOT OURS TO SEND. His ruling: "wire radius will be the same as the one
+predefined in the vaulted app". The studio already draws the cable net at a known radius and uses
+that same value here, so the mechanism wires match the net wires by construction rather than by
+two numbers that agree until one is edited. Do NOT add a radius field.
+
+STILL OPEN, with a default in place so nothing blocks: which net vertex each wire pulls on. Until
+he says otherwise, wire branch order is taken as anchor order along the row, and the component
+chin PRINTS THE MATCHED DISTANCES so a wire latched to the wrong anchor is visible rather than
+silent.
+
 ## BUILD RULING, 2026-09-08: this is now being built, and his inputs are firmer
 
 His words: "can we work on the exporter that will then go to the vaulted app we have, so the
