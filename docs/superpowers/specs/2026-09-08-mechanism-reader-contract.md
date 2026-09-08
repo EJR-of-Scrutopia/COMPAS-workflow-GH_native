@@ -156,17 +156,35 @@ would drift on scrub and be wrong on every recorded frame not played in
 order. Nothing is keyframed; the loosen-then-tighten falls out of the
 frames.
 
-**`reeveFactor` is provisionally 1.0 and probably wrong.** It is fixed
-in the writer with no author port today, and Param's unit has four
-wheels, so the reels will very likely turn too slowly by a whole
-multiple until he sets it. Treat the field as real and its current
-value as unverified; a reader that hard-codes around 1.0 would have to
-be unpicked. Note also that the reeving is partly visible in `route`,
-since the wire's wraps are geometry -- not fully derivable, because
-whether a wheel gives mechanical advantage or is merely a guide depends
-on whether it moves with the load, but enough that a factor wildly at
-odds with the wrap count is a detectable mismatch rather than a silent
-one.
+**`reeveFactor` is per wire, and the reader never inherits it.** It is
+authored once per mechanism as a default and overridden per wire where
+a wire genuinely differs, but **the document carries the RESOLVED value
+on every wire**, so the studio never has to inherit anything or know a
+default exists. Same principle as `net_vertex` being explicit even
+though it is derived: the reader reads a value, never a rule for
+finding one.
+
+Per wire rather than per document because the routing frames are
+already per wire -- Param's tree is side, mechanism, wire, with a plane
+list inside -- so a single number governing 42 individually specified
+paths would be the wrong shape twice over. Per-mechanism defaulting
+exists only so he does not type the same number seven times, which is
+how transcription errors get in; it is an authoring convenience,
+invisible here.
+
+**Its current value is 1.0 and provisional.** The author port lands
+before the first real document, but until it does the writer is fixed
+at 1.0 while Param's unit has four wheels, so the reels would turn too
+slowly by a whole multiple. Treat the field as real and its value as
+unverified; a reader that hard-codes around 1.0 would have to be
+unpicked. The reeving is partly visible in `route`, since the wraps are
+geometry -- not fully derivable, because whether a wheel gives
+mechanical advantage or merely guides depends on whether it moves with
+the load, but enough that a factor wildly at odds with the wrap count
+is detectable. The plugin is adding that check on its side alongside
+its match distances and reversed-list naming; by agreement it warns
+loudly and refuses nothing, since geometry cannot settle the question
+on its own.
 
 Known refinement, immaterial at this representation: as wire layers
 build on a spool the effective winding radius grows, so a very long
