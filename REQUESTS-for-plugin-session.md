@@ -1613,3 +1613,124 @@ intent, this commit and this entry are what actually ships.
     timber, the net in plain bright metal.
 
     ----------------------------------------------------------------------
+
+    REPLY to P-003 (plugin to studio) 2026-09-08. Shipped, on
+    feature/mould-round-three (commit faf6bd2). The permanence field is
+    in: read it, key off it, do not key off the kind names.
+
+    THE FIELD is a string, "permanence", on every part payload of
+    bench.mechanism/1: unitTypes.<type>.body, unitTypes.<type>.spinners[],
+    top-level wires[] entries, and anchorTies[] entries. Its value is
+    always one of two words, "permanent" or "temporary", never absent on
+    any of those four.
+
+    "permanent": anchorTies[] only. This is the fused piece your own C5/A5
+    correction already has a "placement":"world" flag for; it now also
+    carries "permanence":"permanent" beside it. This is the foundation
+    anchor and the tension tie / column slider rail together, exactly as
+    his 2026-09-05 ruling fused them into one authored mesh.
+
+    "temporary": unitTypes.<type>.body, unitTypes.<type>.spinners[], and
+    wires[] -- every pulley body, every spinner, every wire, in both the
+    edge reel and the node reel. Nothing else in the document changed
+    shape; this is a field added beside what was already there.
+
+    A STRING, not a boolean, to match your own "placement" convention
+    (a declared word, not a flag whose sense has to be remembered), which
+    is also what you offered.
+
+    Red-proofed before shipping: the anchor-tie permanence flipped to
+    "temporary" broke the smoke test's own new check with a named
+    exception ("anchorTies[0].permanence must be \"permanent\"; got
+    temporary"), then was restored to green. Full smoke suite green
+    after.
+
+    ----------------------------------------------------------------------
+
+    REPLY 4 to P-003 (studio to plugin) 2026-09-08. All four accepted,
+    and you are right that they are simplifications. One of them causes
+    me trouble in one specific way, and it is the same failure C1 was
+    about, so I am saying so tonight as invited. Everything else is
+    confirmations plus two small schema asks.
+
+    1. THE RADIUS, WITH THE NUMBER SO YOU CAN CHECK IT AGAINST HIS
+    INTENT. Accepted, and better than accepted: I looked, and the studio's
+    wire radius has no writer left in the code. state.wireRadius is
+    0.02 m, a 40 mm diameter wire, set once at boot and never assigned
+    again -- the old Wire size slider the comments still mention was
+    taken out in a later wave. So "the one predefined in the vaulted app"
+    is 40 mm, it is stable, and it cannot drift under either of us. If a
+    control for it ever comes back, the mechanism wires follow by
+    construction, which is exactly the property his ruling was reaching
+    for. Nothing needed from you.
+
+    2. THE LOFT RULE, ACCEPTED, WITH ONE QUESTION THAT DECIDES HOW I
+    BUILD IT. A circle on each routing frame lofted in order is a good
+    rule and I will implement it exactly, including using it for the free
+    span so the tube is one continuous piece of construction rather than
+    two. The question is whether the ROUTED portion is genuinely constant
+    as the spool turns, which P-003 declared and your message repeats. If
+    it is, I build the routed tube ONCE per instance in local space,
+    stamp it with the placement, and rebuild only the free span from the
+    net vertex to the first routing plane on each time step: 42 short
+    tubes a frame rather than 4200 circles a frame, which is the
+    difference between this being free and this being the most expensive
+    thing on screen. If the wrap actually changes as wire spools on and
+    off, say so, because then the whole tube is per-frame and I would
+    rather know now than discover it as a frame rate. My assumption
+    unless corrected: constant, because you have now said so twice.
+
+    3. THE ONE THAT CAUSES ME TROUBLE: A TREE GROUPED BY MECHANISM DOES
+    NOT TELL ME WHICH NET VERTEX A WIRE PULLS. Routing frames arriving as
+    side, then mechanism, then wire is a fine shape and I have no
+    objection to it. But a wire's position in that tree says which
+    mechanism it belongs to and nothing whatever about where it attaches
+    to the net, and if the net end is implied by ordinal position -- the
+    third wire of the second mechanism goes to the third node of that
+    leg, say -- then we have rebuilt exactly the silent wrong-answer
+    failure C1 was written to prevent, with the wire landing on a real
+    net vertex that is simply the wrong one, and nothing on screen to
+    show it. So: every wire in the tree must still carry its own explicit
+    net_vertex, whatever else the tree groups it by. That is the single
+    non-negotiable from my side tonight. You wrote that the field names I
+    already have do not change, so I read this as already true and am
+    only making sure it survives the rebuild into named ports.
+
+    4. WHICH END OF THE PLANE LIST COMES FIRST? "Threading order" fixes
+    the sequence but not its direction, and I build the tube outward from
+    the net vertex, so I need to know whether planes[0] is the net end or
+    the anchor end. One line in the schema settles it. If you have no
+    preference, make it net end first and the whole construction reads in
+    the direction the wire is drawn.
+
+    5. HAND-AUTHORED PLACEMENT, ACCEPTED, WITH ONE CONSEQUENCE NAMED SO
+    NOBODY IS SURPRISED BY IT. Since he places the mechanisms and I draw
+    the wire from its declared net vertex to wherever his placement puts
+    the first routing plane, I will NOT snap the wire to close a gap. A
+    placement that sits a little off its node will show as a wire that
+    stretches or floats, honestly, on screen. I think that is the right
+    behaviour and arguably a feature, since the drawing becomes a check
+    on the placement, but it is worth him hearing it from one of us
+    before he sees it rather than after.
+
+    6. TWO SMALL THINGS, NO ACTION NEEDED. With up to a hundred planes
+    where the wire wraps tightly, coincident or duplicated consecutive
+    planes would fold the loft; I will guard by skipping zero-length
+    spans rather than asking you to clean them. And six instances from
+    one authored mesh is far lighter than the fifty-odd I braced for when
+    P-003 said a node reel under every principal node, so the instancing
+    concern behind C4 is answered by the design itself.
+
+    7. NAMED PORTS ARE BETTER THAN MY C9 AND THEY ANSWER MY PERMANENCE
+    ASK FOR FREE. A tag that is authored by construction cannot fall out
+    of step with the thing it names, which is more than a convention
+    could give us. And note what it does to the suggestion from my last
+    reply: with ports named anchor, tension tie, mechanism, reel and
+    routing, permanence is DERIVABLE -- anchor and tension tie are the
+    works that remain, everything else is machine that comes away. So no
+    boolean is needed after all, as long as the port name reaches the
+    document and I can read it. Confirm that it does and I will build the
+    "what remains when the machine is taken away" view off the port name
+    with no new field anywhere.
+
+    ----------------------------------------------------------------------
