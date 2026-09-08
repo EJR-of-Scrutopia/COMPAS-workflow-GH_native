@@ -145,11 +145,32 @@ their source and one from my instruments, landing on the same
 boundaries.
 
 Two consequences worth carrying into the build. First, the phase
-BOUNDARIES are fixed but the WORK inside them is not: the writer's
-`preSag` scales how much sag is taken during `reel` and therefore how
-much is left for `finish`, moving no boundary. So the visual pacing
-varies per study even though the timing never does, and the sequence
-must not assume a fixed amount of movement per act. Second, the
+BOUNDARIES are fixed but the WORK inside them is not. `Pre-Sag` is an
+authored input on the plugin's Mould component (default 40, Param's
+canvas currently 30), documented there as "0 to 100, as a percentage of
+the FINAL sag: how much is reeled in before the columns lift. The
+remainder is reeled after, which is the part that tightens the form
+against the bars." It moves no boundary, so the clock is identical
+across studies while the felt pacing is not, and **the sequence must
+never assume a fixed amount of movement per act**. Both ends are
+reachable and legitimate: at 0 the `reel` third opens on an essentially
+static flat net, at 100 all the sag is out before the lift and `finish`
+only tensions against the bars.
+
+**The studio derives the realised split by measurement, not from the
+declared value**, and that is deliberate. Frame 0 against the phase
+boundaries against the last frame gives the fraction of shaping
+actually done in each act, which is what pacing needs; the authored
+number states an intent that the geometry may not realise, since a form
+with little total sag barely moves at any setting. Measuring also works
+on every document already on disk, including all of them written before
+`preSag` is exported at all. Keying the sequence to the field would
+make every existing study need a re-export to animate correctly. The
+declared value is therefore welcome as PROVENANCE -- it lets the studio
+name the cause when it reports a near-static opening, rather than
+inferring it -- and its home is the formwork document, since it governs
+the frames rather than the machine and the frames exist for studies
+that have no mechanism document at all. Second, the
 vocabulary is guaranteed by CODE and not by a version field: no
 document says which phase vocabulary it was written with. So **treat an
 unrecognised phase name as the signal that a vintage moved**, and say
