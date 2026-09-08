@@ -287,7 +287,23 @@ internal static class MechanismCollector
         IReadOnlyList<MechanismRoutingWire> routing,
         IReadOnlyList<MechanismPlacementBranch> placements,
         List<string> warnings,
-        List<string> notes)
+        List<string> notes) =>
+        BuildWithResult(asset, routing, placements, warnings, notes, null);
+
+    /// <summary>
+    /// The same build, with the solved Result available so that placement
+    /// can be DERIVED from the net's own anchor rows when none is authored
+    /// (his ruling, 2026-09-09: "the placement point will be figured out as
+    /// part of the export"). A five-argument call is the same thing with
+    /// nothing to derive from, kept so every existing caller stands.
+    /// </summary>
+    public static string? BuildWithResult(
+        MechanismAssetInput asset,
+        IReadOnlyList<MechanismRoutingWire> routing,
+        IReadOnlyList<MechanismPlacementBranch> placements,
+        List<string> warnings,
+        List<string> notes,
+        ResultDto? result)
     {
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(routing);
@@ -500,6 +516,16 @@ internal static class MechanismCollector
                           "placement derives its transform from."
                         : "."));
             }
+        }
+
+        // PLACEMENT, DERIVED FROM THE NET when he authored none. His own
+        // words, 2026-09-09: the planes "just flip randomly, and its so
+        // hard to create rules so they each follow them". Nothing that is
+        // authored can be stopped from flipping; a rule derived from the
+        // solved net has nothing to flip.
+        if (placements.Count == 0 && result is not null)
+        {
+            placements = DerivePlacements(result, routingByIndex, warnings, notes);
         }
 
         // ROUTING FRAME OWNERSHIP (7c8db59, unchanged): classified ONCE
@@ -1738,6 +1764,261 @@ internal static class MechanismCollector
     internal static double Dot3(double[] a, double[] b) =>
         (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 
+    /// <summary>The world's own up, the one direction a machine standing on a foundation does not have to be told.</summary>
+    internal static readonly double[] WorldUp = { 0.0, 0.0, 1.0 };
+
+    /// <summary>The mean of a set of points; the origin for an empty set.</summary>
+    internal static double[] CentroidOf(IReadOnlyList<double[]> points)
+    {
+        if (points.Count == 0)
+            return new[] { 0.0, 0.0, 0.0 };
+        var sum = new double[3];
+        foreach (double[] p in points)
+        {
+            sum[0] += p[0];
+            sum[1] += p[1];
+            sum[2] += p[2];
+        }
+        return new[] { sum[0] / points.Count, sum[1] / points.Count, sum[2] / points.Count };
+    }
+
+    /// <summary>
+    /// The component of a vector ACROSS a unit axis, normalised: the axis's
+    /// own contribution removed. Falls back to any perpendicular when the
+    /// vector is parallel to the axis and so has no across-component at all.
+    /// </summary>
+    internal static double[] AcrossAxis(double[] v, double[] axisUnit)
+    {
+        double along = Dot3(v, axisUnit);
+        double[] across =
+        {
+            v[0] - (along * axisUnit[0]),
+            v[1] - (along * axisUnit[1]),
+            v[2] - (along * axisUnit[2]),
+        };
+        double length = Math.Sqrt(Dot3(across, across));
+        return length < 1.0e-9 ? AnyPerpendicular(axisUnit) : new[]
+        {
+            across[0] / length, across[1] / length, across[2] / length,
+        };
+    }
+
+    private static double[] Negate3(double[] v) => new[] { -v[0], -v[1], -v[2] };
+
+    private static double[] Difference3(double[] a, double[] b) =>
+        new[] { a[0] - b[0], a[1] - b[1], a[2] - b[2] };
+
+    /// <summary>
+    /// PLACEMENT DERIVED FROM THE NET'S OWN ANCHOR ROWS, so that nothing is
+    /// authored and therefore nothing can flip (his ruling, 2026-09-09).
+    ///
+    /// THE RULE, and its whole content is that BOTH SIDES OF THE
+    /// CORRESPONDENCE ARE BUILT THE SAME WAY:
+    ///
+    ///   X   along the line of anchors
+    ///   Z   the world's own up, taken across X
+    ///   Y   Z cross X
+    ///
+    /// and X's sign settled by which side of that line the MACHINE sits on:
+    /// in the machine's own space, Y must point from its wire ends toward
+    /// its body; in the world, Y must point away from the net. Those are the
+    /// same physical statement, which is what makes the two frames
+    /// comparable. An earlier attempt used "toward the net's centre" in the
+    /// world against "toward the wire's net end" in the machine, and those
+    /// are NOT the same direction -- caught by prototyping the rule against
+    /// his own exported study before any of this was written, where it put
+    /// every anchor 0.97 of a unit out.
+    ///
+    /// Every placement it derives is a PROPER ROTATION (his ruling: one
+    /// machine, built once, turned round, never a mirror-image second
+    /// product), and it reproduces his hand-authored side 0 exactly.
+    ///
+    /// The seven planes it synthesises per group carry the derived
+    /// orientation applied to each wire's OWN first-frame axes, so the
+    /// settled one-correspondence maths downstream recovers exactly this
+    /// transform with a zero residual, and every door-guard, diagnosis and
+    /// document downstream runs unchanged against derived planes and
+    /// authored ones alike.
+    /// </summary>
+    internal static List<MechanismPlacementBranch> DerivePlacements(
+        ResultDto result,
+        IReadOnlyDictionary<int, MechanismRoutingWire> routingByIndex,
+        List<string> warnings,
+        List<string> notes)
+    {
+        var derived = new List<MechanismPlacementBranch>();
+        EquilibriumResultDto? eq = result.Equilibrium;
+        if (eq is null || eq.Vertices.Count == 0)
+        {
+            warnings.Add(
+                "Placement (PL) is not authored and none could be derived: " +
+                "the wired Result carries no solved net to read anchor rows " +
+                "from. Wire a solved Result, or author Placement planes.");
+            return derived;
+        }
+
+        // THE MACHINE'S OWN END OF THE CORRESPONDENCE. Every wire must carry
+        // frames: a derived placement pairs each wire with an anchor, and a
+        // wire with no first frame has nothing to pair.
+        var first = new double[PlacementGroupSize][];
+        var xAxis = new double[PlacementGroupSize][];
+        var yAxis = new double[PlacementGroupSize][];
+        var last = new List<double[]>(PlacementGroupSize);
+        for (int i = 0; i < PlacementGroupSize; i++)
+        {
+            if (!routingByIndex.TryGetValue(i, out MechanismRoutingWire? wire) ||
+                wire.Route.Count == 0)
+            {
+                warnings.Add(
+                    $"Placement (PL) is not authored and none could be derived: " +
+                    $"Routing (RT)[{i}] carries no frames, and a derived " +
+                    "placement pairs every one of the seven wires with an " +
+                    "anchor of its own.");
+                return derived;
+            }
+            first[i] = wire.Route[0].Origin;
+            xAxis[i] = wire.Route[0].XAxis;
+            yAxis[i] = wire.Route[0].YAxis;
+            last.Add(wire.Route[wire.Route.Count - 1].Origin);
+        }
+
+        double[] machineX = NormalizeOrZ(Difference3(first[PlacementGroupSize - 1], first[0]));
+        double[] machineZ = AcrossAxis(WorldUp, machineX);
+        double[] machineY = CrossProduct(machineZ, machineX);
+        double[] wireEndCentre = CentroidOf(first);
+        double[] bodyCentre = CentroidOf(last);
+        if (Dot3(machineY, Difference3(bodyCentre, wireEndCentre)) < 0.0)
+        {
+            machineX = Negate3(machineX);
+            machineY = CrossProduct(machineZ, machineX);
+        }
+        int[] alongMachine = Enumerable.Range(0, PlacementGroupSize)
+            .OrderBy(i => Dot3(first[i], machineX))
+            .ToArray();
+        double[][] machineBasisTransposed =
+            Transpose3(BasisFromColumns(machineX, machineY, machineZ));
+
+        var netPoints = new List<double[]>(eq.Vertices.Count);
+        foreach (Point3Dto v in eq.Vertices)
+            netPoints.Add(new[] { v.X, v.Y, v.Z });
+        double[] netCentre = CentroidOf(netPoints);
+
+        List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
+        if (rows.Count == 0)
+        {
+            warnings.Add(
+                "Placement (PL) is not authored and none could be derived: " +
+                "the solved Result carries no anchor rows.");
+            return derived;
+        }
+
+        int placedTotal = 0;
+        for (int side = 0; side < rows.Count; side++)
+        {
+            List<int> row = rows[side];
+            var rowPoints = row.Select(id => netPoints[id]).ToList();
+            if (row.Count < PlacementGroupSize)
+            {
+                warnings.Add(
+                    $"Anchor row {side} holds {row.Count} anchor(s), fewer " +
+                    $"than the {PlacementGroupSize} one machine needs; no " +
+                    "mechanism is placed on it.");
+                continue;
+            }
+
+            // THE ROW'S OWN DIRECTION, from its two furthest-apart anchors,
+            // so the order along it can never depend on how the row was
+            // walked.
+            double[] rowDirection = NormalizeOrZ(Difference3(rowPoints[1], rowPoints[0]));
+            double widest = 0.0;
+            for (int a = 0; a < rowPoints.Count; a++)
+            {
+                for (int b = a + 1; b < rowPoints.Count; b++)
+                {
+                    double span = Distance(rowPoints[a], rowPoints[b]);
+                    if (span > widest)
+                    {
+                        widest = span;
+                        rowDirection = NormalizeOrZ(Difference3(rowPoints[b], rowPoints[a]));
+                    }
+                }
+            }
+            List<int> sorted = Enumerable.Range(0, row.Count)
+                .OrderBy(i => Dot3(rowPoints[i], rowDirection))
+                .ToList();
+
+            int groups = row.Count / PlacementGroupSize;
+            int leftover = row.Count % PlacementGroupSize;
+            for (int g = 0; g < groups; g++)
+            {
+                var anchors = new double[PlacementGroupSize][];
+                for (int k = 0; k < PlacementGroupSize; k++)
+                    anchors[k] = rowPoints[sorted[(g * PlacementGroupSize) + k]];
+
+                double[] worldX = NormalizeOrZ(
+                    Difference3(anchors[PlacementGroupSize - 1], anchors[0]));
+                double[] worldZ = AcrossAxis(WorldUp, worldX);
+                double[] worldY = CrossProduct(worldZ, worldX);
+                double[] groupCentre = CentroidOf(anchors);
+                if (Dot3(worldY, Difference3(netCentre, groupCentre)) > 0.0)
+                {
+                    worldX = Negate3(worldX);
+                    worldY = CrossProduct(worldZ, worldX);
+                }
+                int[] alongRow = Enumerable.Range(0, PlacementGroupSize)
+                    .OrderBy(k => Dot3(anchors[k], worldX))
+                    .ToArray();
+
+                double[][] rotation = Multiply3(
+                    BasisFromColumns(worldX, worldY, worldZ), machineBasisTransposed);
+
+                var planes = new MechanismPlacementPlane[PlacementGroupSize];
+                for (int k = 0; k < PlacementGroupSize; k++)
+                {
+                    int wire = alongMachine[k];
+                    planes[wire] = new MechanismPlacementPlane(
+                        anchors[alongRow[k]],
+                        MultiplyVector3(rotation, xAxis[wire]),
+                        MultiplyVector3(rotation, yAxis[wire]),
+                        MultiplyVector3(rotation, CrossProduct(xAxis[wire], yAxis[wire])));
+                }
+                derived.Add(new MechanismPlacementBranch(
+                    new MechanismInstanceId(side, g), planes));
+                placedTotal++;
+            }
+
+            if (leftover > 0)
+            {
+                warnings.Add(
+                    $"Anchor row {side}: {leftover} anchor(s) are left over " +
+                    $"after {groups} machine(s) of {PlacementGroupSize} wires " +
+                    "and carry no mechanism. A machine is never stretched or " +
+                    "half-filled to use them up; add or remove anchors if you " +
+                    "want the row filled exactly.");
+            }
+        }
+
+        if (placedTotal > 0)
+        {
+            notes.Add(
+                $"Placement (PL) was not authored, so {placedTotal} " +
+                $"mechanism(s) were DERIVED from the net's own anchor rows " +
+                $"({rows.Count} row(s)), every one a rotation and none a " +
+                "mirror." + Environment.NewLine +
+                "The rule builds both ends of the correspondence the same " +
+                "way: X along the line of anchors, Z the world's own up " +
+                "taken across X, Y = Z cross X, with X's sign settled by " +
+                "which side of that line the machine sits on -- toward its " +
+                "own body in its own space, away from the net in the world. " +
+                "Nothing here is authored, so nothing here can flip. The " +
+                "seven planes each machine gets carry that orientation " +
+                "applied to each wire's own first-frame axes, so every " +
+                "door-guard below runs against them exactly as it would " +
+                "against planes you drew.");
+        }
+        return derived;
+    }
+
     /// <summary>
     /// Move everything added from <paramref name="from"/> onwards to the
     /// FRONT of the list, keeping its own order. Grasshopper's balloon shows
@@ -2154,12 +2435,17 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         parameters.AddPlaneParameter(
             "Placement",
             "PL",
-            "Planes for ALL wires, world space, tree path {side}{group}: " +
-            "seven planes per branch, one mechanism instance per branch, " +
-            "plane i the world target for Routing wire i. The instance " +
-            "transform is DERIVED from plane 0 against Routing wire 0's " +
-            "own first frame and validated against the other six -- he " +
-            "no longer authors a placement frame directly.",
+            "OPTIONAL. Leave it EMPTY and the placement is derived from " +
+            "the solved net's own anchor rows instead: X along the line of " +
+            "anchors, Z the world's own up across it, Y completing them, " +
+            "and the machine turned to face away from the net. Nothing is " +
+            "authored that way, so nothing can flip when the form changes, " +
+            "and every instance is a rotation of one machine rather than a " +
+            "mirror-image second one. Wire it and you override that: seven " +
+            "planes per branch, tree path {side}{group}, plane i the world " +
+            "target for Routing wire i, the transform taken from plane 0 " +
+            "against Routing wire 0's own first frame and validated " +
+            "against the other six.",
             GH_ParamAccess.tree);
         parameters[8].Optional = true;
     }
@@ -2194,13 +2480,17 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             var warnings = new List<string>();
             var notes = new List<string>();
 
-            bool hasResult = TryReadResult(data, out _);
+            // THE RESULT IS READ, NOT DISCARDED, now that a placement can be
+            // DERIVED from the net's own anchor rows when none is authored
+            // (his ruling, 2026-09-09).
+            bool hasResult = TryReadResult(data, out ResultDto? solved);
 
             MechanismAssetInput asset = ReadAsset(data, warnings);
             List<MechanismRoutingWire> routing = ReadRouting(data, warnings);
             List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
-            string? payload = MechanismCollector.Build(asset, routing, placements, warnings, notes);
+            string? payload = MechanismCollector.BuildWithResult(
+                asset, routing, placements, warnings, notes, solved);
 
             int routedWireCount = routing.Count(w => w.Route.Count > 0);
             var status = new List<string>

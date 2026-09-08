@@ -3352,6 +3352,33 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismDerivedPlacement(plugin);
+            Console.WriteLine(
+                "PASS  Placement DERIVED from the net's own anchor rows "
+                + "(2026-09-09, his ruling after the authored planes kept "
+                + "flipping: nothing that is authored can be stopped from "
+                + "flipping, and a rule read off the solved net has nothing "
+                + "to flip). Two rows of seven anchors either side of a net, "
+                + "with NO Placement wired at all, derive exactly two "
+                + "machines. Both are PROPER ROTATIONS and neither a "
+                + "reflection, because you build one machine and turn it "
+                + "round rather than a mirror-image second product; both "
+                + "residuals are zero, since every anchor is a target the "
+                + "rule placed itself; and the far row comes out exactly a "
+                + "HALF TURN about Z from the near one, asserted as a matrix "
+                + "rather than described. With no Result wired nothing is "
+                + "invented. Prototyped first against his own exported 2 "
+                + "Sided Vault, where it reproduced his hand-authored side 0 "
+                + "to 0.000 and placed all six instances' anchors to "
+                + "0.000000 m.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismDerivedPlacement: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41047,6 +41074,257 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "Routing (RT)[0] carrying no frames must be named as " +
                 "fatal to every placement; warnings were: " + string.Join(" | ", f1Warnings));
+        }
+    }
+
+    /// <summary>
+    /// PLACEMENT DERIVED FROM THE NET, so that nothing is authored and
+    /// therefore nothing can flip (his ruling, 2026-09-09: the placement
+    /// planes "just flip randomly, and its so hard to create rules so they
+    /// each follow them").
+    ///
+    /// Two anchor rows of seven, on opposite sides of a net, with NO
+    /// Placement (PL) wired at all. The rule builds both ends of the
+    /// correspondence the same way -- X along the line of anchors, Z the
+    /// world's own up taken across X, Y = Z cross X, X's sign settled by
+    /// which side of that line the machine sits on -- and must produce:
+    ///
+    ///   two instances, one per row, neither of them authored;
+    ///   both PROPER ROTATIONS, never a reflection, since you build one
+    ///     machine and turn it round rather than a mirror-image second one;
+    ///   a residual of zero, because every anchor is a target the rule
+    ///     placed itself;
+    ///   and the far row exactly a HALF TURN about Z from the near one,
+    ///     which is what "turned round" means here and is asserted as a
+    ///     matrix rather than as a description.
+    ///
+    /// Prototyped against his own exported 2 Sided Vault before any of this
+    /// was written: the rule reproduced his hand-authored side 0 to 0.000
+    /// and put all six instances' anchors within 0.000000 m.
+    /// </summary>
+    private static void ValidateMechanismDerivedPlacement(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "BuildWithResult");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(
+                frameType, origin, x, y,
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
+
+        double[] unitX = { 1.0, 0.0, 0.0 };
+        double[] unitY = { 0.0, 1.0, 0.0 };
+
+        // THE NET: two rows of seven anchors, at x = -8 and x = +8, running
+        // in y. Nothing else, so the net's own centre sits between them and
+        // "away from the net" is unambiguous on each side.
+        var anchorsNear = new List<double[]>();
+        var anchorsFar = new List<double[]>();
+        for (int k = 0; k < 7; k++)
+        {
+            anchorsNear.Add(new[] { -8.0, -1.5 + (0.15 * k), 0.0 });
+            anchorsFar.Add(new[] { 8.0, -1.5 + (0.15 * k), 0.0 });
+        }
+
+        object P(double[] v) => Activator.CreateInstance(point, v[0], v[1], v[2])!;
+        var all = new List<double[]>();
+        all.AddRange(anchorsNear);
+        all.AddRange(anchorsFar);
+        Array vertexArray = Array.CreateInstance(point, all.Count);
+        for (int i = 0; i < all.Count; i++)
+            vertexArray.SetValue(P(all[i]), i);
+
+        // Chained WITHIN each row and never across, so the two rows are two
+        // connected groups and the anchor-row derivation finds both.
+        var edgePairs = new List<(int, int)>();
+        for (int k = 0; k + 1 < 7; k++)
+        {
+            edgePairs.Add((k, k + 1));
+            edgePairs.Add((7 + k, 8 + k));
+        }
+        Array edgeArray = Array.CreateInstance(edgeType, edgePairs.Count);
+        for (int i = 0; i < edgePairs.Count; i++)
+        {
+            edgeArray.SetValue(
+                Activator.CreateInstance(edgeType, edgePairs[i].Item1, edgePairs[i].Item2), i);
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertexArray);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edgeArray);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, edgePairs.Count).ToArray());
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(0, all.Count).ToArray());
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        // THE MACHINE: its seven wires begin ON the near row's anchors and
+        // run OUT to x = -10, so which side of its own anchor line its body
+        // sits on is a fact about the machine, not a convention.
+        object[] wires = new object[7];
+        for (int k = 0; k < 7; k++)
+        {
+            wires[k] = Activator.CreateInstance(
+                routingWireType,
+                k,
+                MechanismListOf(
+                    frameType,
+                    FrameOf(anchorsNear[k], unitX, unitY),
+                    FrameOf(new[] { -10.0, anchorsNear[k][1], 1.0 }, unitX, unitY)))!;
+        }
+
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new double[] { -10, 0, 0 }, new double[] { -9, 0, 0 },
+                new double[] { -10, 1, 1 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            MechanismListOf(frameType))!;
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                MechanismListOf(placementBranchType),   // NOTHING AUTHORED
+                warnings, notes, result,
+            });
+        if (payload is not string json)
+            throw new InvalidOperationException("A mechanism with no authored placement must still produce a payload.");
+
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement instances = doc.RootElement.GetProperty("instances");
+        if (instances.GetArrayLength() != 2)
+        {
+            throw new InvalidOperationException(
+                "Two anchor rows of seven must derive exactly two placements, " +
+                "one machine each, with no Placement (PL) authored; got " +
+                instances.GetArrayLength() + " in " + json);
+        }
+
+        double[][] ReadLinear(JsonElement instance)
+        {
+            var rows = new List<double[]>();
+            foreach (JsonElement row in instance.GetProperty("linear").EnumerateArray())
+                rows.Add(row.EnumerateArray().Select(e => e.GetDouble()).ToArray());
+            return rows.ToArray();
+        }
+        bool Matches(double[][] got, double[][] want)
+        {
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    if (Math.Abs(got[r][c] - want[r][c]) > 1.0e-9)
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        double[][] identity =
+        {
+            new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 },
+        };
+        double[][] halfTurn =
+        {
+            new[] { -1.0, 0.0, 0.0 }, new[] { 0.0, -1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 },
+        };
+
+        bool sawIdentity = false;
+        bool sawHalfTurn = false;
+        foreach (JsonElement instance in instances.EnumerateArray())
+        {
+            if (instance.GetProperty("reflected").GetBoolean())
+            {
+                throw new InvalidOperationException(
+                    "A DERIVED placement must always be a proper ROTATION and " +
+                    "never a reflection: you build one machine and turn it " +
+                    "round, not a mirror-image second product. Got a " +
+                    "reflection in " + json);
+            }
+            double residual = instance.GetProperty("residualM").GetDouble();
+            if (residual > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "A derived placement's residual must be zero -- every " +
+                    "anchor it is measured against is a target the rule " +
+                    "placed itself; got " +
+                    residual.ToString("0.######", CultureInfo.InvariantCulture) + " m.");
+            }
+            double[][] linear = ReadLinear(instance);
+            sawIdentity |= Matches(linear, identity);
+            sawHalfTurn |= Matches(linear, halfTurn);
+        }
+        if (!sawIdentity || !sawHalfTurn)
+        {
+            throw new InvalidOperationException(
+                "The near row must derive the identity and the far row " +
+                "exactly a HALF TURN about Z -- the same machine, turned " +
+                "round, which is the whole content of 'a rotation, never a " +
+                "mirror'. Got " + json);
+        }
+
+        bool derivationNamed = notes.Any(n =>
+            n.Contains("DERIVED", StringComparison.Ordinal) &&
+            n.Contains("anchor rows", StringComparison.Ordinal));
+        if (!derivationNamed)
+        {
+            throw new InvalidOperationException(
+                "The chin must say plainly that the placement was derived " +
+                "rather than authored, since it is the difference between a " +
+                "machine he placed and one the exporter placed; notes were: " +
+                string.Join(" | ", notes));
+        }
+
+        // AUTHORED PLACEMENT STILL WINS. Derivation fills a gap; it never
+        // overrides him.
+        var authoredWarnings = new List<string>();
+        var authoredNotes = new List<string>();
+        object? authoredPayload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                MechanismListOf(placementBranchType),
+                authoredWarnings, authoredNotes, null,
+            });
+        if (authoredPayload is not string noResultJson)
+            throw new InvalidOperationException("A mechanism with no Result must still produce a payload.");
+        using JsonDocument noResult = JsonDocument.Parse(noResultJson);
+        if (noResult.RootElement.GetProperty("instances").GetArrayLength() != 0)
+        {
+            throw new InvalidOperationException(
+                "With no Result wired there is no net to derive from, so no " +
+                "instance may be invented; got " + noResultJson);
         }
     }
 
