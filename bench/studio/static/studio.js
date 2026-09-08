@@ -312,8 +312,17 @@ function clampCameraAboveFloor() {
   if (camera.position.z < eye) camera.position.z = eye;
 }
 
+// The prop gumball's handle group. It lives up here, a long way from the
+// gumball section that builds it, for one reason: renderView sizes it on
+// every frame, and a `let` declared down there would sit in its temporal
+// dead zone if a render ever happened during boot.
+let propGumball = null;
+
 function renderView() {
   clampCameraAboveFloor();
+  // Every render path goes through here, the recorder's included, so the
+  // gumball's screen-constant size is settled in one place.
+  sizePropGumball();
   composer.render();
 }
 
@@ -1503,7 +1512,9 @@ function refreshPropOutline() {
 // rotate, a gold square off the ring to scale about the feet, and the
 // body itself to move (the existing carry). The record stays the truth;
 // saveProps runs on release, not per pixel.
-let propGumball = null;
+// The handle group itself is declared far above, next to renderView,
+// because renderView sizes it every frame and a `let` down here would be
+// in its temporal dead zone if anything ever rendered during boot.
 
 function clearPropGumball() {
   if (!propGumball) return;
@@ -1530,18 +1541,34 @@ const GUMBALL_AXES = [
   { key: "z", colour: 0x2f6fe4, dir: [0, 0, 1] },
 ];
 
+// Param: "can we make it about 3 times smaller? Have it a default size
+// for all objects." It used to be cut to the prop's own footprint, which
+// is why a fifteen-metre beech wore a gumball you could park a car in
+// and a bollard wore one you had to hunt for. Rhino's answer, and now
+// ours: build it at UNIT size and scale it per frame off the camera
+// distance, so it holds one size ON SCREEN whatever it drives and
+// however far away you stand. The fraction is of the viewport height.
+const GUMBALL_SCREEN = 0.1;
+
+function sizePropGumball() {
+  if (!propGumball) return;
+  const distance = camera.position.distanceTo(propGumball.position);
+  // The world height the camera sees at the gumball's own distance.
+  const span = 2 * distance
+    * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  propGumball.scale.setScalar(Math.max(1e-4, GUMBALL_SCREEN * span));
+}
+
 function setPropGumball(record) {
   clearPropGumball();
   if (!record || !state.propEdit) return;
-  const box = new THREE.Box3().setFromObject(record.object);
-  const radius = Math.max(0.5,
-    0.62 * Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y));
   propGumball = new THREE.Group();
-  const slim = Math.max(0.012, radius * 0.02);
-  const fat = Math.max(0.08, radius * 0.1);       // the invisible grab
-  const stem = Math.max(0.55, radius * 1.05);
-  const head = Math.max(0.05, radius * 0.085);
-  const cube = Math.max(0.05, radius * 0.075);
+  const radius = 1;                       // sized on screen, not in metres
+  const slim = radius * 0.02;
+  const fat = radius * 0.1;                       // the invisible grab
+  const stem = radius * 1.05;
+  const head = radius * 0.085;
+  const cube = radius * 0.075;
 
   const paint = (colour) => new THREE.MeshBasicMaterial({
     color: colour, transparent: true, opacity: 0.92, depthTest: false });
@@ -1609,7 +1636,7 @@ function setPropGumball(record) {
   }
 
   const origin = new THREE.Mesh(
-    new THREE.SphereGeometry(Math.max(0.035, radius * 0.05), 12, 10),
+    new THREE.SphereGeometry(radius * 0.05, 12, 10),
     new THREE.MeshBasicMaterial({ color: 0xf4f4f4, transparent: true,
       opacity: 0.95, depthTest: false }));
   origin.renderOrder = 3;
@@ -1617,10 +1644,15 @@ function setPropGumball(record) {
 
   propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02);
   propsGroup.add(propGumball);
+  // Sized before it is ever seen or raycast: a click that lands between
+  // the build and the next render must test the gumball at the size it
+  // will be drawn at, not at unit size.
+  sizePropGumball();
 }
 
-// Cheap follow while a prop is carried or turned: position and spin only.
-// A size change rebuilds instead (setPropGumball), so the ring re-fits.
+// Cheap follow while a prop is carried or turned: position only. Its
+// SIZE no longer follows anything about the prop, so scaling a prop
+// leaves the gumball alone; only the camera changes how big it draws.
 function refreshPropGumball() {
   if (!propGumball || !state.selectedProp) return;
   // Position only. The gumball is world-aligned by design, so a turning
@@ -1632,8 +1664,9 @@ function refreshPropGumball() {
 function gumballHandleAt(event) {
   if (!propGumball) return null;
   // Raycast trusts matrixWorld as stored, and a gumball built THIS frame
-  // has not been through a render yet: update it, or the ray tests a
-  // ring still sitting at the origin.
+  // has not been through a render yet: size it and update it, or the ray
+  // tests a ring still sitting at the origin at the wrong size.
+  sizePropGumball();
   propGumball.updateMatrixWorld(true);
   const rect = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(

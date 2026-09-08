@@ -957,6 +957,49 @@ def test_a_slider_reading_can_be_typed_into():
     assert "position: relative" in typable and "z-index: 3" in typable
 
 
+def test_the_entry_box_is_torn_down_exactly_once():
+    """The red banner Param photographed: "Uncaught NotFoundError: Failed
+    to execute 'remove' on 'Element': The node to be removed is no longer
+    a child of this node. Perhaps it was moved in a 'blur' event
+    handler?"
+
+    Enter and blur BOTH commit, and they are not alternatives. Removing a
+    focused element makes the browser fire blur synchronously from inside
+    the removal, so Enter re-entered commit: every change event fired
+    twice (two full re-cuts for one typed piece size) and the outer
+    remove() then looked for a node its own reentrant twin had already
+    taken out. Measured live before the fix: changes = 2, one throw.
+
+    The teardown is therefore once-only, and it drops the blur listener
+    BEFORE it removes the box, which is the ordering that matters: the
+    other way round, blur still lands mid-removal."""
+
+    panel = (REPO / "bench" / "studio" / "static" / "panel.js").read_text(
+        encoding="utf-8")
+
+    # Pinned contiguously, in order: the guard, then the unlisten, then
+    # the removal. Any one of the three alone is not the fix.
+    assert "    let torn = false;\n"\
+        "    const restore = () => {\n"\
+        "      if (torn) return;\n"\
+        "      torn = true;\n"\
+        '      box.removeEventListener("blur", commit);\n'\
+        "      if (box.parentNode) box.remove();" in panel
+
+    # And the banner it wore. A throw after the studio is up means a
+    # handler failed on a page that is fully built; saying "half-built"
+    # there sent him hunting a cached script for a fault in a slider.
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    boot = html[html.index("function bootFault(message)"):]
+    boot = boot[:boot.index('window.addEventListener("error"')]
+    assert "if (window.__studioReady) {" in boot
+    assert "<b>Something in the studio threw.</b>" in boot
+    assert boot.index("if (window.__studioReady) {") \
+        < boot.index("<b>The studio stopped setting itself up.</b>"), (
+        "the ready check has to come FIRST or the boot message wins anyway")
+
+
 def test_props_carry_a_height_and_the_gumball_can_move_it():
     """Param: "add in a x,y,z arrow control on the objects when in edit
     mode. allowing them to clip below ground, as some assets need to do
@@ -1006,6 +1049,30 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     assert "propGumball.rotation" not in gumball
     follow = _js_function(js, "function refreshPropGumball()")
     assert "propGumball.rotation" not in follow
+
+    # Param: "can we make it about 3 times smaller? Have it a default size
+    # for all objects." One size ON SCREEN, whatever it drives and however
+    # far off the camera stands, which is Rhino's own behaviour: built at
+    # unit size, scaled per frame off the camera distance.
+    assert "const GUMBALL_SCREEN = 0.1;" in js
+    assert "setFromObject(record.object)" not in gumball, (
+        "the prop's own bounding box must not size the gumball again: "
+        "that is what gave a fifteen-metre beech a car-sized widget")
+    size = _js_function(js, "function sizePropGumball()")
+    assert "camera.position.distanceTo(propGumball.position)" in size
+    assert "Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)" in size, (
+        "the visible world height at that distance, from the real lens")
+    assert "propGumball.scale.setScalar" in size
+    # Sized on the one path every render takes, the recorder's included.
+    view = _js_function(js, "function renderView()")
+    assert "sizePropGumball();" in view
+    # And before a raycast, because a click can land between the build
+    # and the next render, when the group is still at unit size.
+    assert "  sizePropGumball();\n  propGumball.updateMatrixWorld(true);" in js
+    # The group is declared above renderView, not down in the gumball
+    # section: a `let` down there is in its temporal dead zone for any
+    # render that happens during boot.
+    assert js.index("let propGumball = null;") < js.index("function renderView()")
 
     # One reader per gesture, chosen for the gesture rather than the
     # ground: the ground plane cannot measure a vertical drag, nor a

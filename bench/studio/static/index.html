@@ -427,6 +427,18 @@
   // diagnostics log (bench/studio/diagnostics.log), and the banner says
   // what it can.
   function bootFault(message) {
+    // Once the studio is up, the same throw means something else
+    // entirely: a fault in one handler, on a page that is fully built.
+    // Saying "half-built" there sent Param hunting a cached script for a
+    // fault that was in a slider's entry box.
+    if (window.__studioReady) {
+      shout("<b>Something in the studio threw.</b> "
+        + (message || "An error was thrown")
+        + ". The page is built and the rest of it still works; whatever you "
+        + "had just done is the thing that failed. The full story is in "
+        + "<code>bench/studio/diagnostics.log</code>.");
+      return;
+    }
     shout("<b>The studio stopped setting itself up.</b> "
       + (message || "An error was thrown")
       + ". The panel is half-built. If the build stamp above is not the one "

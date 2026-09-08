@@ -93,8 +93,19 @@ function makeValueTypable(input, value) {
     box.type = "text";
     box.className = "scrub-entry";
     box.value = Number.isFinite(shown) ? String(shown) : String(raw);
+    // Enter and blur BOTH commit, and they are not alternatives: removing
+    // a focused element makes the browser fire blur synchronously, from
+    // inside the removal. So Enter re-entered commit, dispatched every
+    // change event a second time (two re-cuts for one typed piece size),
+    // and left the outer remove() looking for a node its own reentrant
+    // twin had already taken out -- the NotFoundError Param saw, wearing
+    // a "the panel is half-built" banner it had no right to.
+    let torn = false;
     const restore = () => {
-      box.remove();
+      if (torn) return;
+      torn = true;
+      box.removeEventListener("blur", commit);
+      if (box.parentNode) box.remove();
       for (const node of hidden) {
         if (node.nodeType === 1) node.style.display = "";
         else if (node.restoreText !== undefined) node.nodeValue = node.restoreText;
