@@ -445,3 +445,35 @@ shape difference. So, when the residual exceeds the 0.001 m guard:
 
 The one-correspondence derivation stays primary. The fit is a fallback that engages only where the
 primary demonstrably fails and the data demonstrably supports it, and it is never silent.
+
+### 10c. Collinear anchors, and the spin taken from all seven pairs
+
+10b's refit demanded all three rotations from the seven origins and refused when it could not get
+them. His own anchors are COLLINEAR, to within a thousandth of their own spread, as a row of
+foundation anchors naturally is, so it refused on every branch. Two consequences follow from
+collinearity and both matter:
+
+1. Seven points on a line pin which way the line points and nothing about the SPIN about it. A fit
+   that demands all three throws away the two it could have had.
+2. A spin about the anchor line moves points ON that line not at all. So a large residual on
+   collinear anchors is never a roll error. It is the line itself pointed wrongly, which the
+   origins fix exactly.
+
+The job therefore splits. The origins carry the line, and every anchor lands on its own plane's
+origin with the residual going to zero. The remaining spin is settled by a closed-form circular
+least squares over the AUTHORED AXES of all seven placement planes against all seven routing
+frames. This is his own ruling of 2026-09-08 made general: the pairing of a wire's first frame with
+its starting anchor IS the relationship, and it holds across every branch, so it is used seven
+times over rather than once. Both handednesses are tried, since collinear origins cannot tell a
+mirrored side from a turned one either; the axes settle that as well.
+
+How far the authored axes still disagree after the best spin is REPORTED, in degrees, on every
+refit of this kind. It is the only measure of the one degree of freedom the origins could not
+supply: near zero means the spin is as well founded as the placement, and a large figure means the
+mechanism may be rolled about the anchor line even though every anchor is exactly placed. It is
+never hidden, because a rolled mechanism and a correctly placed one look identical in the anchor
+residual.
+
+The three-dimensional fit of 10b stays primary and is tried first; the line fit engages only where
+the origins are collinear. Both are fallbacks behind the settled one-correspondence derivation, and
+neither is ever silent.
