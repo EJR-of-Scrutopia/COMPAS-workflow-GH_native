@@ -2219,7 +2219,7 @@ def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert ("window.__studio = { state, scene, camera, controls, "
             "applyDayCycle, placeProp,\n  ensurePropTemplate, "
-            "renderObjectPreview }" in js), (
+            "renderObjectPreview, composer }" in js), (
         "the probe rig reads app state through this hook, and frames "
         "detail captures through the camera and controls; applyDayCycle is "
         "exposed too (Task 3) so a probe can drive the day cycle directly "
@@ -2227,7 +2227,11 @@ def test_the_probe_hook_exposes_state_and_scene():
         "drift from the pure function it is meant to be checking; and "
         "placeProp, so a probe can populate a scene without synthesising a "
         "pointer gesture per prop, which is how a check nobody runs gets "
-        "written")
+        "written; and the composer, so a probe can count REAL renders "
+        "rather than requestAnimationFrame ticks -- under software GL the "
+        "studio draws about once a second while rAF runs at sixty, and "
+        "readings settled on rAF come off a canvas that has not been "
+        "redrawn since the change they are meant to be measuring")
 
 
 def test_the_postprocessing_addons_are_vendored():

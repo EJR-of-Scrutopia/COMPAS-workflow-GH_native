@@ -431,3 +431,29 @@ taken away" view reads off the port name.
   2026-09-08: structurally guaranteed by a pure function of normalised
   time, confirmed from the plugin's own source and cross-checked
   against my measurement. See the sequence section.
+
+## Two facts from the writer, 2026-09-08, to hold until the file arrives
+
+Both were reported by the plugin session against Param's real geometry
+and will be visible in the document itself. Neither is the reader's fault
+to fix.
+
+1. The seven anchors per mechanism are COLLINEAR. The placement transform
+   is therefore fitted in two parts: the anchor line from the seven
+   origins, which is exact, and the roll about that line from the
+   authored axes of all seven placement planes against all seven routing
+   frames. On the current data those axes disagree by about 45 degrees on
+   average after the best spin, so every anchor lands exactly while the
+   machine may be ROLLED about the anchor line. If a mechanism renders
+   lying on its side, that is the cause, it is an authoring convention
+   for Param to settle, and the figure is reported per branch in the
+   document's own chin. The reader should surface it, not correct it.
+
+2. Side 1 is a genuine REFLECTION: determinant -1, which is expected for
+   the mirrored side. Instancing must carry a left-handed transform
+   rather than assume a rotation, or the mirrored half will come back
+   inside out.
+
+Still open and NOT to be decided without Param: placement derived from
+the first wire frame moves the key layout. That is a design decision, it
+is his, and it gets raised with him directly when the reader reaches it.

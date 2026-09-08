@@ -60,7 +60,7 @@ def load_contract(path) -> Dict[str, Any]:
 # changes over.
 KIND_SUFFIXES = (
     "-contract.json", "-compas.json", "-tessellation.json", "-frames.json",
-    "-form.json", "-skin.json", "-formwork.json")
+    "-form.json", "-skin.json", "-formwork.json", "-mechanism.json")
 
 # Verdicts for the loose scan below, keyed by path, size and mtime. The
 # browser polls the study list every two seconds and a contract runs to

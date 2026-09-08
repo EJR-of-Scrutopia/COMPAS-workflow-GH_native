@@ -223,6 +223,13 @@ const state = {
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   outline: 0,            // the dark line inked round each voussoir, in metres
+  glow: 0.6,             // how far a lamp's halo spreads; 0 is no halo at all
+  // What a newly placed lamp is given, and what the Lights sliders write
+  // to when no single lamp is selected. The literals are LAMP_LUMENS and
+  // LAMP_KELVIN, which are declared with the lamp itself far below: a
+  // reference here would be reading them before they exist.
+  lampLumens: 1600,      // a 100 W bulb, in the units lamps are sold in
+  lampKelvin: 3000,      // warm white
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the SKIN index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
@@ -291,6 +298,56 @@ composer.addPass(new RenderPass(scene, camera));
 composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(BrightnessContrastShader);
 composer.addPass(gradePass);
+
+// The glow around a lamp (Param: "place an orb light say inside the
+// pavilion, it will glow"). Drawn as a HALO ON THE LAMP -- an additive,
+// camera-facing disc of light around the globe -- rather than as a
+// full-frame bloom pass.
+//
+// A bloom (UnrealBloomPass) was built first and then withdrawn. It is
+// wired correctly: with the threshold dropped it takes the whole image
+// to near white. But in SKY mode every capture came back blank while
+// studio mode was unaffected, and the composer was rendering and
+// throwing nothing throughout. I could not settle whether that was real:
+// the software renderer these checks run under draws about once a
+// second, and the readings that condemned it were taken against a canvas
+// that may not have been redrawn. So it is withdrawn as UNPROVEN rather
+// than as broken -- a feature that might blank the viewport on his
+// machine is not one to ship on a maybe, and re-testing it wants a real
+// GPU, not this one.
+//
+// The halo costs one transparent quad per lamp, behaves identically on
+// every device, is occluded by the vault the way a real light is, and I
+// can photograph it working. Bloom stays available as an upgrade if he
+// wants the whole image to bleed: it is one npm dependency away, and
+// wants testing on his own GPU.
+let haloTexture = null;
+
+function lampHaloTexture() {
+  if (haloTexture) return haloTexture;
+  const size = 128;
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = size;
+  const context = canvasEl.getContext("2d");
+  const gradient = context.createRadialGradient(
+    size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  // A steep falloff: a lamp's halo is a small hot core with a wide, very
+  // faint skirt, and a linear ramp reads as a painted disc instead.
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.18, "rgba(255,255,255,0.55)");
+  gradient.addColorStop(0.45, "rgba(255,255,255,0.13)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  haloTexture = new THREE.CanvasTexture(canvasEl);
+  haloTexture.colorSpace = THREE.SRGBColorSpace;
+  return haloTexture;
+}
+
+function applyGlow() {
+  // Every lamp already on the scene, since the halo is the lamp's own.
+  for (const record of state.props) applyPropLight(record);
+}
 
 function applyGrade() {
   renderer.toneMappingExposure = state.exposureBase * state.brightness * EXPOSURE_GAIN;
@@ -1049,15 +1106,154 @@ function propCone() {
   return group;
 }
 
+// ---------- lamps ----------
+// Param: "some light props... when we turn the sky dark and place an orb
+// light say inside the pavilion, it will glow. We should then allow more
+// settings to customise the warm and cool colour of the light too."
+//
+// A lamp is a prop like any other -- carried, placed, moved by the
+// gumball, layered, saved -- that happens to carry a real light. Two
+// numbers describe it, and they are the two an architect actually
+// specifies: how much light (lumens, the number on the box) and what
+// colour that light is (kelvin, the other number on the box).
+const LAMP_LUMENS = 1600;            // a 100 W bulb, in the units lamps are sold in
+const LAMP_KELVIN = 3000;            // warm white
+const KELVIN_MIN = 1800, KELVIN_MAX = 6500;
+
+// Colour temperature to RGB, the Tanner Helland approximation, which is
+// accurate enough over 1000-40000 K for anything anyone will look at.
+// The point of it is that "warm" and "cool" stop being two swatches and
+// become a dial with candlelight at one end and overcast noon at the
+// other.
+function kelvinColour(kelvin) {
+  const t = Math.min(40000, Math.max(1000, kelvin)) / 100;
+  let r, g, b;
+  if (t <= 66) {
+    r = 255;
+    g = 99.4708025861 * Math.log(t) - 161.1195681661;
+  } else {
+    r = 329.698727446 * Math.pow(t - 60, -0.1332047592);
+    g = 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  }
+  if (t >= 66) b = 255;
+  else if (t <= 19) b = 0;
+  else b = 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  const clamp = (v) => Math.min(1, Math.max(0, v / 255));
+  // Through SRGBColorSpace, because those coefficients are gamma-encoded
+  // bytes: read as linear they come out washed and far too pale.
+  return new THREE.Color().setRGB(clamp(r), clamp(g), clamp(b),
+    THREE.SRGBColorSpace);
+}
+
+function propOrbLight() {
+  const group = new THREE.Group();
+  // The globe is UNLIT (MeshBasicMaterial): it is the source, so nothing
+  // in the scene should be shading it, and its colour is pushed above 1
+  // so the bloom threshold has something to catch.
+  const globe = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+  globe.position.z = 0.9;
+  globe.userData.lampGlobe = true;
+  globe.castShadow = globe.receiveShadow = false;
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.045, 0.62, 8), propMaterial(0x2b2e33));
+  stem.rotation.x = Math.PI / 2;
+  stem.position.z = 0.31;
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.05, 16),
+    propMaterial(0x2b2e33));
+  foot.rotation.x = Math.PI / 2;
+  foot.position.z = 0.025;
+  // decay 2 is the inverse square, which is what makes a lamp read as a
+  // lamp: bright at the wall it is near and gone across the room.
+  // The halo: additive, camera-facing, and DEPTH TESTED, so the vault
+  // hides it exactly as it hides the globe. Its own material per lamp,
+  // because each lamp carries its own colour; the texture is shared.
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: lampHaloTexture(), transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  halo.position.z = 0.9;
+  halo.userData.lampHalo = true;
+  const light = new THREE.PointLight(0xffffff, 1, 0, 2);
+  light.position.z = 0.9;
+  light.userData.lampLight = true;
+  // A point light's shadow is six renders of the whole scene, every
+  // frame. Deliberately off: the lamps are for mood, and the sun is what
+  // the shadow study is for.
+  light.castShadow = false;
+  group.add(globe, stem, foot, halo, light);
+  return group;
+}
+
 const PROP_BUILDERS = {
   figure: propFigure, tree: propTree, pallets: propPallets,
-  barrier: propBarrier, cone: propCone,
+  barrier: propBarrier, cone: propCone, "orb-light": propOrbLight,
 };
+
+// Which prop types are lamps. A set rather than a name test, so a second
+// lamp (a downlight, a strip) is one builder and one entry here.
+const LAMP_TYPES = new Set(["orb-light"]);
+
+function isLamp(record) {
+  return !!record && LAMP_TYPES.has(record.type);
+}
+
+// A lamp's two numbers, written on to the objects that answer for them.
+// Called on placement, on restore, and whenever the sliders move.
+function applyPropLight(record) {
+  if (!isLamp(record)) return;
+  const kelvin = Math.min(KELVIN_MAX, Math.max(KELVIN_MIN,
+    +record.kelvin || LAMP_KELVIN));
+  const lumens = Math.max(0, +record.lumens || 0);
+  const colour = kelvinColour(kelvin);
+  record.object.traverse((child) => {
+    if (child.isLight && child.userData.lampLight) {
+      child.color.copy(colour);
+      // three.js takes lumens directly and does the 4*pi itself.
+      child.power = lumens;
+    }
+    if (child.isMesh && child.userData.lampGlobe) {
+      // Above 1 so the bloom has something to catch, and brighter with
+      // the lamp: a dim lamp should not wear the same halo as a bright
+      // one. Off entirely reads as a globe that is simply off.
+      const punch = lumens > 0 ? 1.2 + 1.8 * Math.min(1, lumens / 3000) : 0.25;
+      child.material.color.copy(colour).multiplyScalar(punch);
+    }
+    if (child.isSprite && child.userData.lampHalo) {
+      // Metres across, from the Glow slider and the lamp's own output: a
+      // dim lamp must not wear a bright lamp's halo, and a lamp that is
+      // off wears none at all.
+      const spread = lumens > 0
+        ? state.glow * (1.4 + 2.6 * Math.min(1, lumens / 3000)) : 0;
+      child.visible = spread > 0;
+      child.scale.setScalar(Math.max(0.001, spread));
+      child.material.color.copy(colour);
+      child.material.opacity = 0.45 + 0.55 * Math.min(1, lumens / 3000);
+    }
+  });
+}
+
+// A restore hands back both numbers. An entry saved before lamps existed
+// has neither, and falls back to the current defaults rather than to
+// darkness -- a lamp that restores unlit looks broken, not remembered.
+function adoptLampSettings(record, entry) {
+  if (!isLamp(record)) return;
+  record.lumens = typeof entry.lumens === "number" ? entry.lumens
+    : state.lampLumens;
+  record.kelvin = typeof entry.kelvin === "number" ? entry.kelvin
+    : state.lampKelvin;
+  applyPropLight(record);
+}
+
 
 function makeProp(type) {
   const group = PROP_BUILDERS[type]();
   group.traverse((child) => {
-    if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    // A lamp's globe is the one mesh that must not: it is a source, and
+    // a source casting a hard sun shadow of itself reads as a ball of
+    // plastic rather than as a light.
+    if (child.isMesh && !child.userData.lampGlobe) {
+      child.castShadow = true; child.receiveShadow = true;
+    }
   });
   group.userData.propType = type;
   return group;
@@ -1126,7 +1322,9 @@ function saveProps() {
     props: state.props.map((p) => ({
       type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation,
       rotX: p.rotX || 0, rotY: p.rotY || 0,
-      scale: p.scale || 1, layer: p.layer || 1 })),
+      scale: p.scale || 1, layer: p.layer || 1,
+      // Only a lamp carries these, and a lamp always does.
+      lumens: p.lumens, kelvin: p.kelvin })),
   };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
@@ -1142,6 +1340,10 @@ function disposeProp(object) {
       child.geometry.dispose();
       child.material.dispose();
     }
+    // A lamp's halo is a Sprite, not a Mesh, and owns a material per
+    // lamp. Its TEXTURE is one shared canvas for the whole page, and
+    // Material.dispose leaves that alone.
+    if (child.isSprite) child.material.dispose();
   });
 }
 
@@ -1199,6 +1401,7 @@ function restoreProps() {
       +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
       +entry.rotX || 0, +entry.rotY || 0);
     record.layer = +entry.layer || 1;
+    adoptLampSettings(record, entry);
   }
   applyLayerVisibility();
 }
@@ -1232,6 +1435,11 @@ function ensurePropTemplate(key) {
   if (propTemplates.has(key)) return Promise.resolve(propTemplates.get(key));
   const entry = propLibraryEntry(key);
   if (!entry) return Promise.resolve(null);
+  // A built-in prop is code, not a file. Letting it fall through would
+  // fetch a model that does not exist and log a load failure for a prop
+  // that is working perfectly; null is the right answer, and every
+  // caller already falls back to PROP_BUILDERS on one.
+  if (entry.builtIn) return Promise.resolve(null);
   if (!propTemplatePromises.has(key)) {
     const done = beginLoading("Loading " + (entry.label || entry.key));
     propTemplatePromises.set(key, loadPropTemplate(entry)
@@ -1248,31 +1456,58 @@ function ensurePropTemplate(key) {
   return propTemplatePromises.get(key);
 }
 
-async function loadPropLibrary() {
-  let payload = null;
-  try {
-    payload = await fetchJson("/api/props");
-  } catch (error) {
-    return;                              // no library, the old props stand
-  }
-  const entries = (payload.props || []).filter((entry) => entry && entry.key && entry.file);
-  if (!entries.length) return;
-  state.propLibrary = entries;
-  state.propCredits = payload.library || null;
-  buildPropTiles();
-  // The type select is still the source of truth for what Place will place,
-  // exactly as the material select is behind the material tiles. Every
-  // manifest entry is offered: whether its file loads is only knowable by
-  // loading it, which now happens when it is chosen.
+// One built object per built-in, kept for the life of the page. The tile
+// redraws on every library load and on a theme change, and building a
+// fresh group each time would strand its buffers on the GPU.
+const builtInPreviews = new Map();
+
+function builtInPreview(key) {
+  if (!builtInPreviews.has(key)) builtInPreviews.set(key, makeProp(key));
+  return builtInPreviews.get(key);
+}
+
+// The type select is the source of truth for what a placement places,
+// exactly as the material select is behind the material tiles. Every
+// entry is offered, built-ins first: whether a library model's file
+// loads is only knowable by loading it, which happens when it is chosen.
+function listPropTypes() {
   const select = document.getElementById("prop-type");
+  if (!select) return;
   select.innerHTML = "";
-  for (const entry of entries) {
+  for (const entry of state.propLibrary) {
     const option = document.createElement("option");
     option.value = entry.key;
     option.textContent = entry.label || entry.key;
     select.appendChild(option);
   }
   if (select.options.length) select.value = select.options[0].value;
+}
+
+// Props that are code rather than files. They need no folder, no fetch
+// and no manifest, so they are offered even when the prop library is
+// missing entirely -- which is exactly the state a new machine is in.
+const BUILT_IN_PROPS = [
+  { key: "orb-light", label: "Orb light", group: "lights", builtIn: true,
+    sizeMetres: [0.56, 0.56, 1.18] },
+];
+
+async function loadPropLibrary() {
+  // Always on the shelf, whatever the fetch below does.
+  state.propLibrary = BUILT_IN_PROPS.slice();
+  let payload = null;
+  try {
+    payload = await fetchJson("/api/props");
+  } catch (error) {
+    buildPropTiles();                    // no library: the built-ins stand
+    listPropTypes();
+    return;
+  }
+  const entries = (payload.props || []).filter((entry) => entry && entry.key && entry.file);
+  state.propLibrary = [...BUILT_IN_PROPS, ...entries];
+  state.propCredits = payload.library || null;
+  buildPropTiles();
+  listPropTypes();
+  if (!entries.length) return;
   logStudio("prop library: " + entries.length + " models");
   // A cold boot restores a study's props before this manifest arrives, so
   // anything it had to skip gets a second chance now that the names are
@@ -1357,6 +1592,13 @@ function buildPropTiles() {
     const tile = previewTile(entry.key, entry.label || entry.key,
       (canvasEl) => {
         fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+        // A built-in has no file and so no snapshot beside it: it is
+        // built and drawn on the spot, which costs nothing because it is
+        // a handful of primitives rather than a photoscan.
+        if (entry.builtIn) {
+          renderObjectPreview(builtInPreview(entry.key), canvasEl);
+          return;
+        }
         const picture = new Image();
         picture.onload = () => {
           canvasEl.getContext("2d").drawImage(
@@ -1466,8 +1708,19 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   object.userData.fromLibrary = !!template;
   const record = { type, x, y, z, rotation, rotX, rotY, scale,
     layer: state.activeLayer, object };
+  // A lamp arrives lit, wearing whatever the Lights sliders currently
+  // say. The caller (a restore, a scene) may overwrite both numbers and
+  // call applyPropLight again; placing one by hand should not need to.
+  if (isLamp(record)) {
+    record.lumens = state.lampLumens;
+    record.kelvin = state.lampKelvin;
+    applyPropLight(record);
+  }
   object.visible = layerVisible(record.layer);
   state.props.push(record);
+  // The Lights heading counts the lamps in the scene, so a placement has
+  // to tell it. Without this the row said "Lights" over two lamps.
+  if (isLamp(record)) syncLightControls();
   if (save) saveProps();
   return record;
 }
@@ -1762,6 +2015,9 @@ function selectProp(record) {
   state.selectedProp = record;
   setPropOutline(record);
   setPropGumball(record);
+  // Selecting a lamp aims the Lights sliders at that lamp alone, so they
+  // have to show its numbers rather than the last thing they showed.
+  syncLightControls();
   if (record && !propEditHinted) {
     propEditHinted = true;
     logStudio("selected prop: drag the ring to rotate, the square to "
@@ -2447,6 +2703,8 @@ function collectScene() {
     brightness: state.brightness,
     contrast: state.contrast,
     outline: state.outline,
+    glow: state.glow,
+    lamp: { lumens: state.lampLumens, kelvin: state.lampKelvin },
     hdri: {
       name: state.hdriName, projection: state.hdriProjection,
       scale: state.hdriScale, height: state.hdriHeight, rotation: state.hdriRotation,
@@ -2474,6 +2732,7 @@ function collectScene() {
       rotation: record.rotation,
       rotX: record.rotX || 0, rotY: record.rotY || 0,
       scale: record.scale, layer: record.layer || 1,
+      lumens: record.lumens, kelvin: record.kelvin,
     })),
     propLayers: state.propLayers.map((layer) => ({
       id: layer.id, name: layer.name, visible: layer.visible })),
@@ -2591,6 +2850,7 @@ async function applyScene(record) {
         +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
         +entry.rotX || 0, +entry.rotY || 0);
       record.layer = +entry.layer || 1;
+      adoptLampSettings(record, entry);
     }
     applyLayerVisibility();
   }
@@ -2617,6 +2877,16 @@ async function applyScene(record) {
     control("outline-width").value = scene_.outline;
     applyOutline();
   }
+  if (typeof scene_.glow === "number") {
+    state.glow = scene_.glow;
+    control("glow-strength").value = scene_.glow;
+    applyGlow();
+  }
+  if (scene_.lamp) {
+    if (typeof scene_.lamp.lumens === "number") state.lampLumens = scene_.lamp.lumens;
+    if (typeof scene_.lamp.kelvin === "number") state.lampKelvin = scene_.lamp.kelvin;
+  }
+  syncLightControls();
   const hdri = scene_.hdri || {};
   if (hdri.projection) {
     state.hdriProjection = hdri.projection; control("hdri-projection").value = hdri.projection;
@@ -6904,6 +7174,76 @@ document.getElementById("outline-width").addEventListener("input", (e) => {
   state.outline = Math.max(0, +e.target.value);
   applyOutline();
 });
+
+// ---------- the lamp controls ----------
+// Which lamps a slider is about to touch: the one that is selected, or
+// every lamp in the scene. Selecting a lamp is how you say "just this
+// one", which is the same gesture that already moves and scales it, and
+// the heading says out loud which of the two is happening.
+function lampTargets() {
+  if (isLamp(state.selectedProp)) return [state.selectedProp];
+  return state.props.filter(isLamp);
+}
+
+function syncLightControls() {
+  const heading = document.getElementById("lights-heading");
+  const lamps = state.props.filter(isLamp);
+  const one = isLamp(state.selectedProp) ? state.selectedProp : null;
+  if (heading) {
+    heading.textContent = one ? "Lights (selected lamp)"
+      : lamps.length ? "Lights (all " + lamps.length + ")"
+        : "Lights";
+  }
+  // The sliders show the selected lamp's own numbers, or the defaults a
+  // newly placed lamp will wear.
+  const lumens = one ? one.lumens : state.lampLumens;
+  const kelvin = one ? one.kelvin : state.lampKelvin;
+  const write = (id, value, reading) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.value = value;
+    paintScrub(input);
+    const span = document.getElementById(id + "-value");
+    if (span) span.textContent = reading;
+  };
+  write("lamp-lumens", lumens, Math.round(lumens));
+  write("lamp-kelvin", kelvin, Math.round(kelvin));
+  write("glow-strength", state.glow, Math.round(state.glow * 100));
+}
+
+function writeLamps(field, value) {
+  const targets = lampTargets();
+  for (const record of targets) {
+    record[field] = value;
+    applyPropLight(record);
+  }
+  // With nothing selected the number is also the default for the next
+  // lamp placed, which is what makes "set them all warm, then add
+  // another" behave the way anyone would expect.
+  if (!isLamp(state.selectedProp)) {
+    if (field === "lumens") state.lampLumens = value;
+    else state.lampKelvin = value;
+  }
+  syncLightControls();
+  return targets.length;
+}
+
+document.getElementById("lamp-lumens").addEventListener("input", (e) => {
+  writeLamps("lumens", Math.max(0, +e.target.value));
+});
+document.getElementById("lamp-kelvin").addEventListener("input", (e) => {
+  writeLamps("kelvin", +e.target.value);
+});
+// The layout is per study and lives in localStorage; writing it on every
+// pixel of a drag would be a hundred writes for one decision.
+for (const id of ["lamp-lumens", "lamp-kelvin"]) {
+  document.getElementById(id).addEventListener("change", () => saveProps());
+}
+document.getElementById("glow-strength").addEventListener("input", (e) => {
+  state.glow = Math.max(0, +e.target.value);
+  applyGlow();
+  syncLightControls();
+});
 document.getElementById("brightness").addEventListener("input", (e) => {
   state.brightness = +e.target.value;
   applyGrade();
@@ -9127,6 +9467,9 @@ function removePropRecord(record) {
   propsGroup.remove(record.object);
   state.props = state.props.filter((p) => p !== record);
   if (state.selectedProp === record) selectProp(null);
+  // A lamp leaving changes what the Lights row is talking about, and it
+  // may not have been the selected one (which would have said so above).
+  if (isLamp(record)) syncLightControls();
   saveProps();
   // The drawer is a picture of state.props, so a prop leaving has to
   // reach it: deleting one in the viewport used to leave its tile behind
@@ -9278,7 +9621,7 @@ requestAnimationFrame(frame);
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
 window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp,
-  ensurePropTemplate, renderObjectPreview };
+  ensurePropTemplate, renderObjectPreview, composer };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.

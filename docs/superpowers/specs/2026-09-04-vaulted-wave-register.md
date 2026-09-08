@@ -1197,3 +1197,81 @@ centre lands on the tile (elementFromPoint), lights it, turns the mode
 on, lights the panel's face too and leaves #shelf-body hidden; opening
 and closing the Scenes drawer leaves it lit; a second press clears all
 three. Seven mutations, all killed.
+
+----------------------------------------------------------------------
+
+## 2026-09-08 -- THE OUTLINE, THE LAMPS, AND A CRASH OF MINE
+
+THE ENTRY-BOX CRASH (his red banner). Enter and blur BOTH committed the
+typed slider value, and they are not alternatives: removing a focused
+element makes the browser fire blur synchronously from inside the
+removal. So Enter re-entered commit, fired every change event twice --
+two full re-cuts for one typed piece size -- and left the outer remove()
+looking for a node its own reentrant twin had already taken out.
+Measured before the fix: changes = 2, one NotFoundError. Teardown is now
+once-only and drops the blur listener BEFORE removing the box; the other
+order still lands blur mid-removal.
+
+The banner also lied about where it was. A throw after boot means a
+handler failed on a page that is fully built, not a half-built panel, and
+saying "half-built" sent him hunting a cached script.
+
+THE GUMBALL, THREE TIMES SMALLER ("Have it a default size for all
+objects"): built at unit size and scaled per frame off the camera
+distance, so it holds about a tenth of the viewport height whatever it
+drives and however far off you stand. Measured live: 87 px at 37 m, 88 px
+at 73 m. Its group is declared beside renderView, not in the gumball
+section, because renderView sizes it every frame and a `let` down there
+would be in its temporal dead zone for any render during boot.
+
+THE INKED OUTLINE ("a dark line around the vault voussoirs... from a 0
+line to thicker line"). Geometry, not lines: WebGL ignores linewidth on
+every desktop driver, so a LineSegments outline is one pixel wide for
+ever. Each casting carries a ribbon round its own boundary, running
+INWARD so the ink never crosses a joint on to its neighbour, on BOTH
+surfaces (his follow-up: a vault is looked at from underneath). Width is
+a uniform, so dragging is free; at zero the ribbons are not drawn at all,
+saving 1500 draw calls for an invisible result.
+
+THE BOUNDARY IS DERIVED, NOT ASSUMED. pieces.py emits "mid" as the cell's
+used corners -- a list, not a loop -- and joining it corner by corner
+drew long chords wandering across the vault: a fishing net, not
+voussoirs. Taking every edge of every face on one side and keeping the
+ones exactly ONE face uses agrees with the server's own side walls on all
+1501 pieces, 24 edges each, no mismatch. The outline also revealed
+something true: on this study the voussoirs are TRIANGLES, 194 of 200
+sampled pieces having three corners.
+
+THE LAMPS ("place an orb light say inside the pavilion, it will glow...
+customise the warm and cool colour"). A lamp is a prop like any other
+that happens to hold a PointLight, described by the two numbers on a real
+lamp's box: lumens and kelvin, per lamp, saved with the study and the
+scene. The Lights sliders drive the SELECTED lamp, or every lamp when
+none is selected, and the heading says which.
+
+THE GLOW IS A HALO, NOT A BLOOM, AND THE REASON MATTERS. UnrealBloomPass
+was vendored, wired and then withdrawn. It is wired correctly -- drop the
+threshold and it takes the whole image to near white -- but in SKY mode
+every capture came back blank while studio mode was fine, with the
+composer rendering and throwing nothing. I could not settle whether that
+was real, because the software renderer these checks run under draws
+about ONCE A SECOND while requestAnimationFrame runs at sixty, and the
+readings that condemned it were settled on rAF: they came off a canvas
+that had not been redrawn since the change. Withdrawn as UNPROVEN rather
+than broken. The halo -- an additive, depth-tested, camera-facing disc on
+each lamp -- costs one quad per lamp, behaves the same everywhere, and
+was photographed working.
+
+THE MEASUREMENT LESSON, which is the durable one: under software GL,
+settle probes on the STUDIO'S OWN renders (monkey-patch composer.render
+and count) and never on requestAnimationFrame. Three readings in a row
+came back byte-identical and I nearly believed them.
+
+TWO DEFECTS FOUND ON THE WAY. A slider resting at ZERO cannot say what
+its unit is, so the typed-value factor could not be derived and a typed
+20 landed as a raw 20: the five sliders that can sit at zero now declare
+data-unit. And the client's SIZE_MIN mirror was left at 0.3 when the
+server floor moved to 0.1, so a bundle cut at 100 or 200 mm failed the
+range test in applyCut and the slider kept the previous number while the
+vault was cut finer. The old test pinned the literal 0.3, which is why it
+stayed green; it now pins the RELATIONSHIP between the two files.

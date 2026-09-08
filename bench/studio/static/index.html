@@ -287,6 +287,17 @@
     <!-- Brightness and contrast moved to the Camera section: they are
          the grade on the lens, not the light in the scene. -->
 
+    <!-- Param: "some light props, using our great lumen engine... We
+         should then allow more settings to customise the warm and cool
+         colour of the light too." Lumens and kelvin are the two numbers
+         printed on a real lamp's box, so they are the two here. The
+         heading says what the sliders are about to touch: the one lamp
+         selected, or every lamp in the scene. -->
+    <span class="row-heading" id="lights-heading">Lights</span>
+    <label id="lamp-lumens-row">Lamp <input id="lamp-lumens" type="range" data-unit="1" min="0" max="6000" step="50" value="1600"> <span id="lamp-lumens-value">1600</span> lm</label>
+    <label id="lamp-kelvin-row">Warmth <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000"> <span id="lamp-kelvin-value">3000</span> K</label>
+    <label id="glow-row">Glow <input id="glow-strength" type="range" data-unit="100" min="0" max="1.5" step="0.05" value="0.6"> <span id="glow-value">60</span>%</label>
+
     <span class="row-heading">Ground</span>
     <div id="ground-folder-row" class="folder-line">
       <button id="ground-folder-choose" title="Pick your ground material folder">Ground folder</button>

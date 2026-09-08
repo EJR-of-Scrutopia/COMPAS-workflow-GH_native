@@ -1033,6 +1033,93 @@ def test_the_voussoirs_can_be_inked_with_an_outline():
     assert 'if (typeof scene_.outline === "number") {' in js
 
 
+def test_a_lamp_is_a_prop_that_carries_a_real_light():
+    """Param: "some light props, using our great lumen engine. when we
+    turn the sky dark and place an orb light say inside the pavilion, it
+    will glow. We should then allow more settings to customise the warm
+    and cool colour of the light too."
+
+    A lamp is a prop like any other -- carried, placed, moved by the
+    gumball, layered, saved -- that happens to hold a PointLight. Its two
+    numbers are the two printed on a real lamp's box: lumens and kelvin.
+    Verified live: placed at 1600 lm / 3000 K the light comes out
+    ffb16e at 127 cd, and cooling it to 6500 K takes both the light and
+    its halo to fffefa."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    # The prop itself, and the set that says which types are lamps -- a
+    # set rather than a name test, so a second lamp is one builder and
+    # one entry.
+    assert '"orb-light": propOrbLight,' in js
+    assert 'const LAMP_TYPES = new Set(["orb-light"]);' in js
+    assert "new THREE.PointLight(0xffffff, 1, 0, 2)" in js, (
+        "decay 2 is the inverse square, which is what makes a lamp read "
+        "as a lamp rather than as a flood")
+
+    # Kelvin, not two swatches. The coefficients are gamma-encoded bytes,
+    # so they must go in through SRGBColorSpace or they come out pale.
+    kelvin = _js_function(js, "function kelvinColour(kelvin)")
+    assert "99.4708025861 * Math.log(t) - 161.1195681661" in kelvin
+    assert "THREE.SRGBColorSpace);" in kelvin
+
+    lit = _js_function(js, "function applyPropLight(record)")
+    assert "child.color.copy(colour);" in lit
+    assert "child.power = lumens;" in lit, "three.js takes lumens directly"
+    # The globe is the source: unlit, and pushed above 1 so it reads as
+    # brighter than white rather than as a pale ball.
+    assert "1.2 + 1.8 * Math.min(1, lumens / 3000)" in lit
+    # The halo is the glow, and it dies with the lamp.
+    assert "child.visible = spread > 0;" in lit
+
+    # A source casting a hard sun shadow of ITSELF reads as plastic.
+    made = _js_function(js, "function makeProp(type)")
+    assert "if (child.isMesh && !child.userData.lampGlobe) {" in made
+
+    # The halo is depth tested, so the vault hides it exactly as it hides
+    # the globe. depthWrite is off so it never occludes what is behind it.
+    assert "blending: THREE.AdditiveBlending, depthWrite: false" in js
+    assert "depthTest: false" not in _js_function(js, "function propOrbLight()")
+    # And its material is freed with the prop: a Sprite is not a Mesh, so
+    # the mesh branch above it never sees one.
+    assert "if (child.isSprite) child.material.dispose();" in js
+
+    # Both numbers survive a reload and a scene.
+    assert "lumens: p.lumens, kelvin: p.kelvin })" in js, "the study layout"
+    assert "lumens: record.lumens, kelvin: record.kelvin," in js, "the scene"
+    assert js.count("adoptLampSettings(record, entry);") == 2, (
+        "restoreProps and applyScene both give a lamp its numbers back")
+    adopt = _js_function(js, "function adoptLampSettings(record, entry)")
+    assert "state.lampLumens;" in adopt and "state.lampKelvin;" in adopt, (
+        "a prop saved before lamps existed restores lit, not dark")
+
+    # The controls, in the Scene menu, and what they aim at.
+    scene = html[html.index('<details id="scene-section">'):]
+    scene = scene[:scene.index("</details>")]
+    for control in ("lamp-lumens", "lamp-kelvin", "glow-strength"):
+        assert 'id="%s"' % control in scene, control
+    aim = _js_function(js, "function lampTargets()")
+    assert "if (isLamp(state.selectedProp)) return [state.selectedProp];" in aim
+    assert "return state.props.filter(isLamp);" in aim
+    # The heading says which of the two is about to happen, and it has to
+    # be told when the count changes -- it read "Lights" over two lamps
+    # until a placement started saying so.
+    sync = _js_function(js, "function syncLightControls()")
+    assert '"Lights (all " + lamps.length + ")"' in sync
+    assert "  if (isLamp(record)) syncLightControls();\n  if (save) saveProps();" in js
+
+    # The lamp is offered even with no prop library at all: it is code,
+    # not a file, so no folder needs choosing and no fetch can fail it.
+    assert 'key: "orb-light", label: "Orb light", group: "lights", builtIn: true' in js
+    assert "state.propLibrary = BUILT_IN_PROPS.slice();" in js
+    ensure = _js_function(js, "function ensurePropTemplate(key)")
+    assert "if (entry.builtIn) return Promise.resolve(null);" in ensure, (
+        "a built-in has no file to fetch, and fetching one would log a "
+        "load failure for a prop that works")
+
+
 def test_a_slider_that_rests_at_zero_declares_its_unit():
     """The typable reading works out its unit by dividing what is shown by
     what the slider holds -- which is exactly the one thing a slider
