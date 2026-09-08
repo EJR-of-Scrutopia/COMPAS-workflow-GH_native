@@ -48,6 +48,51 @@ he says otherwise, wire branch order is taken as anchor order along the row, and
 chin PRINTS THE MATCHED DISTANCES so a wire latched to the wrong anchor is visible rather than
 silent.
 
+### Four rulings from the studio's REPLY 4, binding on the collector rebuild
+
+R1. EVERY WIRE CARRIES ITS OWN EXPLICIT net_vertex, whatever the tree groups it by. NON
+NEGOTIABLE, and the studio is right to insist: a tree grouped side, mechanism, wire says which
+mechanism a wire belongs to and NOTHING about which net vertex it pulls. If the net end were
+implied by ordinal position we would have rebuilt the exact silent-wrong-answer failure their C1
+was written to prevent, a wire landing on a real vertex that is simply the wrong one with nothing
+on screen to show it. The document's top-level wires array already carries net_vertex; the
+REBUILD MUST NOT let the named-port shape quietly replace it with position-in-tree.
+
+R2. planes[0] IS THE NET END. Threading order fixes the sequence but not its direction, and the
+studio builds the tube outward from the net vertex, so the list must read in the direction the
+wire is drawn. TELL PARAM, since he authors them. The plugin also VALIDATES it, the door-guard
+pattern: after placement, the first plane must sit nearer its net vertex than the last, and a
+reversed list is named in the chin rather than silently drawn backwards.
+
+R3. THE ROUTED PORTION IS CONSTANT, confirmed and reasoned rather than asserted. The routing
+frames describe FIXED HARDWARE, the guide plate holes and the wheel wraps; the wire passes
+through the same route whatever length has spooled. What changes is the FREE SPAN and the drum's
+rotation. This is worth its weight to the studio: constant means the routed tube is built once
+per instance and stamped with the placement, with only the free span rebuilt per time step, 42
+short tubes a frame instead of 4200 circles. ONE HONEST CAVEAT to carry: as wire layers build up
+on a spool the effective winding radius grows slightly, so a long take-up is not perfectly
+constant at the drum itself. At this level of representation it is immaterial, and if his machine
+ever needs the layer effect it is a refinement to the spin arithmetic, not to the routing.
+
+R4. PERMANENCE COMES FROM THE PORT NAME, so no boolean is needed after all. With ports named
+anchor, tension tie, mechanism, reel and routing, the anchor and the tension tie ARE the works
+that remain, and the studio derives his "what remains when the machine is taken away" view from
+the part kind. THE REQUIREMENT THIS PLACES ON THE REBUILD: the port name must REACH THE DOCUMENT
+as the part's kind, not be flattened away into an anonymous parts list. That single property
+serves the material tags, the permanence view, and their C9, and it is the reason the named-port
+shape is better than the tree it replaces.
+
+MEASURED FACT FROM THEIR SIDE, for his information: the studio's wire radius is 0.02 m, a 40 mm
+diameter wire, set once at boot with no writer left in the code (the old Wire size slider was
+removed in a later wave). So "the one predefined in the vaulted app" is 40 mm and cannot drift.
+He should confirm 40 mm suits the design, since it is now the number his mechanism wires render
+at as well as his net.
+
+CONSEQUENCE HE SHOULD HEAR BEFORE HE SEES IT: the studio will NOT snap a wire to close a gap. It
+draws from the declared net vertex to wherever his placement puts the first plane, so a mechanism
+placed off its node shows as a wire that stretches or floats. That is right, and arguably a
+feature, since the drawing becomes a check on the placement.
+
 ## BUILD RULING, 2026-09-08: this is now being built, and his inputs are firmer
 
 His words: "can we work on the exporter that will then go to the vaulted app we have, so the
