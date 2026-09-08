@@ -31,13 +31,21 @@ internal static class ExportPlan
 
     public const string FormworkKind = "formwork";
 
-    public static string[] Kinds(bool hasCells, bool hasColumns)
+    /// <summary>
+    /// The fourth sibling: heavy but rare, re-sent only when its own change
+    /// key moves, exactly like the other three (mechanism spec section 1).
+    /// </summary>
+    public const string MechanismKind = "mechanism";
+
+    public static string[] Kinds(bool hasCells, bool hasColumns, bool hasMechanism)
     {
         var kinds = new List<string> { FormKind };
         if (hasCells)
             kinds.Add(SkinKind);
         if (hasColumns)
             kinds.Add(FormworkKind);
+        if (hasMechanism)
+            kinds.Add(MechanismKind);
         return kinds.ToArray();
     }
 
@@ -792,5 +800,329 @@ internal static class FormworkDocument
                 i < block.MemberForce.Count ? block.MemberForce[i] : 0.0));
         }
         return members;
+    }
+}
+
+/// <summary>
+/// MECHANISM, <c>&lt;study&gt;-mechanism.json</c>, schema
+/// <c>bench.mechanism/1</c>: the fourth sibling document (mechanism spec
+/// section 1), built from TWO halves that never disagree about a row
+/// because they share one call (<see cref="MechanismGeometry"/>):
+///
+/// the SHAPE half is the MECHANISM collector's own payload, already
+/// validated and passed through here verbatim (bodies, spinners, axes,
+/// sockets, reeve factor, spool radius, anchor tie meshes); the PLACEMENT
+/// half is computed here, against the Result Export already owns, exactly
+/// the way the formwork document's frames are built here and not by
+/// Columns or Animate.
+///
+/// Caught on its own by the caller, the way formwork is: a Result the
+/// mechanism payload's shape does not fit (a node reel with no columns,
+/// say) costs this document and nothing else.
+/// </summary>
+internal static class MechanismDocument
+{
+    public const string Schema = "bench.mechanism/1";
+
+    public static string Json(
+        ResultDto result,
+        string study,
+        double unitFactor,
+        string mechanismPayloadJson)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(mechanismPayloadJson);
+        if (!double.IsFinite(unitFactor) || unitFactor <= 0.0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(unitFactor),
+                unitFactor,
+                "The length unit factor is how many metres one document " +
+                "unit is, so it is finite and positive.");
+        }
+
+        using JsonDocument parsed = JsonDocument.Parse(mechanismPayloadJson);
+        JsonElement root = parsed.RootElement;
+        JsonElement unitTypesIn = root.TryGetProperty("unitTypes", out JsonElement ut)
+            ? ut
+            : default;
+        JsonElement tiesIn = root.TryGetProperty("anchorTies", out JsonElement at)
+            ? at
+            : default;
+
+        EquilibriumResultDto? eq = result.Equilibrium;
+        int vertexCount = eq?.Vertices.Count ?? 0;
+        MouldColumnsDto? columns = result.Mould?.Columns;
+
+        bool hasEdge = unitTypesIn.ValueKind == JsonValueKind.Object &&
+            unitTypesIn.TryGetProperty("edge", out _);
+        bool hasNode = unitTypesIn.ValueKind == JsonValueKind.Object &&
+            unitTypesIn.TryGetProperty("node", out _);
+
+        List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
+
+        var unitTypesOut = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var edgeInstances = new List<Dictionary<string, object?>>();
+        var nodeInstances = new List<Dictionary<string, object?>>();
+        int columnNodeCount = 0;
+
+        if (hasEdge)
+        {
+            unitTypesOut["edge"] = unitTypesIn.GetProperty("edge");
+            (int, int)[] edges = eq is null
+                ? Array.Empty<(int, int)>()
+                : MouldGeometry.ValidEdges(eq, vertexCount, out _);
+            List<int>[] adjacency = MouldGeometry.BuildAdjacency(vertexCount, edges);
+            var anchorSet = new HashSet<int>();
+            foreach (List<int> row in rows)
+            {
+                foreach (int id in row)
+                    anchorSet.Add(id);
+            }
+            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                List<int> row = rows[rowIndex];
+                var wires = new List<Dictionary<string, object?>>();
+                var seen = new HashSet<(int, int)>();
+                foreach (int anchorNode in row)
+                {
+                    foreach (int neighbour in adjacency[anchorNode])
+                    {
+                        if (anchorSet.Contains(neighbour))
+                            continue;
+                        if (!seen.Add((neighbour, anchorNode)))
+                            continue;
+                        AssertInRange(neighbour, vertexCount, "wires[].netVertex");
+                        AssertInRange(anchorNode, vertexCount, "wires[].anchorNode");
+                        wires.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["netVertex"] = neighbour,
+                            ["anchorNode"] = anchorNode,
+                        });
+                    }
+                }
+                // A row with no wire is not a reeling group (mechanism spec
+                // section 4): the edge reel exists on the anchor lines that
+                // actually carry a wire, not on every anchor row.
+                if (wires.Count == 0)
+                    continue;
+
+                var points = new Point3d[row.Count];
+                for (int i = 0; i < row.Count; i++)
+                {
+                    Point3Dto p = eq!.Vertices[row[i]];
+                    points[i] = new Point3d(p.X, p.Y, p.Z);
+                }
+                Dictionary<string, object?> frame = TangentFrame(points);
+                edgeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["frame"] = frame,
+                    ["row"] = rowIndex,
+                    ["wires"] = wires,
+                });
+            }
+        }
+
+        if (hasNode)
+        {
+            if (columns is null)
+            {
+                throw new InvalidOperationException(
+                    "A node reel unit was wired (PU branch {1}), but this " +
+                    "Result carries no Mould columns block: a node reel " +
+                    "sits under a principal node, and there is no " +
+                    "principal node without columns.");
+            }
+            unitTypesOut["node"] = unitTypesIn.GetProperty("node");
+            columnNodeCount = columns.Nodes.Count;
+            List<List<int>> runs = eq is null
+                ? new List<List<int>>()
+                : MouldGeometry.PrincipalRuns(eq, vertexCount);
+            for (int head = 0; head < columns.Heads.Count; head++)
+            {
+                int principalNode = head < columns.HeadNode.Count
+                    ? columns.HeadNode[head]
+                    : -1;
+                AssertInRange(principalNode, vertexCount, "instances.node[].principalNode");
+                Point3Dto headPoint = eq!.Vertices[principalNode];
+                double groundZ = result.Mould?.Ground ?? headPoint.Z;
+                Point3d origin = new(headPoint.X, headPoint.Y, groundZ);
+                Vector3d tangent = RunTangentAt(runs, principalNode, eq);
+                Dictionary<string, object?> frame = FrameAt(origin, tangent);
+
+                int columnNode = head;
+                AssertInRange(principalNode, vertexCount, "wires[].netVertex");
+                AssertInRange(columnNode, columnNodeCount, "wires[].columnNode");
+                nodeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["frame"] = frame,
+                    ["head"] = head,
+                    ["principalNode"] = principalNode,
+                    ["wires"] = new List<Dictionary<string, object?>>
+                    {
+                        new(StringComparer.Ordinal)
+                        {
+                            ["netVertex"] = principalNode,
+                            ["columnNode"] = columnNode,
+                        },
+                    },
+                });
+            }
+        }
+
+        var anchorTiesOut = new List<JsonElement>();
+        if (tiesIn.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement tie in tiesIn.EnumerateArray())
+                anchorTiesOut.Add(tie);
+        }
+
+        var instances = new Dictionary<string, object?>(StringComparer.Ordinal);
+        if (hasEdge)
+            instances["edge"] = edgeInstances;
+        if (hasNode)
+            instances["node"] = nodeInstances;
+
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["schema"] = Schema,
+            ["study"] = study,
+            ["units"] = "m",
+            ["lengthUnitToMetres"] = unitFactor,
+            ["vertexCount"] = vertexCount,
+            ["columnNodeCount"] = columnNodeCount,
+            ["unitTypes"] = unitTypesOut,
+            ["anchorTies"] = anchorTiesOut,
+            ["instances"] = instances,
+        };
+        return JsonSerializer.Serialize(payload, ContractJson.Options);
+    }
+
+    private static void AssertInRange(int value, int count, string label)
+    {
+        if (value < 0 || value >= count)
+        {
+            throw new InvalidOperationException(
+                $"{label} = {value} is out of range for a net/column set " +
+                $"of {count}; a mechanism document is not written from a " +
+                "wire mapping that cannot be resolved.");
+        }
+    }
+
+    /// <summary>
+    /// The edge-reel placement frame, tangential to the anchor row (mould
+    /// spec's "always tangential to the anchors ... decided in the plugin
+    /// to make it safe"): origin at the row's own centroid, X along the
+    /// row's first-to-last direction, Z world up, Y completing a
+    /// right-handed frame. A row of fewer than two points, or one whose
+    /// ends coincide (a closed loop walked back to its start), has no
+    /// measurable tangent and falls back to world X.
+    /// </summary>
+    private static Dictionary<string, object?> TangentFrame(IReadOnlyList<Point3d> points)
+    {
+        Point3d origin = Centroid(points);
+        Vector3d tangent = Vector3d.XAxis;
+        if (points.Count >= 2)
+        {
+            Vector3d span = points[^1] - points[0];
+            if (span.Length > 1.0e-9)
+                tangent = span;
+        }
+        return FrameAt(origin, tangent);
+    }
+
+    private static Point3d Centroid(IReadOnlyList<Point3d> points)
+    {
+        if (points.Count == 0)
+            return Point3d.Origin;
+        double x = 0.0, y = 0.0, z = 0.0;
+        foreach (Point3d p in points)
+        {
+            x += p.X;
+            y += p.Y;
+            z += p.Z;
+        }
+        return new Point3d(x / points.Count, y / points.Count, z / points.Count);
+    }
+
+    /// <summary>
+    /// One right-handed world-coordinates frame: X the given tangent
+    /// (unitised, falling back to world X when it is degenerate), Z world
+    /// up, Y completing the frame. Tangent parallel to Z (a vertical
+    /// anchor line, geometrically unusual but not refused) falls back to
+    /// world Y as the reference instead of world Z.
+    ///
+    /// UNITIZE AND CROSS PRODUCT ARE DONE BY HAND, deliberately, rather
+    /// than through <c>Vector3d.Unitize()</c>/<c>Vector3d.CrossProduct</c>:
+    /// measured (this harness's own MechanismDocument check), those two
+    /// RhinoCommon members reach into the native <c>rhcommon_c</c> core and
+    /// throw <c>DllNotFoundException</c> outside Rhino, which is exactly
+    /// why <see cref="ColumnsMesh"/>'s own <c>Cross</c> helper already
+    /// reimplements the cross product rather than calling it -- the
+    /// precedent this follows.
+    /// </summary>
+    private static Dictionary<string, object?> FrameAt(Point3d origin, Vector3d tangent)
+    {
+        Vector3d x = Unitized(tangent, Vector3d.XAxis);
+        Vector3d y = Unitized(Cross(Vector3d.ZAxis, x), Vector3d.YAxis);
+        if (y.Length < 1.0e-9)
+            y = Unitized(Cross(Vector3d.YAxis, x), Vector3d.YAxis);
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["origin"] = new[] { origin.X, origin.Y, origin.Z },
+            ["xAxis"] = new[] { x.X, x.Y, x.Z },
+            ["yAxis"] = new[] { y.X, y.Y, y.Z },
+        };
+    }
+
+    /// <summary>
+    /// A vector's own arithmetic normalisation, hand-rolled (see
+    /// <see cref="FrameAt"/>'s own remark on why): the length is a plain
+    /// managed computation, only the RhinoCommon convenience METHODS reach
+    /// into the native core. A vector too short to have a direction falls
+    /// back to <paramref name="fallback"/> rather than dividing by
+    /// (near) zero.
+    /// </summary>
+    private static Vector3d Unitized(Vector3d vector, Vector3d fallback)
+    {
+        double length = vector.Length;
+        if (length < 1.0e-9)
+            return fallback;
+        return new Vector3d(
+            vector.X / length, vector.Y / length, vector.Z / length);
+    }
+
+    private static Vector3d Cross(Vector3d a, Vector3d b) => new(
+        (a.Y * b.Z) - (a.Z * b.Y),
+        (a.Z * b.X) - (a.X * b.Z),
+        (a.X * b.Y) - (a.Y * b.X));
+
+    /// <summary>
+    /// The direction along the principal run a node sits on, at that node:
+    /// the vector to whichever run-neighbour exists (the next node if
+    /// there is one, else the previous one). World X when the node sits on
+    /// no principal run at all, which the caller's frame construction
+    /// treats the same as any other degenerate tangent.
+    /// </summary>
+    private static Vector3d RunTangentAt(
+        List<List<int>> runs, int node, EquilibriumResultDto? eq)
+    {
+        if (eq is null)
+            return Vector3d.XAxis;
+        foreach (List<int> run in runs)
+        {
+            int position = run.IndexOf(node);
+            if (position < 0)
+                continue;
+            int neighbour = position + 1 < run.Count
+                ? run[position + 1]
+                : (position > 0 ? run[position - 1] : -1);
+            if (neighbour < 0)
+                continue;
+            Point3Dto from = eq.Vertices[node];
+            Point3Dto to = eq.Vertices[neighbour];
+            return new Vector3d(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
+        }
+        return Vector3d.XAxis;
     }
 }

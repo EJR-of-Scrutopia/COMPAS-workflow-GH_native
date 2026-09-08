@@ -240,6 +240,12 @@
       "label": "BH",
       "category": "90 System",
       "filename": "backend_health.png"
+    },
+    {
+      "key": "mechanism",
+      "label": "ME",
+      "category": "05 Deliver",
+      "filename": "mechanism.png"
     }
   ]
 }
