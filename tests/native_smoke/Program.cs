@@ -3271,6 +3271,49 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismDocumentRotation(plugin);
+            Console.WriteLine(
+                "PASS  MechanismDocument, rotation invariance (mechanism "
+                + "spec section 8 item 2, \"a rotated model rotates its "
+                + "placements with it\"): the SAME three-vertex fixture "
+                + "ValidateMechanismDocument pins, turned 40 degrees about "
+                + "world Z, gets an edge-reel frame (origin and X tangent) "
+                + "and a node-reel frame (origin and X tangent) that are "
+                + "the ORIGINAL frames rotated by the same 40 degrees, "
+                + "hand-computed off the rotation rather than re-read from "
+                + "the implementation; the wire ids (netVertex, "
+                + "anchorNode) name the same indices either way, since a "
+                + "rotation moves geometry, never topology.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismDocument rotation: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismWireRangeGuard(plugin);
+            Console.WriteLine(
+                "PASS  MechanismDocument, wire-id range guard (mechanism "
+                + "spec section 8 item 3, \"every wire id references a net "
+                + "vertex and an anchor or column node that exists in the "
+                + "frames\"): a HeadNode entry naming net vertex 99 on a "
+                + "3-vertex net is refused, named by field and value "
+                + "(instances.node[].principalNode); a second head whose "
+                + "own columnNode index (1) exceeds the document's OWN "
+                + "declared columnNodeCount (1, from a Nodes list of one) "
+                + "is refused too, cross-checked against that count rather "
+                + "than against Heads' own length -- two distinct ways the "
+                + "guard is proved able to catch a wire id nothing in the "
+                + "frames can resolve.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismDocument range guard: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateLiveUploader(plugin);
             Console.WriteLine(
                 "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
@@ -40936,6 +40979,307 @@ internal static partial class Program
     private static bool Close(double[] a, double[] b) =>
         a.Length == b.Length &&
         a.Zip(b, (x, y) => Math.Abs(x - y)).All(d => d < 1e-9);
+
+    /// <summary>
+    /// ValidateMechanismDocument's own three-vertex fixture, TURNED 40
+    /// degrees about world Z (mechanism spec section 8 item 2). Every node
+    /// in that fixture sits at y=0, so the rotation is just
+    /// (x,y,z) -&gt; (x cos(theta), x sin(theta), z), and the two hand-worked
+    /// expectations below follow directly:
+    ///
+    /// EDGE REEL: row [0,1]'s centroid and its own first-to-last tangent
+    /// were both (1,0,0) unrotated (<see cref="ValidateMechanismDocument"/>);
+    /// rotated, both become (cos(theta), sin(theta), 0). The wire's ids
+    /// (netVertex 2, anchorNode 1) name INDICES, not positions, so they must
+    /// not move at all.
+    ///
+    /// NODE REEL: the origin is the head's plan position at the Mould's OWN
+    /// Ground level, a scalar a Z-axis rotation cannot touch, so it becomes
+    /// (cos(theta), sin(theta), -5). The frame's X axis is the unitised
+    /// principal-run tangent from node 2 to node 1, (cos(theta), sin(theta),
+    /// 1) before unitising -- length sqrt(2) regardless of theta, since the
+    /// rotation only ever mixes the two components whose squares already
+    /// summed to 1.
+    ///
+    /// column.Nodes' own point is left UN-rotated on purpose: nothing in
+    /// MechanismDocument.Json reads its position, only its Count (the
+    /// document's columnNodeCount), so rotating it would prove nothing and
+    /// leaving it fixed is the honest fixture.
+    /// </summary>
+    private static void ValidateMechanismDocumentRotation(Assembly plugin)
+    {
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type equilibriumProblemType = RequireContractType(plugin, "EquilibriumProblemDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        const double AngleDegrees = 40.0;
+        double theta = AngleDegrees * Math.PI / 180.0;
+        double c = Math.Cos(theta);
+        double s = Math.Sin(theta);
+        (double X, double Y, double Z) Rotated(double x, double y, double z) =>
+            ((x * c) - (y * s), (x * s) + (y * c), z);
+
+        (double, double, double) n0 = Rotated(0, 0, 0);
+        (double, double, double) n1 = Rotated(2, 0, 0);
+        (double, double, double) n2 = Rotated(1, 0, -1);
+        object[] nodes =
+        {
+            P(n0.Item1, n0.Item2, n0.Item3),
+            P(n1.Item1, n1.Item2, n1.Item3),
+            P(n2.Item1, n2.Item2, n2.Item3),
+        };
+        Array netEdges = Array.CreateInstance(edgeType, 2);
+        netEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        netEdges.SetValue(Activator.CreateInstance(edgeType, 1, 2), 1);
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces", new[] { 1.0, 1.0 });
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+
+        object analysisTopology = CreateInstance(topologyType);
+        SetContractProperty(analysisTopology, topologyType, "Vertices", Points(nodes));
+        SetContractProperty(
+            analysisTopology,
+            topologyType,
+            "PrincipalRuns",
+            new int[][] { new[] { 1, 2 } });
+        object analysisProblem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(analysisProblem, equilibriumProblemType, "Topology", analysisTopology);
+        SetContractProperty(equilibrium, equilibriumType, "Problem", analysisProblem);
+
+        Array columnNodes = Array.CreateInstance(point, 1);
+        columnNodes.SetValue(P(1, 0, -5), 0);
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes", columnNodes);
+        SetContractProperty(block, columnsType, "Members", Array.CreateInstance(edgeType, 0));
+        SetContractProperty(block, columnsType, "MemberForce", Array.Empty<double>());
+        SetContractProperty(block, columnsType, "Trees", Array.Empty<int[]>());
+        SetContractProperty(block, columnsType, "Heads", new[] { 0 });
+        SetContractProperty(block, columnsType, "Forks", Array.Empty<int>());
+        SetContractProperty(block, columnsType, "Feet", Array.Empty<int>());
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 2 });
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", -5.0);
+        SetContractProperty(mould, mouldType, "Columns", block);
+
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        const string minimalUnit =
+            "{\"body\":{\"vertices\":[],\"faces\":[]},\"spinners\":[]," +
+            "\"sockets\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}";
+        string payload =
+            "{\"unitTypes\":{\"edge\":" + minimalUnit + ",\"node\":" + minimalUnit + "}," +
+            "\"anchorTies\":[]}";
+
+        string document = (string)json.Invoke(
+            null, new object?[] { result, "mechanism rotation fixture", 1.0, payload })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The rotated mechanism document did not parse.");
+
+        JsonNode edgeInstance = root["instances"]!["edge"]!.AsArray()[0]!;
+        double[] edgeOrigin = ReadTriple(edgeInstance["frame"]!["origin"]!.AsArray());
+        double[] edgeX = ReadTriple(edgeInstance["frame"]!["xAxis"]!.AsArray());
+        double[] expectedEdgeVector = { c, s, 0.0 };
+        if (!Close(edgeOrigin, expectedEdgeVector) || !Close(edgeX, expectedEdgeVector))
+        {
+            throw new InvalidOperationException(
+                "A model rotated 40 degrees about world Z must rotate its "
+                + "edge-reel frame with it: expected origin and xAxis both "
+                + string.Join(",", expectedEdgeVector) + "; got origin="
+                + string.Join(",", edgeOrigin) + " xAxis=" + string.Join(",", edgeX));
+        }
+        JsonArray edgeWires = edgeInstance["wires"]!.AsArray();
+        if (edgeWires.Count != 1 ||
+            (int?)edgeWires[0]!["netVertex"] != 2 ||
+            (int?)edgeWires[0]!["anchorNode"] != 1)
+        {
+            throw new InvalidOperationException(
+                "A rotation must not change WHICH indices a wire names, "
+                + "only where their frame sits; got " + edgeWires.ToJsonString());
+        }
+
+        JsonNode nodeInstance = root["instances"]!["node"]!.AsArray()[0]!;
+        double[] nodeOrigin = ReadTriple(nodeInstance["frame"]!["origin"]!.AsArray());
+        double[] expectedNodeOrigin = { c, s, -5.0 };
+        if (!Close(nodeOrigin, expectedNodeOrigin))
+        {
+            throw new InvalidOperationException(
+                "The node reel's frame must rotate with the model, keeping "
+                + "the Mould's OWN Ground level untouched by a Z rotation: "
+                + "expected " + string.Join(",", expectedNodeOrigin) + "; got "
+                + string.Join(",", nodeOrigin));
+        }
+        double[] nodeX = ReadTriple(nodeInstance["frame"]!["xAxis"]!.AsArray());
+        double inverseSqrt2 = 1.0 / Math.Sqrt(2.0);
+        double[] expectedNodeX = { c * inverseSqrt2, s * inverseSqrt2, inverseSqrt2 };
+        if (!Close(nodeX, expectedNodeX))
+        {
+            throw new InvalidOperationException(
+                "The node reel's own tangent (from the rotated principal "
+                + "run) must rotate with the model: expected "
+                + string.Join(",", expectedNodeX) + "; got " + string.Join(",", nodeX));
+        }
+    }
+
+    /// <summary>
+    /// MechanismDocument.Json's own guard against a wire id nothing in the
+    /// frames can resolve (mechanism spec section 8 item 3): two distinct
+    /// ways to break it, on the same three-vertex fixture
+    /// <see cref="ValidateMechanismDocument"/> pins, proved separately so a
+    /// fix to one cannot silently leave the other unguarded.
+    ///
+    /// CASE A: HeadNode names net vertex 99, past a vertexCount of 3.
+    /// CASE B: a second head shares no new column-node slot -- Heads carries
+    /// two entries while Nodes (and so columnNodeCount) carries only one --
+    /// so the second head's OWN columnNode index (1, its position in Heads)
+    /// falls outside a columnNodeCount of 1. This is the "cross-checked by
+    /// count" half of the check: the guard must compare against the
+    /// document's OWN declared columnNodeCount, not against Heads' own
+    /// length, or a mismatched columns block would pass silently.
+    /// </summary>
+    private static void ValidateMechanismWireRangeGuard(Assembly plugin)
+    {
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type equilibriumProblemType = RequireContractType(plugin, "EquilibriumProblemDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        string RunFixture(int[] headNode, int[] heads, int columnNodeCount)
+        {
+            object[] nodes = { P(0, 0, 0), P(2, 0, 0), P(1, 0, -1) };
+            Array netEdges = Array.CreateInstance(edgeType, 2);
+            netEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+            netEdges.SetValue(Activator.CreateInstance(edgeType, 1, 2), 1);
+
+            object equilibrium = CreateInstance(equilibriumType);
+            SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+            SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+            SetContractProperty(
+                equilibrium, equilibriumType, "MemberForces", new[] { 1.0, 1.0 });
+            SetContractProperty(
+                equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+
+            object analysisTopology = CreateInstance(topologyType);
+            SetContractProperty(analysisTopology, topologyType, "Vertices", Points(nodes));
+            SetContractProperty(
+                analysisTopology,
+                topologyType,
+                "PrincipalRuns",
+                new int[][] { new[] { 1, 2 } });
+            object analysisProblem = CreateInstance(equilibriumProblemType);
+            SetContractProperty(analysisProblem, equilibriumProblemType, "Topology", analysisTopology);
+            SetContractProperty(equilibrium, equilibriumType, "Problem", analysisProblem);
+
+            Array columnNodes = Array.CreateInstance(point, columnNodeCount);
+            for (int i = 0; i < columnNodeCount; i++)
+                columnNodes.SetValue(P(1, 0, -5), i);
+            object block = CreateInstance(columnsType);
+            SetContractProperty(block, columnsType, "Nodes", columnNodes);
+            SetContractProperty(block, columnsType, "Members", Array.CreateInstance(edgeType, 0));
+            SetContractProperty(block, columnsType, "MemberForce", Array.Empty<double>());
+            SetContractProperty(block, columnsType, "Trees", Array.Empty<int[]>());
+            SetContractProperty(block, columnsType, "Heads", heads);
+            SetContractProperty(block, columnsType, "Forks", Array.Empty<int>());
+            SetContractProperty(block, columnsType, "Feet", Array.Empty<int>());
+            SetContractProperty(block, columnsType, "HeadNode", headNode);
+            object mould = CreateInstance(mouldType);
+            SetContractProperty(mould, mouldType, "Ground", -5.0);
+            SetContractProperty(mould, mouldType, "Columns", block);
+
+            object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+            SetContractProperty(result, resultType, "Mould", mould);
+
+            const string minimalUnit =
+                "{\"body\":{\"vertices\":[],\"faces\":[]},\"spinners\":[]," +
+                "\"sockets\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}";
+            string payload = "{\"unitTypes\":{\"node\":" + minimalUnit + "},\"anchorTies\":[]}";
+
+            return (string)json.Invoke(
+                null, new object?[] { result, "mechanism range-guard fixture", 1.0, payload })!;
+        }
+
+        try
+        {
+            RunFixture(headNode: new[] { 99 }, heads: new[] { 0 }, columnNodeCount: 1);
+            throw new InvalidOperationException(
+                "A HeadNode entry naming net vertex 99 on a 3-vertex net "
+                + "must be refused; MechanismDocument.Json wrote a document "
+                + "instead.");
+        }
+        catch (TargetInvocationException wrapped)
+        {
+            if (wrapped.InnerException is not InvalidOperationException inner ||
+                !inner.Message.Contains("principalNode", StringComparison.Ordinal) ||
+                !inner.Message.Contains("99", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Case A must refuse with a message naming "
+                    + "'principalNode' and the bad value 99; got "
+                    + $"{DescribeException(wrapped.InnerException ?? wrapped)}.");
+            }
+        }
+
+        try
+        {
+            RunFixture(headNode: new[] { 2, 2 }, heads: new[] { 0, 1 }, columnNodeCount: 1);
+            throw new InvalidOperationException(
+                "A second head whose own columnNode index (1) exceeds a "
+                + "columnNodeCount of 1 must be refused; "
+                + "MechanismDocument.Json wrote a document instead.");
+        }
+        catch (TargetInvocationException wrapped)
+        {
+            if (wrapped.InnerException is not InvalidOperationException inner ||
+                !inner.Message.Contains("columnNode", StringComparison.Ordinal) ||
+                !inner.Message.Contains("net/column set of 1", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Case B must refuse with a message naming 'columnNode' "
+                    + "cross-checked against 'net/column set of 1'; got "
+                    + $"{DescribeException(wrapped.InnerException ?? wrapped)}.");
+            }
+        }
+    }
 
     private static void ValidateLiveUploader(Assembly plugin)
     {
