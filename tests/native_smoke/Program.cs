@@ -3277,6 +3277,31 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismRouteOwnership(plugin);
+            Console.WriteLine(
+                "PASS  MechanismCollector routing frame ownership (his "
+                + "wrapped-wire ruling, 2026-09-08: \"i have modelled the "
+                + "wire to wrap around the drums\"): a frame within a "
+                + "reel's own radial neighbourhood of its axis is owned "
+                + "by that reel; a frame away from every reel is owned "
+                + "by the body; a frame's own origin, xAxis and yAxis are "
+                + "BYTE-IDENTICAL to what was authored whichever owner it "
+                + "gets; a frame close to a reel's own radius boundary, "
+                + "or near two reels' axes at once, is NAMED as "
+                + "AMBIGUOUS with its numbers rather than picked "
+                + "silently; the chin's own per-mechanism tally of body "
+                + "and reel counts matches the assignment exactly; and "
+                + "the owner fields survive MechanismDocument.Json's own "
+                + "re-parse and rebuild of the route into the final "
+                + "document, unchanged.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismRouteOwnership: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41250,6 +41275,361 @@ internal static partial class Program
                 "Nothing wired must produce null and no warning noise; "
                 + $"got payload={nothing}, warnings={emptyWarnings.Count}, "
                 + $"notes={emptyNotes.Count}.");
+        }
+    }
+
+    /// <summary>
+    /// ROUTING FRAME OWNERSHIP (task: Param has modelled the wire wrapping
+    /// the drums -- "it is option 2. i have modelled the wire to wrap
+    /// around the drums" -- so a routing frame sitting on a rotating reel
+    /// must be told apart from one on the fixed body, or the studio holds
+    /// it fixed while the reel spins under it, reading as slipping rather
+    /// than reeling).
+    ///
+    /// ONE mechanism, FOUR reels, two of them doing real geometric work:
+    /// reel 0's axis is the world Z line through the origin, its own mesh
+    /// vertices 2 units out, so its radial extent is 2; reel 1's axis is
+    /// the vertical line through (3, 0, 0), its own mesh also 2 units out
+    /// (radial extent 2 as well, chosen so reel 0 and reel 1's own
+    /// neighbourhoods overlap between x=1 and x=5); reels 2 and 3 sit far
+    /// off at (1000, 1000, 0) and never come into play, present only so
+    /// the fixture is his real four-reels-per-mechanism shape.
+    ///
+    /// FOUR routing frames on ONE wire, each proving a different corner of
+    /// the rule:
+    ///   [0] (0.1, 0, 5): a hair off reel 0's own axis, ratio 0.05 --
+    ///       clearly OWNED BY REEL 0, no warning.
+    ///   [1] (50, 50, 50): nowhere near any reel (every ratio &gt;&gt; 1) --
+    ///       clearly OWNED BY THE BODY, no warning.
+    ///   [2] (-2.1, 0, 5): distance 2.1 against reel 0's own radius 2,
+    ///       ratio 1.05 -- just OUTSIDE reel 0's neighbourhood, so owned
+    ///       by the body, but close enough to the 1.0 boundary that it
+    ///       must be NAMED rather than trusted silently. The NEGATIVE
+    ///       side is used deliberately: +2.1 sits only 0.9 from reel 1's
+    ///       own axis (ratio 0.45), which would make reel 1 the winner
+    ///       outright rather than testing reel 0's own boundary alone.
+    ///   [3] (1.5, 0, 5): distance 1.5 to BOTH reel 0's and reel 1's own
+    ///       axis lines, ratio 0.75 against both radii -- inside both
+    ///       neighbourhoods at once, so it is NAMED (near two reels'
+    ///       axes) even though it still resolves to reel 0 (first found
+    ///       on an exact tie).
+    ///
+    /// Proves, each independently: a frame on a reel's own neighbourhood
+    /// is owned by that reel; a frame away from every reel is owned by
+    /// the body; a frame's own origin/xAxis/yAxis are BYTE-IDENTICAL in
+    /// the output to what was authored, whichever owner it got (ownership
+    /// never moves a position); the boundary-close and near-two-reels
+    /// cases are both NAMED with their numbers, never silently resolved;
+    /// and the chin's own per-mechanism tally (body 2, reel 0 2, reel 1
+    /// 0, reel 2 0, reel 3 0) matches the assignment exactly.
+    /// </summary>
+    private static void ValidateMechanismRouteOwnership(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type meshBranchType = RequireComponentType(plugin, "MechanismMeshBranch");
+        Type axisBranchType = RequireComponentType(plugin, "MechanismAxisBranch");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        Type instanceType = RequireComponentType(plugin, "MechanismInstanceInput");
+        Type wireType = RequireComponentType(plugin, "MechanismWireInput");
+        Type rowPartType = RequireComponentType(plugin, "MechanismRowPartInput");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "Build");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(frameType, origin, x, y)!;
+        object IdentityAxis() => FrameOf(
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object MeshBranch(IReadOnlyList<int> path, object meshes, object fromBrep) =>
+            Activator.CreateInstance(meshBranchType, path, meshes, fromBrep)!;
+        object AxisBranch(IReadOnlyList<int> path, object axes) =>
+            Activator.CreateInstance(axisBranchType, path, axes)!;
+        object EmptyRowParts() => MechanismListOf(rowPartType);
+        object FourNotBrep() => MechanismListOf(typeof(bool), false, false, false, false);
+
+        object bodyMesh = Mesh(new[] { new double[] { 0, 0, 0 }, new double[] { 1, 1, 1 } });
+        object bodyAsset = Activator.CreateInstance(assetType, bodyMesh, false)!;
+
+        // Reel 0: axis the world Z line through the origin; own mesh
+        // vertices 2 units out on X and Y -- radial extent 2.
+        object reel0Axis = FrameOf(
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object reel0Mesh = Mesh(new[]
+        {
+            new double[] { 2, 0, 0 }, new double[] { -2, 0, 0 },
+            new double[] { 0, 2, 0 }, new double[] { 0, -2, 0 },
+        });
+
+        // Reel 1: axis the vertical line through (3, 0, 0); own mesh
+        // vertices 2 units out from THAT line -- radial extent 2, chosen
+        // so reel 0's and reel 1's own neighbourhoods overlap.
+        object reel1Axis = FrameOf(
+            new[] { 3.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object reel1Mesh = Mesh(new[]
+        {
+            new double[] { 5, 0, 0 }, new double[] { 1, 0, 0 },
+            new double[] { 3, 2, 0 }, new double[] { 3, -2, 0 },
+        });
+
+        // Reels 2 and 3: far off, never in play -- present only so the
+        // fixture carries his real four-reels-per-mechanism shape.
+        object reel23Axis = FrameOf(
+            new[] { 1000.0, 1000.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object reel23Mesh = Mesh(new[]
+        {
+            new double[] { 1001, 1000, 0 }, new double[] { 999, 1000, 0 },
+            new double[] { 1000, 1001, 0 }, new double[] { 1000, 999, 0 },
+        });
+
+        object meshBranches = MechanismListOf(
+            meshBranchType,
+            MeshBranch(
+                new List<int> { 0, 0 },
+                MechanismListOf(meshType, reel0Mesh, reel1Mesh, reel23Mesh, reel23Mesh),
+                FourNotBrep()));
+        object axisBranches = MechanismListOf(
+            axisBranchType,
+            AxisBranch(
+                new List<int> { 0, 0 },
+                MechanismListOf(frameType, reel0Axis, reel1Axis, reel23Axis, reel23Axis)));
+
+        object instance = Activator.CreateInstance(
+            instanceType,
+            Activator.CreateInstance(instanceIdType, 0, 0)!,
+            IdentityAxis(),
+            (object?)"mechanism")!;
+        object instances = MechanismListOf(instanceType, instance);
+
+        double[] frame0Origin = { 0.1, 0.0, 5.0 };
+        double[] frame1Origin = { 50.0, 50.0, 50.0 };
+        // -2.1, not +2.1: the positive side sits only 0.9 from reel 1's
+        // own axis (x=3), which would make reel 1 the nearer reel by a
+        // wide margin (ratio 0.45) rather than testing reel 0's own
+        // boundary in isolation. The negative side is 5.1 from reel 1's
+        // axis (ratio 2.55, nowhere near ambiguous), so only reel 0's own
+        // 1.0 boundary is under test here.
+        double[] frame2Origin = { -2.1, 0.0, 5.0 };
+        double[] frame3Origin = { 1.5, 0.0, 5.0 };
+        double[] routeX = { 1.0, 0.0, 0.0 };
+        double[] routeY = { 0.0, 1.0, 0.0 };
+        object routeFrames = MechanismListOf(
+            frameType,
+            FrameOf(frame0Origin, routeX, routeY),
+            FrameOf(frame1Origin, routeX, routeY),
+            FrameOf(frame2Origin, routeX, routeY),
+            FrameOf(frame3Origin, routeX, routeY));
+        object wire = Activator.CreateInstance(
+            wireType,
+            Activator.CreateInstance(instanceIdType, 0, 0)!,
+            0,
+            routeFrames)!;
+        object wires = MechanismListOf(wireType, wire);
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null,
+            new object?[]
+            {
+                bodyAsset, meshBranches, axisBranches,
+                instances, wires, EmptyRowParts(), EmptyRowParts(), null,
+                warnings, notes,
+            });
+        if (payload is not string json)
+            throw new InvalidOperationException("A valid mechanism with reels and one wire must produce a payload.");
+
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement wiresOut = doc.RootElement.GetProperty("wires");
+        if (wiresOut.GetArrayLength() != 1)
+            throw new InvalidOperationException("Exactly one wire must be produced; got " + json);
+        JsonElement route = wiresOut[0].GetProperty("route");
+        if (route.GetArrayLength() != 4)
+            throw new InvalidOperationException("The wire's route must carry all four authored frames; got " + json);
+
+        void AssertPositionUnchanged(JsonElement frame, double[] origin, int index)
+        {
+            double[] gotOrigin = frame.GetProperty("origin").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] gotX = frame.GetProperty("xAxis").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] gotY = frame.GetProperty("yAxis").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            if (!gotOrigin.SequenceEqual(origin) || !gotX.SequenceEqual(routeX) || !gotY.SequenceEqual(routeY))
+            {
+                throw new InvalidOperationException(
+                    $"frame [{index}]'s own origin/xAxis/yAxis must be BYTE-IDENTICAL " +
+                    "to what was authored regardless of its owner; got origin=[" +
+                    string.Join(",", gotOrigin) + "].");
+            }
+        }
+
+        JsonElement f0 = route[0];
+        JsonElement f1 = route[1];
+        JsonElement f2 = route[2];
+        JsonElement f3 = route[3];
+        AssertPositionUnchanged(f0, frame0Origin, 0);
+        AssertPositionUnchanged(f1, frame1Origin, 1);
+        AssertPositionUnchanged(f2, frame2Origin, 2);
+        AssertPositionUnchanged(f3, frame3Origin, 3);
+
+        if (f0.GetProperty("owner").GetString() != "reel" || f0.GetProperty("ownerReel").GetInt32() != 0)
+        {
+            throw new InvalidOperationException(
+                "frame [0] sits on reel 0's own axis neighbourhood and must be " +
+                $"owned by reel 0; got owner={f0.GetProperty("owner")}, " +
+                $"ownerReel={f0.GetProperty("ownerReel")}.");
+        }
+        if (f1.GetProperty("owner").GetString() != "body" || f1.GetProperty("ownerReel").GetInt32() != -1)
+        {
+            throw new InvalidOperationException(
+                "frame [1] sits away from every reel and must be owned by the " +
+                $"body (ownerReel -1); got owner={f1.GetProperty("owner")}, " +
+                $"ownerReel={f1.GetProperty("ownerReel")}.");
+        }
+        if (f2.GetProperty("owner").GetString() != "body" || f2.GetProperty("ownerReel").GetInt32() != -1)
+        {
+            throw new InvalidOperationException(
+                "frame [2] sits just outside reel 0's own radius (ratio 1.05) " +
+                "and must be owned by the body; got owner=" +
+                $"{f2.GetProperty("owner")}, ownerReel={f2.GetProperty("ownerReel")}.");
+        }
+        if (f3.GetProperty("owner").GetString() != "reel" || f3.GetProperty("ownerReel").GetInt32() != 0)
+        {
+            throw new InvalidOperationException(
+                "frame [3] sits inside both reel 0's and reel 1's own " +
+                "neighbourhoods and must still resolve to ONE owner (reel 0, " +
+                $"first found on the tie); got owner={f3.GetProperty("owner")}, " +
+                $"ownerReel={f3.GetProperty("ownerReel")}.");
+        }
+
+        // THE AMBIGUOUS CASES ARE NAMED, NEVER SILENT: frame [2] close to
+        // reel 0's own boundary, frame [3] close to both reel 0's and
+        // reel 1's own neighbourhoods at once.
+        bool boundaryNamed = warnings.Any(w =>
+            w.Contains("frame [2]", StringComparison.Ordinal) &&
+            w.Contains("AMBIGUOUS", StringComparison.Ordinal) &&
+            w.Contains("reel 0", StringComparison.Ordinal));
+        if (!boundaryNamed)
+        {
+            throw new InvalidOperationException(
+                "frame [2]'s ownership sits close to reel 0's own radius " +
+                "boundary and must be named AMBIGUOUS; warnings were: " +
+                string.Join(" | ", warnings));
+        }
+        bool twoReelsNamed = warnings.Any(w =>
+            w.Contains("frame [3]", StringComparison.Ordinal) &&
+            w.Contains("AMBIGUOUS", StringComparison.Ordinal) &&
+            w.Contains("reel 0", StringComparison.Ordinal) &&
+            w.Contains("reel 1", StringComparison.Ordinal));
+        if (!twoReelsNamed)
+        {
+            throw new InvalidOperationException(
+                "frame [3]'s ownership sits near BOTH reel 0's and reel 1's " +
+                "own neighbourhoods and must be named AMBIGUOUS, naming both; " +
+                "warnings were: " + string.Join(" | ", warnings));
+        }
+        bool falsePositive = warnings.Any(w =>
+            w.Contains("frame [0]", StringComparison.Ordinal) &&
+            w.Contains("AMBIGUOUS", StringComparison.Ordinal));
+        if (falsePositive)
+        {
+            throw new InvalidOperationException(
+                "frame [0] is a clean, unambiguous reel-0 assignment and must " +
+                "NOT be named ambiguous; warnings were: " + string.Join(" | ", warnings));
+        }
+
+        // THE CHIN'S OWN PER-MECHANISM TALLY (task requirement 3): body 2
+        // (frames [1] and [2]), reel 0 2 (frames [0] and [3]), reels 1-3
+        // zero -- said so he can check the derivation in one glance.
+        bool tallyNamed = notes.Any(n =>
+            n.Contains("side 0 mechanism 0", StringComparison.Ordinal) &&
+            n.Contains("routing frame ownership", StringComparison.Ordinal) &&
+            n.Contains("body 2", StringComparison.Ordinal) &&
+            n.Contains("reel 0 2", StringComparison.Ordinal) &&
+            n.Contains("reel 1 0", StringComparison.Ordinal) &&
+            n.Contains("reel 2 0", StringComparison.Ordinal) &&
+            n.Contains("reel 3 0", StringComparison.Ordinal));
+        if (!tallyNamed)
+        {
+            throw new InvalidOperationException(
+                "The chin must report the per-mechanism ownership tally " +
+                "(body 2, reel 0 2, reel 1/2/3 0); notes were: " +
+                string.Join(" | ", notes));
+        }
+
+        // OWNERSHIP MUST SURVIVE THE FINAL DOCUMENT, not only the
+        // collector's own intermediate payload: MechanismDocument.Json
+        // re-parses "wires[].route[]" and rebuilds it (it needs each
+        // frame's own Origin for the R2 distance check), so this is the
+        // one place a careless rebuild would silently drop the owner
+        // fields the collector just worked out. A minimal two-node
+        // Result (anchors 0 and 1, row [0, 1]) is enough to carry the
+        // wire through net-vertex matching without being dropped.
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo documentJson = RequirePublicStatic(documentType, "Json");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object[] anchorNodes = { P(0, 0, 0), P(2, 0, 0) };
+        Array anchorEdges = Array.CreateInstance(edgeType, 1);
+        anchorEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(anchorNodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", anchorEdges);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces", new[] { 1.0 });
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+        object twoNodeResult = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        var documentWarnings = new List<string>();
+        var documentNotes = new List<string>();
+        string document = (string)documentJson.Invoke(
+            null,
+            new object?[] { twoNodeResult, "ownership fixture", 1.0, json, documentWarnings, documentNotes })!;
+        using JsonDocument finalDoc = JsonDocument.Parse(document);
+        JsonElement finalWires = finalDoc.RootElement.GetProperty("wires");
+        if (finalWires.GetArrayLength() != 1)
+        {
+            throw new InvalidOperationException(
+                "The one authored wire must survive net-vertex matching " +
+                "and reach the final document; got " + document);
+        }
+        JsonElement finalRoute = finalWires[0].GetProperty("route");
+        if (finalRoute.GetArrayLength() != 4)
+        {
+            throw new InvalidOperationException(
+                "The final document's route must still carry all four " +
+                "frames; got " + document);
+        }
+        AssertPositionUnchanged(finalRoute[0], frame0Origin, 0);
+        AssertPositionUnchanged(finalRoute[1], frame1Origin, 1);
+        AssertPositionUnchanged(finalRoute[2], frame2Origin, 2);
+        AssertPositionUnchanged(finalRoute[3], frame3Origin, 3);
+        bool ownershipSurvived =
+            finalRoute[0].GetProperty("owner").GetString() == "reel" &&
+            finalRoute[0].GetProperty("ownerReel").GetInt32() == 0 &&
+            finalRoute[1].GetProperty("owner").GetString() == "body" &&
+            finalRoute[1].GetProperty("ownerReel").GetInt32() == -1 &&
+            finalRoute[2].GetProperty("owner").GetString() == "body" &&
+            finalRoute[2].GetProperty("ownerReel").GetInt32() == -1 &&
+            finalRoute[3].GetProperty("owner").GetString() == "reel" &&
+            finalRoute[3].GetProperty("ownerReel").GetInt32() == 0;
+        if (!ownershipSurvived)
+        {
+            throw new InvalidOperationException(
+                "Ownership must survive MechanismDocument.Json's own " +
+                "re-parse and rebuild of the route, unchanged from the " +
+                "collector's own classification; got " + document);
         }
     }
 

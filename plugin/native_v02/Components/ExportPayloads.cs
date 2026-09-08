@@ -870,7 +870,8 @@ internal static class MechanismDocument
         int vertexCount = eq?.Vertices.Count ?? 0;
         int columnNodeCount = result.Mould?.Columns?.Nodes.Count ?? 0;
 
-        var wireEntries = new List<(int Side, int Mechanism, int Wire, List<MechanismFrame> Route)>();
+        var wireEntries = new List<(int Side, int Mechanism, int Wire,
+            List<(MechanismFrame Frame, string Owner, int OwnerReel)> Route)>();
         if (wiresIn.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement w in wiresIn.EnumerateArray())
@@ -878,9 +879,30 @@ internal static class MechanismDocument
                 int side = w.GetProperty("side").GetInt32();
                 int mechanism = w.GetProperty("mechanism").GetInt32();
                 int wireIndex = w.GetProperty("wire").GetInt32();
-                var route = new List<MechanismFrame>();
+                var route = new List<(MechanismFrame Frame, string Owner, int OwnerReel)>();
                 foreach (JsonElement p in w.GetProperty("route").EnumerateArray())
-                    route.Add(ReadFrame(p));
+                {
+                    // OWNERSHIP CARRIED THROUGH, NEVER RECOMPUTED: the
+                    // collector is the one place holding the reel
+                    // geometry this classification needs (his
+                    // wrapped-wire ruling, 2026-09-08), so this document
+                    // only reads what it already decided. A missing field
+                    // (an older payload, or a fixture with no reels
+                    // wired) falls back to the body, the same default
+                    // the classification itself returns when no reel
+                    // claims a frame.
+                    string owner =
+                        p.TryGetProperty(MechanismCollector.RouteOwnerField, out JsonElement ownerEl) &&
+                        ownerEl.ValueKind == JsonValueKind.String
+                            ? ownerEl.GetString() ?? MechanismCollector.RouteOwnerBody
+                            : MechanismCollector.RouteOwnerBody;
+                    int ownerReel =
+                        p.TryGetProperty(MechanismCollector.RouteOwnerReelField, out JsonElement reelEl) &&
+                        reelEl.ValueKind == JsonValueKind.Number
+                            ? reelEl.GetInt32()
+                            : MechanismCollector.NoOwnerReel;
+                    route.Add((ReadFrame(p), owner, ownerReel));
+                }
                 wireEntries.Add((side, mechanism, wireIndex, route));
             }
         }
@@ -1039,7 +1061,8 @@ internal static class MechanismDocument
         var wiresOut = new List<Dictionary<string, object?>>();
         for (int i = 0; i < wireEntries.Count; i++)
         {
-            (int side, int mechanism, int wireIndex, List<MechanismFrame> route) = wireEntries[i];
+            (int side, int mechanism, int wireIndex,
+                List<(MechanismFrame Frame, string Owner, int OwnerReel)> route) = wireEntries[i];
             if (i >= anchorFlat.Count)
             {
                 warnings.Add(
@@ -1071,7 +1094,7 @@ internal static class MechanismDocument
             {
                 Point3Dto netPoint = eq.Vertices[netVertex];
                 double[] netWorld = { netPoint.X, netPoint.Y, netPoint.Z };
-                double[] firstWorld = TransformLocal(route[0].Origin, instanceFrame);
+                double[] firstWorld = TransformLocal(route[0].Frame.Origin, instanceFrame);
                 double distFirst = MechanismCollector.Distance(firstWorld, netWorld);
                 notes.Add(
                     $"wire {id}: matched net_vertex {netVertex}, first " +
@@ -1109,7 +1132,7 @@ internal static class MechanismDocument
                 }
                 if (route.Count > 1)
                 {
-                    double[] lastWorld = TransformLocal(route[^1].Origin, instanceFrame);
+                    double[] lastWorld = TransformLocal(route[^1].Frame.Origin, instanceFrame);
                     double distLast = MechanismCollector.Distance(lastWorld, netWorld);
                     if (distLast < distFirst)
                     {
@@ -1152,7 +1175,14 @@ internal static class MechanismDocument
                 // each frame and loft"): the ordered local routing planes,
                 // carried through unchanged so the studio builds the
                 // identical tube this component's own Rhino preview would.
-                ["route"] = route.Select(MechanismCollector.FramePayload).ToList(),
+                // THE ROUTE ITSELF, WITH ITS OWNER (his wrapped-wire
+                // ruling, 2026-09-08): carried straight through from the
+                // collector's own classification, never recomputed here,
+                // so the studio knows which frames to hold fixed in the
+                // instance and which to rotate with a spinner.
+                ["route"] = route
+                    .Select(r => MechanismCollector.RouteFramePayload(r.Frame, r.Owner, r.OwnerReel))
+                    .ToList(),
                 // A wire is the machine reeling, not the works that remain
                 // (Param's ruling; the field and its two values are
                 // declared once, on MechanismCollector, and read here

@@ -197,6 +197,45 @@ internal static class MechanismCollector
     public const double SpoolRadiusDisagreementFactor = 0.05;
 
     /// <summary>
+    /// ROUTING FRAME OWNERSHIP, his ruling confirmed 2026-09-08: "it is
+    /// option 2. i have modelled the wire to wrap around the drums." A
+    /// routing frame that sits on a rotating reel is no longer fixed
+    /// hardware -- treating it as fixed while the reel spins reads as the
+    /// wire slipping under a still drum, backwards from the reeling he
+    /// built. Field names follow <see cref="PermanenceField"/>'s own
+    /// convention: a declared word, not a boolean the reader has to
+    /// remember the sense of.
+    /// </summary>
+    public const string RouteOwnerField = "owner";
+
+    public const string RouteOwnerReelField = "ownerReel";
+
+    public const string RouteOwnerBody = "body";
+
+    public const string RouteOwnerReel = "reel";
+
+    /// <summary>
+    /// No reel owns this frame: the sentinel <c>ownerReel</c> carries when
+    /// <c>owner</c> is <see cref="RouteOwnerBody"/>, the same "no index"
+    /// convention a tree with no notch already uses elsewhere in this
+    /// plugin (ColumnPlacement's own <c>footIndex[t] == -1</c>).
+    /// </summary>
+    public const int NoOwnerReel = -1;
+
+    public const double MinimumReelExtentRadius = 1.0e-6;
+
+    /// <summary>
+    /// How close a frame's own distance-to-axis, relative to that reel's
+    /// own radius, may sit to the 1.0 ownership boundary -- or how close a
+    /// SECOND reel's own ratio may also sit at or under it -- before the
+    /// classification is NAMED rather than trusted silently. His other
+    /// binding instruction (positions are used verbatim, never snapped or
+    /// tidied) applies just as much to a judgement call this close to the
+    /// line: it is reported, not quietly resolved.
+    /// </summary>
+    public const double RouteOwnerAmbiguityMargin = 0.15;
+
+    /// <summary>
     /// The note said whenever a mesh-or-brep port meshed a Brep itself
     /// rather than being handed an authored mesh: he cannot see the
     /// settings once it is meshed, so the settings are named here (spec's
@@ -439,7 +478,14 @@ internal static class MechanismCollector
                 "no instances are produced.");
         }
 
+        // ROUTING FRAME OWNERSHIP (his wrapped-wire ruling, confirmed
+        // 2026-09-08 -- "it is option 2. i have modelled the wire to wrap
+        // around the drums"): every routing frame is classified against
+        // ITS OWN instance's resolved reels (ClassifyRouteFrameOwner
+        // below) before it is written out, and tallied per mechanism so
+        // the chin can report the count without opening the document.
         var wiresOut = new List<Dictionary<string, object?>>();
+        var ownerCounts = new Dictionary<MechanismInstanceId, Dictionary<string, int>>();
         foreach (MechanismWireInput wire in wires
             .OrderBy(w => w.Instance.Side)
             .ThenBy(w => w.Instance.Mechanism)
@@ -453,13 +499,65 @@ internal static class MechanismCollector
                     "wire dropped.");
                 continue;
             }
+
+            resolvedReels.TryGetValue(wire.Instance, out List<MechanismReelEntry>? instanceReels);
+            List<MechanismReelEntry> reelsForOwnership = instanceReels ?? new List<MechanismReelEntry>();
+
+            if (!ownerCounts.TryGetValue(wire.Instance, out Dictionary<string, int>? counts))
+            {
+                counts = new Dictionary<string, int>(StringComparer.Ordinal) { [RouteOwnerBody] = 0 };
+                for (int r = 0; r < reelsForOwnership.Count; r++)
+                    counts[$"reel {r}"] = 0;
+                ownerCounts[wire.Instance] = counts;
+            }
+
+            var routeOut = new List<Dictionary<string, object?>>(wire.Route.Count);
+            for (int frameIndex = 0; frameIndex < wire.Route.Count; frameIndex++)
+            {
+                MechanismFrame routeFrame = wire.Route[frameIndex];
+                (string owner, int ownerReel, string? ambiguity) =
+                    ClassifyRouteFrameOwner(routeFrame, reelsForOwnership);
+
+                string countKey = owner == RouteOwnerReel ? $"reel {ownerReel}" : RouteOwnerBody;
+                counts[countKey] = counts.GetValueOrDefault(countKey) + 1;
+
+                if (ambiguity is not null)
+                {
+                    warnings.Add(
+                        $"Routing (RT)[{wire.Instance.Side}][{wire.Instance.Mechanism}]" +
+                        $"[{wire.Wire}] frame [{frameIndex}]: ownership is " +
+                        $"AMBIGUOUS ({ambiguity}); assigned " +
+                        (owner == RouteOwnerReel ? $"reel {ownerReel}" : "the body") +
+                        " as the nearest, never picked silently -- look at it.");
+                }
+
+                routeOut.Add(RouteFramePayload(routeFrame, owner, ownerReel));
+            }
+
             wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["side"] = wire.Instance.Side,
                 ["mechanism"] = wire.Instance.Mechanism,
                 ["wire"] = wire.Wire,
-                ["route"] = wire.Route.Select(FramePayload).ToList(),
+                ["route"] = routeOut,
             });
+        }
+
+        // THE CHIN'S OWN COUNTS (task requirement: how the derivation
+        // matched what he modelled, per mechanism, in one glance): how
+        // many routing frames landed on each reel and how many on the
+        // body.
+        foreach (KeyValuePair<MechanismInstanceId, Dictionary<string, int>> mechanismCounts in
+            ownerCounts.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
+        {
+            string tally = string.Join(
+                ", ",
+                mechanismCounts.Value
+                    .OrderBy(p => p.Key, StringComparer.Ordinal)
+                    .Select(p => $"{p.Key} {p.Value}"));
+            notes.Add(
+                $"mechanism {mechanismCounts.Key.Label}: routing frame " +
+                $"ownership -- {tally}.");
         }
 
         List<Dictionary<string, object?>> anchorsOut =
@@ -746,6 +844,23 @@ internal static class MechanismCollector
         };
 
     /// <summary>
+    /// A routing frame with its OWNER stamped alongside -- the static
+    /// body, or the reel it rides. Built on <see cref="FramePayload"/>, so
+    /// the frame's own origin and axes are byte-identical to a plain
+    /// routing/axis/placement frame; <see cref="RouteOwnerField"/> and
+    /// <see cref="RouteOwnerReelField"/> are the only addition, and
+    /// nothing here ever touches Origin/XAxis/YAxis.
+    /// </summary>
+    internal static Dictionary<string, object?> RouteFramePayload(
+        MechanismFrame frame, string owner, int ownerReel)
+    {
+        Dictionary<string, object?> payload = FramePayload(frame);
+        payload[RouteOwnerField] = owner;
+        payload[RouteOwnerReelField] = ownerReel;
+        return payload;
+    }
+
+    /// <summary>
     /// The smallest of the three world-axis extents of a mesh's own
     /// vertices: the spool-radius default's source. Zero for an empty
     /// mesh, which the caller floors at <see cref="MinimumSpoolRadius"/>
@@ -801,6 +916,186 @@ internal static class MechanismCollector
         double dy = a[1] - b[1];
         double dz = a[2] - b[2];
         return Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
+    }
+
+    /// <summary>
+    /// The perpendicular distance from a point to a line given as an
+    /// origin plus a UNIT direction: plain arithmetic, Rhino-free, the
+    /// same reasoning as <c>MechanismDocument.TransformLocal</c>'s own
+    /// hand-rolled cross product -- RhinoCommon's native convenience
+    /// members throw outside Rhino, so small vector math is reimplemented
+    /// per boundary rather than depended on.
+    /// </summary>
+    internal static double PerpendicularDistanceToLine(
+        double[] point, double[] lineOrigin, double[] lineDirectionUnit)
+    {
+        double[] toPoint =
+        {
+            point[0] - lineOrigin[0],
+            point[1] - lineOrigin[1],
+            point[2] - lineOrigin[2],
+        };
+        double along =
+            (toPoint[0] * lineDirectionUnit[0]) +
+            (toPoint[1] * lineDirectionUnit[1]) +
+            (toPoint[2] * lineDirectionUnit[2]);
+        double[] perpendicular =
+        {
+            toPoint[0] - (along * lineDirectionUnit[0]),
+            toPoint[1] - (along * lineDirectionUnit[1]),
+            toPoint[2] - (along * lineDirectionUnit[2]),
+        };
+        return Math.Sqrt(
+            (perpendicular[0] * perpendicular[0]) +
+            (perpendicular[1] * perpendicular[1]) +
+            (perpendicular[2] * perpendicular[2]));
+    }
+
+    internal static double[] CrossProduct(double[] a, double[] b) => new[]
+    {
+        (a[1] * b[2]) - (a[2] * b[1]),
+        (a[2] * b[0]) - (a[0] * b[2]),
+        (a[0] * b[1]) - (a[1] * b[0]),
+    };
+
+    /// <summary>
+    /// A unit vector, or world Z as a degenerate-axis guard (an authored
+    /// plane whose X and Y happen to be parallel), so a broken axis frame
+    /// still classifies rather than divides by zero.
+    /// </summary>
+    internal static double[] NormalizeOrZ(double[] v)
+    {
+        double length = Math.Sqrt((v[0] * v[0]) + (v[1] * v[1]) + (v[2] * v[2]));
+        return length < 1.0e-12
+            ? new double[] { 0.0, 0.0, 1.0 }
+            : new[] { v[0] / length, v[1] / length, v[2] / length };
+    }
+
+    /// <summary>
+    /// A REEL'S OWN RADIAL NEIGHBOURHOOD: the furthest any of its OWN mesh
+    /// vertices sits from its OWN axis line, measured perpendicular to
+    /// that axis -- the rotating hardware's own real extent about the
+    /// axis he authored. NOT the spoolRadius default
+    /// (SmallestBoundingDimension over 4), which answers a different
+    /// question (the spin arithmetic) with a different number; this is
+    /// purely a geometric footprint. Floored, like spoolRadius, so an
+    /// empty or degenerate mesh cannot divide a ratio by zero.
+    /// </summary>
+    internal static double ReelRadialExtent(MechanismMesh mesh, MechanismFrame axis)
+    {
+        double[] axisDirection = NormalizeOrZ(CrossProduct(axis.XAxis, axis.YAxis));
+        double maxRadius = 0.0;
+        foreach (double[] vertex in mesh.Vertices)
+        {
+            double radius = PerpendicularDistanceToLine(vertex, axis.Origin, axisDirection);
+            if (radius > maxRadius)
+                maxRadius = radius;
+        }
+        return Math.Max(maxRadius, MinimumReelExtentRadius);
+    }
+
+    /// <summary>
+    /// THE OWNERSHIP RULE (built for his wrapped-wire ruling, confirmed
+    /// 2026-09-08 -- "it is option 2. i have modelled the wire to wrap
+    /// around the drums"): a routing frame belongs to the reel whose own
+    /// radial neighbourhood it sits nearest, relative to that reel's own
+    /// size -- the PERPENDICULAR distance from the frame's own origin to
+    /// the reel's axis LINE (the axis plane's origin plus its Z, from
+    /// XAxis cross YAxis), divided by that SAME reel's own radial extent
+    /// (<see cref="ReelRadialExtent"/>). A ratio at or under 1.0 means the
+    /// frame sits on or inside that reel's own footprint; the reel with
+    /// the SMALLEST such ratio wins. If no reel's ratio reaches 1.0, the
+    /// frame belongs to the static body. This reads Origin only -- it
+    /// never writes it back: ownership is metadata about a frame, the
+    /// frame's own numbers pass through untouched.
+    ///
+    /// WARNS, NEVER GUESSES SILENTLY, on two shapes that must be named
+    /// rather than resolved for him: the winning ratio sits within
+    /// <see cref="RouteOwnerAmbiguityMargin"/> of the 1.0 boundary itself
+    /// (a frame close enough to a drum's own edge that a small placement
+    /// difference could flip the answer), or a SECOND reel's own ratio
+    /// also sits at or under 1.0 plus that same margin (the frame sits
+    /// near two reels' axes at once). Either way the single best-ratio
+    /// owner is still returned -- every frame gets one -- but
+    /// <c>Ambiguity</c> carries the numbers so the call is visible, not
+    /// hidden behind a confident-looking answer.
+    /// </summary>
+    internal static (string Owner, int OwnerReel, string? Ambiguity) ClassifyRouteFrameOwner(
+        MechanismFrame frame, IReadOnlyList<MechanismReelEntry> reels)
+    {
+        if (reels.Count == 0)
+            return (RouteOwnerBody, NoOwnerReel, null);
+
+        double bestRatio = double.PositiveInfinity;
+        int bestIndex = -1;
+        double bestDistance = 0.0;
+        double bestRadius = 0.0;
+        double secondRatio = double.PositiveInfinity;
+        int secondIndex = -1;
+        double secondDistance = 0.0;
+        double secondRadius = 0.0;
+
+        for (int i = 0; i < reels.Count; i++)
+        {
+            double[] axisDirection = NormalizeOrZ(
+                CrossProduct(reels[i].Axis.XAxis, reels[i].Axis.YAxis));
+            double distance = PerpendicularDistanceToLine(
+                frame.Origin, reels[i].Axis.Origin, axisDirection);
+            double radius = ReelRadialExtent(reels[i].Mesh, reels[i].Axis);
+            double ratio = distance / radius;
+            if (ratio < bestRatio)
+            {
+                secondRatio = bestRatio;
+                secondIndex = bestIndex;
+                secondDistance = bestDistance;
+                secondRadius = bestRadius;
+                bestRatio = ratio;
+                bestIndex = i;
+                bestDistance = distance;
+                bestRadius = radius;
+            }
+            else if (ratio < secondRatio)
+            {
+                secondRatio = ratio;
+                secondIndex = i;
+                secondDistance = distance;
+                secondRadius = radius;
+            }
+        }
+
+        bool ownedByReel = bestRatio <= 1.0;
+        string owner = ownedByReel ? RouteOwnerReel : RouteOwnerBody;
+        int ownerReel = ownedByReel ? bestIndex : NoOwnerReel;
+
+        bool nearBoundary = Math.Abs(bestRatio - 1.0) <= RouteOwnerAmbiguityMargin;
+        bool nearTwoReels = secondIndex >= 0 && secondRatio <= 1.0 + RouteOwnerAmbiguityMargin;
+        string? ambiguity = null;
+        if (nearBoundary || nearTwoReels)
+        {
+            var pieces = new List<string>();
+            if (nearBoundary)
+            {
+                pieces.Add(
+                    $"reel {bestIndex} at distance " +
+                    bestDistance.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " against its own radius " +
+                    bestRadius.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " (ratio " + bestRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                    ", within " + RouteOwnerAmbiguityMargin.ToString("0.##", CultureInfo.InvariantCulture) +
+                    " of the 1.0 boundary)");
+            }
+            if (nearTwoReels)
+            {
+                pieces.Add(
+                    $"also within reach of reel {secondIndex} at distance " +
+                    secondDistance.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " against its own radius " +
+                    secondRadius.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " (ratio " + secondRatio.ToString("0.###", CultureInfo.InvariantCulture) + ")");
+            }
+            ambiguity = string.Join("; ", pieces);
+        }
+        return (owner, ownerReel, ambiguity);
     }
 
     /// <summary>
@@ -1012,7 +1307,14 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "{wire}: an ordered list of planes per wire, unit-local " +
             "space, in threading order, planes[0] the NET END (his " +
             "ruling; validated after placement, a reversed list is " +
-            "named).",
+            "named). Each frame is classified against its own " +
+            "instance's Reel (RE): one lying within a reel's own " +
+            "radial neighbourhood of its axis (Reel Axis/AX) is owned " +
+            "by that reel, so the studio spins it with the drum; " +
+            "everything else is owned by the static body. Positions " +
+            "are never altered by this -- ownership is metadata, said " +
+            "on Status (ST) per mechanism, with an ambiguous frame " +
+            "named rather than silently assigned.",
             GH_ParamAccess.tree);
         parameters[7].Optional = true;
 
