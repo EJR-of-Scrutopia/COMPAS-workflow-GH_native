@@ -1594,13 +1594,17 @@ public sealed class ExportComponent : NativeComponentBase
                     // wire) costs this document and nothing else.
                     try
                     {
+                        var mechanismNotes = new List<string>();
                         payloads.Add((
                             kind,
                             MechanismDocument.Json(
                                 result,
                                 inputs.Study,
                                 inputs.UnitFactor,
-                                inputs.Mechanism)));
+                                inputs.Mechanism,
+                                warnings,
+                                mechanismNotes)));
+                        warnings.AddRange(mechanismNotes);
                     }
                     catch (Exception mechanismError)
                     {

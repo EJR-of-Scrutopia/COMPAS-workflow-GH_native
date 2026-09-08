@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Ananke.COMPAS.Native.Contracts;
@@ -824,14 +826,29 @@ internal static class MechanismDocument
 {
     public const string Schema = "bench.mechanism/1";
 
+    /// <summary>
+    /// Finish the collector's raw payload into the fourth sibling document:
+    /// match each authored wire (Routing/RT) to a net vertex, validate the
+    /// match (R2's reversed-list check) and pass everything else through.
+    /// This is the ONE place the Result is available, so it is also the
+    /// one place net-vertex matching can happen (the collector itself is
+    /// Result-free except for the door-guard). <paramref name="warnings"/>
+    /// and <paramref name="notes"/> are appended to, matching
+    /// <see cref="MechanismCollector.Build"/>'s own convention, so a caller
+    /// can pool them across a whole solve's chin.
+    /// </summary>
     public static string Json(
         ResultDto result,
         string study,
         double unitFactor,
-        string mechanismPayloadJson)
+        string mechanismPayloadJson,
+        List<string> warnings,
+        List<string> notes)
     {
         ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(mechanismPayloadJson);
+        ArgumentNullException.ThrowIfNull(warnings);
+        ArgumentNullException.ThrowIfNull(notes);
         if (!double.IsFinite(unitFactor) || unitFactor <= 0.0)
         {
             throw new ArgumentOutOfRangeException(
@@ -843,121 +860,174 @@ internal static class MechanismDocument
 
         using JsonDocument parsed = JsonDocument.Parse(mechanismPayloadJson);
         JsonElement root = parsed.RootElement;
-        JsonElement unitTypesIn = root.TryGetProperty("unitTypes", out JsonElement ut)
-            ? ut
-            : default;
-        JsonElement tiesIn = root.TryGetProperty("anchorTies", out JsonElement at)
-            ? at
-            : default;
+        JsonElement mechanismIn = root.TryGetProperty("mechanism", out JsonElement me) ? me : default;
+        JsonElement instancesIn = root.TryGetProperty("instances", out JsonElement inst) ? inst : default;
+        JsonElement wiresIn = root.TryGetProperty("wires", out JsonElement wi) ? wi : default;
+        JsonElement anchorsIn = root.TryGetProperty("anchors", out JsonElement an) ? an : default;
+        JsonElement tiesIn = root.TryGetProperty("tensionTies", out JsonElement tt) ? tt : default;
 
         EquilibriumResultDto? eq = result.Equilibrium;
         int vertexCount = eq?.Vertices.Count ?? 0;
-        MouldColumnsDto? columns = result.Mould?.Columns;
+        int columnNodeCount = result.Mould?.Columns?.Nodes.Count ?? 0;
 
-        bool hasEdge = unitTypesIn.ValueKind == JsonValueKind.Object &&
-            unitTypesIn.TryGetProperty("edge", out _);
-        bool hasNode = unitTypesIn.ValueKind == JsonValueKind.Object &&
-            unitTypesIn.TryGetProperty("node", out _);
-
+        // NET VERTEX MATCHING, THE DEFAULT RULE (spec's own "STILL OPEN",
+        // a default left in place so nothing blocks): wire order (side,
+        // mechanism, wire -- his own tree order) matched against anchor
+        // order along the row, flattened row by row. R1's non-negotiable
+        // survives the named-port rebuild: every wire gets its OWN
+        // explicit net_vertex written into the document, never left to be
+        // inferred from tree position downstream.
         List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
+        var anchorFlat = new List<int>();
+        foreach (List<int> row in rows)
+            anchorFlat.AddRange(row);
 
-        var unitTypesOut = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var edgeInstances = new List<Dictionary<string, object?>>();
-        var nodeInstances = new List<Dictionary<string, object?>>();
-        // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
-        // instance participates but not what the wire IS". Every wire this
-        // document declares is built ONCE here and instances above carry
-        // only the id, never a second copy of what it names.
-        var wiresOut = new List<Dictionary<string, object?>>();
-        int columnNodeCount = 0;
-
-        if (hasEdge)
+        var wireEntries = new List<(int Side, int Mechanism, int Wire, List<MechanismFrame> Route)>();
+        if (wiresIn.ValueKind == JsonValueKind.Array)
         {
-            unitTypesOut["edge"] = unitTypesIn.GetProperty("edge");
-            (int, int)[] edges = eq is null
-                ? Array.Empty<(int, int)>()
-                : MouldGeometry.ValidEdges(eq, vertexCount, out _);
-            List<int>[] adjacency = MouldGeometry.BuildAdjacency(vertexCount, edges);
-            var anchorSet = new HashSet<int>();
-            foreach (List<int> row in rows)
+            foreach (JsonElement w in wiresIn.EnumerateArray())
             {
-                foreach (int id in row)
-                    anchorSet.Add(id);
+                int side = w.GetProperty("side").GetInt32();
+                int mechanism = w.GetProperty("mechanism").GetInt32();
+                int wireIndex = w.GetProperty("wire").GetInt32();
+                var route = new List<MechanismFrame>();
+                foreach (JsonElement p in w.GetProperty("route").EnumerateArray())
+                    route.Add(ReadFrame(p));
+                wireEntries.Add((side, mechanism, wireIndex, route));
             }
-            for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
-            {
-                List<int> row = rows[rowIndex];
-                var wireIds = new List<string>();
-                var seen = new HashSet<(int, int)>();
-                foreach (int anchorVertex in row)
-                {
-                    foreach (int neighbour in adjacency[anchorVertex])
-                    {
-                        if (anchorSet.Contains(neighbour))
-                            continue;
-                        if (!seen.Add((neighbour, anchorVertex)))
-                            continue;
-                        // EVERY INDEX NAMES ITS SPACE (studio's C1/A1): both
-                        // ends of an edge-reel wire are net vertices --
-                        // "anchor node IS a net vertex" (mechanism spec
-                        // section 5) -- so both fields carry the
-                        // "_vertex" suffix; only the role differs.
-                        AssertInRange(neighbour, vertexCount, "wires[].net_vertex");
-                        AssertInRange(anchorVertex, vertexCount, "wires[].anchor_vertex");
-                        string id = $"edge-{rowIndex}-{neighbour}";
-                        wireIds.Add(id);
-                        wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                        {
-                            ["id"] = id,
-                            ["net_vertex"] = neighbour,
-                            ["anchor_vertex"] = anchorVertex,
-                            // THE ORDERED PATH (A7): every wire this
-                            // document derives visits exactly one instance
-                            // (mechanism spec section 5, "through ITS
-                            // instance's sockets"), so the list is length
-                            // one today; declared as a list rather than a
-                            // single reference so a future wire threaded
-                            // through more than one unit costs no reshape.
-                            ["path"] = new List<Dictionary<string, object?>>
-                            {
-                                new(StringComparer.Ordinal)
-                                {
-                                    ["type"] = "edge",
-                                    ["row"] = rowIndex,
-                                },
-                            },
-                            // A wire is the machine reeling, not the works
-                            // that remain (Param's ruling; the field and
-                            // its two values are declared once, on
-                            // MechanismCollector, and read here unchanged).
-                            [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
-                        });
-                    }
-                }
-                // A row with no wire is not a reeling group (mechanism spec
-                // section 4): the edge reel exists on the anchor lines that
-                // actually carry a wire, not on every anchor row.
-                if (wireIds.Count == 0)
-                    continue;
+        }
+        // HIS OWN TREE ORDER: "frames, wires per mechanism, mechanisms per
+        // side, sides" -- side ascending, then mechanism, then wire.
+        wireEntries.Sort((a, b) =>
+        {
+            int bySide = a.Side.CompareTo(b.Side);
+            if (bySide != 0)
+                return bySide;
+            int byMechanism = a.Mechanism.CompareTo(b.Mechanism);
+            return byMechanism != 0 ? byMechanism : a.Wire.CompareTo(b.Wire);
+        });
 
-                var points = new Point3d[row.Count];
-                for (int i = 0; i < row.Count; i++)
+        var instanceFrames = new Dictionary<(int Side, int Mechanism), MechanismFrame>();
+        var instanceWireIds = new Dictionary<(int Side, int Mechanism), List<string>>();
+        var instancesOut = new List<Dictionary<string, object?>>();
+        if (instancesIn.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement instanceIn in instancesIn.EnumerateArray())
+            {
+                int side = instanceIn.GetProperty("side").GetInt32();
+                int mechanism = instanceIn.GetProperty("mechanism").GetInt32();
+                MechanismFrame frame = ReadFrame(instanceIn.GetProperty("frame"));
+                instanceFrames[(side, mechanism)] = frame;
+                var wireIds = new List<string>();
+                instanceWireIds[(side, mechanism)] = wireIds;
+                instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    Point3Dto p = eq!.Vertices[row[i]];
-                    points[i] = new Point3d(p.X, p.Y, p.Z);
-                }
-                Dictionary<string, object?> frame = TangentFrame(points);
-                edgeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["frame"] = frame,
-                    // ONE PLACEMENT CONVENTION (C5/A5): every reel instance
-                    // carries both a type (via unitTypes.edge/.node) and a
-                    // placement frame, unlike the anchor tie's "world" flag.
+                    ["side"] = side,
+                    ["mechanism"] = mechanism,
+                    ["frame"] = MechanismCollector.FramePayload(frame),
+                    ["kind"] = instanceIn.TryGetProperty("kind", out JsonElement k)
+                        ? k.GetString()
+                        : null,
+                    // ONE PLACEMENT CONVENTION (studio's C5/A5): every
+                    // instance carries a placement frame he authored,
+                    // unlike Anchor/Tension Tie's "world" flag below.
                     ["placement"] = "instance",
-                    ["row"] = rowIndex,
                     ["wireIds"] = wireIds,
                 });
             }
+        }
+
+        // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
+        // instance participates but not what the wire IS". Every wire this
+        // document declares is finished ONCE here and instances above
+        // carry only the id, never a second copy of what it names.
+        var wiresOut = new List<Dictionary<string, object?>>();
+        for (int i = 0; i < wireEntries.Count; i++)
+        {
+            (int side, int mechanism, int wireIndex, List<MechanismFrame> route) = wireEntries[i];
+            if (i >= anchorFlat.Count)
+            {
+                warnings.Add(
+                    $"wire (side {side}, mechanism {mechanism}, wire " +
+                    $"{wireIndex}): no anchor node left to match against " +
+                    $"({anchorFlat.Count} anchor node(s) found for " +
+                    $"{wireEntries.Count} wire(s) authored, default rule " +
+                    "is wire order against anchor order along the row); " +
+                    "dropped.");
+                continue;
+            }
+            int netVertex = anchorFlat[i];
+            AssertInRange(netVertex, vertexCount, "wires[].net_vertex");
+            string id = $"{side}-{mechanism}-{wireIndex}";
+
+            // R2, VALIDATED AFTER PLACEMENT (his ruling: planes[0] is the
+            // net end; the door-guard pattern, not trust): transform the
+            // route's own first and last local points through the
+            // instance's authored placement and compare their distance to
+            // the matched net vertex's world position. Also the "PRINTS
+            // ITS DISTANCES" requirement: every match is named, not only a
+            // wrong one, so a wire on the wrong anchor is visible rather
+            // than merely possible.
+            if (eq is not null &&
+                route.Count > 0 &&
+                instanceFrames.TryGetValue((side, mechanism), out MechanismFrame instanceFrame))
+            {
+                Point3Dto netPoint = eq.Vertices[netVertex];
+                double[] netWorld = { netPoint.X, netPoint.Y, netPoint.Z };
+                double[] firstWorld = TransformLocal(route[0].Origin, instanceFrame);
+                double distFirst = MechanismCollector.Distance(firstWorld, netWorld);
+                notes.Add(
+                    $"wire {id}: matched net_vertex {netVertex}, first " +
+                    "routing plane " +
+                    distFirst.ToString("0.###", CultureInfo.InvariantCulture) +
+                    " m from it.");
+                if (route.Count > 1)
+                {
+                    double[] lastWorld = TransformLocal(route[^1].Origin, instanceFrame);
+                    double distLast = MechanismCollector.Distance(lastWorld, netWorld);
+                    if (distLast < distFirst)
+                    {
+                        warnings.Add(
+                            $"wire {id}: routing list appears REVERSED " +
+                            "(last routing plane " +
+                            distLast.ToString("0.###", CultureInfo.InvariantCulture) +
+                            $" m from net_vertex {netVertex}, nearer than " +
+                            "the first at " +
+                            distFirst.ToString("0.###", CultureInfo.InvariantCulture) +
+                            $" m); RT[{side}][{mechanism}][{wireIndex}]'s " +
+                            "planes[0] should be authored at the net end, " +
+                            "his ruling.");
+                    }
+                }
+            }
+
+            if (instanceWireIds.TryGetValue((side, mechanism), out List<string>? wireIds))
+                wireIds.Add(id);
+
+            wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["id"] = id,
+                ["net_vertex"] = netVertex,
+                // THE ORDERED PATH (A7): every wire this document derives
+                // visits exactly one instance, so the list is length one
+                // today; declared as a list rather than a single reference
+                // so a future wire threaded through more than one unit
+                // costs no reshape.
+                ["path"] = new List<Dictionary<string, object?>>
+                {
+                    new(StringComparer.Ordinal) { ["side"] = side, ["mechanism"] = mechanism },
+                },
+                // THE ROUTE ITSELF (his construction, "create a circle on
+                // each frame and loft"): the ordered local routing planes,
+                // carried through unchanged so the studio builds the
+                // identical tube this component's own Rhino preview would.
+                ["route"] = route.Select(MechanismCollector.FramePayload).ToList(),
+                // A wire is the machine reeling, not the works that remain
+                // (Param's ruling; the field and its two values are
+                // declared once, on MechanismCollector, and read here
+                // unchanged).
+                [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
+            });
         }
 
         // DECLARE THE PRINCIPAL ROWS (studio's C6/A6): the ordered net
@@ -965,8 +1035,7 @@ internal static class MechanismDocument
         // clustering/nearest-vertex derivation and treat this as the
         // authority (their derivation stays their fallback for a study with
         // no mechanism document). Emitted whenever the net solved at all;
-        // empty when there is nothing to walk, never omitted, so an absent
-        // node-reel type reads as "no rows" rather than "field missing".
+        // empty when there is nothing to walk, never omitted.
         List<List<int>> principalRuns = eq is null
             ? new List<List<int>>()
             : MouldGeometry.PrincipalRuns(eq, vertexCount);
@@ -974,74 +1043,22 @@ internal static class MechanismDocument
         foreach (List<int> run in principalRuns)
             principalRowsOut.Add(run);
 
-        if (hasNode)
+        object? mechanismOut = mechanismIn.ValueKind == JsonValueKind.Object
+            ? mechanismIn
+            : null;
+
+        var anchorsOut = new List<JsonElement>();
+        if (anchorsIn.ValueKind == JsonValueKind.Array)
         {
-            if (columns is null)
-            {
-                throw new InvalidOperationException(
-                    "A node reel unit was wired (PU branch {1}), but this " +
-                    "Result carries no Mould columns block: a node reel " +
-                    "sits under a principal node, and there is no " +
-                    "principal node without columns.");
-            }
-            unitTypesOut["node"] = unitTypesIn.GetProperty("node");
-            columnNodeCount = columns.Nodes.Count;
-            for (int head = 0; head < columns.Heads.Count; head++)
-            {
-                int principalNode = head < columns.HeadNode.Count
-                    ? columns.HeadNode[head]
-                    : -1;
-                AssertInRange(principalNode, vertexCount, "instances.node[].net_vertex");
-                Point3Dto headPoint = eq!.Vertices[principalNode];
-                double groundZ = result.Mould?.Ground ?? headPoint.Z;
-                Point3d origin = new(headPoint.X, headPoint.Y, groundZ);
-                Vector3d tangent = RunTangentAt(principalRuns, principalNode, eq);
-                Dictionary<string, object?> frame = FrameAt(origin, tangent);
-
-                int columnNode = head;
-                AssertInRange(principalNode, vertexCount, "wires[].net_vertex");
-                AssertInRange(columnNode, columnNodeCount, "wires[].column_node");
-                string id = $"node-{head}";
-                wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["id"] = id,
-                    ["net_vertex"] = principalNode,
-                    ["column_node"] = columnNode,
-                    ["path"] = new List<Dictionary<string, object?>>
-                    {
-                        new(StringComparer.Ordinal)
-                        {
-                            ["type"] = "node",
-                            ["head"] = head,
-                        },
-                    },
-                    // A wire is the machine reeling, not the works that
-                    // remain (Param's ruling; see the edge-reel wire above).
-                    [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
-                });
-                nodeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["frame"] = frame,
-                    ["placement"] = "instance",
-                    ["head"] = head,
-                    ["net_vertex"] = principalNode,
-                    ["wireIds"] = new List<string> { id },
-                });
-            }
+            foreach (JsonElement anchor in anchorsIn.EnumerateArray())
+                anchorsOut.Add(anchor);
         }
-
-        var anchorTiesOut = new List<JsonElement>();
+        var tensionTiesOut = new List<JsonElement>();
         if (tiesIn.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement tie in tiesIn.EnumerateArray())
-                anchorTiesOut.Add(tie);
+                tensionTiesOut.Add(tie);
         }
-
-        var instances = new Dictionary<string, object?>(StringComparer.Ordinal);
-        if (hasEdge)
-            instances["edge"] = edgeInstances;
-        if (hasNode)
-            instances["node"] = nodeInstances;
 
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -1063,10 +1080,10 @@ internal static class MechanismDocument
                 "form document's equilibrium). column_node indices are the " +
                 "same numbering as the formwork document's columns.nodes " +
                 "and frames[].columnNodes.",
-            // THE ROTATION DECLARATION (studio's C3/A3): the spin each
-            // spinner marked driven:true turns, stated as unit, sign and
-            // reference rather than left for the reader to guess from a
-            // bare formula. The studio derives the angle; nothing here is
+            // THE ROTATION DECLARATION (studio's C3/A3): the spin the
+            // driven spinner turns, stated as unit, sign and reference
+            // rather than left for the reader to guess from a bare
+            // formula. The studio derives the angle; nothing here is
             // per-frame.
             ["rotation"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -1083,9 +1100,10 @@ internal static class MechanismDocument
                     "function of t and safe to scrub or play out of order.",
             },
             ["principalRows"] = principalRowsOut,
-            ["unitTypes"] = unitTypesOut,
-            ["anchorTies"] = anchorTiesOut,
-            ["instances"] = instances,
+            ["mechanism"] = mechanismOut,
+            ["instances"] = instancesOut,
+            ["anchors"] = anchorsOut,
+            ["tensionTies"] = tensionTiesOut,
             ["wires"] = wiresOut,
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
@@ -1102,120 +1120,45 @@ internal static class MechanismDocument
         }
     }
 
-    /// <summary>
-    /// The edge-reel placement frame, tangential to the anchor row (mould
-    /// spec's "always tangential to the anchors ... decided in the plugin
-    /// to make it safe"): origin at the row's own centroid, X along the
-    /// row's first-to-last direction, Z world up, Y completing a
-    /// right-handed frame. A row of fewer than two points, or one whose
-    /// ends coincide (a closed loop walked back to its start), has no
-    /// measurable tangent and falls back to world X.
-    /// </summary>
-    private static Dictionary<string, object?> TangentFrame(IReadOnlyList<Point3d> points)
-    {
-        Point3d origin = Centroid(points);
-        Vector3d tangent = Vector3d.XAxis;
-        if (points.Count >= 2)
-        {
-            Vector3d span = points[^1] - points[0];
-            if (span.Length > 1.0e-9)
-                tangent = span;
-        }
-        return FrameAt(origin, tangent);
-    }
+    private static MechanismFrame ReadFrame(JsonElement element) => new(
+        ReadTripleRaw(element.GetProperty("origin")),
+        ReadTripleRaw(element.GetProperty("xAxis")),
+        ReadTripleRaw(element.GetProperty("yAxis")));
 
-    private static Point3d Centroid(IReadOnlyList<Point3d> points)
-    {
-        if (points.Count == 0)
-            return Point3d.Origin;
-        double x = 0.0, y = 0.0, z = 0.0;
-        foreach (Point3d p in points)
-        {
-            x += p.X;
-            y += p.Y;
-            z += p.Z;
-        }
-        return new Point3d(x / points.Count, y / points.Count, z / points.Count);
-    }
+    private static double[] ReadTripleRaw(JsonElement array) =>
+        array.EnumerateArray().Select(e => e.GetDouble()).ToArray();
 
     /// <summary>
-    /// One right-handed world-coordinates frame: X the given tangent
-    /// (unitised, falling back to world X when it is degenerate), Z world
-    /// up, Y completing the frame. Tangent parallel to Z (a vertical
-    /// anchor line, geometrically unusual but not refused) falls back to
-    /// world Y as the reference instead of world Z.
-    ///
-    /// UNITIZE AND CROSS PRODUCT ARE DONE BY HAND, deliberately, rather
-    /// than through <c>Vector3d.Unitize()</c>/<c>Vector3d.CrossProduct</c>:
-    /// measured (this harness's own MechanismDocument check), those two
-    /// RhinoCommon members reach into the native <c>rhcommon_c</c> core and
-    /// throw <c>DllNotFoundException</c> outside Rhino, which is exactly
-    /// why <see cref="ColumnsMesh"/>'s own <c>Cross</c> helper already
-    /// reimplements the cross product rather than calling it -- the
-    /// precedent this follows.
+    /// A LOCAL POINT, TRANSFORMED THROUGH AN AUTHORED PLACEMENT FRAME:
+    /// origin plus x*xAxis plus y*yAxis plus z*zAxis, zAxis derived by hand
+    /// (xAxis cross yAxis) rather than through
+    /// <c>Vector3d.CrossProduct</c>/<c>Plane</c>: measured (this harness's
+    /// own MechanismDocument check), RhinoCommon's native convenience
+    /// members throw <c>DllNotFoundException</c> outside Rhino, which is
+    /// exactly why <see cref="ColumnsMesh"/>'s own <c>Cross</c> helper
+    /// already reimplements the cross product rather than calling it --
+    /// the precedent this follows. Plain <c>double[]</c> throughout, since
+    /// placement is now authored, not computed, and none of this needs a
+    /// Rhino type at all.
     /// </summary>
-    private static Dictionary<string, object?> FrameAt(Point3d origin, Vector3d tangent)
+    private static double[] TransformLocal(double[] localPoint, MechanismFrame frame)
     {
-        Vector3d x = Unitized(tangent, Vector3d.XAxis);
-        Vector3d y = Unitized(Cross(Vector3d.ZAxis, x), Vector3d.YAxis);
-        if (y.Length < 1.0e-9)
-            y = Unitized(Cross(Vector3d.YAxis, x), Vector3d.YAxis);
-        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        double[] z = Cross(frame.XAxis, frame.YAxis);
+        double x = localPoint[0];
+        double y = localPoint[1];
+        double zc = localPoint[2];
+        return new[]
         {
-            ["origin"] = new[] { origin.X, origin.Y, origin.Z },
-            ["xAxis"] = new[] { x.X, x.Y, x.Z },
-            ["yAxis"] = new[] { y.X, y.Y, y.Z },
+            frame.Origin[0] + (x * frame.XAxis[0]) + (y * frame.YAxis[0]) + (zc * z[0]),
+            frame.Origin[1] + (x * frame.XAxis[1]) + (y * frame.YAxis[1]) + (zc * z[1]),
+            frame.Origin[2] + (x * frame.XAxis[2]) + (y * frame.YAxis[2]) + (zc * z[2]),
         };
     }
 
-    /// <summary>
-    /// A vector's own arithmetic normalisation, hand-rolled (see
-    /// <see cref="FrameAt"/>'s own remark on why): the length is a plain
-    /// managed computation, only the RhinoCommon convenience METHODS reach
-    /// into the native core. A vector too short to have a direction falls
-    /// back to <paramref name="fallback"/> rather than dividing by
-    /// (near) zero.
-    /// </summary>
-    private static Vector3d Unitized(Vector3d vector, Vector3d fallback)
+    private static double[] Cross(double[] a, double[] b) => new[]
     {
-        double length = vector.Length;
-        if (length < 1.0e-9)
-            return fallback;
-        return new Vector3d(
-            vector.X / length, vector.Y / length, vector.Z / length);
-    }
-
-    private static Vector3d Cross(Vector3d a, Vector3d b) => new(
-        (a.Y * b.Z) - (a.Z * b.Y),
-        (a.Z * b.X) - (a.X * b.Z),
-        (a.X * b.Y) - (a.Y * b.X));
-
-    /// <summary>
-    /// The direction along the principal run a node sits on, at that node:
-    /// the vector to whichever run-neighbour exists (the next node if
-    /// there is one, else the previous one). World X when the node sits on
-    /// no principal run at all, which the caller's frame construction
-    /// treats the same as any other degenerate tangent.
-    /// </summary>
-    private static Vector3d RunTangentAt(
-        List<List<int>> runs, int node, EquilibriumResultDto? eq)
-    {
-        if (eq is null)
-            return Vector3d.XAxis;
-        foreach (List<int> run in runs)
-        {
-            int position = run.IndexOf(node);
-            if (position < 0)
-                continue;
-            int neighbour = position + 1 < run.Count
-                ? run[position + 1]
-                : (position > 0 ? run[position - 1] : -1);
-            if (neighbour < 0)
-                continue;
-            Point3Dto from = eq.Vertices[node];
-            Point3Dto to = eq.Vertices[neighbour];
-            return new Vector3d(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
-        }
-        return Vector3d.XAxis;
-    }
+        (a[1] * b[2]) - (a[2] * b[1]),
+        (a[2] * b[0]) - (a[0] * b[2]),
+        (a[0] * b[1]) - (a[1] * b[0]),
+    };
 }
