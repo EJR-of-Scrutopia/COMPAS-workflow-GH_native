@@ -1863,6 +1863,41 @@ internal static class MechanismCollector
     internal static readonly double[] WorldUp = { 0.0, 0.0, 1.0 };
 
     /// <summary>
+    /// SEVERAL PARTS AS ONE MESH: vertices concatenated, face indices
+    /// shifted by the running vertex count. No welding and no repair -- the
+    /// parts keep every vertex and face they arrived with, and only their
+    /// numbering changes.
+    ///
+    /// WHY THIS EXISTS (2026-09-09, and it cost him a night): Frame 1 was an
+    /// ITEM port meaning "one joined mesh", and he wired SEVENTEEN meshes to
+    /// it. Grasshopper's answer to a list on an item port is to solve the
+    /// whole component once per item, so the mechanism was built seventeen
+    /// times and the last build won -- a 55 mm bracket in place of his
+    /// frame, exported without one word of complaint, and seventeen payloads
+    /// out of ME which then made Export iterate and warn about its Result.
+    /// A port that silently produces a plausible wrong answer is worse than
+    /// one that refuses, so these ports take a list and join it.
+    /// </summary>
+    internal static MechanismMesh JoinMeshes(IReadOnlyList<MechanismMesh> parts)
+    {
+        var vertices = new List<double[]>();
+        var faces = new List<int[]>();
+        foreach (MechanismMesh part in parts)
+        {
+            int offset = vertices.Count;
+            vertices.AddRange(part.Vertices);
+            foreach (int[] face in part.Faces)
+            {
+                var shifted = new int[face.Length];
+                for (int i = 0; i < face.Length; i++)
+                    shifted[i] = face[i] + offset;
+                faces.Add(shifted);
+            }
+        }
+        return new MechanismMesh(vertices, faces);
+    }
+
+    /// <summary>
     /// The MEDIAN of a set of values, which is what a winding radius wants
     /// rather than a mean: a wire's frames are nearly all at the drum's own
     /// radius and a handful sit on the run in and out, and a median ignores
@@ -2480,17 +2515,24 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "Tension Tie",
             "TT",
             "The foundation anchor and the tension tie / column slider " +
-            "rail, arrived as ONE FUSED mesh (his settled ruling), in the " +
-            "mechanism's own local space. Instanced exactly like Frame 1, " +
-            "Frame 2, the Motors and the reels; permanence \"permanent\".",
-            GH_ParamAccess.item);
+            "rail, ONE piece in the mechanism's own local space (his " +
+            "settled ruling that they arrive fused). Wire several objects " +
+            "and they are JOINED into that one piece rather than solving " +
+            "the component once per object. Instanced exactly like Frame " +
+            "1, Frame 2, the Motors and the reels; permanence " +
+            "\"permanent\".",
+            GH_ParamAccess.list);
         parameters[1].Optional = true;
 
         parameters.AddGenericParameter(
             "Frame 1",
             "F1",
-            "The mechanism frame, one joined mesh, unit-local space.",
-            GH_ParamAccess.item);
+            "The mechanism frame, ONE piece, unit-local space. Wire " +
+            "several objects and they are JOINED here into that one piece: " +
+            "an item port given a list makes Grasshopper solve the whole " +
+            "component once per object and keep only the last, which is " +
+            "how a 55 mm bracket once exported in place of a whole frame.",
+            GH_ParamAccess.list);
         parameters[2].Optional = true;
 
         parameters.AddGenericParameter(
@@ -2505,8 +2547,10 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         parameters.AddGenericParameter(
             "Motors",
             "MO",
-            "The motors, one joined mesh, unit-local space.",
-            GH_ParamAccess.item);
+            "The motors, ONE piece, unit-local space. Wire several " +
+            "objects and they are JOINED here into that one piece rather " +
+            "than solving the component once per object.",
+            GH_ParamAccess.list);
         parameters[4].Optional = true;
 
         parameters.AddGenericParameter(
@@ -2654,33 +2698,52 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return true;
     }
 
+    /// <summary>
+    /// ONE PIECE OF THE MACHINE, however many objects he wired to say it.
+    /// The port takes a LIST and joins it, so a frame modelled in seventeen
+    /// parts arrives whole instead of Grasshopper solving the component
+    /// seventeen times and keeping the last part. A single wired object is
+    /// a list of one and behaves exactly as it always did.
+    /// </summary>
+    private MechanismMesh? ReadOnePiece(
+        IGH_DataAccess data, int port, string label, List<string> warnings, out bool fromBrep)
+    {
+        fromBrep = false;
+        var items = new List<object>();
+        data.GetDataList(port, items);
+        var parts = new List<MechanismMesh>(items.Count);
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (!TryMeshOrBrep(items[i], out MechanismMesh? part, out bool partFromBrep) ||
+                part is null)
+            {
+                warnings.Add(
+                    $"{label}" + (items.Count > 1 ? $"[{i}]" : string.Empty) +
+                    " did not resolve to a mesh or a closed Brep; " +
+                    (items.Count > 1 ? "skipped." : "refused."));
+                continue;
+            }
+            parts.Add(part);
+            fromBrep |= partFromBrep;
+        }
+        if (parts.Count == 0)
+            return null;
+        if (parts.Count == 1)
+            return parts[0];
+        int vertexCount = parts.Sum(part => part.Vertices.Count);
+        warnings.Add(
+            $"{label} arrived as {parts.Count} SEPARATE objects and was " +
+            $"joined here into one piece ({vertexCount} vertices). This " +
+            "port means one part of the machine, so the join is only a " +
+            "convenience: if those objects are not all the same part, wire " +
+            "the ones that are not somewhere else.");
+        return MechanismCollector.JoinMeshes(parts);
+    }
+
     private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings)
     {
-        object? ttItem = null;
-        data.GetData(1, ref ttItem);
-        MechanismMesh? tt = null;
-        bool ttBrep = false;
-        if (ttItem is not null)
-        {
-            if (!TryMeshOrBrep(ttItem, out tt, out ttBrep) || tt is null)
-            {
-                warnings.Add("Tension Tie (TT) did not resolve to a mesh or a closed Brep; refused.");
-                tt = null;
-            }
-        }
-
-        object? f1Item = null;
-        data.GetData(2, ref f1Item);
-        MechanismMesh? f1 = null;
-        bool f1Brep = false;
-        if (f1Item is not null)
-        {
-            if (!TryMeshOrBrep(f1Item, out f1, out f1Brep) || f1 is null)
-            {
-                warnings.Add("Frame 1 (F1) did not resolve to a mesh or a closed Brep; refused.");
-                f1 = null;
-            }
-        }
+        MechanismMesh? tt = ReadOnePiece(data, 1, "Tension Tie (TT)", warnings, out bool ttBrep);
+        MechanismMesh? f1 = ReadOnePiece(data, 2, "Frame 1 (F1)", warnings, out bool f1Brep);
 
         var f2Items = new List<object>();
         data.GetDataList(3, f2Items);
@@ -2697,18 +2760,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             f2Brep.Add(b);
         }
 
-        object? moItem = null;
-        data.GetData(4, ref moItem);
-        MechanismMesh? mo = null;
-        bool moBrep = false;
-        if (moItem is not null)
-        {
-            if (!TryMeshOrBrep(moItem, out mo, out moBrep) || mo is null)
-            {
-                warnings.Add("Motors (MO) did not resolve to a mesh or a closed Brep; refused.");
-                mo = null;
-            }
-        }
+        MechanismMesh? mo = ReadOnePiece(data, 4, "Motors (MO)", warnings, out bool moBrep);
 
         var reItems = new List<object>();
         data.GetDataList(5, reItems);
