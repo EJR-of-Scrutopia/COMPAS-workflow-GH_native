@@ -41543,9 +41543,8 @@ internal static partial class Program
                 $"ownerReel={f4.GetProperty("ownerReel")}.");
         }
         bool beyondTheFacesNamed = notes.Any(n =>
-            n.Contains("Routing (RT)[0]", StringComparison.Ordinal) &&
             n.Contains("BEYOND", StringComparison.Ordinal) &&
-            n.Contains("1 frame(s)", StringComparison.Ordinal));
+            n.Contains("1 sat inside", StringComparison.Ordinal));
         if (!beyondTheFacesNamed)
         {
             throw new InvalidOperationException(
@@ -41554,16 +41553,30 @@ internal static partial class Program
                 "silently; notes were: " + string.Join(" | ", notes));
         }
 
-        bool boundaryNamed = warnings.Any(w =>
-            w.Contains("frame [2]", StringComparison.Ordinal) &&
-            w.Contains("AMBIGUOUS", StringComparison.Ordinal) &&
-            w.Contains("reel 0", StringComparison.Ordinal));
+        // A frame just OUTSIDE a reel is NOT a warning: the point where a
+        // wire lifts off a drum stands still however fast that drum turns,
+        // so the body holding it is what the machine does, and on real
+        // wrapped geometry it happens on every wire over every drum (his
+        // second solve, 2026-09-08: twenty-eight such lines, which pushed
+        // the placement report off the bottom of the balloon). It is still
+        // NAMED, with its own numbers, in the borderline note.
+        bool boundaryNamed = notes.Any(n =>
+            n.Contains("JUST outside", StringComparison.Ordinal) &&
+            n.Contains("reel 0", StringComparison.Ordinal) &&
+            n.Contains("frame [2]", StringComparison.Ordinal));
         if (!boundaryNamed)
         {
             throw new InvalidOperationException(
-                "frame [2]'s ownership sits close to reel 0's own radius " +
-                "boundary and must be named AMBIGUOUS; warnings were: " +
-                string.Join(" | ", warnings));
+                "frame [2] sits just outside reel 0's own radius and must be " +
+                "named, with its reel and its own frame index, in the " +
+                "borderline note; notes were: " + string.Join(" | ", notes));
+        }
+        if (warnings.Any(w => w.Contains("frame [2]", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "A frame just outside a reel must NOT raise a warning -- it " +
+                "is the normal shape of wrapped wire and floods the chin; " +
+                "warnings were: " + string.Join(" | ", warnings));
         }
         bool twoReelsNamed = warnings.Any(w =>
             w.Contains("frame [3]", StringComparison.Ordinal) &&

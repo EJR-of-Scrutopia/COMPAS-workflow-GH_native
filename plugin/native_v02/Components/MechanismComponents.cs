@@ -510,26 +510,40 @@ internal static class MechanismCollector
             ownerCounts[$"reel {r}"] = 0;
         ReelNeighbourhood[] neighbourhoods = BuildReelNeighbourhoods(reels);
         var classifiedRoutes = new Dictionary<int, List<(MechanismFrame Frame, string Owner, int OwnerReel)>>();
+
+        // THE BORDERLINE CASES ARE GATHERED ACROSS EVERY WIRE AND SAID ONCE
+        // (2026-09-08, second pass on his real machine).
+        //
+        // A wire WRAPPED on a drum sits at that drum's own surface on every
+        // frame of the wrap, and the radius it is measured against is the
+        // mesh's own outermost extent -- the flanges -- so a CORRECT wrap
+        // lands a little inside 1.0 on every frame and the tangent frames
+        // where it lifts off land a little outside. Both are the normal
+        // shape of wrapped wire, not a fault, and both fire on every wire
+        // over every drum: his second solve produced twenty-eight such
+        // lines and pushed the PLACEMENT report -- the only part of this
+        // chin he can act on -- past Grasshopper's own "further remarks not
+        // shown" cut.
+        //
+        // A frame just outside is left with the BODY deliberately, not
+        // merely by the arithmetic: the point where a wire leaves a drum
+        // stands still in space however fast that drum turns, so holding it
+        // is what the machine actually does. What survives as a WARNING is
+        // only the case where the answer is genuinely undecided and would
+        // move different geometry: two reels reaching the same frame.
+        var contested = new Dictionary<(int First, int Second), (int Count, int Wire, int Frame, double FirstRatio, double SecondRatio)>();
+        int rideCount = 0;
+        int justOutsideCount = 0;
+        int beyondTheFacesCount = 0;
+        double closestJustOutsideRatio = double.PositiveInfinity;
+        int closestJustOutsideReel = NoOwnerReel;
+        int closestJustOutsideWire = -1;
+        int closestJustOutsideFrame = -1;
         for (int w = 0; w < PlacementGroupSize; w++)
         {
             if (!routingByIndex.TryGetValue(w, out MechanismRoutingWire? wire) || wire.Route.Count == 0)
                 continue;
             var classified = new List<(MechanismFrame, string, int)>(wire.Route.Count);
-
-            // AMBIGUITY IS GATHERED, THEN SAID ONCE PER WIRE (2026-09-08,
-            // his own ten-reel mechanism): a wire WRAPPED on a drum sits at
-            // that drum's own surface on every frame of the wrap, so a
-            // per-frame warning on "close to the boundary" fires on the
-            // normal case and buries the chin -- his read 15 rows deep and
-            // then "Further warnings not shown". What is worth a warning is
-            // where the answer could flip to different BEHAVIOUR: a frame
-            // just OUTSIDE a reel that the body therefore keeps still, and a
-            // frame two reels both reach. A frame just INSIDE the reel that
-            // owns it is the expected case and is tallied, not warned.
-            var justOutside = new Dictionary<int, (int Count, int WorstFrame, double Ratio, double Distance, double Radius)>();
-            var contested = new Dictionary<(int First, int Second), (int Count, int WorstFrame, double FirstRatio, double SecondRatio)>();
-            var onTheBoundary = new Dictionary<int, int>();
-            int beyondTheFaces = 0;
 
             for (int frameIndex = 0; frameIndex < wire.Route.Count; frameIndex++)
             {
@@ -540,18 +554,20 @@ internal static class MechanismCollector
                 ownerCounts[countKey] = ownerCounts.GetValueOrDefault(countKey) + 1;
 
                 if (verdict.AxiallyExcluded)
-                    beyondTheFaces++;
+                    beyondTheFacesCount++;
 
                 if (!ownedByReel &&
                     verdict.NearestReel >= 0 &&
                     verdict.NearestRatio <= 1.0 + RouteOwnerAmbiguityMargin)
                 {
-                    (int count, int worstFrame, double ratio, double distance, double radius) =
-                        justOutside.GetValueOrDefault(
-                            verdict.NearestReel, (0, frameIndex, double.PositiveInfinity, 0.0, 0.0));
-                    justOutside[verdict.NearestReel] = verdict.NearestRatio < ratio
-                        ? (count + 1, frameIndex, verdict.NearestRatio, verdict.NearestDistance, verdict.NearestRadius)
-                        : (count + 1, worstFrame, ratio, distance, radius);
+                    justOutsideCount++;
+                    if (verdict.NearestRatio < closestJustOutsideRatio)
+                    {
+                        closestJustOutsideRatio = verdict.NearestRatio;
+                        closestJustOutsideReel = verdict.NearestReel;
+                        closestJustOutsideWire = w;
+                        closestJustOutsideFrame = frameIndex;
+                    }
                 }
 
                 if (ownedByReel &&
@@ -559,78 +575,88 @@ internal static class MechanismCollector
                     verdict.SecondRatio <= 1.0 + RouteOwnerAmbiguityMargin)
                 {
                     (int First, int Second) key = (verdict.OwnerReel, verdict.SecondReel);
-                    (int count, int worstFrame, double firstRatio, double secondRatio) =
-                        contested.GetValueOrDefault(key, (0, frameIndex, 0.0, double.PositiveInfinity));
+                    (int count, int atWire, int atFrame, double firstRatio, double secondRatio) =
+                        contested.GetValueOrDefault(key, (0, w, frameIndex, 0.0, double.PositiveInfinity));
                     contested[key] = verdict.SecondRatio < secondRatio
-                        ? (count + 1, frameIndex, verdict.NearestRatio, verdict.SecondRatio)
-                        : (count + 1, worstFrame, firstRatio, secondRatio);
+                        ? (count + 1, w, frameIndex, verdict.NearestRatio, verdict.SecondRatio)
+                        : (count + 1, atWire, atFrame, firstRatio, secondRatio);
                 }
 
                 if (ownedByReel && verdict.NearestRatio >= 1.0 - RouteOwnerAmbiguityMargin)
-                    onTheBoundary[verdict.OwnerReel] = onTheBoundary.GetValueOrDefault(verdict.OwnerReel) + 1;
+                    rideCount++;
 
                 classified.Add((frame, verdict.Owner, verdict.OwnerReel));
             }
             classifiedRoutes[w] = classified;
-
-            foreach (KeyValuePair<int, (int Count, int WorstFrame, double Ratio, double Distance, double Radius)> entry
-                in justOutside.OrderBy(p => p.Key))
-            {
-                warnings.Add(
-                    $"Routing (RT)[{w}]: {entry.Value.Count} frame(s) sit JUST " +
-                    $"OUTSIDE reel {entry.Key}'s own radius and were given to " +
-                    "the body -- ownership AMBIGUOUS, closest at frame " +
-                    $"[{entry.Value.WorstFrame}] (distance " +
-                    entry.Value.Distance.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " against its own radius " +
-                    entry.Value.Radius.ToString("0.####", CultureInfo.InvariantCulture) +
-                    ", ratio " + entry.Value.Ratio.ToString("0.###", CultureInfo.InvariantCulture) +
-                    "); if the wire wraps that reel there, those frames should " +
-                    "turn with it rather than stand still.");
-            }
-            foreach (KeyValuePair<(int First, int Second), (int Count, int WorstFrame, double FirstRatio, double SecondRatio)> entry
-                in contested.OrderBy(p => p.Key.First).ThenBy(p => p.Key.Second))
-            {
-                warnings.Add(
-                    $"Routing (RT)[{w}]: {entry.Value.Count} frame(s) sit within " +
-                    $"reach of BOTH reel {entry.Key.First} and reel " +
-                    $"{entry.Key.Second} -- ownership AMBIGUOUS, closest at " +
-                    $"frame [{entry.Value.WorstFrame}] (reel {entry.Key.First} " +
-                    "ratio " +
-                    entry.Value.FirstRatio.ToString("0.###", CultureInfo.InvariantCulture) +
-                    $", reel {entry.Key.Second} ratio " +
-                    entry.Value.SecondRatio.ToString("0.###", CultureInfo.InvariantCulture) +
-                    $"); assigned reel {entry.Key.First} as the nearer, never " +
-                    "picked silently.");
-            }
-            foreach (KeyValuePair<int, int> entry in onTheBoundary.OrderBy(p => p.Key))
-            {
-                notes.Add(
-                    $"Routing (RT)[{w}]: {entry.Value} frame(s) ride reel " +
-                    $"{entry.Key} within " +
-                    RouteOwnerAmbiguityMargin.ToString("0.##", CultureInfo.InvariantCulture) +
-                    " of its own outer radius and were given to it -- expected " +
-                    "of a wire wrapped on a drum, whose wrap sits at that " +
-                    "drum's own surface by construction; tallied here rather " +
-                    "than warned frame by frame.");
-            }
-            if (beyondTheFaces > 0)
-            {
-                notes.Add(
-                    $"Routing (RT)[{w}]: {beyondTheFaces} frame(s) sat inside a " +
-                    "reel's own radius but BEYOND that reel's own end faces, so " +
-                    "the body keeps them -- a reel owns only what lies between " +
-                    "its own faces.");
-            }
         }
+
+        foreach (KeyValuePair<(int First, int Second), (int Count, int Wire, int Frame, double FirstRatio, double SecondRatio)> entry
+            in contested.OrderBy(p => p.Key.First).ThenBy(p => p.Key.Second))
+        {
+            warnings.Add(
+                $"mechanism: {entry.Value.Count} routing frame(s) sit within " +
+                $"reach of BOTH reel {entry.Key.First} and reel " +
+                $"{entry.Key.Second} -- ownership AMBIGUOUS, closest at " +
+                $"Routing (RT)[{entry.Value.Wire}] frame [{entry.Value.Frame}] " +
+                $"(reel {entry.Key.First} ratio " +
+                entry.Value.FirstRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                $", reel {entry.Key.Second} ratio " +
+                entry.Value.SecondRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                $"); assigned reel {entry.Key.First} as the nearer, never " +
+                "picked silently.");
+        }
+
         if (classifiedRoutes.Count > 0)
         {
+            var borderline = new List<string>();
+            if (rideCount > 0)
+            {
+                borderline.Add(
+                    $"{rideCount} ride the reel that owns them, within " +
+                    RouteOwnerAmbiguityMargin.ToString("0.##", CultureInfo.InvariantCulture) +
+                    " of its own outer radius (expected of a wire wrapped on " +
+                    "a drum, whose wrap sits at that drum's own surface by " +
+                    "construction)");
+            }
+            if (justOutsideCount > 0)
+            {
+                borderline.Add(
+                    $"{justOutsideCount} sit JUST outside a reel and are held " +
+                    "by the body, which is what a wire's lift-off point does " +
+                    "in life (it stands still however fast the drum turns), " +
+                    $"closest reel {closestJustOutsideReel} at ratio " +
+                    closestJustOutsideRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                    $", Routing (RT)[{closestJustOutsideWire}] frame " +
+                    $"[{closestJustOutsideFrame}]");
+            }
+            if (beyondTheFacesCount > 0)
+            {
+                borderline.Add(
+                    $"{beyondTheFacesCount} sat inside a reel's own radius but " +
+                    "BEYOND its own end faces, so the body keeps them (a reel " +
+                    "owns only what lies between its own faces)");
+            }
+            if (borderline.Count > 0)
+            {
+                notes.Add(
+                    "mechanism: the borderline routing frames, every wire " +
+                    "together -- " + string.Join("; ", borderline) + ".");
+            }
+
             string tally = string.Join(
                 ", ",
                 ownerCounts.OrderBy(p => p.Key, StringComparer.Ordinal)
                     .Select(p => $"{p.Key} {p.Value}"));
             notes.Add($"mechanism: routing frame ownership, the ONE authored mechanism -- {tally}.");
         }
+
+        // WHERE THE PLACEMENT REPORT STARTS. Everything it adds is moved to
+        // the FRONT of the chin below: Grasshopper's own balloon shows
+        // fifteen lines and then "further remarks not shown", and the
+        // placement report is the only part of this chin that can be acted
+        // on -- it must never be the part that falls off the bottom.
+        int notesBeforePlacement = notes.Count;
+        int warningsBeforePlacement = warnings.Count;
 
         // PLACEMENT: one instance transform per branch, derived from the
         // FIRST CORRESPONDENCE (wire 0's first routing frame S_0 against
@@ -929,6 +955,9 @@ internal static class MechanismCollector
                 "authored, but no mechanism instance could be derived " +
                 "(see the routing warning above); nothing is instanced.");
         }
+
+        MoveTailToFront(notes, notesBeforePlacement);
+        MoveTailToFront(warnings, warningsBeforePlacement);
 
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -1382,6 +1411,21 @@ internal static class MechanismCollector
     };
 
     internal static double[] Column3(double[][] m, int col) => new[] { m[0][col], m[1][col], m[2][col] };
+
+    /// <summary>
+    /// Move everything added from <paramref name="from"/> onwards to the
+    /// FRONT of the list, keeping its own order. Grasshopper's balloon shows
+    /// fifteen lines and then "further remarks not shown", so a chin whose
+    /// actionable half is written last loses exactly the half that matters.
+    /// </summary>
+    internal static void MoveTailToFront(List<string> lines, int from)
+    {
+        if (from <= 0 || from >= lines.Count)
+            return;
+        List<string> tail = lines.GetRange(from, lines.Count - from);
+        lines.RemoveRange(from, lines.Count - from);
+        lines.InsertRange(0, tail);
+    }
 
     internal static double[][] Transpose3(double[][] m) => new[]
     {
