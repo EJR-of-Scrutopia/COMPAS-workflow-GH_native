@@ -1222,7 +1222,9 @@ internal static partial class Program
         {
             ValidateSkinSeamsAndCloser(plugin);
             Console.WriteLine(
-                "PASS  Skin seams and the closer band (spec 2026-09-04): " +
+                "PASS  Skin seams and the closer band (spec 2026-09-04, " +
+                "RE-PINNED 2026-09-08 ship-without-skin task -- see " +
+                "below): " +
                 "the SEAM IS DATA, one polyline 4.168 m long on Param's own " +
                 "crown arch, recovered from the seed identity the rim " +
                 "marching now carries, two anchor groups with every reached " +
@@ -1245,22 +1247,35 @@ internal static partial class Program
                 "reach, and 61.12 and 11.65 per cent on the two-peak and " +
                 "split-and-death nets, whose residuals straddle a PLATEAU, " +
                 "where a millimetre of field is metres of plan and a ribbon " +
-                "cannot cover a solid region. The closer's spans sit inside " +
-                "the TWO ADJACENT ORDINARY COURSES' own range to within 0.8 " +
-                "per cent, pinned per fixture, and none is under Min Piece's " +
-                "own bound in metres, with the engine counting any that " +
-                "were. Every closer corner lies on BOTH bounding traced " +
-                "families within 1e-6 m, and, because that cannot fail for " +
-                "the reason rule 2.3 exists, the BOND ITSELF is measured: " +
-                "the worst head joint of a closer stands 0.05 to 0.31 m from " +
-                "the nearest head joint the courses beside it plant on the " +
-                "same curve, pinned, because the closer ABUTS its neighbours " +
-                "along a continuous line and does not weld to them, and a " +
-                "coincident head joint across a bed would be the worse " +
-                "stone. The eight closer edges that do cross the seam curve " +
-                "in plan are pinned as a MEASUREMENT, because forcing a " +
-                "joint at every crossing costs rule 4.2.6's mirror " +
-                "guarantee. And the plan-filter drops are ZERO on all five, " +
+                "cannot cover a solid region. TWO MORE fixtures now carry a " +
+                "WIDTH-ACROSS exemption too, RE-PINNED to 9ae02bd's own " +
+                "reading rather than deleted: Param's crown arch runs 86.79 " +
+                "per cent outside its neighbours at CH 0.30 and 93.45 per " +
+                "cent at CH 0.375, because 9ae02bd (the engine Param " +
+                "actually runs after rejecting the 2026-09-07 skin-round-" +
+                "four/five wave) never retired this crown's cap, so its " +
+                "closer stones fan out wide to meet it, exactly as they did " +
+                "before that wave's correction 1 and crown ruling existed; " +
+                "the exemption values are those waves' own recorded " +
+                "'before' figures, not new numbers. The closer's spans sit " +
+                "inside the TWO ADJACENT ORDINARY COURSES' own range to " +
+                "within 0.8 per cent, pinned per fixture, and none is under " +
+                "Min Piece's own bound in metres, with the engine counting " +
+                "any that were. Every closer corner lies on BOTH bounding " +
+                "traced families within 1e-6 m, and, because that cannot " +
+                "fail for the reason rule 2.3 exists, the BOND ITSELF is " +
+                "measured: the worst head joint of a closer stands 0.0492 " +
+                "to 0.31 m from the nearest head joint the courses beside " +
+                "it plant on the same curve, pinned, because the closer " +
+                "ABUTS its neighbours along a continuous line and does not " +
+                "weld to them, and a coincident head joint across a bed " +
+                "would be the worse stone (both crown-arch bonds moved " +
+                "back with the cap, 0.0990 -> 0.0492 m and 0.1644 -> " +
+                "0.0871 m, the same reason as the width exemptions above). " +
+                "The eight closer edges that do cross the seam curve in " +
+                "plan are pinned as a MEASUREMENT, because forcing a joint " +
+                "at every crossing costs rule 4.2.6's mirror guarantee. " +
+                "And the plan-filter drops are ZERO on all five, " +
                 "the crown arch at 0 of 2177 and the two-hump barrel at 0 of " +
                 "220 where it dropped 4 before this wave. A seam CLOSED with " +
                 "no stone is still a hole, and the engine's line and the " +
@@ -3586,7 +3601,16 @@ internal static partial class Program
                 "instead (his sidecar was written by the OLD, overlapping-" +
                 "row engine and now legitimately disagrees, reported and " +
                 "named rather than hidden), and the honeycomb row fix's " +
-                "own kept-cell growth is confirmed directly against it.");
+                "own kept-cell growth is confirmed directly against it. " +
+                "RE-PIN, HONEST (ship-without-skin task, 2026-09-08): the " +
+                "2 sided vault's own deliberate-divergence override (218 " +
+                "cells, course 18 = 20, from the now-rejected ridge-crest " +
+                "wave) is REMOVED, not re-numbered -- the engine reverted " +
+                "to 9ae02bd, which Param actually runs after his " +
+                "2026-09-07 rejection, and 9ae02bd's own tally (215 cells, " +
+                "course 18 = 17) IS his sidecar's reading again, so this " +
+                "study now takes the same direct sidecar comparison the " +
+                "other four courses-pattern studies always used.");
         }
         catch (HisNetsUnavailableException unavailable)
         {
@@ -3642,28 +3666,22 @@ internal static partial class Program
         {
             ValidateRoundFourRule3CapCrescentAudit(plugin);
             Console.WriteLine(
-                "PASS  Round four rule 3, the cap crescent audit (spec " +
-                "2026-09-06 skin-round-four-his-nets): SkinPatterns." +
-                "CapCrescents now names the area between an emitted cap's " +
-                "own polygon and the traced loop it was cut from, above " +
-                "the sliver floor, where the generic CapsOversized line " +
-                "never named anything beyond a girth -- proved wired by " +
-                "a positive-case witness (the asymmetric six-lobe, needing " +
-                "no OneDrive) and then MEASURED on HIS OWN 2-sided vault: " +
-                "the real, oversized, four-corner diamond crown he " +
-                "photographed carries a crescent of only 0.0123 m2 " +
-                "against his own 0.05 m2 floor, genuinely under it and " +
-                "correctly read as silent, cross-checked against this " +
-                "harness's own independent re-trace at the exact level " +
-                "Courses() itself qualifies the cap against. FIX 5's own " +
-                "per-chord bound (round three, G3) holds directly on his " +
-                "geometry (worst chord 0.0031 m2), not only the synthetic " +
-                "six-lobe and his separately-exported crown-arch contract. " +
-                "The thickening witness: closing the crescent WORSENS the " +
-                "cap cell's own interior-sampling deviation (about 0.11 m " +
-                "against 0.07 m raw); the diagnosis's own 0.097 m worst " +
-                "reading belongs to the ordinary course-18 cells below the " +
-                "cap, which this fix never touches.");
+                "PASS  Round four rule 3, the cap crescent audit " +
+                "(re-pinned 2026-09-08, ship-without-skin task): " +
+                "SkinPatterns.CapCrescents names the area between an " +
+                "emitted cap's own polygon and the traced loop it was cut " +
+                "from, above the sliver floor -- proved wired by a " +
+                "positive-case witness (the asymmetric six-lobe, needing " +
+                "no OneDrive, 0.100 m2 combined crescent against a 0.07 m2 " +
+                "floor). On HIS OWN 2-sided vault this check no longer " +
+                "pins the cap-retired ruling (spec 2026-09-07): that " +
+                "ruling shipped in the same skin-round-four/five wave " +
+                "Param rejected on 2026-09-07, and the deployed plugin " +
+                "runs 9ae02bd, which never retired this cap. Reverted to " +
+                "9ae02bd's own reading, measured directly: 1 diamond cap, " +
+                "1 oversized-cap warning, 0 uncovered regions at the " +
+                "crest. Was 0 and 0 under the now-unshipped ruling; " +
+                "un-widened, just moved back to what Param actually runs.");
         }
         catch (HisNetsUnavailableException unavailable)
         {
@@ -3780,24 +3798,20 @@ internal static partial class Program
         {
             ValidateSkinRailPointCountParity(plugin);
             Console.WriteLine(
-                "PASS  Two-sided vault deadline, correction 1 (spec " +
-                "2026-09-07): every courses-pattern cell's own loft rails " +
-                "(SkinCell.Sections) carry the SAME point count and " +
-                "correspond by arc-length fraction, across all eight of " +
-                "his studies -- BEFORE this fix, 1966 of 4003 (49%) did " +
-                "not. BandCell and CloserBand's staged stones both now " +
-                "build a SEPARATE, arc-length-resampled Sections pair for " +
-                "the loft alone, never touching the outline lower/upper " +
-                "themselves: two earlier attempts that resampled (or " +
-                "padded) those same lists before the outline was built " +
-                "from them were both reverted after the full suite caught " +
-                "them changing plan-validity or width-measurement outcomes " +
-                "on unrelated fixtures; a Sections-local pair touches " +
-                "neither, so the walls stay byte-identical on every " +
-                "fixture, always -- see this check's own doc comment for " +
-                "the full before-fix census, measured directly against " +
-                "his own chin, and for why it does not corroborate a " +
-                "springing-specific concentration.");
+                "PASS  Two-sided vault deadline, correction 1 (RE-PINNED " +
+                "2026-09-08, ship-without-skin task): this check used to " +
+                "pin the MatchRailPointCounts fix (spec 2026-09-07) -- " +
+                "every courses-pattern cell's loft rails carrying the SAME " +
+                "point count, arc-length corresponding -- but that fix " +
+                "shipped in the same skin-round-four/five wave Param " +
+                "rejected on 2026-09-07, and the deployed plugin runs " +
+                "9ae02bd, which never had it. Reverted to 9ae02bd's own " +
+                "census, measured directly and unchanged from this check's " +
+                "own doc comment: 1966 of 4003 loft-route cells (49%) " +
+                "carry a rail-point-count mismatch, 239 at course 0-2 (the " +
+                "springing), 62 at the top three courses (the crown) -- " +
+                "was 0 of 4003 under the now-unshipped fix, reverted to " +
+                "1966 of 4003, the state Param actually runs.");
         }
         catch (HisNetsUnavailableException unavailable)
         {
@@ -23496,25 +23510,42 @@ internal static partial class Program
         // crown arch" is, by its own name, an ARCH -- genuinely ridge-
         // shaped by the SAME discriminator Param's ruling names ("any
         // other true ridge form in the fixtures, the barrel fixtures
-        // included"), so this fixture's own crown cap is now retired too,
-        // exactly as his 2-sided vault's is. Its closer stones no longer
-        // fan out wide to meet an oversized cap that is not there any
-        // more: measured width excursion is now 0.00%, comfortably
-        // inside the ordinary bar, so the named exemption this fixture
-        // used to need is gone, not merely re-numbered. The worst head-
-        // joint bond moved with it, 0.0492 -> 0.0990 m: the closer band
-        // now meets ridge stones running along the retired cap's own
-        // former footprint instead of a single polygon's own fixed
-        // corners, a different (and still real) meeting geometry, not a
-        // regression -- the rest of this fixture's own numbers (stone
-        // count, seam chords, span excursion, the 0.9 width floor) are
-        // UNCHANGED, proving the closer band's own basic construction is
-        // not what moved.
+        // included"), so this fixture's own crown cap was retired too,
+        // exactly as his 2-sided vault's was. Its closer stones no longer
+        // fanned out wide to meet an oversized cap that was not there any
+        // more: measured width excursion was 0.00%, comfortably inside
+        // the ordinary bar, so the named exemption this fixture used to
+        // need was gone, not merely re-numbered. The worst head-joint
+        // bond moved with it, 0.0492 -> 0.0990 m.
+        //
+        // WIDTH EXEMPTION RESTORED, RE-PINNED (ship-without-skin task,
+        // 2026-09-08): the crown-retirement ruling above shipped in the
+        // same skin-round-four/five wave Param rejected on 2026-09-07
+        // ("most cells now dont have a block are just surfaces ... it
+        // actually looks worse"). The deployed plugin was rolled back to
+        // 9ae02bd, which never retired this cap; the branch's engine now
+        // matches that rollback exactly, so the closer stones fan out
+        // wide to meet the (still present) oversized cap again, exactly
+        // as they did before correction 1 and the crown ruling both
+        // existed. Measured directly against 9ae02bd, 2026-09-08: width
+        // excursion 0.867909 (86.79%), matching the exact figure this
+        // block's own history already named as the correction-1 "before"
+        // number (0.8679); the named exemption is restored at that value.
+        // Was 0.00% (no exemption needed) under the now-unshipped ruling;
+        // reverted to 0.8679, the state Param actually runs. The worst
+        // head-joint bond moves back with it, 0.0990 -> 0.0492 m, the
+        // same "before" figure this block's history already named: the
+        // closer band once again meets a single polygon's own fixed
+        // corners instead of ridge stones running along a retired cap's
+        // footprint. If a future fix legitimately re-retires the cap
+        // here, this exemption and this bond both need removing with it,
+        // not left stale.
         SeamFixture(
             "Param's crown arch", crown, 0.10, 0.30,
             expectedStones: 68, dropsAllowed: 0,
-            expectedSeamChords: 32, expectedBond: 0.0990,
+            expectedSeamChords: 32, expectedBond: 0.0492,
             expectedSpanExcursion: 0.0276,
+            widthExemption: 0.867909,
             widthFloorFraction: 0.9);
         // CH 0.375 KEEPS its coverage exemption at the same number, and
         // the reason is now a construction fact rather than a hole class:
@@ -23526,25 +23557,26 @@ internal static partial class Program
         // six-lobe carries at its seam tips, each piece under the sliver
         // floor. At CH 0.30 the same crotches DO leave an arc and the
         // end-stones close them to 100.05 per cent.
-        // WIDTH EXEMPTION RE-MEASURED (CORRECTION 1) AND BOND RE-MEASURED
-        // (PARAM'S RULING ON THE CROWN), TWO-SIDED VAULT DEADLINE (spec
-        // 2026-09-07): width exemption 0.9345 -> 0.9475, same reason as
-        // the CH 0.30 fixture above (CellWidthAcross is a sampling-
-        // density-weighted average over Sections, which the rail-parity
-        // fix deliberately changes; the outline, and so this fixture's
-        // own coverage exemption a few lines up, is untouched). Bond
-        // 0.0871 -> 0.1644, same reason as the CH 0.30 fixture's own
-        // bond move: this crown is ridge-shaped too and now retires its
-        // cap, so the closer band meets ridge stones running along the
-        // former cap's own footprint instead of one polygon's fixed
-        // corners.
+        // WIDTH EXEMPTION AND BOND, RE-PINNED (ship-without-skin task,
+        // 2026-09-08): correction 1 (rail-point parity) and Param's
+        // ruling on the crown (cap retirement) had moved this fixture's
+        // width exemption 0.9345 -> 0.9475 and its bond 0.0871 -> 0.1644,
+        // same reasons as the CH 0.30 fixture above. Both fixes shipped
+        // in the skin-round-four/five wave Param rejected on 2026-09-07;
+        // the deployed plugin runs 9ae02bd, which has neither, and the
+        // branch's engine now matches it exactly. Measured directly
+        // against 9ae02bd, 2026-09-08: width exemption 0.934531 (93.45%),
+        // exactly the pre-correction-1 figure this block's own history
+        // already named (0.9345). Bond re-pinned back to 0.0871, the
+        // same pre-ruling figure. Was 0.9475 / 0.1644; reverted to
+        // 0.9345 / 0.0871, the state Param actually runs.
         SeamFixture(
             "Param's crown arch at CH 0.375", crown, 0.17, 0.375,
             expectedStones: 34, dropsAllowed: 0,
-            expectedSeamChords: 28, expectedBond: 0.1644,
+            expectedSeamChords: 28, expectedBond: 0.0871,
             expectedSpanExcursion: 0.0037,
             coverageExemption: 0.9734,
-            widthExemption: 0.9475,
+            widthExemption: 0.934531,
             widthFloorFraction: 0.9);
         object barrel = Activator.CreateInstance(
             netType,
@@ -47353,88 +47385,32 @@ internal static partial class Program
                 [17] = 32, [18] = 31, [19] = 31
             },
             // TWO-SIDED VAULT DEADLINE, PARAM'S RULING ON THE CROWN (spec
-            // 2026-09-07): the ridge-crest fix deliberately drops his 2
-            // sided vault's own crown cap (course 18 read 1 cap + 16
-            // closer stones = 17; the ridge now takes 19 cells there,
-            // 0 cap, coursed and closer stones running along the crest
-            // instead), so this study joins the Hex studies' own
-            // deliberate-divergence class: his sidecar (215 cells, the
-            // old capped geometry) is read and reported alongside this
-            // pin, same discipline, so the divergence stays on the record
-            // rather than silent.
+            // 2026-09-07) added a "2 sided vault" entry here, growing
+            // through 17 -> 19 -> 14 -> 20 cells at course 18 across that
+            // wave's own three fix rounds (218 cells overall at the last),
+            // to carry this study's own deliberate divergence from his
+            // sidecar once the ridge-crest fix retired its crown cap.
             //
-            // THE CREST RING CLOSER (this task, spec 2026-09-07's own
-            // follow-up, "the crest itself"): course 18 MOVES AGAIN, 19 to
-            // 14, because the interim number above was the RADIATING
-            // ROSETTE this task exists to retire -- sixteen wedge stones
-            // tapering to the field's own near-point maximum, half of
-            // them under Param's own size floor (0.272 m against an
-            // 0.53 m ordinary span), which his ruling names by shape
-            // ("no radiating sunburst of wedges") and not only by size.
-            // The crest closer replaces them with stones cut at ordinary
-            // Size pitch off the crown loop's own real girth, paired to
-            // the recovered ridge seam rather than to that point (a third
-            // sibling of the existing ridge and slab-closer paths,
-            // SkinPatterns.cs, gated on the identical topology-plus-
-            // ridgeRatio test CapQualifies already proves safe), plus ONE
-            // small corner patch at the loop's own narrow pinch where
-            // CloserBand's general nearest-point pairing -- proven only on
-            // OPEN guides until this task, never on a closed one -- still
-            // folds: seven ridge stones (0.411-0.476 m, inside the
-            // ordinary size band, against the retired rosette's 0.27 m)
-            // plus one patch, eight cells replacing sixteen. MEASURED, not
-            // assumed: undersized count 0 (rule 2.4's own bound), and the
-            // patch's own crescent (a flat corner triangulated to the
-            // summit point, the same simplification CapPolygonOutline's
-            // own comment already names) reads 0.0408 m2, under this
-            // pattern's 0.05 m2 sliver floor and the SAME species as this
-            // vault's own retired cap crescent (0.0123 m2, "genuinely
-            // under [the] floor and correctly read as silent" per the cap
-            // crescent audit's own PASS message) -- bigger because one
-            // corner carries it rather than a whole loop's own
-            // circumference sharing it, not because anything is wrong.
-            //
-            // FIX ROUND, THE SIBLING-BAND SEAM (2026-09-07 review of
-            // b0612ac/9aec8e9): course 18 MOVES A THIRD TIME, 14 to 20
-            // (212 to 218 cells overall), because the interim number above
-            // was itself measured against a hole, not against real
-            // coverage. Course 18 was, unmeasured until this review, TWO
-            // co-resident sub-bands sharing one course number: the crest
-            // ring closer's own 7 stones + 1 patch (bisection's Depth-1
-            // sub-band, `top`, protected from being swallowed) AND a
-            // sibling SLAB immediately below it (Depth 0, the ordinary
-            // refused-band path, closing two open flank strips against the
-            // SAME shared closed loop the crest ring closer also guides
-            // its own stones off). Neither's own local BandUncoveredArea
-            // audit ever saw the other's cells, and both are guided off
-            // the identical curve at independent phases: MEASURED, by
-            // independently parsing the harness's own SVG render and its
-            // triangulated mesh silhouette, 0.556 m2 of real, uncovered
-            // plan area at the crest -- two holes, 0.469 m2 and 0.087 m2,
-            // both far above the 0.05 m2 sliver floor -- where
-            // UncoveredRegions read 0. THE FIX: the slab now defers to the
-            // crest ring closer wherever they would collide (recorded by
-            // course, before either cell-building loop runs, off the
-            // IDENTICAL crestCandidate test and CloserBand call fix 5's
-            // own gate runs again, so the two can never disagree), and the
-            // crest ring closer's own trial drops whichever of its
-            // candidates collide with the slab's real, already-kept
-            // ground, closing what that costs with the SAME wedge-to-
-            // summit patch mechanism already proven on its own small
-            // crescent -- now subdivided at ordinary Size pitch rather
-            // than as one oversized fan where a genuine collision needs
-            // more than a sliver closed. MEASURED, not assumed: the whole-
-            // vault KeepValidPlans overlap-drop count fell to 2 (from a
-            // real, silent loss before), trialUncovered reads exactly 0,
-            // and the render shows the two holes gone -- see this task's
-            // own report for the before/after pair.
-            ["2 sided vault"] = new Dictionary<int, int>
-            {
-                [0] = 12, [1] = 10, [2] = 12, [3] = 10, [4] = 12, [5] = 10,
-                [6] = 12, [7] = 10, [8] = 12, [9] = 10, [10] = 12, [11] = 10,
-                [12] = 12, [13] = 10, [14] = 12, [15] = 10, [16] = 12,
-                [17] = 10, [18] = 20
-            }
+            // REVERTED, SHIP-WITHOUT-SKIN TASK (2026-09-08): that whole
+            // wave -- the ridge-crest fix, the crest ring closer, the
+            // sibling-band seam fix, all of it -- is what Param rejected
+            // on 2026-09-07 ("most cells now dont have a block are just
+            // surfaces ... it actually looks worse"). The deployed plugin
+            // was rolled back to 9ae02bd; the branch's engine
+            // (SkinPatterns.cs, SkinComponents.cs) now matches that
+            // rollback exactly, so this study no longer diverges from his
+            // own sidecar at all -- the reverted engine's course-18 tally
+            // (1 cap + 16 closer stones = 17, 215 cells overall) IS his
+            // sidecar's own capped-geometry reading, byte for count. The
+            // override entry is therefore removed rather than re-numbered:
+            // with no entry here, ValidateHisNetsFixtures falls through to
+            // comparing this study directly against sidecarTally, same as
+            // it always did before this wave existed, and that comparison
+            // now legitimately passes. RE-PIN, HONEST: was 218 cells
+            // (course 18 = 20, the ridge-crest wave's own final number);
+            // reverted to 215 cells (course 18 = 17), measured directly
+            // against 9ae02bd and cross-checked byte-for-count against his
+            // own -skin.json sidecar, 2026-09-08.
         };
 
     /// <summary>
@@ -47918,21 +47894,22 @@ internal static partial class Program
                 "Param's own exported form document.");
 
         // PARAM'S RULING ON THE CROWN (spec 2026-09-07-two-sided-vault-
-        // deadline.md, "HIS RULING ON THE CROWN"), RETIRING ROUND FOUR
-        // RULE 3 ON THIS STUDY: his 2-sided vault's crown is a RIDGE, not
-        // a true apex (measured: its own qualifying crown loop swings
-        // through 0.4208 m of world Z against a 2.855 m girth, 14.7% --
-        // his own words, "4.985 against 4.564" -- against 3/4/5/6 sided
-        // vaults' genuine apexes, all under 0.7%; the elliptical dome, a
-        // real but genuine apex check 12.2(g) still pins oversized, 6.6%).
-        // CapQualifies now refuses this crown on that discriminator, so
-        // the diamond-cap-and-crescent audit this check used to run on
-        // his vault no longer has a cap to audit: CapsOversized and
-        // CapCrescents both read empty by construction, not by a
-        // regression. What this check verifies instead is the ruling's
-        // own acceptance: no cap, and the crest still fully covered --
-        // courses from both flanks meeting along it, not a hole where the
-        // diamond used to be.
+        // deadline.md, "HIS RULING ON THE CROWN") RETIRED THE CAP ON THIS
+        // STUDY, but that ruling shipped in the SAME skin-round-four/five
+        // wave Param rejected on 2026-09-07 ("most cells now dont have a
+        // block are just surfaces ... it actually looks worse"): the
+        // deployed plugin was rolled back to 9ae02bd, and the branch's
+        // engine (plugin/native_v02/Components/SkinPatterns.cs,
+        // SkinComponents.cs) now matches that rollback exactly, CapQualifies
+        // included. So this check no longer pins "no cap" -- it pins what
+        // 9ae02bd's own CapQualifies gives this study: ONE diamond cap and
+        // ONE oversized-cap warning, the same reading this check pinned
+        // before the crown ruling existed. RE-PIN, HONEST: was 0 oversized,
+        // 0 cap cells (the retired-cap ruling, now un-shipped); reverted to
+        // 1 oversized, 1 cap cell (9ae02bd's own reading, measured directly
+        // against the rolled-back engine, 2026-09-08). If a future fix
+        // legitimately re-retires the cap here, this pin needs revisiting
+        // with it, not silently widened.
         object generated = courses.Invoke(
             null, new object[] { net, Size, CourseHeight, MinPiece })!;
         int capsOversized = Reading<int>(generated, "CapsOversized");
@@ -47940,16 +47917,15 @@ internal static partial class Program
             .GetProperty("Cells")!.GetValue(generated)!;
         int capCellCount = generatedCells.Cast<object>()
             .Count(cell => Reading<bool>(cell, "Cap"));
-        if (capsOversized != 0 || capCellCount != 0)
+        if (capsOversized != 1 || capCellCount != 1)
         {
             throw new InvalidOperationException(
-                $"'{Study}': Param's own ruling on the crown (spec " +
-                "2026-09-07) retires the cap here -- a ridge takes ridge " +
-                "stones, not a one-polygon cap -- so CapsOversized and " +
-                "the emitted cap count must both be zero; got " +
-                $"{capsOversized} oversized, {capCellCount} cap cell(s). " +
-                "If a fix legitimately restored a cap here, this check's " +
-                "own premise needs revisiting, not silently widened.");
+                $"'{Study}': 9ae02bd's own CapQualifies (the engine " +
+                "Param actually runs, after his 2026-09-07 rejection of " +
+                "the skin-round-four/five wave) puts a diamond cap on " +
+                "this crown, so CapsOversized and the emitted cap count " +
+                $"must both read 1; got {capsOversized} oversized, " +
+                $"{capCellCount} cap cell(s).");
         }
         string[] uncoveredRegions = ((IEnumerable)generated.GetType()
                 .GetProperty("UncoveredRegions")!.GetValue(generated)!)
@@ -47957,19 +47933,17 @@ internal static partial class Program
         if (uncoveredRegions.Length > 0)
         {
             throw new InvalidOperationException(
-                $"'{Study}': the crest must still read FULLY COVERED once " +
-                "the cap is retired -- courses from both flanks meeting " +
-                "along it, not a hole where the diamond used to be; the " +
-                $"engine's own audit names {uncoveredRegions.Length} " +
-                "uncovered region(s): " +
+                $"'{Study}': the crest must still read FULLY COVERED, " +
+                "diamond cap included -- the engine's own audit names " +
+                $"{uncoveredRegions.Length} uncovered region(s): " +
                 $"{string.Join("; ", uncoveredRegions)}.");
         }
         Console.WriteLine(
-            $"      Round four rule 3, RETIRED on {Study} (spec " +
-            "2026-09-07, Param's ruling on the crown): no cap, no " +
-            "oversized-cap warning, and 0 uncovered regions -- the crest " +
-            "is fully covered by ridge and closer stones, not left open " +
-            "where the diamond used to be.");
+            $"      Round four rule 3, on {Study} (9ae02bd's engine, " +
+            "the state Param runs after his 2026-09-07 rejection of the " +
+            "skin-round-four/five wave): 1 diamond cap, 1 oversized-cap " +
+            "warning, and 0 uncovered regions -- the crest is fully " +
+            "covered by the cap and the closer band around it.");
     }
 
 
@@ -48537,16 +48511,47 @@ internal static partial class Program
                     : string.Empty));
         }
 
-        if (totalMismatched > 0)
+        // RE-PIN, HONEST (ship-without-skin task, 2026-09-08). This check
+        // used to require ZERO mismatches: MatchRailPointCounts (BandCell,
+        // SkinPatterns.cs) resampled both a cell's rails to a shared,
+        // arc-length-corresponding point count before the outline or
+        // Sections were built. That fix shipped in the same skin-round-
+        // four/five wave Param rejected on 2026-09-07 ("most cells now
+        // dont have a block are just surfaces ... it actually looks
+        // worse"), and the deployed plugin was rolled back to 9ae02bd,
+        // which never had MatchRailPointCounts. The branch's engine now
+        // matches that rollback exactly, so this check no longer pins
+        // "no mismatch" -- it pins 9ae02bd's own measured census, the
+        // same "before this fix" figures this method's own doc comment
+        // already recorded: 1966 of 4003 loft-route cells mismatched
+        // (49%), 239 of those at course 0-2 (the springing), 62 at the
+        // top three courses (the crown). Was 0 of 4003 under the now-
+        // unshipped fix; reverted to 1966 of 4003, measured directly
+        // against 9ae02bd, 2026-09-08. If a future fix legitimately
+        // re-lands rail-point parity, this pin needs re-measuring with
+        // it, not silently zeroed.
+        const int ExpectedMismatched = 1966;
+        const int ExpectedWithSections = 4003;
+        const int ExpectedSpringingMismatched = 239;
+        const int ExpectedCrownMismatched = 62;
+        if (totalMismatched != ExpectedMismatched ||
+            totalWithSections != ExpectedWithSections ||
+            courseSpringingMismatched != ExpectedSpringingMismatched ||
+            courseCrownMismatched != ExpectedCrownMismatched)
         {
             throw new InvalidOperationException(
-                $"{totalMismatched} of {totalWithSections} loft-route " +
-                "cells across his eight studies carry a rail-point-count " +
-                "mismatch between their two BandCell rails; " +
-                $"{courseSpringingMismatched} of those sit at course 0-2 " +
-                "(the springing), " +
-                $"{courseCrownMismatched} at the top three courses (the " +
-                $"crown). Per study: {string.Join("; ", perStudy)}.");
+                $"9ae02bd's own rail-point-count census (the engine Param " +
+                "actually runs after his 2026-09-07 rejection of the " +
+                $"skin-round-four/five wave) is pinned at " +
+                $"{ExpectedMismatched} of {ExpectedWithSections} " +
+                "loft-route cells mismatched across his eight studies " +
+                $"({ExpectedSpringingMismatched} at course 0-2, the " +
+                $"springing, {ExpectedCrownMismatched} at the top three " +
+                "courses, the crown); got " +
+                $"{totalMismatched} of {totalWithSections} " +
+                $"({courseSpringingMismatched} springing, " +
+                $"{courseCrownMismatched} crown). Per study: " +
+                $"{string.Join("; ", perStudy)}.");
         }
     }
 
