@@ -106,10 +106,29 @@ where the wire wraps tightly.
    the wire is drawn. The plugin validates it after placement rather
    than trusting it: the first plane must sit nearer its net vertex
    than the last, and a reversed list is named on the component.
-5. **The routed portion is constant.** The routing frames describe
-   fixed hardware, the guide plate holes and the wheel wraps; the wire
-   passes the same route however much length has spooled. What changes
-   is the free span and the drum's rotation.
+5. **The routed portion is PARTLY constant.** Superseded 2026-09-08
+   after being stated twice: Param has modelled the wire wrapping the
+   drums, so part of every wire's routed path sits on a body that
+   rotates. Every `wires[].route[]` frame now carries `owner`
+   (`"body"` or `"reel"`) and `ownerReel` (that reel's 0-based index,
+   or -1), shipped at plugin `be30f38`. Body-owned frames behave as
+   originally agreed and are built once per instance. Reel-owned
+   frames belong to a spinning part.
+
+   The owner is DERIVED, not authored: for each frame the writer takes
+   the perpendicular distance from the frame's origin to each reel's
+   axis, divides by that reel's radial extent, and the smallest ratio
+   at or under 1.0 wins. Frames near a boundary or near two reels are
+   named on the component as ambiguous rather than picked silently.
+   Positions are never altered -- classification only, with a check
+   proving a frame's origin and axes are byte-identical whichever
+   owner it gets. So this is another derived value to read explicitly
+   and sanity-check, the same posture as `net_vertex`.
+
+   **What to DO with a reel-owned frame is open, and rigidly rotating
+   it is probably wrong.** See the open items: a wrap cannot rotate
+   rigidly while the free span feeding it stays put, because one end
+   of the wire has to stay where the wire arrives.
 
 ## What the studio builds
 
@@ -125,12 +144,12 @@ boot, never assigned; the Wire size slider the old comments mention was
 removed in an earlier wave. So the mechanism wires match the net wires
 by construction, which is what his ruling was reaching for.
 
-Because the routed portion is constant, build the routed tube **once
-per instance** in local space, stamp it with the placement, and rebuild
-only the **free span** from the net vertex to the first routing plane
-per time step. That is 42 short tubes a frame rather than 4200 circles.
-Guard coincident or duplicated consecutive planes by skipping
-zero-length spans, or a tight wrap folds the loft.
+Build the **body-owned** routed tube once per instance in local space
+and stamp it with the placement; rebuild the **free span** from the net
+vertex to the first routing plane per time step. That is still 42 short
+tubes a frame rather than 4200 circles. The **reel-owned** portion is
+the open question below. Guard coincident or duplicated consecutive
+planes by skipping zero-length spans, or a tight wrap folds the loft.
 
 **No snapping.** The wire is drawn from its declared net vertex to
 wherever the placement puts the first plane. A mechanism placed off its
@@ -318,6 +337,37 @@ taken away" view reads off the port name.
   is one word of approval away, and worth pairing with the Pre-Sag
   question below since both ask what the studio should do with clock
   time in which nothing happens.
+
+- **What a reel-owned route frame should DO, unsettled, and the
+  proposed answer looks wrong.** The plugin's intent is that reel-owned
+  frames rotate with their drum, so a stationary wire on a spinning
+  drum does not read as slipping. The geometric objection: **a wrap
+  cannot rotate rigidly while the free span feeding it stays still.**
+  One end of the wire has to remain where the wire arrives. Rotate the
+  wrapped frames rigidly and the junction with the last body-owned
+  frame opens by the full spin angle; let the free span chase the
+  rotated wrap instead and the wire visibly orbits the drum. Neither is
+  what a winch does.
+
+  How bad depends on total turns, and a rough estimate says badly. With
+  `turns = delta * reeve / (2 * pi * spoolRadius)`, a per-wire take-up
+  of about a metre (plausible when the columns rise 2.64 m) on a drum
+  of 50 to 100 mm radius gives roughly 1.6 to 3 turns at reeve 1, and
+  6 to 13 turns at reeve 4. Rigid rotation through several turns does
+  not produce a wire; it produces a wrap pointing somewhere unrelated
+  to where the wire comes in. For rigid rotation to be sound the drum
+  would need a radius near 0.6 m, which is not this machine.
+
+  The likely resolution, pending the two numbers below: a wrap of a
+  full turn or more is nearly invariant under rotation about its own
+  axis, so leaving those frames where they are is NOT the slipping
+  failure the plugin fears -- the drum reads as turning because the
+  spinner MESH turns, which already happens. Slip only shows if the
+  wrap is a short arc with visible ends. So: leave reel-owned frames in
+  place if the wrap is roughly symmetric, and treat a short-arc wrap as
+  the case that needs a tangent-point construction rather than a rigid
+  spin. **Two numbers settle it, both Param's: how far the authored
+  wrap subtends, and the drum radius.**
 
 - **The static opening, same family, also Param's.** At `Pre-Sag` 0 the
   `reel` third opens on an essentially static flat net. Compounded with
