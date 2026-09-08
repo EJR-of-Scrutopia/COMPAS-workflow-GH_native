@@ -220,12 +220,34 @@ taken away" view reads off the port name.
 
 ## Open, and whose
 
-- **The drop's rhythm, Param's.** `FORMWORK_SECONDS` is 12 and the drop
-  begins when the frames reach time 100, but the machine stops moving
-  at frame time 90. Every take therefore spends its last **1.2 seconds**
-  on a motionless machine before the first voussoir falls. Not changed:
-  the rhythm is his call. Worth knowing the quiet phases earn their time
-  once the reels and wires are drawn.
+- **The drop's rhythm, Param's, and the case is stronger than it first
+  looked.** `FORMWORK_SECONDS` is 12 and the studio starts the build
+  clock when the frames reach time 100, but the machine stops moving at
+  time 90, so every take spends its last **1.2 seconds** on a motionless
+  machine before the first voussoir falls. The plugin has since supplied
+  the intent behind that tail: `hold` exists **to keep the shape while
+  load arrives**. So the drop is meant to happen DURING hold, and the
+  studio currently waits for the phase to finish before starting the
+  thing the phase was written for. That reframes this from a matter of
+  taste to a misreading of the frames' own design.
+
+  The fix is small and geometrically safe: begin the build clock at the
+  start of `hold` (frame time 90) rather than at the end of the frames.
+  Nothing moves during hold, so the net is already at its equilibrium
+  pose throughout, and pieces landing on it during the phase meet the
+  same geometry they meet today. Not changed while he slept, because it
+  alters the visible rhythm and the take length of a presentation
+  animation and he has twice been told it would be left alone -- but it
+  is one word of approval away, and worth pairing with the Pre-Sag
+  question below since both ask what the studio should do with clock
+  time in which nothing happens.
+
+- **The static opening, same family, also Param's.** At `Pre-Sag` 0 the
+  `reel` third opens on an essentially static flat net. Compounded with
+  the tail above, a take could run with roughly a third of it
+  motionless. His canvas is at 30, nowhere near it. Both ends are
+  legitimate machine settings rather than faults, so the sequence must
+  survive them gracefully whatever he decides about rhythm.
 - **The anodised material, Param's**, to be confirmed on screen once
   the parts exist.
 - ~~Phase vocabulary and order guaranteed or incidental~~ **CLOSED**
