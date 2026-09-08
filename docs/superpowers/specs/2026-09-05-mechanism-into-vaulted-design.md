@@ -48,6 +48,45 @@ he says otherwise, wire branch order is taken as anchor order along the row, and
 chin PRINTS THE MATCHED DISTANCES so a wire latched to the wrong anchor is visible rather than
 silent.
 
+### HIS FIVE-PART MECHANISM, described 2026-09-08 late. TO BE BUILT AFTER HE TESTS THE CURRENT ONE
+
+His own description, and it supersedes the port shape above once built. THE MECHANISM IS FIVE
+PARTS: (1) the frame, one joined mesh; (2) a second part of the frame in a DIFFERENT MATERIAL,
+several objects; (3) the REELS, of which there are TEN per mechanism, but seven move identically
+so he groups them as one, giving FOUR reel entries, which lands on the four-reel structure
+already built; (4) the WIRE FRAMES; (5) the MOTORS, one joined mesh. He joins what can be joined
+so each input takes one mesh, except the seven grouped reels, the wires, and the second frame
+part. He proposes a component taking all five and feeding the exporter, plus an input for the
+reels' rotation planes matching the reels' own data structure.
+
+THE PLACEMENT CHANGE, which is the substantive part: ONE mechanism authored exactly right, placed
+from THE FIRST FRAME OF EACH WIRE-FRAME GROUP. His words: "just give you one mechanism, exactly
+how it should be, you take the starting planes and place the mechanism off each starting plane
+set (remember 7 wires per mechanism and the strucutre will follow that goruped in 7, then number
+of 7 per side, then sides)". And the constraint that will bite if ignored: "if the mechanism goes
+on the opposite side it needs to be flipped and not be upside down" -- a MIRROR, not a rotation,
+so handedness must come from his own frame axes rather than be inferred.
+
+THE COST OF THAT CHANGE, flagged by the studio session and worth more than the change is worth
+losing: deriving placement from the wire frame guarantees the mechanism and its wire can never
+disagree, which is better than two independently authored values. BUT IT INVERTS THE DIAGNOSTIC
+WE DELIBERATELY KEPT. Today the studio refuses to snap a wire, so a mis-placed mechanism shows as
+a wire that stretches or floats and the drawing checks the placement. If placement comes FROM the
+wire, a bad first frame moves the whole unit to a wrong but perfectly SELF-CONSISTENT position
+and nothing on screen looks wrong at all. The error stops being visible precisely because the two
+can no longer contradict each other. THEREFORE, binding on that build: the first wire frame
+becomes a single point of failure, and the component must carry a proximity or sanity print
+against it the way the tension tie's door guard already does, so his eye on the canvas has
+something to catch it with.
+
+ALSO SETTLED: the anchor and tension tie now arrive as ONE object by his choice, so the document
+must keep them distinguishable even though they enter together, since the permanence view rests
+on that distinction. And the wrap: "yes the wires are already fully wound in the image and my
+model, you can use the frames to tighten and losen along the frames as long as it stays spooled
+enough for now" -- a multi-turn wrap, so reel-owned routing frames stay STATIC (rotating a
+multi-turn helix about its own axis is a visual no-op away from its ends), and the visible motion
+comes from the spinner mesh turning.
+
 ### The reeve factor, settled 2026-09-08 late. NOT YET BUILT, and 1.0 is currently WRONG
 
 THE GAP, found by the rebuild's own review: reeveFactor ships as a FIXED 1.0 with no author port.
