@@ -7897,24 +7897,33 @@ outlineMaterial.onBeforeCompile = (shader) => {
       "#include <begin_vertex>\n  transformed += outlineSide * outlineWidth;");
 };
 
-// Which edges of the top face are the piece's OUTLINE. Not the order the
+// Which edges of one FACE of the piece are its OUTLINE. Not the order the
 // corners arrive in: pieces.py emits "mid" as the cell's used corners,
 // which is a list, not a loop, and joining it corner by corner drew long
 // chords wandering across the vault -- it looked like a fishing net, not
 // like voussoirs. The boundary is derived instead, the way a boundary
-// always is: take every edge of every TOP face, and keep the ones exactly
-// one face uses. An edge two faces share is an interior seam of the
-// triangulation and no part of the piece's outline.
-function topBoundaryEdges(faces, count) {
+// always is: take every edge of every face on the side asked for, and
+// keep the ones exactly one face uses. An edge two faces share is an
+// interior seam of the triangulation and no part of the piece's outline.
+//
+// underside picks the far side of the casting: a piece's points run
+// 0..count-1 on the top and count..2*count-1 underneath it, so the two
+// surfaces are the same loop read off two ranges (Param: "make sure it
+// shows on the underside of the skin too, not just the outside"). The
+// indices come back rebased to 0..count-1 either way, so one ribbon
+// builder serves both.
+function boundaryEdges(faces, count, underside) {
+  const low = underside ? count : 0;
+  const high = low + count;
   const seen = new Map();
   for (const face of faces) {
-    let top = true;
+    let ours = true;
     for (const index of face) {
-      if (index >= count) { top = false; break; }
+      if (index < low || index >= high) { ours = false; break; }
     }
-    if (!top) continue;                // a bottom face or a side wall
+    if (!ours) continue;               // the other surface, or a side wall
     for (let i = 0; i < face.length; i++) {
-      const a = face[i], b = face[(i + 1) % face.length];
+      const a = face[i] - low, b = face[(i + 1) % face.length] - low;
       const key = a < b ? a + ":" + b : b + ":" + a;
       const already = seen.get(key);
       if (already) already.uses += 1;
@@ -7928,11 +7937,13 @@ function topBoundaryEdges(faces, count) {
   return edges;
 }
 
-// The ribbon for one piece: its top corners (already shrunk the way the
-// casting was), the surface normal at each, and the centroid that says
-// which way "inward" is.
-function outlineRibbon(loop, normals, centre, edges) {
-  const positions = [], sides = [];
+// The ribbon for one FACE of one piece: that face's corners (already
+// shrunk the way the casting was), the outward normal at each, and the
+// centroid that says which way "inward" is. Called twice per casting,
+// once per surface, and the two results are drawn as one mesh.
+function outlineRibbon(loop, normals, centre, edges, into) {
+  const positions = into ? into.positions : [];
+  const sides = into ? into.sides : [];
   for (const edge of edges) {
     const a = loop[edge.a], b = loop[edge.b];
     const na = normals[edge.a], nb = normals[edge.b];
@@ -8046,19 +8057,31 @@ function buildPieceMeshes() {
         }
       }
     }
-    // The top corners, shrunk exactly as the casting was: the path the
-    // inked outline runs along, once the boundary edges are known.
-    const loop = [];
+    // The corners of both surfaces, shrunk exactly as the casting was:
+    // the paths the inked outline runs along, once the boundary edges of
+    // each are known. A vault is looked at from underneath more than from
+    // above, so the underside gets the same line (Param: "make sure it
+    // shows on the underside of the skin too").
+    const place = (p) => (shrink === 1 ? [p[0], p[1], p[2]] : [
+      centre[0] + (p[0] - centre[0]) * shrink,
+      centre[1] + (p[1] - centre[1]) * shrink,
+      centre[2] + (p[2] - centre[2]) * shrink]);
+    const above = [], below = [], under = [];
     for (let i = 0; i < count; i++) {
-      const p = points[i];
-      loop.push(shrink === 1 ? [p[0], p[1], p[2]] : [
-        centre[0] + (p[0] - centre[0]) * shrink,
-        centre[1] + (p[1] - centre[1]) * shrink,
-        centre[2] + (p[2] - centre[2]) * shrink]);
+      above.push(place(points[i]));
+      below.push(place(points[i + count]));
+      // The underside's outward normal is the surface normal reversed,
+      // which is what lifts its ribbon clear of the face rather than
+      // burying it in the casting.
+      const n = piece.normals[i];
+      under.push([-n[0], -n[1], -n[2]]);
     }
-    built.push({ piece, positions, weights, surface, centre,
-      outline: outlineRibbon(loop, piece.normals, centre,
-        topBoundaryEdges(piece.faces, count)) });
+    const ribbon = { positions: [], sides: [] };
+    outlineRibbon(above, piece.normals, centre,
+      boundaryEdges(piece.faces, count, false), ribbon);
+    outlineRibbon(below, under, centre,
+      boundaryEdges(piece.faces, count, true), ribbon);
+    built.push({ piece, positions, weights, surface, centre, outline: ribbon });
   }
   // Sprayed concrete is one continuous surface: the joint gap is zero,
   // the shrink factor is exactly 1 and shared boundary points are

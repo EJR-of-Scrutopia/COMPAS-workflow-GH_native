@@ -987,16 +987,27 @@ def test_the_voussoirs_can_be_inked_with_an_outline():
     # the vault: a fishing net, not voussoirs. The boundary is derived
     # instead, and it was checked against the server's own side walls on
     # a live 1501-piece cut: 24 edges per piece, both ways, no mismatch.
-    edges = _js_function(js, "function topBoundaryEdges(faces, count)")
-    assert "if (index >= count) { top = false; break; }" in edges, (
-        "a face touching the underside is not a top face")
+    edges = _js_function(js, "function boundaryEdges(faces, count, underside)")
+    assert "if (index < low || index >= high) { ours = false; break; }" in edges, (
+        "a face on the other surface, or a side wall, is not this boundary")
     assert "if (edge.uses === 1) edges.push(edge);" in edges, (
         "an edge two faces share is an interior seam, not an outline")
-    assert "topBoundaryEdges(piece.faces, count)" in js
+
+    # BOTH surfaces. Param: "make sure it shows on the underside of the
+    # skin too, not just the outside" -- a vault is looked at from
+    # underneath more than from above. The two calls differ only in which
+    # range of points they read and which way the normal points, and the
+    # underside's normal is reversed so its ribbon lifts clear of the face
+    # instead of burying itself in the casting.
+    assert "boundaryEdges(piece.faces, count, false), ribbon);" in js
+    assert "boundaryEdges(piece.faces, count, true), ribbon);" in js
+    assert "under.push([-n[0], -n[1], -n[2]]);" in js
+    assert "below.push(place(points[i + count]));" in js
 
     # The width is a uniform on a side vector, so zero has no area and
     # the slider costs nothing to drag.
-    ribbon = _js_function(js, "function outlineRibbon(loop, normals, centre, edges)")
+    ribbon = _js_function(
+        js, "function outlineRibbon(loop, normals, centre, edges, into)")
     assert "sides.push(out * sx, out * sy, out * sz);" in ribbon
     assert "transformed += outlineSide * outlineWidth;" in js
     assert "const outlineWidth = { value: 0 };" in js
