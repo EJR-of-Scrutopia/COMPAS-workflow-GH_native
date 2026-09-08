@@ -145,14 +145,17 @@ internal static partial class Program
                 // member and form lines, the load and reaction points and
                 // vectors) and to Diagnose (the report), which carry them
                 // already; what is left here is the drawing, so the pin is
-                // seven inputs and NO outputs. RequiredPreviewComponents and
+                // NO outputs. RequiredPreviewComponents and
                 // NativeVisibilityGuardComponents keep it, because the
-                // viewport is now the whole of it.
+                // viewport is now the whole of it. Preset is APPENDED at 7
+                // by the display wave (2026-09-08), retiring StyleComponent:
+                // the six names before it must not move, which is what this
+                // list says.
                 ["Ananke.COMPAS.Native.Components.DisplayComponent"] = (
                     new[]
                     {
                         "Result", "Style", "Elements", "Metric", "Weight",
-                        "Vector Scale", "Gap"
+                        "Vector Scale", "Gap", "Preset"
                     },
                     Array.Empty<string>()),
                 // Fit owns the geometry-against-the-solved-state half of
@@ -308,12 +311,6 @@ internal static partial class Program
                     "02 Solve",
                     new[] { "PRB", "q", "Run" },
                     new[] { "RES", "L", "S" }),
-                ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
-                    "Style",
-                    "Style",
-                    "04 Read",
-                    new[] { "Preset", "Weight", "Vector" },
-                    new[] { "STY" }),
                 // Columns is pinned because slot 2 is RENAMED from Ground to
                 // Type and keeps its slot: the nicknames are the canvas
                 // contract, and a saved wire has to land on the same port it
@@ -377,7 +374,6 @@ internal static partial class Program
             ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
             ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
             ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
-            ["Ananke.COMPAS.Native.Components.StyleComponent"] = ("diagram_style", "ST"),
             ["Ananke.COMPAS.Native.Components.DisplayComponent"] =
                 ("graphic_diagram_display", "DI"),
             ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
@@ -587,20 +583,24 @@ internal static partial class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 23)
+        if (componentTypes.Length != 22)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
             // with nineteen components' worth of contract untested. 21 was
             // the skin rework: Skin and Armadillo Dual became ONE Skin
-            // component in 05 Deliver, three patterns behind one flag. 22 is
-            // TNA Horizontal, the plan-moving station that stands between
-            // TNA Relax and TNA Solve. 23 is MECHANISM, the fourth sibling
-            // document's collector, feeding Export beside RES and Cells
-            // (mechanism spec, 2026-09-05/08).
+            // component in 05 Deliver, three patterns behind one flag. 22 was
+            // first TNA Horizontal, the plan-moving station that stands
+            // between TNA Relax and TNA Solve; 23 briefly added MECHANISM,
+            // the fourth sibling document's collector, feeding Export beside
+            // RES and Cells (mechanism spec, 2026-09-05/08). The display
+            // wave (2026-09-08) retires StyleComponent, its own Preset
+            // dropdown moved onto Display as an appended input rather than
+            // a new component, so the count returns to 22 for a different
+            // reason than the first time it was 22.
             failures.Add(
-                $"Expected 23 concrete public components, found " +
+                $"Expected 22 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -3809,6 +3809,53 @@ internal static partial class Program
             failures.Add(
                 $"Two-sided vault deadline, correction 1: " +
                 $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateStyleRetirement(plugin);
+            Console.WriteLine(
+                "PASS  StyleComponent retires (the display wave, " +
+                "2026-09-08): its class no longer exists and its GUID " +
+                "c3f8a2d6-4e9b-4071-8f5a-b1d7c9e3a250 is not carried by " +
+                "any other component, the Monitor/MouldState precedent " +
+                "for a retired component -- a saved definition holding " +
+                "one loads it as an orphaned object, Grasshopper's own " +
+                "honest handling for an unknown GUID. StyleDto, StyleGoo " +
+                "and StyleParam are NOT deleted with it, because " +
+                "Display's own optional Style input still consumes them.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Style retirement: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDisplayPresetInput(plugin);
+            Console.WriteLine(
+                "PASS  Display's Preset input, StyleComponent's " +
+                "replacement (the display wave, 2026-09-08): APPENDED at " +
+                "input 7 so Elements, Metric, Weight, Vector Scale and " +
+                "Gap keep their ports; ValueLists carries it with " +
+                "StyleComponent's own three items (Analysis, Classical " +
+                "GS, Monochrome) and the 'analysis' default, and the " +
+                "override actually returns all three specs a fresh " +
+                "placement would attach. A component straight off the " +
+                "palette answers ReadFromArchive = false; the same " +
+                "component round-tripped through GH_IO's own writer and " +
+                "reader answers true, so a reopened canvas is offered " +
+                "nothing new -- an archived Display draws exactly the " +
+                "preset it drew before, because EffectivePreset gives " +
+                "Display's own input priority, a wired Style's Preset " +
+                "second, and Analysis last, the same shape Weight and " +
+                "Vector Scale already gave their own inputs over Style's " +
+                "fields.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Display's Preset input: {DescribeException(exception)}");
         }
 
         // Every deferred assertion is reported here, at the suite level, so
@@ -44879,6 +44926,369 @@ internal static partial class Program
                     + "Loads reads density 1.0, the value an empty port "
                     + "already reads as, until a material is picked.");
             }
+        }
+    }
+
+    /// <summary>
+    /// StyleComponent retires (the display wave, 2026-09-08), matching the
+    /// Monitor/MouldState precedent recorded in the readers-design and
+    /// res-spine specs: the class is gone and its GUID is never reused, so
+    /// a saved definition that holds one loads it as an orphaned object --
+    /// Grasshopper's own honest handling for an unknown GUID, not anything
+    /// this plugin renders or could render headless.
+    ///
+    /// StyleDto, StyleGoo and StyleParam do NOT go with it, unlike
+    /// MouldState's contract types: Display's own optional Style input
+    /// still accepts one, for a hand-built source (an Expression or
+    /// Script component), so deleting them would be deleting a type
+    /// Display's own RegisterInputParams still needs to compile.
+    /// </summary>
+    private static void ValidateStyleRetirement(Assembly plugin)
+    {
+        if (plugin.GetType(
+                "Ananke.COMPAS.Native.Components.StyleComponent")
+            is not null)
+        {
+            throw new InvalidOperationException(
+                "StyleComponent is retired; its class must not exist.");
+        }
+
+        var retiredGuid = new Guid("c3f8a2d6-4e9b-4071-8f5a-b1d7c9e3a250");
+        foreach (Type componentType in GetLoadableTypes(plugin)
+            .Where(IsConcretePublicGrasshopperComponent))
+        {
+            object other = Activator.CreateInstance(componentType)!;
+            try
+            {
+                Guid otherGuid = (Guid)componentType
+                    .GetProperty("ComponentGuid")!.GetValue(other)!;
+                if (otherGuid == retiredGuid)
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name} carries the RETIRED " +
+                        "Style GUID, which is never reused.");
+                }
+            }
+            finally
+            {
+                if (other is IDisposable disposableOther)
+                    disposableOther.Dispose();
+            }
+        }
+
+        foreach (string typeName in new[]
+        {
+            "Ananke.COMPAS.Native.Contracts.StyleDto",
+            "Ananke.COMPAS.Native.Contracts.StyleGoo",
+            "Ananke.COMPAS.Native.Contracts.StyleParam"
+        })
+        {
+            if (plugin.GetType(typeName) is null)
+            {
+                throw new InvalidOperationException(
+                    $"{typeName} must still exist: Display's own Style " +
+                    "input still consumes it.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Display's own Preset input, StyleComponent's replacement (the
+    /// display wave, 2026-09-08), in the halves this harness can take
+    /// headless -- the same split <see cref="ValidateShippedDensityList"/>
+    /// uses for Loads' Density list.
+    ///
+    /// CONTENT: <c>DisplayComponent.ValueLists</c> carries exactly three
+    /// specs now (Elements, Metric, Preset), the third targeting input 7 --
+    /// APPENDED after Gap, not inserted at Style's old slot 1, so no
+    /// existing wire on Elements, Metric, Weight, Vector Scale or Gap
+    /// moves -- pinned with StyleComponent's own three items and its
+    /// "analysis" default, and the override actually returns all three,
+    /// not just declares them in an array nothing reads.
+    ///
+    /// DECISION: the same <c>_readFromArchive</c> gate Elements and Metric
+    /// already ride, measured directly on a DisplayComponent instance: a
+    /// component straight off the palette answers ReadFromArchive = false
+    /// (so AddedToDocument would still attach Preset's dropdown along with
+    /// the others), and the same component round-tripped through GH_IO's
+    /// own writer and reader -- exactly the way a reopened file or a
+    /// pasted definition arrives -- answers true (so nothing is attached a
+    /// second time on an archived canvas).
+    ///
+    /// PRIORITY: <c>EffectivePreset</c>, the fallback SolveInstance now
+    /// calls instead of reading a wired Style's Preset directly. Own input
+    /// (trimmed and normalised) wins whenever it carries anything; a blank
+    /// input falls back to a wired Style's Preset; Analysis is last. This
+    /// is what keeps an ARCHIVED definition unchanged: Preset is new, so
+    /// it is never wired on an old canvas, and nothing produces a StyleDto
+    /// any more either, so every reopened Display keeps drawing exactly
+    /// the preset it drew before this wave -- Analysis, unless a hand-
+    /// built Style source still supplies one.
+    /// </summary>
+    private static void ValidateDisplayPresetInput(Assembly plugin)
+    {
+        Type display = RequireComponentType(plugin, "DisplayComponent");
+
+        // ---- content: the static ValueLists array.
+        FieldInfo valueListsField = display.GetField(
+            "ValueLists", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "DisplayComponent.ValueLists was not found.");
+        IList specs = (IList)valueListsField.GetValue(null)!;
+        if (specs.Count != 3)
+        {
+            throw new InvalidOperationException(
+                "DisplayComponent must suggest exactly three value " +
+                $"lists, Elements, Metric and Preset; it suggests " +
+                $"{specs.Count}.");
+        }
+        object presetSpec = specs.Cast<object>()
+            .FirstOrDefault(spec =>
+                (string)spec.GetType().GetProperty("Name")!
+                    .GetValue(spec)! == "Preset")
+            ?? throw new InvalidOperationException(
+                "DisplayComponent.ValueLists carries no 'Preset' spec.");
+        Type specType = presetSpec.GetType();
+        int inputIndex = (int)specType.GetProperty("InputIndex")!
+            .GetValue(presetSpec)!;
+        if (inputIndex != 7)
+        {
+            throw new InvalidOperationException(
+                "The Preset value list must target input 7, APPENDED " +
+                $"after Gap; it targets {inputIndex}.");
+        }
+        string defaultValue = (string)specType.GetProperty("DefaultValue")!
+            .GetValue(presetSpec)!;
+        if (defaultValue != "analysis")
+        {
+            throw new InvalidOperationException(
+                "The Preset value list default must pin at \"analysis\"; " +
+                $"found \"{defaultValue}\".");
+        }
+        bool checkList = (bool)specType.GetProperty("CheckList")!
+            .GetValue(presetSpec)!;
+        if (checkList)
+        {
+            throw new InvalidOperationException(
+                "Preset is a single-select dropdown, not a checklist.");
+        }
+        IList items = (IList)specType.GetProperty("Items")!
+            .GetValue(presetSpec)!;
+        (string Label, string Value)[] expectedItems =
+        {
+            ("Analysis", "analysis"),
+            ("Classical GS", "classical"),
+            ("Monochrome", "monochrome")
+        };
+        if (items.Count != expectedItems.Length)
+        {
+            throw new InvalidOperationException(
+                $"The Preset value list must pin exactly " +
+                $"{expectedItems.Length} items; it has {items.Count}.");
+        }
+        for (int i = 0; i < expectedItems.Length; i++)
+        {
+            Type tupleType = items[i]!.GetType();
+            string label = (string)tupleType.GetField("Item1")!
+                .GetValue(items[i])!;
+            string value = (string)tupleType.GetField("Item2")!
+                .GetValue(items[i])!;
+            if (label != expectedItems[i].Label ||
+                value != expectedItems[i].Value)
+            {
+                throw new InvalidOperationException(
+                    $"Preset value list item {i} must pin as " +
+                    $"(\"{expectedItems[i].Label}\", " +
+                    $"\"{expectedItems[i].Value}\"); found " +
+                    $"(\"{label}\", \"{value}\").");
+            }
+        }
+
+        // ---- content: the override actually returns all three, not just
+        // an array declared but never read.
+        PropertyInfo listsProperty = display.GetProperty(
+            "SuggestedValueLists",
+            BindingFlags.Instance | BindingFlags.NonPublic |
+            BindingFlags.DeclaredOnly)
+            ?? throw new InvalidOperationException(
+                "DisplayComponent must OVERRIDE SuggestedValueLists with " +
+                "Elements, Metric and Preset.");
+
+        object freshForOverride = Activator.CreateInstance(display)!;
+        try
+        {
+            IList overrideSpecs =
+                (IList)listsProperty.GetValue(freshForOverride)!;
+            if (overrideSpecs.Count != 3)
+            {
+                throw new InvalidOperationException(
+                    "DisplayComponent.SuggestedValueLists must return " +
+                    $"all three specs; it returned {overrideSpecs.Count}.");
+            }
+        }
+        finally
+        {
+            if (freshForOverride is IDisposable disposableOverride)
+                disposableOverride.Dispose();
+        }
+
+        // ---- decision: fresh vs archived, the same gate Elements and
+        // Metric already ride, measured on a real DisplayComponent
+        // instance the same way ValidateShippedDensityList measures it on
+        // Loads.
+        PropertyInfo readFromArchive = display.GetProperty(
+            "ReadFromArchive", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "NativeComponentBase.ReadFromArchive was not found on " +
+                "DisplayComponent.");
+
+        object fresh = Activator.CreateInstance(display)!;
+        try
+        {
+            if (readFromArchive.GetValue(fresh) is not false)
+            {
+                throw new InvalidOperationException(
+                    "a freshly constructed Display must answer " +
+                    "ReadFromArchive = false, or Preset's dropdown would " +
+                    "never ship with a component straight off the " +
+                    "palette.");
+            }
+        }
+        finally
+        {
+            if (fresh is IDisposable disposableFresh)
+                disposableFresh.Dispose();
+        }
+
+        MethodInfo read = display.GetMethods()
+            .First(method =>
+                method.Name == "Read" &&
+                method.GetParameters().Length == 1 &&
+                method.GetParameters()[0].ParameterType.Name ==
+                    "GH_IReader");
+        Type readerType = read.GetParameters()[0].ParameterType;
+        Type writerType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_IWriter", throwOnError: true)!;
+        Type archiveType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_Archive", throwOnError: true)!;
+
+        object archive = Activator.CreateInstance(archiveType)
+            ?? throw new InvalidOperationException(
+                "GH_Archive could not be constructed.");
+        object saved = Activator.CreateInstance(display)!;
+        object? reopened = null;
+        try
+        {
+            MethodInfo createTop = archiveType.GetMethod(
+                "CreateTopLevelNode", new[] { typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.CreateTopLevelNode(string) was not found.");
+            object writer = createTop.Invoke(
+                archive, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "GH_Archive gave no writer to save Display into.");
+            MethodInfo write = display.GetMethod("Write", new[] { writerType })
+                ?? throw new InvalidOperationException(
+                    "DisplayComponent.Write(GH_IWriter) was not found.");
+            if (write.Invoke(saved, new[] { writer }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "DisplayComponent refused to write itself into a " +
+                    "GH_Archive, so there is no archived component to " +
+                    "measure ReadFromArchive on.");
+            }
+
+            object root =
+                archiveType.GetProperty("GetRootNode")?.GetValue(archive)
+                ?? throw new InvalidOperationException(
+                    "GH_Archive.GetRootNode gave nothing to read.");
+            object container = root.GetType()
+                .GetMethod("FindChunk", new[] { typeof(string) })!
+                .Invoke(root, new object[] { "Container" })
+                ?? throw new InvalidOperationException(
+                    "The archive carries no 'Container' chunk to read " +
+                    "Display out of.");
+
+            reopened = Activator.CreateInstance(display)!;
+            if (read.Invoke(reopened, new[] { container }) is not true)
+            {
+                throw new InvalidOperationException(
+                    "DisplayComponent refused to read the archive back.");
+            }
+            if (readFromArchive.GetValue(reopened) is not true)
+            {
+                throw new InvalidOperationException(
+                    "a Display whose Read ran must answer ReadFromArchive " +
+                    "= true, or a reopened canvas would get Preset's " +
+                    "dropdown attached a second time, on top of whatever " +
+                    "an author did with it after the first.");
+            }
+        }
+        finally
+        {
+            if (saved is IDisposable disposableSaved)
+                disposableSaved.Dispose();
+            if (reopened is IDisposable disposableReopened)
+                disposableReopened.Dispose();
+        }
+
+        // ---- priority: EffectivePreset, own input over a wired Style's
+        // Preset over Analysis.
+        MethodInfo effectivePreset = display.GetMethod(
+            "EffectivePreset", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "DisplayComponent.EffectivePreset was not found.");
+        Type styleDtoType = plugin.GetType(
+            "Ananke.COMPAS.Native.Contracts.StyleDto")
+            ?? throw new InvalidOperationException("StyleDto was not found.");
+
+        string Effective(string? presetInput, object? style) =>
+            (string)effectivePreset.Invoke(
+                null, new object?[] { presetInput, style })!;
+
+        object monochromeStyle = Activator.CreateInstance(styleDtoType)!;
+        styleDtoType.GetProperty("Preset")!.SetValue(
+            monochromeStyle, "monochrome");
+
+        if (Effective("classical", null) != "classical")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must return Display's own Preset input " +
+                "when it carries one, even with no Style wired.");
+        }
+        if (Effective("Classical GS", null) != "classical")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must NORMALISE its own input the same " +
+                "way StyleComponent's dropdown values did; \"Classical " +
+                "GS\" must read as \"classical\".");
+        }
+        if (Effective("classical", monochromeStyle) != "classical")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must prefer Display's OWN Preset input " +
+                "over a wired Style's Preset when both are given.");
+        }
+        if (Effective(string.Empty, monochromeStyle) != "monochrome")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must fall back to a wired Style's " +
+                "Preset when Display's own input is left blank.");
+        }
+        if (Effective("   ", monochromeStyle) != "monochrome")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must treat a WHITESPACE-ONLY own input " +
+                "as blank, or a stray space would silently override a " +
+                "wired Style's Preset with nothing.");
+        }
+        if (Effective(null, null) != "analysis")
+        {
+            throw new InvalidOperationException(
+                "EffectivePreset must fall back to \"analysis\" when " +
+                "neither Display's own input nor a Style is given -- the " +
+                "reading an archived Display, reopened with neither, " +
+                "drew before this wave.");
         }
     }
 
