@@ -990,6 +990,16 @@ namespace Ananke.COMPAS.Native.Components
     /// layout, against the form diagram's span, independently of Vector
     /// Scale (which sizes load/reaction/residual arrows); one reproduces
     /// today's fixed fit exactly.
+    ///
+    /// The same wave also settles how load/reaction/residual arrows scale:
+    /// <c>VectorArrowLine</c> draws each one at the vector's own magnitude
+    /// times Vector Scale, RhinoVAULT's own rule (read directly from the
+    /// installed plugin's <c>draw_thrust_loads</c>, not guessed at), and a
+    /// vector at or below the near-zero tolerance draws NOTHING rather
+    /// than a zero-length line -- a gap that existed on the FD
+    /// loads/reactions and the shared residuals branch, which had no
+    /// zero-skip before this wave even though the TNA branches already
+    /// did.
     /// </summary>
     public sealed class DisplayComponent : NativePreviewComponentBase
     {
@@ -1113,9 +1123,12 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Vector Scale",
                 "VS",
-                "Load/reaction/residual vector scale; zero uses Style's " +
-                "vector scale, or an automatic scale from the solved " +
-                "model's bounding diagonal and largest load/reaction.",
+                "Load/reaction/residual arrow length is the vector's own " +
+                "magnitude times this number (RhinoVAULT's own " +
+                "draw_thrust_loads rule); a zero vector draws nothing. " +
+                "Zero here uses Style's vector scale, or an automatic " +
+                "scale from the solved model's bounding diagonal and " +
+                "largest load/reaction.",
                 GH_ParamAccess.item,
                 0.0);
             parameters.AddNumberParameter(
@@ -1374,15 +1387,15 @@ namespace Ananke.COMPAS.Native.Components
                         foreach (TnaLoadMappingDto item in
                                  result.Mappings!.Loads)
                         {
-                            Vector3d vector = Vector(item.Vector);
-                            if (vector.SquareLength <= 1.0e-24)
-                                continue;
                             Point3d start = Point(
                                 equilibrium.Vertices[
                                     item.EquilibriumVertexId]);
-                            loadLines.Add(new Line(
+                            Line? line = VectorArrowLine(
                                 start,
-                                start + effectiveVectorScale * vector));
+                                Vector(item.Vector),
+                                effectiveVectorScale);
+                            if (line is not null)
+                                loadLines.Add(line.Value);
                         }
                     }
                     if (elements.Contains("reactions"))
@@ -1390,15 +1403,15 @@ namespace Ananke.COMPAS.Native.Components
                         foreach (TnaSupportMappingDto item in
                                  result.Mappings!.Reactions)
                         {
-                            Vector3d vector = Vector(item.Reaction);
-                            if (vector.SquareLength <= 1.0e-24)
-                                continue;
                             Point3d start = Point(
                                 equilibrium.Vertices[
                                     item.EquilibriumVertexId]);
-                            reactionLines.Add(new Line(
+                            Line? line = VectorArrowLine(
                                 start,
-                                start + effectiveVectorScale * vector));
+                                Vector(item.Reaction),
+                                effectiveVectorScale);
+                            if (line is not null)
+                                reactionLines.Add(line.Value);
                         }
                     }
                 }
@@ -1431,10 +1444,12 @@ namespace Ananke.COMPAS.Native.Components
                         foreach (NodalVectorDto item in equilibrium.Loads)
                         {
                             Point3d start = Point(item.Point);
-                            loadLines.Add(new Line(
+                            Line? line = VectorArrowLine(
                                 start,
-                                start +
-                                effectiveVectorScale * Vector(item.Vector)));
+                                Vector(item.Vector),
+                                effectiveVectorScale);
+                            if (line is not null)
+                                loadLines.Add(line.Value);
                         }
                     }
                     if (elements.Contains("reactions"))
@@ -1443,10 +1458,12 @@ namespace Ananke.COMPAS.Native.Components
                                  equilibrium.Reactions)
                         {
                             Point3d start = Point(item.Point);
-                            reactionLines.Add(new Line(
+                            Line? line = VectorArrowLine(
                                 start,
-                                start +
-                                effectiveVectorScale * Vector(item.Vector)));
+                                Vector(item.Vector),
+                                effectiveVectorScale);
+                            if (line is not null)
+                                reactionLines.Add(line.Value);
                         }
                     }
                 }
@@ -1456,10 +1473,12 @@ namespace Ananke.COMPAS.Native.Components
                     foreach (NodalVectorDto item in equilibrium.Residuals)
                     {
                         Point3d start = Point(item.Point);
-                        residualLines.Add(new Line(
+                        Line? line = VectorArrowLine(
                             start,
-                            start +
-                            effectiveVectorScale * Vector(item.Vector)));
+                            Vector(item.Vector),
+                            effectiveVectorScale);
+                        if (line is not null)
+                            residualLines.Add(line.Value);
                     }
                 }
 
@@ -1494,10 +1513,16 @@ namespace Ananke.COMPAS.Native.Components
                 // and nothing else emits them now the outputs are gone. A
                 // vector scale the component chose for itself says "auto":
                 // an author comparing two Displays needs to know which of
-                // the two numbers was theirs.
+                // the two numbers was theirs. "linear x magnitude" NAMES
+                // the rule VectorArrowLine actually draws by (RhinoVAULT's
+                // own draw_thrust_loads rule, read directly rather than
+                // guessed at): arrow length is the vector's own magnitude
+                // times this one number, nothing normalised or clamped, so
+                // nobody reading a saved canvas has to guess what "vectors
+                // x..." means.
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · {preset} · " +
-                    $"thrust x{effectiveWeight:G3} · vectors x" +
+                    $"thrust x{effectiveWeight:G3} · vectors linear x" +
                     $"{effectiveVectorScale:G3}" +
                     (vectorScaleIsAuto ? " auto" : string.Empty);
             }
@@ -1600,6 +1625,59 @@ namespace Ananke.COMPAS.Native.Components
                     Point(equilibrium.Vertices[edge.U]),
                     Point(equilibrium.Vertices[edge.V])))
                 .ToArray();
+
+        /// <summary>
+        /// One load/reaction/residual arrow: the raw vector times
+        /// <paramref name="scale"/>, arrow length linear in the vector's
+        /// own magnitude. This is RhinoVAULT's own rule for drawing loads
+        /// -- read directly from the installed plugin, not guessed at --
+        /// <c>compas_rv.scene.formobject.draw_thrust_loads</c>: <c>vector
+        /// = Vector(*load) * scale</c>, a flat user-set scalar with no
+        /// per-draw normalisation against the largest load or the model's
+        /// own size. A vector at or below the SAME near-zero tolerance the
+        /// TNA loads/reactions branches already used (1e-24 on the square
+        /// length, ~1e-12 on the length itself) draws NOTHING rather than
+        /// a zero-length line: RhinoVAULT's own <c>tol_vectors</c> check
+        /// does the same (<c>if vector.length > tol</c>), and a
+        /// zero-length arrow reads as a stray dot, not "no load here".
+        ///
+        /// Shared by all five of Display's vector streams (TNA
+        /// loads/reactions, FD loads/reactions, residuals) so the rule and
+        /// its zero-skip apply identically everywhere; before this, the
+        /// zero-skip existed only on the TNA branches and FD
+        /// loads/reactions and residuals could draw a degenerate
+        /// zero-length "arrow" for an exactly-zero vector.
+        ///
+        /// Degenerate cases, by construction: two loads differing in
+        /// magnitude draw arrows differing in length by the exact same
+        /// ratio (this is a straight multiply, nothing is compressed or
+        /// clamped); all loads equal in magnitude draw arrows all the
+        /// same length; a single load draws one arrow at
+        /// <paramref name="scale"/> times its own magnitude; a zero load
+        /// draws nothing (this method's own null); and one enormous
+        /// outlier alongside small loads is drawn EXACTLY, not compressed
+        /// -- under a fixed user Scale every arrow is still magnitude
+        /// times that one number, so the outlier simply draws very long
+        /// (matching RhinoVAULT, which has no per-draw normalisation
+        /// either); under Display's own AUTOMATIC scale (Vector Scale
+        /// left at zero, no Style supplying one) the single largest action
+        /// across ALL loads and reactions sets the scale so IT draws at
+        /// about 1.5% of the model's bounding diagonal, which is Display's
+        /// own pre-existing convenience layer on top of this rule, not
+        /// something this method does -- an outlier under auto-scale still
+        /// draws every other arrow in exact linear proportion to it, only
+        /// smaller in absolute terms, which is the correct, honest reading
+        /// of "linear in magnitude" rather than a bug to compress away.
+        /// </summary>
+        private static Line? VectorArrowLine(
+            Point3d start,
+            Vector3d vector,
+            double scale)
+        {
+            if (vector.SquareLength <= 1.0e-24)
+                return null;
+            return new Line(start, start + scale * vector);
+        }
 
         /// <summary>
         /// Copied from the since-deleted <c>DeconstructComponent.ForceState</c>,
