@@ -205,6 +205,11 @@
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
     <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
     <label>Spin rate <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
+    <!-- The machine rides with the formwork (Param's ruling), and this is
+         the way to get it out of the way for a shell render. Hidden until
+         a study actually carries a mechanism document, so it is not a
+         dead control on the studies that have none. -->
+    <label id="machine-row" class="hidden"><input id="show-machine" type="checkbox" checked> Machine</label>
     <button id="record-button" class="primary">Record 1080p</button>
     <div id="record-status"></div>
   </details>

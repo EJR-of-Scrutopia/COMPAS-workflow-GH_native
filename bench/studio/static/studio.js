@@ -8,6 +8,9 @@ import {
   upgradeSliders, paintScrub, repaintScrubs, buildSegmented, paintSegmented,
   buildGroups, paintGroupSummaries, setGroupSummaries,
 } from "/static/panel.js";
+import {
+  readMechanism, checkNetVertices, checkRouteDirection, turnsFor,
+} from "/static/mechanism.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
@@ -126,6 +129,8 @@ const state = {
   bundle: null,
   source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
+  mechanism: null,     // bench.mechanism/1 payload, or null: the machine's SHAPE (see buildMachine)
+  showMachine: true,   // Param's ruling: the machine rides with the formwork, with its own toggle
   columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
   propLibrary: [],     // the manifest entries that loaded, from /api/props
   propCredits: null,   // what the library as a whole is, and where it came from
@@ -6329,14 +6334,23 @@ async function loadStudy(exportName) {
       "/api/studies/" + encodeURIComponent(exportName) + "/formwork")
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
+    // The machine, on the same terms: absent is an ordinary state of the
+    // world and reads as "no machine for this study", exactly as a
+    // missing formwork document reads as "no formwork act".
+    const mechanismPromise = fetch(
+      "/api/studies/" + encodeURIComponent(exportName) + "/mechanism")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
     const fresh = await fetchJson(url);
     if (sequence !== state.loadSequence) return "superseded";
     // Held locally until this load is confirmed the winner: assigned
     // before the check, a superseded load clobbered the winning study's
     // formwork with its own.
     const formwork = await formworkPromise;
+    const mechanismDocument = await mechanismPromise;
     if (sequence !== state.loadSequence) return "superseded";
     state.formwork = formwork;
+    state.mechanism = mechanismDocument;
     overlay.classList.add("hidden");
     status.textContent = "";
     // Same export means the user is comparing settings, not changing
@@ -6542,6 +6556,8 @@ document.getElementById("delete-study").addEventListener("click", async () => {
 function clearScene() {
   state.source = null;
   state.formwork = null;
+  state.mechanism = null;
+  disposeMachine();
   state.bundle = null;
   selectProp(null);
   rebuildFormworkObjects();
@@ -7167,6 +7183,10 @@ document.getElementById("sun-elevation").addEventListener("input", (e) => {
 document.getElementById("sun-colour").addEventListener("input", (e) => {
   state.sunColourOverride = e.target.value;
   sun.color.set(e.target.value);
+});
+document.getElementById("show-machine").addEventListener("change", (e) => {
+  state.showMachine = !!e.target.checked;
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 });
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
 // The inked outline. Only a uniform moves, so this is free to drag.
@@ -8772,6 +8792,10 @@ function rebuildFormworkObjects() {
   }
   formworkObjects = handles;
   scene.add(group);
+  // The machine reads the net's own frames (it draws each wire to its net
+  // vertex), so it is built on the same beat. It loads library materials,
+  // so it finishes asynchronously and shows up a moment later.
+  buildMachine();
 }
 
 // The formwork act's whole scene contribution, pure in t like everything
@@ -8831,6 +8855,391 @@ function applyFormworkAct(t, strikeU) {
       bars.position.z = lift.wires - 1.5 * strikeU;
       syncNetShadow(bars);
     }
+  }
+}
+
+// ---------- the machine ----------
+// bench.mechanism/1: the rig that pulls the net. Shape only -- the motion
+// is the formwork frames', which the studio already replays -- so this
+// act adds no clock of its own. It rides WITH the formwork (Param's
+// ruling), which is also what makes the strike honest: the machine goes
+// away with the columns and the net, and the anchors and tension ties
+// stay, because those two are the permanent works.
+let machineObjects = null;
+
+function disposeMachine() {
+  const row = document.getElementById("machine-row");
+  if (row) row.classList.add("hidden");
+  if (!machineObjects) return;
+  scene.remove(machineObjects.group);
+  machineObjects.group.traverse((child) => {
+    if (child.isMesh) {
+      child.geometry.dispose();
+      if (child.material && child.material.dispose) child.material.dispose();
+    }
+  });
+  machineObjects = null;
+}
+
+// The wire, from a DECLARED RULE rather than sent geometry: a circle on
+// each routing frame, lofted in order. A polyline through the frame
+// origins would cut every corner the wrapping makes; following each
+// frame's own axes is what puts the wire on the drum.
+//
+// The radius is the studio's own wire radius, so the machine's wires and
+// the net's wires match by construction, which is what Param's ruling
+// was reaching for.
+const WIRE_SIDES = 8;
+
+function loftWire(frames, radius) {
+  const positions = [], indices = [];
+  const rings = [];
+  let previous = null;
+  for (const frame of frames) {
+    const m = frame.matrix;
+    const origin = [m[12], m[13], m[14]];
+    // Zero-length spans fold the loft, so a repeated plane is skipped
+    // rather than drawn. A tight wrap authors them freely.
+    if (previous && Math.hypot(origin[0] - previous[0], origin[1] - previous[1],
+      origin[2] - previous[2]) < 1e-6) continue;
+    previous = origin;
+    const ring = [];
+    for (let i = 0; i < WIRE_SIDES; i++) {
+      const a = (i / WIRE_SIDES) * Math.PI * 2;
+      const cx = Math.cos(a) * radius, cy = Math.sin(a) * radius;
+      // The circle lies in the frame's own XY, so the tube follows the
+      // frame's Z around every turn.
+      ring.push(positions.length / 3);
+      positions.push(
+        m[0] * cx + m[4] * cy + m[12],
+        m[1] * cx + m[5] * cy + m[13],
+        m[2] * cx + m[6] * cy + m[14]);
+    }
+    rings.push(ring);
+  }
+  for (let r = 0; r + 1 < rings.length; r++) {
+    const a = rings[r], b = rings[r + 1];
+    for (let i = 0; i < WIRE_SIDES; i++) {
+      const j = (i + 1) % WIRE_SIDES;
+      indices.push(a[i], b[i], b[j], a[i], b[j], a[j]);
+    }
+  }
+  if (!indices.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position",
+    new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function geometryFromPart(part) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position",
+    new THREE.BufferAttribute(new Float32Array(part.geometry.vertices), 3));
+  geometry.setIndex(part.geometry.triangles);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+// Param owns this mapping from the panel, so a re-skin is not a
+// re-export. A library material that will not load falls back to a plain
+// grey rather than leaving the part invisible: a machine you can see in
+// the wrong colour beats a machine you cannot see.
+function machineMaterial(part) {
+  let base = null;
+  if (libraryCache.has(part.material)) base = libraryCache.get(part.material).material;
+  const material = base ? base.clone()
+    : new THREE.MeshStandardMaterial({ color: 0x8d9298, roughness: 0.55, metalness: 0.6 });
+  if (part.tint) material.color.set(part.tint);
+  return material;
+}
+
+// A reel's winding radius, measured from the reel itself: the furthest
+// any of its own vertices stands from its spin axis. With no authored
+// axis the largest half-extent of its bounding box stands in, which is
+// the right answer for a disc and an over-estimate for nothing that is
+// shaped like a drum.
+//
+// This exists because the writer defaults spoolRadius from reel ZERO's
+// bounding box for every reel, so ten reels of different sizes would all
+// turn at the first one's rate.
+function measureSpoolRadius(part) {
+  const v = part.geometry.vertices;
+  if (!v.length) return 0.03;
+  if (part.axis) {
+    const [ox, oy, oz] = part.axis.origin;
+    const [dx, dy, dz] = part.axis.direction;
+    let worst = 0;
+    for (let i = 0; i + 2 < v.length; i += 3) {
+      const px = v[i] - ox, py = v[i + 1] - oy, pz = v[i + 2] - oz;
+      const along = px * dx + py * dy + pz * dz;
+      worst = Math.max(worst, Math.hypot(
+        px - dx * along, py - dy * along, pz - dz * along));
+    }
+    if (worst > 1e-4) return worst;
+  }
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i + 2 < v.length; i += 3) {
+    minX = Math.min(minX, v[i]); maxX = Math.max(maxX, v[i]);
+    minY = Math.min(minY, v[i + 1]); maxY = Math.max(maxY, v[i + 1]);
+    minZ = Math.min(minZ, v[i + 2]); maxZ = Math.max(maxZ, v[i + 2]);
+  }
+  const half = [(maxX - minX) / 2, (maxY - minY) / 2, (maxZ - minZ) / 2]
+    .sort((a, b) => b - a);
+  return half[1] > 1e-4 ? half[1] : 0.03;
+}
+
+async function buildMachine() {
+  disposeMachine();
+  if (!state.mechanism || !state.bundle) return;
+  const model = readMechanism(state.mechanism);
+  if (!model.ok) {
+    logStudio("the machine document was not read: " + model.reason);
+    return;
+  }
+  // Everything the reader could not use, said out loud. These are the
+  // earliest signal that the document's key layout moved, which the
+  // contract says to expect, so they are worth the log lines.
+  for (const note of model.notes) logStudio("machine: " + note);
+  if (!model.parts.length) {
+    logStudio("the machine document carries no readable parts");
+    return;
+  }
+
+  // Loaded before anything is built, so no part pops in wearing the
+  // fallback grey a frame after the rest.
+  await Promise.all([...new Set(model.parts.map((part) => part.material))]
+    .map((key) => ensureLibraryMaterial(key)));
+
+  const group = new THREE.Group();
+  const permanent = new THREE.Group();      // what remains after the strike
+  const temporary = new THREE.Group();      // what leaves with the formwork
+  group.add(permanent, temporary);
+  const spinners = [];
+
+  const instances = model.instances.length ? model.instances
+    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false }];
+  for (const part of model.parts) {
+    const geometry = geometryFromPart(part);
+    // A permanent part arrives pre-placed in world coordinates, so it is
+    // built ONCE; a machine part is the authored body and is stamped per
+    // instance.
+    const targets = part.world ? [null] : instances;
+    for (const instance of targets) {
+      const mesh = new THREE.Mesh(geometry, machineMaterial(part));
+      mesh.castShadow = mesh.receiveShadow = true;
+      if (instance && instance.matrix) {
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.fromArray(instance.matrix);
+        // A mirrored instance has its winding reversed by the transform,
+        // so its faces light from the inside unless the material knows.
+        if (instance.mirrored) mesh.material.side = THREE.DoubleSide;
+      }
+      (part.permanent ? permanent : temporary).add(mesh);
+      if (part.spins && instance) {
+        // Param's ruling on the spin: measure each reel's OWN radius from
+        // its geometry rather than trusting one default taken from reel
+        // zero's bounding box, and say that the RATE stays unverified
+        // until reeveFactor is authored.
+        if (part.measuredRadius === undefined) {
+          part.measuredRadius = measureSpoolRadius(part);
+        }
+        spinners.push({ mesh, part, instance, turns: 0 });
+      }
+    }
+  }
+
+  // The wires. The body-owned portion is built ONCE per instance, in the
+  // authored body's local space and stamped with the placement; the free
+  // span from the net vertex to the first routing plane is rebuilt per
+  // frame. That is 42 short tubes a frame rather than 4200 circles.
+  //
+  // Reel-owned frames stay where they are, on Param's ruling: the wires
+  // are already fully wound, so the wrap is multi-turn and nearly
+  // invariant under rotation about its own axis. The drum reads as
+  // turning because the drum MESH turns.
+  const wireMaterial = new THREE.MeshStandardMaterial({
+    color: 0xb9bec6, roughness: 0.35, metalness: 0.9 });
+  const wires = [];
+  for (const wire of model.wires) {
+    const step = wire.path && wire.path.length ? wire.path[0] : null;
+    const instance = instances.find((candidate) => step
+      && candidate.side === step.side && candidate.mechanism === step.mechanism)
+      || instances[0];
+    const routed = loftWire(wire.route, state.wireRadius);
+    let mesh = null;
+    if (routed) {
+      mesh = new THREE.Mesh(routed, wireMaterial);
+      if (instance && instance.matrix) {
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.fromArray(instance.matrix);
+      }
+      temporary.add(mesh);
+    }
+    // The free span, drawn as its own tube and rewritten every frame.
+    const free = new THREE.Mesh(
+      new THREE.CylinderGeometry(state.wireRadius, state.wireRadius, 1, WIRE_SIDES),
+      wireMaterial);
+    free.visible = false;
+    temporary.add(free);
+    wires.push({ wire, instance, mesh, free, freeAtFrame0: null });
+  }
+
+  scene.add(group);
+  machineObjects = { group, permanent, temporary, spinners, wires, model,
+    wireMaterial };
+  const row = document.getElementById("machine-row");
+  if (row) row.classList.remove("hidden");
+  logStudio("machine: " + model.parts.length + " parts, "
+    + instances.length + " instances, " + model.wires.length + " wires");
+  // Said once, plainly, because it is the one number in the machine the
+  // studio knows to be unverified: the writer fixes reeveFactor at 1.0
+  // while Param's unit has four wheels, so the reels turn at the right
+  // TIMES and probably the wrong RATE.
+  if (model.wires.some((wire) => wire.reeveFactor === 1)) {
+    logStudio("machine: the reels turn from a reeve factor of 1.0, which "
+      + "the exporter has not authored yet, so their rate is unverified; "
+      + "each reel's radius is measured from its own geometry");
+  }
+  // The two derived values the writer sends, re-checked and REPORTED.
+  // A wire drawn to a plausible but wrong vertex is the one failure
+  // nobody would notice on screen.
+  reportMachineChecks(model);
+}
+
+// Where a wire first meets the machine, in world coordinates: its first
+// routing plane, carried through its instance's placement.
+const machineHead = new THREE.Vector3();
+const machineTail = new THREE.Vector3();
+const machineMatrix = new THREE.Matrix4();
+
+function wireHead(entry, into) {
+  const first = entry.wire.route[0];
+  if (!first) return null;
+  into.set(first.matrix[12], first.matrix[13], first.matrix[14]);
+  if (entry.instance && entry.instance.matrix) {
+    into.applyMatrix4(machineMatrix.fromArray(entry.instance.matrix));
+  }
+  return into;
+}
+
+// Param, on what the machine does while the pieces land: "the reel
+// actually still happens slightly as the pieces drop adding prestress to
+// cope with the added load, becoming an inverse kinematics engine."
+//
+// The FRAMES carry no such motion -- they stop at time 90 and hold --
+// so this is a studio-side model rather than something read, and it is
+// named as one. It is driven by how much load has arrived, which is the
+// fraction of castings already placed, and it is deliberately small: a
+// few per cent of the take-up already done, not a second act.
+const PRESTRESS_TAKE_UP = 0.04;
+
+function prestressFraction(t) {
+  const total = placementCount();
+  if (!total) return 0;
+  const build = Math.max(0, t - openingSeconds() - formworkSeconds());
+  const step = placementStep();
+  if (!(step > 0)) return 0;
+  return Math.min(1, build / (step * total));
+}
+
+function applyMachineAct(t, strikeU) {
+  if (!machineObjects) return;
+  const doc = state.formwork;
+  const show = state.showMachine !== false
+    && (state.showMode === "framework" || state.showMode === "both");
+  machineObjects.group.visible = show;
+  if (!show || !doc) return;
+
+  // The machine leaves with the columns and the net, on the same fade and
+  // the same drop, because it is one machine leaving. The anchors and the
+  // tension ties stay: they are the permanent works.
+  machineObjects.temporary.visible = strikeU < 1;
+  machineObjects.temporary.position.z = -1.5 * strikeU;
+  machineObjects.wireMaterial.transparent = strikeU > 0;
+  machineObjects.wireMaterial.opacity = 1 - strikeU;
+
+  const frame = interpolateFormworkFrame(doc.frames, machineTime(t, formworkSeconds()));
+  const vertices = frame && frame.vertices;
+  if (!vertices) return;
+  const lift = netClearance();
+  const prestress = PRESTRESS_TAKE_UP * prestressFraction(t);
+
+  for (const entry of machineObjects.wires) {
+    const wire = entry.wire;
+    if (wire.netVertex === null) continue;
+    const base = wire.netVertex * 3;
+    if (base + 2 >= vertices.length) continue;
+    machineTail.set(vertices[base], vertices[base + 1],
+      vertices[base + 2] + lift.wires);
+    const head = wireHead(entry, machineHead);
+    if (!head) continue;
+    const span = machineTail.distanceTo(head);
+    // Frame 0 is the reference, so the spin is a pure function of t and
+    // cannot drift on a scrub or on a recorded frame played out of order.
+    if (entry.freeAtFrame0 === null) entry.freeAtFrame0 = span;
+    entry.free.visible = span > 1e-4 && strikeU < 1;
+    if (entry.free.visible) {
+      // A unit cylinder stood along its own Y, aimed and stretched: one
+      // geometry for every span at every frame.
+      entry.free.position.copy(machineTail).lerp(head, 0.5);
+      entry.free.scale.set(1, span, 1);
+      entry.free.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        machineHead.clone().sub(machineTail).normalize());
+      entry.free.position.z -= 1.5 * strikeU;
+    }
+    entry.span = span;
+  }
+
+  // The spin. Each reel turns by the take-up of a wire it carries, about
+  // its own authored axis, plus the small prestress the load brings.
+  for (const spinner of machineObjects.spinners) {
+    const served = machineObjects.wires.find((entry) =>
+      entry.instance === spinner.instance
+      && entry.wire.route.some((plane) => plane.ownerReel === spinner.part.index));
+    if (!served || served.freeAtFrame0 === null) continue;
+    // The MEASURED radius wins: the writer currently defaults every
+    // reel's spoolRadius from reel zero's bounding box, so ten reels of
+    // different sizes would otherwise all turn at the first one's rate.
+    const radius = spinner.part.measuredRadius
+      || served.wire.spoolRadius || 0.03;
+    const turns = turnsFor(served.freeAtFrame0,
+      served.span * (1 - prestress), served.wire.reeveFactor, radius);
+    spinner.turns = turns;
+    const axis = spinner.part.axis;
+    if (!axis) continue;
+    spinner.mesh.matrixAutoUpdate = false;
+    machineMatrix.makeRotationAxis(
+      new THREE.Vector3(axis.direction[0], axis.direction[1], axis.direction[2]),
+      turns * Math.PI * 2);
+    spinner.mesh.matrix.identity();
+    if (spinner.instance && spinner.instance.matrix) {
+      spinner.mesh.matrix.fromArray(spinner.instance.matrix);
+    }
+    spinner.mesh.matrix.multiply(machineMatrix);
+  }
+}
+
+function reportMachineChecks(model) {
+  const doc = state.formwork;
+  if (!doc || !doc.frames || !doc.frames.length) return;
+  const vertices = doc.frames[doc.frames.length - 1].vertices;
+  if (!vertices) return;
+  const reversed = checkRouteDirection(model.wires, vertices);
+  if (reversed.length) {
+    logStudio("machine: " + reversed.length + " wire route(s) read from the "
+      + "machine end rather than the net end: " + reversed.slice(0, 4).join(", "));
+  }
+  const complaints = checkNetVertices(model.wires, vertices, null);
+  for (const complaint of complaints.slice(0, 4)) {
+    logStudio("machine: " + complaint.reason);
+  }
+  if (complaints.length > 4) {
+    logStudio("machine: and " + (complaints.length - 4) + " more wires whose "
+      + "declared net vertex is not the nearest one");
   }
 }
 
@@ -8967,6 +9376,10 @@ function applySceneAtTime(t) {
     syncNetShadow(object);
   }
   applyFormworkAct(t, strikeU);
+  // Its own call rather than a tail inside the formwork act, which
+  // returns early on three separate conditions -- a study with no column
+  // members would have had a machine that never moved.
+  applyMachineAct(t, strikeU);
   applyShowMode();
 }
 
@@ -9621,7 +10034,7 @@ requestAnimationFrame(frame);
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
 window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp,
-  ensurePropTemplate, renderObjectPreview, composer };
+  ensurePropTemplate, renderObjectPreview, composer, buildMachine };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.

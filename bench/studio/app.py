@@ -36,6 +36,7 @@ import generators
 import geometry
 import hdri_preview
 import materials as material_library
+import mechanism
 import staging
 import tessellation
 
@@ -679,6 +680,36 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             "edges": edges,
             "columns": {"members": members},
         }
+
+    @app.get("/api/studies/{export}/mechanism")
+    def get_mechanism(export: str):
+        """The machine for this study, verbatim, or a 404 saying why.
+
+        A 404 is an ordinary state of the world exactly as it is for
+        formwork: most studies carry no mechanism document, and the
+        client treats any non-200 as "no machine" and loads the study
+        as before.
+
+        The document is passed through UNSHAPED on purpose. Its key
+        layout is expected to move again (five parts, ten reels of which
+        seven move as one, placement from the first wire frame), and a
+        server that understood those keys would need editing and
+        restarting each time they moved, mid-session, while Param is
+        exporting and looking. The shaping lives in static/mechanism.js,
+        where a moved key costs a refresh.
+        """
+
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(404, "no export named {!r}".format(export))
+        document = bundle._read_optional(bundle.mechanism_sidecar(export))
+        if document is None:
+            raise HTTPException(404, "this study carries no mechanism document")
+        try:
+            return mechanism.validate_mechanism_document(document)
+        except ValueError as error:
+            raise HTTPException(
+                404, "the stored mechanism document is unusable: {}".format(error))
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):

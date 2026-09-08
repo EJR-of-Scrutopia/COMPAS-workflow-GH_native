@@ -117,6 +117,16 @@ def frames_sidecar(export_name: str) -> Path:
     return _sidecar(export_name, "-formwork.json", "-frames.json")
 
 
+def mechanism_sidecar(export_name: str) -> Path:
+    """The machine document: the rig that pulls the net.
+
+    One name only. Unlike its siblings this document has never had an
+    older spelling, so there is no legacy name to fall back to.
+    """
+
+    return _sidecar(export_name, "-mechanism.json")
+
+
 def tessellation_sidecar(export_name: str) -> Path:
     """The skin document: the cells somebody authored."""
 
