@@ -41298,6 +41298,131 @@ internal static partial class Program
                 "number it is, not be quietly fitted away; got " +
                 swappedResidual.ToString("0.######", CultureInfo.InvariantCulture) + " m.");
         }
+
+        // SCENARIO 3, HIS OWN MACHINE: seven anchors IN A LINE. A line pins
+        // which way it points but not the spin about it, so a fit that
+        // demands all three rotations from the origins refuses and throws
+        // away the two it could have had. Seven collinear sources along X,
+        // their exact image under a 90 degree turn about Z followed by a 90
+        // degree roll about the turned line, moved to (10, 20, 30). Plane
+        // [0]'s axes are left UNTURNED while planes [1..6] carry the true
+        // ones, so the settled one-correspondence maths reads the identity
+        // and misses by 8.485281 m, the origins alone cannot found an
+        // orientation, and only the split fit can place it.
+        double[][] lineSources = new double[7][];
+        double[][] lineTargets = new double[7][];
+        for (int i = 0; i < 7; i++)
+        {
+            lineSources[i] = new[] { (double)i, 0.0, 0.0 };
+            lineTargets[i] = new[] { 10.0, 20.0 + i, 30.0 };
+        }
+
+        // The true transform carries X to Y, Y to Z and Z to X.
+        double[] turnedX = { 0.0, 1.0, 0.0 };
+        double[] turnedY = { 0.0, 0.0, 1.0 };
+        double[] turnedZ = { 1.0, 0.0, 0.0 };
+
+        object[] linePlanes = new object[7];
+        linePlanes[0] = PlaneOf(lineTargets[0], unitX, unitY, unitZ);
+        for (int i = 1; i < 7; i++)
+            linePlanes[i] = PlaneOf(lineTargets[i], turnedX, turnedY, turnedZ);
+        object lineBranch = Activator.CreateInstance(
+            placementBranchType,
+            Activator.CreateInstance(instanceIdType, 0, 0)!,
+            MechanismListOf(placementPlaneType, linePlanes))!;
+
+        object[] lineWires = new object[7];
+        for (int i = 0; i < 7; i++)
+        {
+            lineWires[i] = Activator.CreateInstance(
+                routingWireType,
+                i,
+                MechanismListOf(frameType, FrameOf(lineSources[i], unitX, unitY)))!;
+        }
+
+        var lineWarnings = new List<string>();
+        var lineNotes = new List<string>();
+        object? linePayload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset, MechanismListOf(routingWireType, lineWires),
+                MechanismListOf(placementBranchType, lineBranch),
+                lineWarnings, lineNotes,
+            });
+        if (linePayload is not string lineJson)
+            throw new InvalidOperationException("The collinear fixture must produce a payload.");
+
+        bool lineNamed = lineWarnings.Any(w =>
+            w.Contains("IN A LINE", StringComparison.Ordinal) &&
+            w.Contains("REFITTED", StringComparison.Ordinal));
+        if (!lineNamed)
+        {
+            throw new InvalidOperationException(
+                "Seven collinear anchors must still be refitted -- the origins " +
+                "carry the line exactly and only the spin about it wants " +
+                "another source -- and the chin must say so; warnings were: " +
+                string.Join(" | ", lineWarnings));
+        }
+
+        JsonElement lineFitted = OnlyInstance(lineJson);
+        double lineResidual = lineFitted.GetProperty("residualM").GetDouble();
+        if (lineResidual > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A collinear anchor row lands EXACTLY once the line is fitted " +
+                "from the origins, because a spin about that line moves points " +
+                "on it not at all; got " +
+                lineResidual.ToString("0.######", CultureInfo.InvariantCulture) +
+                " m. The one-correspondence transform reads 8.485281 m here.");
+        }
+
+        double[][] expectedLineLinear =
+        {
+            new[] { 0.0, 0.0, 1.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+        };
+        JsonElement lineLinearOut = lineFitted.GetProperty("linear");
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 3; column++)
+            {
+                double got = lineLinearOut[row][column].GetDouble();
+                if (Math.Abs(got - expectedLineLinear[row][column]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The line refit's row {row} column {column} must be " +
+                        $"{expectedLineLinear[row][column]}: the direction comes " +
+                        "from the origins and the spin from all seven planes' " +
+                        $"own axes, not from plane [0] alone; got {got}.");
+                }
+            }
+        }
+        if (lineFitted.GetProperty("reflected").GetBoolean())
+        {
+            throw new InvalidOperationException(
+                "Collinear origins cannot tell a mirrored side from a turned " +
+                "one, so the AXES must settle the handedness -- and these axes " +
+                "are a proper rotation. Reported as a reflection instead.");
+        }
+
+        // THE ONE DEGREE OF FREEDOM THE ORIGINS COULD NOT SUPPLY IS
+        // REPORTED, not hidden: twelve of the fourteen authored axis pairs
+        // agree exactly and plane [0]'s two are 90 degrees out, so the mean
+        // disagreement is pi / 14 radians, 12.86 degrees. Without that
+        // figure a rolled mechanism looks identical to a placed one.
+        bool disagreementNamed = lineWarnings.Any(w =>
+            w.Contains("12.86 degrees", StringComparison.Ordinal));
+        if (!disagreementNamed)
+        {
+            throw new InvalidOperationException(
+                "The line refit must report how far the authored axes still " +
+                "disagree after the best spin (12.86 degrees here), because " +
+                "that is the only measure of the one degree of freedom the " +
+                "origins could not supply; warnings were: " +
+                string.Join(" | ", lineWarnings));
+        }
     }
 
     /// <summary>
