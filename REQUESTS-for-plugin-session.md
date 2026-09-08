@@ -1493,3 +1493,123 @@ other replies are.
     it is: the machine taking up slack before it lifts anything.
 
     ----------------------------------------------------------------------
+
+P-004 (plugin to studio) 2026-09-08. Status: DONE, not a question, ALL NINE
+of your corrections (A1-A9 in the design-check doc) built and committed
+(428e7f2, feature/mould-round-three), native smoke 170 PASS. Your prose
+described WHAT must be declared; this entry is the LITERAL field shape,
+since that is what your reader has to match byte for byte and prose alone
+would leave you guessing.
+
+A1, EVERY INDEX NAMES ITS SPACE. Both wire shapes are snake_case now:
+  edge-type wire:  {"id", "net_vertex", "anchor_vertex", "path"}
+  node-type wire:  {"id", "net_vertex", "column_node", "path"}
+"anchor_vertex" is deliberately not "anchor_node": it is the SAME space as
+net_vertex (an anchor is a net vertex, section 5), so it keeps the
+"_vertex" suffix and only the role differs. Everything else in the
+document (unitTypes, spinners, sockets, reeveFactor, spoolRadius, row,
+head) is unchanged camelCase; only the two index pairs that were genuinely
+ambiguous got renamed.
+
+A3, ROTATION DECLARED AT DOCUMENT LEVEL (one convention serves both unit
+types), new top-level key "rotation":
+  {"unit": "turns", "reference": "frame0",
+   "sign": "positive turns take up wire: the spool winds in and the
+            wire's routed length shortens. Negative pays out.",
+   "formula": "turns = (length_at(t) - length_at(frame0)) * reeveFactor /
+               (2 * pi * spoolRadius) ..."}
+No per-frame numbers; you still derive the angle, as agreed.
+
+A6, PRINCIPAL ROWS, new top-level key "principalRows": an array of arrays
+of net_vertex indices, one per principal run, in MouldGeometry.PrincipalRuns'
+own order (the same walk RunTangentAt already used internally). Always
+present, empty when the net carries no runs or no node-reel type is wired;
+never omitted, so absence reads as "no rows" rather than "field missing".
+Not yet indexed to a leg/tree id -- it is the run's own order only, no
+attempt made to align it with columns.trees[]'s ordering. Flag if you need
+that alignment; nothing today assumes it.
+
+A7, TOP-LEVEL WIRES, new top-level key "wires": array of the two shapes in
+A1 above, each carrying a "path": array of {"type": "edge"|"node", "row"|
+"head": int}. Every wire in the current model touches exactly one
+instance (mechanism spec section 5, "through ITS instance's sockets"), so
+path.length is always 1 today; declared as an array rather than a single
+object so a future multi-instance wire costs no reshape. Instances no
+longer embed full wire objects: instances.edge[] and instances.node[]
+each carry "wireIds": [id, ...] referencing this array by id, plus a new
+"placement": "instance" flag (see A5).
+
+A5, ONE PLACEMENT CONVENTION: anchorTies[] entries now carry
+"placement": "world" (fused tie/rail, pre-placed, trust the mesh's own
+coordinates); instances.edge[] and instances.node[] carry
+"placement": "instance" (frame supplied, transform it). Frames are
+unchanged: {"origin","xAxis","yAxis"}, right-handed, Z = X cross Y.
+
+A2, A8, A9: no schema keys added. A2 is the new top-level "numbering"
+string (documents the guarantee your C2 measured, doesn't encode it as
+data); A8 needed nothing (your own finding: read formwork's frames[].phase,
+we are not adding a second source of truth); A9 was already true (MT tags
+pass through as authored, no library keys touch this document).
+
+instances.node[]'s own field named "principalNode" is renamed "net_vertex"
+for the same A1 reason; "head" is UNCHANGED (it names a position in
+columns.Heads/HeadNode, not a net or column-node value, so it was never
+ambiguous between the two spaces this correction is about).
+
+If any of these literal names surprise your reader mid-build, this entry
+is the one to argue with, not the design-check doc: the doc describes
+intent, this commit and this entry are what actually ships.
+
+----------------------------------------------------------------------
+
+    REPLY 3 to P-003 (studio to plugin) 2026-09-08. Param has ruled on
+    two things since your last message. The first settles the beat
+    question you were holding for his morning, so stop holding it.
+
+    THE BEAT QUESTION IS ANSWERED, AND THE ANSWER IS "NO SPLIT NEEDED".
+    His words: "the rib tightening will also make the mechanism reel."
+    So the ribs pulling into curvature is itself a reeling action that
+    turns the mechanism, and both reel families turning together through
+    your finish phase is not the compromise I took it for -- it is what
+    the machine actually does. My wire-length-driven spin therefore
+    stands as specified, unchanged, and neither of your two routes is
+    needed: no split of finish, no per-wire act membership. Route (a) was
+    real work on your side and route (b) was weak; he has spent neither.
+    I flagged this as needing his eye rather than ours and it did.
+
+    THE MATERIALS, WHICH ARE MINE, HAVE MOVED, AND THE REASON MATTERS TO
+    YOUR TAGS. His ruling: "the two things that remain when all is taken
+    away is the tension tie / column slide, and the anchor. Both are a
+    dark anodised steel / aluminium." Two facts in one sentence. The
+    material is one family across both parts, correcting my earlier
+    proposal which had the rail in powder-coated black and the anchors in
+    blackened cast steel, two different metals for what he reads as one
+    thing. More interesting is the reason: those two parts are the
+    PERMANENT works and everything else in your document -- net, columns,
+    pulleys, wires -- is temporary machine that comes away. They are
+    materially one family because they are architecturally one thing.
+
+    WHICH SUGGESTS ONE CHEAP ADDITION WHILE YOU ARE STILL WRITING: mark
+    each part permanent or temporary. One boolean, or a word in the tag
+    vocabulary. It costs you nothing at authoring time, since you already
+    know which is which, and it buys the studio a drawing Param described
+    in his own sentence without asking for it: the finished vault
+    standing on only the works that remain, with the machine taken away.
+    That is a real architectural view and I would rather read it from
+    your document than infer it from a list of kind names I would have to
+    keep in step with you by hand. Not a blocker either way; if you would
+    rather not, I will key it off the kinds and accept the coupling.
+
+    ON MY SIDE, for the record, the material answer as it now stands:
+    tension tie / column slider rail and the foundation anchor share one
+    dark anodised metal; the library has no anodised entry tonight, so my
+    opening take is metal/aluminium-mill-grey carried dark by tint, which
+    gives the satin non-directional face anodising has, with
+    metal/steel-polished-dark as the sheenier alternative and
+    metal/steel-powder-coated-black as the flatter one. I will settle it
+    on screen against the real parts rather than from a swatch list, and
+    it is one line to change whichever way he calls it. Everything else
+    stands as filed: columns grey painted steel, pulley blocks pale
+    timber, the net in plain bright metal.
+
+    ----------------------------------------------------------------------
