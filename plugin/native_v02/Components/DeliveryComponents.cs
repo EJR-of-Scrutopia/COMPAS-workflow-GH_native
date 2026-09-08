@@ -134,13 +134,16 @@ internal sealed record ExportBuildInputs(
     string? CellWarning,
     double UnitFactor,
     double Radius,
+    string Mechanism,
     Func<string, object, CancellationToken, Task<JsonElement>> Worker,
     CancellationToken Lifetime);
 
 /// <summary>
-/// One Export solve's eight inputs, gathered and validated on the solve
-/// thread. Both phases read the same eight, and eight out parameters had
-/// stopped being a signature anybody could read.
+/// One Export solve's NINE inputs, gathered and validated on the solve
+/// thread. Both phases read the same nine, and eight out parameters had
+/// stopped being a signature anybody could read even before Mechanism
+/// appended a ninth (a pure append per <c>ParameterIdentity</c>: nothing
+/// above it moved).
 /// </summary>
 public sealed record ExportInputs(
     ResultDto Result,
@@ -151,7 +154,8 @@ public sealed record ExportInputs(
     string? CellWarning,
     bool Live,
     string Studio,
-    double Radius);
+    double Radius,
+    string Mechanism);
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -167,9 +171,12 @@ public sealed record TessellationCell(
 /// The one delivery boundary for a solved Result, and the Result decides
 /// what comes out of it: every Result is a FORM document (the portable
 /// contract, the study name and the thrust mesh the studio's FEA reads), a
-/// Result with Cells wired is also a SKIN document, and a Result whose
-/// Mould block carries columns is also a self-contained FORMWORK document,
-/// the machine and its motion together. Write puts the set on disk as
+/// Result with Cells wired is also a SKIN document, a Result whose Mould
+/// block carries columns is also a self-contained FORMWORK document, the
+/// machine and its motion together, and a Mechanism payload wired in from
+/// the MECHANISM collector is also a MECHANISM document, the machine's own
+/// shape (mechanism spec, 2026-09-05/08): heavy but rare, re-sent only when
+/// its own change key moves. Write puts the set on disk as
 /// <c>&lt;Name&gt;-&lt;kind&gt;.json</c>; Live pushes the same set to the
 /// studio, debounced, off the UI thread.
 ///
@@ -260,10 +267,11 @@ public sealed class ExportComponent : NativeComponentBase
         : base(
             "Export",
             "Export",
-            "Write the three documents a solved Result can be: the form " +
+            "Write the documents a solved Result can be: the form " +
             "document always, the skin document when cells are wired, the " +
             "self-contained formwork document when the Result carries " +
-            "columns, and push the set live to the studio.",
+            "columns, the mechanism document when Mechanism carries a " +
+            "payload, and push the set live to the studio.",
             ComponentCategories.Deliver,
             "export")
     {
@@ -506,6 +514,20 @@ public sealed class ExportComponent : NativeComponentBase
             GH_ParamAccess.item,
             false);
         parameters[7].Optional = true;
+        parameters.AddTextParameter(
+            "Mechanism",
+            "ME",
+            "The MECHANISM collector's own payload (its Payload output, " +
+            "wired straight in): the fourth sibling document, " +
+            "<Name>-mechanism.json, schema bench.mechanism/1, written " +
+            "beside form/skin/formwork only when this carries something. " +
+            "Blank, or the collector's own empty answer, means no " +
+            "mechanism document for this study. APPENDED after Write, so " +
+            "no archived wire on a file saved before this port existed " +
+            "moves.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[8].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -661,6 +683,7 @@ public sealed class ExportComponent : NativeComponentBase
                     inputs.CellWarning,
                     ResolveUnitFactor(),
                     inputs.Radius,
+                    inputs.Mechanism,
                     DispatchToWorker,
                     _lifetime.Token)));
 
@@ -1003,6 +1026,7 @@ public sealed class ExportComponent : NativeComponentBase
         bool liveInput = false;
         string studioInput = DefaultStudio;
         double radiusInput = DefaultColumnRadius;
+        string mechanismInput = string.Empty;
         List<string> errors;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
@@ -1021,6 +1045,7 @@ public sealed class ExportComponent : NativeComponentBase
         data.GetData(5, ref studioInput);
         data.GetData(6, ref liveInput);
         data.GetData(7, ref writeInput);
+        data.GetData(8, ref mechanismInput);
 
         errors = new List<string>(resultValue.Validate());
         // THE COURSES ARE THE BRANCH PATHS AND NOTHING ELSE. The Courses
@@ -1133,7 +1158,8 @@ public sealed class ExportComponent : NativeComponentBase
             cellWarning,
             liveInput,
             studio,
-            radius);
+            radius,
+            mechanismInput ?? string.Empty);
         return true;
     }
 
@@ -1417,7 +1443,8 @@ public sealed class ExportComponent : NativeComponentBase
         MouldColumnsDto? block = result.Mould?.Columns;
         bool hasColumns = block is not null && block.Members.Count > 0;
         bool hasCells = inputs.Cells is not null && inputs.Cells.Count > 0;
-        string[] kinds = ExportPlan.Kinds(hasCells, hasColumns);
+        bool hasMechanism = !string.IsNullOrWhiteSpace(inputs.Mechanism);
+        string[] kinds = ExportPlan.Kinds(hasCells, hasColumns, hasMechanism);
         var payloads = new List<(string Kind, string Json)>(kinds.Length);
         var warnings = new List<string>();
         string? note = null;
@@ -1556,6 +1583,30 @@ public sealed class ExportComponent : NativeComponentBase
                         warnings.Add(
                             "formwork: " +
                             formworkError.GetBaseException().Message);
+                    }
+                    break;
+                }
+                case ExportPlan.MechanismKind:
+                {
+                    // Caught on its own, the same way formwork is: a
+                    // mechanism payload whose shape does not fit this
+                    // Result (a node reel with no columns, an out-of-range
+                    // wire) costs this document and nothing else.
+                    try
+                    {
+                        payloads.Add((
+                            kind,
+                            MechanismDocument.Json(
+                                result,
+                                inputs.Study,
+                                inputs.UnitFactor,
+                                inputs.Mechanism)));
+                    }
+                    catch (Exception mechanismError)
+                    {
+                        warnings.Add(
+                            "mechanism: " +
+                            mechanismError.GetBaseException().Message);
                     }
                     break;
                 }

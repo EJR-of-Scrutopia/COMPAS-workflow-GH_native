@@ -221,15 +221,16 @@ internal static partial class Program
                 // ruling, and the COURSES PORT GONE by the design of
                 // 2026-09-04 section 2, which is what slides every archived
                 // wire after it up one and is why the Live hold is checked
-                // against a definition archived with the old count. The
-                // outputs are one JSON list and one Status, and a reader
-                // tells the documents apart by the schema key each text
-                // carries rather than by slot.
+                // against a definition archived with the old count.
+                // Mechanism is APPENDED last (the mechanism spec), so no
+                // existing wire moved. The outputs are one JSON list and one
+                // Status, and a reader tells the documents apart by the
+                // schema key each text carries rather than by slot.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
                     new[]
                     {
                         "Result", "Cells", "Column Radius", "Name",
-                        "Path", "Studio", "Live", "Write"
+                        "Path", "Studio", "Live", "Write", "Mechanism"
                     },
                     new[] { "JSON", "Status" })
             };
@@ -382,6 +383,7 @@ internal static partial class Program
             ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
             ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
             ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
+            ["Ananke.COMPAS.Native.Components.MechanismCollectorComponent"] = ("mechanism", "ME"),
         };
 
     public static int Main(string[] args)
@@ -585,7 +587,7 @@ internal static partial class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 22)
+        if (componentTypes.Length != 23)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
@@ -594,9 +596,11 @@ internal static partial class Program
             // the skin rework: Skin and Armadillo Dual became ONE Skin
             // component in 05 Deliver, three patterns behind one flag. 22 is
             // TNA Horizontal, the plan-moving station that stands between
-            // TNA Relax and TNA Solve.
+            // TNA Relax and TNA Solve. 23 is MECHANISM, the fourth sibling
+            // document's collector, feeding Export beside RES and Cells
+            // (mechanism spec, 2026-09-05/08).
             failures.Add(
-                $"Expected 22 concrete public components, found " +
+                $"Expected 23 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -3132,9 +3136,10 @@ internal static partial class Program
         {
             ValidateExportPlan(plugin);
             Console.WriteLine(
-                "PASS  ExportPlan: THREE documents, not five kinds. Form "
+                "PASS  ExportPlan: FOUR documents, not five kinds. Form "
                 + "always, skin when cells are wired, formwork when the "
-                + "Mould block carries columns, in that order, with none of "
+                + "Mould block carries columns, mechanism when the MECHANISM "
+                + "collector produced a payload, in that order, with none of "
                 + "the five old kinds anywhere among them; and a study Name "
                 + "is ONE path segment, so a separator, a colon or a dot-dot "
                 + "ANYWHERE in it, not only alone, is refused before it can "
@@ -3218,6 +3223,50 @@ internal static partial class Program
         catch (Exception exception)
         {
             failures.Add($"FormworkDocument: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismCollector(plugin);
+            Console.WriteLine(
+                "PASS  MechanismCollector (mechanism spec section 3a, the "
+                + "door guard): a spinner mesh with no matching AX plane "
+                + "REFUSES its whole unit, named by unit and spinner index; "
+                + "a unit with no part-0 body is dropped and named; SR left "
+                + "blank defaults from the spool's bounding box when one is "
+                + "wired and from the BODY's when it is not, said as a note "
+                + "naming the value and the source; the anchor-tie door "
+                + "guard passes a tie sitting on its own row and NAMES one "
+                + "sitting far from it, the tolerance scaling with the "
+                + "row's own anchor spacing; AT wired with no Result leaves "
+                + "the check unrun and says so by name; and nothing wired "
+                + "at all produces no payload and no warning noise.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismCollector: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismDocument(plugin);
+            Console.WriteLine(
+                "PASS  MechanismDocument (bench.mechanism/1, the fourth "
+                + "sibling): an edge-reel row with one wired wire gets ONE "
+                + "instance, its frame tangent computed from the row's own "
+                + "first-to-last anchor direction and its origin the row's "
+                + "centroid, both hand-computed off the fixture; the wire "
+                + "names the free net vertex and the anchor node it runs "
+                + "to; a node-reel head's frame sits at the principal "
+                + "node's plan position and the Mould's own Ground level, "
+                + "its wire pairing the head's own net vertex to its "
+                + "column-node index; vertexCount and columnNodeCount are "
+                + "declared at document level from the SAME Result Export "
+                + "already owns.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismDocument: {DescribeException(exception)}");
         }
 
         try
@@ -38855,7 +38904,7 @@ internal static partial class Program
         string[] newInputs =
         {
             "Result", "Cells", "Column Radius", "Name", "Path", "Studio",
-            "Live", "Write"
+            "Live", "Write", "Mechanism"
         };
         string[] outputs = { "JSON", "Status" };
 
@@ -38931,7 +38980,7 @@ internal static partial class Program
         if (Hold(newInputs, true))
         {
             throw new InvalidOperationException(
-                "A definition archived against TODAY's eight inputs must "
+                "A definition archived against TODAY's nine inputs must "
                 + "not be held: every wire came back where it left, and a "
                 + "hold there is a false alarm on every file saved after "
                 + "this wave.");
@@ -39085,13 +39134,14 @@ internal static partial class Program
         string[] expected =
         {
             "Result", "Cells", "Column Radius", "Name", "Path",
-            "Studio", "Live", "Write"
+            "Studio", "Live", "Write", "Mechanism"
         };
         if (inputs.Count != expected.Length)
         {
             throw new InvalidOperationException(
                 $"Export registers {expected.Length} inputs now that the "
-                + $"Courses port is gone; it registers {inputs.Count}.");
+                + $"Courses port is gone and Mechanism is appended; it "
+                + $"registers {inputs.Count}.");
         }
         for (int at = 0; at < expected.Length; at++)
         {
@@ -39102,10 +39152,11 @@ internal static partial class Program
             {
                 throw new InvalidOperationException(
                     "Export's inputs are {Result, Cells, Column Radius, "
-                    + "Name, Path, Studio, Live, Write}, Path immediately "
-                    + "AFTER Name by the ruling of section 10.1 and no "
-                    + $"Courses among them; slot {at} is '{name}' and should "
-                    + $"be '{expected[at]}'.");
+                    + "Name, Path, Studio, Live, Write, Mechanism}, Path "
+                    + "immediately AFTER Name by the ruling of section "
+                    + "10.1, Mechanism APPENDED last (the mechanism "
+                    + "spec), and no Courses among them; slot "
+                    + $"{at} is '{name}' and should be '{expected[at]}'.");
             }
         }
         foreach (object? port in inputs)
@@ -39237,18 +39288,27 @@ internal static partial class Program
     {
         Type plan = plugin.GetType("Ananke.COMPAS.Native.Components.ExportPlan", throwOnError: true)!;
         MethodInfo kinds = RequirePublicStatic(plan, "Kinds");
-        string Show(bool cells, bool columns) =>
-            string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns })!);
-        // THREE DOCUMENTS, not five kinds (design of 2026-09-04 section 1).
-        // Form is every Result: it is the contract, and the studio resolves
-        // a study on the contract alone since their 89bc1b3. Skin joins it
-        // where somebody wired cells, formwork where the Mould block
-        // carries columns, since the machine that moves is the columns.
+        string Show(bool cells, bool columns, bool mechanism = false) =>
+            string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns, mechanism })!);
+        // FOUR DOCUMENTS now, not five kinds (design of 2026-09-04 section 1,
+        // widened by the mechanism spec of 2026-09-05/08). Form is every
+        // Result: it is the contract, and the studio resolves a study on the
+        // contract alone since their 89bc1b3. Skin joins it where somebody
+        // wired cells, formwork where the Mould block carries columns
+        // (the machine that moves is the columns), and mechanism where the
+        // MECHANISM collector produced a payload -- the fourth sibling,
+        // heavy but rare.
         if (Show(false, false) != "form") throw new InvalidOperationException($"No cells, no columns: form alone; got {Show(false, false)}.");
         if (Show(true, false) != "form,skin") throw new InvalidOperationException($"Cells add skin; got {Show(true, false)}.");
         if (Show(false, true) != "form,formwork") throw new InvalidOperationException($"Columns add formwork; got {Show(false, true)}.");
         if (Show(true, true) != "form,skin,formwork") throw new InvalidOperationException($"All three in order; got {Show(true, true)}.");
         if (Show(true, false).Contains("formwork", StringComparison.Ordinal)) throw new InvalidOperationException($"No columns, no formwork: there is no machine to animate; got {Show(true, false)}.");
+        // The mechanism document is the fourth, LAST in the plan's order,
+        // independent of cells/columns: a study with no cells and no
+        // columns can still carry a mechanism (a foundation anchor and a
+        // pulley unit ask for no cutting cells and no column tree).
+        if (Show(false, false, true) != "form,mechanism") throw new InvalidOperationException($"Mechanism alone follows form; got {Show(false, false, true)}.");
+        if (Show(true, true, true) != "form,skin,formwork,mechanism") throw new InvalidOperationException($"All four in order; got {Show(true, true, true)}.");
         // AND NONE OF THE FIVE OLD KINDS ANYWHERE. The set stops being
         // written as contract, compas, tessellation, columns and frames; a
         // plan that still named one of them would put a file on the
@@ -39259,7 +39319,7 @@ internal static partial class Program
             foreach (bool columns in new[] { false, true })
             {
                 string[] set = (string[])kinds.Invoke(
-                    null, new object?[] { cells, columns })!;
+                    null, new object?[] { cells, columns, false })!;
                 foreach (string dead in new[]
                          {
                              "contract", "compas", "tessellation", "columns",
@@ -40435,6 +40495,448 @@ internal static partial class Program
             + $"furthest node travels {travel:0.###}.");
     }
 
+    /// <summary>
+    /// A small reusable list-building helper for the plugin's own plain
+    /// Mechanism record types, which the harness has no compile-time
+    /// reference to: <c>List&lt;T&gt;</c> is built by reflection off the
+    /// element type and filled through the non-generic <c>IList</c> every
+    /// <c>List&lt;T&gt;</c> implements, so one helper drives every one of
+    /// them (MechanismSpinnerInput, MechanismUnitInput,
+    /// MechanismAnchorTieInput, MechanismAnchorRow, MechanismFrame alike).
+    /// </summary>
+    private static object MechanismListOf(Type elementType, params object?[] items)
+    {
+        Type listType = typeof(List<>).MakeGenericType(elementType);
+        object list = Activator.CreateInstance(listType)
+            ?? throw new InvalidOperationException(
+                $"Could not construct List<{elementType.Name}>.");
+        IList asList = (IList)list;
+        foreach (object? item in items)
+            asList.Add(item);
+        return list;
+    }
+
+    /// <summary>
+    /// MechanismCollector.Build (mechanism spec section 3a, the door
+    /// guard), driven entirely through the plain, Rhino-free record types
+    /// it takes: no Grasshopper object and no Rhino mesh crosses this
+    /// boundary, which is the whole point of keeping the collector's own
+    /// packaging logic separate from <see cref="MechanismCollectorComponent"/>'s
+    /// tree-walking.
+    ///
+    /// Five things are proved, each independently able to fail:
+    /// 1. A spinner mesh with NO matching axis refuses its WHOLE unit
+    ///    (never a partial one), named by type and spinner index.
+    /// 2. A unit with no part-0 body is dropped and named.
+    /// 3. SR left blank defaults from the BODY's own bounding box when the
+    ///    unit carries no spinner (the spool default is a different code
+    ///    path, exercised by the "0.5" figure below), said as a note.
+    /// 4. The anchor-tie door guard: a tie sitting near its own row's
+    ///    nodes is silent, one sitting far from them is named, and the
+    ///    tolerance is the row's OWN characteristic spacing times the
+    ///    collector's own factor, not a fixed number -- proved by giving
+    ///    both rows the SAME spacing and only one tie the same distance.
+    /// 5. Nothing wired at all gives back null with NEITHER list touched.
+    /// </summary>
+    private static void ValidateMechanismCollector(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type axisType = RequireComponentType(plugin, "MechanismAxis");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type spinnerType = RequireComponentType(plugin, "MechanismSpinnerInput");
+        Type unitType = RequireComponentType(plugin, "MechanismUnitInput");
+        Type tieType = RequireComponentType(plugin, "MechanismAnchorTieInput");
+        Type rowType = RequireComponentType(plugin, "MechanismAnchorRow");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "Build");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+
+        // A cube spanning 0..2 on every axis: smallest bounding dimension
+        // 2, so the SR default (that dimension over 4) is 0.5 -- a figure
+        // this check can name exactly rather than merely "some default".
+        double[][] cube =
+        {
+            new double[] { 0, 0, 0 }, new double[] { 2, 0, 0 },
+            new double[] { 0, 2, 0 }, new double[] { 0, 0, 2 },
+        };
+        object cubeMesh = Mesh(cube);
+        object smallMesh = Mesh(new[] { new double[] { 0, 0, 0 } });
+
+        // UNIT 0 (edge): a body, and ONE spinner with a mesh but NO axis.
+        // The door guard must refuse this unit WHOLE: "edge" must be
+        // absent from unitTypes, not present with an empty spinners list.
+        object spinnerNoAxis = Activator.CreateInstance(
+            spinnerType, cubeMesh, null, "spin-tag")!;
+        object edgeUnit = Activator.CreateInstance(
+            unitType,
+            0,
+            cubeMesh,
+            "edge-body",
+            MechanismListOf(spinnerType, spinnerNoAxis),
+            MechanismListOf(frameType),
+            null,
+            null)!;
+
+        // UNIT 1 (node): a body and NO spinner at all, so SR defaults from
+        // the BODY's own bounding box (0.5, per the cube above) rather
+        // than a spool's.
+        object nodeUnit = Activator.CreateInstance(
+            unitType,
+            1,
+            cubeMesh,
+            "node-body",
+            MechanismListOf(spinnerType),
+            MechanismListOf(frameType),
+            null,
+            null)!;
+
+        object units = MechanismListOf(unitType, edgeUnit, nodeUnit);
+
+        // Two rows, IDENTICAL spacing (1.0 between consecutive nodes, so
+        // the tolerance -- 3x that -- is 3.0 on both): tie 0 sits 1e-4 from
+        // its own row's middle node (silent), tie 1 sits 100 away from the
+        // SAME shape of row (named). Only the DISTANCE differs, which is
+        // what proves the tolerance is read off the row and not hardcoded.
+        double[][] rowPoints = { new[] { 0.0, 0, 0 }, new[] { 1.0, 0, 0 }, new[] { 2.0, 0, 0 } };
+        object row0 = Activator.CreateInstance(rowType, (object)rowPoints)!;
+        object row1 = Activator.CreateInstance(rowType, (object)rowPoints)!;
+        object rows = MechanismListOf(rowType, row0, row1);
+
+        object tieNear = Activator.CreateInstance(
+            tieType, smallMesh, new[] { 1.0, 0.0, 0.0001 }, "tie-near")!;
+        object tieFar = Activator.CreateInstance(
+            tieType, smallMesh, new[] { 1.0, 100.0, 0.0 }, "tie-far")!;
+        object ties = MechanismListOf(tieType, tieNear, tieFar);
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null, new object?[] { units, ties, rows, warnings, notes });
+        if (payload is not string json || string.IsNullOrEmpty(json))
+        {
+            throw new InvalidOperationException(
+                "A unit and two anchor ties were wired; Build must return a "
+                + "payload rather than null.");
+        }
+
+        bool refusedEdge = warnings.Any(w =>
+            w.Contains("edge", StringComparison.Ordinal) &&
+            w.Contains("spinner 1", StringComparison.Ordinal) &&
+            w.Contains("axis", StringComparison.Ordinal) &&
+            w.Contains("refused", StringComparison.Ordinal));
+        if (!refusedEdge)
+        {
+            throw new InvalidOperationException(
+                "A spinner with no matching axis must refuse its whole "
+                + "unit, named by type and spinner index; warnings were: "
+                + string.Join(" | ", warnings));
+        }
+
+        bool defaultedSpool = notes.Any(n =>
+            n.Contains("node", StringComparison.Ordinal) &&
+            n.Contains("0.5", StringComparison.Ordinal) &&
+            n.Contains("body", StringComparison.Ordinal));
+        if (!defaultedSpool)
+        {
+            throw new InvalidOperationException(
+                "SR left blank on a spinner-less unit must default to the "
+                + "BODY's own bounding box (0.5 on this fixture) and say "
+                + "so; notes were: " + string.Join(" | ", notes));
+        }
+
+        if (warnings.Any(w => w.Contains("AT[0]", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "AT[0] sits 1e-4 from its own row and must be SILENT; "
+                + "warnings were: " + string.Join(" | ", warnings));
+        }
+        bool namedFarTie = warnings.Any(w =>
+            w.Contains("AT[1]", StringComparison.Ordinal) &&
+            w.Contains("door-guard tolerance", StringComparison.Ordinal));
+        if (!namedFarTie)
+        {
+            throw new InvalidOperationException(
+                "AT[1] sits 100 units from its own row (tolerance 3.0) and "
+                + "must be NAMED; warnings were: "
+                + string.Join(" | ", warnings));
+        }
+
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            JsonElement unitTypes = document.RootElement.GetProperty("unitTypes");
+            if (unitTypes.TryGetProperty("edge", out _))
+            {
+                throw new InvalidOperationException(
+                    "The refused edge unit must not appear in unitTypes at "
+                    + "all; the payload carries it anyway: " + json);
+            }
+            if (!unitTypes.TryGetProperty("node", out JsonElement nodeOut))
+            {
+                throw new InvalidOperationException(
+                    "The valid node unit must appear in unitTypes; it does "
+                    + "not: " + json);
+            }
+            double spoolRadius = nodeOut.GetProperty("spoolRadius").GetDouble();
+            if (Math.Abs(spoolRadius - 0.5) > 1e-9)
+            {
+                throw new InvalidOperationException(
+                    $"The node unit's spoolRadius must default to 0.5 "
+                    + $"(the body's bounding box over 4); got {spoolRadius}.");
+            }
+            JsonElement anchorTies = document.RootElement.GetProperty("anchorTies");
+            if (anchorTies.GetArrayLength() != 2 ||
+                anchorTies[0].GetProperty("row").GetInt32() != 0 ||
+                anchorTies[1].GetProperty("row").GetInt32() != 1)
+            {
+                throw new InvalidOperationException(
+                    "anchorTies must carry both ties, row-numbered by "
+                    + "position (0 and 1); payload: " + json);
+            }
+        }
+
+        // AT wired with no Result: the check does not run, and says so
+        // rather than passing the ties through in silence.
+        var noResultWarnings = new List<string>();
+        object? withoutResult = build.Invoke(
+            null,
+            new object?[]
+            {
+                MechanismListOf(unitType), MechanismListOf(tieType, tieFar),
+                null, noResultWarnings, new List<string>(),
+            });
+        if (withoutResult is not string ||
+            !noResultWarnings.Any(w =>
+                w.Contains("no Result was wired", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "AT wired with no Result must say the door-guard could not "
+                + "run; warnings were: " + string.Join(" | ", noResultWarnings));
+        }
+
+        // Nothing wired at all: null, and NEITHER list touched (spec
+        // section 8 item 6, "no mechanism document and no warning noise").
+        var emptyWarnings = new List<string>();
+        var emptyNotes = new List<string>();
+        object? nothing = build.Invoke(
+            null,
+            new object?[]
+            {
+                MechanismListOf(unitType), MechanismListOf(tieType), null,
+                emptyWarnings, emptyNotes,
+            });
+        if (nothing is not null || emptyWarnings.Count != 0 || emptyNotes.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "Nothing wired must produce null and no warning noise; got "
+                + $"payload={nothing}, warnings={emptyWarnings.Count}, "
+                + $"notes={emptyNotes.Count}.");
+        }
+    }
+
+    /// <summary>
+    /// MechanismDocument.Json (mechanism spec section 4, the placement
+    /// half): a THREE-node fixture small enough to hand-compute every
+    /// number it asserts. Nodes 0 and 1 are anchors joined directly (the
+    /// row); node 2 hangs off node 1 (the one wire this row carries).
+    ///
+    /// The EDGE reel: the row [0, 1] (ConnectedGroups walks from node 0,
+    /// the lower of the two ends) gives a tangent frame along the row's
+    /// own first-to-last direction, (1,0,0), origin at the row's centroid
+    /// (1,0,0); the ONE wire is (netVertex 2, anchorNode 1), since node 0's
+    /// only neighbour (node 1) is itself an anchor and contributes no wire.
+    ///
+    /// The NODE reel: one head standing over node 2 with a principal run
+    /// [1, 2] to take its tangent from; the frame's origin sits at node
+    /// 2's plan position and the Mould's own Ground level (-5), and its
+    /// axes are checked for being unit length and mutually perpendicular
+    /// rather than for an exact value, since the run tangent's own sign
+    /// convention is not part of the contract this pins.
+    /// </summary>
+    private static void ValidateMechanismDocument(Assembly plugin)
+    {
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type equilibriumProblemType = RequireContractType(plugin, "EquilibriumProblemDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        // Node 0, 1: anchors 2 m apart along X. Node 2: hangs off node 1,
+        // sagged in Z, offset in X so the node-reel run tangent is not
+        // trivially parallel to the edge-reel one.
+        object[] nodes = { P(0, 0, 0), P(2, 0, 0), P(1, 0, -1) };
+        Array netEdges = Array.CreateInstance(edgeType, 2);
+        netEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        netEdges.SetValue(Activator.CreateInstance(edgeType, 1, 2), 1);
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces", new[] { 1.0, 1.0 });
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+
+        // A principal run [1, 2] so the node reel's tangent is measured
+        // rather than defaulted to world X.
+        object analysisTopology = CreateInstance(topologyType);
+        SetContractProperty(analysisTopology, topologyType, "Vertices", Points(nodes));
+        SetContractProperty(
+            analysisTopology,
+            topologyType,
+            "PrincipalRuns",
+            new int[][] { new[] { 1, 2 } });
+        object analysisProblem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(analysisProblem, equilibriumProblemType, "Topology", analysisTopology);
+        SetContractProperty(equilibrium, equilibriumType, "Problem", analysisProblem);
+
+        // One column head standing over node 2, ground level -5.
+        object columnNode = P(1, 0, -5);
+        Array columnNodes = Array.CreateInstance(point, 1);
+        columnNodes.SetValue(columnNode, 0);
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes", columnNodes);
+        SetContractProperty(block, columnsType, "Members", Array.CreateInstance(edgeType, 0));
+        SetContractProperty(block, columnsType, "MemberForce", Array.Empty<double>());
+        SetContractProperty(block, columnsType, "Trees", Array.Empty<int[]>());
+        SetContractProperty(block, columnsType, "Heads", new[] { 0 });
+        SetContractProperty(block, columnsType, "Forks", Array.Empty<int>());
+        SetContractProperty(block, columnsType, "Feet", Array.Empty<int>());
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 2 });
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", -5.0);
+        SetContractProperty(mould, mouldType, "Columns", block);
+
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        const string minimalUnit =
+            "{\"body\":{\"vertices\":[],\"faces\":[]},\"spinners\":[]," +
+            "\"sockets\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}";
+        string payload =
+            "{\"unitTypes\":{\"edge\":" + minimalUnit + ",\"node\":" + minimalUnit + "}," +
+            "\"anchorTies\":[]}";
+
+        const string Study = "mechanism fixture";
+        string document = (string)json.Invoke(
+            null, new object?[] { result, Study, 1.0, payload })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The mechanism document did not parse.");
+
+        if ((string?)root["schema"] != "bench.mechanism/1")
+            throw new InvalidOperationException($"schema must be bench.mechanism/1; got {root["schema"]}.");
+        if ((int?)root["vertexCount"] != 3)
+            throw new InvalidOperationException($"vertexCount must be 3; got {root["vertexCount"]}.");
+        if ((int?)root["columnNodeCount"] != 1)
+            throw new InvalidOperationException($"columnNodeCount must be 1; got {root["columnNodeCount"]}.");
+
+        JsonArray edgeInstances = root["instances"]!["edge"]!.AsArray();
+        if (edgeInstances.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Exactly one anchor row carries a wire (node 0's only "
+                + "neighbour is itself an anchor); instances.edge has "
+                + $"{edgeInstances.Count}.");
+        }
+        JsonNode edgeInstance = edgeInstances[0]!;
+        if ((int?)edgeInstance["row"] != 0)
+            throw new InvalidOperationException($"The single edge instance's row must be 0; got {edgeInstance["row"]}.");
+        JsonArray edgeWires = edgeInstance["wires"]!.AsArray();
+        if (edgeWires.Count != 1 ||
+            (int?)edgeWires[0]!["netVertex"] != 2 ||
+            (int?)edgeWires[0]!["anchorNode"] != 1)
+        {
+            throw new InvalidOperationException(
+                "The edge reel's one wire must be (netVertex 2, anchorNode "
+                + "1); got " + edgeWires.ToJsonString());
+        }
+        double[] origin = ReadTriple(edgeInstance["frame"]!["origin"]!.AsArray());
+        double[] xAxis = ReadTriple(edgeInstance["frame"]!["xAxis"]!.AsArray());
+        if (!Close(origin, new[] { 1.0, 0.0, 0.0 }) || !Close(xAxis, new[] { 1.0, 0.0, 0.0 }))
+        {
+            throw new InvalidOperationException(
+                "The edge reel's frame must sit at the row's centroid "
+                + "(1,0,0) with X tangent to the row (1,0,0); got origin="
+                + string.Join(",", origin) + " xAxis=" + string.Join(",", xAxis));
+        }
+
+        JsonArray nodeInstances = root["instances"]!["node"]!.AsArray();
+        if (nodeInstances.Count != 1)
+            throw new InvalidOperationException($"instances.node must carry one head; got {nodeInstances.Count}.");
+        JsonNode nodeInstance = nodeInstances[0]!;
+        if ((int?)nodeInstance["head"] != 0 || (int?)nodeInstance["principalNode"] != 2)
+        {
+            throw new InvalidOperationException(
+                "The node reel's one instance must be head 0 over "
+                + "principalNode 2; got " + nodeInstance.ToJsonString());
+        }
+        JsonArray nodeWires = nodeInstance["wires"]!.AsArray();
+        if (nodeWires.Count != 1 ||
+            (int?)nodeWires[0]!["netVertex"] != 2 ||
+            (int?)nodeWires[0]!["columnNode"] != 0)
+        {
+            throw new InvalidOperationException(
+                "The node reel's one wire must be (netVertex 2, columnNode "
+                + "0); got " + nodeWires.ToJsonString());
+        }
+        double[] nodeOrigin = ReadTriple(nodeInstance["frame"]!["origin"]!.AsArray());
+        if (!Close(nodeOrigin, new[] { 1.0, 0.0, -5.0 }))
+        {
+            throw new InvalidOperationException(
+                "The node reel's frame must sit at the head's plan "
+                + "position and the Mould's OWN Ground level (1,0,-5); "
+                + "got " + string.Join(",", nodeOrigin));
+        }
+        double[] nodeX = ReadTriple(nodeInstance["frame"]!["xAxis"]!.AsArray());
+        double[] nodeY = ReadTriple(nodeInstance["frame"]!["yAxis"]!.AsArray());
+        double xLen = Math.Sqrt((nodeX[0] * nodeX[0]) + (nodeX[1] * nodeX[1]) + (nodeX[2] * nodeX[2]));
+        double yLen = Math.Sqrt((nodeY[0] * nodeY[0]) + (nodeY[1] * nodeY[1]) + (nodeY[2] * nodeY[2]));
+        double dot = (nodeX[0] * nodeY[0]) + (nodeX[1] * nodeY[1]) + (nodeX[2] * nodeY[2]);
+        if (Math.Abs(xLen - 1.0) > 1e-9 || Math.Abs(yLen - 1.0) > 1e-9 || Math.Abs(dot) > 1e-9)
+        {
+            throw new InvalidOperationException(
+                "The node reel's frame must be an orthonormal pair (unit "
+                + $"length, zero dot product); got |X|={xLen}, |Y|={yLen}, "
+                + $"X.Y={dot}.");
+        }
+
+        // Byte-identical on a second run: the mechanism document's own
+        // change-key requirement (mechanism spec section 4), same as
+        // formwork's.
+        string again = (string)json.Invoke(
+            null, new object?[] { result, Study, 1.0, payload })!;
+        if (!string.Equals(document, again, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The mechanism document must be byte-identical for the "
+                + "same Result and payload; two runs differ.");
+        }
+    }
+
+    private static double[] ReadTriple(JsonArray array) =>
+        new[] { (double)array[0]!, (double)array[1]!, (double)array[2]! };
+
+    private static bool Close(double[] a, double[] b) =>
+        a.Length == b.Length &&
+        a.Zip(b, (x, y) => Math.Abs(x - y)).All(d => d < 1e-9);
+
     private static void ValidateLiveUploader(Assembly plugin)
     {
         Type uploader = plugin.GetType("Ananke.COMPAS.Native.Components.LiveUploader", throwOnError: true)!;
@@ -41499,7 +42001,7 @@ internal static partial class Program
             new object?[]
             {
                 ThrustMeshFixture(plugin), "arch", null, null, 1.0, 0.05,
-                worker, CancellationToken.None,
+                string.Empty, worker, CancellationToken.None,
             })!;
         object Run(Func<string, bool> wantMesh)
         {
