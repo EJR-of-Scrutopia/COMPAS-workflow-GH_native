@@ -1114,7 +1114,7 @@ function saveProps() {
     layers: state.propLayers.map((layer) => ({
       id: layer.id, name: layer.name, visible: layer.visible })),
     props: state.props.map((p) => ({
-      type: p.type, x: p.x, y: p.y, rotation: p.rotation,
+      type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation,
       scale: p.scale || 1, layer: p.layer || 1 })),
   };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
@@ -1185,7 +1185,7 @@ function restoreProps() {
       continue;
     }
     const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
-      +entry.rotation || 0, false, +entry.scale || 1);
+      +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0);
     record.layer = +entry.layer || 1;
   }
   applyLayerVisibility();
@@ -1433,13 +1433,16 @@ function renderObjectPreview(object, canvasEl) {
   previewRig.camera.lookAt(0, 0, 0);
 }
 
-function placeProp(type, x, y, rotation, save, scale = 1) {
+function placeProp(type, x, y, rotation, save, scale = 1, z = 0) {
   const template = propTemplates.get(type);
   // A clone shares geometry and materials with its template, which is what
   // makes twenty figures cost one model; it is also why disposeProp does
   // not free anything for a library prop (see there).
   const object = template ? template.clone() : makeProp(type);
-  object.position.set(x, y, 0);
+  // z is a deliberate height offset, zero for everything placed on the
+  // ground and negative for the assets Param needs to sink into it
+  // ("allowing them to clip below ground, as some assets need to do so").
+  object.position.set(x, y, z);
   object.rotation.z = rotation;
   // A prop's feet are its origin (loadPropTemplate shifts min.z to 0), so
   // a uniform scale about the origin grows it from the GROUND UP -- the
@@ -1448,7 +1451,7 @@ function placeProp(type, x, y, rotation, save, scale = 1) {
   object.scale.setScalar(scale);
   propsGroup.add(object);
   object.userData.fromLibrary = !!template;
-  const record = { type, x, y, rotation, scale,
+  const record = { type, x, y, z, rotation, scale,
     layer: state.activeLayer, object };
   object.visible = layerVisible(record.layer);
   state.props.push(record);
@@ -1541,8 +1544,41 @@ function setPropGumball(record) {
     new THREE.MeshBasicMaterial({ visible: false }));
   grabGrip.position.copy(grip.position);
   grabGrip.userData.handle = "scale";
-  propGumball.add(ring, grip, grabRing, grabGrip);
-  propGumball.position.set(record.x, record.y, 0.02);
+  // The height arrow (Param: "add in a x,y,z arrow control on the objects
+  // when in edit mode. allowing them to clip below ground, as some assets
+  // need to do so"). Dragging the body already gives x and y; what the
+  // gumball could not say was UP. Double-headed on purpose, because
+  // sinking a prop is as ordinary a move as lifting one.
+  const stem = Math.max(0.6, radius * 1.1);
+  const axis = new THREE.Mesh(
+    new THREE.CylinderGeometry(Math.max(0.015, radius * 0.022),
+      Math.max(0.015, radius * 0.022), stem * 2, 8),
+    new THREE.MeshBasicMaterial({ color: 0x4fbf6a, transparent: true,
+      opacity: 0.9, depthTest: false }));
+  axis.rotation.x = Math.PI / 2;          // the cylinder stands up Z
+  axis.renderOrder = 3;
+  axis.userData.handle = "lift";
+  const coneSize = Math.max(0.05, radius * 0.09);
+  const heads = [];
+  for (const direction of [1, -1]) {
+    const head = new THREE.Mesh(
+      new THREE.ConeGeometry(coneSize, coneSize * 2.2, 10),
+      new THREE.MeshBasicMaterial({ color: 0x4fbf6a, transparent: true,
+        opacity: 0.95, depthTest: false }));
+    head.rotation.x = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+    head.position.z = direction * (stem + coneSize);
+    head.renderOrder = 3;
+    head.userData.handle = "lift";
+    heads.push(head);
+  }
+  const grabAxis = new THREE.Mesh(
+    new THREE.CylinderGeometry(Math.max(0.09, radius * 0.12),
+      Math.max(0.09, radius * 0.12), stem * 2.3, 8),
+    new THREE.MeshBasicMaterial({ visible: false }));
+  grabAxis.rotation.x = Math.PI / 2;
+  grabAxis.userData.handle = "lift";
+  propGumball.add(ring, grip, axis, ...heads, grabRing, grabGrip, grabAxis);
+  propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02);
   propGumball.rotation.z = record.rotation || 0;
   propsGroup.add(propGumball);
 }
@@ -1551,7 +1587,8 @@ function setPropGumball(record) {
 // A size change rebuilds instead (setPropGumball), so the ring re-fits.
 function refreshPropGumball() {
   if (!propGumball || !state.selectedProp) return;
-  propGumball.position.set(state.selectedProp.x, state.selectedProp.y, 0.02);
+  propGumball.position.set(state.selectedProp.x, state.selectedProp.y,
+    (state.selectedProp.z || 0) + 0.02);
   propGumball.rotation.z = state.selectedProp.rotation || 0;
 }
 
@@ -1568,6 +1605,41 @@ function gumballHandleAt(event) {
   propRaycaster.setFromCamera(ndc, camera);
   const hits = propRaycaster.intersectObjects(propGumball.children, false);
   return hits.length ? hits[0].object.userData.handle : null;
+}
+
+// Where the pointer sits on the prop's own vertical line, in metres of
+// world z. The ray is met with an upright plane through the prop that
+// faces the camera, so the reading is stable at any camera pitch --
+// including the low, near-horizontal views where the ground plane gives
+// no vertical information at all. Null when the ray runs parallel to it.
+const liftPlane = new THREE.Plane();
+const liftHit = new THREE.Vector3();
+
+function liftHeightAt(event, record) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  // The plane's normal is the camera's own view direction flattened into
+  // plan: upright, and as square to the eye as an upright plane can be.
+  const facing = new THREE.Vector3();
+  camera.getWorldDirection(facing);
+  facing.z = 0;
+  if (facing.lengthSq() < 1e-9) facing.set(0, 1, 0);   // straight down
+  facing.normalize();
+  liftPlane.setFromNormalAndCoplanarPoint(facing,
+    new THREE.Vector3(record.x, record.y, record.z || 0));
+  return propRaycaster.ray.intersectPlane(liftPlane, liftHit)
+    ? liftHit.z : null;
+}
+
+// How tall this prop stands, for bounding the lift. Measured from the
+// object rather than the template, so a scaled prop gets its real height.
+function propHeightOf(record) {
+  const box = new THREE.Box3().setFromObject(record.object);
+  const height = box.max.z - box.min.z;
+  return Number.isFinite(height) && height > 0.2 ? height : 5;
 }
 
 let propEditHinted = false;
@@ -2272,7 +2344,8 @@ function collectScene() {
       relief: state.ground.relief, offset: state.ground.offset.slice(),
       rotation: state.ground.rotation },
     props: state.props.map((record) => ({
-      type: record.type, x: record.x, y: record.y, rotation: record.rotation,
+      type: record.type, x: record.x, y: record.y, z: record.z || 0,
+      rotation: record.rotation,
       scale: record.scale, layer: record.layer || 1,
     })),
     propLayers: state.propLayers.map((layer) => ({
@@ -2388,7 +2461,7 @@ async function applyScene(record) {
     for (const entry of scene_.props) {
       if (!knownPropType(entry.type)) continue;
       const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
-        +entry.rotation || 0, false, +entry.scale || 1);
+        +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0);
       record.layer = +entry.layer || 1;
     }
     applyLayerVisibility();
@@ -3552,8 +3625,11 @@ function renderShelfLayers(grid) {
         // of having to find the edit button and press it"), so edit mode
         // comes on with the selection rather than being hunted for.
         // Quietly, because the mode change is a consequence of the click
-        // and not a thing he asked for in its own right.
+        // and not a thing he asked for in its own right -- and as a LOAN
+        // worth one placement, not a mode he now has to notice and undo.
+        const granted = !state.propEdit;
         setPropEdit(true, true);
+        if (granted) propEditOneShot = true;
         selectProp(record);
       }
       tile.classList.toggle("active", gatheredProps.has(record));
@@ -3708,7 +3784,7 @@ function moveStamp(hit) {
     const record = stampRig.records[i];
     record.x = hit.x + def.dx;
     record.y = hit.y + def.dy;
-    record.object.position.set(record.x, record.y, 0);
+    record.object.position.set(record.x, record.y, record.z || 0);
   }
 }
 
@@ -6821,6 +6897,10 @@ function dropCarriedProp() {
   // outline lingers, and no key can quietly move it afterwards.
   if (!state.propEdit) selectProp(null);
   saveProps();
+  // A loan of edit mode buys one placement. This was it, so the scene
+  // goes back to being all camera rather than leaving him in a mode he
+  // never asked for and would have to notice to leave.
+  if (propEditOneShot) setPropEdit(false);
   // A prop arriving on the open layer earns its tile at once, and a moved
   // one refreshes the coordinates its tile carries in its tooltip.
   refreshLayersShelf();
@@ -6856,8 +6936,19 @@ document.getElementById("prop-browse").addEventListener("click", () => {
 // `quietly` skips the log line for the automatic turn-on that follows
 // picking a prop from a layer tile, where the mode change is a
 // consequence of what the user did rather than something they asked for.
+// Set while edit was granted BY a layer-tile click rather than asked for
+// at the button. Such a grant is worth exactly one placement (Param:
+// "dont auto turn on edit if i move a prop around via the select prop in
+// layer and move it, should be a one time placement"), so the drop that
+// ends the move puts the scene back to being all camera.
+let propEditOneShot = false;
+
 function setPropEdit(on, quietly = false) {
   const was = state.propEdit;
+  // Any deliberate press of either Edit button makes the mode his, not a
+  // loan: it stops being one-shot and stays until he turns it off.
+  if (!quietly) propEditOneShot = false;
+  if (!on) propEditOneShot = false;
   state.propEdit = on;
   for (const id of ["prop-edit", "shelf-prop-edit"]) {
     const button = document.getElementById(id);
@@ -6912,14 +7003,23 @@ canvas.addEventListener("pointerdown", (event) => {
     const handle = gumballHandleAt(event);
     if (handle) {
       const record = state.selectedProp;
-      const ground = groundPointAt(event);
-      if (ground) {
+      // The lift handle cannot be measured against the ground plane: a
+      // vertical drag barely moves the point where the ray meets z = 0,
+      // and looks past infinity when the camera is low. It reads its own
+      // upright plane instead (liftHeightAt), so up is up whatever the
+      // camera is doing.
+      const ground = handle === "lift"
+        ? liftHeightAt(event, record) : groundPointAt(event);
+      if (ground !== null && ground !== undefined) {
         state.gumball = {
           mode: handle, record,
           startRotation: record.rotation || 0,
           startScale: record.scale || 1,
-          startAngle: Math.atan2(ground.y - record.y, ground.x - record.x),
-          startDistance: Math.max(0.05,
+          startZ: record.z || 0,
+          startLift: handle === "lift" ? ground : 0,
+          startAngle: handle === "lift" ? 0
+            : Math.atan2(ground.y - record.y, ground.x - record.x),
+          startDistance: handle === "lift" ? 1 : Math.max(0.05,
             Math.hypot(ground.x - record.x, ground.y - record.y)),
         };
         controls.enabled = false;
@@ -6955,10 +7055,24 @@ canvas.addEventListener("pointermove", (event) => {
   // both measured in plan about the prop's feet, the way Rhino reads a
   // gumball drag in top view.
   if (state.gumball) {
+    const { mode, record, startRotation, startScale, startAngle,
+      startDistance, startZ, startLift } = state.gumball;
+    if (mode === "lift") {
+      const height = liftHeightAt(event, record);
+      if (height === null) return;
+      // Free to go under the floor, which is the whole point, but bounded
+      // by the prop's own height so a drag cannot fling it out of sight:
+      // one body-length down buries anything, one up clears anything.
+      const reach = propHeightOf(record) + 1;
+      record.z = Math.min(reach, Math.max(-reach,
+        startZ + (height - startLift)));
+      record.object.position.set(record.x, record.y, record.z);
+      refreshPropOutline();
+      refreshPropGumball();
+      return;
+    }
     const ground = groundPointAt(event);
     if (!ground) return;
-    const { mode, record, startRotation, startScale, startAngle,
-      startDistance } = state.gumball;
     if (mode === "rotate") {
       const angle = Math.atan2(ground.y - record.y, ground.x - record.x);
       record.rotation = startRotation + (angle - startAngle);
@@ -6979,7 +7093,7 @@ canvas.addEventListener("pointermove", (event) => {
   if (!hit) return;
   carried.x = hit.x;
   carried.y = hit.y;
-  carried.object.position.set(hit.x, hit.y, 0);
+  carried.object.position.set(hit.x, hit.y, carried.z || 0);
   refreshPropOutline();
   refreshPropGumball();
 });
@@ -6990,16 +7104,20 @@ function endPropDrag(event) {
   if (state.gumball) {
     const record = state.gumball.record;
     const before = { rotation: state.gumball.startRotation,
-                     scale: state.gumball.startScale };
+                     scale: state.gumball.startScale,
+                     z: state.gumball.startZ || 0 };
     state.gumball = null;
     controls.enabled = true;
     if (Math.abs((record.rotation || 0) - before.rotation) > 1e-6
-        || Math.abs((record.scale || 1) - before.scale) > 1e-6) {
+        || Math.abs((record.scale || 1) - before.scale) > 1e-6
+        || Math.abs((record.z || 0) - before.z) > 1e-6) {
       pushUndo("the adjustment", () => {
         record.rotation = before.rotation;
         record.scale = before.scale;
+        record.z = before.z;
         record.object.rotation.z = before.rotation;
         record.object.scale.setScalar(before.scale);
+        record.object.position.set(record.x, record.y, before.z);
         if (state.selectedProp === record) {
           refreshPropOutline();
           setPropGumball(record);
@@ -7066,12 +7184,13 @@ window.addEventListener("keydown", (event) => {
   } else if (event.key === "Delete" || event.key === "Backspace") {
     const record = state.selectedProp;
     const gone = { type: record.type, x: record.x, y: record.y,
+                   z: record.z || 0,
                    rotation: record.rotation, scale: record.scale,
                    layer: record.layer };
     pushUndo("deleting the " + gone.type, async () => {
       await ensurePropTemplate(gone.type);
       const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
-        false, gone.scale);
+        false, gone.scale, gone.z || 0);
       again.layer = gone.layer;
       again.object.visible = layerVisible(again.layer);
       saveProps();
@@ -7082,6 +7201,9 @@ window.addEventListener("keydown", (event) => {
     // removePropRecord also puts a carried corpse down, or the outline
     // keeps following the cursor and the camera stays locked.
     removePropRecord(record);
+    // A loaned edit mode is spent by a delete just as much as by a
+    // placement: the prop it was loaned for is gone.
+    if (propEditOneShot) setPropEdit(false);
   }
 });
 // "change" (drag release), not "input": the file's own convention for every

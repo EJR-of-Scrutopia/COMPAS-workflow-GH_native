@@ -722,10 +722,22 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     shelf = _js_function(js, "function renderShelf()")
     assert 'shelfEdit.classList.toggle("active", state.propEdit)' in shelf
 
-    # Picking from a tile grants the powers, quietly.
+    # Picking from a tile grants the powers, quietly -- and as a LOAN
+    # worth one placement, not a mode he then has to notice and undo
+    # (Param: "dont auto turn on edit if i move a prop around via the
+    # select prop in layer and move it, should be a one time placement").
     tiles = _js_function(js, "function renderShelfLayers(grid)")
+    assert "const granted = !state.propEdit;" in tiles
     assert "setPropEdit(true, true);" in tiles
+    assert "if (granted) propEditOneShot = true;" in tiles
     assert "selectProp(record);" in tiles
+    # Spent by the placement that ends the move, and by a delete, since
+    # the prop it was loaned for is then gone.
+    assert "    if (propEditOneShot) setPropEdit(false);" in js
+    # A deliberate press of either button makes the mode his to keep.
+    toggle_head = js[js.index("function setPropEdit(on, quietly = false)"):]
+    toggle_head = toggle_head[:toggle_head.index("state.propEdit = on;")]
+    assert "if (!quietly) propEditOneShot = false;" in toggle_head
 
     # The ghost tile: every writer of state.props tells the drawer, and
     # the call is pinned CONTIGUOUS with the save above it, so an early
@@ -733,7 +745,7 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     # behaviour goes.
     assert "  saveProps();\n"\
         "  // The drawer is a picture of state.props" in js
-    assert "  saveProps();\n"\
+    assert "  if (propEditOneShot) setPropEdit(false);\n"\
         "  // A prop arriving on the open layer earns its tile" in js
     remove = _js_function(js, "function removePropRecord(record)")
     assert "refreshLayersShelf();" in remove
@@ -750,6 +762,60 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     clear = js[js.index('getElementById("props-clear")'):]
     clear = clear[:clear.index("});")]
     assert "refreshLayersShelf();" in clear
+
+
+def test_props_carry_a_height_and_the_gumball_can_move_it():
+    """Param: "add in a x,y,z arrow control on the objects when in edit
+    mode. allowing them to clip below ground, as some assets need to do
+    so", and then "if i drag an object down in z, when i click and move
+    it around it should always stay at that z height until i raise or
+    lower it again via z".
+
+    So z is a real field on the record, persisted everywhere x and y are,
+    carried through a move rather than reset by it, and driven by a
+    double-headed arrow that reads its own upright plane."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    # A height on the record, defaulted, and written where x and y are.
+    assert "function placeProp(type, x, y, rotation, save, scale = 1, z = 0)" in js
+    assert "object.position.set(x, y, z);" in js
+    assert "const record = { type, x, y, z, rotation, scale," in js
+    # Persisted by BOTH memories: the per-study layout and a saved scene.
+    assert "type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation," in js
+    assert "type: record.type, x: record.x, y: record.y, z: record.z || 0," in js
+    # And restored by every reader, or a sunk prop pops back to the floor.
+    assert js.count("+entry.scale || 1, +entry.z || 0)") == 2, (
+        "restoreProps and applyScene both give a prop its height back")
+    assert "false, gone.scale, gone.z || 0)" in js, (
+        "undoing a delete restores the height too")
+
+    # HIS SECOND RULING: a move keeps the height it was given.
+    assert "carried.object.position.set(hit.x, hit.y, carried.z || 0);" in js
+    assert "record.object.position.set(record.x, record.y, record.z || 0);" in js, (
+        "the stamp rig moves at its own height too")
+
+    # The arrow: double-headed, because sinking is as ordinary as lifting.
+    gumball = _js_function(js, "function setPropGumball(record)")
+    assert gumball.count('userData.handle = "lift"') == 3, (
+        "stem, both heads and the fat grab twin all answer to lift")
+    assert "for (const direction of [1, -1])" in gumball
+    assert "propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02)" in gumball
+
+    # Read against an upright plane, not the ground: a vertical drag barely
+    # moves the ground hit and looks past infinity from a low camera.
+    lift = _js_function(js, "function liftHeightAt(event, record)")
+    assert "camera.getWorldDirection(facing);" in lift
+    assert "facing.z = 0;" in lift
+    assert "intersectPlane(liftPlane, liftHit)" in lift
+
+    # Bounded by the prop's own height, so it can always be buried and can
+    # never be flung out of sight.
+    assert "const reach = propHeightOf(record) + 1;" in js
+    assert "record.z = Math.min(reach, Math.max(-reach," in js
+    # And the height is undoable with the rest of the adjustment.
+    assert "z: state.gumball.startZ || 0 };" in js
+    assert "record.object.position.set(record.x, record.y, before.z);" in js
 
 
 def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
