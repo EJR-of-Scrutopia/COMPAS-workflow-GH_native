@@ -92,6 +92,32 @@ internal static class MechanismCollector
     public const string NodeTypeName = "node";
 
     /// <summary>
+    /// The permanence field's own name and its two values, said once and
+    /// read everywhere a part payload is built (here and in
+    /// <see cref="MechanismDocument"/>'s wires). Param's ruling to the
+    /// Vaulted studio, 2026-09-08: "the two things that remain when all is
+    /// taken away is the tension tie / column slide, and the anchor" -- the
+    /// anchor tie (fusing the foundation anchor and the tension tie /
+    /// column slider rail, spec section "TENSION TIE / COLUMN SLIDER RAIL")
+    /// is the PERMANENT works; the pulley bodies, their spinners and the
+    /// wires that reel them are the TEMPORARY machine that comes away once
+    /// the vault stands.
+    ///
+    /// A STRING, not a boolean, following the document's own convention:
+    /// <c>"placement"</c> already carries <c>"instance"</c>/<c>"world"</c>
+    /// as a declared word rather than a flag the reader has to remember the
+    /// sense of, and the studio's own ask offered either shape. The studio
+    /// asked for this specifically so it need not key off the kind names
+    /// (edge/node/anchorTie) by hand; it is authored once, here, because
+    /// the writer already knows which is which.
+    /// </summary>
+    public const string PermanenceField = "permanence";
+
+    public const string Permanent = "permanent";
+
+    public const string Temporary = "temporary";
+
+    /// <summary>
     /// How far an anchor tie may sit from the nearest node of its own row
     /// before the door-guard names it: a multiple of the row's OWN
     /// characteristic anchor spacing, so the tolerance scales with the study
@@ -178,6 +204,9 @@ internal static class MechanismCollector
                     // (requirements doc section 1); anything after it is a
                     // cosmetic wheel, carried but not rotated.
                     ["driven"] = i == 0,
+                    // A spinning part is machine, not the works that remain
+                    // (Param's ruling, see PermanenceField above).
+                    [PermanenceField] = Temporary,
                 });
             }
             if (refused)
@@ -207,9 +236,15 @@ internal static class MechanismCollector
                           "spinner."));
             }
 
+            // The pulley body is machine too: it is the reel that comes
+            // away, not the tie or anchor it never touches (Param's ruling,
+            // see PermanenceField above).
+            Dictionary<string, object?> bodyPayload = MeshPayload(body, unit.BodyMaterialTag);
+            bodyPayload[PermanenceField] = Temporary;
+
             unitPayloads[typeName] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["body"] = MeshPayload(body, unit.BodyMaterialTag),
+                ["body"] = bodyPayload,
                 ["spinners"] = spinnerPayloads,
                 ["sockets"] = unit.Sockets.Select(FramePayload).ToList(),
                 ["reeveFactor"] = reeveFactor,
@@ -279,6 +314,11 @@ internal static class MechanismCollector
                 // from "this kind has no frame", the flag says so directly:
                 // the studio trusts this word, not the kind, per their ask.
                 ["placement"] = "world",
+                // THE PERMANENT WORKS (Param's ruling, see PermanenceField
+                // above): this mesh fuses the foundation anchor and the
+                // tension tie / column slider rail, the two things that
+                // remain when the machine comes away.
+                [PermanenceField] = Permanent,
             });
         }
 

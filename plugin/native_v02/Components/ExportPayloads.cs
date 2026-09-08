@@ -926,6 +926,11 @@ internal static class MechanismDocument
                                     ["row"] = rowIndex,
                                 },
                             },
+                            // A wire is the machine reeling, not the works
+                            // that remain (Param's ruling; the field and
+                            // its two values are declared once, on
+                            // MechanismCollector, and read here unchanged).
+                            [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
                         });
                     }
                 }
@@ -1010,6 +1015,9 @@ internal static class MechanismDocument
                             ["head"] = head,
                         },
                     },
+                    // A wire is the machine reeling, not the works that
+                    // remain (Param's ruling; see the edge-reel wire above).
+                    [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
                 });
                 nodeInstances.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
