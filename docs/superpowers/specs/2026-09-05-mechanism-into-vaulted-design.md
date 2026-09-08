@@ -392,3 +392,56 @@ Vaulted session's half, requested in the channel note, built against fixtures th
 generated-default anchor clamp: parked. Per-frame mesh baking: never. The wheels' individual
 spin within a unit beyond the spool: cosmetic, later, driven by the same derived lengths if ever
 wanted.
+
+## 10. Two amendments to the settled maths, 2026-09-08, from his first real solve
+
+Both come from the chin his own ten-reel mechanism printed, not from review. They amend sections
+above; where they disagree with anything earlier, these win.
+
+### 10a. Ownership is radial AND axial
+
+Section 3's ownership rule tested a routing frame's perpendicular distance to a reel's AXIS, which
+is an infinite line. A reel therefore claimed anything inside its radius however far past its own
+end faces that frame sat, so a wire running parallel to a drum read as riding on it and the studio
+would have spun it. A reel now owns only what lies inside its radius AND between its own end faces,
+with a margin of a quarter of its own radius past each face.
+
+The ambiguity report changes with it. A wire wrapped on a drum sits at that drum's surface on every
+frame of the wrap, and the radius it is measured against is the mesh's outermost extent -- the
+flanges -- so a CORRECT wrap lands at ratio about 0.92, inside the +/-0.15 band, on every frame,
+for ever. Warning per frame there says nothing and buries everything else: his read fifteen rows
+deep and then "Further warnings not shown". Warnings are now kept for the two cases where the
+answer could flip to different BEHAVIOUR -- a frame just OUTSIDE a reel that the body therefore
+holds still, and a frame two reels both reach -- gathered and said once per wire and reel. A frame
+just inside the reel that owns it is tallied in a note.
+
+### 10b. A placement falls back to a fit from all seven origins
+
+The placement maths derive the whole instance transform from ONE correspondence, so the instance
+inherits placement plane [0]'s own X and Y. A routing frame's own X and Y spin freely about the
+wire's tangent (a perp-frame on a curve picks them arbitrarily) and an anchor plane's axes are
+whatever they were authored as. There is no reason for the two to agree, and when they do not,
+every one of the other six wires lands rotated about plane [0] while all seven origins sit exactly
+where they belong. His first solve read 1.364922 m of residual on all three mechanisms of side 0
+and 1.173451 m on all three of side 1 -- identical within a side, so the three copies agree with
+each other and the disagreement is between the AUTHORED MECHANISM and the PLACEMENT PLANES.
+
+Edge lengths decide which fault it is, because they survive any placement. Matched pair for pair
+they separate orientation from everything else; sorted they separate a reordering from a genuine
+shape difference. So, when the residual exceeds the 0.001 m guard:
+
+1. Seven origins congruent PAIR FOR PAIR: the fault is orientation alone. The transform is REFITTED
+   from all seven origins -- basis founded on the base point, the furthest correspondence and the
+   most off-axis one, both handednesses tried and the better kept, so a genuinely mirrored side
+   still yields a genuine reflection derived from where its anchors sit rather than from a
+   hand-authored left-handed plane. The chin says the refit happened and gives both residuals.
+   Refused, with the reason named, when the origins are collinear or fewer than three wires carry
+   frames; plane [0]'s axes still place the instance then.
+2. Congruent only as a SET: the branches are in different orders. Named, NOT refitted -- a fit onto
+   the wrong pairing places a plausible, wrong machine.
+3. The wires' LAST frames congruent instead: the routes are threaded the other way round, against
+   his own R2 ruling that Route[0] is the net end. Named, not refitted.
+4. Nothing congruent: the placement planes and the wire ends are different geometry. Named.
+
+The one-correspondence derivation stays primary. The fit is a fallback that engages only where the
+primary demonstrably fails and the data demonstrably supports it, and it is never silent.
