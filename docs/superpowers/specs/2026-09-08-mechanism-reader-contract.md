@@ -130,9 +130,32 @@ on two studies:
 
 Beware the names: the frames' `reel` is a pre-lift event and is **not**
 Param's "ribs reel in", which lands in `finish`. Both sessions misread
-this at first. The plugin will carry one line per phase name in the
-schema, and owes an answer on whether the vocabulary and order are
-guaranteed across studies or merely incidental.
+this at first, in opposite directions.
+
+**The names and their order are structurally guaranteed, not
+data-dependent.** The writer is a single pure function of normalised
+time against hard-coded thresholds (`Phases(time, preSag)` in the
+plugin's `MouldComponents.cs`): under 0.3 `reel`, under 0.6 `raise`,
+under 0.9 `finish`, otherwise `hold`. Neither geometry, topology,
+anchor count nor solve is an input to that decision, so no study can
+reorder, rename or omit a phase. The measurement above agrees with the
+code exactly: at the frames' 2-unit spacing, 28, 58 and 88 are simply
+the last frames below 30, 60 and 90. Two independent readings, one from
+their source and one from my instruments, landing on the same
+boundaries.
+
+Two consequences worth carrying into the build. First, the phase
+BOUNDARIES are fixed but the WORK inside them is not: the writer's
+`preSag` scales how much sag is taken during `reel` and therefore how
+much is left for `finish`, moving no boundary. So the visual pacing
+varies per study even though the timing never does, and the sequence
+must not assume a fixed amount of movement per act. Second, the
+vocabulary is guaranteed by CODE and not by a version field: no
+document says which phase vocabulary it was written with. So **treat an
+unrecognised phase name as the signal that a vintage moved**, and say
+so, rather than slotting it somewhere sensible. Any future change to
+these names or thresholds is meant to bump the formwork document's
+schema identifier, which is the only defence available.
 
 Acts two and three are not separable in the frames, which are
 piecewise-linear morphs rather than a simulation: per-frame
@@ -184,6 +207,7 @@ taken away" view reads off the port name.
   once the reels and wires are drawn.
 - **The anodised material, Param's**, to be confirmed on screen once
   the parts exist.
-- **Phase vocabulary and order guaranteed or incidental, the plugin's**,
-  to be answered from the frames writer's own code rather than
-  extrapolated from two samples.
+- ~~Phase vocabulary and order guaranteed or incidental~~ **CLOSED**
+  2026-09-08: structurally guaranteed by a pure function of normalised
+  time, confirmed from the plugin's own source and cross-checked
+  against my measurement. See the sequence section.
