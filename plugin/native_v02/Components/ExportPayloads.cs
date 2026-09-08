@@ -1259,10 +1259,16 @@ internal static class MechanismDocument
                 ["sign"] = "positive turns take up wire: the spool winds " +
                     "in and the wire's routed length shortens. Negative " +
                     "pays out.",
-                ["formula"] = "turns = (length_at(t) - length_at(frame0)) " +
+                ["formula"] = "turns = (length_at(frame0) - length_at(t)) " +
                     "* reeveFactor / (2 * pi * spoolRadius), where " +
-                    "length_at(t) is the wire's own net-side routed length " +
-                    "at frame t. The delta is always measured from frame " +
+                    "length_at(t) is the wire's own FREE span at frame t, " +
+                    "the run from its net vertex to where it first meets " +
+                    "the machine; the wrapped portion is not counted, " +
+                    "being constant. THE SUBTRACTION IS frame0 MINUS t, " +
+                    "not the other way about, so that taking up reads " +
+                    "POSITIVE and agrees with the sign sentence: reeling " +
+                    "in SHORTENS the free span, so frame0 minus t grows. " +
+                    "The delta is always measured from frame " +
                     "0, never the previous frame, so the result is a pure " +
                     "function of t and safe to scrub or play out of order.",
             },
