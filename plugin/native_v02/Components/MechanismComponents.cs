@@ -44,14 +44,23 @@ internal sealed record MechanismMesh(
     IReadOnlyList<int[]> Faces);
 
 /// <summary>
-/// One routing (or reel axis) frame: origin plus X and Y axes, Z derived as
-/// X cross Y. Used ONLY for geometry the ONE authored mechanism itself
-/// carries (routing frames, reel axes) -- never mirrored, so a derived,
-/// always-right-handed Z costs nothing. A PLACEMENT TARGET plane is a
-/// different shape, <see cref="MechanismPlacementPlane"/>, because that one
-/// genuinely can be mirrored and its true handedness must survive.
+/// One routing (or reel axis) frame: origin and all THREE axes, Z CARRIED
+/// rather than derived.
+///
+/// Z WAS ONCE DERIVED AS X CROSS Y AND THAT WAS A BUG, found by this
+/// component's own rebuild and fixed here. The authored mechanism itself is
+/// never mirrored, so a derived Z was sound where the frame was WRITTEN; but
+/// an INSTANCE frame is the derived placement transform, and Param's far side
+/// is a REFLECTION, whose basis is left-handed. There X cross Y points
+/// OPPOSITE the true Z, so any local point with an out-of-plane component
+/// landed on the wrong side of the frame. Carrying the real Z removes the
+/// question entirely rather than making every reader remember the handedness.
 /// </summary>
-internal sealed record MechanismFrame(double[] Origin, double[] XAxis, double[] YAxis);
+internal sealed record MechanismFrame(
+    double[] Origin,
+    double[] XAxis,
+    double[] YAxis,
+    double[] ZAxis);
 
 /// <summary>
 /// A placement TARGET plane (Placement/PL), his own authored frame in world
@@ -632,7 +641,10 @@ internal static class MechanismCollector
                     // a known, out-of-scope limit of a two-axis frame
                     // representation, not fixed by this rebuild.
                     ["frame"] = FramePayload(new MechanismFrame(
-                        translation, Column3(linear, 0), Column3(linear, 1))),
+                        translation,
+                        Column3(linear, 0),
+                        Column3(linear, 1),
+                        Column3(linear, 2))),
                     ["kind"] = "mechanism",
                     ["placement"] = "instance",
                     // THE FULL DERIVED TRANSFORM, informational: every row
@@ -749,6 +761,7 @@ internal static class MechanismCollector
             ["origin"] = frame.Origin,
             ["xAxis"] = frame.XAxis,
             ["yAxis"] = frame.YAxis,
+            ["zAxis"] = frame.ZAxis,
         };
 
     /// <summary>
@@ -1394,7 +1407,8 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             axes.Add(new MechanismFrame(
                 new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
                 new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
-                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
+                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
         }
 
         return new MechanismAssetInput(
@@ -1429,7 +1443,8 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                 frames.Add(new MechanismFrame(
                     new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
                     new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
-                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
+                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                    new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
             }
             wires.Add(new MechanismRoutingWire(wire, frames));
         }

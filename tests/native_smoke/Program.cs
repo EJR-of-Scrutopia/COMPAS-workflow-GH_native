@@ -40789,7 +40789,23 @@ internal static partial class Program
         object Mesh(double[][] vertices) => Activator.CreateInstance(
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
         object FrameOf(double[] origin, double[] x, double[] y) =>
-            Activator.CreateInstance(frameType, origin, x, y)!;
+            Activator.CreateInstance(
+                frameType,
+                origin,
+                x,
+                y,
+                // Z is CARRIED by the record now, never derived from X
+                // cross Y, because a REFLECTED instance frame is
+                // left-handed and a derived Z would point the wrong way
+                // there. These fixtures author right-handed frames, so
+                // the cross product IS their true Z; a fixture that
+                // means to be mirrored passes its own Z instead.
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
         object IdentityAxis() => FrameOf(
             new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
 
@@ -41009,7 +41025,23 @@ internal static partial class Program
         object Mesh(double[][] vertices) => Activator.CreateInstance(
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
         object FrameOf(double[] origin, double[] x, double[] y) =>
-            Activator.CreateInstance(frameType, origin, x, y)!;
+            Activator.CreateInstance(
+                frameType,
+                origin,
+                x,
+                y,
+                // Z is CARRIED by the record now, never derived from X
+                // cross Y, because a REFLECTED instance frame is
+                // left-handed and a derived Z would point the wrong way
+                // there. These fixtures author right-handed frames, so
+                // the cross product IS their true Z; a fixture that
+                // means to be mirrored passes its own Z instead.
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
         object PlaneOf(double[] origin, double[] x, double[] y, double[] z) =>
             Activator.CreateInstance(placementPlaneType, origin, x, y, z)!;
         object IdentityAxis() => FrameOf(
@@ -41745,7 +41777,23 @@ internal static partial class Program
         object Mesh(double[][] vertices) => Activator.CreateInstance(
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
         object FrameOf(double[] origin, double[] x, double[] y) =>
-            Activator.CreateInstance(frameType, origin, x, y)!;
+            Activator.CreateInstance(
+                frameType,
+                origin,
+                x,
+                y,
+                // Z is CARRIED by the record now, never derived from X
+                // cross Y, because a REFLECTED instance frame is
+                // left-handed and a derived Z would point the wrong way
+                // there. These fixtures author right-handed frames, so
+                // the cross product IS their true Z; a fixture that
+                // means to be mirrored passes its own Z instead.
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
         object PlaneOf(double[] origin, double[] x, double[] y, double[] z) =>
             Activator.CreateInstance(placementPlaneType, origin, x, y, z)!;
         object Asset(
