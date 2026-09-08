@@ -272,6 +272,13 @@ internal static class MechanismCollector
                 ["row"] = i,
                 ["mesh"] = MeshPayload(tie.Mesh, null),
                 ["materialTag"] = tie.MaterialTag,
+                // ONE PLACEMENT CONVENTION (studio's C5/A5): the fused tie
+                // and rail is authored in place and exported in world
+                // coordinates already, unlike the reels which are type plus
+                // instance placement. Rather than let the reader infer that
+                // from "this kind has no frame", the flag says so directly:
+                // the studio trusts this word, not the kind, per their ask.
+                ["placement"] = "world",
             });
         }
 
