@@ -193,18 +193,36 @@ CHECK = textwrap.dedent("""
 
     // ---------- reading a document ----------
     const bodyGeom = { vertices: [[0,0,0],[1,0,0],[1,1,0]], faces: [[0,1,2]] };
+    // The real document's shape, measured from Param's own 2 Sided Vault
+    // export: the parts live INSIDE the authored body under named keys,
+    // each key holding one part or a list, each declaring its own
+    // permanence; instances carry `frame` (a frame) and `placement` (a
+    // LABEL); reels carry `mesh`, their own `reel` number and an axis.
     const document = {
       schema: "bench.mechanism/1",
       lengthUnitToMetres: 1,
-      reels: [{ geometry: bodyGeom }, { geometry: bodyGeom }],
-      motors: [{ geometry: bodyGeom }],
-      anchors: [{ geometry: bodyGeom }],
-      tensionTies: [{ geometry: bodyGeom }],
+      mechanism: {
+        frame1: { vertices: bodyGeom.vertices, faces: bodyGeom.faces,
+          permanence: "temporary" },
+        reels: [
+          { reel: 0, mesh: bodyGeom, permanence: "temporary", driven: true,
+            axis: { origin: [0,0,0], xAxis: [1,0,0], yAxis: [0,1,0],
+              zAxis: [0,0,1] } },
+          { reel: 1, mesh: bodyGeom, permanence: "temporary", driven: true },
+        ],
+        motors: { vertices: bodyGeom.vertices, faces: bodyGeom.faces,
+          permanence: "temporary" },
+        tensionTie: { vertices: bodyGeom.vertices, faces: bodyGeom.faces,
+          permanence: "permanent" },
+        reeveFactor: 1,
+        spoolRadius: 0.05,
+      },
       instances: [
-        { side: 0, mechanism: 0,
-          placement: { origin: [0,0,0], xAxis: [1,0,0], yAxis: [0,1,0] } },
-        { side: 1, mechanism: 0,
-          placement: { origin: [5,0,0], xAxis: [1,0,0], yAxis: [0,1,0],
+        { side: 0, mechanism: 0, placement: "authored", wireIds: ["0-0-0"],
+          frame: { origin: [0,0,0], xAxis: [1,0,0], yAxis: [0,1,0],
+            zAxis: [0,0,1] } },
+        { side: 1, mechanism: 0, placement: "authored", wireIds: ["1-0-0"],
+          frame: { origin: [5,0,0], xAxis: [1,0,0], yAxis: [0,1,0],
             zAxis: [0,0,-1] } },
       ],
       wires: [
@@ -219,18 +237,26 @@ CHECK = textwrap.dedent("""
     };
     const read = readMechanism(document);
     expect(read.ok === true, "the document reads");
-    expect(read.parts.length === 5, "two reels, a motor, an anchor and a tie");
+    expect(read.parts.length === 5, "a frame, two reels, a motor and a tie");
     const kinds = read.parts.map((p) => p.kind).join(",");
-    expect(kinds === "motor,reel,reel,anchor,tie",
-      "kind comes from the PORT, in the table's own order: " + kinds);
+    expect(kinds === "frame1,motor,reel,reel,tie",
+      "kind comes from the KEY, in the table's own order: " + kinds);
+    expect(read.parts.find((p) => p.kind === "reel").index === 0
+      && read.parts.filter((p) => p.kind === "reel")[1].index === 1,
+      "a reel states its own number, which is what ownerReel points at");
     const reel = read.parts.find((p) => p.kind === "reel");
     expect(reel.spins === true, "a reel spins");
     expect(reel.material === "timber/birch-pale-fine", "his ruling: birch reels");
-    const anchor = read.parts.find((p) => p.kind === "anchor");
-    expect(anchor.permanent === true && anchor.world === true,
-      "the anchor is permanent and arrives pre-placed");
     const tie = read.parts.find((p) => p.kind === "tie");
-    expect(tie.permanent === true, "so does the tension tie");
+    expect(tie.permanent === true,
+      "the tie DECLARES its permanence and it is read, not inferred");
+    expect(read.parts.find((p) => p.kind === "frame1").permanent === false,
+      "and a temporary part declares that too");
+    // Everything is in the body's LOCAL space, tie included, so every
+    // part is stamped with each instance's placement: permanent means
+    // "survives the strike", not "arrives pre-placed".
+    expect(read.parts.every((p) => p.world === false),
+      "no part arrives pre-placed in this shape");
     expect(read.parts.find((p) => p.kind === "motor").material
       === "metal/steel-powder-coated-black", "his ruling: black motors");
 
@@ -242,6 +268,15 @@ CHECK = textwrap.dedent("""
     expect(read.wires[0].netVertex === 0, "explicit net vertex, never inferred");
     expect(read.wires[0].route[1].owner === "reel", "owner survives");
     expect(read.wires[0].route[1].ownerReel === 1, "and which reel");
+    // reeveFactor and spoolRadius ride on the BODY in this writer, not on
+    // each wire, so the body's values stand in rather than the reader
+    // inheriting a rule it has to know about.
+    expect(read.wires[0].reeveFactor === 1, "reeve falls back to the body's");
+    expect(Math.abs(read.wires[0].spoolRadius - 0.05) < 1e-9,
+      "so does the spool radius");
+    // The instance names the wires it carries, which is exact.
+    expect(read.instances[0].wireIds.join() === "0-0-0",
+      "an instance names its own wires");
 
     // An unknown key is REPORTED, because it is the earliest signal that
     // the layout moved -- which the contract says to expect.
@@ -258,7 +293,7 @@ CHECK = textwrap.dedent("""
 
     // The older one-body shape still opens.
     const oneBody = readMechanism({ schema: "bench.mechanism/1",
-      mechanism: { geometry: bodyGeom } });
+      mechanism: { vertices: bodyGeom.vertices, faces: bodyGeom.faces } });
     expect(oneBody.parts.length === 1 && oneBody.parts[0].kind === "body",
       "a document with one authored body still reads");
 
@@ -269,10 +304,10 @@ CHECK = textwrap.dedent("""
     expect(noVertex.notes.some((n) => n.indexOf("net_vertex") !== -1),
       "and said out loud");
 
-    // A renamed port is read AND reported, so a rename is visible rather
+    // A renamed key is read AND reported, so a rename is visible rather
     // than silently absorbed.
     const renamed = readMechanism({ schema: "bench.mechanism/1",
-      drums: [{ geometry: bodyGeom }] });
+      mechanism: { drums: [{ mesh: bodyGeom }] } });
     expect(renamed.parts.length === 1 && renamed.parts[0].kind === "reel",
       "drums are reels");
     expect(renamed.notes.some((n) => n.indexOf("drums") !== -1),
@@ -337,17 +372,17 @@ def test_the_material_table_matches_his_rulings():
 
     source = MODULE.read_text(encoding="utf-8")
     for port, material in (
-            ("frames1", "metal/steel-mill-grey"),
-            ("frames2", "metal/steel-mill-grey"),
+            ("frame1", "metal/steel-mill-grey"),
+            ("frame2", "metal/steel-mill-grey"),
             ("motors", "metal/steel-powder-coated-black"),
             ("reels", "timber/birch-pale-fine"),
             ("pulleys", "timber/birch-pale-fine"),
-            ("anchors", "metal/aluminium-mill-grey"),
-            ("tensionTies", "metal/aluminium-mill-grey")):
+            ("anchor", "metal/aluminium-mill-grey"),
+            ("tensionTie", "metal/aluminium-mill-grey")):
         line = [row for row in source.splitlines()
-                if 'port: "%s"' % port in row]
+                if 'key: "%s"' % port in row]
         assert line, port
-        block = source[source.index('port: "%s"' % port):]
+        block = source[source.index('key: "%s"' % port):]
         block = block[:block.index("}")]
         assert material in block, "%s should wear %s" % (port, material)
 

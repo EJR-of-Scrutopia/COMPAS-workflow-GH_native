@@ -4833,9 +4833,26 @@ function paintMaterialSwatches() {
 // mirror, so a test now holds the two files to the same pair.
 const SIZE_MIN = 0.1, SIZE_MAX = 3.0;
 
+// Said once per refusal rather than on every applyCut, which runs on
+// every appearance change too.
+let lastCutRefusal = null;
+
 function applyCut(preserve) {
   paintMaterialSwatches();
   repaintScrubs();
+  // A cut the generator could not make. The study still opens -- the net,
+  // the formwork and the machine are all independent of the voussoirs --
+  // so the honest thing is to say why there are none rather than to show
+  // an empty vault with no explanation.
+  const refusal = state.bundle && state.bundle.tessellation
+    && state.bundle.tessellation.cut_refusal;
+  if (refusal && refusal !== lastCutRefusal) {
+    lastCutRefusal = refusal;
+    showBanner("No skin on this study: " + refusal
+      + " The net, the formwork and the machine are drawn; there are no "
+      + "voussoirs to draw.", "error");
+    logStudio("no cut: " + refusal);
+  }
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
   // server-side at the bundle's own size, and each one is looked up in
@@ -8991,7 +9008,13 @@ function measureSpoolRadius(part) {
   return half[1] > 1e-4 ? half[1] : 0.03;
 }
 
+// One build at a time. buildMachine awaits its materials, so two loads in
+// quick succession both got past disposeMachine before either had added
+// anything, and the scene ended up with two machines in it.
+let machineBuild = 0;
+
 async function buildMachine() {
+  const mine = ++machineBuild;
   disposeMachine();
   if (!state.mechanism || !state.bundle) return;
   const model = readMechanism(state.mechanism);
@@ -9012,6 +9035,7 @@ async function buildMachine() {
   // fallback grey a frame after the rest.
   await Promise.all([...new Set(model.parts.map((part) => part.material))]
     .map((key) => ensureLibraryMaterial(key)));
+  if (mine !== machineBuild) return;      // another load started meanwhile
 
   const group = new THREE.Group();
   const permanent = new THREE.Group();      // what remains after the strike
@@ -9064,9 +9088,13 @@ async function buildMachine() {
     color: 0xb9bec6, roughness: 0.35, metalness: 0.9 });
   const wires = [];
   for (const wire of model.wires) {
+    // The instance NAMES the wires it carries, so use that; the path is
+    // the fallback for a document that does not.
     const step = wire.path && wire.path.length ? wire.path[0] : null;
-    const instance = instances.find((candidate) => step
-      && candidate.side === step.side && candidate.mechanism === step.mechanism)
+    const instance = instances.find((candidate) =>
+      candidate.wireIds && candidate.wireIds.includes(wire.id))
+      || instances.find((candidate) => step
+        && candidate.side === step.side && candidate.mechanism === step.mechanism)
       || instances[0];
     const routed = loftWire(wire.route, state.wireRadius);
     let mesh = null;
@@ -9087,6 +9115,7 @@ async function buildMachine() {
     wires.push({ wire, instance, mesh, free, freeAtFrame0: null });
   }
 
+  if (mine !== machineBuild) return;      // a newer build owns the scene
   scene.add(group);
   machineObjects = { group, permanent, temporary, spinners, wires, model,
     wireMaterial };
@@ -9170,10 +9199,12 @@ function applyMachineAct(t, strikeU) {
   for (const entry of machineObjects.wires) {
     const wire = entry.wire;
     if (wire.netVertex === null) continue;
-    const base = wire.netVertex * 3;
-    if (base + 2 >= vertices.length) continue;
-    machineTail.set(vertices[base], vertices[base + 1],
-      vertices[base + 2] + lift.wires);
+    // The frames carry vertices as TRIPLES, the convention every other
+    // reader here uses (writeInstancedPoints reads points[i][0]). Read
+    // as a flat array they index a third of the net and land nowhere.
+    const point = vertices[wire.netVertex];
+    if (!point) continue;
+    machineTail.set(point[0], point[1], point[2] + lift.wires);
     const head = wireHead(entry, machineHead);
     if (!head) continue;
     const span = machineTail.distanceTo(head);
@@ -9226,14 +9257,40 @@ function applyMachineAct(t, strikeU) {
 function reportMachineChecks(model) {
   const doc = state.formwork;
   if (!doc || !doc.frames || !doc.frames.length) return;
-  const vertices = doc.frames[doc.frames.length - 1].vertices;
-  if (!vertices) return;
+  const triples = doc.frames[doc.frames.length - 1].vertices;
+  if (!triples || !triples.length) return;
+  // mechanism.js's checks take a FLAT array, because they are pure and
+  // node-tested; the frames carry triples. Flattened here, at the one
+  // boundary between the two, rather than teaching either side about
+  // the other's shape.
+  const vertices = new Array(triples.length * 3);
+  for (let i = 0; i < triples.length; i++) {
+    vertices[i * 3] = triples[i][0];
+    vertices[i * 3 + 1] = triples[i][1];
+    vertices[i * 3 + 2] = triples[i][2];
+  }
+  // IN WORLD SPACE. The route frames are in the authored body's LOCAL
+  // space, so comparing them with the net directly is comparing across a
+  // placement -- 16.1 m of it on this study. Run that way the check
+  // accused 35 of 42 wires of naming the wrong net vertex; with the
+  // instance frame applied the gap is 0.0000 m on all 42 and every
+  // declared vertex IS the nearest. A check that cries wolf is worse
+  // than no check, because the one time it is right nobody looks.
+  const placedHead = (wire) => {
+    const first = wire.route[0];
+    if (!first) return null;
+    const instance = model.instances.find((candidate) =>
+      candidate.wireIds && candidate.wireIds.includes(wire.id));
+    machineHead.set(first.matrix[12], first.matrix[13], first.matrix[14]);
+    if (instance) machineHead.applyMatrix4(machineMatrix.fromArray(instance.matrix));
+    return [machineHead.x, machineHead.y, machineHead.z];
+  };
   const reversed = checkRouteDirection(model.wires, vertices);
   if (reversed.length) {
     logStudio("machine: " + reversed.length + " wire route(s) read from the "
       + "machine end rather than the net end: " + reversed.slice(0, 4).join(", "));
   }
-  const complaints = checkNetVertices(model.wires, vertices, null);
+  const complaints = checkNetVertices(model.wires, vertices, placedHead);
   for (const complaint of complaints.slice(0, 4)) {
     logStudio("machine: " + complaint.reason);
   }

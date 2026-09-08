@@ -455,10 +455,60 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size,
             arrays["vertices"], arrays["faces"],
             geometry.face_centroids(arrays["vertices"], arrays["faces"]),
         )
-        tess = generators.generate(pattern, plan, size)
+        try:
+            tess = generators.generate(pattern, plan, size)
+        except ValueError as refusal:
+            # A plan no polar pattern can cover is a real limit and its
+            # message is worth keeping, but it must not make the study
+            # UNOPENABLE. Param's 2 Sided Vault is barrel-like -- two
+            # springings and a ridge, so its plan rim turns back on itself
+            # -- and every generator here sweeps courses about an axis.
+            # Refusing the whole bundle meant he could not look at the
+            # machine either, and the machine is what that study is for.
+            #
+            # So the cut comes back EMPTY and says why. No voussoirs are
+            # drawn, nothing is invented, and the net, the formwork and the
+            # mechanism all open exactly as they would have.
+            tess = _uncut_tessellation(pattern, size, str(refusal))
     centroids = geometry.face_centroids(arrays["vertices"], arrays["faces"])
     binding = tessellation.analysis_binding(tess, centroids)
     return tess, surface, binding
+
+
+def _uncut_tessellation(pattern: str, size: float, refusal: str) -> Dict:
+    """A cut with no cells in it, carrying the reason there are none.
+
+    Every field the summary reads is present, so nothing downstream has to
+    learn about this case; `cut_refusal` is the one addition, and it is
+    what the studio shows the user instead of a blank refusal page.
+    """
+
+    return {
+        "pattern": pattern,
+        "source": "generated",
+        "target_size": size,
+        "courses": 0,
+        "cells": [],
+        "points": [],
+        "provenance": "no cut: " + refusal,
+        "z_offset_max": None,
+        "courses_inferred": False,
+        "backward_turn": None,
+        "backward_steps": None,
+        "cut_refusal": refusal,
+        # The same report shape a real cut carries, all empty. Everything
+        # downstream reads these by name, and an empty cut has nothing
+        # wrong with it in any of these senses -- it has nothing in it.
+        "report": {
+            "orphan_faces": [],
+            "double_faces": [],
+            "open_facets": [],
+            "slivers": [],
+            "folded": [],
+            "coverage_holes": [],
+            "broken_boundary": [],
+        },
+    }
 
 
 def _cut_for(export_name, contract, arrays, render, pattern, size, source=None):
@@ -543,6 +593,10 @@ def build_bundle(
         ),
         "backward_steps": tess.get("backward_steps"),
         "report": binding["report"],
+        # Present only when the generator could not cover this plan. The
+        # studio shows it and draws no voussoirs, rather than refusing to
+        # open the study at all.
+        "cut_refusal": tess.get("cut_refusal"),
     }
     overlap = set(tessellation_summary) & set(report)
     if overlap:

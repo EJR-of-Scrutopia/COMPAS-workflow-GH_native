@@ -569,6 +569,13 @@ def analysis_binding(tess: Dict, centroids: Sequence[Sequence[float]]) -> Dict:
 
 def _bucket_size(tess: Dict) -> float:
     points = tess["points"]
+    # A cut with no points is a real state now: a plan no generator can
+    # cover comes back empty and says why, rather than refusing the whole
+    # study, so that the net and the machine can still be looked at. The
+    # bucket size of nothing is arbitrary and never used, because the grid
+    # it sizes is asked about no cells.
+    if not points:
+        return 1e-6
     spread = max(
         max(p[0] for p in points) - min(p[0] for p in points),
         max(p[1] for p in points) - min(p[1] for p in points),

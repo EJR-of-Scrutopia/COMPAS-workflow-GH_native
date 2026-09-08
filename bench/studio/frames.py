@@ -33,6 +33,19 @@ from typing import Any, Dict, List, Mapping, Optional
 SCHEMA_PREFIX = "bench.frames/"
 SCHEMA_VERSION = "1"
 SCHEMA = SCHEMA_PREFIX + SCHEMA_VERSION
+
+# The document was renamed -frames.json to -formwork.json when the
+# exporter moved to its three-document set, and its SCHEMA was renamed
+# with it. This reader only knew the old name, so every export written
+# since carried a schema it refused: the formwork act was silently
+# missing on Param's 2 Sided Vault, and would have been on every new
+# study, with a 404 that read like "this study has no frames" rather than
+# "this reader does not know this name".
+#
+# Both names are accepted at the same version. The bodies are identical:
+# the rename was to the document's title, not to its contents.
+ALSO_SCHEMA_PREFIX = "bench.formwork/"
+ALSO_SCHEMA = ALSO_SCHEMA_PREFIX + SCHEMA_VERSION
 PHASES = ("reel", "raise", "finish", "hold")
 # The five instants the writer always samples exactly (spec section 3);
 # their presence is guarantee 2, and the epsilon matches the writer's
@@ -92,13 +105,16 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
         raise ValueError("a frames document must be a JSON object.")
 
     schema = document.get("schema")
-    if not isinstance(schema, str) or not schema.startswith(SCHEMA_PREFIX):
+    known = (SCHEMA_PREFIX, ALSO_SCHEMA_PREFIX)
+    if not isinstance(schema, str) or not schema.startswith(known):
         raise ValueError(
-            "frames schema {!r} is not {!r}.".format(schema, SCHEMA))
-    if schema != SCHEMA:
+            "frames schema {!r} is not {!r} or {!r}.".format(
+                schema, SCHEMA, ALSO_SCHEMA))
+    if schema not in (SCHEMA, ALSO_SCHEMA):
         raise ValueError(
             "frames schema {!r} is a version this reader does not "
-            "support; it reads {!r}.".format(schema, SCHEMA))
+            "support; it reads {!r} and {!r}.".format(
+                schema, SCHEMA, ALSO_SCHEMA))
 
     units = document.get("units")
     if units != "m":

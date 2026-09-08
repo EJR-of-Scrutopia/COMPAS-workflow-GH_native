@@ -141,12 +141,20 @@ def test_bundle_endpoint_validates_and_serves(tmp_path, monkeypatch):
     assert out_of_range.status_code == 400
 
 
-def test_a_plan_the_engine_refuses_is_a_400_not_a_500(tmp_path, monkeypatch):
+def test_a_plan_the_engine_refuses_opens_with_no_cut(tmp_path, monkeypatch):
     """A vault with a bay (re-entrant plan) is not star shaped, and no
-    polar pattern can cover it. Before this wave no geometry could reach
-    this failure at all, since the old ring/wedge binning worked on any
-    centroid cloud; get_bundle must surface generators.generate's own
-    message rather than let it fall through to an unhandled 500.
+    polar pattern can cover it.
+
+    This used to be a 400: the message reached the user, but so did a
+    study that would not open at all. That was the wrong failure. The
+    voussoirs are only one of the things a study carries -- the net, the
+    formwork and the machine are all independent of them -- and Param's
+    2 Sided Vault is exactly the case: a barrel form whose plan rim turns
+    back on itself, no skin document, and a machine he needs to look at.
+
+    So the cut comes back EMPTY and carries the generator's own message.
+    Nothing is invented, no piece is drawn, and the reason is on the
+    document where the studio can show it.
     """
     client, _ = make_client(tmp_path, monkeypatch)
     upload = tmp_path / "upload"
@@ -158,10 +166,15 @@ def test_a_plan_the_engine_refuses_is_a_400_not_a_500(tmp_path, monkeypatch):
         "/api/studies/Bay/bundle",
         params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9},
     )
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "not star shaped" in detail
-    assert "Author the tessellation in Grasshopper and import it instead" in detail
+    assert response.status_code == 200, "the study opens"
+    body = response.json()
+    assert body["pieces"] == [], "and draws no voussoirs"
+    refusal = body["tessellation"]["cut_refusal"]
+    assert "not star shaped" in refusal
+    assert "Author the tessellation in Grasshopper and import it instead" in refusal
+    # The rest of the study is intact, which is the whole point.
+    assert body["render_mesh"]["vertices"], "the surface still arrives"
+    assert body["tessellation"]["cells"] == 0
 
 
 def test_an_authored_bundles_size_round_trips_through_the_api(tmp_path, monkeypatch):

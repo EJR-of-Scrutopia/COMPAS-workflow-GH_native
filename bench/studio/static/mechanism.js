@@ -29,36 +29,39 @@ export const SCHEMA = "bench.mechanism/1";
 // goes away with the columns and formwork. the tension tie / anchor
 // stays").
 export const PART_KINDS = [
-  { port: "frames1", kind: "frame1", material: "metal/steel-mill-grey" },
-  { port: "frames2", kind: "frame2", material: "metal/steel-mill-grey" },
-  { port: "motors", kind: "motor", material: "metal/steel-powder-coated-black" },
-  { port: "reels", kind: "reel", material: "timber/birch-pale-fine", spins: true },
-  { port: "pulleys", kind: "pulley", material: "timber/birch-pale-fine" },
-  { port: "anchors", kind: "anchor", material: "metal/aluminium-mill-grey",
-    world: true, permanent: true, tint: "#3a3d42" },
-  { port: "tensionTies", kind: "tie", material: "metal/aluminium-mill-grey",
-    world: true, permanent: true, tint: "#3a3d42" },
+  { key: "frame1", kind: "frame1", material: "metal/steel-mill-grey" },
+  { key: "frame2", kind: "frame2", material: "metal/steel-mill-grey" },
+  { key: "motors", kind: "motor", material: "metal/steel-powder-coated-black" },
+  { key: "reels", kind: "reel", material: "timber/birch-pale-fine", spins: true },
+  { key: "pulleys", kind: "pulley", material: "timber/birch-pale-fine" },
+  { key: "tensionTie", kind: "tie", material: "metal/aluminium-mill-grey",
+    tint: "#3a3d42", permanent: true },
+  { key: "anchor", kind: "anchor", material: "metal/aluminium-mill-grey",
+    tint: "#3a3d42", permanent: true },
 ];
 
-// Ports the writer has used for the same kind under an older or newer
-// spelling. Listed rather than guessed at, so an unknown port is still
-// reported as unknown instead of being silently absorbed by a fuzzy
-// match. Add a line here when the writer renames something.
-const PORT_ALIASES = {
-  frames1: ["frame1", "frameOne", "framesOne"],
-  frames2: ["frame2", "frameTwo", "framesTwo"],
+// Keys the writer has used for the same part under another spelling.
+// Listed rather than guessed at, so an unknown key is still reported as
+// unknown instead of being absorbed by a fuzzy match.
+const KEY_ALIASES = {
+  frame1: ["frames1", "frameOne"],
+  frame2: ["frames2", "frameTwo"],
   motors: ["motor", "drives"],
   reels: ["reel", "drums", "spools"],
   pulleys: ["pulley", "pulleyBodies", "bodies"],
-  anchors: ["anchor", "foundationAnchors"],
-  tensionTies: ["tensionTie", "ties", "tie"],
+  tensionTie: ["tensionTies", "tie", "ties"],
+  anchor: ["anchors", "foundationAnchor"],
 };
 
-function pickArray(document, port) {
-  const names = [port].concat(PORT_ALIASES[port] || []);
+// A part key holds EITHER one part or a list of them -- frame1 is a
+// single body and frame2 is three -- so both are read and the caller
+// never has to know which this document used.
+function partsUnder(body, key) {
+  const names = [key].concat(KEY_ALIASES[key] || []);
   for (const name of names) {
-    const value = document[name];
-    if (Array.isArray(value)) return { name, value };
+    const value = body[name];
+    if (Array.isArray(value)) return { name, entries: value };
+    if (value && typeof value === "object") return { name, entries: [value] };
   }
   return null;
 }
@@ -69,6 +72,7 @@ function pickArray(document, port) {
 const KNOWN_KEYS = new Set([
   "schema", "units", "lengthUnitToMetres", "numbering", "rotation",
   "principalRows", "mechanism", "instances", "wires", "study", "generated",
+  "vertexCount", "columnNodeCount", "anchors", "tensionTies",
   "notes", "warnings", "provenance",
 ]);
 
@@ -232,44 +236,65 @@ export function readMechanism(document) {
 
   const notes = [];
   const parts = [];
+  // The parts live INSIDE the authored body, under named keys, and each
+  // key holds either one part or a list of them: frame1 is a single body
+  // and frame2 is three. They are in the body's LOCAL space, so every one
+  // of them is stamped with each instance's placement -- the tension tie
+  // included, which is why "permanent" here means "survives the strike"
+  // and not "arrives pre-placed".
+  const body = document.mechanism && typeof document.mechanism === "object"
+    ? document.mechanism : {};
   for (const spec of PART_KINDS) {
-    const found = pickArray(document, spec.port);
+    const found = partsUnder(body, spec.key);
     if (!found) continue;
-    if (found.name !== spec.port) {
-      notes.push("the " + spec.kind + " parts arrived on port \""
-        + found.name + "\", not \"" + spec.port + "\"");
+    if (found.name !== spec.key) {
+      notes.push("the " + spec.kind + " parts arrived under \""
+        + found.name + "\", not \"" + spec.key + "\"");
     }
     let index = 0;
-    for (const entry of found.value) {
-      const geometry = readGeometry(entry && entry.geometry ? entry.geometry : entry,
+    for (const entry of found.entries) {
+      // A reel carries its mesh under `mesh` and its spin axis beside it;
+      // the simpler parts are the geometry themselves.
+      const geometry = readGeometry(
+        entry && (entry.mesh || entry.geometry) ? (entry.mesh || entry.geometry) : entry,
         scale);
       if (!geometry) {
         notes.push("a " + spec.kind + " carried no readable geometry");
         index += 1;
         continue;
       }
+      // Permanence is DECLARED on the part, so it is read rather than
+      // inferred from which key it arrived under. The table's own value
+      // stands in only when the document is silent.
+      const declared = typeof entry.permanence === "string"
+        ? entry.permanence.toLowerCase() : null;
       parts.push({
-        kind: spec.kind, index, geometry,
+        kind: spec.kind,
+        // A reel states its own number, which is what route frames point
+        // at through ownerReel; position in the list is not that number.
+        index: Number.isInteger(entry.reel) ? entry.reel : index,
+        geometry,
         material: spec.material, tint: spec.tint || null,
-        world: !!spec.world, permanent: !!spec.permanent, spins: !!spec.spins,
+        world: false,
+        permanent: declared ? declared === "permanent" : !!spec.permanent,
+        spins: !!spec.spins,
+        driven: entry.driven !== false,
         axis: readAxis(entry, scale),
       });
       index += 1;
     }
   }
 
-  // The authored body, when the parts are not listed per port. The
-  // earlier shape shipped ONE mesh under `mechanism`; the newer one
-  // splits it into named parts. Both are read, so a document written
-  // either way opens.
+  // The whole-body fallback: the earliest shape shipped ONE mesh under
+  // `mechanism` with no named parts inside it.
   if (!parts.length) {
-    const body = readGeometry(
+    const whole = readGeometry(
       document.mechanism && document.mechanism.geometry
         ? document.mechanism.geometry : document.mechanism, scale);
-    if (body) {
-      parts.push({ kind: "body", index: 0, geometry: body,
+    if (whole) {
+      parts.push({ kind: "body", index: 0, geometry: whole,
         material: "metal/steel-mill-grey", tint: null,
-        world: false, permanent: false, spins: false, axis: null });
+        world: false, permanent: false, spins: false, driven: false, axis: null });
       notes.push("this document carries one authored body rather than "
         + "named parts, so the whole machine wears one material");
     }
@@ -277,8 +302,11 @@ export function readMechanism(document) {
 
   const instances = [];
   for (const entry of Array.isArray(document.instances) ? document.instances : []) {
+    // `frame` first: this writer uses `placement` for a LABEL, and
+    // reading that first found a string and reported six unreadable
+    // placements on a document whose placements are all present.
     const matrix = placementMatrix(
-      entry && (entry.placement || entry.frame), scale);
+      entry && (entry.frame || entry.placement), scale);
     if (!matrix) {
       notes.push("an instance carried no readable placement frame");
       continue;
@@ -286,6 +314,10 @@ export function readMechanism(document) {
     instances.push({
       side: Number.isInteger(entry.side) ? entry.side : 0,
       mechanism: Number.isInteger(entry.mechanism) ? entry.mechanism : 0,
+      // The instance NAMES the wires it carries, which is an exact
+      // mapping and beats matching a wire's path back to a side and a
+      // mechanism number.
+      wireIds: Array.isArray(entry.wireIds) ? entry.wireIds.slice() : [],
       matrix, mirrored: isReflection(matrix),
     });
   }
@@ -315,9 +347,15 @@ export function readMechanism(document) {
       route,
       // Resolved on every wire by contract, so the reader never inherits
       // and never needs to know a default exists.
-      reeveFactor: Number.isFinite(+entry.reeveFactor) ? +entry.reeveFactor : null,
+      reeveFactor: Number.isFinite(+entry.reeveFactor) ? +entry.reeveFactor
+        : (Number.isFinite(+body.reeveFactor) ? +body.reeveFactor : null),
+      // Per wire by contract; this writer carries it once on the body,
+      // so the body's value stands in rather than the reader inheriting
+      // a rule. The studio measures each reel anyway (see
+      // measureSpoolRadius), and the measured one wins.
       spoolRadius: Number.isFinite(+entry.spoolRadius)
-        ? +entry.spoolRadius * scale : null,
+        ? +entry.spoolRadius * scale
+        : (Number.isFinite(+body.spoolRadius) ? +body.spoolRadius * scale : null),
     });
     if (wires[wires.length - 1].netVertex === null) {
       notes.push("wire " + JSON.stringify(entry.id)
@@ -327,8 +365,8 @@ export function readMechanism(document) {
 
   for (const key of Object.keys(document)) {
     if (KNOWN_KEYS.has(key)) continue;
-    if (PART_KINDS.some((spec) => spec.port === key)) continue;
-    if (Object.values(PORT_ALIASES).some((list) => list.includes(key))) continue;
+    if (PART_KINDS.some((spec) => spec.key === key)) continue;
+    if (Object.values(KEY_ALIASES).some((list) => list.includes(key))) continue;
     notes.push("this reader does not use the key \"" + key + "\"");
   }
 
