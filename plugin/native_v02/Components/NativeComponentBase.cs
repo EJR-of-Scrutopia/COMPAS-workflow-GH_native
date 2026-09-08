@@ -639,6 +639,26 @@ public abstract class NativeComponentBase : GH_Component
 
     protected override Bitmap? Icon => PluginResources.Icon(_iconName);
 
+    /// <summary>
+    /// A CHIN LINE'S HEADLINE: its first line, which is the whole message
+    /// as far as Grasshopper's own balloon is concerned.
+    ///
+    /// His ruling, 2026-09-08, on a mechanism chin that told him the truth
+    /// at four hundred characters a line: "make the bubble message only the
+    /// fix and make that small. the ST can have more detail." So a warning
+    /// or a note may carry its reasoning on FURTHER LINES after the first;
+    /// the balloon gets this, and the Status output gets the whole thing.
+    /// A single-line message passes through unchanged, which is why every
+    /// call site can use it unconditionally.
+    /// </summary>
+    protected static string Headline(string line)
+    {
+        if (string.IsNullOrEmpty(line))
+            return line;
+        int firstBreak = line.IndexOf('\n');
+        return firstBreak < 0 ? line : line[..firstBreak].TrimEnd('\r');
+    }
+
     public override GH_Exposure Exposure => GH_Exposure.primary;
 
     private protected virtual IReadOnlyList<ComponentValueListSpec>
