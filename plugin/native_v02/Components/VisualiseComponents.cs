@@ -985,7 +985,11 @@ namespace Ananke.COMPAS.Native.Components
     /// input wins whenever it carries a value; a wired Style's Preset is
     /// still honoured, but only as the fallback for when Preset is left
     /// blank, matching the priority Weight and Vector Scale already gave
-    /// their own inputs over Style's fields.
+    /// their own inputs over Style's fields. The same wave APPENDS Force
+    /// Scale at input 8: it sizes the reciprocal force diagram's own
+    /// layout, against the form diagram's span, independently of Vector
+    /// Scale (which sizes load/reaction/residual arrows); one reproduces
+    /// today's fixed fit exactly.
     /// </summary>
     public sealed class DisplayComponent : NativePreviewComponentBase
     {
@@ -1032,6 +1036,12 @@ namespace Ananke.COMPAS.Native.Components
                 },
                 "analysis")
         };
+
+        // The force diagram's fit fraction at Force Scale 1.0 -- pinned so
+        // the default reproduces today's drawing exactly. Force Scale
+        // multiplies it directly, so the diagram's drawn extent scales
+        // linearly with the input.
+        private const double ForceDiagramBaseFitFraction = 0.35;
 
         private readonly List<DrawLine> _preview = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
@@ -1129,6 +1139,20 @@ namespace Ananke.COMPAS.Native.Components
                 "supplied.",
                 GH_ParamAccess.item,
                 string.Empty);
+            // APPENDED (the display wave, 2026-09-08), so no existing wire
+            // on the eight inputs above moves. Sizes the reciprocal force
+            // diagram's own layout against the form diagram's span; distinct
+            // from Vector Scale, which sizes load/reaction/residual arrows.
+            // One reproduces today's fixed fit exactly (see
+            // ForceDiagramBaseFitFraction); the drawn diagram's extent
+            // scales linearly with this input.
+            parameters.AddNumberParameter(
+                "Force Scale",
+                "FS",
+                "Reciprocal force-diagram size, against the form " +
+                "diagram's own span; one reproduces today's fixed fit.",
+                GH_ParamAccess.item,
+                1.0);
         }
 
         protected override void RegisterOutputParams(
@@ -1160,6 +1184,7 @@ namespace Ananke.COMPAS.Native.Components
             double vectorScaleInput = 0.0;
             double gap = 0.15;
             string presetInput = string.Empty;
+            double forceScaleInput = 1.0;
 
             if (!data.GetData(0, ref resultGoo) ||
                 resultGoo?.Value is not ResultDto result)
@@ -1173,6 +1198,7 @@ namespace Ananke.COMPAS.Native.Components
             data.GetData(5, ref vectorScaleInput);
             data.GetData(6, ref gap);
             data.GetData(7, ref presetInput);
+            data.GetData(8, ref forceScaleInput);
 
             try
             {
@@ -1209,6 +1235,8 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 if (!double.IsFinite(gap) || gap < 0.0)
                     errors.Add("Gap must be finite and non-negative.");
+                if (!double.IsFinite(forceScaleInput) || forceScaleInput <= 0.0)
+                    errors.Add("Force Scale must be finite and positive.");
                 if (errors.Count > 0)
                     throw new InvalidOperationException(string.Join(" ", errors));
 
@@ -1327,7 +1355,7 @@ namespace Ananke.COMPAS.Native.Components
                                 formVerticesForLayout,
                                 forceVertices,
                                 result.AnalysisPlane!,
-                                0.35,
+                                ForceDiagramBaseFitFraction * forceScaleInput,
                                 gap);
                         foreach (TnaEdgeStateDto state in states)
                         {
