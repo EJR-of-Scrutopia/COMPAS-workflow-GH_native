@@ -1168,3 +1168,32 @@ but is missing from a later read, scan for a clash BEFORE re-applying,
 because the clash file is where the work went.
 
 ----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+
+## 2026-09-08 -- EDIT BECOMES A TILE
+
+Param: "can you make the edit button a tile also to the right of the
+Scenes tile. Just a button you press it highlights and no pop up. just
+runs the edit mode. i feel it more intuitive."
+
+A third face on one mode, not a third mode. #shelf-edit-tile stands in
+the tab strip between Scenes and the take controls, and joins the two
+id lists that setPropEdit already paints and wires, so the panel's Edit,
+the Layers drawer's Edit and the tile can never disagree about whether
+edit is on.
+
+THE LOAD-BEARING DETAIL is an absence: the tile carries NO data-shelf.
+All three pieces of tab machinery (openShelf's paint, closeShelf's
+clear, and the click loop that opens drawers) are scoped to
+#shelf-tabs button[data-shelf]. A tab-shaped button that carried one
+would open a drawer named after itself and have its light scrubbed off
+every time another tab was pressed; carrying none, it opens nothing and
+keeps its own state while any drawer comes and goes. The test pins the
+absence, because the no-pop-up promise rests entirely on it.
+
+Verified live rather than statically: a real press at the tile's own
+centre lands on the tile (elementFromPoint), lights it, turns the mode
+on, lights the panel's face too and leaves #shelf-body hidden; opening
+and closing the Scenes drawer leaves it lit; a second press clears all
+three. Seven mutations, all killed.

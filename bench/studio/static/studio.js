@@ -7072,7 +7072,11 @@ function setPropEdit(on, quietly = false) {
   if (!quietly) propEditOneShot = false;
   if (!on) propEditOneShot = false;
   state.propEdit = on;
-  for (const id of ["prop-edit", "shelf-prop-edit"]) {
+  // Three faces on one mode: the panel's, the Layers drawer's, and the
+  // tile in the tab strip (Param: "make the edit button a tile also to
+  // the right of the Scenes tile"). One toggle paints all three, so they
+  // cannot disagree about whether edit is on.
+  for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {
     const button = document.getElementById(id);
     if (button) button.classList.toggle("active", on);
   }
@@ -7091,7 +7095,7 @@ function setPropEdit(on, quietly = false) {
   }
 }
 
-for (const id of ["prop-edit", "shelf-prop-edit"]) {
+for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {
   document.getElementById(id).addEventListener("click",
     () => setPropEdit(!state.propEdit));
 }

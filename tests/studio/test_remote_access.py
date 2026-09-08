@@ -713,9 +713,9 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     # list alone: _js_function slices to the next top-level declaration,
     # which here runs past the end of setPropEdit into the listener loop
     # below, so a bare id-list assertion passes on the wrong loop.
-    assert 'for (const id of ["prop-edit", "shelf-prop-edit"]) {\n'\
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
         "    const button = document.getElementById(id);" in js
-    assert 'for (const id of ["prop-edit", "shelf-prop-edit"]) {\n'\
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
         '  document.getElementById(id).addEventListener("click",\n'\
         "    () => setPropEdit(!state.propEdit));" in js
     # And a freshly opened drawer shows the mode the scene is in.
@@ -762,6 +762,49 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     clear = js[js.index('getElementById("props-clear")'):]
     clear = clear[:clear.index("});")]
     assert "refreshLayersShelf();" in clear
+
+
+def test_edit_is_a_tile_of_its_own_beside_the_drawers():
+    """Param: "can you make the edit button a tile also to the right of
+    the Scenes tile. Just a button you press it highlights and no pop up.
+    just runs the edit mode. i feel it more intuitive."
+
+    So: a third face on the same mode, standing in the tab strip to the
+    right of Scenes, opening nothing. It carries no data-shelf, which is
+    what keeps openShelf and closeShelf from claiming it -- a tab-shaped
+    button that DID carry one would open a drawer named after itself and
+    have its light scrubbed off every time another tab was pressed."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    tabs = html[html.index('id="shelf-tabs"'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'id="shelf-edit-tile"' in tabs, "the tile stands in the tab strip"
+    assert tabs.index('data-shelf="scenes"') < tabs.index('id="shelf-edit-tile"'), (
+        "and to the RIGHT of Scenes, where he asked for it")
+    assert tabs.index('id="shelf-edit-tile"') < tabs.index('id="shelf-play"'), (
+        "before the take controls, so it reads with the drawers not the take")
+
+    # No drawer. The whole no-pop-up promise rests on this one absence:
+    # the tab wiring is scoped to [data-shelf], so a tile without one is
+    # invisible to openShelf, to closeShelf, and to the click loop.
+    tile = tabs[tabs.index('id="shelf-edit-tile"'):]
+    tile = tile[:tile.index(">")]
+    assert "data-shelf" not in tile, (
+        "a data-shelf here would make the mode toggle open a drawer")
+
+    # It lights by the same rule the other tiles light by, and by the one
+    # toggle that paints the other two Edit faces.
+    assert "#shelf-tabs button.active" in css
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
+        "    const button = document.getElementById(id);" in js
+    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
+        '  document.getElementById(id).addEventListener("click",\n'\
+        "    () => setPropEdit(!state.propEdit));" in js
 
 
 def test_the_skin_is_weighed_in_the_analysis():

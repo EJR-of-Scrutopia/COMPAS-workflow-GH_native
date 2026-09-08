@@ -67,6 +67,11 @@
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
     <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
     <button data-shelf="scenes" title="Save, restore and delete whole scenes">Scenes</button>
+    <!-- A mode, not a drawer (Param: "just a button you press it
+         highlights and no pop up"). It deliberately carries no
+         data-shelf, so openShelf and closeShelf leave it alone and it
+         keeps its own lit state while any drawer comes and goes. -->
+    <button id="shelf-edit-tile" title="Edit mode: click a prop to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
