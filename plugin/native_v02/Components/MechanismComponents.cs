@@ -1502,10 +1502,36 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// <c>fromBrep</c> flag this returns, so the setting stays named in
     /// ONE place).
     /// </summary>
+    /// <summary>
+    /// A wired mesh, however Grasshopper chose to hand it over.
+    ///
+    /// THE BUG THIS FIXES, found by Param's first real wiring: reading an
+    /// input as <c>object</c> gives back the GOO WRAPPER (GH_Mesh, GH_Brep,
+    /// GH_ObjectWrapper), never the bare <see cref="Mesh"/>, so a switch on
+    /// the geometry types alone matched NOTHING and every part he wired was
+    /// refused as "not a mesh" while being a perfectly good mesh. Unwrap
+    /// first, through the goo's own cast so a Brep-shaped goo converts the
+    /// way Grasshopper itself would, and only then look at the geometry.
+    /// </summary>
+    private static object? UnwrapGeometry(object? item)
+    {
+        if (item is IGH_Goo goo)
+        {
+            if (goo.CastTo(out Mesh castMesh) && castMesh is not null)
+                return castMesh;
+            if (goo.CastTo(out Brep castBrep) && castBrep is not null)
+                return castBrep;
+            if (goo is GH_ObjectWrapper wrapper)
+                return wrapper.Value;
+        }
+        return item;
+    }
+
     private static bool TryMeshOrBrep(object? item, out MechanismMesh? mesh, out bool fromBrep)
     {
         fromBrep = false;
         mesh = null;
+        item = UnwrapGeometry(item);
         switch (item)
         {
             case Mesh m:
