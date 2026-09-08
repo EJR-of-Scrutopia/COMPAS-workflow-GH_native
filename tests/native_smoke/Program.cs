@@ -40856,6 +40856,20 @@ internal static partial class Program
                     $"The node unit's spoolRadius must default to 0.5 "
                     + $"(the body's bounding box over 4); got {spoolRadius}.");
             }
+
+            // PERMANENCE, Param's ruling to the Vaulted studio 2026-09-08:
+            // a pulley body is temporary machine, not the works that
+            // remain. Checked here rather than assumed from the constant's
+            // existence, so a body payload built without it is caught.
+            string? bodyPermanence = nodeOut.GetProperty("body")
+                .GetProperty("permanence").GetString();
+            if (bodyPermanence != "temporary")
+            {
+                throw new InvalidOperationException(
+                    "unitTypes.node.body.permanence must be \"temporary\"; "
+                    + $"got {bodyPermanence ?? "(absent)"}.");
+            }
+
             JsonElement anchorTies = document.RootElement.GetProperty("anchorTies");
             if (anchorTies.GetArrayLength() != 2 ||
                 anchorTies[0].GetProperty("row").GetInt32() != 0 ||
@@ -40864,6 +40878,76 @@ internal static partial class Program
                 throw new InvalidOperationException(
                     "anchorTies must carry both ties, row-numbered by "
                     + "position (0 and 1); payload: " + json);
+            }
+
+            // PERMANENCE, the other half of Param's ruling: the anchor tie
+            // fuses the foundation anchor and the tension tie / column
+            // slider rail, the two parts that remain when the machine
+            // comes away, so BOTH rows must carry the permanent value.
+            for (int i = 0; i < 2; i++)
+            {
+                string? tiePermanence = anchorTies[i]
+                    .GetProperty("permanence").GetString();
+                if (tiePermanence != "permanent")
+                {
+                    throw new InvalidOperationException(
+                        $"anchorTies[{i}].permanence must be \"permanent\"; "
+                        + $"got {tiePermanence ?? "(absent)"}.");
+                }
+            }
+        }
+
+        // A SEPARATE unit, wired with ONE VALID spinner (mesh plus a
+        // matching axis), proves the spinner payload itself carries the
+        // permanence field: the fixture above refuses its only spinner (no
+        // matching axis) and drops it, so that unit's spinners array is
+        // always empty and this cannot be proved there.
+        object validAxis = Activator.CreateInstance(
+            axisType, new[] { 0.0, 0.0, 0.0 }, new[] { 0.0, 0.0, 1.0 })!;
+        object spinnerWithAxis = Activator.CreateInstance(
+            spinnerType, cubeMesh, validAxis, "spin-tag")!;
+        object edgeUnitWithSpinner = Activator.CreateInstance(
+            unitType,
+            0,
+            cubeMesh,
+            "edge-body",
+            MechanismListOf(spinnerType, spinnerWithAxis),
+            MechanismListOf(frameType),
+            null,
+            null)!;
+        var spinnerWarnings = new List<string>();
+        var spinnerNotes = new List<string>();
+        object? spinnerPayload = build.Invoke(
+            null,
+            new object?[]
+            {
+                MechanismListOf(unitType, edgeUnitWithSpinner),
+                MechanismListOf(tieType), null, spinnerWarnings, spinnerNotes,
+            });
+        if (spinnerPayload is not string spinnerJson)
+        {
+            throw new InvalidOperationException(
+                "A valid spinner (mesh plus matching axis) must not be "
+                + "refused; Build must return a payload.");
+        }
+        using (JsonDocument spinnerDoc = JsonDocument.Parse(spinnerJson))
+        {
+            JsonElement spinners = spinnerDoc.RootElement
+                .GetProperty("unitTypes").GetProperty("edge")
+                .GetProperty("spinners");
+            if (spinners.GetArrayLength() != 1)
+            {
+                throw new InvalidOperationException(
+                    "The valid spinner must appear in unitTypes.edge.spinners; "
+                    + spinnerJson);
+            }
+            string? spinnerPermanence = spinners[0]
+                .GetProperty("permanence").GetString();
+            if (spinnerPermanence != "temporary")
+            {
+                throw new InvalidOperationException(
+                    "unitTypes.edge.spinners[0].permanence must be "
+                    + $"\"temporary\"; got {spinnerPermanence ?? "(absent)"}.");
             }
         }
 
@@ -41060,6 +41144,14 @@ internal static partial class Program
                 "The edge wire's path must be exactly one entry, "
                 + "{type: edge, row: 0}; got " + edgePath.ToJsonString());
         }
+        // PERMANENCE, Param's ruling to the Vaulted studio 2026-09-08: a
+        // wire is the machine reeling, not the works that remain.
+        if ((string?)edgeWire["permanence"] != "temporary")
+        {
+            throw new InvalidOperationException(
+                "The edge wire's permanence must be \"temporary\"; got "
+                + $"{edgeWire["permanence"]}.");
+        }
         double[] origin = ReadTriple(edgeInstance["frame"]!["origin"]!.AsArray());
         double[] xAxis = ReadTriple(edgeInstance["frame"]!["xAxis"]!.AsArray());
         if (!Close(origin, new[] { 1.0, 0.0, 0.0 }) || !Close(xAxis, new[] { 1.0, 0.0, 0.0 }))
@@ -41104,6 +41196,13 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "The node wire's path must be exactly one entry, "
                 + "{type: node, head: 0}; got " + nodePath.ToJsonString());
+        }
+        // PERMANENCE, the other reel: a node wire is machine too.
+        if ((string?)nodeWire["permanence"] != "temporary")
+        {
+            throw new InvalidOperationException(
+                "The node wire's permanence must be \"temporary\"; got "
+                + $"{nodeWire["permanence"]}.");
         }
 
         // C6/A6: the principal row [1, 2] declared verbatim, so the studio
