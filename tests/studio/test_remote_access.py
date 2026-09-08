@@ -764,6 +764,109 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     assert "refreshLayersShelf();" in clear
 
 
+def test_the_skin_is_weighed_in_the_analysis():
+    """Param's major fix: "the material applied to skin needs to be the
+    material density that is calculated during the stress test. that is
+    paired with the skin thickness. so if i am picking a copper say, we
+    need to use that material density in the calculations and it needs to
+    say that."
+
+    The skin stops being render-only for weight. Its density travels to
+    the solver, earns its own cache slot, is recorded in provenance, and
+    the narrative says which density it used and why."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import staging
+
+    # One resolver, bounded, falling back rather than poisoning a solve.
+    assert staging.resolve_density("concrete") == 2400.0
+    assert staging.resolve_density("concrete", 8940) == 8940.0
+    assert staging.resolve_density("concrete", 0.5) == 2400.0, "below the floor"
+    assert staging.resolve_density("concrete", 1e9) == 2400.0, "above the roof"
+    assert staging.resolve_density("concrete", "copper") == 2400.0, "not a number"
+
+    # A density override earns its OWN cache slot, or switching skins is
+    # served the previous weight's answers -- and the default keeps the
+    # old filename, so nothing already on disk rebuilds for nothing.
+    import bundle as bundle_module
+    plain = bundle_module.bundle_path("s", "concrete", "p", 0.4, 0.1).name
+    heavy = bundle_module.bundle_path("s", "concrete", "p", 0.4, 0.1, 8940).name
+    assert plain == "bundle-concrete-p-s400-t100.json"
+    assert heavy == "bundle-concrete-p-s400-t100-d8940.json"
+    assert bundle_module.staging_path("s", "c", "p", 0.4, 0.1, 8940).name.endswith(
+        "-d8940.json")
+
+    # The whole chain carries it, so no leg can quietly weigh it otherwise.
+    app_source = (REPO / "bench" / "studio" / "app.py").read_text(encoding="utf-8")
+    assert "source: str = Query(None), density: float = Query(None)," in app_source
+    assert "thickness, source, density)" in app_source
+    assert "source=cut_source, density=density," in app_source
+    staging_source = (REPO / "bench" / "studio" / "staging.py").read_text(
+        encoding="utf-8")
+    assert "density = resolve_density(material, density)" in staging_source
+    assert "weight_per_area = thickness * density * GRAVITY" in staging_source
+    assert "DENSITIES[material]" not in staging_source.split(
+        "def resolve_density")[1].split("def formwork_curve")[1], (
+        "past the resolver nothing reads the raw table again")
+
+    # Recorded, so the reader can be told rather than left to assume.
+    bundle_source = (REPO / "bench" / "studio" / "bundle.py").read_text(
+        encoding="utf-8")
+    assert '"density": staging.resolve_density(material, density),' in bundle_source
+    assert '"density_from_skin": density is not None,' in bundle_source
+
+    # The client sends it only when the skin actually differs, so a plain
+    # concrete study keeps its cache entry.
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const weighAs = skinDensity();" in js
+    assert "Math.abs(weighAs - structuralDensity()) > 1" in js
+    # The append itself, not just the decision to make one: without this a
+    # deleted line left the condition standing and sent nothing.
+    assert 'url += "&density=" + weighAs;' in js
+    assert "density: params.density," in js, "the staged run is weighed too"
+
+    # And the narrative says which density it used, and whose it was.
+    narrative = (REPO / "bench" / "studio" / "static"
+                 / "data_analysis.js").read_text(encoding="utf-8")
+    assert "input.densityFromSkin = !!bundle.provenance.density_from_skin;" in narrative
+    assert "the SKIN's own density rather than the structural" in narrative
+    # And the self-weight ESTIMATE weighs with the same density it just
+    # reported, or a copper shell is announced at 8940 and then weighed as
+    # concrete two sentences later.
+    assert "? area * thickness * input.density * 9.81 / 1e3" in narrative
+    assert "area * thickness * DENSITIES[bundle.material]" not in narrative
+
+
+def test_a_slider_reading_can_be_typed_into():
+    """Param: "where the text is on the slider say the 10mm in this
+    screenshot. i would like to be able to click on it and type in my own
+    value." The reading becomes a click target that edits in place."""
+
+    panel = (REPO / "bench" / "studio" / "static" / "panel.js").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "makeValueTypable(input, value);" in panel
+    # The unit factor is DERIVED from what is on screen, so no table of
+    # thirty sliders has to be kept in step with their labels.
+    assert "const scale = Number.isFinite(shown) && raw !== 0 ? shown / raw : 1;" in panel
+    assert "typed / (scale || 1)" in panel
+    # Children are hidden and restored, never replaced: handlers write
+    # into spans in there by id.
+    assert "node.style.display = \"none\";" in panel
+    assert "node.restoreText = node.nodeValue;" in panel
+    # Both events, because expensive handlers listen on change only.
+    assert 'input.dispatchEvent(new Event("input", { bubbles: true }));' in panel
+    assert 'input.dispatchEvent(new Event("change", { bubbles: true }));' in panel
+    # Enter commits, Escape abandons, and the studio's own keys stay out.
+    assert 'if (event.key === "Enter")' in panel
+    assert 'else if (event.key === "Escape")' in panel
+    assert "event.stopPropagation();" in panel
+    # The reading has to take back the pointer the row gives away.
+    assert ".scrub .scrub-value.typable { pointer-events: auto;" in css
+
+
 def test_props_carry_a_height_and_the_gumball_can_move_it():
     """Param: "add in a x,y,z arrow control on the objects when in edit
     mode. allowing them to clip below ground, as some assets need to do

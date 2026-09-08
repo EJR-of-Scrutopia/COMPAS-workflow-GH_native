@@ -71,14 +71,26 @@ def _has_key_path(document: Dict, path: str) -> bool:
     return True
 
 
-def bundle_path(slug: str, material: str, pattern: str, size: float, thickness: float) -> Path:
-    return STUDIES_DIR / slug / "studio" / "bundle-{}-{}-s{}-t{}.json".format(
-        material, pattern, round(size * 1000), round(thickness * 1000))
+# A density override earns its own cache slot, or switching the skin
+# from copper to timber would be served the previous weight's answers.
+# The suffix is ADDED only when there is an override, so every bundle
+# already on disk keeps its name and nothing rebuilds for nothing.
+def _density_suffix(density) -> str:
+    return "" if density is None else "-d{}".format(round(float(density)))
 
 
-def staging_path(slug: str, material: str, pattern: str, size: float, thickness: float) -> Path:
-    return STUDIES_DIR / slug / "studio" / "staging-{}-{}-s{}-t{}.json".format(
-        material, pattern, round(size * 1000), round(thickness * 1000))
+def bundle_path(slug: str, material: str, pattern: str, size: float,
+                thickness: float, density=None) -> Path:
+    return STUDIES_DIR / slug / "studio" / "bundle-{}-{}-s{}-t{}{}.json".format(
+        material, pattern, round(size * 1000), round(thickness * 1000),
+        _density_suffix(density))
+
+
+def staging_path(slug: str, material: str, pattern: str, size: float,
+                 thickness: float, density=None) -> Path:
+    return STUDIES_DIR / slug / "studio" / "staging-{}-{}-s{}-t{}{}.json".format(
+        material, pattern, round(size * 1000), round(thickness * 1000),
+        _density_suffix(density))
 
 
 def _sidecar(export_name: str, *suffixes: str) -> Path:
@@ -473,8 +485,12 @@ def _cut_for(export_name, contract, arrays, render, pattern, size, source=None):
 
 def build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
-    source: Optional[str] = None,
+    source: Optional[str] = None, density: Optional[float] = None,
 ) -> Dict:
+    # Deferred on purpose: staging imports THIS module, so a
+    # top-level import here would close the cycle. Only the density
+    # table is wanted, and only at call time.
+    import staging
     # Captured BEFORE any input is read, for THIS study's slug, so an
     # invalidation of this study landing at any point during the build is
     # seen by the persist check below, and an unrelated study's upload,
@@ -534,7 +550,7 @@ def build_bundle(
     # The stage plan is embedded only if it was solved against THIS cut.
     # A stale plan is worse than no plan: see _staging_matches.
     staged = _read_optional(
-        staging_path(slug, material, key_pattern, size, thickness))
+        staging_path(slug, material, key_pattern, size, thickness, density))
     if not _staging_matches(staged, made):
         staged = None
 
@@ -591,6 +607,12 @@ def build_bundle(
             "contract_file": pairs[export_name]["contract"].name,
             "render_subdivision": render_subdivision_note(arrays["faces"]),
             "thickness": thickness,
+            # What this vault was WEIGHED as, and whether that was
+            # the skin's doing. The Data sheet reads both so it can
+            # name the density rather than leave the reader to assume
+            # the structural class's own.
+            "density": staging.resolve_density(material, density),
+            "density_from_skin": density is not None,
             "combination": "ULS",
             "combination_factor": 1.35,
             "note": "staging and verification are null until their runs "
@@ -598,7 +620,8 @@ def build_bundle(
                     "stage plan names cells this cut does not draw",
         },
     }
-    target = bundle_path(slug, material, key_pattern, size, thickness)
+    target = bundle_path(slug, material, key_pattern, size, thickness,
+                         density)
     # The same guard _cut_for applies to the memo, applied to the DISK.
     # A re-upload that landed while this build was running deleted this
     # very file and bumped the generation; without this check the build
@@ -644,6 +667,7 @@ def _cache_is_fresh(cached) -> bool:
 def cached_bundle_bytes(
     export_name: str, material: str, pattern: str, size: float,
     thickness: float = 0.2, source: Optional[str] = None,
+    density: Optional[float] = None,
 ) -> Optional[bytes]:
     """The cached bundle's ORIGINAL bytes, when the cache is usable.
 
@@ -664,7 +688,8 @@ def cached_bundle_bytes(
     key_pattern = cut_cache_pattern(
         pattern, resolve_cut_source(export_name, contract, source))
     path = bundle_path(
-        geometry.slugify(export_name), material, key_pattern, size, thickness)
+        geometry.slugify(export_name), material, key_pattern, size, thickness,
+        density)
     try:
         if not path.is_file():
             return None
@@ -677,7 +702,7 @@ def cached_bundle_bytes(
 
 def load_or_build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
-    source: Optional[str] = None,
+    source: Optional[str] = None, density: Optional[float] = None,
 ) -> Dict:
     # The cache key needs the resolved source, which needs the contract,
     # so a cache HIT still reads the contract. That is a few milliseconds
@@ -690,8 +715,10 @@ def load_or_build_bundle(
         key_pattern = cut_cache_pattern(
             pattern, resolve_cut_source(export_name, contract, source))
     cached = _read_optional(
-        bundle_path(geometry.slugify(export_name), material, key_pattern, size, thickness)
+        bundle_path(geometry.slugify(export_name), material, key_pattern,
+                    size, thickness, density)
     )
     if _cache_is_fresh(cached):
         return cached
-    return build_bundle(export_name, material, pattern, size, thickness, source)
+    return build_bundle(export_name, material, pattern, size, thickness,
+                        source, density)

@@ -555,7 +555,18 @@ def test_size_out_of_range_is_rejected_by_name(tmp_path, monkeypatch):
                 "size": 9.0, "thickness": 0.2},
     )
     assert response.status_code == 400
-    assert "0.3" in response.json()["detail"]
+    # Re-pinned 2026-09-08: the floor dropped to 100 mm on his word ("I
+    # would like to make the piece size go down to 100mm target"), so the
+    # refusal names 0.1 now. Read from the module rather than typed, so
+    # a later move of the floor cannot leave this sentence stale.
+    from app import SIZE_MIN
+    assert SIZE_MIN == 0.1, "his 100 mm target floor"
+    assert str(SIZE_MIN) in response.json()["detail"]
+    # The slider must reach as low as the server allows, or the floor
+    # exists only in the API and he can never drag down to it.
+    html = (Path(__file__).resolve().parents[2] / "bench" / "studio"
+            / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="size-slider" type="range" min="{}"'.format(SIZE_MIN) in html
 
 
 def test_an_unknown_pattern_is_rejected_by_name(tmp_path, monkeypatch):

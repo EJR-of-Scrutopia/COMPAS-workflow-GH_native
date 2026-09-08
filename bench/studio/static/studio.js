@@ -3262,6 +3262,11 @@ const NAME_DENSITIES = [
   [/sandstone/, 2300], [/rubble/, 2200], [/travertine/, 2400],
 ];
 
+function structuralDensity() {
+  const structural = document.getElementById("material-select").value;
+  return STRUCTURAL_DENSITIES[structural] || 2400;
+}
+
 function skinDensity() {
   const skin = state.appearance.skin;
   if (isLibraryKey(skin)) {
@@ -3273,8 +3278,7 @@ function skinDensity() {
       if (FAMILY_DENSITIES[entry.family]) return FAMILY_DENSITIES[entry.family];
     }
   }
-  const structural = document.getElementById("material-select").value;
-  return STRUCTURAL_DENSITIES[structural] || 2400;
+  return structuralDensity();
 }
 
 // Which of the server's seven structural materials this skin implies: the
@@ -5953,6 +5957,15 @@ async function loadStudy(exportName) {
   let url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
+  // The vault is weighed as what it WEARS, not as the class it is cut
+  // like (Param: "if i am picking a copper say, we need to use that
+  // material density in the calculations"). Sent only when a skin
+  // actually overrides the structural density, so a plain concrete
+  // study keeps its existing cache entry and rebuilds nothing.
+  const weighAs = skinDensity();
+  if (weighAs && Math.abs(weighAs - structuralDensity()) > 1) {
+    url += "&density=" + weighAs;
+  }
   // Omitted entirely when null, so the server applies its own default
   // (the Skin when the study has one). Sending a source the study cannot
   // offer is a 400 that names the problem, which is what the control's
@@ -7514,7 +7527,8 @@ async function startRun() {
   const material = document.getElementById("material-select").value;
   // Captured now, at POST time, so a later slider nudge cannot change what
   // this run is understood to have solved.
-  const params = { material, pattern: state.pattern, size: state.size, thickness: state.thickness };
+  const params = { material, pattern: state.pattern, size: state.size,
+    thickness: state.thickness, density: skinDensity() };
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
@@ -7522,6 +7536,9 @@ async function startRun() {
       body: JSON.stringify({
         export: exportName, material, pattern: params.pattern,
         size: params.size, thickness: params.thickness,
+        // Staged with the weight the vault is wearing, so the stress
+        // numbers describe the building on screen.
+        density: params.density,
         // The cut on screen is the cut the run stages: without this a
         // Skin study's generated view ran the authored cut and reported
         // done for a stage plan the user never saw.

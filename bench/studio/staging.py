@@ -60,6 +60,32 @@ DENSITIES = {
 # the Eurocodes carry no entry for it, and this is recorded as such the
 # same way timber's friction already is.
 # 2500: limestone, the Armadillo Vault's own material.
+# The studio may weigh a vault by the SKIN it wears rather than by the
+# structural class it is cut like (Param: "the material applied to skin
+# needs to be the material density that is calculated during the stress
+# test... if i am picking a copper say, we need to use that material
+# density in the calculations"). A copper shell is cut as masonry but
+# weighs 8940 kg/m3, and a self-weight solve that ignored that would be
+# describing a different building. The override arrives as a number so
+# this module needs no knowledge of the material library; out-of-range
+# values fall back rather than poisoning a solve.
+DENSITY_MIN = 50.0
+DENSITY_MAX = 25000.0
+
+
+def resolve_density(material: str, override: Optional[float] = None) -> float:
+    """The density to weigh this vault with, and nothing else decides it."""
+
+    if override is not None:
+        try:
+            value = float(override)
+        except (TypeError, ValueError):
+            return DENSITIES[material]
+        if DENSITY_MIN <= value <= DENSITY_MAX:
+            return value
+    return DENSITIES[material]
+
+
 DEFAULT_THICKNESS = 0.2
 THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 
@@ -205,6 +231,7 @@ def stage_plan(assignment: List[Optional[list]], order: List[list],
 def formwork_curve(
     vertices: List[Dict], faces: List[list], plan: List[Dict], material: str,
     thickness: float = DEFAULT_THICKNESS,
+    density: Optional[float] = None,
 ) -> List[Dict]:
     """Exact formwork load by stage: cumulative weight of placed faces.
 
@@ -214,11 +241,15 @@ def formwork_curve(
         plan: staging plan from stage_plan()
         material: "concrete" or "timber"
         thickness: shell thickness in metres
+        density: kg/m3 to weigh with, overriding the material's own. The
+            studio sends the SKIN's density when the vault wears a
+            library material, so a copper shell is weighed as copper
+            rather than as the structural class it is cut like.
 
     Returns:
         list of dicts: each with stage, placed_weight_newtons, formwork_carries_newtons
     """
-    density = DENSITIES[material]
+    density = resolve_density(material, density)
     curve = []
     for entry in plan:
         weight = sum(
@@ -301,6 +332,7 @@ def run_staging(
     cra_runner: Optional[Callable[[dict], dict]] = None,
     include_cra: bool = False,
     source: Optional[str] = None,
+    density: Optional[float] = None,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -349,8 +381,12 @@ def run_staging(
     tess, _surface, binding = bundle.build_tessellation_for(
         export_name, contract, arrays, render, pattern, size, source)
     plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
+    # One resolution for the whole run, so the curve, the per-stage
+    # solves and the orphan check can never weigh the vault differently.
+    density = resolve_density(material, density)
     curve = formwork_curve(
-        arrays["vertices"], arrays["faces"], plan, material, thickness
+        arrays["vertices"], arrays["faces"], plan, material, thickness,
+        density
     )
 
     if runner is None:
@@ -448,7 +484,7 @@ def run_staging(
             else:
                 stage_entry["cra"] = cra_runner({
                     "blocks": stage_blocks,
-                    "density": DENSITIES[material],
+                    "density": density,
                     "mu": FRICTION[material],
                 })
         stages.append(stage_entry)
@@ -467,7 +503,7 @@ def run_staging(
     # This cut can orphan a face, so the total has to be shipped for the
     # equality to still be checkable.
     orphan_faces = (binding["report"].get("orphan_faces") or [])
-    weight_per_area = thickness * DENSITIES[material] * GRAVITY
+    weight_per_area = thickness * density * GRAVITY
     orphan_weight = sum(
         geometry.face_area(arrays["vertices"], arrays["faces"][face])
         for face in orphan_faces

@@ -246,10 +246,20 @@ export function computeAnalysisInput(bundle, stage) {
   if (input.totalLoadKN != null && area > 0) {
     input.loadPerM2 = input.totalLoadKN / area;
   }
+  // What the vault was WEIGHED as. When a skin overrides the structural
+  // class's own density the narrative has to say so, or the reader will
+  // assume concrete and misread every number under it.
+  input.density = bundle.provenance.density
+    || DENSITIES[bundle.material] || null;
+  input.densityFromSkin = !!bundle.provenance.density_from_skin;
+  // The estimate weighs the vault with the SAME density the solve was
+  // given, not the structural table's: a copper shell that reported its
+  // own 8940 kg/m3 two sentences earlier must not then be weighed as
+  // concrete here.
   input.selfWeightKN = stage && stage.self_weight_newtons != null
     ? stage.self_weight_newtons / 1e3
-    : DENSITIES[bundle.material] && thickness > 0 && area > 0
-      ? area * thickness * DENSITIES[bundle.material] * 9.81 / 1e3
+    : input.density && thickness > 0 && area > 0
+      ? area * thickness * input.density * 9.81 / 1e3
       : null;
 
   // The build's tender moment and its handover: the stage that would
@@ -560,6 +570,16 @@ export function buildAnalysisHtml(input) {
       + mpa(input.limits.compression) + " in compression and "
       + mpa(input.limits.tension) + " in tension before the limit "
       + "(" + input.limits.basis + ").</p>");
+    if (input.density) {
+      parts.push("<p>Weighed at <b>" + Math.round(input.density)
+        + " kg/m<sup>3</sup></b>"
+        + (input.densityFromSkin
+          ? ", which is the SKIN's own density rather than the structural "
+            + "class's: the vault is cut like " + input.limits.label.toLowerCase()
+            + " and weighed as what it wears. Every load, stress and "
+            + "deflection number above follows from that weight."
+          : ", the structural material's own density.") + "</p>");
+    }
     parts.push("<p>The shell is <b>"
       + Math.round(input.thickness * 1000) + " mm</b> thick over a "
       + input.span.toFixed(1) + " m span: a slenderness of 1:"

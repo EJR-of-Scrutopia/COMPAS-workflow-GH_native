@@ -51,7 +51,81 @@ export function upgradeSliders(root) {
     paintScrub(input);
     input.addEventListener("input", () => paintScrub(input));
     input.addEventListener("change", () => paintScrub(input));
+    makeValueTypable(input, value);
   }
+}
+
+// Param: "where the text is on the slider say the 10mm in this
+// screenshot. i would like to be able to click on it and type in my own
+// value." A slider is a coarse instrument, and some numbers you simply
+// know.
+//
+// The reading is a linear multiple of the slider's raw value -- mm from
+// metres, percent from a fraction, or the number itself -- and that
+// factor is DERIVED from what is on screen rather than declared per
+// slider. So a slider whose handler changes its own unit stays right,
+// and no table has to be kept in step with thirty labels.
+//
+// The value cell often holds a span some handler writes into by id, so
+// its children are HIDDEN and restored rather than replaced: destroying
+// them would quietly break whoever writes the reading.
+function makeValueTypable(input, value) {
+  value.classList.add("typable");
+  value.title = "Click to type a value";
+  value.addEventListener("click", () => {
+    if (value.querySelector("input")) return;          // already editing
+    const shown = parseFloat(
+      (value.textContent.match(/-?\d+(?:\.\d+)?/) || [])[0]);
+    const raw = +input.value;
+    const scale = Number.isFinite(shown) && raw !== 0 ? shown / raw : 1;
+    const hidden = [];
+    for (const node of Array.from(value.childNodes)) {
+      if (node.nodeType === 1) {
+        hidden.push(node);
+        node.style.display = "none";
+      } else if (node.nodeType === 3) {
+        hidden.push(node);
+        node.restoreText = node.nodeValue;
+        node.nodeValue = "";
+      }
+    }
+    const box = document.createElement("input");
+    box.type = "text";
+    box.className = "scrub-entry";
+    box.value = Number.isFinite(shown) ? String(shown) : String(raw);
+    const restore = () => {
+      box.remove();
+      for (const node of hidden) {
+        if (node.nodeType === 1) node.style.display = "";
+        else if (node.restoreText !== undefined) node.nodeValue = node.restoreText;
+      }
+      paintScrub(input);
+    };
+    const commit = () => {
+      const typed = parseFloat(box.value);
+      if (Number.isFinite(typed)) {
+        const min = +input.min || 0;
+        const max = input.max === "" ? 100 : +input.max;
+        input.value = String(
+          Math.min(max, Math.max(min, typed / (scale || 1))));
+        // Both events, because this file's own convention splits them:
+        // "input" repaints live, "change" is what the expensive handlers
+        // (a re-cut, a recolour) listen for.
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      restore();
+    };
+    box.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); commit(); }
+      else if (event.key === "Escape") { event.preventDefault(); restore(); }
+      event.stopPropagation();          // the studio's own keys stay out
+    });
+    box.addEventListener("blur", commit);
+    value.appendChild(box);
+    box.focus();
+    box.select();
+  });
 }
 
 export function paintScrub(input) {

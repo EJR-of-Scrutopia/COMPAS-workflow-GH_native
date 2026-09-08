@@ -127,7 +127,12 @@ RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
 
 MATERIALS = sorted(staging.DENSITIES)
-SIZE_MIN = 0.3
+# 0.1 on his word: "I would like to make the piece size go down to
+# 100mm target". A 100 mm target on a real vault is tens of
+# thousands of pieces, so the cut is slow rather than refused, and
+# the piece-count note beside the slider is what tells him the cost
+# before he waits for it.
+SIZE_MIN = 0.1
 SIZE_MAX = 3.0
 PATTERNS = sorted(generators.GENERATORS)
 
@@ -570,7 +575,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def get_bundle(
         export: str, material: str = Query(...), pattern: str = Query(...),
         size: float = Query(...), thickness: float = Query(0.2),
-        source: str = Query(None),
+        source: str = Query(None), density: float = Query(None),
     ):
         _validate(export, material, pattern, size, thickness)
         try:
@@ -580,11 +585,11 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             # 80 MB dict is skipped (measured at 8.3 s per warm poll on
             # the Column diagnosis study). None falls through unchanged.
             raw = bundle.cached_bundle_bytes(
-                export, material, pattern, size, thickness, source)
+                export, material, pattern, size, thickness, source, density)
             if raw is not None:
                 return Response(content=raw, media_type="application/json")
             return bundle.load_or_build_bundle(
-                export, material, pattern, size, thickness, source)
+                export, material, pattern, size, thickness, source, density)
         except ValueError as error:
             # domain.boundary_ring, generators.generate and
             # tessellation.from_document all raise ValueError with a message
@@ -673,6 +678,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         export = body.get("export", "")
         material = body.get("material", "")
         pattern = body.get("pattern", "")
+        # The skin's density, when the vault is wearing one. Absent or
+        # unreadable means "weigh it as its structural class", which is
+        # what every run did before skins could be structural.
+        try:
+            density = float(body["density"]) if body.get("density") else None
+        except (TypeError, ValueError):
+            density = None
         # Coerced BEFORE _validate, so a value float() cannot read raised
         # out of the coercion itself and answered 500: size "abc" and a
         # null thickness both did, while a MISSING size correctly gave 400
@@ -749,14 +761,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
                 staging.run_staging(
                     pairs[export], material, pattern, size,
-                    bundle.staging_path(slug, material, key_pattern, size, thickness),
+                    bundle.staging_path(slug, material, key_pattern, size,
+                                        thickness, density),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
-                    source=cut_source,
+                    source=cut_source, density=density,
                 )
                 run["phase"] = "bundling"
                 run["message"] = "assembling the bundle"
                 bundle.build_bundle(
-                    export, material, pattern, size, thickness, cut_source)
+                    export, material, pattern, size, thickness, cut_source,
+                    density)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

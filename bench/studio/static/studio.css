@@ -545,6 +545,18 @@ body.panel-collapsed #legend { right: var(--s4); }
   color: var(--ink-2); pointer-events: none; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-size: 11px;
   font-variant-numeric: tabular-nums; }
+/* The reading is a click target now (Param: "i would like to be able to
+   click on it and type in my own value"), so it takes back the pointer
+   the row gives away. The cost is that a drag begun exactly on the
+   number does not grab the slider; the number is a small target at the
+   right end and typing into it is the point. */
+.scrub .scrub-value.typable { pointer-events: auto; cursor: text; }
+.scrub .scrub-value.typable:hover { color: var(--ink); }
+.scrub .scrub-entry { width: 68px; margin: 0; padding: 0 4px;
+  text-align: right; font: inherit; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+  background: var(--raised); border: 1px solid var(--accent);
+  border-radius: 3px; }
 .scrub:hover .fill::before { background: var(--well); }
 .scrub:hover .scrub-name { color: var(--ink); }
 .scrub input[type="range"]:focus-visible + .fill { outline: 1px solid var(--accent);

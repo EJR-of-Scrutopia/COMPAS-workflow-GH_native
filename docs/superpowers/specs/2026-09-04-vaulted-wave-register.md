@@ -1101,3 +1101,70 @@ so the library is right by default; or leave it, if a giant is wanted
 for a forest backdrop. Nothing changed without his word.
 
 ----------------------------------------------------------------------
+
+## 2026-09-08 -- THE SKIN BECOMES STRUCTURAL, AND TWO SMALLER ASKS
+
+His major fix: "the material applied to skin needs to be the material
+density that is calculated during the stress test. that is paired with
+the skin thickness. so if i am picking a copper say, we need to use that
+material density in the calculations and it needs to say that."
+
+Until now the skin was render-only by design, and the studio said so in
+the log. It still is for LOOK; it is no longer for WEIGHT.
+
+- staging.resolve_density(material, override) is the one place that
+  decides, bounded 50..25000 kg/m3, falling back rather than poisoning a
+  solve on a bad number. run_staging resolves ONCE so the formwork
+  curve, the per-stage solves and the orphan check cannot weigh the
+  vault differently from each other.
+- The whole chain carries it: the bundle route takes ?density=, and
+  load_or_build_bundle / cached_bundle_bytes / build_bundle / the run
+  route / run_staging all pass it down. bundle.py imports staging
+  DEFERRED, since staging imports bundle and a top-level import would
+  close the cycle.
+- CACHE: a density override earns its own slot (-d8940 suffix), so
+  switching skin from copper to timber is not served the previous
+  weight's answers. The suffix is ADDED only when overridden, so every
+  bundle already on disk keeps its name and nothing rebuilt.
+- Provenance records density and density_from_skin; the Data sheet reads
+  both and says "Weighed at 8940 kg/m3, which is the SKIN's own density
+  rather than the structural class's: the vault is cut like concrete
+  C30/37 and weighed as what it wears." The self-weight ESTIMATE was
+  also weighing by the structural table and is now on the resolved
+  density, which is what turned 28.7 tonnes into 107.
+- Client sends skinDensity() only when it differs from
+  structuralDensity(), so a plain concrete study keeps its cache entry.
+  The staged run carries it too, captured at POST time with the rest.
+- LIVE on Column diagnosis after a server restart: default bundle
+  density 2400 / from_skin false; ?density=8940 bundle density 8940 /
+  from_skin true, its own cache slot, and NO staging borrowed from the
+  concrete run (staging is null under the new key until a run happens
+  there, which is the isolation working).
+
+PIECE SIZE floor to 100 mm ("I would like to make the piece size go down
+to 100mm target"): SIZE_MIN 0.3 -> 0.1 and the slider's own min with it.
+The refusal message names the module's constant now rather than a typed
+string, so the next move of the floor cannot leave the test stale.
+
+TYPABLE SLIDER READINGS ("i would like to be able to click on it and
+type in my own value"): panel.js's makeValueTypable turns the .scrub
+reading into a click target that edits in place. The unit factor is
+DERIVED from what is on screen (mm from metres, percent from a
+fraction) rather than declared per slider, so no table has to be kept in
+step with thirty labels and a slider that changes its own unit stays
+right. The cell's children are HIDDEN and restored rather than
+replaced, because handlers write into spans in there by id. Enter
+commits, Escape abandons, keys stop propagating so the studio's own
+shortcuts stay out, and both input and change fire because the
+expensive handlers listen on change alone. The reading takes back the
+pointer the row gives away; the cost is that a drag begun exactly on
+the number no longer grabs the slider.
+
+ONEDRIVE ATE A THIRD EDIT: data_analysis.js lost the density sentence
+to a name-clash sibling that held the newer content, the same pattern
+as studio.js twice earlier tonight. Promoted the clash, removed it,
+rescanned clean. THE HABIT THIS EARNS: after any edit that "succeeded"
+but is missing from a later read, scan for a clash BEFORE re-applying,
+because the clash file is where the work went.
+
+----------------------------------------------------------------------
