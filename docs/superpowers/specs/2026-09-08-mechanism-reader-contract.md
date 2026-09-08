@@ -17,23 +17,50 @@ the motion already lives in the formwork document's frames the studio
 replays today. Absence means "no machine view for this study", quietly,
 exactly as a missing formwork document is treated.
 
-Parts arrive on **named ports** -- anchor, tension tie, mechanism,
-placement, reel, reel axis, routing -- and the port a part came in on
-IS its semantic tag. The plugin guarantees the port name reaches the
-document as the part's kind rather than being flattened into an
-anonymous list. That one property serves three things at once: the
-material mapping, the permanence view, and the tag vocabulary.
+Parts arrive on **named ports** -- Param rejected a tree of type and
+part and asked for one port per kind -- so **the part's kind is the
+array it sits in**, not a tag field on it. That is the tag vocabulary
+answered structurally: a kind authored by construction cannot fall out
+of step with the thing it names. It also serves the material mapping
+and the permanence view from the same property.
 
-Geometry travels **once per type** in the `bench.columns/1` convention
-(a vertices array, a faces array, mixed triangles and quads,
+### The literal top-level keys
+
+Read from the writer (`ExportPayloads.cs`, plugin commits 9225647 and
+363fdea), not from a description of it:
+
+    numbering, rotation, principalRows, mechanism, instances,
+    anchors, tensionTies, wires
+
+- `mechanism` -- ONE authored body plus its spinners. Not a map of unit
+  types: Param authors a single mesh and places six instances of it.
+- `instances` -- its own top-level array, each entry carrying `side`,
+  `mechanism` and `placement`.
+- `anchors` and `tensionTies` -- two separate arrays, because they
+  arrive on two separate ports and are two distinct kinds in his own
+  list. These are the permanent works; everything else is machine.
+- `wires` -- `id`, `net_vertex`, `path` (a list of `{side, mechanism}`
+  steps) and `route` (the routing frames).
+- `numbering`, `rotation`, `principalRows` -- as described elsewhere on
+  this page.
+
+Geometry travels **once**, in the `bench.columns/1` convention (a
+vertices array, a faces array, mixed triangles and quads,
 `lengthUnitToMetres` on the document). Instances carry a placement
 frame and nothing else: origin plus x and y axes, right handed, z
-derived. The anchor and the tension tie are the exception and arrive
+derived. The anchors and tension ties are the exception and arrive
 pre-placed in world coordinates behind an explicit flag, rather than
 relying on the reader to know their kind is special.
 
 Param authors the placements himself. The plugin relays; the studio
 stamps.
+
+> This shape superseded an earlier one mid-negotiation, after five
+> rounds of settling the old keys. The lesson is cheap to state and
+> was expensive to nearly learn: a contract page describes a writer,
+> so it is only as current as the last time somebody read the writer.
+> Diff this section against the emitted keys before building, not
+> against memory of an agreement.
 
 ## The shape of his machine, for sizing
 
@@ -51,13 +78,27 @@ where the wire wraps tightly.
    against equilibrium max and mean 0.000000000 m, edge lists identical
    element for element. Numbering, not positions -- frame 0 is the flat
    start and sits far away (5.651 m max on Column diagnosis).
-2. **Every wire carries its own explicit `net_vertex`**, whatever the
-   tree groups it by. Non-negotiable, and written into the plugin's
-   rebuild requirements in those words. A tree grouped by mechanism
-   says which mechanism a wire belongs to and nothing about which
-   vertex it pulls; inferring the net end from ordinal position would
-   land the wire on a real vertex that is simply the wrong one, with
-   nothing on screen to show it.
+2. **Every wire carries its own explicit `net_vertex`**, whatever else
+   groups it. Non-negotiable, written into the plugin's requirements in
+   those words, and it survived the port rewrite. Grouping alone says
+   which mechanism a wire belongs to and nothing about which vertex it
+   pulls; inferring the net end from ordinal position would land the
+   wire on a real vertex that is simply the wrong one, with nothing on
+   screen to show it.
+
+   **But explicit is not the same as authored.** The plugin DERIVES
+   `net_vertex` by matching wire order to anchor order along the row;
+   Param does not declare it. The reader is unaffected -- the value is
+   in the document either way, so the studio cannot be silently wrong
+   about what it was told -- but the writer can be, and a bad match is
+   the C1 failure relocated from the reader to the writer rather than
+   eliminated. Their defence is that the component prints every match
+   distance so a wrong one shows on his canvas. **Ours costs nothing
+   and belongs here too:** after placement, compare each wire's
+   declared `net_vertex` against the vertices nearest its first routing
+   plane, and if a different vertex is dramatically closer, say so in
+   the log. Same principle as refusing to snap the wire -- detect and
+   report, never quietly draw the plausible thing.
 3. **Two index spaces, named in the field itself**: `net_vertex` into
    `frames[].vertices`, `column_node` into `frames[].columnNodes`.
    Node reels live in the first, the tie and rail in the second.
@@ -97,17 +138,35 @@ node shows as a wire that stretches or floats. The drawing is a check
 on the placement, not a flattering picture of it. Param has been told
 to expect this.
 
-**The spin**, per spinner, about its own authored axis:
+**The spin**, per spinner, about its own authored axis. The `rotation`
+object now declares its own terms rather than promising them in a
+message:
 
-    angle = delta(net-side wire length) * reeve_factor / spool_radius
+    unit      = "turns"
+    reference = "frame0"
+    sign      = positive turns take up wire (the spool winds in and the
+                wire's routed length shortens); negative pays out
+    formula   = turns = (length_at(t) - length_at(frame0))
+                        * reeveFactor / (2 * pi * spoolRadius)
 
-in radians. The document declares its unit, its sign convention in
-words with take-up named, and measures the delta from **frame 0**, not
-from the previous frame. That last one matters: the studio's timeline
-is a pure function of t by construction, so an incremental delta would
-drift on scrub and be wrong on every recorded frame not played in
+So the studio multiplies by 2 pi for radians, as expected. The
+**frame 0 reference** is the load-bearing part: the studio's timeline is
+a pure function of t by construction, so an incremental per-frame delta
+would drift on scrub and be wrong on every recorded frame not played in
 order. Nothing is keyframed; the loosen-then-tighten falls out of the
 frames.
+
+**`reeveFactor` is provisionally 1.0 and probably wrong.** It is fixed
+in the writer with no author port today, and Param's unit has four
+wheels, so the reels will very likely turn too slowly by a whole
+multiple until he sets it. Treat the field as real and its current
+value as unverified; a reader that hard-codes around 1.0 would have to
+be unpicked. Note also that the reeving is partly visible in `route`,
+since the wire's wraps are geometry -- not fully derivable, because
+whether a wheel gives mechanical advantage or is merely a guide depends
+on whether it moves with the load, but enough that a factor wildly at
+odds with the wrap count is a detectable mismatch rather than a silent
+one.
 
 Known refinement, immaterial at this representation: as wire layers
 build on a spool the effective winding radius grows, so a very long
