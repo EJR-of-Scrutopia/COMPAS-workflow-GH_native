@@ -19,14 +19,22 @@ namespace Ananke.COMPAS.Native.Components;
 /// can drive every rule below with arrays it builds itself, exactly the way
 /// <see cref="TessellationCell"/> keeps Export's own cells Rhino-free.
 ///
-/// This is the collector's OWN packaging model: the meshes, axes, sockets and
-/// declared facts as Param wires them, validated and reduced to plain data on
-/// the solve thread (Rhino access happens in
+/// NAMED PORTS, not a tree of type-and-part (the input model settled with
+/// Param 2026-09-08 night, superseding this file's earlier {type}{part}
+/// scheme entire): anchor, tension tie, mechanism, placement, reel, reel
+/// axis, routing, plus reel kind. The port a part arrives on IS its
+/// semantic kind -- read by the structural array it lands in (anchors,
+/// tensionTies, mechanism.body, mechanism.spinners, wires) rather than a
+/// redundant tag field, per the studio's own REPLY 4 point 7: permanence
+/// and material both derive from the port, "no new field anywhere".
+///
+/// This is the collector's OWN packaging model: the meshes, axes, frames
+/// and rows as Param wires them, validated and reduced to plain data on the
+/// solve thread (Rhino access happens in
 /// <see cref="MechanismCollectorComponent"/> only). What is NOT here is any
-/// placement: the spec's section 4 has the plugin compute instances from the
-/// Result it already owns, and that Result belongs to Export, not to this
-/// collector, so placement is built in <see cref="MechanismDocument"/>
-/// alongside the formwork document it already sits beside.
+/// PLACEMENT COMPUTATION: he places the mechanisms himself (Placement, one
+/// authority), and net-vertex matching needs the solved Result, so both are
+/// finished in <see cref="MechanismDocument"/> at Export time.
 /// </summary>
 internal sealed record MechanismMesh(
     IReadOnlyList<double[]> Vertices,
@@ -35,43 +43,67 @@ internal sealed record MechanismMesh(
 /// <summary>One spinner's rotation axis, unit-local: a point on it and its direction.</summary>
 internal sealed record MechanismAxis(double[] Origin, double[] Direction);
 
-/// <summary>One routing (or placement) frame, unit-local unless stated otherwise.</summary>
+/// <summary>One routing (or placement) frame: origin plus X and Y axes, Z derived.</summary>
 internal sealed record MechanismFrame(double[] Origin, double[] XAxis, double[] YAxis);
 
 /// <summary>
-/// One spinner as PU/AX hand it in: a mesh and, when AX carried a matching
-/// plane, its axis. A null <see cref="Axis"/> is what makes the door-guard
-/// refuse this spinner's whole unit (spec 3a: "a spinner mesh in PU with no
-/// matching plane in AX is refused").
+/// The ONE authored mechanism asset (his "one continuous body ... always
+/// place"): a body mesh (ME) plus the spinning parts (RE) each carrying its
+/// own axis (AX), matched to RE 1:1 by position. Authored ONCE regardless
+/// of how many places it is instanced -- never six copies of the mesh, the
+/// studio's own 8 GB iPad constraint (C4).
 /// </summary>
-internal sealed record MechanismSpinnerInput(
-    MechanismMesh Mesh,
-    MechanismAxis? Axis,
-    string MaterialTag);
+internal sealed record MechanismAssetInput(
+    MechanismMesh? Body,
+    bool BodyFromBrep,
+    IReadOnlyList<MechanismMesh?> ReelMeshes,
+    IReadOnlyList<bool> ReelFromBrep,
+    IReadOnlyList<MechanismAxis?> ReelAxes);
+
+/// <summary>One instance address: side then mechanism, his own tree order ("mechanisms per side, sides").</summary>
+internal readonly record struct MechanismInstanceId(int Side, int Mechanism)
+{
+    public string Label => $"side {Side} mechanism {Mechanism}";
+}
 
 /// <summary>
-/// One pulley type's whole contribution (PU's {type} branch plus AX/PS/PR/SR
-/// at that same type), before validation.
+/// One placed instance (PL), his own placement, plus its optional
+/// functional label (RK, "edge"/"node") -- informational only, never
+/// structural (spec 3a's settled reading: SR/PR no longer travel as
+/// authored ports at all, so nothing downstream branches on this word).
 /// </summary>
-internal sealed record MechanismUnitInput(
-    int Type,
-    MechanismMesh? Body,
-    string BodyMaterialTag,
-    IReadOnlyList<MechanismSpinnerInput> Spinners,
-    IReadOnlyList<MechanismFrame> Sockets,
-    double? ReeveFactor,
-    double? SpoolRadius);
+internal sealed record MechanismInstanceInput(
+    MechanismInstanceId Id,
+    MechanismFrame Placement,
+    string? Kind);
 
-/// <summary>One AT row: the authored tie mesh, its world-space centroid, and its tag.</summary>
-internal sealed record MechanismAnchorTieInput(
+/// <summary>
+/// One authored wire (RT): the ordered local routing planes in threading
+/// order, planes[0] the NET END by his ruling (R2) -- validated after
+/// placement in <see cref="MechanismDocument"/>, which is the one place
+/// that also owns the Result the net-vertex world position comes from.
+/// </summary>
+internal sealed record MechanismWireInput(
+    MechanismInstanceId Instance,
+    int Wire,
+    IReadOnlyList<MechanismFrame> Route);
+
+/// <summary>
+/// One AN or TT row: the authored mesh, its ORIGINAL position in the port's
+/// own list (so a dropped item mid-list never renumbers the rows after
+/// it), its world-space centroid (the door-guard's own probe point), and
+/// whether it arrived as a Brep and was meshed here.
+/// </summary>
+internal sealed record MechanismRowPartInput(
+    int Index,
     MechanismMesh Mesh,
     double[] Centroid,
-    string MaterialTag);
+    bool FromBrep);
 
 /// <summary>
 /// One anchor row's node points, world space, in the walking order
-/// <c>MouldGeometry.ConnectedGroups</c> returns -- the same order AT's own
-/// row numbering follows (requirements doc section 2).
+/// <c>MouldGeometry.ConnectedGroups</c> returns -- the same order AN/TT's
+/// own row numbering follows (requirements doc section 2).
 /// </summary>
 internal sealed record MechanismAnchorRow(IReadOnlyList<double[]> NodePoints);
 
@@ -80,36 +112,28 @@ internal sealed record MechanismAnchorRow(IReadOnlyList<double[]> NodePoints);
 /// no Rhino type crosses this boundary, so the harness can drive every rule
 /// with arrays it builds itself.
 ///
-/// ONE JOB: turn what was wired into one JSON payload Export can embed, and
-/// say by name what could not be trusted rather than silently dropping it or
-/// silently accepting it. Placement (the plugin's other half, spec section 4)
-/// is not this class's concern; it is built by <see cref="MechanismDocument"/>
-/// from the Result Export already owns.
+/// ONE JOB: turn what was wired into one JSON payload
+/// <see cref="MechanismDocument"/> can finish (net-vertex matching,
+/// reversed-route naming) and Export can embed, and say by name what could
+/// not be trusted rather than silently dropping it or silently accepting
+/// it.
 /// </summary>
 internal static class MechanismCollector
 {
-    public const string EdgeTypeName = "edge";
-    public const string NodeTypeName = "node";
-
     /// <summary>
     /// The permanence field's own name and its two values, said once and
     /// read everywhere a part payload is built (here and in
     /// <see cref="MechanismDocument"/>'s wires). Param's ruling to the
     /// Vaulted studio, 2026-09-08: "the two things that remain when all is
-    /// taken away is the tension tie / column slide, and the anchor" -- the
-    /// anchor tie (fusing the foundation anchor and the tension tie /
-    /// column slider rail, spec section "TENSION TIE / COLUMN SLIDER RAIL")
-    /// is the PERMANENT works; the pulley bodies, their spinners and the
-    /// wires that reel them are the TEMPORARY machine that comes away once
-    /// the vault stands.
+    /// taken away is the tension tie / column slide, and the anchor" --
+    /// Anchor (AN) and Tension Tie (TT) are the PERMANENT works; the
+    /// mechanism body, its spinners and the wires that reel them are the
+    /// TEMPORARY machine that comes away once the vault stands.
     ///
     /// A STRING, not a boolean, following the document's own convention:
     /// <c>"placement"</c> already carries <c>"instance"</c>/<c>"world"</c>
     /// as a declared word rather than a flag the reader has to remember the
-    /// sense of, and the studio's own ask offered either shape. The studio
-    /// asked for this specifically so it need not key off the kind names
-    /// (edge/node/anchorTie) by hand; it is authored once, here, because
-    /// the writer already knows which is which.
+    /// sense of.
     /// </summary>
     public const string PermanenceField = "permanence";
 
@@ -118,14 +142,10 @@ internal static class MechanismCollector
     public const string Temporary = "temporary";
 
     /// <summary>
-    /// How far an anchor tie may sit from the nearest node of its own row
-    /// before the door-guard names it: a multiple of the row's OWN
-    /// characteristic anchor spacing, so the tolerance scales with the study
-    /// rather than assuming a unit. No numeric ruling from Param exists yet
-    /// for this figure; three times the row's own spacing is generous enough
-    /// that an authored-in-place tie never trips it by construction, while a
-    /// tie left over from a different solve, whose anchors sit rows apart,
-    /// still does.
+    /// How far an AN or TT mesh may sit from the nearest node of its own
+    /// row before the door-guard names it: a multiple of the row's OWN
+    /// characteristic anchor spacing, so the tolerance scales with the
+    /// study rather than assuming a unit.
     /// </summary>
     public const double AnchorTieToleranceFactor = 3.0;
 
@@ -134,156 +154,285 @@ internal static class MechanismCollector
     public const double MinimumSpoolRadius = 1.0e-6;
 
     /// <summary>
+    /// The note said whenever a mesh-or-brep port meshed a Brep itself
+    /// rather than being handed an authored mesh: he cannot see the
+    /// settings once it is meshed, so the settings are named here (spec's
+    /// own validation list, "a brep accepted and meshed says so with the
+    /// settings used").
+    /// </summary>
+    public const string BrepMeshingNote =
+        "arrived as a Brep and was meshed here with Rhino's default " +
+        "meshing parameters (MeshingParameters.Default), since no mesh " +
+        "was authored directly and you cannot see the settings once it " +
+        "is meshed.";
+
+    /// <summary>
     /// Build the mechanism payload, or null when nothing was wired at all
-    /// (spec section 8 item 6: "the collector with NOTHING wired produces no
-    /// mechanism document and no warning noise"). <paramref name="warnings"/>
-    /// and <paramref name="notes"/> are appended to, never cleared, so a
-    /// caller can pool them across a whole solve's chin.
+    /// (spec section 8 item 6: "the collector with NOTHING wired produces
+    /// no mechanism document and no warning noise"). <paramref
+    /// name="warnings"/> and <paramref name="notes"/> are appended to,
+    /// never cleared, so a caller can pool them across a whole solve's
+    /// chin.
     /// </summary>
     public static string? Build(
-        IReadOnlyList<MechanismUnitInput> units,
-        IReadOnlyList<MechanismAnchorTieInput> ties,
+        MechanismAssetInput asset,
+        IReadOnlyList<MechanismInstanceInput> instances,
+        IReadOnlyList<MechanismWireInput> wires,
+        IReadOnlyList<MechanismRowPartInput> anchors,
+        IReadOnlyList<MechanismRowPartInput> tensionTies,
         IReadOnlyList<MechanismAnchorRow>? rows,
         List<string> warnings,
         List<string> notes)
     {
-        ArgumentNullException.ThrowIfNull(units);
-        ArgumentNullException.ThrowIfNull(ties);
+        ArgumentNullException.ThrowIfNull(asset);
+        ArgumentNullException.ThrowIfNull(instances);
+        ArgumentNullException.ThrowIfNull(wires);
+        ArgumentNullException.ThrowIfNull(anchors);
+        ArgumentNullException.ThrowIfNull(tensionTies);
         ArgumentNullException.ThrowIfNull(warnings);
         ArgumentNullException.ThrowIfNull(notes);
 
-        if (units.Count == 0 && ties.Count == 0)
+        bool nothingWired =
+            asset.Body is null && asset.ReelMeshes.Count == 0 &&
+            instances.Count == 0 && wires.Count == 0 &&
+            anchors.Count == 0 && tensionTies.Count == 0;
+        if (nothingWired)
             return null;
 
-        var unitPayloads = new Dictionary<string, object?>(StringComparer.Ordinal);
-        foreach (MechanismUnitInput unit in units)
+        // A SPINNER WITHOUT AN AXIS REFUSES ITS UNIT BY NAME. There is one
+        // authored mechanism now, not one per type, so "its unit" is the
+        // whole asset: any Reel (RE) entry with no matching Reel Axis (AX),
+        // by position, drops the whole mechanism rather than instancing a
+        // machine missing a declared rotation.
+        bool assetOk = asset.Body is not null;
+        if (!assetOk && (instances.Count > 0 || wires.Count > 0))
         {
-            string typeName = TypeName(unit.Type);
-            if (typeName.Length == 0)
+            warnings.Add(
+                "Placement (PL) or Routing (RT) was authored, but " +
+                "Mechanism (ME) carries no body mesh; nothing is " +
+                "instanced without a body.");
+        }
+        if (asset.ReelMeshes.Count != asset.ReelAxes.Count)
+        {
+            warnings.Add(
+                $"Reel (RE) carries {asset.ReelMeshes.Count} spinner " +
+                $"mesh(es) but Reel Axis (AX) carries {asset.ReelAxes.Count}" +
+                " plane(s); a spinner without a matching axis refuses its " +
+                "unit, so the whole mechanism is refused: the axis is " +
+                "authored, never inferred.");
+            assetOk = false;
+        }
+        else
+        {
+            for (int i = 0; i < asset.ReelMeshes.Count; i++)
             {
-                warnings.Add(
-                    $"PU branch {{{unit.Type}}} is neither 0 (edge reel) nor " +
-                    "1 (node reel); ignored.");
-                continue;
-            }
-            if (unit.Body is null)
-            {
-                warnings.Add(
-                    $"{typeName}: PU carries no part 0 (the static body); " +
-                    "a mechanism with no body is not a mechanism, so this " +
-                    "unit is dropped.");
-                continue;
-            }
-            MechanismMesh body = unit.Body;
-
-            var spinnerPayloads = new List<Dictionary<string, object?>>(unit.Spinners.Count);
-            bool refused = false;
-            for (int i = 0; i < unit.Spinners.Count; i++)
-            {
-                MechanismSpinnerInput spinner = unit.Spinners[i];
-                if (spinner.Axis is null)
+                if (asset.ReelMeshes[i] is null)
                 {
                     warnings.Add(
-                        $"{typeName} spinner {i + 1}: PU carries a mesh but " +
-                        "AX carries no matching axis; the axis is authored, " +
-                        "never inferred (spec 3a), so this unit is refused.");
-                    refused = true;
-                    continue;
+                        $"Reel (RE)[{i}] did not resolve to a mesh or a " +
+                        "closed Brep; a spinner without a matching mesh " +
+                        "refuses its unit, so the whole mechanism is " +
+                        "refused.");
+                    assetOk = false;
                 }
+                else if (asset.ReelAxes[i] is null)
+                {
+                    warnings.Add(
+                        $"Reel (RE)[{i}] has no matching Reel Axis (AX)" +
+                        "[" + i + "]; a spinner without a matching axis " +
+                        "refuses its unit, so the whole mechanism is " +
+                        "refused: the axis is authored, never inferred.");
+                    assetOk = false;
+                }
+            }
+        }
+
+        Dictionary<string, object?>? mechanismOut = null;
+        if (assetOk && asset.Body is not null)
+        {
+            Dictionary<string, object?> bodyPayload = MeshPayload(asset.Body);
+            bodyPayload[PermanenceField] = Temporary;
+            if (asset.BodyFromBrep)
+                notes.Add($"Mechanism (ME) {BrepMeshingNote}");
+
+            var spinnerPayloads = new List<Dictionary<string, object?>>(asset.ReelMeshes.Count);
+            for (int i = 0; i < asset.ReelMeshes.Count; i++)
+            {
+                MechanismMesh mesh = asset.ReelMeshes[i]!;
+                MechanismAxis axis = asset.ReelAxes[i]!;
                 spinnerPayloads.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["mesh"] = MeshPayload(spinner.Mesh, null),
+                    ["mesh"] = MeshPayload(mesh),
                     ["axis"] = new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        ["origin"] = spinner.Axis.Origin,
-                        ["direction"] = spinner.Axis.Direction,
+                        ["origin"] = axis.Origin,
+                        ["direction"] = axis.Direction,
                     },
-                    ["materialTag"] = spinner.MaterialTag,
-                    // spinners[0] (PU's part 1) is the driven spool, the one
-                    // spinner section 5's derived rotation ever turns
+                    // spinners[0] (RE's item 0) is the driven spool, the
+                    // one spinner section 5's derived rotation ever turns
                     // (requirements doc section 1); anything after it is a
                     // cosmetic wheel, carried but not rotated.
                     ["driven"] = i == 0,
-                    // A spinning part is machine, not the works that remain
-                    // (Param's ruling, see PermanenceField above).
                     [PermanenceField] = Temporary,
                 });
-            }
-            if (refused)
-                continue;
-
-            double reeveFactor = unit.ReeveFactor ?? 1.0;
-            double spoolRadius;
-            if (unit.SpoolRadius is double declared)
-            {
-                spoolRadius = declared;
-            }
-            else
-            {
-                MechanismMesh boundingSource =
-                    unit.Spinners.Count > 0 ? unit.Spinners[0].Mesh : body;
-                spoolRadius = Math.Max(
-                    SmallestBoundingDimension(boundingSource) / 4.0,
-                    MinimumSpoolRadius);
-                notes.Add(
-                    $"{typeName}: SR defaulted to " +
-                    spoolRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                    (unit.Spinners.Count > 0
-                        ? " from the spool's own bounding box (smallest " +
-                          "dimension over 4)."
-                        : " from the body's own bounding box (smallest " +
-                          "dimension over 4), since this unit carries no " +
-                          "spinner."));
+                if (asset.ReelFromBrep[i])
+                    notes.Add($"Reel (RE)[{i}] {BrepMeshingNote}");
             }
 
-            // The pulley body is machine too: it is the reel that comes
-            // away, not the tie or anchor it never touches (Param's ruling,
-            // see PermanenceField above).
-            Dictionary<string, object?> bodyPayload = MeshPayload(body, unit.BodyMaterialTag);
-            bodyPayload[PermanenceField] = Temporary;
+            // SPOOL RADIUS AND REEVE FACTOR are no longer authored ports
+            // (settled port list: his six words plus routing/kind name
+            // eight ports, none of them PR or SR). Reeve factor is 1.0, a
+            // declared constant rather than an authored override. Spool
+            // radius defaults exactly as before: the driven spool's own
+            // bounding box smallest dimension over 4, falling back to the
+            // body's when the mechanism carries no spinner -- said in the
+            // chin so the default is never silent.
+            MechanismMesh boundingSource =
+                spinnerPayloads.Count > 0 ? asset.ReelMeshes[0]! : asset.Body;
+            double spoolRadius = Math.Max(
+                SmallestBoundingDimension(boundingSource) / 4.0,
+                MinimumSpoolRadius);
+            notes.Add(
+                "mechanism: spoolRadius defaulted to " +
+                spoolRadius.ToString("0.####", CultureInfo.InvariantCulture) +
+                (spinnerPayloads.Count > 0
+                    ? " from the driven spool's own bounding box (smallest " +
+                      "dimension over 4)."
+                    : " from the body's own bounding box (smallest " +
+                      "dimension over 4), since this mechanism carries no " +
+                      "spinner."));
 
-            unitPayloads[typeName] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            mechanismOut = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["body"] = bodyPayload,
                 ["spinners"] = spinnerPayloads,
-                ["sockets"] = unit.Sockets.Select(FramePayload).ToList(),
-                ["reeveFactor"] = reeveFactor,
+                ["reeveFactor"] = 1.0,
                 ["spoolRadius"] = spoolRadius,
             };
         }
 
-        var tiePayloads = new List<Dictionary<string, object?>>(ties.Count);
-        if (ties.Count > 0 && rows is null)
+        var instancesOut = new List<Dictionary<string, object?>>();
+        var instanceIds = new HashSet<(int Side, int Mechanism)>();
+        if (mechanismOut is not null)
+        {
+            foreach (MechanismInstanceInput instance in instances)
+            {
+                instanceIds.Add((instance.Id.Side, instance.Id.Mechanism));
+                instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["side"] = instance.Id.Side,
+                    ["mechanism"] = instance.Id.Mechanism,
+                    ["frame"] = FramePayload(instance.Placement),
+                    ["kind"] = instance.Kind ?? "mechanism",
+                    // ONE PLACEMENT CONVENTION (studio's C5/A5): every
+                    // instance carries a placement frame he authored,
+                    // unlike Anchor/Tension Tie's "world" flag below.
+                    ["placement"] = "instance",
+                });
+                if (instance.Kind is null)
+                {
+                    notes.Add(
+                        $"{instance.Id.Label}: no Reel Kind (RK) authored; " +
+                        "tagged the generic kind \"mechanism\".");
+                }
+            }
+        }
+        else if (instances.Count > 0)
         {
             warnings.Add(
-                $"AT carries {ties.Count} anchor tie mesh(es) but no Result " +
-                "was wired to Mechanism: the door-guard proximity check " +
-                "against the anchor rows could not run, and each tie's row " +
-                "is its own position in AT, unconfirmed.");
+                $"{instances.Count} Placement (PL) instance(s) were " +
+                "authored, but the mechanism asset was refused or absent; " +
+                "no instances are produced.");
         }
-        for (int i = 0; i < ties.Count; i++)
+
+        var wiresOut = new List<Dictionary<string, object?>>();
+        foreach (MechanismWireInput wire in wires
+            .OrderBy(w => w.Instance.Side)
+            .ThenBy(w => w.Instance.Mechanism)
+            .ThenBy(w => w.Wire))
         {
-            MechanismAnchorTieInput tie = ties[i];
+            if (!instanceIds.Contains((wire.Instance.Side, wire.Instance.Mechanism)))
+            {
+                warnings.Add(
+                    $"Routing (RT)[{wire.Instance.Side}][{wire.Instance.Mechanism}]" +
+                    $"[{wire.Wire}] has no matching Placement (PL) instance; " +
+                    "wire dropped.");
+                continue;
+            }
+            wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["side"] = wire.Instance.Side,
+                ["mechanism"] = wire.Instance.Mechanism,
+                ["wire"] = wire.Wire,
+                ["route"] = wire.Route.Select(FramePayload).ToList(),
+            });
+        }
+
+        List<Dictionary<string, object?>> anchorsOut =
+            BuildRowParts("Anchor (AN)", anchors, rows, warnings, notes);
+        List<Dictionary<string, object?>> tiesOut =
+            BuildRowParts("Tension Tie (TT)", tensionTies, rows, warnings, notes);
+
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["mechanism"] = mechanismOut,
+            ["instances"] = instancesOut,
+            ["wires"] = wiresOut,
+            ["anchors"] = anchorsOut,
+            ["tensionTies"] = tiesOut,
+        };
+        return JsonSerializer.Serialize(payload, ContractJson.Options);
+    }
+
+    /// <summary>
+    /// Anchor (AN) and Tension Tie (TT) share the SAME door-guard
+    /// (requirements doc section (b): "reused as-is for BOTH new ports ...
+    /// just run twice instead of once"). Both are authored in place in
+    /// world coordinates and never placed by this component; both are
+    /// permanent, and both are validated against the anchor row's own
+    /// nearest node, with a tolerance that scales with the row's own
+    /// characteristic anchor spacing.
+    /// </summary>
+    private static List<Dictionary<string, object?>> BuildRowParts(
+        string portLabel,
+        IReadOnlyList<MechanismRowPartInput> parts,
+        IReadOnlyList<MechanismAnchorRow>? rows,
+        List<string> warnings,
+        List<string> notes)
+    {
+        var results = new List<Dictionary<string, object?>>(parts.Count);
+        if (parts.Count > 0 && rows is null)
+        {
+            warnings.Add(
+                $"{portLabel} carries {parts.Count} mesh(es) but no Result " +
+                "was wired to Mechanism: the door-guard proximity check " +
+                $"against the anchor rows could not run, and each " +
+                $"{portLabel} row is its own position in {portLabel}, " +
+                "unconfirmed.");
+        }
+        foreach (MechanismRowPartInput part in parts)
+        {
+            int i = part.Index;
             if (rows is not null)
             {
                 if (i >= rows.Count)
                 {
                     warnings.Add(
-                        $"AT[{i}] has no matching anchor row (only " +
-                        $"{rows.Count} found by the solved net); its row " +
-                        "index is unvalidated.");
+                        $"{portLabel}[{i}] has no matching anchor row " +
+                        $"(only {rows.Count} found by the solved net); its " +
+                        "row index is unvalidated.");
                 }
                 else if (rows[i].NodePoints.Count == 0)
                 {
                     warnings.Add(
-                        $"anchor row {i} carries no anchor nodes; AT[{i}] " +
-                        "cannot be validated against it.");
+                        $"anchor row {i} carries no anchor nodes; " +
+                        $"{portLabel}[{i}] cannot be validated against it.");
                 }
                 else
                 {
                     IReadOnlyList<double[]> nodePoints = rows[i].NodePoints;
                     double nearest = nodePoints
-                        .Select(p => Distance(p, tie.Centroid))
+                        .Select(p => Distance(p, part.Centroid))
                         .Min();
                     double tolerance = Math.Max(
                         AnchorTieToleranceFactor * CharacteristicSpacing(nodePoints),
@@ -291,66 +440,46 @@ internal static class MechanismCollector
                     if (nearest > tolerance)
                     {
                         warnings.Add(
-                            $"AT[{i}] sits " +
+                            $"{portLabel}[{i}] sits " +
                             nearest.ToString("0.###", CultureInfo.InvariantCulture) +
                             $" from anchor row {i} (nearest anchor node), " +
                             "farther than the door-guard tolerance of " +
                             tolerance.ToString("0.###", CultureInfo.InvariantCulture) +
                             $" ({AnchorTieToleranceFactor.ToString("0.#", CultureInfo.InvariantCulture)}x " +
-                            "the row's own anchor spacing): this tension " +
-                            "tie may be authored against a different solve.");
+                            "the row's own anchor spacing): this part may " +
+                            "be authored against a different solve.");
                     }
                 }
             }
-            tiePayloads.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            results.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["row"] = i,
-                ["mesh"] = MeshPayload(tie.Mesh, null),
-                ["materialTag"] = tie.MaterialTag,
-                // ONE PLACEMENT CONVENTION (studio's C5/A5): the fused tie
-                // and rail is authored in place and exported in world
-                // coordinates already, unlike the reels which are type plus
-                // instance placement. Rather than let the reader infer that
-                // from "this kind has no frame", the flag says so directly:
-                // the studio trusts this word, not the kind, per their ask.
+                ["mesh"] = MeshPayload(part.Mesh),
+                // ONE PLACEMENT CONVENTION (studio's C5/A5): Anchor and
+                // Tension Tie arrive pre-placed in world coordinates,
+                // unlike the mechanism's own instances above; the flag
+                // says so directly rather than leaving it to be inferred
+                // from "this kind carries no frame".
                 ["placement"] = "world",
                 // THE PERMANENT WORKS (Param's ruling, see PermanenceField
-                // above): this mesh fuses the foundation anchor and the
-                // tension tie / column slider rail, the two things that
+                // above): Anchor and Tension Tie are the two things that
                 // remain when the machine comes away.
                 [PermanenceField] = Permanent,
             });
+            if (part.FromBrep)
+                notes.Add($"{portLabel}[{i}] {BrepMeshingNote}");
         }
-
-        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["unitTypes"] = unitPayloads,
-            ["anchorTies"] = tiePayloads,
-        };
-        return JsonSerializer.Serialize(payload, ContractJson.Options);
+        return results;
     }
 
-    public static string TypeName(int type) => type switch
-    {
-        0 => EdgeTypeName,
-        1 => NodeTypeName,
-        _ => string.Empty,
-    };
-
-    private static Dictionary<string, object?> MeshPayload(
-        MechanismMesh mesh, string? materialTag)
-    {
-        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+    private static Dictionary<string, object?> MeshPayload(MechanismMesh mesh) =>
+        new(StringComparer.Ordinal)
         {
             ["vertices"] = mesh.Vertices,
             ["faces"] = mesh.Faces,
         };
-        if (materialTag is not null)
-            payload["materialTag"] = materialTag;
-        return payload;
-    }
 
-    private static Dictionary<string, object?> FramePayload(MechanismFrame frame) =>
+    internal static Dictionary<string, object?> FramePayload(MechanismFrame frame) =>
         new(StringComparer.Ordinal)
         {
             ["origin"] = frame.Origin,
@@ -360,10 +489,9 @@ internal static class MechanismCollector
 
     /// <summary>
     /// The smallest of the three world-axis extents of a mesh's own
-    /// vertices: SR's declared default source (settled section 3a: "the
-    /// {part} 1 spinner's (the spool's) bounding box smallest dimension over
-    /// 4"). Zero for an empty mesh, which the caller floors at
-    /// <see cref="MinimumSpoolRadius"/> rather than dividing by it.
+    /// vertices: the spool-radius default's source. Zero for an empty
+    /// mesh, which the caller floors at <see cref="MinimumSpoolRadius"/>
+    /// rather than dividing by it.
     /// </summary>
     internal static double SmallestBoundingDimension(MechanismMesh mesh)
     {
@@ -382,6 +510,31 @@ internal static class MechanismCollector
             }
         }
         return Math.Min(max[0] - min[0], Math.Min(max[1] - min[1], max[2] - min[2]));
+    }
+
+    /// <summary>The bounding-box centre of a mesh's own vertices, plain arithmetic, used as AN/TT's own door-guard probe point.</summary>
+    internal static double[] BoundingBoxCenter(MechanismMesh mesh)
+    {
+        if (mesh.Vertices.Count == 0)
+            return new double[] { 0.0, 0.0, 0.0 };
+        double[] min = { double.MaxValue, double.MaxValue, double.MaxValue };
+        double[] max = { double.MinValue, double.MinValue, double.MinValue };
+        foreach (double[] v in mesh.Vertices)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (v[axis] < min[axis])
+                    min[axis] = v[axis];
+                if (v[axis] > max[axis])
+                    max[axis] = v[axis];
+            }
+        }
+        return new[]
+        {
+            (min[0] + max[0]) / 2.0,
+            (min[1] + max[1]) / 2.0,
+            (min[2] + max[2]) / 2.0,
+        };
     }
 
     internal static double Distance(double[] a, double[] b)
@@ -410,21 +563,21 @@ internal static class MechanismCollector
 }
 
 /// <summary>
-/// The anchor-row geometry the door-guard (and, from Export, the edge-reel
-/// placement) both read off a solved Result: the same grouping
+/// The anchor-row geometry the door-guard (and, from Export, wire-to-anchor
+/// matching) both read off a solved Result: the same grouping
 /// <c>MouldGeometry.ConnectedGroups</c>/<c>GroupingAdjacency</c> already give
 /// Diagnose's own "every anchor is in a strip of its own" check
-/// (requirements doc section 2), so an edge-reel row and an anchor-tie row
-/// can never disagree about what a row is.
+/// (requirements doc section 2), so an AN/TT row and a wire's matched
+/// anchor can never disagree about what a row is.
 /// </summary>
 internal static class MechanismGeometry
 {
     /// <summary>
     /// Every anchor row's NODE INDICES, in <c>ConnectedGroups</c>' own
     /// order. The one place this grouping is computed, so the door-guard's
-    /// rows (points only) and Export's placement/wires (indices) can never
-    /// disagree about what a row is. Empty when the Result carries no
-    /// equilibrium or no anchors.
+    /// rows (points only) and Export's own wire-to-anchor matching
+    /// (indices) can never disagree about what a row is. Empty when the
+    /// Result carries no equilibrium or no anchors.
     /// </summary>
     public static List<List<int>> AnchorRowIndices(ResultDto result)
     {
@@ -469,20 +622,23 @@ internal static class MechanismGeometry
 
 /// <summary>
 /// MECHANISM ("ME"): the collector for the fourth sibling document, feeding
-/// Export beside RES and Cells exactly as the spec's section 3 describes.
+/// Export beside RES and Cells. NAMED PORTS, settled with Param 2026-09-08
+/// night: "anchor, tension tie, mechanism, mechanism normal, mechanism
+/// reel, reel plane", plus Routing and Reel Kind (this document's own
+/// additions, needed to carry what his six words describe but do not name
+/// a port for).
 ///
-/// Every port is optional and every one is a tree except AT and RES, so an
-/// author who wants only a pulley unit, only a tension tie, or nothing at
-/// all can wire exactly that. Nothing here places anything: PU/AX/PS/PR/SR
-/// travel unit-local and AT travels in world coordinates exactly as
-/// authored, validated rather than placed (the door-guard rule). Result
-/// (RES) is wired ONLY so that door-guard has anchor rows to check AT
-/// against; placement itself is Export's job, against the Result it already
-/// owns.
+/// Every port is optional, so an author who wants only a mechanism, only a
+/// tension tie, or nothing at all can wire exactly that. Nothing here
+/// PLACES anything: he places every instance himself (Placement), and
+/// Anchor/Tension Tie travel in world coordinates exactly as authored,
+/// validated rather than placed (the door-guard rule). Result (RES) is
+/// wired so the door-guard has anchor rows to check Anchor/Tension Tie
+/// against, and so Export can later match each wire to a net vertex.
 ///
 /// Nothing wired produces an empty Payload and a quiet chin (spec section 8
-/// item 6): Export reads an empty Payload as "no mechanism document for this
-/// study" exactly the way it reads no Cells as "no skin document".
+/// item 6): Export reads an empty Payload as "no mechanism document for
+/// this study" exactly the way it reads no Cells as "no skin document".
 /// </summary>
 public sealed class MechanismCollectorComponent : NativeComponentBase
 {
@@ -490,10 +646,9 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         : base(
             "Mechanism",
             "ME",
-            "Collect the reeling machine's authored parts -- the pulley " +
-            "units and their spinners with their own rotation axes, the " +
-            "wire routing, the reeve factor and spool radius, and the " +
-            "anchor tie authored in place -- and validate them into one " +
+            "Collect the reeling machine's authored parts on their named " +
+            "ports -- Anchor, Tension Tie, Mechanism, Placement, Reel, " +
+            "Reel Axis, Routing, Reel Kind -- and validate them into one " +
             "payload for Export's mechanism document. Nothing wired " +
             "produces nothing: this is the fourth sibling document, and " +
             "it is optional per study.",
@@ -511,83 +666,98 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             new ResultParam(),
             "Result",
             "RES",
-            "The solved Result, wired ONLY so the anchor tie (AT) can be " +
-            "validated against the anchor rows it should sit beside. " +
-            "Placement is not computed here (Export owns that); AT wired " +
-            "with no Result here is accepted but its proximity check is " +
-            "skipped and said so.",
+            "The solved Result, wired so Anchor (AN) and Tension Tie (TT) " +
+            "can be validated against the anchor rows they should sit " +
+            "beside, and so Export can match each wire (RT) to a net " +
+            "vertex (default: wire order against anchor order along the " +
+            "row). Placement is authored, not computed here or by Export.",
             GH_ParamAccess.item);
         parameters[0].Optional = true;
-        parameters.AddMeshParameter(
-            "Pulley Units",
-            "PU",
-            "One mesh per part, as a tree path {type}{part}: type 0 is " +
-            "the edge reel (anchor-line unit), type 1 the node reel " +
-            "(principal-node unit); within a type, part 0 is ALWAYS the " +
-            "static body and part 1..N are the spinners in order. A type " +
-            "with only part 0 is a legal fully-static unit. A missing " +
-            "type means the machine has no reels of that kind.",
-            GH_ParamAccess.tree);
+
+        parameters.AddGenericParameter(
+            "Anchor",
+            "AN",
+            "The foundation anchor: one mesh (or closed Brep, meshed " +
+            "here and said so) per anchored row, authored IN PLACE in " +
+            "WORLD coordinates. This component computes no placement for " +
+            "it; it validates it against the anchor rows (a proximity " +
+            "check, named by row when one strays).",
+            GH_ParamAccess.list);
         parameters[1].Optional = true;
-        parameters.AddPlaneParameter(
-            "Spinner Axes",
-            "AX",
-            "One rotation-axis plane per spinner, matching Pulley Units' " +
-            "{type}{part} path for part >= 1 only: plane origin is a " +
-            "point on the axis, plane Z is the axis direction, both in " +
-            "the unit's own local space. A spinner mesh with no matching " +
-            "axis here is refused: the axis is authored, never inferred.",
-            GH_ParamAccess.tree);
+
+        parameters.AddGenericParameter(
+            "Tension Tie",
+            "TT",
+            "The sliding ground bar / column tension tie: one mesh (or " +
+            "closed Brep, meshed here and said so) per anchored row, " +
+            "authored IN PLACE in WORLD coordinates and validated " +
+            "against the anchor rows exactly as Anchor (AN) is.",
+            GH_ParamAccess.list);
         parameters[2].Optional = true;
-        parameters.AddPlaneParameter(
-            "Sockets",
-            "PS",
-            "The wire's routing frames through one unit type, in WIRE " +
-            "ORDER, unit-local space: one branch per {type} (matching " +
-            "Pulley Units' outer index only, not part), items in the " +
-            "order the wire passes them. A type with no branch here " +
-            "routes with no via points.",
-            GH_ParamAccess.tree);
+
+        parameters.AddGenericParameter(
+            "Mechanism",
+            "ME",
+            "The ONE authored mechanism body (a mesh, or a closed Brep " +
+            "meshed here and said so), in the unit's own local space. " +
+            "Instanced at every Placement (PL) frame -- never a copy per " +
+            "instance.",
+            GH_ParamAccess.item);
         parameters[3].Optional = true;
-        parameters.AddNumberParameter(
-            "Reeve Factor",
-            "PR",
-            "Rope crossing the spool per unit of net-side length change, " +
-            "one number per {type}; default 1.0 when a type's branch is " +
-            "absent or empty.",
+
+        parameters.AddPlaneParameter(
+            "Placement",
+            "PL",
+            "One placement frame per instance, tree path " +
+            "{side}{mechanism}, world coordinates: where he puts the " +
+            "mechanism. Authored by him; this component computes no " +
+            "placement.",
             GH_ParamAccess.tree);
         parameters[4].Optional = true;
-        parameters.AddNumberParameter(
-            "Spool Radius",
-            "SR",
-            "One number per {type}; when absent, defaulted from the " +
-            "part 1 spinner's own bounding box (smallest dimension over " +
-            "4), or the body's when the type carries no spinner, and " +
-            "said in the chin so the default is never silent.",
-            GH_ParamAccess.tree);
+
+        parameters.AddGenericParameter(
+            "Reel",
+            "RE",
+            "The spinning parts' meshes (or closed Breps, meshed here " +
+            "and said so), unit-local space, authored once: item 0 is " +
+            "the driven spool, the rest are cosmetic wheels carried but " +
+            "not rotated.",
+            GH_ParamAccess.list);
         parameters[5].Optional = true;
-        parameters.AddMeshParameter(
-            "Anchor Ties",
-            "AT",
-            "The sliding ground bar, anchor clamps and column tension " +
-            "tie as ONE authored mesh per anchor row, in the same row " +
-            "order the solved net's anchor grouping gives (item 0 is " +
-            "row 0). Authored IN PLACE and exported in WORLD " +
-            "coordinates: this component computes no placement for it, " +
-            "it validates it against the anchor rows (a proximity check, " +
-            "named by index when a tie strays).",
+
+        parameters.AddPlaneParameter(
+            "Reel Axis",
+            "AX",
+            "One rotation-axis plane per Reel (RE) entry, matching it " +
+            "1:1 by position: plane origin a point on the axis, plane Z " +
+            "the axis direction, unit-local space. A Reel mesh with no " +
+            "matching axis here refuses the WHOLE mechanism: the axis " +
+            "is authored, never inferred.",
             GH_ParamAccess.list);
         parameters[6].Optional = true;
-        parameters.AddTextParameter(
-            "Materials",
-            "MT",
-            "Tags per part, matched by position: Pulley Units' own " +
-            "{type}{part} paths for body/spinner tags, plus {2}{row} for " +
-            "each Anchor Tie row. A missing tag falls back to the " +
-            "part's own name (for example 'edge body', 'node spinner1', " +
-            "'anchor tie 0').",
+
+        parameters.AddPlaneParameter(
+            "Routing",
+            "RT",
+            "The wire's routing frames, tree path {side}{mechanism}" +
+            "{wire}: an ordered list of planes per wire, unit-local " +
+            "space, in threading order, planes[0] the NET END (his " +
+            "ruling; validated after placement, a reversed list is " +
+            "named).",
             GH_ParamAccess.tree);
         parameters[7].Optional = true;
+
+        parameters.AddTextParameter(
+            "Reel Kind",
+            "RK",
+            "One word per instance, tree path {side}{mechanism} " +
+            "matching Placement (PL): \"edge\" or \"node\", naming which " +
+            "functional family this instance belongs to. Optional and " +
+            "purely informational: an unspecified instance is still " +
+            "built, tagged the generic kind \"mechanism\", and a chin " +
+            "remark says so.",
+            GH_ParamAccess.tree);
+        parameters[8].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
@@ -603,10 +773,11 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         parameters.AddTextParameter(
             "Status",
             "ST",
-            "What was received (unit types, spinners, anchor ties, " +
-            "sockets, whether a Result was wired), then any named " +
-            "warning the door-guard raised, then any default the chin " +
-            "owes an author who left SR blank.",
+            "What was received (the mechanism body, its reels, how many " +
+            "placements and wires, Anchor/Tension Tie rows, whether a " +
+            "Result was wired), then any named warning the door-guard or " +
+            "the axis check raised, then any note the chin owes about a " +
+            "default or a Brep meshed in passing.",
             GH_ParamAccess.item);
     }
 
@@ -614,24 +785,32 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     {
         try
         {
-            var shapeWarnings = new List<string>();
-            var units = ReadUnits(data, shapeWarnings);
-            var ties = ReadAnchorTies(data, shapeWarnings);
+            var warnings = new List<string>();
+            var notes = new List<string>();
+
             bool hasResult = TryReadResult(data, out ResultDto? result);
             List<MechanismAnchorRow>? rows =
                 hasResult ? MechanismGeometry.AnchorRows(result!) : null;
 
-            var warnings = new List<string>(shapeWarnings);
-            var notes = new List<string>();
+            List<MechanismRowPartInput> anchors = ReadRowParts(data, 1, "AN", warnings);
+            List<MechanismRowPartInput> ties = ReadRowParts(data, 2, "TT", warnings);
+            MechanismAssetInput asset = ReadAsset(data, warnings);
+            List<MechanismInstanceInput> instances = ReadInstances(data, warnings);
+            List<MechanismWireInput> wires = ReadWires(data, warnings);
+
             string? payload = MechanismCollector.Build(
-                units, ties, rows, warnings, notes);
+                asset, instances, wires, anchors, ties, rows, warnings, notes);
 
             var status = new List<string>
             {
-                units.Count == 0 && ties.Count == 0
+                payload is null
                     ? "received: nothing wired; no mechanism document."
-                    : $"received: {units.Count} pulley unit type(s), " +
-                      $"{ties.Count} anchor tie(s), Result " +
+                    : "received: mechanism body " +
+                      (asset.Body is null ? "not authored" : "authored") +
+                      $", {asset.ReelMeshes.Count} reel(s), " +
+                      $"{instances.Count} placement(s), {wires.Count} " +
+                      $"wire(s), {anchors.Count} anchor(s), {ties.Count} " +
+                      "tension tie(s), Result " +
                       (hasResult ? "wired." : "not wired."),
             };
             foreach (string warning in warnings)
@@ -649,7 +828,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             data.SetData(1, string.Join(Environment.NewLine, status));
             Message = payload is null
                 ? "nothing wired"
-                : $"{units.Count} unit type(s), {ties.Count} tie(s)";
+                : $"{instances.Count} instance(s), {wires.Count} wire(s)";
         }
         catch (Exception error)
         {
@@ -668,92 +847,165 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return true;
     }
 
-    private List<MechanismUnitInput> ReadUnits(
-        IGH_DataAccess data, List<string> warnings)
+    private List<MechanismRowPartInput> ReadRowParts(
+        IGH_DataAccess data, int index, string label, List<string> warnings)
     {
-        data.GetDataTree(1, out GH_Structure<GH_Mesh> puTree);
-        data.GetDataTree(2, out GH_Structure<GH_Plane> axTree);
-        data.GetDataTree(3, out GH_Structure<GH_Plane> psTree);
-        data.GetDataTree(4, out GH_Structure<GH_Number> prTree);
-        data.GetDataTree(5, out GH_Structure<GH_Number> srTree);
-        data.GetDataTree(7, out GH_Structure<GH_String> mtTree);
-
-        // {type}{part} -> mesh, from PU's own two-level paths.
-        var bodies = new Dictionary<int, MechanismMesh>();
-        var spinnersByType = new Dictionary<int, SortedDictionary<int, MechanismMesh>>();
-        foreach (GH_Path path in puTree.Paths)
+        var items = new List<object>();
+        data.GetDataList(index, items);
+        var parts = new List<MechanismRowPartInput>(items.Count);
+        for (int i = 0; i < items.Count; i++)
         {
-            if (path.Indices.Length != 2)
+            if (!TryMeshOrBrep(items[i], out MechanismMesh? mesh, out bool fromBrep) ||
+                mesh is null)
             {
                 warnings.Add(
-                    $"PU path {{{string.Join(",", path.Indices)}}} is not a " +
-                    "{type}{part} two-level path; ignored.");
+                    $"{label}[{i}] did not resolve to a mesh or a closed " +
+                    "Brep; skipped.");
                 continue;
             }
-            int type = path.Indices[0];
-            int part = path.Indices[1];
-            IList branch = puTree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            GH_Mesh? meshGoo = branch[0] as GH_Mesh;
-            if (meshGoo?.Value is null)
+            double[] centroid = MechanismCollector.BoundingBoxCenter(mesh);
+            parts.Add(new MechanismRowPartInput(i, mesh, centroid, fromBrep));
+        }
+        return parts;
+    }
+
+    private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings)
+    {
+        object? meItem = null;
+        data.GetData(3, ref meItem);
+        MechanismMesh? body = null;
+        bool bodyFromBrep = false;
+        if (meItem is not null)
+        {
+            if (!TryMeshOrBrep(meItem, out body, out bodyFromBrep) || body is null)
             {
-                warnings.Add($"PU[{type}][{part}] is null; skipped.");
-                continue;
-            }
-            MechanismMesh mesh = MeshFromRhino(meshGoo.Value);
-            if (part == 0)
-            {
-                bodies[type] = mesh;
-            }
-            else
-            {
-                if (!spinnersByType.TryGetValue(type, out var spinners))
-                {
-                    spinners = new SortedDictionary<int, MechanismMesh>();
-                    spinnersByType[type] = spinners;
-                }
-                spinners[part] = mesh;
+                warnings.Add(
+                    "Mechanism (ME) did not resolve to a mesh or a closed " +
+                    "Brep; the mechanism has no body.");
+                body = null;
             }
         }
 
-        var axes = new Dictionary<(int Type, int Part), MechanismAxis>();
-        foreach (GH_Path path in axTree.Paths)
+        var reItems = new List<object>();
+        data.GetDataList(5, reItems);
+        var reelMeshes = new List<MechanismMesh?>(reItems.Count);
+        var reelFromBrep = new List<bool>(reItems.Count);
+        for (int i = 0; i < reItems.Count; i++)
+        {
+            if (!TryMeshOrBrep(reItems[i], out MechanismMesh? mesh, out bool fromBrep))
+            {
+                warnings.Add(
+                    $"Reel (RE)[{i}] did not resolve to a mesh or a " +
+                    "closed Brep; treated as missing.");
+                reelMeshes.Add(null);
+                reelFromBrep.Add(false);
+                continue;
+            }
+            reelMeshes.Add(mesh);
+            reelFromBrep.Add(fromBrep);
+        }
+
+        var axItems = new List<GH_Plane>();
+        data.GetDataList(6, axItems);
+        var reelAxes = new List<MechanismAxis?>(axItems.Count);
+        foreach (GH_Plane? planeGoo in axItems)
+        {
+            if (planeGoo is null)
+            {
+                reelAxes.Add(null);
+                continue;
+            }
+            Plane plane = planeGoo.Value;
+            reelAxes.Add(new MechanismAxis(
+                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                new[] { plane.Normal.X, plane.Normal.Y, plane.Normal.Z }));
+        }
+
+        return new MechanismAssetInput(body, bodyFromBrep, reelMeshes, reelFromBrep, reelAxes);
+    }
+
+    private List<MechanismInstanceInput> ReadInstances(IGH_DataAccess data, List<string> warnings)
+    {
+        data.GetDataTree(4, out GH_Structure<GH_Plane> plTree);
+        data.GetDataTree(8, out GH_Structure<GH_String> rkTree);
+
+        var kinds = new Dictionary<(int Side, int Mechanism), string>();
+        foreach (GH_Path path in rkTree.Paths)
         {
             if (path.Indices.Length != 2)
             {
                 warnings.Add(
-                    $"AX path {{{string.Join(",", path.Indices)}}} is not a " +
-                    "{type}{part} two-level path; ignored.");
+                    $"RK path {{{string.Join(",", path.Indices)}}} is not " +
+                    "a {side}{mechanism} two-level path; ignored.");
                 continue;
             }
-            int type = path.Indices[0];
-            int part = path.Indices[1];
-            IList branch = axTree.get_Branch(path);
+            IList branch = rkTree.get_Branch(path);
             if (branch.Count == 0)
                 continue;
+            GH_String? textGoo = branch[0] as GH_String;
+            if (textGoo is null || string.IsNullOrWhiteSpace(textGoo.Value))
+                continue;
+            kinds[(path.Indices[0], path.Indices[1])] = textGoo.Value;
+        }
+
+        var instances = new List<MechanismInstanceInput>();
+        foreach (GH_Path path in plTree.Paths)
+        {
+            if (path.Indices.Length != 2)
+            {
+                warnings.Add(
+                    $"PL path {{{string.Join(",", path.Indices)}}} is not " +
+                    "a {side}{mechanism} two-level path; ignored.");
+                continue;
+            }
+            int side = path.Indices[0];
+            int mechanism = path.Indices[1];
+            IList branch = plTree.get_Branch(path);
+            if (branch.Count == 0)
+                continue;
+            if (branch.Count > 1)
+            {
+                warnings.Add(
+                    $"PL[{side}][{mechanism}] carries {branch.Count} " +
+                    "planes; only the first is used (one plane per " +
+                    "instance).");
+            }
             GH_Plane? planeGoo = branch[0] as GH_Plane;
             if (planeGoo is null)
-                continue;
-            Plane plane = planeGoo.Value;
-            axes[(type, part)] = new MechanismAxis(
-                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
-                new[] { plane.Normal.X, plane.Normal.Y, plane.Normal.Z });
-        }
-
-        var sockets = new Dictionary<int, List<MechanismFrame>>();
-        foreach (GH_Path path in psTree.Paths)
-        {
-            if (path.Indices.Length != 1)
             {
-                warnings.Add(
-                    $"PS path {{{string.Join(",", path.Indices)}}} is not a " +
-                    "single {type} path; ignored.");
+                warnings.Add($"PL[{side}][{mechanism}] is null; instance skipped.");
                 continue;
             }
-            int type = path.Indices[0];
+            Plane plane = planeGoo.Value;
+            var frame = new MechanismFrame(
+                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z });
+            kinds.TryGetValue((side, mechanism), out string? kind);
+            instances.Add(new MechanismInstanceInput(
+                new MechanismInstanceId(side, mechanism), frame, kind));
+        }
+        return instances;
+    }
+
+    private List<MechanismWireInput> ReadWires(IGH_DataAccess data, List<string> warnings)
+    {
+        data.GetDataTree(7, out GH_Structure<GH_Plane> rtTree);
+        var wires = new List<MechanismWireInput>();
+        foreach (GH_Path path in rtTree.Paths)
+        {
+            if (path.Indices.Length != 3)
+            {
+                warnings.Add(
+                    $"RT path {{{string.Join(",", path.Indices)}}} is not " +
+                    "a {side}{mechanism}{wire} three-level path; ignored.");
+                continue;
+            }
+            int side = path.Indices[0];
+            int mechanism = path.Indices[1];
+            int wire = path.Indices[2];
             var frames = new List<MechanismFrame>();
-            foreach (GH_Plane planeGoo in psTree.get_Branch(path))
+            foreach (GH_Plane planeGoo in rtTree.get_Branch(path))
             {
                 if (planeGoo is null)
                     continue;
@@ -763,141 +1015,49 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                     new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
                     new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
             }
-            sockets[type] = frames;
-        }
-
-        var reeve = ReadOneNumberPerType(prTree, "PR", warnings);
-        var spool = ReadOneNumberPerType(srTree, "SR", warnings);
-
-        var tags = new Dictionary<(int Type, int Part), string>();
-        foreach (GH_Path path in mtTree.Paths)
-        {
-            if (path.Indices.Length != 2)
-                continue;
-            IList branch = mtTree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            GH_String? textGoo = branch[0] as GH_String;
-            if (textGoo is null || string.IsNullOrWhiteSpace(textGoo.Value))
-                continue;
-            tags[(path.Indices[0], path.Indices[1])] = textGoo.Value;
-        }
-
-        var types = new SortedSet<int>(bodies.Keys);
-        foreach (int type in spinnersByType.Keys)
-            types.Add(type);
-
-        var units = new List<MechanismUnitInput>(types.Count);
-        foreach (int type in types)
-        {
-            bodies.TryGetValue(type, out MechanismMesh? body);
-            var spinnerInputs = new List<MechanismSpinnerInput>();
-            if (spinnersByType.TryGetValue(type, out var spinnerMeshes))
-            {
-                foreach ((int part, MechanismMesh mesh) in spinnerMeshes)
-                {
-                    axes.TryGetValue((type, part), out MechanismAxis? axis);
-                    string tag = tags.TryGetValue((type, part), out string? explicitTag)
-                        ? explicitTag
-                        : $"{MechanismCollector.TypeName(type)} spinner{part}";
-                    spinnerInputs.Add(new MechanismSpinnerInput(mesh, axis, tag));
-                }
-            }
-            sockets.TryGetValue(type, out List<MechanismFrame>? typeSockets);
-            reeve.TryGetValue(type, out double? typeReeve);
-            spool.TryGetValue(type, out double? typeSpool);
-            string bodyTag = tags.TryGetValue((type, 0), out string? explicitBodyTag)
-                ? explicitBodyTag
-                : $"{MechanismCollector.TypeName(type)} body";
-            units.Add(new MechanismUnitInput(
-                type,
-                body,
-                bodyTag,
-                spinnerInputs,
-                (IReadOnlyList<MechanismFrame>?)typeSockets ?? Array.Empty<MechanismFrame>(),
-                typeReeve,
-                typeSpool));
-        }
-        return units;
-    }
-
-    private static Dictionary<int, double?> ReadOneNumberPerType(
-        GH_Structure<GH_Number> tree, string portName, List<string> warnings)
-    {
-        var byType = new Dictionary<int, double?>();
-        foreach (GH_Path path in tree.Paths)
-        {
-            if (path.Indices.Length != 1)
+            if (frames.Count == 0)
             {
                 warnings.Add(
-                    $"{portName} path {{{string.Join(",", path.Indices)}}} " +
-                    "is not a single {type} path; ignored.");
+                    $"RT[{side}][{mechanism}][{wire}] carries no routing " +
+                    "planes; wire dropped.");
                 continue;
             }
-            int type = path.Indices[0];
-            IList branch = tree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            if (branch.Count > 1)
-            {
-                warnings.Add(
-                    $"{portName}[{type}] carries {branch.Count} values; " +
-                    "only the first is used.");
-            }
-            GH_Number? numberGoo = branch[0] as GH_Number;
-            if (numberGoo is null)
-                continue;
-            byType[type] = numberGoo.Value;
+            wires.Add(new MechanismWireInput(
+                new MechanismInstanceId(side, mechanism), wire, frames));
         }
-        return byType;
+        return wires;
     }
 
-    private List<MechanismAnchorTieInput> ReadAnchorTies(
-        IGH_DataAccess data, List<string> warnings)
+    /// <summary>
+    /// Reads a mesh directly, or a closed Brep meshed here with Rhino's
+    /// default meshing parameters (spec's own validation list: "a brep
+    /// accepted and meshed says so with the settings used" -- the note
+    /// itself is added by <see cref="MechanismCollector"/> from the
+    /// <c>fromBrep</c> flag this returns, so the setting stays named in
+    /// ONE place).
+    /// </summary>
+    private static bool TryMeshOrBrep(object? item, out MechanismMesh? mesh, out bool fromBrep)
     {
-        data.GetDataTree(6, out GH_Structure<GH_Mesh> atTree);
-        data.GetDataTree(7, out GH_Structure<GH_String> mtTree);
-
-        var atTags = new Dictionary<int, string>();
-        foreach (GH_Path path in mtTree.Paths)
+        fromBrep = false;
+        mesh = null;
+        switch (item)
         {
-            if (path.Indices.Length != 2 || path.Indices[0] != 2)
-                continue;
-            IList branch = mtTree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            GH_String? textGoo = branch[0] as GH_String;
-            if (textGoo is null || string.IsNullOrWhiteSpace(textGoo.Value))
-                continue;
-            atTags[path.Indices[1]] = textGoo.Value;
+            case Mesh m:
+                mesh = MeshFromRhino(m);
+                return true;
+            case Brep b:
+                Mesh[] pieces = Mesh.CreateFromBrep(b, MeshingParameters.Default);
+                if (pieces is null || pieces.Length == 0)
+                    return false;
+                var joined = new Mesh();
+                foreach (Mesh piece in pieces)
+                    joined.Append(piece);
+                mesh = MeshFromRhino(joined);
+                fromBrep = true;
+                return true;
+            default:
+                return false;
         }
-
-        var ties = new List<MechanismAnchorTieInput>(atTree.DataCount);
-        int index = 0;
-        foreach (GH_Path path in atTree.Paths)
-        {
-            foreach (GH_Mesh? meshGoo in atTree.get_Branch(path))
-            {
-                if (meshGoo?.Value is null)
-                {
-                    warnings.Add($"AT[{index}] is null; skipped.");
-                    index++;
-                    continue;
-                }
-                Mesh mesh = meshGoo.Value;
-                BoundingBox box = mesh.GetBoundingBox(true);
-                Point3d centre = box.Center;
-                string tag = atTags.TryGetValue(index, out string? explicitTag)
-                    ? explicitTag
-                    : $"anchor tie {index}";
-                ties.Add(new MechanismAnchorTieInput(
-                    MeshFromRhino(mesh),
-                    new[] { centre.X, centre.Y, centre.Z },
-                    tag));
-                index++;
-            }
-        }
-        return ties;
     }
 
     private static MechanismMesh MeshFromRhino(Mesh mesh)
