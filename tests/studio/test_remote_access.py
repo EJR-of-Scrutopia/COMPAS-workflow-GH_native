@@ -1167,6 +1167,113 @@ def test_the_client_size_floor_still_mirrors_the_server():
     assert float(client.group(2)) == float(server_max.group(1))
 
 
+def test_the_machine_draws_the_way_he_asked():
+    """Param, on first seeing his machine in the app, 2026-09-09: the
+    anchor once; the machine always there with the formwork and it was
+    not; no animation; wires the same as the cables; the cables cropping
+    through the drums; only one motor of seven; the bottom of the machine
+    and the anchor on the floor; frame 1 in the principal bars' metal;
+    real textures on every part.
+
+    Each fix here rests on a measurement of his real export, recorded in
+    the register and the contract page. The pins are contiguous where an
+    early return could otherwise leave the text standing."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    build = js[js.index("async function buildMachine() {"):
+               js.index("// Where a wire first meets the machine")]
+    act = js[js.index("function applyMachineAct(t, strikeU) {"):
+             js.index("function reportMachineChecks(model) {")]
+
+    # THE MACHINE NEVER LEFT THE SCENE; IT WAS HIDDEN. Measured: 180
+    # meshes present at every step, hidden by the strike once the clock
+    # had been played or scrubbed to the end, where it sticks. The gate is
+    # now the formwork's own lens in the timeline, and standing in the
+    # rest modes, exactly as the finished net is.
+    assert "formworkVisibility({ t, seconds, strikeU," in act
+    assert 'state.showMode !== "shell"' in act, "shell is the vault alone"
+    assert "    temporary.visible = true;             // standing, as the finished net is" in act
+    # The build lands after the load's own scene pass (it awaits its
+    # materials), so it applies the clock itself or stands in a pose the
+    # clock did not dictate.
+    assert "  reportMachineChecks(model);\n" \
+        "  // Born into the state the clock dictates." in build
+    assert "applySceneAtTime(state.timeline.t);" in build
+    # And it no longer waits on a bundle the first load has not got yet.
+    assert "  if (!state.mechanism) return;" in build
+    assert "!state.bundle" not in build
+
+    # THE ANCHOR ONCE. The tie is authored at row scale in the body frame;
+    # stamped per instance it appeared three times a side.
+    assert "    if (part.permanent) {\n" \
+        "      const mesh = new THREE.Mesh(geometry, machineMaterial(part));\n" \
+        "      mesh.castShadow = mesh.receiveShadow = true;\n" \
+        "      permanent.add(mesh);" in build
+
+    # THE WIRES ARE THE CABLES: the same steel the net clones, transparent
+    # from birth, and never vertexColors.
+    assert "  const wireMaterial = materials.steel.clone();\n" \
+        "  wireMaterial.transparent = true;" in build
+    assert "vertexColors = true" not in build, (
+        "the net needs that for setColorAt; a plain Mesh with no colour "
+        "attribute would multiply by nothing and go black")
+
+    # THE CENTRELINE IS CORRECTED BEFORE IT IS LOFTED, and the loft sweeps
+    # a rotation-minimising frame rather than trusting the exported x/y.
+    assert "wireCentreline(wire.route, reelAxes, state.wireRadius), state.wireRadius);" in build
+    loft = _js_function(js, "function loftWire(points, radius)")
+    assert "x = [x[0] - tn[0] * along, x[1] - tn[1] * along, x[2] - tn[2] * along];" in loft, (
+        "parallel transport: the previous x with its along-tangent part removed")
+
+    # THE RADIUS A REEL WINDS AT comes from the frames it owns, not from
+    # the document's spoolRadius (0.030, which matches nothing in the
+    # file) and not from the flange.
+    assert "part.contactRadius = reelContactRadius(model.wires, part.index, part.axis)" in build
+    measure = _js_function(js, "function measureSpoolRadius(part)")
+    assert "if (r > 1e-3 && r < nearest) nearest = r;" in measure, "the barrel, not the flange"
+
+    # SEVEN MOTORS FROM ONE BODY, said out loud.
+    assert "const shifts = motorShifts(model);" in build
+    assert 'const placements = part.kind === "motor" ? shifts : [[0, 0, 0]];' in build
+    assert 'logStudio("machine: the document carries ONE motor body; it is stamped "' in build
+
+    # THE FLOOR: lifted so the lowest point sits on the studio's floor,
+    # and the log names which part that was and where it was authored.
+    assert "  const floor = groundLevel();\n" \
+        "  const lift = Number.isFinite(lowest) ? floor - lowest : 0;\n" \
+        "  group.position.z = lift;" in build
+    # The wire head and the free spans live in that lifted, dropping frame.
+    head = _js_function(js, "function wireHead(entry, into)")
+    assert "into.z += machineObjects.group.position.z + machineObjects.temporary.position.z;" in head
+    assert "      entry.free.position.z -= parentZ;" in act
+
+    # THE SPIN is measured along the RIB through the net, not the free
+    # span: on the real file the route's first frame IS the anchor, so
+    # the free span is zero at every frame and the reels stood still.
+    assert "entry.rib = ribChain(edges, finalPose, wire.netVertex);" in act
+    assert "entry.ribAtFrame0 = chainLength(firstPose, entry.rib) / 2;" in act, (
+        "halved: two machines pull on one rib")
+    assert "served.ribNow * (1 - prestress), served.wire.reeveFactor, radius);" in act
+    # THE SPIN turns about the drum's own axis through its own origin.
+    assert ".multiply(pivotTo).multiply(machineMatrix).multiply(pivotBack);" in act
+    assert "pivotTo.makeTranslation(axis.origin[0], axis.origin[1], axis.origin[2]);" in act
+
+    # TEXTURES: smooth normals first, then a triangle soup with box UVs at
+    # the picture's own tile size. Without UVs every library material read
+    # as one flat texel.
+    geom = _js_function(js, "function geometryFromPart(part)")
+    assert "geometry.computeVertexNormals();" in geom
+    assert "geometry = geometry.toNonIndexed();" in geom
+    assert "boxUVs(positions, centre, [0, 0], 1 / tile[0], 1 / tile[1])" in geom
+    assert 'geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));' in geom, (
+        "computing the UVs is not the same as giving them to the mesh")
+    # Twice in the file: the voussoirs' and the machine's. A mutation that
+    # stripped the PIECES' UVs was caught by nothing until this line.
+    assert js.count('geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));') == 2
+    assert geom.index("computeVertexNormals") < geom.index("toNonIndexed"), (
+        "normals are smoothed while the corners are still shared")
+
+
 def test_the_entry_box_is_torn_down_exactly_once():
     """The red banner Param photographed: "Uncaught NotFoundError: Failed
     to execute 'remove' on 'Element': The node to be removed is no longer

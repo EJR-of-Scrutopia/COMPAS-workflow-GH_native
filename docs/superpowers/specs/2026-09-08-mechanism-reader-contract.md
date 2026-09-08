@@ -521,3 +521,43 @@ The lesson is about checks, not about this bug: **a check that cries
 wolf is worse than no check, because the one time it is right nobody
 looks.** Verify a complaint in the frame the data lives in before
 reporting it to anybody.
+
+## Departures from the contract, made on the real file, 2026-09-09
+
+Recorded because the page above still states the negotiated rule and a
+reader who trusts it will build the wrong thing twice.
+
+1. **length_at(t) is the RIB, not the free span.** The contract defines
+   take-up from the free span between the net vertex and the wire's
+   first routing frame. On the real file that span is zero at every
+   frame: route[0] IS the anchor (gap 0.0000 m, reproduced on both
+   sides) and the anchors are the net's fixed supports. Read that way
+   the reels turned 0.008 of a turn. The studio now measures take-up
+   along the rib of net cable leaving the anchor and climbing over the
+   vault -- from the anchor to its highest neighbour in the final pose,
+   then the straightest continuation -- halved between the two machines
+   that pull one rib. Measured: -1.9 turns mid-build, -1.1 at the end.
+   `ribChain` and `chainLength` in static/mechanism.js.
+
+2. **Routing frame origins are the CONTACT LINE, not the centreline.**
+   Spools 0.049988 m from their axis against a 0.0500 barrel; pulleys at
+   exactly the groove-bottom radii 0.170 / 0.200 / 0.300. The studio
+   pushes the centreline out by one wire radius, radially from the drum
+   axis, at every reel-owned frame, and blends that offset along the
+   straight runs. If the exporter moves to centreline frames, remove the
+   offset (`wireCentreline`, the `k = wireRadius / about.radius` line).
+
+3. **The reel radius is measured, not read.** `spoolRadius` 0.030
+   matches no reel in the file. Each reel's contact radius is the
+   median distance of the frames it owns from its own axis.
+
+4. **The permanent parts are stamped ONCE, untransformed.** The tie is
+   authored at row scale in the body frame, centred on x 0, y 0.
+
+5. **The motors are replicated by the studio.** One authored body,
+   stamped at every spool of its bank. To be removed when the exporter
+   authors them.
+
+6. **The machine is lifted to the floor.** z = 0 in the file is the wire
+   plane; the machine's lowest point (the tie's feet, -0.117) is placed
+   on the studio floor, and the log names the lift.

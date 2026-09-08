@@ -2219,7 +2219,8 @@ def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert ("window.__studio = { state, scene, camera, controls, "
             "applyDayCycle, placeProp,\n  ensurePropTemplate, "
-            "renderObjectPreview, composer, buildMachine }" in js), (
+            "renderObjectPreview, composer, buildMachine,\n"
+            "  machine: () => machineObjects }" in js), (
         "the probe rig reads app state through this hook, and frames "
         "detail captures through the camera and controls; applyDayCycle is "
         "exposed too (Task 3) so a probe can drive the day cycle directly "
@@ -2233,7 +2234,10 @@ def test_the_probe_hook_exposes_state_and_scene():
         "readings settled on rAF come off a canvas that has not been "
         "redrawn since the change they are meant to be measuring; and "
         "buildMachine, so a probe can hand the reader a document and see "
-        "what it draws without a real export having to exist yet")
+        "what it draws without a real export having to exist yet; and a "
+        "getter for the built machine, because machineObjects is a "
+        "module-level let that is replaced on every rebuild and a probe "
+        "needs the current one to read a reel's turns")
 
 
 def test_the_postprocessing_addons_are_vendored():

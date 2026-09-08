@@ -29,15 +29,21 @@ export const SCHEMA = "bench.mechanism/1";
 // goes away with the columns and formwork. the tension tie / anchor
 // stays").
 export const PART_KINDS = [
-  { key: "frame1", kind: "frame1", material: "metal/steel-mill-grey" },
+  // Param, on seeing it: "Make the frame 1 the same metal and colour as
+  // principle line bars" -- which wear metal/steel-polished-dark.
+  { key: "frame1", kind: "frame1", material: "metal/steel-polished-dark" },
   { key: "frame2", kind: "frame2", material: "metal/steel-mill-grey" },
   { key: "motors", kind: "motor", material: "metal/steel-powder-coated-black" },
   { key: "reels", kind: "reel", material: "timber/birch-pale-fine", spins: true },
   { key: "pulleys", kind: "pulley", material: "timber/birch-pale-fine" },
-  { key: "tensionTie", kind: "tie", material: "metal/aluminium-mill-grey",
-    tint: "#3a3d42", permanent: true },
-  { key: "anchor", kind: "anchor", material: "metal/aluminium-mill-grey",
-    tint: "#3a3d42", permanent: true },
+  // "The anchor is a solid black steel, let it have some character too
+  // with the scratches and slight wear / weld colouration." The aged
+  // blackened steel in the library is exactly that picture; no tint, so
+  // its own wear reads through.
+  { key: "tensionTie", kind: "tie", material: "metal/steel-blackened-aged",
+    permanent: true },
+  { key: "anchor", kind: "anchor", material: "metal/steel-blackened-aged",
+    permanent: true },
 ];
 
 // Keys the writer has used for the same part under another spelling.
@@ -384,6 +390,239 @@ function readAxis(entry, scale) {
     readVector(frame.direction || frame.zAxis || frame.axis) || [0, 0, 1]);
   if (!origin || !direction) return null;
   return { origin: origin.map((v) => v * scale), direction };
+}
+
+// ---------- the wire centreline ----------
+// Measured on the real document (2026-09-09): every routing frame's
+// origin sits ON the drum's contact surface, not on the wire's
+// centreline. The spools' frames stand 0.049988 m from their axis against
+// a barrel of 0.0500; the pulleys' at exactly 0.170 / 0.200 / 0.300
+// against groove bottoms of 0.170 / 0.200 / 0.300. A tube drawn on those
+// origins is half inside the drum, which is the "crops through
+// everything" Param saw. So the centreline is the contact line pushed out
+// by one wire radius, RADIALLY FROM THE DRUM AXIS at every reel-owned
+// frame -- never along the frame's own x or y, whose orientation the
+// measurement found arbitrary on the spools and sign-inconsistent on the
+// pulleys -- and blended linearly across the straight runs between reels,
+// ramping from zero at the net end where the wire leaves an anchor.
+//
+// The same measurement found the spools sampled at 4.9 frames per turn
+// (73.6 degrees a step), so a straight loft draws a five-sided polygon
+// 10 mm inside the true helix. Reel-owned spans are subdivided by
+// ROTATION ABOUT THE DRUM AXIS: the radial direction turned through the
+// signed angle between the two frames, the axial coordinate and radius
+// lerped. Eight steps on a spool and four on a pulley bring the chord sag
+// under 0.2 mm everywhere.
+export const SPOOL_STEPS = 8;
+export const PULLEY_STEPS = 4;
+export const SPOOL_RADIUS_LIMIT = 0.1;   // below this a drum counts as a spool
+
+function originOf(frame) {
+  return [frame.matrix[12], frame.matrix[13], frame.matrix[14]];
+}
+
+// Where a point stands relative to a drum axis: how far along it, and the
+// radial vector square to it.
+function aboutAxis(point, axis) {
+  const u = axis.direction;
+  const dx = point[0] - axis.origin[0];
+  const dy = point[1] - axis.origin[1];
+  const dz = point[2] - axis.origin[2];
+  const along = dx * u[0] + dy * u[1] + dz * u[2];
+  const radial = [dx - u[0] * along, dy - u[1] * along, dz - u[2] * along];
+  return { along, radial, radius: Math.hypot(radial[0], radial[1], radial[2]) };
+}
+
+// The radius a reel actually winds at: the median distance of the route
+// frames it owns from its own axis. On the real file that is 0.050 for
+// the spools and 0.170 / 0.200 / 0.300 for the pulleys, while the
+// document's spoolRadius says 0.030 and matches nothing in it. null when
+// no frame names the reel.
+export function reelContactRadius(wires, reelIndex, axis) {
+  const radii = [];
+  for (const wire of wires) {
+    for (const frame of wire.route) {
+      if (frame.owner !== "reel" || frame.ownerReel !== reelIndex) continue;
+      radii.push(aboutAxis(originOf(frame), axis).radius);
+    }
+  }
+  if (!radii.length) return null;
+  radii.sort((a, b) => a - b);
+  return radii[Math.floor(radii.length / 2)];
+}
+
+// Rodrigues: v turned about the unit axis u by angle.
+function turn(v, u, angle) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const dot = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const cx = u[1] * v[2] - u[2] * v[1];
+  const cy = u[2] * v[0] - u[0] * v[2];
+  const cz = u[0] * v[1] - u[1] * v[0];
+  return [
+    v[0] * c + cx * s + u[0] * dot * (1 - c),
+    v[1] * c + cy * s + u[1] * dot * (1 - c),
+    v[2] * c + cz * s + u[2] * dot * (1 - c),
+  ];
+}
+
+// The wire's centreline as a list of [x, y, z] points in the body's own
+// space. `reelAxes` maps a reel index to {origin, direction}.
+export function wireCentreline(route, reelAxes, wireRadius) {
+  const n = route.length;
+  if (!n) return [];
+  const offsets = new Array(n).fill(null);
+  const known = [];
+  for (let i = 0; i < n; i++) {
+    const frame = route[i];
+    const axis = frame.owner === "reel" ? reelAxes[frame.ownerReel] : null;
+    if (!axis) continue;
+    const about = aboutAxis(originOf(frame), axis);
+    if (about.radius < 1e-9) continue;
+    const k = wireRadius / about.radius;
+    offsets[i] = [about.radial[0] * k, about.radial[1] * k, about.radial[2] * k];
+    known.push(i);
+  }
+  // Straight runs: blend between the offsets at either end. Before the
+  // first drum the wire is leaving an anchor, so it ramps from nothing;
+  // after the last it holds.
+  for (let i = 0; i < n; i++) {
+    if (offsets[i]) continue;
+    let before = -1, after = -1;
+    for (const k of known) {
+      if (k < i) before = k;
+      else { after = k; break; }
+    }
+    if (before === -1 && after === -1) {
+      offsets[i] = [0, 0, 0];
+    } else if (before === -1) {
+      const f = i / after;
+      offsets[i] = offsets[after].map((c) => c * f);
+    } else if (after === -1) {
+      offsets[i] = offsets[before].slice();
+    } else {
+      const f = (i - before) / (after - before);
+      offsets[i] = offsets[before].map((c, j) => c + (offsets[after][j] - c) * f);
+    }
+  }
+
+  const points = [];
+  for (let i = 0; i < n; i++) {
+    const frame = route[i];
+    const o = originOf(frame);
+    const here = [o[0] + offsets[i][0], o[1] + offsets[i][1], o[2] + offsets[i][2]];
+    points.push(here);
+    const next = route[i + 1];
+    if (!next || frame.owner !== "reel" || next.owner !== "reel"
+        || frame.ownerReel !== next.ownerReel) continue;
+    const axis = reelAxes[frame.ownerReel];
+    if (!axis) continue;
+    // Both ends about the drum axis, each already pushed out by the wire
+    // radius, then the arc between them walked in steps.
+    const nextO = originOf(next);
+    const there = [nextO[0] + offsets[i + 1][0], nextO[1] + offsets[i + 1][1],
+      nextO[2] + offsets[i + 1][2]];
+    const a = aboutAxis(here, axis);
+    const b = aboutAxis(there, axis);
+    if (a.radius < 1e-9 || b.radius < 1e-9) continue;
+    const ra = a.radial.map((c) => c / a.radius);
+    const rb = b.radial.map((c) => c / b.radius);
+    const u = axis.direction;
+    const cx = ra[1] * rb[2] - ra[2] * rb[1];
+    const cy = ra[2] * rb[0] - ra[0] * rb[2];
+    const cz = ra[0] * rb[1] - ra[1] * rb[0];
+    const angle = Math.atan2(cx * u[0] + cy * u[1] + cz * u[2],
+      ra[0] * rb[0] + ra[1] * rb[1] + ra[2] * rb[2]);
+    const steps = a.radius < SPOOL_RADIUS_LIMIT ? SPOOL_STEPS : PULLEY_STEPS;
+    for (let s = 1; s < steps; s++) {
+      const f = s / steps;
+      const r = turn(ra, u, angle * f);
+      const radius = a.radius + (b.radius - a.radius) * f;
+      const along = a.along + (b.along - a.along) * f;
+      points.push([
+        axis.origin[0] + u[0] * along + r[0] * radius,
+        axis.origin[1] + u[1] * along + r[1] * radius,
+        axis.origin[2] + u[2] * along + r[2] * radius,
+      ]);
+    }
+  }
+  return points;
+}
+
+// ---------- the take-up ----------
+// The contract measures take-up as the FREE SPAN from the net vertex to
+// the wire's first routing frame. On the real file that span is zero at
+// every frame: the route's first frame IS the anchor (gap 0.0000 m,
+// measured) and the anchors are the net's fixed supports, which do not
+// move. Read that way the reels stood still -- Param's "no animation
+// either".
+//
+// What does shorten is the RIB: the run of net cable that leaves the
+// anchor and climbs over the vault. Reeling in tightens it, which is what
+// "the ribs reel in" means, and its length is in every frame the formwork
+// already carries. So the take-up is measured along the rib. Both
+// machines pull on one rib, one from each end, so each is credited with
+// half.
+//
+// These two take vertices as TRIPLES, the frames' own convention, so the
+// hot path does not flatten 441 points every frame.
+
+// The chain of net vertices a rib runs through, chosen on the FINAL pose
+// (topology does not change between frames): from the anchor, step to
+// the neighbour that stands highest, then keep the straightest
+// continuation until the chain runs out or turns away.
+export function ribChain(edges, finalVertices, start) {
+  const next = new Map();
+  const link = (a, b) => {
+    if (!next.has(a)) next.set(a, []);
+    next.get(a).push(b);
+  };
+  for (const edge of edges) {
+    const u = edge[0], v = edge[1];
+    if (!Number.isInteger(u) || !Number.isInteger(v)) continue;
+    link(u, v); link(v, u);
+  }
+  const at = (i) => finalVertices[i];
+  const chain = [start];
+  const seen = new Set(chain);
+  let candidates = (next.get(start) || []).filter((n) => at(n));
+  if (!candidates.length) return chain;
+  // Up first: the rim runs level, the rib climbs.
+  let current = candidates.reduce((best, n) => (at(n)[2] > at(best)[2] ? n : best));
+  chain.push(current);
+  seen.add(current);
+  let previous = start;
+  for (let guard = 0; guard < 2000; guard++) {
+    const p = at(previous), c = at(current);
+    const dx = c[0] - p[0], dy = c[1] - p[1], dz = c[2] - p[2];
+    const dl = Math.hypot(dx, dy, dz) || 1;
+    let bestDot = -Infinity, bestNext = -1;
+    for (const n of next.get(current) || []) {
+      if (seen.has(n) || !at(n)) continue;
+      const q = at(n);
+      const ex = q[0] - c[0], ey = q[1] - c[1], ez = q[2] - c[2];
+      const el = Math.hypot(ex, ey, ez) || 1;
+      const dot = (dx * ex + dy * ey + dz * ez) / (dl * el);
+      if (dot > bestDot) { bestDot = dot; bestNext = n; }
+    }
+    // A turn sharper than about 78 degrees is the rib ending at a rim,
+    // not continuing.
+    if (bestNext === -1 || bestDot < 0.2) break;
+    chain.push(bestNext);
+    seen.add(bestNext);
+    previous = current;
+    current = bestNext;
+  }
+  return chain;
+}
+
+export function chainLength(vertices, chain) {
+  let length = 0;
+  for (let i = 0; i + 1 < chain.length; i++) {
+    const a = vertices[chain[i]], b = vertices[chain[i + 1]];
+    if (!a || !b) continue;
+    length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  return length;
 }
 
 // ---------- the checks the contract asks for ----------

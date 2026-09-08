@@ -1368,3 +1368,114 @@ own suffix, "<name>-machine.json", so a folder scan need not open a
 10 MB document to learn what it is. An asset whose wire count does not
 divide the anchor row leaves the short group UNPLACED and says so, which
 is also his own ruling.
+
+----------------------------------------------------------------------
+
+## 2026-09-09 -- THE MACHINE, SEEN, AND EIGHT THINGS MEASURED
+
+Param, on seeing his machine drawn: the anchor once; the machine always
+there with the formwork and it was not; no animation; wires the same as
+the cables; cables cropping through the drums; only one motor of seven;
+the bottom of the machine and the anchor on the floor; frame 1 in the
+principal bars' metal; real textures on every part.
+
+Five investigations ran against the real 2 Sided Vault export and the
+studio's own code before anything was changed. What they found, and
+what was done, item by item.
+
+THE MACHINE NEVER LEFT THE SCENE; IT WAS HIDDEN. Measured live: 180
+meshes present at every step of a fifteen-step walk. Two gates were
+wrong at once. applyMachineAct showed the machine only in the REST modes
+(framework, both) while formworkVisibility shows the formwork only in
+the TIMELINE, so the two were never on screen together, which is the
+missing animation. And in the rest modes the machine honoured the
+strike while the finished net does not -- so once the clock had been
+played or scrubbed to the end, where it STICKS across re-cuts,
+re-selects and every control, the machine was struck for the rest of
+the session. A third half: buildMachine is async and landed after the
+load's own scene pass, so a reloaded machine stood in its default pose
+until the next control touched it, then vanished, which is why it looked
+random. Now: the formwork's own lens in the timeline, standing in the
+rest modes exactly as the finished net is, shell shows neither, and the
+build applies the clock itself when it lands. Also the first build of
+every session had been skipped by an `!state.bundle` guard, since the
+formwork objects are rebuilt before the bundle arrives.
+
+THE WIRES WERE ON THE DRUM SURFACE. Every routing frame's origin sits ON
+the contact surface: spools 0.049988 m from their axis against a 0.0500
+barrel, pulleys at exactly 0.170 / 0.200 / 0.300 against groove bottoms
+of the same. A tube on those origins is half inside the drum. The
+centreline is now pushed out one wire radius RADIALLY FROM THE DRUM AXIS
+at reel-owned frames (never along the frame's x or y, whose orientation
+is arbitrary on the spools and sign-inconsistent on the pulleys) and
+blended along the straight runs, ramping from zero at the anchor.
+
+THE SPOOLS WERE FIVE-SIDED. 73.6 degrees per frame, 4.9 frames a turn,
+so a straight loft drew a polygon 10 mm inside the helix. Reel-owned
+spans are now walked by rotation about the drum axis: eight steps on a
+spool, four on a pulley, sag under 0.2 mm. The ring frames come from
+parallel transport, not the exported axes. z IS the tangent on every
+frame (|d.z| 0.99999 body, 0.9992 reel by central difference), so the
+ring plane was already right.
+
+THE WIRES ARE THE CABLES: materials.steel.clone(), transparent from
+birth, never vertexColors (the net needs that for setColorAt; a plain
+Mesh with no colour attribute would go black).
+
+NO ANIMATION, THE OTHER HALF. The contract measures take-up as the free
+span from the net vertex to the wire's first routing frame. On this file
+that span is ZERO at every frame: the route's first frame IS the anchor
+(gap 0.0000 m) and the anchors are fixed supports. Read that way the
+reels turned 0.008 of a turn. Take-up is now measured along the RIB --
+the run of net cable that leaves the anchor and climbs over the vault,
+which is what "the ribs reel in" means -- from the anchor to the
+highest neighbour, then the straightest continuation, halved between
+the two machines that pull one rib. Measured after: -1.9 turns
+mid-build, -1.1 at the end, signs following the frames. This is a
+DEPARTURE from the contract's definition and is recorded on the
+contract page; the plugin session has been told.
+
+THE REELS' RADIUS. spoolRadius 0.030 matches nothing in the file. Each
+reel's contact radius is the median distance of the frames it owns from
+its axis: 0.050 spools, 0.170 / 0.200 / 0.300 pulleys. axis.zAxis is
+the true drum axis on all ten (cv 0.035-0.076 against 0.12-0.37 for x
+and y). The spin now pivots about axis.origin -- it had rotated about
+the body origin, which would swing a drum round the machine.
+
+ONE MOTOR, NOT SEVEN. mechanism.motors is ONE body (35,754 vertices,
+one component after welding, 0.28 x 0.14 x 0.23 m) beside the seventh
+spool; nothing in the schema repeats it. The studio stamps it at every
+spool of the same bank, shifted by each spool's axis origin, and says
+so. The proper fix is the exporter authoring seven.
+
+THE TIE ONCE. Authored at row scale (17.5 m, centred on x 0 y 0) in the
+body frame. Stamped per instance it appeared three times a side; from
+the middle machine it sat 1.05 m off the row centre. Stamped once,
+untransformed. CAVEAT: its seven 20 mm lugs at the negative-x end serve
+only machine 0's wires (y -1.51..-0.59); machines 1 and 2 have none.
+
+THE FLOOR. z = 0 in the file is the WIRE plane. The frame plates bottom
+at +0.100, the drums at -0.034, the tie feet at -0.117: they do NOT
+share a plane in the model. The whole machine is lifted so its lowest
+point (the tie) sits on the studio floor and the log names the lift;
+the drums then stand 83 mm and the plates 217 mm above it, which is
+how they are authored.
+
+FRAME 1 IS A 55 mm BLOCK. mechanism.frame1 is 147 vertices, 96 quads,
+0.055 x 0.04 x 0.055 m at the seventh spool's wire terminal. The real
+frame is frame2 (two 1.34 x 1.67 m side plates and a cross member). So
+"missing the second frame" is probably frame 1 not exporting, and it
+wears the principal bars' metal as asked, at 55 mm.
+
+TEXTURES. The parts had NO UV attribute, so every library material
+sampled one texel: flat beige for "birch". Parts are now smoothed while
+indexed, then expanded to a triangle soup and box-projected at
+1 / tileMetres (one repeat per the size the picture declares). Frame 1
+wears metal/steel-polished-dark (the principal bars'); the tie wears
+metal/steel-blackened-aged for the scratches and weld colour he asked
+for.
+
+STILL THE EXPORTER'S, told to the plugin session: spool pitch 0.0267 m
+per turn against a 0.040 m tube diameter, so adjacent turns overlap by
+12 mm whatever the loft does; spoolRadius 0.030 vs a 0.050 barrel; one
+motor body; frame1's 55 mm block; the tie's per-machine lugs.

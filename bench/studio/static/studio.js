@@ -10,6 +10,7 @@ import {
 } from "/static/panel.js";
 import {
   readMechanism, checkNetVertices, checkRouteDirection, turnsFor,
+  wireCentreline, reelContactRadius, ribChain, chainLength,
 } from "/static/mechanism.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -8898,50 +8899,71 @@ function disposeMachine() {
   machineObjects = null;
 }
 
-// The wire, from a DECLARED RULE rather than sent geometry: a circle on
-// each routing frame, lofted in order. A polyline through the frame
-// origins would cut every corner the wrapping makes; following each
-// frame's own axes is what puts the wire on the drum.
+// The wire, from a centreline the pure reader has already corrected (see
+// wireCentreline in mechanism.js: the frames' origins sit on the drum
+// SURFACE, so the centreline is pushed out by one wire radius, and the
+// spools' five-frames-a-turn sampling is subdivided by rotation about the
+// drum axis). This function only sweeps a circle along that line.
 //
-// The radius is the studio's own wire radius, so the machine's wires and
-// the net's wires match by construction, which is what Param's ruling
-// was reaching for.
+// The ring's own axes come from parallel transport, not from the frames:
+// each ring's x is the previous ring's x with its along-tangent part
+// removed. That is the rotation-minimising frame, and it is what stops a
+// tube twisting between rings. The radius is the studio's own wire
+// radius, so the machine's wires match the net's by construction.
 const WIRE_SIDES = 8;
 
-function loftWire(frames, radius) {
-  const positions = [], indices = [];
-  const rings = [];
-  let previous = null;
-  for (const frame of frames) {
-    const m = frame.matrix;
-    const origin = [m[12], m[13], m[14]];
-    // Zero-length spans fold the loft, so a repeated plane is skipped
-    // rather than drawn. A tight wrap authors them freely.
-    if (previous && Math.hypot(origin[0] - previous[0], origin[1] - previous[1],
-      origin[2] - previous[2]) < 1e-6) continue;
-    previous = origin;
-    const ring = [];
-    for (let i = 0; i < WIRE_SIDES; i++) {
-      const a = (i / WIRE_SIDES) * Math.PI * 2;
-      const cx = Math.cos(a) * radius, cy = Math.sin(a) * radius;
-      // The circle lies in the frame's own XY, so the tube follows the
-      // frame's Z around every turn.
-      ring.push(positions.length / 3);
-      positions.push(
-        m[0] * cx + m[4] * cy + m[12],
-        m[1] * cx + m[5] * cy + m[13],
-        m[2] * cx + m[6] * cy + m[14]);
-    }
-    rings.push(ring);
+function loftWire(points, radius) {
+  const path = [];
+  for (const p of points) {
+    const last = path[path.length - 1];
+    // A repeated point folds the loft, so it is skipped rather than drawn.
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) < 1e-6) continue;
+    path.push(p);
   }
-  for (let r = 0; r + 1 < rings.length; r++) {
-    const a = rings[r], b = rings[r + 1];
+  const count = path.length;
+  if (count < 2) return null;
+  const tangentAt = (i) => {
+    const a = path[Math.max(i - 1, 0)], b = path[Math.min(i + 1, count - 1)];
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const l = Math.hypot(d[0], d[1], d[2]) || 1;
+    return [d[0] / l, d[1] / l, d[2] / l];
+  };
+  const positions = [], indices = [];
+  let x = null;
+  for (let i = 0; i < count; i++) {
+    const tn = tangentAt(i);
+    if (x) {
+      const along = x[0] * tn[0] + x[1] * tn[1] + x[2] * tn[2];
+      x = [x[0] - tn[0] * along, x[1] - tn[1] * along, x[2] - tn[2] * along];
+      const l = Math.hypot(x[0], x[1], x[2]);
+      x = l > 1e-6 ? [x[0] / l, x[1] / l, x[2] / l] : null;
+    }
+    if (!x) {
+      // Any direction square to the tangent will do for the first ring.
+      const seed = Math.abs(tn[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+      x = [tn[1] * seed[2] - tn[2] * seed[1], tn[2] * seed[0] - tn[0] * seed[2],
+           tn[0] * seed[1] - tn[1] * seed[0]];
+      const l = Math.hypot(x[0], x[1], x[2]) || 1;
+      x = [x[0] / l, x[1] / l, x[2] / l];
+    }
+    const y = [tn[1] * x[2] - tn[2] * x[1], tn[2] * x[0] - tn[0] * x[2],
+               tn[0] * x[1] - tn[1] * x[0]];
+    const p = path[i];
+    for (let k = 0; k < WIRE_SIDES; k++) {
+      const a = (k / WIRE_SIDES) * Math.PI * 2;
+      const cx = Math.cos(a) * radius, cy = Math.sin(a) * radius;
+      positions.push(p[0] + x[0] * cx + y[0] * cy,
+                     p[1] + x[1] * cx + y[1] * cy,
+                     p[2] + x[2] * cx + y[2] * cy);
+    }
+  }
+  for (let r = 0; r + 1 < count; r++) {
+    const a = r * WIRE_SIDES, b = (r + 1) * WIRE_SIDES;
     for (let i = 0; i < WIRE_SIDES; i++) {
       const j = (i + 1) % WIRE_SIDES;
-      indices.push(a[i], b[i], b[j], a[i], b[j], a[j]);
+      indices.push(a + i, b + i, b + j, a + i, b + j, a + j);
     }
   }
-  if (!indices.length) return null;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position",
     new THREE.BufferAttribute(new Float32Array(positions), 3));
@@ -8951,11 +8973,31 @@ function loftWire(frames, radius) {
 }
 
 function geometryFromPart(part) {
-  const geometry = new THREE.BufferGeometry();
+  let geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position",
     new THREE.BufferAttribute(new Float32Array(part.geometry.vertices), 3));
   geometry.setIndex(part.geometry.triangles);
+  // Smooth normals while the corners are still shared, so a drum reads as
+  // round rather than as a barrel of flat staves.
   geometry.computeVertexNormals();
+  // A library material without UVs samples one texel for the whole part,
+  // which is why the reels read as flat beige rather than as birch (Param:
+  // "The wood texture on the reels arent nice, we have proper textures to
+  // use"). Box projection wants a triangle soup, and its scale is UV units
+  // per metre, so 1 / tileMetres gives one repeat per the size the picture
+  // declares itself to be.
+  geometry = geometry.toNonIndexed();
+  const positions = geometry.getAttribute("position").array;
+  let cx = 0, cy = 0, cz = 0;
+  const points = positions.length / 3;
+  for (let i = 0; i < positions.length; i += 3) {
+    cx += positions[i]; cy += positions[i + 1]; cz += positions[i + 2];
+  }
+  const centre = points ? [cx / points, cy / points, cz / points] : [0, 0, 0];
+  const entry = libraryEntry(part.material);
+  const tile = (entry && entry.tileMetres) || [DEFAULT_TILE_METRES, DEFAULT_TILE_METRES];
+  const uvs = boxUVs(positions, centre, [0, 0], 1 / tile[0], 1 / tile[1]);
+  geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
   return geometry;
 }
 
@@ -8972,29 +9014,25 @@ function machineMaterial(part) {
   return material;
 }
 
-// A reel's winding radius, measured from the reel itself: the furthest
-// any of its own vertices stands from its spin axis. With no authored
-// axis the largest half-extent of its bounding box stands in, which is
-// the right answer for a disc and an over-estimate for nothing that is
-// shaped like a drum.
-//
-// This exists because the writer defaults spoolRadius from reel ZERO's
-// bounding box for every reel, so ten reels of different sizes would all
-// turn at the first one's rate.
+// A reel's winding radius when no wire tells us: the nearest any of its
+// own vertices stands to its axis, which is the barrel. The furthest is
+// the flange, and a spin worked out at the flange turns too slowly by
+// the ratio of the two. The contact radius from the routing frames is
+// preferred wherever a wire names the reel (reelContactRadius).
 function measureSpoolRadius(part) {
   const v = part.geometry.vertices;
   if (!v.length) return 0.03;
   if (part.axis) {
     const [ox, oy, oz] = part.axis.origin;
     const [dx, dy, dz] = part.axis.direction;
-    let worst = 0;
+    let nearest = Infinity;
     for (let i = 0; i + 2 < v.length; i += 3) {
       const px = v[i] - ox, py = v[i + 1] - oy, pz = v[i + 2] - oz;
       const along = px * dx + py * dy + pz * dz;
-      worst = Math.max(worst, Math.hypot(
-        px - dx * along, py - dy * along, pz - dz * along));
+      const r = Math.hypot(px - dx * along, py - dy * along, pz - dz * along);
+      if (r > 1e-3 && r < nearest) nearest = r;
     }
-    if (worst > 1e-4) return worst;
+    if (Number.isFinite(nearest)) return nearest;
   }
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -9008,6 +9046,62 @@ function measureSpoolRadius(part) {
   return half[1] > 1e-4 ? half[1] : 0.03;
 }
 
+// Param counted seven motors and saw one, and the census agrees with him
+// about the FILE: mechanism.motors is one body (35,754 vertices that weld
+// to a single component) standing beside the seventh spool, and nothing
+// in the schema repeats it per reel. Until the exporter authors seven,
+// the one motor is stamped at every spool of the same bank, shifted by
+// each spool's axis origin relative to the spool it was authored beside.
+// That is what he modelled -- a drive on every spool -- and the log says
+// it was done here rather than read.
+function motorShifts(model) {
+  const motors = model.parts.filter((part) => part.kind === "motor");
+  const reels = model.parts.filter((part) => part.kind === "reel" && part.axis);
+  if (motors.length !== 1 || reels.length < 2) return [[0, 0, 0]];
+  const v = motors[0].geometry.vertices;
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i + 2 < v.length; i += 3) { cx += v[i]; cy += v[i + 1]; cz += v[i + 2]; }
+  const count = v.length / 3 || 1;
+  const centre = [cx / count, cy / count, cz / count];
+  let home = null, best = Infinity;
+  for (const reel of reels) {
+    const o = reel.axis.origin;
+    const d = Math.hypot(o[0] - centre[0], o[1] - centre[1], o[2] - centre[2]);
+    if (d < best) { best = d; home = reel; }
+  }
+  const hd = home.axis.direction;
+  // The bank: every reel whose axis runs the same way as the home reel's.
+  const bank = reels.filter((reel) => {
+    const d = reel.axis.direction;
+    return d[0] * hd[0] + d[1] * hd[1] + d[2] * hd[2] > 0.999;
+  });
+  if (bank.length < 2) return [[0, 0, 0]];
+  return bank.map((reel) => [
+    reel.axis.origin[0] - home.axis.origin[0],
+    reel.axis.origin[1] - home.axis.origin[1],
+    reel.axis.origin[2] - home.axis.origin[2],
+  ]);
+}
+
+const machineShift = new THREE.Matrix4();
+const machineBox = new THREE.Box3();
+const machineCorner = new THREE.Vector3();
+
+// The lowest world z any corner of this geometry reaches under a matrix.
+function lowestZ(geometry, matrix) {
+  geometry.computeBoundingBox();
+  machineBox.copy(geometry.boundingBox);
+  let low = Infinity;
+  for (let i = 0; i < 8; i++) {
+    machineCorner.set(i & 1 ? machineBox.max.x : machineBox.min.x,
+                      i & 2 ? machineBox.max.y : machineBox.min.y,
+                      i & 4 ? machineBox.max.z : machineBox.min.z);
+    if (matrix) machineCorner.applyMatrix4(matrix);
+    low = Math.min(low, machineCorner.z);
+  }
+  return low;
+}
+
 // One build at a time. buildMachine awaits its materials, so two loads in
 // quick succession both got past disposeMachine before either had added
 // anything, and the scene ended up with two machines in it.
@@ -9016,15 +9110,16 @@ let machineBuild = 0;
 async function buildMachine() {
   const mine = ++machineBuild;
   disposeMachine();
-  if (!state.mechanism || !state.bundle) return;
+  // The machine needs the document alone. This used to also wait on
+  // state.bundle, and on a fresh page the formwork objects are rebuilt
+  // BEFORE the bundle lands, so the first build of every session quietly
+  // did nothing -- one half of "it did it once, now it doesnt".
+  if (!state.mechanism) return;
   const model = readMechanism(state.mechanism);
   if (!model.ok) {
     logStudio("the machine document was not read: " + model.reason);
     return;
   }
-  // Everything the reader could not use, said out loud. These are the
-  // earliest signal that the document's key layout moved, which the
-  // contract says to expect, so they are worth the log lines.
   for (const note of model.notes) logStudio("machine: " + note);
   if (!model.parts.length) {
     logStudio("the machine document carries no readable parts");
@@ -9042,87 +9137,129 @@ async function buildMachine() {
   const temporary = new THREE.Group();      // what leaves with the formwork
   group.add(permanent, temporary);
   const spinners = [];
-
   const instances = model.instances.length ? model.instances
-    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false }];
+    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
+
+  // The drums' axes, and the radius each actually winds at, taken from the
+  // routing frames it owns: 0.050 on the spools and 0.170 / 0.200 / 0.300
+  // on the pulleys, measured, where the document's spoolRadius of 0.030
+  // matches nothing in the file.
+  const reelAxes = {};
+  for (const part of model.parts) {
+    if (part.kind !== "reel" || !part.axis) continue;
+    reelAxes[part.index] = part.axis;
+    part.contactRadius = reelContactRadius(model.wires, part.index, part.axis)
+      || measureSpoolRadius(part);
+  }
+  const shifts = motorShifts(model);
+
+  let lowest = Infinity, lowestKind = null;
+  const note = (kind, z) => { if (z < lowest) { lowest = z; lowestKind = kind; } };
+
   for (const part of model.parts) {
     const geometry = geometryFromPart(part);
-    // A permanent part arrives pre-placed in world coordinates, so it is
-    // built ONCE; a machine part is the authored body and is stamped per
-    // instance.
-    const targets = part.world ? [null] : instances;
-    for (const instance of targets) {
+    // The permanent works are authored ONCE, at row scale, in the body's
+    // own frame: on the real file the tie is 17.5 m long and centred on
+    // x 0, y 0, spanning between the two rows of machines. Stamped per
+    // instance it appeared three times a side, overlapping; stamped from
+    // the middle machine it sat 1.05 m off the row's centre. So it is
+    // stamped once, untransformed (Param: "The anchor should only appear
+    // once").
+    if (part.permanent) {
       const mesh = new THREE.Mesh(geometry, machineMaterial(part));
       mesh.castShadow = mesh.receiveShadow = true;
-      if (instance && instance.matrix) {
+      permanent.add(mesh);
+      note(part.kind, lowestZ(geometry, null));
+      continue;
+    }
+    const placements = part.kind === "motor" ? shifts : [[0, 0, 0]];
+    for (const instance of instances) {
+      for (const shift of placements) {
+        const mesh = new THREE.Mesh(geometry, machineMaterial(part));
+        mesh.castShadow = mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
-        mesh.matrix.fromArray(instance.matrix);
+        if (instance.matrix) mesh.matrix.fromArray(instance.matrix);
+        if (shift[0] || shift[1] || shift[2]) {
+          mesh.matrix.multiply(machineShift.makeTranslation(shift[0], shift[1], shift[2]));
+        }
         // A mirrored instance has its winding reversed by the transform,
         // so its faces light from the inside unless the material knows.
         if (instance.mirrored) mesh.material.side = THREE.DoubleSide;
-      }
-      (part.permanent ? permanent : temporary).add(mesh);
-      if (part.spins && instance) {
-        // Param's ruling on the spin: measure each reel's OWN radius from
-        // its geometry rather than trusting one default taken from reel
-        // zero's bounding box, and say that the RATE stays unverified
-        // until reeveFactor is authored.
-        if (part.measuredRadius === undefined) {
-          part.measuredRadius = measureSpoolRadius(part);
-        }
-        spinners.push({ mesh, part, instance, turns: 0 });
+        temporary.add(mesh);
+        note(part.kind, lowestZ(geometry, mesh.matrix));
+        if (part.spins) spinners.push({ mesh, part, instance, turns: 0 });
       }
     }
   }
 
-  // The wires. The body-owned portion is built ONCE per instance, in the
-  // authored body's local space and stamped with the placement; the free
-  // span from the net vertex to the first routing plane is rebuilt per
-  // frame. That is 42 short tubes a frame rather than 4200 circles.
-  //
-  // Reel-owned frames stay where they are, on Param's ruling: the wires
-  // are already fully wound, so the wrap is multi-turn and nearly
-  // invariant under rotation about its own axis. The drum reads as
-  // turning because the drum MESH turns.
-  const wireMaterial = new THREE.MeshStandardMaterial({
-    color: 0xb9bec6, roughness: 0.35, metalness: 0.9 });
+  // The wires, IDENTICAL to the net's cables (Param: "the wires are the
+  // same as the cables so please make that happen"): the same steel the
+  // net clones, transparent from birth so the strike can fade it, and
+  // never vertexColors -- a plain Mesh with no colour attribute would
+  // multiply by nothing and go black. The routed portion is lofted once
+  // per wire from the corrected centreline and stamped with its instance;
+  // the free span from the net vertex to the first frame is redrawn every
+  // frame.
+  const wireMaterial = materials.steel.clone();
+  wireMaterial.transparent = true;
   const wires = [];
   for (const wire of model.wires) {
-    // The instance NAMES the wires it carries, so use that; the path is
-    // the fallback for a document that does not.
+    // The instance NAMES the wires it carries; the path is the fallback
+    // for a document that does not.
     const step = wire.path && wire.path.length ? wire.path[0] : null;
     const instance = instances.find((candidate) =>
       candidate.wireIds && candidate.wireIds.includes(wire.id))
       || instances.find((candidate) => step
         && candidate.side === step.side && candidate.mechanism === step.mechanism)
       || instances[0];
-    const routed = loftWire(wire.route, state.wireRadius);
+    const routed = loftWire(
+      wireCentreline(wire.route, reelAxes, state.wireRadius), state.wireRadius);
     let mesh = null;
     if (routed) {
       mesh = new THREE.Mesh(routed, wireMaterial);
-      if (instance && instance.matrix) {
+      if (instance.matrix) {
         mesh.matrixAutoUpdate = false;
         mesh.matrix.fromArray(instance.matrix);
       }
       temporary.add(mesh);
     }
-    // The free span, drawn as its own tube and rewritten every frame.
     const free = new THREE.Mesh(
-      new THREE.CylinderGeometry(state.wireRadius, state.wireRadius, 1, WIRE_SIDES),
+      new THREE.CylinderGeometry(state.wireRadius, state.wireRadius, 1, WIRE_SIDES, 1, true),
       wireMaterial);
     free.visible = false;
     temporary.add(free);
-    wires.push({ wire, instance, mesh, free, freeAtFrame0: null });
+    wires.push({ wire, instance, mesh, free, rib: null, ribAtFrame0: null });
   }
+
+  // The floor (Param: "I must have the bottom of the machine and anchor to
+  // the floor too"). The whole machine is lifted so its lowest point sits
+  // on the studio's floor. In the authored file that point is the tie's
+  // feet at z -0.117 while the drums bottom at -0.034 and the frame plates
+  // at +0.100; z = 0 is the wire plane. So one lift puts the tie on the
+  // floor and leaves the drums 83 mm and the plates 217 mm above it, which
+  // is how they are authored -- the log says so, so the gap reads as his
+  // model's rather than the studio's.
+  const floor = groundLevel();
+  const lift = Number.isFinite(lowest) ? floor - lowest : 0;
+  group.position.z = lift;
 
   if (mine !== machineBuild) return;      // a newer build owns the scene
   scene.add(group);
   machineObjects = { group, permanent, temporary, spinners, wires, model,
-    wireMaterial };
+    wireMaterial, lift };
   const row = document.getElementById("machine-row");
   if (row) row.classList.remove("hidden");
   logStudio("machine: " + model.parts.length + " parts, "
     + instances.length + " instances, " + model.wires.length + " wires");
+  if (shifts.length > 1) {
+    logStudio("machine: the document carries ONE motor body; it is stamped "
+      + "at " + shifts.length + " spools here until the exporter authors them");
+  }
+  if (Number.isFinite(lowest)) {
+    logStudio("machine: lifted " + Math.round(lift * 1000) + " mm so its lowest "
+      + "point (the " + lowestKind + ", authored at z "
+      + Math.round(lowest * 1000) + " mm) sits on the floor");
+  }
   // Said once, plainly, because it is the one number in the machine the
   // studio knows to be unverified: the writer fixes reeveFactor at 1.0
   // while Param's unit has four wheels, so the reels turn at the right
@@ -9130,12 +9267,21 @@ async function buildMachine() {
   if (model.wires.some((wire) => wire.reeveFactor === 1)) {
     logStudio("machine: the reels turn from a reeve factor of 1.0, which "
       + "the exporter has not authored yet, so their rate is unverified; "
-      + "each reel's radius is measured from its own geometry");
+      + "each reel's radius is read from the wire frames it carries");
   }
-  // The two derived values the writer sends, re-checked and REPORTED.
-  // A wire drawn to a plausible but wrong vertex is the one failure
-  // nobody would notice on screen.
+  logStudio("machine: take-up is measured along each wire's rib through the "
+    + "net, halved between the two machines that pull it -- the route meets "
+    + "the net at its anchor, so the contract's free span is zero here");
   reportMachineChecks(model);
+  // Born into the state the clock dictates. buildMachine is async, so it
+  // lands AFTER the load's own applySceneAtTime has run; without this the
+  // new machine stood in its default pose until the next control was
+  // touched, and then vanished -- the other half of "it did it once".
+  if (state.timeline && state.objects.shell && state.objects.falsework) {
+    applySceneAtTime(state.timeline.t);
+  } else {
+    applyMachineAct(0, 0);
+  }
 }
 
 // Where a wire first meets the machine, in world coordinates: its first
@@ -9151,6 +9297,9 @@ function wireHead(entry, into) {
   if (entry.instance && entry.instance.matrix) {
     into.applyMatrix4(machineMatrix.fromArray(entry.instance.matrix));
   }
+  // The machine stands lifted to the floor and drops on the strike; the
+  // head has to be where the machine actually is.
+  into.z += machineObjects.group.position.z + machineObjects.temporary.position.z;
   return into;
 }
 
@@ -9174,83 +9323,116 @@ function prestressFraction(t) {
   return Math.min(1, build / (step * total));
 }
 
+// The rest modes show the FINISHED net whatever the clock says; only the
+// timeline shows the machine building it. The machine follows the same
+// rule, because it rides with the formwork (Param: "should always be
+// there with formwork"). What went wrong before: this gate showed the
+// machine only in the rest modes while formworkVisibility showed the
+// formwork only in the timeline, so the two were never on screen
+// together -- and in the rest modes the machine honoured the strike while
+// the finished net did not, so once the clock had been played or scrubbed
+// to the end (and it sticks there across re-cuts, re-selects and every
+// control) the machine was struck for the rest of the session. Measured:
+// the machine group never left the scene; it was hidden.
+const pivotTo = new THREE.Matrix4();
+const pivotBack = new THREE.Matrix4();
+const spinAxis = new THREE.Vector3();
+
 function applyMachineAct(t, strikeU) {
   if (!machineObjects) return;
-  const doc = state.formwork;
-  const show = state.showMachine !== false
-    && (state.showMode === "framework" || state.showMode === "both");
-  machineObjects.group.visible = show;
-  if (!show || !doc) return;
-
+  const { group, permanent, temporary, wireMaterial } = machineObjects;
+  // Shell is the vault alone: no machine, and no anchors either, the same
+  // rule the columns follow in formworkVisibility.
+  const wanted = state.showMachine !== false && state.showMode !== "shell";
+  group.visible = wanted;
+  if (!wanted) return;
+  const seconds = formworkSeconds();
+  let struck = 0;
+  if (state.showMode === "timeline") {
+    const show = formworkVisibility({ t, seconds, strikeU,
+      showMode: state.showMode, hasMembers: true, hasColumnMesh: false });
+    temporary.visible = show.group;
+    struck = strikeU;
+  } else {
+    temporary.visible = true;             // standing, as the finished net is
+  }
+  permanent.visible = true;               // the permanent works remain
   // The machine leaves with the columns and the net, on the same fade and
-  // the same drop, because it is one machine leaving. The anchors and the
-  // tension ties stay: they are the permanent works.
-  machineObjects.temporary.visible = strikeU < 1;
-  machineObjects.temporary.position.z = -1.5 * strikeU;
-  machineObjects.wireMaterial.transparent = strikeU > 0;
-  machineObjects.wireMaterial.opacity = 1 - strikeU;
+  // the same drop, because it is one machine leaving.
+  temporary.position.z = -1.5 * struck;
+  wireMaterial.opacity = 1 - struck;
 
-  const frame = interpolateFormworkFrame(doc.frames, machineTime(t, formworkSeconds()));
+  const doc = state.formwork;
+  if (!doc || !temporary.visible) return;
+  const frame = interpolateFormworkFrame(doc.frames, machineTime(t, seconds));
   const vertices = frame && frame.vertices;
   if (!vertices) return;
   const lift = netClearance();
   const prestress = PRESTRESS_TAKE_UP * prestressFraction(t);
+  // The free spans are children of `temporary`, so their positions are
+  // written in ITS space: the world midpoint less the group's lift and the
+  // strike's drop.
+  const parentZ = group.position.z + temporary.position.z;
+  // The rib each wire pulls, chosen once on the final pose, and its
+  // length at frame 0, the reference the spin is measured from.
+  const finalPose = doc.frames[doc.frames.length - 1].vertices;
+  const firstPose = doc.frames[0].vertices;
+  const edges = Array.isArray(doc.edges) ? doc.edges : [];
 
   for (const entry of machineObjects.wires) {
     const wire = entry.wire;
     if (wire.netVertex === null) continue;
     // The frames carry vertices as TRIPLES, the convention every other
-    // reader here uses (writeInstancedPoints reads points[i][0]). Read
-    // as a flat array they index a third of the net and land nowhere.
+    // reader here uses (writeInstancedPoints reads points[i][0]).
     const point = vertices[wire.netVertex];
     if (!point) continue;
     machineTail.set(point[0], point[1], point[2] + lift.wires);
     const head = wireHead(entry, machineHead);
     if (!head) continue;
     const span = machineTail.distanceTo(head);
-    // Frame 0 is the reference, so the spin is a pure function of t and
-    // cannot drift on a scrub or on a recorded frame played out of order.
-    if (entry.freeAtFrame0 === null) entry.freeAtFrame0 = span;
-    entry.free.visible = span > 1e-4 && strikeU < 1;
+    if (!entry.rib) {
+      entry.rib = ribChain(edges, finalPose, wire.netVertex);
+      // Frame 0 is the reference, so the spin is a pure function of t and
+      // cannot drift on a scrub or on a recorded frame played out of order.
+      entry.ribAtFrame0 = chainLength(firstPose, entry.rib) / 2;
+    }
+    entry.ribNow = chainLength(vertices, entry.rib) / 2;
+    entry.free.visible = span > 1e-4;
     if (entry.free.visible) {
       // A unit cylinder stood along its own Y, aimed and stretched: one
       // geometry for every span at every frame.
       entry.free.position.copy(machineTail).lerp(head, 0.5);
+      entry.free.position.z -= parentZ;
       entry.free.scale.set(1, span, 1);
       entry.free.quaternion.setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0),
-        machineHead.clone().sub(machineTail).normalize());
-      entry.free.position.z -= 1.5 * strikeU;
+        SEGMENT_UP, machineHead.clone().sub(machineTail).normalize());
     }
-    entry.span = span;
   }
 
-  // The spin. Each reel turns by the take-up of a wire it carries, about
-  // its own authored axis, plus the small prestress the load brings.
+  // The spin. Each reel turns by the take-up of a wire it carries, ABOUT
+  // ITS OWN AXIS THROUGH ITS OWN ORIGIN -- a rotation about the body's
+  // origin instead would swing the drum round the machine -- plus the
+  // small prestress the arriving load brings.
   for (const spinner of machineObjects.spinners) {
     const served = machineObjects.wires.find((entry) =>
       entry.instance === spinner.instance
       && entry.wire.route.some((plane) => plane.ownerReel === spinner.part.index));
-    if (!served || served.freeAtFrame0 === null) continue;
-    // The MEASURED radius wins: the writer currently defaults every
-    // reel's spoolRadius from reel zero's bounding box, so ten reels of
-    // different sizes would otherwise all turn at the first one's rate.
-    const radius = spinner.part.measuredRadius
-      || served.wire.spoolRadius || 0.03;
-    const turns = turnsFor(served.freeAtFrame0,
-      served.span * (1 - prestress), served.wire.reeveFactor, radius);
+    if (!served || served.ribAtFrame0 === null) continue;
+    const radius = spinner.part.contactRadius || served.wire.spoolRadius || 0.03;
+    const turns = turnsFor(served.ribAtFrame0,
+      served.ribNow * (1 - prestress), served.wire.reeveFactor, radius);
     spinner.turns = turns;
     const axis = spinner.part.axis;
     if (!axis) continue;
-    spinner.mesh.matrixAutoUpdate = false;
-    machineMatrix.makeRotationAxis(
-      new THREE.Vector3(axis.direction[0], axis.direction[1], axis.direction[2]),
-      turns * Math.PI * 2);
+    spinAxis.set(axis.direction[0], axis.direction[1], axis.direction[2]);
+    machineMatrix.makeRotationAxis(spinAxis, turns * Math.PI * 2);
+    pivotTo.makeTranslation(axis.origin[0], axis.origin[1], axis.origin[2]);
+    pivotBack.makeTranslation(-axis.origin[0], -axis.origin[1], -axis.origin[2]);
     spinner.mesh.matrix.identity();
     if (spinner.instance && spinner.instance.matrix) {
       spinner.mesh.matrix.fromArray(spinner.instance.matrix);
     }
-    spinner.mesh.matrix.multiply(machineMatrix);
+    spinner.mesh.matrix.multiply(pivotTo).multiply(machineMatrix).multiply(pivotBack);
   }
 }
 
@@ -10091,7 +10273,8 @@ requestAnimationFrame(frame);
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
 window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp,
-  ensurePropTemplate, renderObjectPreview, composer, buildMachine };
+  ensurePropTemplate, renderObjectPreview, composer, buildMachine,
+  machine: () => machineObjects };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.

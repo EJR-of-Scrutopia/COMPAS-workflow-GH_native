@@ -100,6 +100,8 @@ CHECK = textwrap.dedent("""
     import {
       SCHEMA, PART_KINDS, readGeometry, placementMatrix, isReflection,
       turnsFor, readMechanism, checkNetVertices, checkRouteDirection,
+      wireCentreline, reelContactRadius, SPOOL_STEPS, PULLEY_STEPS,
+      ribChain, chainLength,
     } from %MODULE%;
 
     function expect(condition, message) {
@@ -349,6 +351,108 @@ CHECK = textwrap.dedent("""
     expect(checkRouteDirection(forwards, vertices).length === 0,
       "a correct route is not");
 
+    // ---------- the wire centreline ----------
+    // Measured on the real file: a routing frame's origin sits ON the
+    // drum surface, so the centreline is one wire radius further out,
+    // radially from the drum axis; and a spool is sampled at five frames
+    // a turn, so the arc between two frames is walked in steps rather
+    // than cut by a chord.
+    const drum = { origin: [0, 0, 0], direction: [0, 0, 1] };
+    const at = (x, y, z, owner, reel) => ({
+      matrix: placementMatrix({ origin: [x, y, z], xAxis: [1,0,0], yAxis: [0,1,0] }),
+      owner, ownerReel: reel === undefined ? -1 : reel });
+    const Rc = 0.05, deg = Math.PI / 180;
+    const route = [
+      at(-3, 0, 0, "body"),                     // the net end, straight run
+      at(-1.5, 0, 0, "body"),
+      at(Rc, 0, 0, "reel", 0),                  // on the drum at 0 degrees
+      at(Rc * Math.cos(73.6 * deg), Rc * Math.sin(73.6 * deg), 0.005, "reel", 0),
+      at(Rc * Math.cos(147.2 * deg), Rc * Math.sin(147.2 * deg), 0.010, "reel", 0),
+    ];
+    const wires_ = [{ route }];
+    near(reelContactRadius(wires_, 0, drum), Rc, 1e-9,
+      "the contact radius is what the frames say, not spoolRadius");
+    expect(reelContactRadius(wires_, 5, drum) === null,
+      "a reel no wire names has no contact radius");
+
+    // The step counts are MEASURED floors, not free parameters: eight on a
+    // spool brings the chord sag under 0.16 mm at R 0.05 and 73.6 degrees
+    // a frame; the pulleys are sampled three to six times finer, so they
+    // need fewer. A test that read these back from the constants adjusted
+    // itself when they changed, which is not a test.
+    expect(SPOOL_STEPS >= 8, "a spool span is walked in at least eight steps");
+    expect(PULLEY_STEPS >= 4 && PULLEY_STEPS < SPOOL_STEPS,
+      "a pulley span takes fewer steps than a spool's, and at least four");
+    const line = wireCentreline(route, { 0: drum }, 0.02);
+    // 5 frames plus (SPOOL_STEPS - 1) walked points on each of the two
+    // spool spans.
+    expect(line.length === 5 + 2 * (SPOOL_STEPS - 1),
+      "spool spans are subdivided: got " + line.length);
+    expect(line.every((p) => p.every(Number.isFinite)), "no NaN in the line");
+    // Every point on the drum stands at Rc + wire radius from the axis.
+    for (let i = 2; i < line.length; i++) {
+      near(Math.hypot(line[i][0], line[i][1]), Rc + 0.02, 1e-9,
+        "drum point " + i + " is one wire radius off the surface");
+    }
+    // The net end leaves the anchor untouched and the straight run ramps
+    // toward the drum's offset.
+    near(Math.hypot(line[0][0] + 3, line[0][1], line[0][2]), 0, 1e-12,
+      "the first point is the frame origin itself");
+    near(line[1][0], -1.5 + 0.01, 1e-9,
+      "halfway along the run the offset is half the wire radius");
+    // The walk follows the SIGNED angle, so it goes the short way round.
+    const a0 = Math.atan2(line[2][1], line[2][0]);
+    const a1 = Math.atan2(line[3][1], line[3][0]);
+    near((a1 - a0) / deg, 73.6 / SPOOL_STEPS, 1e-6,
+      "each step turns one eighth of the frame-to-frame angle");
+    // The axial coordinate is walked too, so a helix stays a helix.
+    near(line[2 + SPOOL_STEPS][2], 0.005, 1e-9, "axial position reaches the next frame");
+
+    // A pulley (radius above the spool limit) takes fewer steps.
+    const Rp = 0.2;
+    const pulley = [
+      at(Rp, 0, 0, "reel", 1),
+      at(Rp * Math.cos(20 * deg), Rp * Math.sin(20 * deg), 0, "reel", 1),
+    ];
+    const pl = wireCentreline(pulley, { 1: drum }, 0.02);
+    expect(pl.length === 2 + (PULLEY_STEPS - 1), "pulley spans take PULLEY_STEPS");
+
+    // No axis for a reel: nothing invented, the frame is used as sent.
+    const blind = wireCentreline(route, {}, 0.02);
+    expect(blind.length === 5, "without axes there is nothing to subdivide");
+    near(blind[2][0], Rc, 1e-12, "and nothing is offset");
+
+    // ---------- the take-up, along the rib ----------
+    // A little net: anchor 0 on the ground, a rim neighbour 5 also on the
+    // ground, and a rib 0-1-2-3-4 rising over a crown to the far anchor 4.
+    // The rib is what the reel shortens; the rim is not.
+    const pose = [
+      [0, 0, 0],      // 0 anchor
+      [1, 0, 1],      // 1
+      [2, 0, 1.6],    // 2 crown
+      [3, 0, 1],      // 3
+      [4, 0, 0],      // 4 far anchor
+      [0, 1, 0],      // 5 rim neighbour of the anchor, level
+      [4, 1, 0],      // 6 rim neighbour of the far anchor
+    ];
+    const net = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [4, 6]];
+    const chain = ribChain(net, pose, 0);
+    expect(chain.join() === "0,1,2,3,4",
+      "the rib climbs from the anchor over the crown to the far anchor, "
+      + "not along the rim: " + chain.join());
+    const slack = chainLength(pose, chain);
+    near(slack, 2 * Math.hypot(1, 1) + 2 * Math.hypot(1, 0.6), 1e-9, "its length");
+    // Reeled in: the same chain measured on a tauter pose is shorter, and
+    // the take-up formula turns positive on the difference.
+    const taut = pose.map((v, i) => (i === 2 ? [2, 0, 1.2] : v));
+    const shorter = chainLength(taut, chain);
+    expect(shorter < slack, "a tauter rib is a shorter rib");
+    expect(turnsFor(slack / 2, shorter / 2, 1, 0.05) > 0,
+      "and the reel takes up wire for it");
+    // An anchor with no edges is a chain of itself, not a crash.
+    expect(ribChain([], pose, 0).join() === "0", "no edges, no rib");
+    expect(chainLength(pose, [0]) === 0, "and no length");
+
     console.log("ok");
 """)
 
@@ -368,17 +472,22 @@ def test_the_reader_reads(tmp_path):
 @needs_node
 def test_the_material_table_matches_his_rulings():
     """Param's answers, 2026-09-08: mill steel frames, black motors, birch
-    reels, and the two permanent works in one dark anodised family."""
+    reels; then on seeing it, frame 1 in the principal bars' polished dark
+    steel and the permanent works in aged blackened steel."""
 
     source = MODULE.read_text(encoding="utf-8")
+    # Revised on seeing the real machine, 2026-09-08 late: frame 1 wears
+    # the principal bars' metal; the anchor and tie wear aged blackened
+    # steel, so the scratches and weld colour he asked for come from the
+    # texture rather than from a tint over plain aluminium.
     for port, material in (
-            ("frame1", "metal/steel-mill-grey"),
+            ("frame1", "metal/steel-polished-dark"),
             ("frame2", "metal/steel-mill-grey"),
             ("motors", "metal/steel-powder-coated-black"),
             ("reels", "timber/birch-pale-fine"),
             ("pulleys", "timber/birch-pale-fine"),
-            ("anchor", "metal/aluminium-mill-grey"),
-            ("tensionTie", "metal/aluminium-mill-grey")):
+            ("anchor", "metal/steel-blackened-aged"),
+            ("tensionTie", "metal/steel-blackened-aged")):
         line = [row for row in source.splitlines()
                 if 'key: "%s"' % port in row]
         assert line, port
