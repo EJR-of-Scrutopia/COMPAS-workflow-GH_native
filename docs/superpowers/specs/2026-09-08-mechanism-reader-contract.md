@@ -168,8 +168,24 @@ message:
     formula   = turns = (length_at(t) - length_at(frame0))
                         * reeveFactor / (2 * pi * spoolRadius)
 
-So the studio multiplies by 2 pi for radians, as expected. The
-**frame 0 reference** is the load-bearing part: the studio's timeline is
+So the studio multiplies by 2 pi for radians, as expected.
+
+**The formula and the sign sentence disagree, and it is unresolved.**
+The sentence says positive turns take up wire and that taking up makes
+the wire's routed length SHORTEN. The formula takes
+`length_at(t) - length_at(frame0)`, so a shortening length yields a
+NEGATIVE number, which the same sentence calls paying out. Both cannot
+be right. Either `length_at` means the wire wound ON the spool, which
+grows as you take up and makes the two agree, or it means the net-side
+run named in the original P-003 wording, in which case the formula
+needs its sign inverted. Until the document says which quantity
+`length_at` is, a reader implementing it literally has an even chance
+of turning every reel backwards through the entire animation -- the
+same failure class as the turns-versus-radians ambiguity, and just as
+invisible in a single still frame. **Do not implement the spin until
+this is answered.**
+
+The **frame 0 reference** is the load-bearing part: the studio's timeline is
 a pure function of t by construction, so an incremental per-frame delta
 would drift on scrub and be wrong on every recorded frame not played in
 order. Nothing is keyframed; the loosen-then-tighten falls out of the
@@ -368,6 +384,24 @@ taken away" view reads off the port name.
   the case that needs a tangent-point construction rather than a rigid
   spin. **Two numbers settle it, both Param's: how far the authored
   wrap subtends, and the drum radius.**
+
+  The plugin concedes the argument and expects case one on evidence:
+  his renders show drums reading as many parallel turns, the ridged
+  look of a fully wound spool, and his own description was "the wire
+  can reel and it gets stacked further on top of itself". Stacking in
+  layers implies many turns rather than a part wrap. Awaiting his
+  confirmation, but the reader should plan for STATIC reel-owned
+  frames. The `owner` fields stay regardless: they are what lets the
+  wrap be drawn once and the free span per frame without re-deriving
+  which is which, and if the geometry ever does need the tangent-point
+  construction the classification is already in the document rather
+  than being a schema change under pressure.
+
+  Note also what "stacked on top of itself" implies for the spin: with
+  layers, the effective winding radius grows as the drum fills, so the
+  constant `spoolRadius` in the formula is a mild simplification of his
+  own stated intent rather than an idealisation nobody meant. It stays
+  immaterial here, and with a static wrap nothing visual depends on it.
 
 - **The static opening, same family, also Param's.** At `Pre-Sag` 0 the
   `reel` third opens on an essentially static flat net. Compounded with
