@@ -1293,10 +1293,24 @@ internal static class MechanismDocument
         }
     }
 
-    private static MechanismFrame ReadFrame(JsonElement element) => new(
-        ReadTripleRaw(element.GetProperty("origin")),
-        ReadTripleRaw(element.GetProperty("xAxis")),
-        ReadTripleRaw(element.GetProperty("yAxis")));
+    /// <summary>
+    /// A frame from the collector's payload. Z is READ where the payload
+    /// carries it, which every payload this plugin writes now does, and
+    /// falls back to X cross Y where it does not. The fallback is right for
+    /// every right-handed frame and is the only sane reading available for a
+    /// payload written before Z travelled; a REFLECTED frame always carries
+    /// its own Z, so the fallback can never silently mirror anything.
+    /// </summary>
+    private static MechanismFrame ReadFrame(JsonElement element)
+    {
+        double[] origin = ReadTripleRaw(element.GetProperty("origin"));
+        double[] xAxis = ReadTripleRaw(element.GetProperty("xAxis"));
+        double[] yAxis = ReadTripleRaw(element.GetProperty("yAxis"));
+        double[] zAxis = element.TryGetProperty("zAxis", out JsonElement z)
+            ? ReadTripleRaw(z)
+            : Cross(xAxis, yAxis);
+        return new MechanismFrame(origin, xAxis, yAxis, zAxis);
+    }
 
     /// <summary>
     /// The plain arithmetic mean of a set of world points: the row-to-side
@@ -1337,7 +1351,11 @@ internal static class MechanismDocument
     /// </summary>
     private static double[] TransformLocal(double[] localPoint, MechanismFrame frame)
     {
-        double[] z = Cross(frame.XAxis, frame.YAxis);
+        // Z IS CARRIED, NEVER DERIVED. X cross Y is the true Z only for a
+        // RIGHT-handed frame; an instance frame on Param's mirrored side is a
+        // REFLECTION, where X cross Y points the opposite way, and a local
+        // point with an out-of-plane component would land on the wrong side.
+        double[] z = frame.ZAxis;
         double x = localPoint[0];
         double y = localPoint[1];
         double zc = localPoint[2];
