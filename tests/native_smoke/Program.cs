@@ -3245,30 +3245,23 @@ internal static partial class Program
         {
             ValidateMechanismCollector(plugin);
             Console.WriteLine(
-                "PASS  MechanismCollector (four reels per mechanism, his "
-                + "ruling of 2026-09-08 night): a reel axis plane's X and "
-                + "Y survive into the document UNCHANGED, never re-derived "
-                + "from Z; TREE-style reels ({side}{mechanism}, four per "
-                + "branch) resolve per mechanism and the chin says TREE; a "
-                + "FLAT list of four authored once REPLICATES across every "
-                + "declared instance and the chin says FLAT and how many; "
-                + "a mismatched tree branch refuses only ITS OWN "
-                + "mechanism's reels, named, leaving every other mechanism "
-                + "intact; a mismatched flat set refuses the WHOLE reel "
-                + "set, named, leaving the body and instances untouched; "
-                + "the reeve factor is ALWAYS named fixed at 1.0 and "
-                + "PROVISIONAL whenever a mechanism is built; spoolRadius "
-                + "defaults from the driven reel's own bounding box when "
-                + "one resolves and from the body's when it does not, said "
-                + "as a note naming the value and the source; the "
-                + "Anchor/Tension Tie door guard -- the SAME algorithm, run "
-                + "TWICE -- passes a part sitting on its own row and NAMES "
-                + "one sitting far from it, the tolerance scaling with the "
-                + "row's own anchor spacing; either port wired with no "
-                + "Result leaves the check unrun and says so by name; a "
-                + "Brep meshed in passing says so with the settings used; "
-                + "and nothing wired at all produces no payload and no "
-                + "warning noise.");
+                "PASS  MechanismCollector (his 2026-09-08 model: ONE "
+                + "authored mechanism -- Frame 1, Frame 2, Motors, a FUSED "
+                + "Tension Tie, and reels each with its own axis): nothing "
+                + "wired gives back null untouched; a full asset produces "
+                + "frame1/frame2/motors/tensionTie/reels with the right "
+                + "permanence tags (tensionTie \"permanent\", the rest "
+                + "\"temporary\"), the chin saying the tie arrived FUSED "
+                + "and every reel spins INDEPENDENTLY about its own axis; "
+                + "a reel mesh with no matching axis, and an axis with no "
+                + "matching mesh, each refuse ONLY that one index, by "
+                + "name, every other reel intact; spoolRadius defaults "
+                + "from reel[0]'s own bounding box when one resolves and "
+                + "from Frame 1's when none does, both named; the reeve "
+                + "factor is ALWAYS named fixed at 1.0 and PROVISIONAL; "
+                + "and Routing (RT)[0] carrying no frames at all is named, "
+                + "by wire, as fatal to every placement rather than left "
+                + "silent.");
         }
         catch (Exception exception)
         {
@@ -3281,19 +3274,21 @@ internal static partial class Program
             Console.WriteLine(
                 "PASS  MechanismCollector routing frame ownership (his "
                 + "wrapped-wire ruling, 2026-09-08: \"i have modelled the "
-                + "wire to wrap around the drums\"): a frame within a "
-                + "reel's own radial neighbourhood of its axis is owned "
-                + "by that reel; a frame away from every reel is owned "
-                + "by the body; a frame's own origin, xAxis and yAxis are "
-                + "BYTE-IDENTICAL to what was authored whichever owner it "
-                + "gets; a frame close to a reel's own radius boundary, "
-                + "or near two reels' axes at once, is NAMED as "
-                + "AMBIGUOUS with its numbers rather than picked "
-                + "silently; the chin's own per-mechanism tally of body "
-                + "and reel counts matches the assignment exactly; and "
-                + "the owner fields survive MechanismDocument.Json's own "
-                + "re-parse and rebuild of the route into the final "
-                + "document, unchanged.");
+                + "wire to wrap around the drums\"), reshaped to a FLAT "
+                + "reel list and routing authored once for the ONE "
+                + "mechanism: a frame within a reel's own radial "
+                + "neighbourhood of its axis is owned by that reel; a "
+                + "frame away from every reel is owned by the body; a "
+                + "frame's own origin, xAxis and yAxis are BYTE-IDENTICAL "
+                + "to what was authored whichever owner it gets; a frame "
+                + "close to a reel's own radius boundary, or near two "
+                + "reels' axes at once, is NAMED as AMBIGUOUS with its "
+                + "numbers rather than picked silently; the chin's own "
+                + "tally of body and reel counts is now GLOBAL (reels and "
+                + "routing are each authored once) and matches the "
+                + "assignment exactly; and the owner fields survive "
+                + "MechanismDocument.Json's own re-parse and rebuild of "
+                + "the route into the final document, unchanged.");
         }
         catch (Exception exception)
         {
@@ -3345,19 +3340,37 @@ internal static partial class Program
 
         try
         {
-            ValidateMechanismSpoolRadiusDisagreement(plugin);
+            ValidateMechanismPlacementDerivation(plugin);
             Console.WriteLine(
-                "PASS  MechanismCollector spoolRadius disagreement (audit "
-                + "finding 4): spoolRadius stays ONE document-level value, "
-                + "taken from whichever mechanism sorts first, but the "
-                + "moment another mechanism's own driven reel disagrees by "
-                + "more than 5%, it is named by the mechanism's own label; "
-                + "two mechanisms whose driven reels genuinely agree stay "
-                + "silent.");
+                "PASS  Mechanism placement derivation, rehearsed on his "
+                + "real shape (one authored mechanism, seven routing "
+                + "wires, a normal and a MIRRORED far-side placement "
+                + "branch, both built from a KNOWN transform so every "
+                + "residual is exactly zero by construction): the normal "
+                + "instance derives translation-only, determinant "
+                + "POSITIVE, not reflected; the mirrored instance derives "
+                + "a genuine REFLECTION, determinant NEGATIVE, from its "
+                + "target plane's own TRUE un-re-derived Z -- the mirror "
+                + "comes out mirrored, MEASURED on the derived transform's "
+                + "own handedness, not read off the code; a branch of six "
+                + "planes is refused BY NAME, its count said, no instance "
+                + "produced; a branch with one plane shifted 0.01 m off "
+                + "its correspondence still places but its residual reads "
+                + "~0.01 m and is named against the 0.001 m door-guard; "
+                + "and, his own concern that the reels are separate "
+                + "meshes needing their placement kept exact, reel 0's own "
+                + "distance to Frame 1's own reference point survives "
+                + "EXACTLY on both instances (the transform is an "
+                + "isometry, reflected or not), while the rotation SENSE "
+                + "the studio would recompute (X cross Y, both carried "
+                + "through the transform) agrees with the axis's own true "
+                + "direction on the normal instance and comes out EXACTLY "
+                + "REVERSED on the mirrored one -- the correct physics for "
+                + "a mirrored spinning reel, not a bug.");
         }
         catch (Exception exception)
         {
-            failures.Add($"MechanismSpoolRadiusDisagreement: {DescribeException(exception)}");
+            failures.Add($"MechanismPlacementDerivation: {DescribeException(exception)}");
         }
 
         try
@@ -40738,67 +40751,50 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// MechanismCollector.Build (named ports, the 2026-09-08 REEL REBUILD
-    /// on top of the 2026-09-08 night named-port rebuild), driven entirely
-    /// through the plain, Rhino- and Grasshopper-free record types it
-    /// takes: no Grasshopper object and no Rhino mesh crosses this
-    /// boundary, which is the whole point of keeping the collector's own
-    /// packaging logic separate from
-    /// <see cref="MechanismCollectorComponent"/>'s tree-walking.
+    /// MechanismCollector.Build, his 2026-09-08 model: ONE authored
+    /// mechanism -- Frame 1, Frame 2, Motors, a FUSED Tension Tie, and
+    /// SEPARATE reels each with its own axis -- driven entirely through
+    /// the plain, Rhino- and Grasshopper-free record types it takes.
     ///
-    /// Nine things are proved, each independently able to fail:
-    /// 1. TREE-STYLE reels: two mechanisms, four reels each, resolve into
-    ///    mechanism.reels tagged with the right side/mechanism/reel, and
-    ///    the chin says "TREE".
-    /// 2. A reel axis plane's X and Y survive into the document EXACTLY
-    ///    as authored -- never re-derived from Z, never normalised away.
-    /// 3. FLAT-STYLE reels: one set of four, authored once, REPLICATES
-    ///    across every declared instance, and the chin says "FLAT" and
-    ///    names how many instances.
-    /// 4. A tree branch whose reel count does not match its axis count
-    ///    refuses ONLY that mechanism's reels, named by address; every
-    ///    other mechanism still resolves.
-    /// 5. A flat set with one unmatched axis refuses the WHOLE reel set
-    ///    (shared by every instance), named; the body and instances are
+    /// Proves, each independently able to fail:
+    /// 1. Nothing wired at all gives back null, warnings and notes both
     ///    untouched.
-    /// 6. The chin ALWAYS names the reeve factor as fixed at 1.0 and
-    ///    PROVISIONAL whenever a mechanism is built.
-    /// 7. spoolRadius left to default reads from the driven reel's own
-    ///    bounding box when one resolves and from the BODY's when the
-    ///    mechanism carries no reel, said as a note naming the value and
-    ///    the source.
-    /// 8. The Anchor (AN) / Tension Tie (TT) door guard is the SAME
-    ///    algorithm run TWICE: a part sitting near its own row's nodes is
-    ///    silent, one sitting far from them is named, and the tolerance is
-    ///    the row's OWN characteristic spacing times the collector's own
-    ///    factor -- proved by giving both rows the SAME spacing and only
-    ///    one part of each port the same distance. Either port wired with
-    ///    no Result leaves the check unrun and says so by name. A part
-    ///    reported as meshed from a Brep says so, with the settings named.
-    /// 9. Nothing wired at all gives back null with NEITHER list touched.
+    /// 2. A full asset (both frame parts, motors, a fused tie, reels)
+    ///    produces mechanism.frame1/frame2/motors/tensionTie/reels with
+    ///    the right shapes and permanence tags (frame1/frame2/motors/
+    ///    reels "temporary", tensionTie "permanent"), and the chin says
+    ///    the tie arrived FUSED and every reel spins INDEPENDENTLY about
+    ///    its own axis.
+    /// 3. A reel MESH with no matching axis, and an AXIS with no matching
+    ///    reel mesh, each refuse ONLY that one index, by name; every
+    ///    other reel still resolves.
+    /// 4. spoolRadius defaults from reel[0]'s own bounding box when a
+    ///    reel resolves, and falls back to Frame 1's when none does,
+    ///    both said as a note naming the value and the source; the reeve
+    ///    factor is ALWAYS named fixed at 1.0 and PROVISIONAL.
+    /// 5. Routing (RT)[0] carrying no frames at all is named, by wire, as
+    ///    fatal to every placement -- an asset wired with no routing
+    ///    authored says so rather than staying silent.
     /// </summary>
     private static void ValidateMechanismCollector(Assembly plugin)
     {
         Type meshType = RequireComponentType(plugin, "MechanismMesh");
         Type frameType = RequireComponentType(plugin, "MechanismFrame");
-        Type meshBranchType = RequireComponentType(plugin, "MechanismMeshBranch");
-        Type axisBranchType = RequireComponentType(plugin, "MechanismAxisBranch");
         Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
-        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
-        Type instanceType = RequireComponentType(plugin, "MechanismInstanceInput");
-        Type wireType = RequireComponentType(plugin, "MechanismWireInput");
-        Type rowPartType = RequireComponentType(plugin, "MechanismRowPartInput");
-        Type rowType = RequireComponentType(plugin, "MechanismAnchorRow");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
         Type collectorType = RequireComponentType(plugin, "MechanismCollector");
         MethodInfo build = RequirePublicStatic(collectorType, "Build");
 
         object Mesh(double[][] vertices) => Activator.CreateInstance(
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(frameType, origin, x, y)!;
+        object IdentityAxis() => FrameOf(
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
 
         // A cube spanning 0..2 on every axis: smallest bounding dimension
-        // 2, so the spool-radius default (that dimension over 4) is 0.5 --
-        // a figure this check can name exactly rather than merely "some
-        // default".
+        // 2, so the spool-radius default (that dimension over 4) is 0.5.
         double[][] cube =
         {
             new double[] { 0, 0, 0 }, new double[] { 2, 0, 0 },
@@ -40807,533 +40803,206 @@ internal static partial class Program
         object cubeMesh = Mesh(cube);
         object smallMesh = Mesh(new[] { new double[] { 0, 0, 0 } });
 
-        object EmptyInstances() => MechanismListOf(instanceType);
-        object EmptyWires() => MechanismListOf(wireType);
-        object EmptyRowParts() => MechanismListOf(rowPartType);
-        object EmptyMeshBranches() => MechanismListOf(meshBranchType);
-        object EmptyAxisBranches() => MechanismListOf(axisBranchType);
+        object EmptyRouting() => MechanismListOf(routingWireType);
+        object EmptyPlacements() => MechanismListOf(placementBranchType);
+        object Asset(
+            object? f1, bool f1Brep, object f2, object f2Brep,
+            object? mo, bool moBrep, object? tt, bool ttBrep,
+            object reMeshes, object reBrep, object axes) =>
+            Activator.CreateInstance(
+                assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
+                reMeshes, reBrep, axes)!;
+        object EmptyAsset() => Asset(
+            null, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            MechanismListOf(frameType));
 
-        object FrameOf(double[] origin, double[] x, double[] y) =>
-            Activator.CreateInstance(frameType, origin, x, y)!;
-        // A DELIBERATELY NON-TRIVIAL frame: origin off the world axes,
-        // X and Y rotated off the world plane, so a bug that re-derives
-        // X/Y from Z (rather than carrying his authored plane through)
-        // shows up as a mismatch rather than an accidental match.
-        object distinctiveAxis = FrameOf(
-            new[] { 1.0, 2.0, 3.0 }, new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 });
-        object IdentityAxis() => FrameOf(
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
-        object MeshBranch(IReadOnlyList<int> path, object meshes, object fromBrep) =>
-            Activator.CreateInstance(meshBranchType, path, meshes, fromBrep)!;
-        object AxisBranch(IReadOnlyList<int> path, object axes) =>
-            Activator.CreateInstance(axisBranchType, path, axes)!;
-        object InstanceOf(int side, int mechanism) => Activator.CreateInstance(
-            instanceType,
-            Activator.CreateInstance(instanceIdType, side, mechanism)!,
-            IdentityAxis(),
-            (object?)"mechanism")!;
-        object FourCubes() => MechanismListOf(meshType, cubeMesh, cubeMesh, cubeMesh, cubeMesh);
-        object FourNotBrep() => MechanismListOf(typeof(bool), false, false, false, false);
-
-        object bodyOnlyAsset = Activator.CreateInstance(assetType, cubeMesh, false)!;
-
-        // CHECK 1 + 2: TREE-STYLE reels, two mechanisms ({0}{0} and
-        // {0}{1}), four reels each. {0}{0}'s reel 0 carries the
-        // distinctive, non-trivial axis plane: its X and Y must reach the
-        // document UNCHANGED.
-        object treeMeshBranches = MechanismListOf(
-            meshBranchType,
-            MeshBranch(new List<int> { 0, 0 }, FourCubes(), FourNotBrep()),
-            MeshBranch(new List<int> { 0, 1 }, FourCubes(), FourNotBrep()));
-        object treeAxisBranches = MechanismListOf(
-            axisBranchType,
-            AxisBranch(
-                new List<int> { 0, 0 },
-                MechanismListOf(frameType, distinctiveAxis, IdentityAxis(), IdentityAxis(), IdentityAxis())),
-            AxisBranch(
-                new List<int> { 0, 1 },
-                MechanismListOf(frameType, IdentityAxis(), IdentityAxis(), IdentityAxis(), IdentityAxis())));
-        var treeWarnings = new List<string>();
-        var treeNotes = new List<string>();
-        object? treePayload = build.Invoke(
+        // CHECK 1: nothing wired at all.
+        var emptyWarnings = new List<string>();
+        var emptyNotes = new List<string>();
+        object? emptyPayload = build.Invoke(
             null,
-            new object?[]
+            new object?[] { EmptyAsset(), EmptyRouting(), EmptyPlacements(), emptyWarnings, emptyNotes });
+        if (emptyPayload is not null)
+            throw new InvalidOperationException("Nothing wired at all must give back null.");
+        if (emptyWarnings.Count != 0 || emptyNotes.Count != 0)
+            throw new InvalidOperationException("Nothing wired at all must leave warnings and notes untouched.");
+
+        // CHECK 2 + 3: a full asset -- both frame parts, motors, a FUSED
+        // tie, and reels where reel[1]'s AXIS is missing and a fourth
+        // AXIS has no matching mesh.
+        object reelAxis0 = IdentityAxis();
+        object reelAxis2 = IdentityAxis();
+        object reelAxis3NoMesh = IdentityAxis();
+        object fullAsset = Asset(
+            cubeMesh, false,
+            MechanismListOf(meshType, smallMesh, smallMesh), MechanismListOf(typeof(bool), false, false),
+            cubeMesh, false,
+            cubeMesh, false,
+            MechanismListOf(meshType, cubeMesh, cubeMesh, cubeMesh),
+            MechanismListOf(typeof(bool), false, false, false),
+            MechanismListOf(frameType, reelAxis0, null, reelAxis2, reelAxis3NoMesh));
+
+        var fullWarnings = new List<string>();
+        var fullNotes = new List<string>();
+        object? fullPayload = build.Invoke(
+            null,
+            new object?[] { fullAsset, EmptyRouting(), EmptyPlacements(), fullWarnings, fullNotes });
+        if (fullPayload is not string fullJson)
+            throw new InvalidOperationException("A full asset must produce a payload.");
+
+        using (JsonDocument doc = JsonDocument.Parse(fullJson))
+        {
+            JsonElement mechanism = doc.RootElement.GetProperty("mechanism");
+            if (mechanism.GetProperty("frame1").GetProperty("permanence").GetString() != "temporary")
+                throw new InvalidOperationException("frame1's permanence must be temporary; got " + fullJson);
+            JsonElement frame2 = mechanism.GetProperty("frame2");
+            if (frame2.GetArrayLength() != 2)
+                throw new InvalidOperationException("frame2 must carry both authored parts; got " + fullJson);
+            if (mechanism.GetProperty("motors").GetProperty("permanence").GetString() != "temporary")
+                throw new InvalidOperationException("motors' permanence must be temporary; got " + fullJson);
+            JsonElement tensionTie = mechanism.GetProperty("tensionTie");
+            if (tensionTie.GetProperty("permanence").GetString() != "permanent")
+                throw new InvalidOperationException("tensionTie's permanence must be permanent; got " + fullJson);
+
+            JsonElement reels = mechanism.GetProperty("reels");
+            if (reels.GetArrayLength() != 2)
             {
-                bodyOnlyAsset, treeMeshBranches, treeAxisBranches,
-                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                treeWarnings, treeNotes,
-            });
-        if (treePayload is not string treeJson)
-            throw new InvalidOperationException("Two valid tree-style mechanisms must produce a payload.");
-        bool treeNoted = treeNotes.Any(n =>
-            n.Contains("TREE", StringComparison.Ordinal) &&
-            n.Contains("2 of 2 mechanism(s)", StringComparison.Ordinal));
-        if (!treeNoted)
+                throw new InvalidOperationException(
+                    "Reel [1] (mesh with no matching axis) and Reel Axis " +
+                    "[3] (axis with no matching mesh) must both be " +
+                    "refused, leaving reels [0] and [2] -- 2 entries; got " +
+                    reels.GetArrayLength() + ": " + fullJson);
+            }
+            foreach (JsonElement reel in reels.EnumerateArray())
+            {
+                if (!reel.GetProperty("driven").GetBoolean())
+                    throw new InvalidOperationException("Every resolved reel must be driven:true (the independent case); got " + fullJson);
+                if (reel.GetProperty("permanence").GetString() != "temporary")
+                    throw new InvalidOperationException("Every reel's permanence must be temporary; got " + fullJson);
+            }
+
+            double spoolRadius = mechanism.GetProperty("spoolRadius").GetDouble();
+            if (Math.Abs(spoolRadius - 0.5) > 1e-9)
+                throw new InvalidOperationException($"spoolRadius must default to 0.5 from reel[0]'s own bounding box; got {spoolRadius}.");
+        }
+
+        bool reelMissingAxisNamed = fullWarnings.Any(w =>
+            w.Contains("Reel (RE)[1]", StringComparison.Ordinal) &&
+            w.Contains("no matching axis plane", StringComparison.Ordinal));
+        if (!reelMissingAxisNamed)
         {
             throw new InvalidOperationException(
-                "Tree-style reels must be named TREE in the chin, with "
-                + "both mechanisms counted; notes were: "
-                + string.Join(" | ", treeNotes));
+                "Reel (RE)[1], authored with no matching axis, must be " +
+                "refused by name; warnings were: " + string.Join(" | ", fullWarnings));
         }
-        using (JsonDocument treeDoc = JsonDocument.Parse(treeJson))
+        bool axisMissingReelNamed = fullWarnings.Any(w =>
+            w.Contains("Reel Axis (AX)[3]", StringComparison.Ordinal) &&
+            w.Contains("no matching reel mesh", StringComparison.Ordinal));
+        if (!axisMissingReelNamed)
         {
-            JsonElement reels = treeDoc.RootElement.GetProperty("mechanism").GetProperty("reels");
-            if (reels.GetArrayLength() != 8)
-            {
-                throw new InvalidOperationException(
-                    "Two mechanisms of four reels each must total 8 " +
-                    "mechanism.reels entries; got " + reels.GetArrayLength() + ": " + treeJson);
-            }
-            JsonElement? reel000 = null;
-            foreach (JsonElement reel in reels.EnumerateArray())
-            {
-                if (reel.GetProperty("side").GetInt32() == 0 &&
-                    reel.GetProperty("mechanism").GetInt32() == 0 &&
-                    reel.GetProperty("reel").GetInt32() == 0)
-                {
-                    reel000 = reel;
-                    break;
-                }
-            }
-            if (reel000 is null)
-                throw new InvalidOperationException("reels must carry an entry for side 0, mechanism 0, reel 0; got " + treeJson);
-            JsonElement axis = reel000.Value.GetProperty("axis");
-            double[] xAxis = axis.GetProperty("xAxis").EnumerateArray().Select(e => e.GetDouble()).ToArray();
-            double[] yAxis = axis.GetProperty("yAxis").EnumerateArray().Select(e => e.GetDouble()).ToArray();
-            double[] origin = axis.GetProperty("origin").EnumerateArray().Select(e => e.GetDouble()).ToArray();
-            bool preserved =
-                origin.SequenceEqual(new[] { 1.0, 2.0, 3.0 }) &&
-                xAxis.SequenceEqual(new[] { 0.0, 1.0, 0.0 }) &&
-                yAxis.SequenceEqual(new[] { 0.0, 0.0, 1.0 });
-            if (!preserved)
-            {
-                throw new InvalidOperationException(
-                    "The reel axis plane's X and Y must survive into the "
-                    + "document UNCHANGED, never re-derived from Z; got "
-                    + "origin=[" + string.Join(",", origin) + "] xAxis=["
-                    + string.Join(",", xAxis) + "] yAxis=[" + string.Join(",", yAxis) + "].");
-            }
-            if (!reel000.Value.GetProperty("driven").GetBoolean())
-                throw new InvalidOperationException("side 0 mechanism 0 reel 0 must be driven:true.");
-            double treeSpoolRadius = treeDoc.RootElement.GetProperty("mechanism").GetProperty("spoolRadius").GetDouble();
-            if (Math.Abs(treeSpoolRadius - 0.5) > 1e-9)
-                throw new InvalidOperationException($"tree-style spoolRadius must default to 0.5 from the first mechanism's driven reel; got {treeSpoolRadius}.");
-
-            // EVERY REEL CARRIES THE TAG THE STUDIO KEYS MATERIAL ON
-            // (mechanism spec section 7 / REPLY 4 point 7): permanence is
-            // structural -- a reel is part of the temporary machine, never
-            // the works that remain -- and this is the one check that
-            // proves the field actually reaches every entry rather than
-            // only the one this fixture happens to look at above.
-            foreach (JsonElement reel in reels.EnumerateArray())
-            {
-                string? reelPermanence = reel.GetProperty("permanence").GetString();
-                if (reelPermanence != "temporary")
-                {
-                    throw new InvalidOperationException(
-                        "Every mechanism.reels[] entry's permanence must " +
-                        $"be \"temporary\"; got {reelPermanence ?? "(absent)"} " +
-                        $"for side {reel.GetProperty("side").GetInt32()} " +
-                        $"mechanism {reel.GetProperty("mechanism").GetInt32()} " +
-                        $"reel {reel.GetProperty("reel").GetInt32()}.");
-                }
-            }
+            throw new InvalidOperationException(
+                "Reel Axis (AX)[3], authored with no matching reel mesh, " +
+                "must be refused by name; warnings were: " + string.Join(" | ", fullWarnings));
         }
-
-        // CHECK 6: the reeve factor is ALWAYS named fixed and provisional,
-        // proved on this same fixture.
-        bool reeveFactorNamed = treeNotes.Any(n =>
+        bool tieFusedNoted = fullNotes.Any(n =>
+            n.Contains("Tension Tie (TT) arrived as ONE FUSED object", StringComparison.Ordinal));
+        if (!tieFusedNoted)
+        {
+            throw new InvalidOperationException(
+                "The chin must say the tie arrived fused; notes were: " + string.Join(" | ", fullNotes));
+        }
+        bool independentNoted = fullNotes.Any(n =>
+            n.Contains("2 reel(s) resolved", StringComparison.Ordinal) &&
+            n.Contains("INDEPENDENTLY", StringComparison.Ordinal));
+        if (!independentNoted)
+        {
+            throw new InvalidOperationException(
+                "The chin must say every reel spins INDEPENDENTLY about " +
+                "its own axis; notes were: " + string.Join(" | ", fullNotes));
+        }
+        bool reeveFactorNamed = fullNotes.Any(n =>
             n.Contains("reeveFactor is fixed at 1.0", StringComparison.Ordinal) &&
             n.Contains("PROVISIONAL", StringComparison.Ordinal));
         if (!reeveFactorNamed)
         {
             throw new InvalidOperationException(
-                "The chin must name the reeve factor as fixed at 1.0 and "
-                + "PROVISIONAL whenever a mechanism is built; notes were: "
-                + string.Join(" | ", treeNotes));
+                "The chin must name the reeve factor as fixed at 1.0 and " +
+                "PROVISIONAL; notes were: " + string.Join(" | ", fullNotes));
         }
 
-        // CHECK 3: FLAT-STYLE reels, one set of four authored once (GH's
-        // own default single-branch path {0}), replicated across TWO real
-        // instances, {0}{0} and {1}{0}.
-        object flatMeshBranches = MechanismListOf(
-            meshBranchType, MeshBranch(new List<int> { 0 }, FourCubes(), FourNotBrep()));
-        object flatAxisBranches = MechanismListOf(
-            axisBranchType,
-            AxisBranch(
-                new List<int> { 0 },
-                MechanismListOf(frameType, IdentityAxis(), IdentityAxis(), IdentityAxis(), IdentityAxis())));
-        object twoInstances = MechanismListOf(instanceType, InstanceOf(0, 0), InstanceOf(1, 0));
-        var flatWarnings = new List<string>();
-        var flatNotes = new List<string>();
-        object? flatPayload = build.Invoke(
+        // CHECK 4b: spoolRadius falls back to Frame 1's own bounding box
+        // when no reel resolves at all.
+        object frame1OnlyAsset = Asset(
+            cubeMesh, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            MechanismListOf(frameType));
+        var f1Warnings = new List<string>();
+        var f1Notes = new List<string>();
+        object? f1Payload = build.Invoke(
             null,
-            new object?[]
-            {
-                bodyOnlyAsset, flatMeshBranches, flatAxisBranches,
-                twoInstances, EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                flatWarnings, flatNotes,
-            });
-        if (flatPayload is not string flatJson)
-            throw new InvalidOperationException("A valid flat reel set must produce a payload.");
-        bool flatNoted = flatNotes.Any(n =>
-            n.Contains("FLAT", StringComparison.Ordinal) &&
-            n.Contains("replicated across 2 instance(s)", StringComparison.Ordinal));
-        if (!flatNoted)
+            new object?[] { frame1OnlyAsset, EmptyRouting(), EmptyPlacements(), f1Warnings, f1Notes });
+        if (f1Payload is not string f1Json)
+            throw new InvalidOperationException("Frame 1 alone must still produce a payload.");
+        using (JsonDocument f1Doc = JsonDocument.Parse(f1Json))
         {
-            throw new InvalidOperationException(
-                "Flat-style reels must be named FLAT in the chin, with the "
-                + "instance count it replicated across; notes were: "
-                + string.Join(" | ", flatNotes));
-        }
-        using (JsonDocument flatDoc = JsonDocument.Parse(flatJson))
-        {
-            JsonElement reels = flatDoc.RootElement.GetProperty("mechanism").GetProperty("reels");
-            int side0Mech0 = reels.EnumerateArray().Count(r =>
-                r.GetProperty("side").GetInt32() == 0 && r.GetProperty("mechanism").GetInt32() == 0);
-            int side1Mech0 = reels.EnumerateArray().Count(r =>
-                r.GetProperty("side").GetInt32() == 1 && r.GetProperty("mechanism").GetInt32() == 0);
-            if (reels.GetArrayLength() != 8 || side0Mech0 != 4 || side1Mech0 != 4)
-            {
-                throw new InvalidOperationException(
-                    "A flat set of four reels must be REPLICATED across "
-                    + "both declared instances (4 each, 8 total); got "
-                    + reels.GetArrayLength() + " total, " + side0Mech0
-                    + " for {0}{0}, " + side1Mech0 + " for {1}{0}: " + flatJson);
-            }
-        }
-
-        // CHECK 4: TREE-STYLE, one mechanism's branch mismatched (four
-        // reels, three axes) -- ONLY that mechanism's reels are refused;
-        // the other mechanism still resolves.
-        object partialMeshBranches = MechanismListOf(
-            meshBranchType,
-            MeshBranch(new List<int> { 0, 0 }, FourCubes(), FourNotBrep()),
-            MeshBranch(new List<int> { 0, 1 }, FourCubes(), FourNotBrep()));
-        object partialAxisBranches = MechanismListOf(
-            axisBranchType,
-            AxisBranch(new List<int> { 0, 0 }, MechanismListOf(frameType, IdentityAxis(), IdentityAxis(), IdentityAxis())),
-            AxisBranch(new List<int> { 0, 1 }, MechanismListOf(frameType, IdentityAxis(), IdentityAxis(), IdentityAxis(), IdentityAxis())));
-        var partialWarnings = new List<string>();
-        var partialNotes = new List<string>();
-        object? partialPayload = build.Invoke(
-            null,
-            new object?[]
-            {
-                bodyOnlyAsset, partialMeshBranches, partialAxisBranches,
-                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                partialWarnings, partialNotes,
-            });
-        if (partialPayload is not string partialJson)
-            throw new InvalidOperationException("A partially mismatched tree must still produce a payload (body intact).");
-        bool partialNamed = partialWarnings.Any(w =>
-            w.Contains("[0][0]", StringComparison.Ordinal) &&
-            w.Contains("axis", StringComparison.Ordinal) &&
-            w.Contains("refused", StringComparison.Ordinal));
-        if (!partialNamed)
-        {
-            throw new InvalidOperationException(
-                "Mechanism [0][0]'s mismatched reel/axis count must be "
-                + "named and refused; warnings were: "
-                + string.Join(" | ", partialWarnings));
-        }
-        using (JsonDocument partialDoc = JsonDocument.Parse(partialJson))
-        {
-            JsonElement reels = partialDoc.RootElement.GetProperty("mechanism").GetProperty("reels");
-            int side0Mech0 = reels.EnumerateArray().Count(r =>
-                r.GetProperty("side").GetInt32() == 0 && r.GetProperty("mechanism").GetInt32() == 0);
-            int side0Mech1 = reels.EnumerateArray().Count(r =>
-                r.GetProperty("side").GetInt32() == 0 && r.GetProperty("mechanism").GetInt32() == 1);
-            if (side0Mech0 != 0 || side0Mech1 != 4)
-            {
-                throw new InvalidOperationException(
-                    "Mechanism [0][0] must carry NO reels (refused) while "
-                    + "[0][1] carries all four (unaffected); got "
-                    + side0Mech0 + " / " + side0Mech1 + ": " + partialJson);
-            }
-        }
-
-        // CHECK 5: FLAT-STYLE, one unmatched axis (reel 2 has none) --
-        // the WHOLE reel set is refused for every instance, but the body
-        // and instances are untouched.
-        object brokenFlatAxes = MechanismListOf(
-            frameType, IdentityAxis(), IdentityAxis(), (object?)null, IdentityAxis());
-        object brokenFlatMeshBranches = MechanismListOf(
-            meshBranchType, MeshBranch(new List<int> { 0 }, FourCubes(), FourNotBrep()));
-        object brokenFlatAxisBranches = MechanismListOf(
-            axisBranchType, AxisBranch(new List<int> { 0 }, brokenFlatAxes));
-        var brokenWarnings = new List<string>();
-        var brokenNotes = new List<string>();
-        object? brokenPayload = build.Invoke(
-            null,
-            new object?[]
-            {
-                bodyOnlyAsset, brokenFlatMeshBranches, brokenFlatAxisBranches,
-                twoInstances, EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                brokenWarnings, brokenNotes,
-            });
-        if (brokenPayload is not string brokenJson)
-            throw new InvalidOperationException("A broken flat reel set must still produce a payload (body intact).");
-        bool brokenNamed = brokenWarnings.Any(w =>
-            w.Contains("reel[2]", StringComparison.Ordinal) &&
-            w.Contains("axis", StringComparison.Ordinal) &&
-            w.Contains("whole reel set is refused", StringComparison.Ordinal));
-        if (!brokenNamed)
-        {
-            throw new InvalidOperationException(
-                "A flat reel with one unmatched axis must refuse the "
-                + "whole reel set, named; warnings were: "
-                + string.Join(" | ", brokenWarnings));
-        }
-        using (JsonDocument brokenDoc = JsonDocument.Parse(brokenJson))
-        {
-            JsonElement reels = brokenDoc.RootElement.GetProperty("mechanism").GetProperty("reels");
-            if (reels.GetArrayLength() != 0)
-            {
-                throw new InvalidOperationException(
-                    "A refused flat reel set must leave mechanism.reels "
-                    + "EMPTY for every instance; got " + reels.GetArrayLength() + ": " + brokenJson);
-            }
-            if (brokenDoc.RootElement.GetProperty("mechanism").GetProperty("body").ValueKind == JsonValueKind.Null)
-                throw new InvalidOperationException("A refused reel set must not touch the body: " + brokenJson);
-        }
-
-        // CHECK 7: a body and NO reel at all, so spoolRadius defaults from
-        // the BODY's own bounding box (0.5, per the cube above) rather
-        // than a reel's.
-        var bodyOnlyWarnings = new List<string>();
-        var bodyOnlyNotes = new List<string>();
-        object? bodyOnlyPayload = build.Invoke(
-            null,
-            new object?[]
-            {
-                bodyOnlyAsset, EmptyMeshBranches(), EmptyAxisBranches(),
-                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                bodyOnlyWarnings, bodyOnlyNotes,
-            });
-        if (bodyOnlyPayload is not string bodyOnlyJson)
-            throw new InvalidOperationException("A body with no reel must still produce a payload.");
-        bool defaultedFromBody = bodyOnlyNotes.Any(n =>
-            n.Contains("spoolRadius", StringComparison.Ordinal) &&
-            n.Contains("0.5", StringComparison.Ordinal) &&
-            n.Contains("body", StringComparison.Ordinal));
-        if (!defaultedFromBody)
-        {
-            throw new InvalidOperationException(
-                "spoolRadius left blank on a reel-less mechanism must "
-                + "default to the BODY's own bounding box (0.5 on this "
-                + "fixture) and say so; notes were: "
-                + string.Join(" | ", bodyOnlyNotes));
-        }
-        using (JsonDocument bodyOnlyDoc = JsonDocument.Parse(bodyOnlyJson))
-        {
-            JsonElement mechanism = bodyOnlyDoc.RootElement.GetProperty("mechanism");
-            double spoolRadius = mechanism.GetProperty("spoolRadius").GetDouble();
+            double spoolRadius = f1Doc.RootElement.GetProperty("mechanism").GetProperty("spoolRadius").GetDouble();
             if (Math.Abs(spoolRadius - 0.5) > 1e-9)
-            {
-                throw new InvalidOperationException(
-                    "spoolRadius must default to 0.5 (the body's bounding "
-                    + $"box over 4); got {spoolRadius}.");
-            }
-            string? bodyPermanence = mechanism.GetProperty("body")
-                .GetProperty("permanence").GetString();
-            if (bodyPermanence != "temporary")
-            {
-                throw new InvalidOperationException(
-                    "mechanism.body.permanence must be \"temporary\"; got "
-                    + $"{bodyPermanence ?? "(absent)"}.");
-            }
-            if (mechanism.GetProperty("reels").GetArrayLength() != 0)
-                throw new InvalidOperationException("A reel-less mechanism must carry an EMPTY reels array.");
+                throw new InvalidOperationException($"spoolRadius must default to 0.5 from Frame 1's own bounding box when no reel resolves; got {spoolRadius}.");
         }
-
-        object noReelAsset = bodyOnlyAsset;
-
-        // ANCHOR (AN) / TENSION TIE (TT): the SAME door guard, run TWICE.
-        // Two rows, IDENTICAL spacing (1.0 between consecutive nodes, so
-        // the tolerance -- 3x that -- is 3.0 on both): row 0's part sits
-        // 1e-4 away (silent), row 1's sits 100 away (named). Only the
-        // DISTANCE differs, proving the tolerance is read off the row and
-        // not hardcoded. Row 0's Anchor part is ALSO flagged FromBrep, so
-        // this fixture proves the Brep-meshed note in the same pass.
-        double[][] rowPoints = { new[] { 0.0, 0, 0 }, new[] { 1.0, 0, 0 }, new[] { 2.0, 0, 0 } };
-        object row0 = Activator.CreateInstance(rowType, (object)rowPoints)!;
-        object row1 = Activator.CreateInstance(rowType, (object)rowPoints)!;
-        object rows = MechanismListOf(rowType, row0, row1);
-
-        object PartNear(bool fromBrep) => Activator.CreateInstance(
-            rowPartType, 0, smallMesh, new[] { 1.0, 0.0, 0.0001 }, fromBrep)!;
-        object PartFar(bool fromBrep) => Activator.CreateInstance(
-            rowPartType, 1, smallMesh, new[] { 1.0, 100.0, 0.0 }, fromBrep)!;
-
-        object anchors = MechanismListOf(rowPartType, PartNear(true), PartFar(false));
-        object tensionTies = MechanismListOf(rowPartType, PartNear(false), PartFar(false));
-
-        var rowWarnings = new List<string>();
-        var rowNotes = new List<string>();
-        object? rowPayload = build.Invoke(
-            null,
-            new object?[]
-            {
-                noReelAsset, EmptyMeshBranches(), EmptyAxisBranches(),
-                EmptyInstances(), EmptyWires(),
-                anchors, tensionTies, rows,
-                rowWarnings, rowNotes,
-            });
-        if (rowPayload is not string rowJson)
-            throw new InvalidOperationException("Anchor/Tension Tie rows must still produce a payload.");
-        if (rowWarnings.Any(w => w.Contains("Anchor (AN)[0]", StringComparison.Ordinal)) ||
-            rowWarnings.Any(w => w.Contains("Tension Tie (TT)[0]", StringComparison.Ordinal)))
+        bool fallbackNoted = f1Notes.Any(n =>
+            n.Contains("spoolRadius defaulted to 0.5", StringComparison.Ordinal) &&
+            n.Contains("since no reel resolved", StringComparison.Ordinal));
+        if (!fallbackNoted)
         {
             throw new InvalidOperationException(
-                "Row 0 sits 1e-4 from its own row and must be SILENT on "
-                + "BOTH ports; warnings were: " + string.Join(" | ", rowWarnings));
-        }
-        bool namedAnchorFar = rowWarnings.Any(w =>
-            w.Contains("Anchor (AN)[1]", StringComparison.Ordinal) &&
-            w.Contains("door-guard tolerance", StringComparison.Ordinal));
-        bool namedTieFar = rowWarnings.Any(w =>
-            w.Contains("Tension Tie (TT)[1]", StringComparison.Ordinal) &&
-            w.Contains("door-guard tolerance", StringComparison.Ordinal));
-        if (!namedAnchorFar || !namedTieFar)
-        {
-            throw new InvalidOperationException(
-                "Row 1 sits 100 units from its own row (tolerance 3.0) "
-                + "and must be NAMED on BOTH ports (the same algorithm, "
-                + "run twice); warnings were: " + string.Join(" | ", rowWarnings));
-        }
-        bool anchorBrepNoted = rowNotes.Any(n =>
-            n.Contains("Anchor (AN)[0]", StringComparison.Ordinal) &&
-            n.Contains("Brep", StringComparison.Ordinal) &&
-            n.Contains("meshed", StringComparison.Ordinal));
-        if (!anchorBrepNoted)
-        {
-            throw new InvalidOperationException(
-                "AN[0] was reported as meshed from a Brep and must say so "
-                + "with the settings used; notes were: "
-                + string.Join(" | ", rowNotes));
-        }
-        using (JsonDocument rowDoc = JsonDocument.Parse(rowJson))
-        {
-            JsonElement anchorsOut = rowDoc.RootElement.GetProperty("anchors");
-            JsonElement tiesOut = rowDoc.RootElement.GetProperty("tensionTies");
-            if (anchorsOut.GetArrayLength() != 2 || tiesOut.GetArrayLength() != 2)
-                throw new InvalidOperationException("Both anchors and tensionTies must carry both rows; " + rowJson);
-            for (int i = 0; i < 2; i++)
-            {
-                string? anchorPermanence = anchorsOut[i].GetProperty("permanence").GetString();
-                string? tiePermanence = tiesOut[i].GetProperty("permanence").GetString();
-                if (anchorPermanence != "permanent" || tiePermanence != "permanent")
-                {
-                    throw new InvalidOperationException(
-                        $"anchors[{i}]/tensionTies[{i}].permanence must be "
-                        + $"\"permanent\"; got {anchorPermanence ?? "(absent)"}"
-                        + $"/{tiePermanence ?? "(absent)"}.");
-                }
-                if (anchorsOut[i].GetProperty("placement").GetString() != "world")
-                    throw new InvalidOperationException($"anchors[{i}].placement must be \"world\"; " + rowJson);
-            }
+                "The fallback source must be named; notes were: " + string.Join(" | ", f1Notes));
         }
 
-        // Wired with no Result: the check does not run, and says so rather
-        // than passing the rows through in silence.
-        var noResultWarnings = new List<string>();
-        object? withoutResult = build.Invoke(
-            null,
-            new object?[]
-            {
-                noReelAsset, EmptyMeshBranches(), EmptyAxisBranches(),
-                EmptyInstances(), EmptyWires(),
-                MechanismListOf(rowPartType, PartFar(false)), EmptyRowParts(), null,
-                noResultWarnings, new List<string>(),
-            });
-        if (withoutResult is not string ||
-            !noResultWarnings.Any(w => w.Contains("no Result was wired", StringComparison.Ordinal)))
+        // CHECK 5: Routing (RT)[0] carrying no frames at all is named, by
+        // wire, and fatal to every placement -- an asset wired with no
+        // routing at all must say so rather than staying silent.
+        bool wire0Named = f1Warnings.Any(w =>
+            w.Contains("Routing (RT)[0]", StringComparison.Ordinal) &&
+            w.Contains("NO MECHANISM INSTANCE CAN BE PLACED", StringComparison.Ordinal));
+        if (!wire0Named)
         {
             throw new InvalidOperationException(
-                "AN wired with no Result must say the door-guard could "
-                + "not run; warnings were: " + string.Join(" | ", noResultWarnings));
-        }
-
-        // Nothing wired at all: null, and NEITHER list touched (spec
-        // section 8 item 6, "no mechanism document and no warning noise").
-        object emptyAsset = Activator.CreateInstance(assetType, null, false)!;
-        var emptyWarnings = new List<string>();
-        var emptyNotes = new List<string>();
-        object? nothing = build.Invoke(
-            null,
-            new object?[]
-            {
-                emptyAsset, EmptyMeshBranches(), EmptyAxisBranches(),
-                EmptyInstances(), EmptyWires(),
-                EmptyRowParts(), EmptyRowParts(), null,
-                emptyWarnings, emptyNotes,
-            });
-        if (nothing is not null || emptyWarnings.Count != 0 || emptyNotes.Count != 0)
-        {
-            throw new InvalidOperationException(
-                "Nothing wired must produce null and no warning noise; "
-                + $"got payload={nothing}, warnings={emptyWarnings.Count}, "
-                + $"notes={emptyNotes.Count}.");
+                "Routing (RT)[0] carrying no frames must be named as " +
+                "fatal to every placement; warnings were: " + string.Join(" | ", f1Warnings));
         }
     }
 
     /// <summary>
-    /// ROUTING FRAME OWNERSHIP (task: Param has modelled the wire wrapping
-    /// the drums -- "it is option 2. i have modelled the wire to wrap
-    /// around the drums" -- so a routing frame sitting on a rotating reel
-    /// must be told apart from one on the fixed body, or the studio holds
-    /// it fixed while the reel spins under it, reading as slipping rather
-    /// than reeling).
-    ///
-    /// ONE mechanism, FOUR reels, two of them doing real geometric work:
-    /// reel 0's axis is the world Z line through the origin, its own mesh
-    /// vertices 2 units out, so its radial extent is 2; reel 1's axis is
-    /// the vertical line through (3, 0, 0), its own mesh also 2 units out
-    /// (radial extent 2 as well, chosen so reel 0 and reel 1's own
-    /// neighbourhoods overlap between x=1 and x=5); reels 2 and 3 sit far
-    /// off at (1000, 1000, 0) and never come into play, present only so
-    /// the fixture is his real four-reels-per-mechanism shape.
-    ///
-    /// FOUR routing frames on ONE wire, each proving a different corner of
-    /// the rule:
-    ///   [0] (0.1, 0, 5): a hair off reel 0's own axis, ratio 0.05 --
-    ///       clearly OWNED BY REEL 0, no warning.
-    ///   [1] (50, 50, 50): nowhere near any reel (every ratio &gt;&gt; 1) --
-    ///       clearly OWNED BY THE BODY, no warning.
-    ///   [2] (-2.1, 0, 5): distance 2.1 against reel 0's own radius 2,
-    ///       ratio 1.05 -- just OUTSIDE reel 0's neighbourhood, so owned
-    ///       by the body, but close enough to the 1.0 boundary that it
-    ///       must be NAMED rather than trusted silently. The NEGATIVE
-    ///       side is used deliberately: +2.1 sits only 0.9 from reel 1's
-    ///       own axis (ratio 0.45), which would make reel 1 the winner
-    ///       outright rather than testing reel 0's own boundary alone.
-    ///   [3] (1.5, 0, 5): distance 1.5 to BOTH reel 0's and reel 1's own
-    ///       axis lines, ratio 0.75 against both radii -- inside both
-    ///       neighbourhoods at once, so it is NAMED (near two reels'
-    ///       axes) even though it still resolves to reel 0 (first found
-    ///       on an exact tie).
-    ///
-    /// Proves, each independently: a frame on a reel's own neighbourhood
-    /// is owned by that reel; a frame away from every reel is owned by
-    /// the body; a frame's own origin/xAxis/yAxis are BYTE-IDENTICAL in
-    /// the output to what was authored, whichever owner it got (ownership
-    /// never moves a position); the boundary-close and near-two-reels
-    /// cases are both NAMED with their numbers, never silently resolved;
-    /// and the chin's own per-mechanism tally (body 2, reel 0 2, reel 1
-    /// 0, reel 2 0, reel 3 0) matches the assignment exactly.
+    /// Routing frame ownership (7c8db59, unchanged), reshaped to a FLAT
+    /// reel list and a routing wire authored once for the ONE mechanism
+    /// (rather than a per-{side}{mechanism} tree): a reel within another
+    /// reel's own radial neighbourhood is owned by that reel; a frame away
+    /// from every reel is owned by the body; a frame close to a reel's own
+    /// radius boundary, or near two reels' axes at once, is NAMED as
+    /// AMBIGUOUS rather than picked silently; positions are BYTE-IDENTICAL
+    /// whichever owner a frame gets; the chin's own tally is now GLOBAL
+    /// (the reels and the routing are each authored once); and ownership
+    /// survives MechanismDocument.Json's own re-parse into the final
+    /// document, unchanged. Same fixture geometry as the pre-rebuild test:
+    ///   [0] (0.1, 0, 5): a hair off reel 0's own axis, ratio 0.05 -- OWNED BY REEL 0.
+    ///   [1] (50, 50, 50): nowhere near any reel -- OWNED BY THE BODY.
+    ///   [2] (-2.1, 0, 5): just OUTSIDE reel 0's own boundary -- body, but NAMED.
+    ///   [3] (1.5, 0, 5): inside both reel 0's and reel 1's neighbourhoods -- NAMED, resolves reel 0.
     /// </summary>
     private static void ValidateMechanismRouteOwnership(Assembly plugin)
     {
         Type meshType = RequireComponentType(plugin, "MechanismMesh");
         Type frameType = RequireComponentType(plugin, "MechanismFrame");
-        Type meshBranchType = RequireComponentType(plugin, "MechanismMeshBranch");
-        Type axisBranchType = RequireComponentType(plugin, "MechanismAxisBranch");
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
         Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
         Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
-        Type instanceType = RequireComponentType(plugin, "MechanismInstanceInput");
-        Type wireType = RequireComponentType(plugin, "MechanismWireInput");
-        Type rowPartType = RequireComponentType(plugin, "MechanismRowPartInput");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
         Type collectorType = RequireComponentType(plugin, "MechanismCollector");
         MethodInfo build = RequirePublicStatic(collectorType, "Build");
 
@@ -41341,22 +41010,21 @@ internal static partial class Program
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
         object FrameOf(double[] origin, double[] x, double[] y) =>
             Activator.CreateInstance(frameType, origin, x, y)!;
+        object PlaneOf(double[] origin, double[] x, double[] y, double[] z) =>
+            Activator.CreateInstance(placementPlaneType, origin, x, y, z)!;
         object IdentityAxis() => FrameOf(
             new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
-        object MeshBranch(IReadOnlyList<int> path, object meshes, object fromBrep) =>
-            Activator.CreateInstance(meshBranchType, path, meshes, fromBrep)!;
-        object AxisBranch(IReadOnlyList<int> path, object axes) =>
-            Activator.CreateInstance(axisBranchType, path, axes)!;
-        object EmptyRowParts() => MechanismListOf(rowPartType);
-        object FourNotBrep() => MechanismListOf(typeof(bool), false, false, false, false);
-
-        object bodyMesh = Mesh(new[] { new double[] { 0, 0, 0 }, new double[] { 1, 1, 1 } });
-        object bodyAsset = Activator.CreateInstance(assetType, bodyMesh, false)!;
+        object Asset(
+            object? f1, bool f1Brep, object f2, object f2Brep,
+            object? mo, bool moBrep, object? tt, bool ttBrep,
+            object reMeshes, object reBrep, object axes) =>
+            Activator.CreateInstance(
+                assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
+                reMeshes, reBrep, axes)!;
 
         // Reel 0: axis the world Z line through the origin; own mesh
         // vertices 2 units out on X and Y -- radial extent 2.
-        object reel0Axis = FrameOf(
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
+        object reel0Axis = IdentityAxis();
         object reel0Mesh = Mesh(new[]
         {
             new double[] { 2, 0, 0 }, new double[] { -2, 0, 0 },
@@ -41374,8 +41042,8 @@ internal static partial class Program
             new double[] { 3, 2, 0 }, new double[] { 3, -2, 0 },
         });
 
-        // Reels 2 and 3: far off, never in play -- present only so the
-        // fixture carries his real four-reels-per-mechanism shape.
+        // Reels 2 and 3: far off, never in play -- present so the chin's
+        // own tally still names four reels, only two of which ever match.
         object reel23Axis = FrameOf(
             new[] { 1000.0, 1000.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
         object reel23Mesh = Mesh(new[]
@@ -41384,24 +41052,13 @@ internal static partial class Program
             new double[] { 1000, 1001, 0 }, new double[] { 1000, 999, 0 },
         });
 
-        object meshBranches = MechanismListOf(
-            meshBranchType,
-            MeshBranch(
-                new List<int> { 0, 0 },
-                MechanismListOf(meshType, reel0Mesh, reel1Mesh, reel23Mesh, reel23Mesh),
-                FourNotBrep()));
-        object axisBranches = MechanismListOf(
-            axisBranchType,
-            AxisBranch(
-                new List<int> { 0, 0 },
-                MechanismListOf(frameType, reel0Axis, reel1Axis, reel23Axis, reel23Axis)));
-
-        object instance = Activator.CreateInstance(
-            instanceType,
-            Activator.CreateInstance(instanceIdType, 0, 0)!,
-            IdentityAxis(),
-            (object?)"mechanism")!;
-        object instances = MechanismListOf(instanceType, instance);
+        object asset = Asset(
+            null, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType, reel0Mesh, reel1Mesh, reel23Mesh, reel23Mesh),
+            MechanismListOf(typeof(bool), false, false, false, false),
+            MechanismListOf(frameType, reel0Axis, reel1Axis, reel23Axis, reel23Axis));
 
         double[] frame0Origin = { 0.1, 0.0, 5.0 };
         double[] frame1Origin = { 50.0, 50.0, 50.0 };
@@ -41409,8 +41066,7 @@ internal static partial class Program
         // own axis (x=3), which would make reel 1 the nearer reel by a
         // wide margin (ratio 0.45) rather than testing reel 0's own
         // boundary in isolation. The negative side is 5.1 from reel 1's
-        // axis (ratio 2.55, nowhere near ambiguous), so only reel 0's own
-        // 1.0 boundary is under test here.
+        // axis (ratio 2.55, nowhere near ambiguous).
         double[] frame2Origin = { -2.1, 0.0, 5.0 };
         double[] frame3Origin = { 1.5, 0.0, 5.0 };
         double[] routeX = { 1.0, 0.0, 0.0 };
@@ -41421,33 +41077,47 @@ internal static partial class Program
             FrameOf(frame1Origin, routeX, routeY),
             FrameOf(frame2Origin, routeX, routeY),
             FrameOf(frame3Origin, routeX, routeY));
-        object wire = Activator.CreateInstance(
-            wireType,
+        object wire0 = Activator.CreateInstance(routingWireType, 0, routeFrames)!;
+        object routing = MechanismListOf(routingWireType, wire0);
+
+        // ONE placement branch, its first plane exactly matching
+        // Routing[0]'s own first frame (an identity correspondence): what
+        // is under test here is ownership, not the placement maths, so
+        // the transform is trivial by construction and planes [1..6] are
+        // dummies never read (wires 1..6 carry no routing frames).
+        object t0 = PlaneOf(frame0Origin, routeX, routeY, new[] { 0.0, 0.0, 1.0 });
+        object dummy = PlaneOf(
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 });
+        object branch = Activator.CreateInstance(
+            placementBranchType,
             Activator.CreateInstance(instanceIdType, 0, 0)!,
-            0,
-            routeFrames)!;
-        object wires = MechanismListOf(wireType, wire);
+            MechanismListOf(placementPlaneType, t0, dummy, dummy, dummy, dummy, dummy, dummy))!;
+        object placements = MechanismListOf(placementBranchType, branch);
 
         var warnings = new List<string>();
         var notes = new List<string>();
         object? payload = build.Invoke(
-            null,
-            new object?[]
-            {
-                bodyAsset, meshBranches, axisBranches,
-                instances, wires, EmptyRowParts(), EmptyRowParts(), null,
-                warnings, notes,
-            });
+            null, new object?[] { asset, routing, placements, warnings, notes });
         if (payload is not string json)
-            throw new InvalidOperationException("A valid mechanism with reels and one wire must produce a payload.");
+            throw new InvalidOperationException("A valid mechanism with reels, one wire and one placement branch must produce a payload.");
 
         using JsonDocument doc = JsonDocument.Parse(json);
         JsonElement wiresOut = doc.RootElement.GetProperty("wires");
-        if (wiresOut.GetArrayLength() != 1)
-            throw new InvalidOperationException("Exactly one wire must be produced; got " + json);
-        JsonElement route = wiresOut[0].GetProperty("route");
+        JsonElement? wire0Out = null;
+        foreach (JsonElement w in wiresOut.EnumerateArray())
+        {
+            if (w.GetProperty("wire").GetInt32() == 0)
+            {
+                wire0Out = w;
+                break;
+            }
+        }
+        if (wire0Out is null)
+            throw new InvalidOperationException("Wire 0 must be produced for the one placed instance; got " + json);
+        JsonElement route = wire0Out.Value.GetProperty("route");
         if (route.GetArrayLength() != 4)
-            throw new InvalidOperationException("The wire's route must carry all four authored frames; got " + json);
+            throw new InvalidOperationException("Wire 0's route must carry all four authored frames; got " + json);
 
         void AssertPositionUnchanged(JsonElement frame, double[] origin, int index)
         {
@@ -41502,9 +41172,6 @@ internal static partial class Program
                 $"ownerReel={f3.GetProperty("ownerReel")}.");
         }
 
-        // THE AMBIGUOUS CASES ARE NAMED, NEVER SILENT: frame [2] close to
-        // reel 0's own boundary, frame [3] close to both reel 0's and
-        // reel 1's own neighbourhoods at once.
         bool boundaryNamed = warnings.Any(w =>
             w.Contains("frame [2]", StringComparison.Ordinal) &&
             w.Contains("AMBIGUOUS", StringComparison.Ordinal) &&
@@ -41538,11 +41205,10 @@ internal static partial class Program
                 "NOT be named ambiguous; warnings were: " + string.Join(" | ", warnings));
         }
 
-        // THE CHIN'S OWN PER-MECHANISM TALLY (task requirement 3): body 2
-        // (frames [1] and [2]), reel 0 2 (frames [0] and [3]), reels 1-3
-        // zero -- said so he can check the derivation in one glance.
+        // THE CHIN'S OWN TALLY IS NOW GLOBAL (reels and routing are each
+        // authored once): body 2 (frames [1] and [2]), reel 0 2 (frames
+        // [0] and [3]), reels 1-3 zero.
         bool tallyNamed = notes.Any(n =>
-            n.Contains("side 0 mechanism 0", StringComparison.Ordinal) &&
             n.Contains("routing frame ownership", StringComparison.Ordinal) &&
             n.Contains("body 2", StringComparison.Ordinal) &&
             n.Contains("reel 0 2", StringComparison.Ordinal) &&
@@ -41552,19 +41218,13 @@ internal static partial class Program
         if (!tallyNamed)
         {
             throw new InvalidOperationException(
-                "The chin must report the per-mechanism ownership tally " +
+                "The chin must report the GLOBAL ownership tally " +
                 "(body 2, reel 0 2, reel 1/2/3 0); notes were: " +
                 string.Join(" | ", notes));
         }
 
         // OWNERSHIP MUST SURVIVE THE FINAL DOCUMENT, not only the
-        // collector's own intermediate payload: MechanismDocument.Json
-        // re-parses "wires[].route[]" and rebuilds it (it needs each
-        // frame's own Origin for the R2 distance check), so this is the
-        // one place a careless rebuild would silently drop the owner
-        // fields the collector just worked out. A minimal two-node
-        // Result (anchors 0 and 1, row [0, 1]) is enough to carry the
-        // wire through net-vertex matching without being dropped.
+        // collector's own intermediate payload.
         Type documentType = RequireComponentType(plugin, "MechanismDocument");
         MethodInfo documentJson = RequirePublicStatic(documentType, "Json");
         Type resultType = RequireContractType(plugin, "ResultDto");
@@ -41598,19 +41258,23 @@ internal static partial class Program
             new object?[] { twoNodeResult, "ownership fixture", 1.0, json, documentWarnings, documentNotes })!;
         using JsonDocument finalDoc = JsonDocument.Parse(document);
         JsonElement finalWires = finalDoc.RootElement.GetProperty("wires");
-        if (finalWires.GetArrayLength() != 1)
+        JsonElement? finalWire0 = null;
+        foreach (JsonElement w in finalWires.EnumerateArray())
+        {
+            if (w.GetProperty("id").GetString()!.EndsWith("-0", StringComparison.Ordinal) &&
+                w.GetProperty("route").GetArrayLength() == 4)
+            {
+                finalWire0 = w;
+                break;
+            }
+        }
+        if (finalWire0 is null)
         {
             throw new InvalidOperationException(
                 "The one authored wire must survive net-vertex matching " +
                 "and reach the final document; got " + document);
         }
-        JsonElement finalRoute = finalWires[0].GetProperty("route");
-        if (finalRoute.GetArrayLength() != 4)
-        {
-            throw new InvalidOperationException(
-                "The final document's route must still carry all four " +
-                "frames; got " + document);
-        }
+        JsonElement finalRoute = finalWire0.Value.GetProperty("route");
         AssertPositionUnchanged(finalRoute[0], frame0Origin, 0);
         AssertPositionUnchanged(finalRoute[1], frame1Origin, 1);
         AssertPositionUnchanged(finalRoute[2], frame2Origin, 2);
@@ -42026,119 +41690,374 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// AUDIT FINDING 4: spoolRadius is ONE document-level value, read
-    /// from whichever mechanism sorts first (side, mechanism ascending)
-    /// -- but per-mechanism reel authoring is an explicitly supported
-    /// style, "for when a mechanism's reels genuinely differ (a mirrored
-    /// side, say)". Two TREE-style mechanisms, {0}{0} and {0}{1}:
-    /// {0}{0}'s reel 0 is a small cube (bounding dimension 2, so
-    /// spoolRadius 0.5, the value actually taken); {0}{1}'s reel 0 is a
-    /// cube four times larger on every axis (bounding dimension 8, its
-    /// own implied radius 2.0) -- 300% off, far outside the 5%
-    /// disagreement floor. A warning must name the mismatch; two
-    /// mechanisms whose driven reels genuinely AGREE (both small cubes,
-    /// the negative half below) must stay silent.
+    /// THE PLACEMENT MATHS, rehearsed on his real shape: ONE authored
+    /// mechanism, seven routing wires, and placement branches for two
+    /// mechanism instances -- a NORMAL side (a pure translation) and a
+    /// MIRRORED far side (his own words: "if the mechanism goes on the
+    /// opposite side it needs to be flipped and not be upside down") --
+    /// plus two broken branches. Every target plane is built by applying a
+    /// KNOWN transform (translate, or negate-X-then-translate) to the SAME
+    /// seven local frames Routing carries, so every residual is EXACTLY
+    /// zero by construction and any non-zero reading is this test's own bug,
+    /// not noise.
+    ///
+    /// Proves:
+    /// 1. The normal instance derives translation-only, determinant +1, NOT
+    ///    reflected, residual ~0 across all six OTHER wires.
+    /// 2. The mirrored instance derives a genuine REFLECTION (determinant
+    ///    -1, from its target plane's own TRUE, un-re-derived Z), residual
+    ///    ~0 across all six OTHER wires -- proving the mirror comes out
+    ///    mirrored by MEASURING the derived transform's own handedness, not
+    ///    by reading the code.
+    /// 3. A branch with only SIX planes is refused BY NAME, its count
+    ///    said, and produces no instance.
+    /// 4. A branch whose plane [3] is shifted 0.01 m off its exact
+    ///    correspondence still places (branch count is fine, T0 is fine)
+    ///    but its residual reads ~0.01 m and crosses the 0.001 m
+    ///    door-guard, named by branch.
+    /// 5. THE REEL AXIS PSEUDOVECTOR CHECK (Param's own concern: reels are
+    ///    separate meshes, "not all combined as one mesh in the frame", so
+    ///    their placement relative to the rest of the machine must survive
+    ///    the SAME transform exactly): reel 0's own distance to Frame 1's
+    ///    own reference point, recomputed after applying each instance's
+    ///    own derived transform to both, is IDENTICAL on the normal and
+    ///    the mirrored instance and equal to the authored local distance
+    ///    (the transform is an isometry, reflected or not). And the axis
+    ///    the studio would recompute downstream -- transforming the
+    ///    authored X and Y, then re-deriving Z as their cross product --
+    ///    agrees with the axis's own TRUE transformed direction on the
+    ///    normal instance and is EXACTLY REVERSED on the mirrored one:
+    ///    carrying X and Y through the transform is what gives a mirrored
+    ///    reel the correct rotation SENSE, never merely the correct seat.
     /// </summary>
-    private static void ValidateMechanismSpoolRadiusDisagreement(Assembly plugin)
+    private static void ValidateMechanismPlacementDerivation(Assembly plugin)
     {
         Type meshType = RequireComponentType(plugin, "MechanismMesh");
         Type frameType = RequireComponentType(plugin, "MechanismFrame");
-        Type meshBranchType = RequireComponentType(plugin, "MechanismMeshBranch");
-        Type axisBranchType = RequireComponentType(plugin, "MechanismAxisBranch");
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
         Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
-        Type instanceType = RequireComponentType(plugin, "MechanismInstanceInput");
-        Type wireType = RequireComponentType(plugin, "MechanismWireInput");
-        Type rowPartType = RequireComponentType(plugin, "MechanismRowPartInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
         Type collectorType = RequireComponentType(plugin, "MechanismCollector");
         MethodInfo build = RequirePublicStatic(collectorType, "Build");
 
         object Mesh(double[][] vertices) => Activator.CreateInstance(
             meshType, (object)vertices, (object)Array.Empty<int[]>())!;
-        double[][] Cube(double size) => new[]
-        {
-            new double[] { 0, 0, 0 }, new double[] { size, 0, 0 },
-            new double[] { 0, size, 0 }, new double[] { 0, 0, size },
-        };
-        object smallCube = Mesh(Cube(2)); // bounding dim 2 -> radius 0.5
-        object bigCube = Mesh(Cube(8));   // bounding dim 8 -> radius 2.0
-
         object FrameOf(double[] origin, double[] x, double[] y) =>
             Activator.CreateInstance(frameType, origin, x, y)!;
-        object IdentityAxis() => FrameOf(
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
-        object MeshBranch(IReadOnlyList<int> path, object meshes, object fromBrep) =>
-            Activator.CreateInstance(meshBranchType, path, meshes, fromBrep)!;
-        object AxisBranch(IReadOnlyList<int> path, object axes) =>
-            Activator.CreateInstance(axisBranchType, path, axes)!;
-        object FourOf(object mesh) => MechanismListOf(meshType, mesh, mesh, mesh, mesh);
-        object FourNotBrep() => MechanismListOf(typeof(bool), false, false, false, false);
-        object FourIdentityAxes() => MechanismListOf(
-            frameType, IdentityAxis(), IdentityAxis(), IdentityAxis(), IdentityAxis());
-        object EmptyInstances() => MechanismListOf(instanceType);
-        object EmptyWires() => MechanismListOf(wireType);
-        object EmptyRowParts() => MechanismListOf(rowPartType);
+        object PlaneOf(double[] origin, double[] x, double[] y, double[] z) =>
+            Activator.CreateInstance(placementPlaneType, origin, x, y, z)!;
+        object Asset(
+            object? f1, bool f1Brep, object f2, object f2Brep,
+            object? mo, bool moBrep, object? tt, bool ttBrep,
+            object reMeshes, object reBrep, object axes) =>
+            Activator.CreateInstance(
+                assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
+                reMeshes, reBrep, axes)!;
+        object InstanceId(int side, int group) =>
+            Activator.CreateInstance(instanceIdType, side, group)!;
+        object Branch(int side, int group, object planes) =>
+            Activator.CreateInstance(placementBranchType, InstanceId(side, group), planes)!;
 
-        object bodyOnlyAsset = Activator.CreateInstance(assetType, smallCube, false)!;
-        object axisBranches = MechanismListOf(
-            axisBranchType,
-            AxisBranch(new List<int> { 0, 0 }, FourIdentityAxes()),
-            AxisBranch(new List<int> { 0, 1 }, FourIdentityAxes()));
+        // THE ONE AUTHORED MECHANISM. Frame 1 a simple cube; one reel, its
+        // own axis DELIBERATELY OFF the mechanism's own local origin (5, 5,
+        // 0), so a bug that only carries an axis's ORIGIN through the
+        // transform (and not its X/Y) is distinguishable from one that
+        // carries all three.
+        object frame1Mesh = Mesh(new[]
+        {
+            new double[] { 0, 0, 0 }, new double[] { 2, 0, 0 },
+            new double[] { 0, 2, 0 }, new double[] { 0, 0, 2 },
+        });
+        double[] reelAxisOrigin = { 5.0, 5.0, 0.0 };
+        double[] reelAxisX = { 1.0, 0.0, 0.0 };
+        double[] reelAxisY = { 0.0, 1.0, 0.0 };
+        object reelAxis = FrameOf(reelAxisOrigin, reelAxisX, reelAxisY);
+        object reelMesh = Mesh(new[] { new double[] { 5, 5, 0 } });
+        object asset = Asset(
+            frame1Mesh, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType, reelMesh),
+            MechanismListOf(typeof(bool), false),
+            MechanismListOf(frameType, reelAxis));
 
-        object mismatchedBranches = MechanismListOf(
-            meshBranchType,
-            MeshBranch(new List<int> { 0, 0 }, FourOf(smallCube), FourNotBrep()),
-            MeshBranch(new List<int> { 0, 1 }, FourOf(bigCube), FourNotBrep()));
+        // SEVEN ROUTING WIRES, each one local frame, S_0 the FIRST
+        // CORRESPONDENCE. X/Y are identity throughout the routing frames --
+        // never mirrored, his own local space -- so Z is safely derived.
+        double[][] localOrigins =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 2.0, 0.0, 0.0 },
+            new[] { 0.0, 2.0, 0.0 },
+            new[] { 1.0, 1.0, 1.0 },
+        };
+        double[] localX = { 1.0, 0.0, 0.0 };
+        double[] localY = { 0.0, 1.0, 0.0 };
+        var routingList = new List<object>();
+        for (int i = 0; i < 7; i++)
+        {
+            object route = MechanismListOf(frameType, FrameOf(localOrigins[i], localX, localY));
+            routingList.Add(Activator.CreateInstance(routingWireType, i, route)!);
+        }
+        object routing = MechanismListOf(routingWireType, routingList.ToArray());
+
+        // BRANCH A ("normal"), side 0 group 0: T_i = S_i.Origin + (0,0,50),
+        // axes untouched -- a pure translation, right-handed throughout.
+        double[] NormalTranslate(double[] o) => new[] { o[0], o[1], o[2] + 50.0 };
+        var normalPlanes = new List<object>();
+        for (int i = 0; i < 7; i++)
+        {
+            normalPlanes.Add(PlaneOf(
+                NormalTranslate(localOrigins[i]), localX, localY, new[] { 0.0, 0.0, 1.0 }));
+        }
+        object branchNormal = Branch(0, 0, MechanismListOf(placementPlaneType, normalPlanes.ToArray()));
+
+        // BRANCH B ("mirrored far side"), side 1 group 0: T_i =
+        // mirror(S_i.Origin) = (-x + 100, y, z) -- his own far side. THE
+        // AXES ARE THE TRUE MIRRORED ONES, read exactly the way a genuinely
+        // mirrored Rhino plane stores them: X negated, Y unchanged, and Z
+        // ALSO UNCHANGED (its true stored value after the mirror transform)
+        // -- NOT re-derived as X cross Y, which would silently discard the
+        // very signal a reflection is built from.
+        double[] Mirror(double[] o) => new[] { -o[0] + 100.0, o[1], o[2] };
+        var mirrorPlanes = new List<object>();
+        for (int i = 0; i < 7; i++)
+        {
+            mirrorPlanes.Add(PlaneOf(
+                Mirror(localOrigins[i]), new[] { -1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 },
+                new[] { 0.0, 0.0, 1.0 }));
+        }
+        object branchMirror = Branch(1, 0, MechanismListOf(placementPlaneType, mirrorPlanes.ToArray()));
+
+        // BREAK 1: side 0 group 1, only SIX planes (drop the seventh).
+        var sixPlanes = normalPlanes.Take(6).ToList();
+        object branchSix = Branch(0, 1, MechanismListOf(placementPlaneType, sixPlanes.ToArray()));
+
+        // BREAK 2: side 0 group 2, a copy of the normal branch with plane
+        // [3] shifted 0.01 m off its exact correspondence -- ten times the
+        // door-guard's own 0.001 m tolerance.
+        var residualPlanes = new List<object>();
+        for (int i = 0; i < 7; i++)
+        {
+            double[] t = NormalTranslate(localOrigins[i]);
+            if (i == 3)
+                t = new[] { t[0] + 0.01, t[1], t[2] };
+            residualPlanes.Add(PlaneOf(t, localX, localY, new[] { 0.0, 0.0, 1.0 }));
+        }
+        object branchResidual = Branch(0, 2, MechanismListOf(placementPlaneType, residualPlanes.ToArray()));
+
+        object placements = MechanismListOf(
+            placementBranchType, branchNormal, branchMirror, branchSix, branchResidual);
+
         var warnings = new List<string>();
         var notes = new List<string>();
         object? payload = build.Invoke(
-            null,
-            new object?[]
+            null, new object?[] { asset, routing, placements, warnings, notes });
+        if (payload is not string json)
+            throw new InvalidOperationException("His real shape, wired whole, must still produce a payload.");
+
+        // THE ACTUAL CHIN, printed so it can be read and quoted, not just
+        // asserted on.
+        Console.WriteLine("      Mechanism rehearsal chin (" + (warnings.Count + notes.Count) + " line(s)):");
+        foreach (string line in notes.Where(n => n.StartsWith("Placement (PL)", StringComparison.Ordinal)))
+            Console.WriteLine("        note: " + line);
+        foreach (string line in warnings.Where(w => w.StartsWith("Placement (PL)", StringComparison.Ordinal)))
+            Console.WriteLine("        warn: " + line);
+
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement instances = doc.RootElement.GetProperty("instances");
+        JsonElement? Find(int side, int mechanism)
+        {
+            foreach (JsonElement inst in instances.EnumerateArray())
             {
-                bodyOnlyAsset, mismatchedBranches, axisBranches,
-                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                warnings, notes,
-            });
-        if (payload is not string)
-        {
-            throw new InvalidOperationException(
-                "Two mismatched tree-style mechanisms must still produce a payload.");
-        }
-        bool named = warnings.Any(w =>
-            w.Contains("spoolRadius", StringComparison.Ordinal) &&
-            w.Contains("side 0 mechanism 1", StringComparison.Ordinal));
-        if (!named)
-        {
-            throw new InvalidOperationException(
-                "Mechanism {0}{1}'s own driven spool implies a radius 4x "
-                + "mechanism {0}{0}'s, the ONE spoolRadius actually taken "
-                + "for every mechanism's rotation; this disagreement must "
-                + "be named. Warnings were: " + string.Join(" | ", warnings));
+                if (inst.GetProperty("side").GetInt32() == side &&
+                    inst.GetProperty("mechanism").GetInt32() == mechanism)
+                {
+                    return inst;
+                }
+            }
+            return null;
         }
 
-        // THE NEGATIVE HALF: two mechanisms whose driven reels genuinely
-        // AGREE must not raise a disagreement warning.
-        object agreeingBranches = MechanismListOf(
-            meshBranchType,
-            MeshBranch(new List<int> { 0, 0 }, FourOf(smallCube), FourNotBrep()),
-            MeshBranch(new List<int> { 0, 1 }, FourOf(smallCube), FourNotBrep()));
-        var agreeingWarnings = new List<string>();
-        var agreeingNotes = new List<string>();
-        build.Invoke(
-            null,
-            new object?[]
-            {
-                bodyOnlyAsset, agreeingBranches, axisBranches,
-                EmptyInstances(), EmptyWires(), EmptyRowParts(), EmptyRowParts(), null,
-                agreeingWarnings, agreeingNotes,
-            });
-        if (agreeingWarnings.Any(w =>
-            w.Contains("spoolRadius", StringComparison.Ordinal) &&
-            w.Contains("% off)", StringComparison.Ordinal)))
+        if (instances.GetArrayLength() != 3)
         {
             throw new InvalidOperationException(
-                "Two mechanisms whose driven reels genuinely AGREE must "
-                + "not raise a disagreement warning; warnings were: "
-                + string.Join(" | ", agreeingWarnings));
+                "Three of the four branches are placeable (normal, " +
+                "mirrored, over-tolerance) and one is refused outright " +
+                "(six planes); got " + instances.GetArrayLength() +
+                " instance(s): " + json);
+        }
+
+        JsonElement? normalInstance = Find(0, 0);
+        JsonElement? mirrorInstance = Find(1, 0);
+        JsonElement? residualInstance = Find(0, 2);
+        JsonElement? sixInstance = Find(0, 1);
+        if (normalInstance is null || mirrorInstance is null || residualInstance is null)
+            throw new InvalidOperationException("The normal, mirrored and over-tolerance instances must all be placed; got " + json);
+        if (sixInstance is not null)
+            throw new InvalidOperationException("The six-plane branch must NOT produce an instance; got " + json);
+
+        // PROOF 1: the normal instance is translation-only, NOT reflected,
+        // residual ~0.
+        if (normalInstance.Value.GetProperty("reflected").GetBoolean())
+            throw new InvalidOperationException("The normal (translate-only) instance must NOT be reflected; got " + json);
+        double normalResidual = normalInstance.Value.GetProperty("residualM").GetDouble();
+        if (normalResidual > 1e-6)
+            throw new InvalidOperationException($"The normal instance's residual must be ~0 by construction; got {normalResidual} m.");
+
+        // PROOF 2: the mirrored instance IS a reflection, residual ~0 --
+        // the mirror comes out mirrored, MEASURED on the derived transform
+        // itself.
+        if (!mirrorInstance.Value.GetProperty("reflected").GetBoolean())
+            throw new InvalidOperationException("The mirrored far-side instance MUST derive as a reflection; got " + json);
+        double mirrorResidual = mirrorInstance.Value.GetProperty("residualM").GetDouble();
+        if (mirrorResidual > 1e-6)
+            throw new InvalidOperationException($"The mirrored instance's residual must be ~0 by construction; got {mirrorResidual} m.");
+        double[][] ReadLinear(JsonElement instance)
+        {
+            var rows = new double[3][];
+            int r = 0;
+            foreach (JsonElement row in instance.GetProperty("linear").EnumerateArray())
+            {
+                rows[r++] = row.EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            }
+            return rows;
+        }
+        double Determinant3(double[][] m) =>
+            (m[0][0] * ((m[1][1] * m[2][2]) - (m[1][2] * m[2][1]))) -
+            (m[0][1] * ((m[1][0] * m[2][2]) - (m[1][2] * m[2][0]))) +
+            (m[0][2] * ((m[1][0] * m[2][1]) - (m[1][1] * m[2][0])));
+        double[][] normalLinear = ReadLinear(normalInstance.Value);
+        double[][] mirrorLinear = ReadLinear(mirrorInstance.Value);
+        double normalDet = Determinant3(normalLinear);
+        double mirrorDet = Determinant3(mirrorLinear);
+        Console.WriteLine(
+            $"      Mechanism rehearsal handedness: normal instance det(L)={normalDet:0.###}, " +
+            $"mirrored instance det(L)={mirrorDet:0.###}.");
+        if (!(normalDet > 0.0))
+            throw new InvalidOperationException($"The normal instance's own derived transform must have a POSITIVE determinant; got {normalDet}.");
+        if (!(mirrorDet < 0.0))
+            throw new InvalidOperationException($"The mirrored instance's own derived transform must have a NEGATIVE determinant -- this IS the reflection, measured, not read off the code; got {mirrorDet}.");
+
+        // PROOF 3: the six-plane branch is refused BY NAME, its count said.
+        bool sixNamed = warnings.Any(w =>
+            w.Contains("side 0 group 1", StringComparison.Ordinal) &&
+            w.Contains("carries 6 plane(s)", StringComparison.Ordinal));
+        if (!sixNamed)
+        {
+            throw new InvalidOperationException(
+                "The six-plane branch must be refused by name, naming its " +
+                "own count; warnings were: " + string.Join(" | ", warnings));
+        }
+
+        // PROOF 4: the over-tolerance branch places but its residual
+        // crosses the door-guard, named by branch.
+        double residualResidual = residualInstance.Value.GetProperty("residualM").GetDouble();
+        if (Math.Abs(residualResidual - 0.01) > 1e-6)
+            throw new InvalidOperationException($"The perturbed branch's own residual must read ~0.01 m; got {residualResidual} m.");
+        bool residualNamed = warnings.Any(w =>
+            w.Contains("side 0 group 2", StringComparison.Ordinal) &&
+            w.Contains("exceeds the 0.001 m door-guard", StringComparison.Ordinal));
+        if (!residualNamed)
+        {
+            throw new InvalidOperationException(
+                "The over-tolerance branch's own residual must be named " +
+                "against the door-guard; warnings were: " + string.Join(" | ", warnings));
+        }
+
+        // PROOF 5: THE REEL AXIS PSEUDOVECTOR CHECK. Apply each instance's
+        // own derived transform BY HAND (never trusting the code's own
+        // reading of itself) to the reel's own axis origin and to Frame 1's
+        // own local reference point (its origin), and to the axis's own
+        // authored X and Y.
+        double[] MultiplyVector3(double[][] m, double[] v) => new[]
+        {
+            (m[0][0] * v[0]) + (m[0][1] * v[1]) + (m[0][2] * v[2]),
+            (m[1][0] * v[0]) + (m[1][1] * v[1]) + (m[1][2] * v[2]),
+            (m[2][0] * v[0]) + (m[2][1] * v[1]) + (m[2][2] * v[2]),
+        };
+        double[] Cross(double[] a, double[] b) => new[]
+        {
+            (a[1] * b[2]) - (a[2] * b[1]),
+            (a[2] * b[0]) - (a[0] * b[2]),
+            (a[0] * b[1]) - (a[1] * b[0]),
+        };
+        double Dist(double[] a, double[] b) => Math.Sqrt(
+            Math.Pow(a[0] - b[0], 2) + Math.Pow(a[1] - b[1], 2) + Math.Pow(a[2] - b[2], 2));
+        double Dot(double[] a, double[] b) => (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
+        double[] ReadOrigin(JsonElement instance) =>
+            instance.GetProperty("frame").GetProperty("origin")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        double[] Place(double[][] linear, double[] translation, double[] point) =>
+            new[]
+            {
+                MultiplyVector3(linear, point)[0] + translation[0],
+                MultiplyVector3(linear, point)[1] + translation[1],
+                MultiplyVector3(linear, point)[2] + translation[2],
+            };
+
+        double[] frame1LocalRef = { 0.0, 0.0, 0.0 };
+        double localDistance = Dist(reelAxisOrigin, frame1LocalRef);
+
+        double[] normalTranslation = ReadOrigin(normalInstance.Value);
+        double[] mirrorTranslation = ReadOrigin(mirrorInstance.Value);
+        double[] reelWorldNormal = Place(normalLinear, normalTranslation, reelAxisOrigin);
+        double[] frame1WorldNormal = Place(normalLinear, normalTranslation, frame1LocalRef);
+        double[] reelWorldMirror = Place(mirrorLinear, mirrorTranslation, reelAxisOrigin);
+        double[] frame1WorldMirror = Place(mirrorLinear, mirrorTranslation, frame1LocalRef);
+        double distNormal = Dist(reelWorldNormal, frame1WorldNormal);
+        double distMirror = Dist(reelWorldMirror, frame1WorldMirror);
+        Console.WriteLine(
+            "      Mechanism rehearsal reel-to-frame1 distance: authored local " +
+            $"{localDistance:0.####} m, normal instance {distNormal:0.####} m, " +
+            $"mirrored instance {distMirror:0.####} m.");
+        if (Math.Abs(distNormal - localDistance) > 1e-9 || Math.Abs(distMirror - localDistance) > 1e-9)
+        {
+            throw new InvalidOperationException(
+                "Reel 0's own distance to Frame 1's own reference point must " +
+                "survive EXACTLY on both the normal and the mirrored " +
+                $"instance (the transform is an isometry); authored " +
+                $"{localDistance}, normal {distNormal}, mirrored {distMirror}.");
+        }
+
+        double[] Zaxis(double[][] linear)
+        {
+            double[] xWorld = MultiplyVector3(linear, reelAxisX);
+            double[] yWorld = MultiplyVector3(linear, reelAxisY);
+            return Cross(xWorld, yWorld);
+        }
+        double[] zTrue(double[][] linear) => MultiplyVector3(linear, new[] { 0.0, 0.0, 1.0 });
+        double[] normalRecomputedZ = Zaxis(normalLinear);
+        double[] normalTrueZ = zTrue(normalLinear);
+        double[] mirrorRecomputedZ = Zaxis(mirrorLinear);
+        double[] mirrorTrueZ = zTrue(mirrorLinear);
+        double normalAgreement = Dot(normalRecomputedZ, normalTrueZ);
+        double mirrorAgreement = Dot(mirrorRecomputedZ, mirrorTrueZ);
+        Console.WriteLine(
+            "      Mechanism rehearsal rotation sense: recomputed-axis dot " +
+            $"true-axis, normal instance {normalAgreement:0.###}, mirrored " +
+            $"instance {mirrorAgreement:0.###} (a mirrored reel's sense " +
+            "must come out REVERSED, negative, not merely re-seated).");
+        if (!(normalAgreement > 0.0))
+        {
+            throw new InvalidOperationException(
+                $"On the normal instance, the axis the studio would " +
+                "recompute (X cross Y, both carried through the transform) " +
+                $"must agree with the axis's own true transformed direction; got dot={normalAgreement}.");
+        }
+        if (!(mirrorAgreement < 0.0))
+        {
+            throw new InvalidOperationException(
+                "On the mirrored instance, the axis the studio would " +
+                "recompute (X cross Y, both carried through the transform) " +
+                "must come out EXACTLY REVERSED from its own true " +
+                $"transformed direction -- that reversal is the correct " +
+                $"rotation sense a mirror gives a spinning reel, not a bug; got dot={mirrorAgreement}.");
         }
     }
 

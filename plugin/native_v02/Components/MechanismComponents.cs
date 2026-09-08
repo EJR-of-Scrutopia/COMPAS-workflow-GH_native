@@ -3,7 +3,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -20,153 +19,132 @@ namespace Ananke.COMPAS.Native.Components;
 /// can drive every rule below with arrays it builds itself, exactly the way
 /// <see cref="TessellationCell"/> keeps Export's own cells Rhino-free.
 ///
-/// NAMED PORTS, not a tree of type-and-part (the input model settled with
-/// Param 2026-09-08 night, superseding this file's earlier {type}{part}
-/// scheme entire): anchor, tension tie, mechanism, placement, reel, reel
-/// axis, routing, plus reel kind. The port a part arrives on IS its
-/// semantic kind -- read by the structural array it lands in (anchors,
-/// tensionTies, mechanism.body, mechanism.spinners, wires) rather than a
-/// redundant tag field, per the studio's own REPLY 4 point 7: permanence
-/// and material both derive from the port, "no new field anywhere".
+/// HIS MODEL, settled 2026-09-08, verbatim: "take one mechanism, there is 3
+/// per side at the moment linked via 7 wires each. I will [give] the
+/// component everything for one component like this. Reel 1-10, reel 1-10
+/// with axis, mechanism frame 1, mechanism frame 2, motors, tension tie,
+/// wire routing frames, placement planes (this will be for all wires, set
+/// into 7 and into side, so that you will know 7 anchors = 1 mechanism, and
+/// its already branched that way, then which side they are)". THIS
+/// SUPERSEDES THE {type}{part} PORT SCHEME (and the 2026-09-08-night NAMED
+/// PORTS scheme built on top of it) ENTIRE.
 ///
-/// This is the collector's OWN packaging model: the meshes, axes, frames
-/// and rows as Param wires them, validated and reduced to plain data on the
-/// solve thread (Rhino access happens in
-/// <see cref="MechanismCollectorComponent"/> only). What is NOT here is any
-/// PLACEMENT COMPUTATION: he places the mechanisms himself (Placement, one
-/// authority), and net-vertex matching needs the solved Result, so both are
-/// finished in <see cref="MechanismDocument"/> at Export time.
+/// ONE MECHANISM IS AUTHORED, ONCE, in its own local space -- reels, reel
+/// axes, both frame parts, the motors, the fused tension tie and the seven
+/// wires' routing frames -- and INSTANCED at every placement branch,
+/// exactly the studio's 8 GB iPad constraint already demanded of the
+/// single-body scheme this replaces. Every part he authors lives in that
+/// SAME local space, and the ONE derived instance transform (below) is
+/// applied to all of them, unchanged and identically: relative arrangement
+/// -- a reel's exact seat against its own frame -- is preserved by
+/// construction, never independently placed or inferred.
 /// </summary>
 internal sealed record MechanismMesh(
     IReadOnlyList<double[]> Vertices,
     IReadOnlyList<int[]> Faces);
 
-/// <summary>One routing (or placement, or reel axis) frame: origin plus X and Y axes, Z derived.</summary>
+/// <summary>
+/// One routing (or reel axis) frame: origin plus X and Y axes, Z derived as
+/// X cross Y. Used ONLY for geometry the ONE authored mechanism itself
+/// carries (routing frames, reel axes) -- never mirrored, so a derived,
+/// always-right-handed Z costs nothing. A PLACEMENT TARGET plane is a
+/// different shape, <see cref="MechanismPlacementPlane"/>, because that one
+/// genuinely can be mirrored and its true handedness must survive.
+/// </summary>
 internal sealed record MechanismFrame(double[] Origin, double[] XAxis, double[] YAxis);
 
 /// <summary>
-/// The ONE authored mechanism BODY (his "one continuous body ... always
-/// place"). Authored ONCE regardless of how many places it is instanced --
-/// never six copies of the mesh, the studio's own 8 GB iPad constraint
-/// (C4). His REELS no longer travel here: his ruling of 2026-09-08 night
-/// (superseding this record's own earlier shape, which carried them
-/// alongside the body) moved them to per-mechanism data -- see <see
-/// cref="MechanismReelEntry"/> and its two branch types below -- since he
-/// authors their orientation deliberately, either per mechanism or once
-/// for the whole asset, never bundled with the body mesh itself.
+/// A placement TARGET plane (Placement/PL), his own authored frame in world
+/// space: origin plus X, Y AND Z, all three read TRUE off the Rhino plane,
+/// Z NEVER re-derived as X cross Y. This is the one place handedness must
+/// survive intact -- when he mirrors a plane for the far side, Rhino's own
+/// Transform leaves its stored ZAxis genuinely LEFT-HANDED (ZAxis no longer
+/// equal to XAxis cross YAxis), and that is exactly the signal the
+/// placement maths below reads to build a reflection rather than a
+/// rotation. Deriving Z here, the way <see cref="MechanismFrame"/> does,
+/// would silently throw that signal away and turn every mirrored instance
+/// into an upside-down one instead of a flipped one.
 /// </summary>
-internal sealed record MechanismAssetInput(
-    MechanismMesh? Body,
-    bool BodyFromBrep);
+internal sealed record MechanismPlacementPlane(
+    double[] Origin, double[] XAxis, double[] YAxis, double[] ZAxis);
 
-/// <summary>
-/// ONE ROTATING REEL: its mesh and its rotation-axis FRAME, unit-local
-/// space. His ruling, 2026-09-08 night, verbatim: "the plane, will be xy
-/// so rotation will go in that axis from z and i will always provide you
-/// the xy orientation so that it rotates in the correct way" -- the
-/// plane's Z is the rotation axis, but its X and Y are carried through
-/// UNCHANGED into the document rather than reduced to a bare
-/// origin-plus-direction, because they are how he encodes which way the
-/// reel spins. Never re-derived, never normalised away.
-/// </summary>
+/// <summary>ONE ROTATING REEL: its mesh and its rotation-axis frame, unit-local space, one of ten.</summary>
 internal sealed record MechanismReelEntry(
     MechanismMesh Mesh,
     bool FromBrep,
     MechanismFrame Axis);
 
 /// <summary>
-/// One authored branch of Reel (RE): its raw tree path (empty, or
-/// length one, for the default path GH assigns a bare flat list; length
-/// TWO -- {side}{mechanism} -- for a genuine per-mechanism branch) and
-/// its meshes in branch order. Kept Rhino- and Grasshopper-free (the path
-/// is plain ints) so <see cref="MechanismCollector"/> can tell a flat
-/// list from a real tree, and drive that decision by reflection in the
-/// harness exactly as it runs live.
+/// THE ONE AUTHORED MECHANISM, his five parts (plus the reels' own axes,
+/// which travel with them): Frame 1, one joined mesh; Frame 2, a SECOND
+/// frame part in a different material, several objects, joined only as far
+/// as he can join them; the Motors, one joined mesh; the Tension Tie, ONE
+/// FUSED mesh (his settled ruling: the foundation anchor and the tension
+/// tie are now one object, so this single part carries both, permanence
+/// "permanent"); and the Reels, ten meshes each with its own authored axis
+/// plane, kept as SEPARATE meshes (his own words: "its not all combined as
+/// one mesh in the frame") rather than joined into Frame 1, because a reel
+/// spins and a frame does not.
 /// </summary>
-internal sealed record MechanismMeshBranch(
-    IReadOnlyList<int> Path,
-    IReadOnlyList<MechanismMesh?> Meshes,
-    IReadOnlyList<bool> FromBrep);
+internal sealed record MechanismAssetInput(
+    MechanismMesh? Frame1,
+    bool Frame1FromBrep,
+    IReadOnlyList<MechanismMesh> Frame2,
+    IReadOnlyList<bool> Frame2FromBrep,
+    MechanismMesh? Motors,
+    bool MotorsFromBrep,
+    MechanismMesh? TensionTie,
+    bool TensionTieFromBrep,
+    IReadOnlyList<MechanismMesh?> ReelMeshes,
+    IReadOnlyList<bool> ReelFromBrep,
+    IReadOnlyList<MechanismFrame?> ReelAxes);
 
-/// <summary>The same shape as <see cref="MechanismMeshBranch"/>, for Reel Axis (AX).</summary>
-internal sealed record MechanismAxisBranch(
-    IReadOnlyList<int> Path,
-    IReadOnlyList<MechanismFrame?> Axes);
+/// <summary>
+/// ONE OF THE SEVEN WIRES the one authored mechanism routes, indexed by
+/// wire number (0..6) rather than by instance -- routing is authored ONCE,
+/// for the mechanism, never per placement. An ordered list of local routing
+/// planes in threading order, <c>Route[0]</c> the NET END by his ruling
+/// (R2), and also -- new here -- the FIRST CORRESPONDENCE every placement
+/// branch derives its instance transform from when <c>Wire == 0</c>.
+/// </summary>
+internal sealed record MechanismRoutingWire(int Wire, IReadOnlyList<MechanismFrame> Route);
 
-/// <summary>One instance address: side then mechanism, his own tree order ("mechanisms per side, sides").</summary>
-internal readonly record struct MechanismInstanceId(int Side, int Mechanism)
+/// <summary>One instance address: side then group of seven, his own tree order ("mechanisms per side, sides").</summary>
+internal readonly record struct MechanismInstanceId(int Side, int Group)
 {
-    public string Label => $"side {Side} mechanism {Mechanism}";
+    public string Label => $"side {Side} group {Group}";
 }
 
 /// <summary>
-/// One placed instance (PL), his own placement, plus its optional
-/// functional label (RK, "edge"/"node") -- informational only, never
-/// structural (spec 3a's settled reading: SR/PR no longer travel as
-/// authored ports at all, so nothing downstream branches on this word).
+/// ONE PLACEMENT BRANCH ({side}{group}): the seven world-space target
+/// planes his placement authors for one mechanism instance's seven wires,
+/// <c>Planes[i]</c> corresponding to Routing wire <c>i</c>. His own words:
+/// "placement planes, this will be for all wires, set into 7 and into
+/// side, so that you will know 7 anchors = 1 mechanism, and its already
+/// branched that way, then which side they are".
 /// </summary>
-internal sealed record MechanismInstanceInput(
-    MechanismInstanceId Id,
-    MechanismFrame Placement,
-    string? Kind);
+internal sealed record MechanismPlacementBranch(
+    MechanismInstanceId Id, IReadOnlyList<MechanismPlacementPlane> Planes);
 
 /// <summary>
-/// One authored wire (RT): the ordered local routing planes in threading
-/// order, planes[0] the NET END by his ruling (R2) -- validated after
-/// placement in <see cref="MechanismDocument"/>, which is the one place
-/// that also owns the Result the net-vertex world position comes from.
-/// </summary>
-internal sealed record MechanismWireInput(
-    MechanismInstanceId Instance,
-    int Wire,
-    IReadOnlyList<MechanismFrame> Route);
-
-/// <summary>
-/// One AN or TT row: the authored mesh, its ORIGINAL position in the port's
-/// own list (so a dropped item mid-list never renumbers the rows after
-/// it), its world-space centroid (the door-guard's own probe point), and
-/// whether it arrived as a Brep and was meshed here.
-/// </summary>
-internal sealed record MechanismRowPartInput(
-    int Index,
-    MechanismMesh Mesh,
-    double[] Centroid,
-    bool FromBrep);
-
-/// <summary>
-/// One anchor row's node points, world space, in the walking order
-/// <c>MouldGeometry.ConnectedGroups</c> returns -- the same order AN/TT's
-/// own row numbering follows (requirements doc section 2).
-/// </summary>
-internal sealed record MechanismAnchorRow(IReadOnlyList<double[]> NodePoints);
-
-/// <summary>
-/// The pure packaging and door-guard logic behind the MECHANISM collector:
-/// no Rhino type crosses this boundary, so the harness can drive every rule
-/// with arrays it builds itself.
+/// The pure packaging and placement-derivation logic behind the MECHANISM
+/// collector: no Rhino type crosses this boundary, so the harness can drive
+/// every rule with arrays it builds itself.
 ///
-/// ONE JOB: turn what was wired into one JSON payload
-/// <see cref="MechanismDocument"/> can finish (net-vertex matching,
-/// reversed-route naming) and Export can embed, and say by name what could
-/// not be trusted rather than silently dropping it or silently accepting
-/// it.
+/// ONE JOB: turn what was wired into one JSON payload Export can embed, and
+/// say by name what could not be trusted rather than silently dropping it
+/// or silently accepting it.
 /// </summary>
 internal static class MechanismCollector
 {
     /// <summary>
     /// The permanence field's own name and its two values, said once and
-    /// read everywhere a part payload is built (here and in
-    /// <see cref="MechanismDocument"/>'s wires). Param's ruling to the
-    /// Vaulted studio, 2026-09-08: "the two things that remain when all is
-    /// taken away is the tension tie / column slide, and the anchor" --
-    /// Anchor (AN) and Tension Tie (TT) are the PERMANENT works; the
-    /// mechanism body, its spinners and the wires that reel them are the
-    /// TEMPORARY machine that comes away once the vault stands.
-    ///
-    /// A STRING, not a boolean, following the document's own convention:
-    /// <c>"placement"</c> already carries <c>"instance"</c>/<c>"world"</c>
-    /// as a declared word rather than a flag the reader has to remember the
-    /// sense of.
+    /// read everywhere a part payload is built. Param's ruling: "the two
+    /// things that remain when all is taken away is the tension tie /
+    /// column slide, and the anchor" -- now ONE fused part -- are the
+    /// PERMANENT works; Frame 1, Frame 2, the Motors, the reels and the
+    /// wires that reel them are the TEMPORARY machine that comes away once
+    /// the vault stands.
     /// </summary>
     public const string PermanenceField = "permanence";
 
@@ -175,10 +153,12 @@ internal static class MechanismCollector
     public const string Temporary = "temporary";
 
     /// <summary>
-    /// How far an AN or TT mesh may sit from the nearest node of its own
-    /// row before the door-guard names it: a multiple of the row's OWN
-    /// characteristic anchor spacing, so the tolerance scales with the
-    /// study rather than assuming a unit.
+    /// STILL READ BY EXPORT'S OWN SEAM (<c>MechanismDocument.Json</c> in
+    /// ExportPayloads.cs, untouched by this rebuild): the wire-to-net-vertex
+    /// match-distance door-guard tolerance, a multiple of the matched row's
+    /// own characteristic anchor spacing. Kept here, by name, even though
+    /// this file's own AN/TT door-guard that ORIGINALLY used it is gone now
+    /// the tie arrives fused and unplaced by this collector.
     /// </summary>
     public const double AnchorTieToleranceFactor = 3.0;
 
@@ -187,24 +167,13 @@ internal static class MechanismCollector
     public const double MinimumSpoolRadius = 1.0e-6;
 
     /// <summary>
-    /// How far another mechanism's own driven-spool bounding dimension may
-    /// relatively disagree with the ONE spoolRadius the document carries
-    /// before it is named (finding 4): loose enough that ordinary meshing
-    /// noise between two nominally-identical reels stays quiet, tight
-    /// enough that a genuinely different reel (a mirrored side with a
-    /// different drum, say) is not.
-    /// </summary>
-    public const double SpoolRadiusDisagreementFactor = 0.05;
-
-    /// <summary>
     /// ROUTING FRAME OWNERSHIP, his ruling confirmed 2026-09-08: "it is
     /// option 2. i have modelled the wire to wrap around the drums." A
     /// routing frame that sits on a rotating reel is no longer fixed
     /// hardware -- treating it as fixed while the reel spins reads as the
     /// wire slipping under a still drum, backwards from the reeling he
-    /// built. Field names follow <see cref="PermanenceField"/>'s own
-    /// convention: a declared word, not a boolean the reader has to
-    /// remember the sense of.
+    /// built. UNCHANGED by this rebuild (7c8db59); only its callers'
+    /// per-instance bookkeeping simplified to a single authored mechanism.
     /// </summary>
     public const string RouteOwnerField = "owner";
 
@@ -228,12 +197,27 @@ internal static class MechanismCollector
     /// How close a frame's own distance-to-axis, relative to that reel's
     /// own radius, may sit to the 1.0 ownership boundary -- or how close a
     /// SECOND reel's own ratio may also sit at or under it -- before the
-    /// classification is NAMED rather than trusted silently. His other
-    /// binding instruction (positions are used verbatim, never snapped or
-    /// tidied) applies just as much to a judgement call this close to the
-    /// line: it is reported, not quietly resolved.
+    /// classification is NAMED rather than trusted silently.
     /// </summary>
     public const double RouteOwnerAmbiguityMargin = 0.15;
+
+    /// <summary>His machine: seven wires, seven placement planes, per mechanism instance.</summary>
+    public const int PlacementGroupSize = 7;
+
+    /// <summary>His machine, nominal: ten reels per mechanism. Used only for the "unusual but used as authored" note, never enforced.</summary>
+    public const int ExpectedReelCount = 10;
+
+    /// <summary>
+    /// The placement door-guard's own tolerance: how far, in metres, the
+    /// derived transform may disagree with the six OTHER placement planes
+    /// before it is named. Small and deliberate -- this is the redundancy
+    /// that makes a bad placement plane show as a number, never a silently
+    /// skewed machine.
+    /// </summary>
+    public const double MaxResidualWarnMetres = 0.001;
+
+    /// <summary>How close a 3x3 basis's own determinant may sit to zero before it is refused as singular (coincident or collinear axes).</summary>
+    public const double SingularBasisDeterminantEpsilon = 1.0e-9;
 
     /// <summary>
     /// The note said whenever a mesh-or-brep port meshed a Brep itself
@@ -258,574 +242,498 @@ internal static class MechanismCollector
     /// </summary>
     public static string? Build(
         MechanismAssetInput asset,
-        IReadOnlyList<MechanismMeshBranch> reelMeshes,
-        IReadOnlyList<MechanismAxisBranch> reelAxes,
-        IReadOnlyList<MechanismInstanceInput> instances,
-        IReadOnlyList<MechanismWireInput> wires,
-        IReadOnlyList<MechanismRowPartInput> anchors,
-        IReadOnlyList<MechanismRowPartInput> tensionTies,
-        IReadOnlyList<MechanismAnchorRow>? rows,
+        IReadOnlyList<MechanismRoutingWire> routing,
+        IReadOnlyList<MechanismPlacementBranch> placements,
         List<string> warnings,
         List<string> notes)
     {
         ArgumentNullException.ThrowIfNull(asset);
-        ArgumentNullException.ThrowIfNull(reelMeshes);
-        ArgumentNullException.ThrowIfNull(reelAxes);
-        ArgumentNullException.ThrowIfNull(instances);
-        ArgumentNullException.ThrowIfNull(wires);
-        ArgumentNullException.ThrowIfNull(anchors);
-        ArgumentNullException.ThrowIfNull(tensionTies);
+        ArgumentNullException.ThrowIfNull(routing);
+        ArgumentNullException.ThrowIfNull(placements);
         ArgumentNullException.ThrowIfNull(warnings);
         ArgumentNullException.ThrowIfNull(notes);
 
-        bool anyReelMeshAuthored = reelMeshes.Any(b => b.Meshes.Count > 0);
-        bool nothingWired =
-            asset.Body is null && !anyReelMeshAuthored &&
-            instances.Count == 0 && wires.Count == 0 &&
-            anchors.Count == 0 && tensionTies.Count == 0;
+        bool anyAssetPart =
+            asset.Frame1 is not null || asset.Frame2.Count > 0 || asset.Motors is not null ||
+            asset.TensionTie is not null || asset.ReelMeshes.Count > 0 || asset.ReelAxes.Count > 0;
+        bool anyRouting = routing.Any(w => w.Route.Count > 0);
+        bool nothingWired = !anyAssetPart && !anyRouting && placements.Count == 0;
         if (nothingWired)
             return null;
 
-        bool assetOk = asset.Body is not null;
-        if (!assetOk && (instances.Count > 0 || wires.Count > 0))
+        if (!anyAssetPart && (placements.Count > 0 || anyRouting))
         {
             warnings.Add(
-                "Placement (PL) or Routing (RT) was authored, but " +
-                "Mechanism (ME) carries no body mesh; nothing is " +
-                "instanced without a body.");
+                "Placement (PL) or Routing (RT) was authored, but no " +
+                "mechanism part (Frame 1, Frame 2, Motors, Tension Tie or " +
+                "Reel) was; nothing is instanced without a mechanism to " +
+                "instance.");
         }
 
-        // FOUR REELS PER MECHANISM, EITHER AUTHORING STYLE (his ruling,
-        // 2026-09-08 night): a tree keyed {side}{mechanism}, authored per
-        // instance, or a flat list of four authored once and replicated
-        // across every instance. See ResolveReelAuthoring below for how
-        // the two are told apart and what a mismatch refuses.
-        Dictionary<MechanismInstanceId, List<MechanismReelEntry>> resolvedReels =
-            ResolveReelAuthoring(reelMeshes, reelAxes, instances, warnings, notes);
+        // TEN REELS, EACH SEPARATE, EACH ITS OWN AXIS (his ruling,
+        // 2026-09-08: "as long as the reel is place correctly in the
+        // mechanism, its not all combined as one mesh in the frame ...
+        // you will need to know where its placed in relation to the rest
+        // of the frames"). Zipped by POSITION, never re-grouped: a reel
+        // without a matching axis (or an axis without a matching reel)
+        // refuses ONLY that reel, by name -- the axis is authored, never
+        // inferred.
+        List<MechanismReelEntry> reels =
+            ResolveReelsFlat(asset.ReelMeshes, asset.ReelFromBrep, asset.ReelAxes, warnings);
+        if (asset.ReelMeshes.Count > 0 && asset.ReelMeshes.Count != ExpectedReelCount)
+        {
+            notes.Add(
+                $"mechanism: Reel (RE) carries {asset.ReelMeshes.Count} " +
+                "reel(s); his machine is ten, so this is unusual but used " +
+                "as authored.");
+        }
+        if (reels.Count > 0)
+        {
+            // BUILD THE INDEPENDENT CASE (his second open point, settled):
+            // he said seven of the ten move identically, but authors all
+            // ten with their own axis, so every reel here spins about ITS
+            // OWN authored axis rather than being collapsed into a shared
+            // group of four.
+            notes.Add(
+                $"mechanism: {reels.Count} reel(s) resolved, each spinning " +
+                "INDEPENDENTLY about its own authored axis -- his ruling " +
+                "that seven of the ten move identically in practice is " +
+                "read as a fact about the machine, not a grouping to " +
+                "build: every reel here is driven by its own axis.");
+        }
 
         Dictionary<string, object?>? mechanismOut = null;
-        if (assetOk && asset.Body is not null)
+        if (anyAssetPart)
         {
-            Dictionary<string, object?> bodyPayload = MeshPayload(asset.Body);
-            bodyPayload[PermanenceField] = Temporary;
-            if (asset.BodyFromBrep)
-                notes.Add($"Mechanism (ME) {BrepMeshingNote}");
+            mechanismOut = new Dictionary<string, object?>(StringComparer.Ordinal);
 
-            var reelsOut = new List<Dictionary<string, object?>>();
-            List<MechanismReelEntry>? boundingGroup = null;
-            MechanismInstanceId? boundingGroupId = null;
-            foreach (KeyValuePair<MechanismInstanceId, List<MechanismReelEntry>> group in
-                resolvedReels.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
+            if (asset.Frame1 is not null)
             {
-                if (boundingGroup is null)
-                {
-                    boundingGroup = group.Value;
-                    boundingGroupId = group.Key;
-                }
-                for (int i = 0; i < group.Value.Count; i++)
-                {
-                    MechanismReelEntry entry = group.Value[i];
-                    reelsOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["side"] = group.Key.Side,
-                        ["mechanism"] = group.Key.Mechanism,
-                        // reel 0 within its own mechanism is the driven
-                        // spool, the one spinner section 5's derived
-                        // rotation ever turns (requirements doc section
-                        // 1); reels 1..3 are cosmetic wheels, carried but
-                        // not rotated.
-                        ["reel"] = i,
-                        ["mesh"] = MeshPayload(entry.Mesh),
-                        ["axis"] = FramePayload(entry.Axis),
-                        ["driven"] = i == 0,
-                        [PermanenceField] = Temporary,
-                    });
-                    if (entry.FromBrep)
-                    {
-                        notes.Add(
-                            $"Reel (RE)[{group.Key.Side}][{group.Key.Mechanism}]" +
-                            $"[{i}] {BrepMeshingNote}");
-                    }
-                }
+                Dictionary<string, object?> f1 = MeshPayload(asset.Frame1);
+                f1[PermanenceField] = Temporary;
+                mechanismOut["frame1"] = f1;
+                if (asset.Frame1FromBrep)
+                    notes.Add($"Frame 1 (F1) {BrepMeshingNote}");
+            }
+            else
+            {
+                mechanismOut["frame1"] = null;
             }
 
-            // SPOOL RADIUS: the driven spool's (reel 0's) own bounding box
-            // smallest dimension over 4, read off the first mechanism in
-            // document order when reels vary per instance, falling back to
-            // the body's own bounding box when the mechanism carries no
-            // spinner at all -- said in the chin so the default is never
-            // silent.
-            MechanismMesh boundingSource =
-                boundingGroup is { Count: > 0 } ? boundingGroup[0].Mesh : asset.Body;
-            double spoolRadius = Math.Max(
-                SmallestBoundingDimension(boundingSource) / 4.0,
-                MinimumSpoolRadius);
+            var f2Out = new List<Dictionary<string, object?>>(asset.Frame2.Count);
+            for (int i = 0; i < asset.Frame2.Count; i++)
+            {
+                Dictionary<string, object?> f2 = MeshPayload(asset.Frame2[i]);
+                f2[PermanenceField] = Temporary;
+                f2Out.Add(f2);
+                if (i < asset.Frame2FromBrep.Count && asset.Frame2FromBrep[i])
+                    notes.Add($"Frame 2 (F2)[{i}] {BrepMeshingNote}");
+            }
+            mechanismOut["frame2"] = f2Out;
+
+            if (asset.Motors is not null)
+            {
+                Dictionary<string, object?> mo = MeshPayload(asset.Motors);
+                mo[PermanenceField] = Temporary;
+                mechanismOut["motors"] = mo;
+                if (asset.MotorsFromBrep)
+                    notes.Add($"Motors (MO) {BrepMeshingNote}");
+            }
+            else
+            {
+                mechanismOut["motors"] = null;
+            }
+
+            if (asset.TensionTie is not null)
+            {
+                Dictionary<string, object?> tt = MeshPayload(asset.TensionTie);
+                tt[PermanenceField] = Permanent;
+                mechanismOut["tensionTie"] = tt;
+                // OPEN POINT (1), SETTLED: "the anchor and tension tie and
+                // now one" -- the reading is on the record, every time,
+                // rather than assumed silently.
+                notes.Add(
+                    "mechanism: Tension Tie (TT) arrived as ONE FUSED " +
+                    "object (the foundation anchor and the tension tie " +
+                    "together), his settled ruling; tagged permanence " +
+                    "\"permanent\".");
+                if (asset.TensionTieFromBrep)
+                    notes.Add($"Tension Tie (TT) {BrepMeshingNote}");
+            }
+            else
+            {
+                mechanismOut["tensionTie"] = null;
+            }
+
+            var reelsOut = new List<Dictionary<string, object?>>(reels.Count);
+            for (int i = 0; i < reels.Count; i++)
+            {
+                // THE REEL AXIS PLANE STAYS LOCAL, X AND Y RAW (never
+                // re-derived): it lives in the SAME local space as Frame 1,
+                // Frame 2, the Motors and the Tension Tie, and is carried
+                // by the SAME derived instance transform they are (see the
+                // placement loop below). Because a rotation axis is a
+                // PSEUDOVECTOR, carrying its authored X and Y through that
+                // transform (rather than only its origin or only a bare
+                // direction) is what gives the correct rotation SENSE on a
+                // mirrored instance: Z' = X' cross Y' flips sign under a
+                // reflection exactly the way a mirror flips the sense a
+                // spinning wheel is seen to turn. Transforming only a
+                // direction vector would lose that sign and leave a
+                // mirrored machine whose reels turn the wrong way -- wrong
+                // for the whole animation, invisible in a still frame.
+                reelsOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["reel"] = i,
+                    ["mesh"] = MeshPayload(reels[i].Mesh),
+                    ["axis"] = FramePayload(reels[i].Axis),
+                    ["driven"] = true,
+                    [PermanenceField] = Temporary,
+                });
+                if (reels[i].FromBrep)
+                    notes.Add($"Reel (RE)[{i}] {BrepMeshingNote}");
+            }
+            mechanismOut["reels"] = reelsOut;
+
+            // SPOOL RADIUS: reel[0]'s own bounding box smallest dimension
+            // over 4, falling back down the rest of the mechanism's parts
+            // when no reel resolved, said in the chin so the default is
+            // never silent.
+            MechanismMesh? spoolSource = reels.Count > 0
+                ? reels[0].Mesh
+                : asset.Frame1 ?? asset.Motors ?? asset.TensionTie ??
+                  (asset.Frame2.Count > 0 ? asset.Frame2[0] : null);
+            double spoolRadius = spoolSource is not null
+                ? Math.Max(SmallestBoundingDimension(spoolSource) / 4.0, MinimumSpoolRadius)
+                : MinimumSpoolRadius;
             notes.Add(
                 "mechanism: spoolRadius defaulted to " +
                 spoolRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                (boundingGroup is { Count: > 0 }
-                    ? " from the driven spool's own bounding box (smallest " +
+                (reels.Count > 0
+                    ? " from reel[0]'s own bounding box (smallest " +
                       "dimension over 4)."
-                    : " from the body's own bounding box (smallest " +
-                      "dimension over 4), since this mechanism carries no " +
-                      "spinner."));
-
-            // SPOOL RADIUS IS ONE DOCUMENT-LEVEL VALUE, applied to every
-            // mechanism's rotation, but per-mechanism reel authoring is an
-            // explicitly supported style (ResolveReelAuthoring above,
-            // "for when a mechanism's reels genuinely differ"). Never
-            // reshaped to per-mechanism here -- the reader's own contract
-            // states spoolRadius as one document-level field, and that is
-            // not this audit's to change -- but the moment two
-            // mechanisms' own driven spools disagree in size, the default
-            // taken from whichever sorts first is named, so a mismatch he
-            // wired on purpose is visible rather than a confident-looking
-            // number quietly wrong for every mechanism but one.
-            if (boundingGroup is { Count: > 0 } && resolvedReels.Count > 1)
-            {
-                var disagreements = new List<string>();
-                foreach (KeyValuePair<MechanismInstanceId, List<MechanismReelEntry>> group in
-                    resolvedReels.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
-                {
-                    if (group.Value.Count == 0 ||
-                        (boundingGroupId.HasValue && group.Key.Equals(boundingGroupId.Value)))
-                    {
-                        continue;
-                    }
-                    double thisRadius = Math.Max(
-                        SmallestBoundingDimension(group.Value[0].Mesh) / 4.0,
-                        MinimumSpoolRadius);
-                    double relativeDelta =
-                        Math.Abs(thisRadius - spoolRadius) /
-                        Math.Max(spoolRadius, MinimumSpoolRadius);
-                    if (relativeDelta > SpoolRadiusDisagreementFactor)
-                    {
-                        disagreements.Add(
-                            $"{group.Key.Label}'s own driven spool implies " +
-                            thisRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                            " (" +
-                            (relativeDelta * 100.0).ToString("0", CultureInfo.InvariantCulture) +
-                            "% off)");
-                    }
-                }
-                if (disagreements.Count > 0)
-                {
-                    warnings.Add(
-                        "mechanism: spoolRadius is ONE document-level " +
-                        $"value, taken from {boundingGroupId!.Value.Label}'s " +
-                        "own driven spool, but every mechanism's rotation " +
-                        "uses it: " + string.Join("; ", disagreements) +
-                        " -- if these reels genuinely differ in size " +
-                        "(a mirrored side, say), the rotation formula is " +
-                        "wrong for them.");
-                }
-            }
+                    : spoolSource is not null
+                        ? " from the frame/motors/tie's own bounding box " +
+                          "(smallest dimension over 4), since no reel " +
+                          "resolved."
+                        : " from the floor value, since no geometry was " +
+                          "wired to derive it from."));
 
             // THE REEVE FACTOR IS PROVISIONAL (his ruling, verbatim: "i
             // dont [want] it to be accurate righ tnow"). Fixed at 1.0, no
-            // authored port, and said here EVERY time a mechanism is
-            // built so an inaccurate spin rate is a stated limitation
-            // rather than a mystery -- the spec's "reeve factor, settled
-            // 2026-09-08 late" records why 1.0 is very probably wrong on
-            // his four-wheel unit and what shape the real fix takes; not
-            // built now.
+            // authored port, said here every time a mechanism is built.
             notes.Add(
                 "mechanism: reeveFactor is fixed at 1.0 -- PROVISIONAL, " +
                 "not accurate, per his own ruling that accuracy is not " +
                 "wanted right now; every reel's spin RATE is likely wrong " +
                 "until a real reeve factor is authored.");
 
-            mechanismOut = new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["body"] = bodyPayload,
-                ["reels"] = reelsOut,
-                ["reeveFactor"] = 1.0,
-                ["spoolRadius"] = spoolRadius,
-            };
+            mechanismOut["reeveFactor"] = 1.0;
+            mechanismOut["spoolRadius"] = spoolRadius;
         }
 
-        var instancesOut = new List<Dictionary<string, object?>>();
-        var instanceIds = new HashSet<(int Side, int Mechanism)>();
-        if (mechanismOut is not null)
+        // ROUTING: the ONE authored mechanism's wire frames, indexed
+        // 0..6 -- authored ONCE, never per instance. A wire whose list is
+        // empty carries no first frame, named by index; wire 0 is the
+        // FIRST CORRESPONDENCE every placement derives from, so its
+        // absence is fatal to every instance, not just its own wire.
+        var routingByIndex = new Dictionary<int, MechanismRoutingWire>();
+        foreach (MechanismRoutingWire wire in routing)
         {
-            foreach (MechanismInstanceInput instance in instances)
-            {
-                instanceIds.Add((instance.Id.Side, instance.Id.Mechanism));
-                instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["side"] = instance.Id.Side,
-                    ["mechanism"] = instance.Id.Mechanism,
-                    ["frame"] = FramePayload(instance.Placement),
-                    ["kind"] = instance.Kind ?? "mechanism",
-                    // ONE PLACEMENT CONVENTION (studio's C5/A5): every
-                    // instance carries a placement frame he authored,
-                    // unlike Anchor/Tension Tie's "world" flag below.
-                    ["placement"] = "instance",
-                });
-                if (instance.Kind is null)
-                {
-                    notes.Add(
-                        $"{instance.Id.Label}: no Reel Kind (RK) authored; " +
-                        "tagged the generic kind \"mechanism\".");
-                }
-            }
+            if (routingByIndex.ContainsKey(wire.Wire))
+                warnings.Add($"Routing (RT)[{wire.Wire}] appears more than once; the later branch wins.");
+            routingByIndex[wire.Wire] = wire;
         }
-        else if (instances.Count > 0)
+        for (int w = 0; w < PlacementGroupSize; w++)
         {
-            warnings.Add(
-                $"{instances.Count} Placement (PL) instance(s) were " +
-                "authored, but the mechanism asset was refused or absent; " +
-                "no instances are produced.");
-        }
-
-        // ROUTING FRAME OWNERSHIP (his wrapped-wire ruling, confirmed
-        // 2026-09-08 -- "it is option 2. i have modelled the wire to wrap
-        // around the drums"): every routing frame is classified against
-        // ITS OWN instance's resolved reels (ClassifyRouteFrameOwner
-        // below) before it is written out, and tallied per mechanism so
-        // the chin can report the count without opening the document.
-        var wiresOut = new List<Dictionary<string, object?>>();
-        var ownerCounts = new Dictionary<MechanismInstanceId, Dictionary<string, int>>();
-        foreach (MechanismWireInput wire in wires
-            .OrderBy(w => w.Instance.Side)
-            .ThenBy(w => w.Instance.Mechanism)
-            .ThenBy(w => w.Wire))
-        {
-            if (!instanceIds.Contains((wire.Instance.Side, wire.Instance.Mechanism)))
+            if (!routingByIndex.TryGetValue(w, out MechanismRoutingWire? wire) || wire.Route.Count == 0)
             {
                 warnings.Add(
-                    $"Routing (RT)[{wire.Instance.Side}][{wire.Instance.Mechanism}]" +
-                    $"[{wire.Wire}] has no matching Placement (PL) instance; " +
-                    "wire dropped.");
+                    $"Routing (RT)[{w}] carries no routing planes; it has " +
+                    $"no first frame, so wire {w} is dropped from every " +
+                    "instance" +
+                    (w == 0
+                        ? " AND NO MECHANISM INSTANCE CAN BE PLACED, since " +
+                          "wire 0's first frame is the correspondence every " +
+                          "placement derives its transform from."
+                        : "."));
+            }
+        }
+
+        // ROUTING FRAME OWNERSHIP (7c8db59, unchanged): classified ONCE
+        // against the mechanism's own reels, since both are authored once
+        // now -- never per instance.
+        var ownerCounts = new Dictionary<string, int>(StringComparer.Ordinal) { [RouteOwnerBody] = 0 };
+        for (int r = 0; r < reels.Count; r++)
+            ownerCounts[$"reel {r}"] = 0;
+        var classifiedRoutes = new Dictionary<int, List<(MechanismFrame Frame, string Owner, int OwnerReel)>>();
+        for (int w = 0; w < PlacementGroupSize; w++)
+        {
+            if (!routingByIndex.TryGetValue(w, out MechanismRoutingWire? wire) || wire.Route.Count == 0)
                 continue;
-            }
-
-            resolvedReels.TryGetValue(wire.Instance, out List<MechanismReelEntry>? instanceReels);
-            List<MechanismReelEntry> reelsForOwnership = instanceReels ?? new List<MechanismReelEntry>();
-
-            if (!ownerCounts.TryGetValue(wire.Instance, out Dictionary<string, int>? counts))
-            {
-                counts = new Dictionary<string, int>(StringComparer.Ordinal) { [RouteOwnerBody] = 0 };
-                for (int r = 0; r < reelsForOwnership.Count; r++)
-                    counts[$"reel {r}"] = 0;
-                ownerCounts[wire.Instance] = counts;
-            }
-
-            var routeOut = new List<Dictionary<string, object?>>(wire.Route.Count);
+            var classified = new List<(MechanismFrame, string, int)>(wire.Route.Count);
             for (int frameIndex = 0; frameIndex < wire.Route.Count; frameIndex++)
             {
-                MechanismFrame routeFrame = wire.Route[frameIndex];
-                (string owner, int ownerReel, string? ambiguity) =
-                    ClassifyRouteFrameOwner(routeFrame, reelsForOwnership);
-
+                MechanismFrame frame = wire.Route[frameIndex];
+                (string owner, int ownerReel, string? ambiguity) = ClassifyRouteFrameOwner(frame, reels);
                 string countKey = owner == RouteOwnerReel ? $"reel {ownerReel}" : RouteOwnerBody;
-                counts[countKey] = counts.GetValueOrDefault(countKey) + 1;
-
+                ownerCounts[countKey] = ownerCounts.GetValueOrDefault(countKey) + 1;
                 if (ambiguity is not null)
                 {
                     warnings.Add(
-                        $"Routing (RT)[{wire.Instance.Side}][{wire.Instance.Mechanism}]" +
-                        $"[{wire.Wire}] frame [{frameIndex}]: ownership is " +
-                        $"AMBIGUOUS ({ambiguity}); assigned " +
+                        $"Routing (RT)[{w}] frame [{frameIndex}]: ownership " +
+                        $"is AMBIGUOUS ({ambiguity}); assigned " +
                         (owner == RouteOwnerReel ? $"reel {ownerReel}" : "the body") +
                         " as the nearest, never picked silently -- look at it.");
                 }
-
-                routeOut.Add(RouteFramePayload(routeFrame, owner, ownerReel));
+                classified.Add((frame, owner, ownerReel));
             }
-
-            wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["side"] = wire.Instance.Side,
-                ["mechanism"] = wire.Instance.Mechanism,
-                ["wire"] = wire.Wire,
-                ["route"] = routeOut,
-            });
+            classifiedRoutes[w] = classified;
         }
-
-        // THE CHIN'S OWN COUNTS (task requirement: how the derivation
-        // matched what he modelled, per mechanism, in one glance): how
-        // many routing frames landed on each reel and how many on the
-        // body.
-        foreach (KeyValuePair<MechanismInstanceId, Dictionary<string, int>> mechanismCounts in
-            ownerCounts.OrderBy(kv => kv.Key.Side).ThenBy(kv => kv.Key.Mechanism))
+        if (classifiedRoutes.Count > 0)
         {
             string tally = string.Join(
                 ", ",
-                mechanismCounts.Value
-                    .OrderBy(p => p.Key, StringComparer.Ordinal)
+                ownerCounts.OrderBy(p => p.Key, StringComparer.Ordinal)
                     .Select(p => $"{p.Key} {p.Value}"));
-            notes.Add(
-                $"mechanism {mechanismCounts.Key.Label}: routing frame " +
-                $"ownership -- {tally}.");
+            notes.Add($"mechanism: routing frame ownership, the ONE authored mechanism -- {tally}.");
         }
 
-        List<Dictionary<string, object?>> anchorsOut =
-            BuildRowParts("Anchor (AN)", anchors, rows, warnings, notes);
-        List<Dictionary<string, object?>> tiesOut =
-            BuildRowParts("Tension Tie (TT)", tensionTies, rows, warnings, notes);
+        // PLACEMENT: one instance transform per branch, derived from the
+        // FIRST CORRESPONDENCE (wire 0's first routing frame S_0 against
+        // the branch's own plane 0, T_0), then validated against the other
+        // six. See the class doc and MechanismPlacementPlane for why T's Z
+        // is read true rather than derived: that is what lets a mirrored
+        // branch yield a genuine reflection here.
+        var instancesOut = new List<Dictionary<string, object?>>();
+        var wiresOut = new List<Dictionary<string, object?>>();
+
+        bool haveS0 = routingByIndex.TryGetValue(0, out MechanismRoutingWire? wire0) && wire0.Route.Count > 0;
+        double[][]? mSInverse = null;
+        if (haveS0)
+        {
+            MechanismFrame s0 = wire0!.Route[0];
+            double[] zS = CrossProduct(s0.XAxis, s0.YAxis);
+            double[][] mS = BasisFromColumns(s0.XAxis, s0.YAxis, zS);
+            mSInverse = Invert3(mS);
+            if (mSInverse is null)
+            {
+                warnings.Add(
+                    "Routing (RT)[0]'s own first frame has coincident or " +
+                    "collinear X/Y axes (the basis is singular); no " +
+                    "mechanism instance can be placed from it.");
+            }
+        }
+
+        if (mSInverse is not null)
+        {
+            MechanismFrame s0 = wire0!.Route[0];
+            foreach (MechanismPlacementBranch branch in placements
+                .OrderBy(b => b.Id.Side).ThenBy(b => b.Id.Group))
+            {
+                string label = branch.Id.Label;
+                if (branch.Planes.Count != PlacementGroupSize)
+                {
+                    warnings.Add(
+                        $"Placement (PL) {label}: carries " +
+                        $"{branch.Planes.Count} plane(s), not the seven a " +
+                        "mechanism instance needs (one per wire); instance refused.");
+                    continue;
+                }
+
+                MechanismPlacementPlane t0 = branch.Planes[0];
+                double[][] mT = BasisFromColumns(t0.XAxis, t0.YAxis, t0.ZAxis);
+                double detT = Determinant3(mT);
+                if (Math.Abs(detT) < SingularBasisDeterminantEpsilon)
+                {
+                    warnings.Add(
+                        $"Placement (PL) {label}: its own first plane has " +
+                        "coincident or collinear axes (the basis is " +
+                        "singular); instance refused.");
+                    continue;
+                }
+
+                // L = M_T * inverse(M_S), applied whole -- never forced to
+                // a rotation, so a left-handed T0 yields a reflection.
+                double[][] linear = Multiply3(mT, mSInverse);
+                double[] linearOs = MultiplyVector3(linear, s0.Origin);
+                double[] translation =
+                {
+                    t0.Origin[0] - linearOs[0],
+                    t0.Origin[1] - linearOs[1],
+                    t0.Origin[2] - linearOs[2],
+                };
+                double det = Determinant3(linear);
+                bool reflected = det < 0.0;
+                if (reflected)
+                {
+                    notes.Add(
+                        $"Placement (PL) {label}: derived transform is A " +
+                        "REFLECTION (determinant " +
+                        det.ToString("0.###", CultureInfo.InvariantCulture) +
+                        "); expected for a mirrored side, not an error.");
+                }
+
+                // VALIDATE WITH THE OTHER SIX: the redundancy that makes a
+                // bad placement plane show as a number, never a silently
+                // skewed machine. Reported ALWAYS, whichever way it comes out.
+                double maxResidual = 0.0;
+                int validated = 0;
+                for (int i = 1; i < PlacementGroupSize; i++)
+                {
+                    if (!routingByIndex.TryGetValue(i, out MechanismRoutingWire? wireI) ||
+                        wireI.Route.Count == 0)
+                    {
+                        continue;
+                    }
+                    double[] predicted = MultiplyVector3(linear, wireI.Route[0].Origin);
+                    predicted[0] += translation[0];
+                    predicted[1] += translation[1];
+                    predicted[2] += translation[2];
+                    double residual = Distance(predicted, branch.Planes[i].Origin);
+                    if (residual > maxResidual)
+                        maxResidual = residual;
+                    validated++;
+                }
+                if (validated == 0)
+                {
+                    notes.Add(
+                        $"Placement (PL) {label}: residual check could not " +
+                        "run -- only Routing (RT)[0] carries frames, " +
+                        "nothing else to validate the placement against.");
+                }
+                else
+                {
+                    notes.Add(
+                        $"Placement (PL) {label}: max residual " +
+                        maxResidual.ToString("0.######", CultureInfo.InvariantCulture) +
+                        $" m across {validated} of 6 other wire(s).");
+                    if (maxResidual > MaxResidualWarnMetres)
+                    {
+                        warnings.Add(
+                            $"Placement (PL) {label}: max residual " +
+                            maxResidual.ToString("0.######", CultureInfo.InvariantCulture) +
+                            $" m exceeds the {MaxResidualWarnMetres} m " +
+                            "door-guard -- this placement plane set may " +
+                            "not be well-founded.");
+                    }
+                }
+
+                instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["side"] = branch.Id.Side,
+                    ["mechanism"] = branch.Id.Group,
+                    // THE FRAME FIELD, KEPT FOR EXPORT'S OWN UNCHANGED SEAM
+                    // (MechanismDocument.Json/TransformLocal): origin plus
+                    // the derived transform's own X and Y columns. A
+                    // reflected instance's X/Y are still exactly right;
+                    // ONLY a routing frame's own LOCAL Z-component would be
+                    // mis-signed by that seam's own X-cross-Y derivation,
+                    // a known, out-of-scope limit of a two-axis frame
+                    // representation, not fixed by this rebuild.
+                    ["frame"] = FramePayload(new MechanismFrame(
+                        translation, Column3(linear, 0), Column3(linear, 1))),
+                    ["kind"] = "mechanism",
+                    ["placement"] = "instance",
+                    // THE FULL DERIVED TRANSFORM, informational: every row
+                    // of L, so a future reader is never limited to the
+                    // two-axis frame above.
+                    ["linear"] = new[] { linear[0], linear[1], linear[2] },
+                    ["reflected"] = reflected,
+                    ["residualM"] = validated > 0 ? (object)maxResidual : null,
+                });
+
+                for (int w = 0; w < PlacementGroupSize; w++)
+                {
+                    if (!classifiedRoutes.TryGetValue(w, out List<(MechanismFrame Frame, string Owner, int OwnerReel)>? route))
+                        continue;
+                    wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["side"] = branch.Id.Side,
+                        ["mechanism"] = branch.Id.Group,
+                        ["wire"] = w,
+                        ["route"] = route
+                            .Select(r => RouteFramePayload(r.Frame, r.Owner, r.OwnerReel))
+                            .ToList(),
+                    });
+                }
+            }
+        }
+        else if (placements.Count > 0)
+        {
+            warnings.Add(
+                $"{placements.Count} Placement (PL) branch(es) were " +
+                "authored, but no mechanism instance could be derived " +
+                "(see the routing warning above); nothing is instanced.");
+        }
 
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["mechanism"] = mechanismOut,
             ["instances"] = instancesOut,
             ["wires"] = wiresOut,
-            ["anchors"] = anchorsOut,
-            ["tensionTies"] = tiesOut,
+            // ANCHOR ARRIVES FUSED INTO TENSION TIE NOW (open point 1,
+            // settled): no separate port, so this array stays empty; kept,
+            // never removed, since Export's own seam reads it.
+            ["anchors"] = new List<object>(),
+            // A LIGHTWEIGHT REFERENCE, not a second copy of the mesh: the
+            // fused tie's own vertices live ONCE, under mechanism.tensionTie,
+            // instanced exactly like Frame 1/2, the Motors and the reels;
+            // this top-level array exists only so the permanence view keeps
+            // a place to find the tie's tag without knowing to look inside
+            // "mechanism".
+            ["tensionTies"] = asset.TensionTie is not null
+                ? new List<Dictionary<string, object?>>
+                  {
+                      new(StringComparer.Ordinal)
+                      {
+                          ["ref"] = "mechanism.tensionTie",
+                          [PermanenceField] = Permanent,
+                      },
+                  }
+                : new List<Dictionary<string, object?>>(),
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
     }
 
     /// <summary>
-    /// FOUR REELS PER MECHANISM, EITHER AUTHORING STYLE (his ruling,
-    /// 2026-09-08 night): a TREE keyed {side}{mechanism}, matching the
-    /// shape his routing frames (RT) already use one level deeper
-    /// ({side}{mechanism}{wire}), with four reel entries per branch --
-    /// authored per instance, for when a mechanism's reels genuinely
-    /// differ (a mirrored side, say). OR a single FLAT list of four,
-    /// authored once on the asset and replicated across every declared
-    /// instance, for when they do not. Both cost him little and both are
-    /// accepted; which one was read is always said in <paramref
-    /// name="notes"/> (the chin), never left silent.
-    ///
-    /// A reel with no matching axis (by position within its own group)
-    /// refuses ITS UNIT: in tree style that is the one mechanism whose
-    /// branch failed, named and left with no reels while every other
-    /// mechanism proceeds; in flat style, since it is one set shared by
-    /// every instance, it is the whole reel set. Either way the axis is
-    /// authored, never inferred. Neither failure touches the body,
-    /// placements or wires -- only reels are ever refused here.
+    /// TEN REELS, ZIPPED BY POSITION: pairs Reel (RE)[i] with Reel Axis
+    /// (AX)[i]; a mesh with no matching axis, or an axis with no matching
+    /// mesh, refuses ONLY that index, by name -- the axis is authored,
+    /// never inferred, and a mismatch elsewhere never costs a reel that
+    /// resolved cleanly.
     /// </summary>
-    private static Dictionary<MechanismInstanceId, List<MechanismReelEntry>> ResolveReelAuthoring(
-        IReadOnlyList<MechanismMeshBranch> meshBranches,
-        IReadOnlyList<MechanismAxisBranch> axisBranches,
-        IReadOnlyList<MechanismInstanceInput> instances,
-        List<string> warnings,
-        List<string> notes)
-    {
-        var resolved = new Dictionary<MechanismInstanceId, List<MechanismReelEntry>>();
-        bool anyMeshes = meshBranches.Any(b => b.Meshes.Count > 0);
-        if (!anyMeshes)
-        {
-            if (axisBranches.Any(b => b.Axes.Count > 0))
-            {
-                warnings.Add(
-                    "Reel Axis (AX) was authored but Reel (RE) carries no " +
-                    "reel mesh(es); a spinner without a matching mesh " +
-                    "refuses its unit, so no reels are produced.");
-            }
-            return resolved;
-        }
-
-        bool meshTree = meshBranches.All(b => b.Path.Count == 2);
-        bool axisTree = axisBranches.Count == 0 || axisBranches.All(b => b.Path.Count == 2);
-        bool meshFlat = meshBranches.Count == 1 && meshBranches[0].Path.Count <= 1;
-        bool axisFlat = axisBranches.Count <= 1 && axisBranches.All(b => b.Path.Count <= 1);
-
-        if (meshTree && axisTree)
-        {
-            foreach (MechanismMeshBranch branch in meshBranches)
-            {
-                int side = branch.Path[0];
-                int mechanism = branch.Path[1];
-                string label = $"[{side}][{mechanism}]";
-                MechanismAxisBranch? axisBranch = axisBranches.FirstOrDefault(
-                    b => b.Path.Count == 2 && b.Path[0] == side && b.Path[1] == mechanism);
-                IReadOnlyList<MechanismFrame?> axes = axisBranch?.Axes ?? Array.Empty<MechanismFrame?>();
-                if (!TryZipReels(branch.Meshes, branch.FromBrep, axes, out List<MechanismReelEntry>? zipped, out string? failure))
-                {
-                    warnings.Add(
-                        $"Reel (RE){label}: {failure} a spinner without a " +
-                        "matching axis refuses its unit, so mechanism " +
-                        $"{label}'s reels are refused: the axis is " +
-                        "authored, never inferred.");
-                    continue;
-                }
-                if (zipped.Count != 4)
-                {
-                    warnings.Add(
-                        $"Reel (RE){label} carries {zipped.Count} reel(s); " +
-                        "his machine is four reels per mechanism, so this " +
-                        "is unusual but used as authored.");
-                }
-                resolved[new MechanismInstanceId(side, mechanism)] = zipped;
-            }
-            notes.Add(
-                "mechanism: Reel (RE) / Reel Axis (AX) were read as a " +
-                "TREE, one branch per mechanism (path {side}{mechanism}); " +
-                $"{resolved.Count} of {meshBranches.Count} mechanism(s) " +
-                "carry reel data.");
-            return resolved;
-        }
-
-        if (meshFlat && axisFlat)
-        {
-            MechanismMeshBranch mb = meshBranches[0];
-            IReadOnlyList<MechanismFrame?> axesFlat =
-                axisBranches.Count == 1 ? axisBranches[0].Axes : Array.Empty<MechanismFrame?>();
-            if (!TryZipReels(mb.Meshes, mb.FromBrep, axesFlat, out List<MechanismReelEntry>? zipped, out string? failure))
-            {
-                warnings.Add(
-                    $"Reel (RE): {failure} a spinner without a matching " +
-                    "axis refuses its unit, so the whole reel set is " +
-                    "refused: the axis is authored, never inferred.");
-                return resolved;
-            }
-            if (zipped.Count != 4)
-            {
-                warnings.Add(
-                    $"Reel (RE) carries {zipped.Count} reel(s); his " +
-                    "machine is four reels per mechanism, so this is " +
-                    "unusual but used as authored.");
-            }
-            foreach (MechanismInstanceInput instance in instances)
-                resolved[instance.Id] = zipped;
-            notes.Add(
-                "mechanism: Reel (RE) / Reel Axis (AX) were read as a " +
-                $"FLAT list of {zipped.Count} reel(s), authored once on " +
-                $"the asset, and replicated across {instances.Count} " +
-                "instance(s).");
-            return resolved;
-        }
-
-        warnings.Add(
-            "Reel (RE) / Reel Axis (AX) paths are neither a clean " +
-            "{side}{mechanism} tree (one branch per mechanism) nor a " +
-            "single flat list (authored once on the asset); reels " +
-            "refused, since the two authoring styles could not be told " +
-            "apart.");
-        return resolved;
-    }
-
-    /// <summary>
-    /// Pairs a branch's meshes with its axes by position (reel 0 with
-    /// axis 0, and so on): the only place a mesh or axis actually going
-    /// missing is named. Returns false, with <paramref name="failure"/>
-    /// naming what went wrong, the moment either list runs a different
-    /// length or a single position fails to resolve on either side.
-    /// </summary>
-    private static bool TryZipReels(
+    private static List<MechanismReelEntry> ResolveReelsFlat(
         IReadOnlyList<MechanismMesh?> meshes,
         IReadOnlyList<bool> fromBrep,
         IReadOnlyList<MechanismFrame?> axes,
-        [NotNullWhen(true)] out List<MechanismReelEntry>? zipped,
-        out string? failure)
+        List<string> warnings)
     {
-        zipped = null;
-        if (meshes.Count != axes.Count)
+        int count = Math.Max(meshes.Count, axes.Count);
+        var reels = new List<MechanismReelEntry>(count);
+        for (int i = 0; i < count; i++)
         {
-            failure = $"carries {meshes.Count} reel mesh(es) but " +
-                $"{axes.Count} axis plane(s);";
-            return false;
-        }
-        var list = new List<MechanismReelEntry>(meshes.Count);
-        for (int i = 0; i < meshes.Count; i++)
-        {
-            if (meshes[i] is null)
+            MechanismMesh? mesh = i < meshes.Count ? meshes[i] : null;
+            MechanismFrame? axis = i < axes.Count ? axes[i] : null;
+            if (mesh is null && axis is null)
+                continue;
+            if (mesh is null || axis is null)
             {
-                failure = $"reel[{i}] did not resolve to a mesh or a " +
-                    "closed Brep;";
-                return false;
+                warnings.Add(
+                    mesh is null
+                        ? $"Reel Axis (AX)[{i}] was authored but Reel " +
+                          $"(RE)[{i}] carries no matching reel mesh; the " +
+                          "axis is authored, never inferred, so reel " +
+                          $"{i} is refused."
+                        : $"Reel (RE)[{i}] was authored but Reel Axis " +
+                          $"(AX)[{i}] carries no matching axis plane; the " +
+                          "axis is authored, never inferred, so reel " +
+                          $"{i} is refused.");
+                continue;
             }
-            if (axes[i] is null)
-            {
-                failure = $"reel[{i}] has no matching Reel Axis (AX) " +
-                    "plane;";
-                return false;
-            }
-            list.Add(new MechanismReelEntry(meshes[i]!, fromBrep[i], axes[i]!));
+            reels.Add(new MechanismReelEntry(mesh, i < fromBrep.Count && fromBrep[i], axis));
         }
-        zipped = list;
-        failure = null;
-        return true;
-    }
-
-    /// <summary>
-    /// Anchor (AN) and Tension Tie (TT) share the SAME door-guard
-    /// (requirements doc section (b): "reused as-is for BOTH new ports ...
-    /// just run twice instead of once"). Both are authored in place in
-    /// world coordinates and never placed by this component; both are
-    /// permanent, and both are validated against the anchor row's own
-    /// nearest node, with a tolerance that scales with the row's own
-    /// characteristic anchor spacing.
-    /// </summary>
-    private static List<Dictionary<string, object?>> BuildRowParts(
-        string portLabel,
-        IReadOnlyList<MechanismRowPartInput> parts,
-        IReadOnlyList<MechanismAnchorRow>? rows,
-        List<string> warnings,
-        List<string> notes)
-    {
-        var results = new List<Dictionary<string, object?>>(parts.Count);
-        if (parts.Count > 0 && rows is null)
-        {
-            warnings.Add(
-                $"{portLabel} carries {parts.Count} mesh(es) but no Result " +
-                "was wired to Mechanism: the door-guard proximity check " +
-                $"against the anchor rows could not run, and each " +
-                $"{portLabel} row is its own position in {portLabel}, " +
-                "unconfirmed.");
-        }
-        foreach (MechanismRowPartInput part in parts)
-        {
-            int i = part.Index;
-            if (rows is not null)
-            {
-                if (i >= rows.Count)
-                {
-                    warnings.Add(
-                        $"{portLabel}[{i}] has no matching anchor row " +
-                        $"(only {rows.Count} found by the solved net); its " +
-                        "row index is unvalidated.");
-                }
-                else if (rows[i].NodePoints.Count == 0)
-                {
-                    warnings.Add(
-                        $"anchor row {i} carries no anchor nodes; " +
-                        $"{portLabel}[{i}] cannot be validated against it.");
-                }
-                else
-                {
-                    IReadOnlyList<double[]> nodePoints = rows[i].NodePoints;
-                    double nearest = nodePoints
-                        .Select(p => Distance(p, part.Centroid))
-                        .Min();
-                    double tolerance = Math.Max(
-                        AnchorTieToleranceFactor * CharacteristicSpacing(nodePoints),
-                        MinimumAnchorTieTolerance);
-                    if (nearest > tolerance)
-                    {
-                        warnings.Add(
-                            $"{portLabel}[{i}] sits " +
-                            nearest.ToString("0.###", CultureInfo.InvariantCulture) +
-                            $" from anchor row {i} (nearest anchor node), " +
-                            "farther than the door-guard tolerance of " +
-                            tolerance.ToString("0.###", CultureInfo.InvariantCulture) +
-                            $" ({AnchorTieToleranceFactor.ToString("0.#", CultureInfo.InvariantCulture)}x " +
-                            "the row's own anchor spacing): this part may " +
-                            "be authored against a different solve.");
-                    }
-                }
-            }
-            results.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["row"] = i,
-                ["mesh"] = MeshPayload(part.Mesh),
-                // ONE PLACEMENT CONVENTION (studio's C5/A5): Anchor and
-                // Tension Tie arrive pre-placed in world coordinates,
-                // unlike the mechanism's own instances above; the flag
-                // says so directly rather than leaving it to be inferred
-                // from "this kind carries no frame".
-                ["placement"] = "world",
-                // THE PERMANENT WORKS (Param's ruling, see PermanenceField
-                // above): Anchor and Tension Tie are the two things that
-                // remain when the machine comes away.
-                [PermanenceField] = Permanent,
-            });
-            if (part.FromBrep)
-                notes.Add($"{portLabel}[{i}] {BrepMeshingNote}");
-        }
-        return results;
+        return reels;
     }
 
     private static Dictionary<string, object?> MeshPayload(MechanismMesh mesh) =>
@@ -847,9 +755,8 @@ internal static class MechanismCollector
     /// A routing frame with its OWNER stamped alongside -- the static
     /// body, or the reel it rides. Built on <see cref="FramePayload"/>, so
     /// the frame's own origin and axes are byte-identical to a plain
-    /// routing/axis/placement frame; <see cref="RouteOwnerField"/> and
-    /// <see cref="RouteOwnerReelField"/> are the only addition, and
-    /// nothing here ever touches Origin/XAxis/YAxis.
+    /// routing/axis frame; <see cref="RouteOwnerField"/> and
+    /// <see cref="RouteOwnerReelField"/> are the only addition.
     /// </summary>
     internal static Dictionary<string, object?> RouteFramePayload(
         MechanismFrame frame, string owner, int ownerReel)
@@ -885,31 +792,6 @@ internal static class MechanismCollector
         return Math.Min(max[0] - min[0], Math.Min(max[1] - min[1], max[2] - min[2]));
     }
 
-    /// <summary>The bounding-box centre of a mesh's own vertices, plain arithmetic, used as AN/TT's own door-guard probe point.</summary>
-    internal static double[] BoundingBoxCenter(MechanismMesh mesh)
-    {
-        if (mesh.Vertices.Count == 0)
-            return new double[] { 0.0, 0.0, 0.0 };
-        double[] min = { double.MaxValue, double.MaxValue, double.MaxValue };
-        double[] max = { double.MinValue, double.MinValue, double.MinValue };
-        foreach (double[] v in mesh.Vertices)
-        {
-            for (int axis = 0; axis < 3; axis++)
-            {
-                if (v[axis] < min[axis])
-                    min[axis] = v[axis];
-                if (v[axis] > max[axis])
-                    max[axis] = v[axis];
-            }
-        }
-        return new[]
-        {
-            (min[0] + max[0]) / 2.0,
-            (min[1] + max[1]) / 2.0,
-            (min[2] + max[2]) / 2.0,
-        };
-    }
-
     internal static double Distance(double[] a, double[] b)
     {
         double dx = a[0] - b[0];
@@ -923,8 +805,7 @@ internal static class MechanismCollector
     /// origin plus a UNIT direction: plain arithmetic, Rhino-free, the
     /// same reasoning as <c>MechanismDocument.TransformLocal</c>'s own
     /// hand-rolled cross product -- RhinoCommon's native convenience
-    /// members throw outside Rhino, so small vector math is reimplemented
-    /// per boundary rather than depended on.
+    /// members throw outside Rhino.
     /// </summary>
     internal static double PerpendicularDistanceToLine(
         double[] point, double[] lineOrigin, double[] lineDirectionUnit)
@@ -974,12 +855,8 @@ internal static class MechanismCollector
     /// <summary>
     /// A REEL'S OWN RADIAL NEIGHBOURHOOD: the furthest any of its OWN mesh
     /// vertices sits from its OWN axis line, measured perpendicular to
-    /// that axis -- the rotating hardware's own real extent about the
-    /// axis he authored. NOT the spoolRadius default
-    /// (SmallestBoundingDimension over 4), which answers a different
-    /// question (the spin arithmetic) with a different number; this is
-    /// purely a geometric footprint. Floored, like spoolRadius, so an
-    /// empty or degenerate mesh cannot divide a ratio by zero.
+    /// that axis. Floored, like spoolRadius, so an empty or degenerate
+    /// mesh cannot divide a ratio by zero.
     /// </summary>
     internal static double ReelRadialExtent(MechanismMesh mesh, MechanismFrame axis)
     {
@@ -995,30 +872,10 @@ internal static class MechanismCollector
     }
 
     /// <summary>
-    /// THE OWNERSHIP RULE (built for his wrapped-wire ruling, confirmed
-    /// 2026-09-08 -- "it is option 2. i have modelled the wire to wrap
-    /// around the drums"): a routing frame belongs to the reel whose own
-    /// radial neighbourhood it sits nearest, relative to that reel's own
-    /// size -- the PERPENDICULAR distance from the frame's own origin to
-    /// the reel's axis LINE (the axis plane's origin plus its Z, from
-    /// XAxis cross YAxis), divided by that SAME reel's own radial extent
-    /// (<see cref="ReelRadialExtent"/>). A ratio at or under 1.0 means the
-    /// frame sits on or inside that reel's own footprint; the reel with
-    /// the SMALLEST such ratio wins. If no reel's ratio reaches 1.0, the
-    /// frame belongs to the static body. This reads Origin only -- it
-    /// never writes it back: ownership is metadata about a frame, the
-    /// frame's own numbers pass through untouched.
-    ///
-    /// WARNS, NEVER GUESSES SILENTLY, on two shapes that must be named
-    /// rather than resolved for him: the winning ratio sits within
-    /// <see cref="RouteOwnerAmbiguityMargin"/> of the 1.0 boundary itself
-    /// (a frame close enough to a drum's own edge that a small placement
-    /// difference could flip the answer), or a SECOND reel's own ratio
-    /// also sits at or under 1.0 plus that same margin (the frame sits
-    /// near two reels' axes at once). Either way the single best-ratio
-    /// owner is still returned -- every frame gets one -- but
-    /// <c>Ambiguity</c> carries the numbers so the call is visible, not
-    /// hidden behind a confident-looking answer.
+    /// THE OWNERSHIP RULE (7c8db59, unchanged): a routing frame belongs to
+    /// the reel whose own radial neighbourhood it sits nearest, relative to
+    /// that reel's own size. WARNS, NEVER GUESSES SILENTLY, on a frame
+    /// close to the 1.0 boundary or near two reels at once.
     /// </summary>
     internal static (string Owner, int OwnerReel, string? Ambiguity) ClassifyRouteFrameOwner(
         MechanismFrame frame, IReadOnlyList<MechanismReelEntry> reels)
@@ -1099,10 +956,9 @@ internal static class MechanismCollector
     }
 
     /// <summary>
-    /// The row's own typical anchor-to-anchor gap: the mean of its
-    /// consecutive point distances, in walking order. Zero for a row of one
-    /// (or none), which the caller floors rather than lets zero the whole
-    /// tolerance.
+    /// STILL READ BY EXPORT'S OWN SEAM (MechanismDocument.Json): the row's
+    /// own typical anchor-to-anchor gap. Zero for a row of one (or none),
+    /// which the caller floors rather than lets zero the whole tolerance.
     /// </summary>
     internal static double CharacteristicSpacing(IReadOnlyList<double[]> points)
     {
@@ -1113,24 +969,101 @@ internal static class MechanismCollector
             total += Distance(points[i], points[i + 1]);
         return total / (points.Count - 1);
     }
+
+    /// <summary>
+    /// THE PLACEMENT MATHS: a 3x3 matrix with X, Y, Z as its COLUMNS,
+    /// <c>m[row][col]</c>, so <see cref="MultiplyVector3"/> is a plain
+    /// matrix-vector product. Used for both the authored mechanism's own
+    /// wire-0 frame (Z derived, X cross Y -- routing frames are never
+    /// mirrored, always right-handed) and a placement target plane (Z read
+    /// TRUE off the plane, never re-derived, since a mirrored placement
+    /// plane is genuinely LEFT-HANDED and that is exactly the signal a
+    /// reflection must be built from).
+    /// </summary>
+    internal static double[][] BasisFromColumns(double[] x, double[] y, double[] z) => new[]
+    {
+        new[] { x[0], y[0], z[0] },
+        new[] { x[1], y[1], z[1] },
+        new[] { x[2], y[2], z[2] },
+    };
+
+    internal static double Determinant3(double[][] m) =>
+        (m[0][0] * ((m[1][1] * m[2][2]) - (m[1][2] * m[2][1]))) -
+        (m[0][1] * ((m[1][0] * m[2][2]) - (m[1][2] * m[2][0]))) +
+        (m[0][2] * ((m[1][0] * m[2][1]) - (m[1][1] * m[2][0])));
+
+    /// <summary>The inverse of a 3x3 matrix, or null when its determinant sits too close to zero to trust (a singular basis: coincident or collinear axes).</summary>
+    internal static double[][]? Invert3(double[][] m)
+    {
+        double det = Determinant3(m);
+        if (Math.Abs(det) < SingularBasisDeterminantEpsilon)
+            return null;
+        double inv = 1.0 / det;
+        return new[]
+        {
+            new[]
+            {
+                ((m[1][1] * m[2][2]) - (m[1][2] * m[2][1])) * inv,
+                ((m[0][2] * m[2][1]) - (m[0][1] * m[2][2])) * inv,
+                ((m[0][1] * m[1][2]) - (m[0][2] * m[1][1])) * inv,
+            },
+            new[]
+            {
+                ((m[1][2] * m[2][0]) - (m[1][0] * m[2][2])) * inv,
+                ((m[0][0] * m[2][2]) - (m[0][2] * m[2][0])) * inv,
+                ((m[0][2] * m[1][0]) - (m[0][0] * m[1][2])) * inv,
+            },
+            new[]
+            {
+                ((m[1][0] * m[2][1]) - (m[1][1] * m[2][0])) * inv,
+                ((m[0][1] * m[2][0]) - (m[0][0] * m[2][1])) * inv,
+                ((m[0][0] * m[1][1]) - (m[0][1] * m[1][0])) * inv,
+            },
+        };
+    }
+
+    internal static double[][] Multiply3(double[][] a, double[][] b)
+    {
+        var result = new double[3][];
+        for (int r = 0; r < 3; r++)
+        {
+            result[r] = new double[3];
+            for (int c = 0; c < 3; c++)
+            {
+                double sum = 0.0;
+                for (int k = 0; k < 3; k++)
+                    sum += a[r][k] * b[k][c];
+                result[r][c] = sum;
+            }
+        }
+        return result;
+    }
+
+    internal static double[] MultiplyVector3(double[][] m, double[] v) => new[]
+    {
+        (m[0][0] * v[0]) + (m[0][1] * v[1]) + (m[0][2] * v[2]),
+        (m[1][0] * v[0]) + (m[1][1] * v[1]) + (m[1][2] * v[2]),
+        (m[2][0] * v[0]) + (m[2][1] * v[1]) + (m[2][2] * v[2]),
+    };
+
+    internal static double[] Column3(double[][] m, int col) => new[] { m[0][col], m[1][col], m[2][col] };
 }
 
 /// <summary>
-/// The anchor-row geometry the door-guard (and, from Export, wire-to-anchor
-/// matching) both read off a solved Result: the same grouping
+/// The anchor-row geometry Export's own seam still reads off a solved
+/// Result (MechanismDocument.Json's own <c>AnchorRowIndices</c> call, for
+/// wire-to-net-vertex matching): the same grouping
 /// <c>MouldGeometry.ConnectedGroups</c>/<c>GroupingAdjacency</c> already give
-/// Diagnose's own "every anchor is in a strip of its own" check
-/// (requirements doc section 2), so an AN/TT row and a wire's matched
-/// anchor can never disagree about what a row is.
+/// Diagnose's own "every anchor is in a strip of its own" check.
+/// UNCHANGED by this rebuild; this collector no longer calls it itself
+/// (there is no AN/TT door-guard left to run against it), but Export's seam
+/// still does.
 /// </summary>
 internal static class MechanismGeometry
 {
     /// <summary>
     /// Every anchor row's NODE INDICES, in <c>ConnectedGroups</c>' own
-    /// order. The one place this grouping is computed, so the door-guard's
-    /// rows (points only) and Export's own wire-to-anchor matching
-    /// (indices) can never disagree about what a row is. Empty when the
-    /// Result carries no equilibrium or no anchors.
+    /// order. Empty when the Result carries no equilibrium or no anchors.
     /// </summary>
     public static List<List<int>> AnchorRowIndices(ResultDto result)
     {
@@ -1149,49 +1082,33 @@ internal static class MechanismGeometry
         }
         return MouldGeometry.ConnectedGroups(anchors, grouping);
     }
-
-    /// <summary>
-    /// Every anchor row, in the same order, as world-space points: the
-    /// door-guard's own read of <see cref="AnchorRowIndices"/>.
-    /// </summary>
-    public static List<MechanismAnchorRow> AnchorRows(ResultDto result)
-    {
-        EquilibriumResultDto? eq = result.Equilibrium;
-        List<List<int>> groups = AnchorRowIndices(result);
-        var rows = new List<MechanismAnchorRow>(groups.Count);
-        foreach (List<int> group in groups)
-        {
-            var points = new List<double[]>(group.Count);
-            foreach (int id in group)
-            {
-                Point3Dto p = eq!.Vertices[id];
-                points.Add(new[] { p.X, p.Y, p.Z });
-            }
-            rows.Add(new MechanismAnchorRow(points));
-        }
-        return rows;
-    }
 }
 
 /// <summary>
 /// MECHANISM ("ME"): the collector for the fourth sibling document, feeding
-/// Export beside RES and Cells. NAMED PORTS, settled with Param 2026-09-08
-/// night: "anchor, tension tie, mechanism, mechanism normal, mechanism
-/// reel, reel plane", plus Routing and Reel Kind (this document's own
-/// additions, needed to carry what his six words describe but do not name
-/// a port for).
+/// Export beside RES and Cells. HIS MODEL, settled 2026-09-08, verbatim:
+/// "take one mechanism, there is 3 per side at the moment linked via 7
+/// wires each. I will [give] the component everything for one component
+/// like this. Reel 1-10, reel 1-10 with axis, mechanism frame 1, mechanism
+/// frame 2, motors, tension tie, wire routing frames, placement planes
+/// (this will be for all wires, set into 7 and into side, so that you will
+/// know 7 anchors = 1 mechanism, and its already branched that way, then
+/// which side they are) ... we are using the first wire frame to dictate
+/// how the mechanism attaches to the 7 placement planes."
+///
+/// ONE MECHANISM IS AUTHORED, ONCE (Frame 1, Frame 2, the Motors, the
+/// fused Tension Tie, the ten Reels each with its own axis, and the seven
+/// Routing wires), and PLACED at every branch of Placement -- one instance
+/// per {side}{group} of seven planes, its transform DERIVED from the
+/// mechanism's own Routing wire 0 against that branch's own first plane,
+/// then validated against the other six (Placement's own maths, settled,
+/// not redesigned here).
 ///
 /// Every port is optional, so an author who wants only a mechanism, only a
-/// tension tie, or nothing at all can wire exactly that. Nothing here
-/// PLACES anything: he places every instance himself (Placement), and
-/// Anchor/Tension Tie travel in world coordinates exactly as authored,
-/// validated rather than placed (the door-guard rule). Result (RES) is
-/// wired so the door-guard has anchor rows to check Anchor/Tension Tie
-/// against, and so Export can later match each wire to a net vertex.
-///
-/// Nothing wired produces an empty Payload and a quiet chin (spec section 8
-/// item 6): Export reads an empty Payload as "no mechanism document for
-/// this study" exactly the way it reads no Cells as "no skin document".
+/// tension tie, or nothing at all can wire exactly that. Nothing wired
+/// produces an empty Payload and a quiet chin (spec section 8 item 6):
+/// Export reads an empty Payload as "no mechanism document for this study"
+/// exactly the way it reads no Cells as "no skin document".
 /// </summary>
 public sealed class MechanismCollectorComponent : NativeComponentBase
 {
@@ -1199,12 +1116,13 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         : base(
             "Mechanism",
             "ME",
-            "Collect the reeling machine's authored parts on their named " +
-            "ports -- Anchor, Tension Tie, Mechanism, Placement, Reel, " +
-            "Reel Axis, Routing, Reel Kind -- and validate them into one " +
-            "payload for Export's mechanism document. Nothing wired " +
-            "produces nothing: this is the fourth sibling document, and " +
-            "it is optional per study.",
+            "Collect the ONE authored mechanism's parts -- Tension Tie, " +
+            "Frame 1, Frame 2, Motors, Reel, Reel Axis, Routing -- and " +
+            "place it at every Placement branch, deriving each instance's " +
+            "transform from Routing wire 0 against that branch's own " +
+            "first plane and validating it against the other six. " +
+            "Nothing wired produces nothing: this is the fourth sibling " +
+            "document, and it is optional per study.",
             ComponentCategories.Deliver,
             "mechanism")
     {
@@ -1219,114 +1137,89 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             new ResultParam(),
             "Result",
             "RES",
-            "The solved Result, wired so Anchor (AN) and Tension Tie (TT) " +
-            "can be validated against the anchor rows they should sit " +
-            "beside, and so Export can match each wire (RT) to a net " +
-            "vertex (default: wire order against anchor order along the " +
-            "row). Placement is authored, not computed here or by Export.",
+            "The solved Result. Kept for forward compatibility with his " +
+            "existing wiring; the Anchor/Tension Tie door-guard that once " +
+            "read it is gone now the tie arrives fused and travels with " +
+            "the mechanism's own placement rather than being separately " +
+            "authored in world space.",
             GH_ParamAccess.item);
         parameters[0].Optional = true;
 
         parameters.AddGenericParameter(
-            "Anchor",
-            "AN",
-            "The foundation anchor: one mesh (or closed Brep, meshed " +
-            "here and said so) per anchored row, authored IN PLACE in " +
-            "WORLD coordinates. This component computes no placement for " +
-            "it; it validates it against the anchor rows (a proximity " +
-            "check, named by row when one strays).",
-            GH_ParamAccess.list);
+            "Tension Tie",
+            "TT",
+            "The foundation anchor and the tension tie / column slider " +
+            "rail, arrived as ONE FUSED mesh (his settled ruling), in the " +
+            "mechanism's own local space. Instanced exactly like Frame 1, " +
+            "Frame 2, the Motors and the reels; permanence \"permanent\".",
+            GH_ParamAccess.item);
         parameters[1].Optional = true;
 
         parameters.AddGenericParameter(
-            "Tension Tie",
-            "TT",
-            "The sliding ground bar / column tension tie: one mesh (or " +
-            "closed Brep, meshed here and said so) per anchored row, " +
-            "authored IN PLACE in WORLD coordinates and validated " +
-            "against the anchor rows exactly as Anchor (AN) is.",
-            GH_ParamAccess.list);
+            "Frame 1",
+            "F1",
+            "The mechanism frame, one joined mesh, unit-local space.",
+            GH_ParamAccess.item);
         parameters[2].Optional = true;
 
         parameters.AddGenericParameter(
-            "Mechanism",
-            "ME",
-            "The ONE authored mechanism body (a mesh, or a closed Brep " +
-            "meshed here and said so), in the unit's own local space. " +
-            "Instanced at every Placement (PL) frame -- never a copy per " +
-            "instance.",
-            GH_ParamAccess.item);
+            "Frame 2",
+            "F2",
+            "A second frame part in a DIFFERENT MATERIAL, unit-local " +
+            "space, joined as far as he can join it -- so a list, not " +
+            "necessarily one mesh.",
+            GH_ParamAccess.list);
         parameters[3].Optional = true;
 
-        parameters.AddPlaneParameter(
-            "Placement",
-            "PL",
-            "One placement frame per instance, tree path " +
-            "{side}{mechanism}, world coordinates: where he puts the " +
-            "mechanism. Authored by him; this component computes no " +
-            "placement.",
-            GH_ParamAccess.tree);
+        parameters.AddGenericParameter(
+            "Motors",
+            "MO",
+            "The motors, one joined mesh, unit-local space.",
+            GH_ParamAccess.item);
         parameters[4].Optional = true;
 
         parameters.AddGenericParameter(
             "Reel",
             "RE",
-            "The spinning parts' meshes (or closed Breps, meshed here " +
-            "and said so), unit-local space: FOUR per mechanism (his " +
-            "machine, ruling of 2026-09-08 night), reel 0 the driven " +
-            "spool and reels 1..3 cosmetic wheels carried but not " +
-            "rotated. Tree path {side}{mechanism}, one branch of four " +
-            "per mechanism (matching Placement/PL and Routing/RT), OR a " +
-            "flat list of four authored once and replicated across " +
-            "every instance -- either is accepted, and Status (ST) says " +
-            "which was read.",
-            GH_ParamAccess.tree);
+            "The ten reels, SEPARATE meshes (never joined into Frame 1, " +
+            "since a reel spins and a frame does not), unit-local space, " +
+            "one list, position i pairs with Reel Axis (AX)[i].",
+            GH_ParamAccess.list);
         parameters[5].Optional = true;
 
         parameters.AddPlaneParameter(
             "Reel Axis",
             "AX",
-            "ONE PLANE PER ROTATING REEL, matching Reel (RE) 1:1 by " +
-            "position within its own mechanism, unit-local space: the " +
-            "plane's Z is the rotation axis, read from the plane's " +
-            "normal. Its X and Y are carried through into the document " +
-            "UNCHANGED -- his ruling, 2026-09-08 night -- because he " +
-            "authors them deliberately to fix the spin direction; never " +
-            "re-derived or normalised away. Same tree-or-flat shape as " +
-            "Reel (RE): {side}{mechanism}, or a flat four replicated " +
-            "across every instance. A reel with no matching axis here " +
-            "refuses its own mechanism's reels: the axis is authored, " +
-            "never inferred.",
-            GH_ParamAccess.tree);
+            "One plane per reel, matching Reel (RE) 1:1 by POSITION, " +
+            "unit-local space: the plane's Z is the rotation axis. Its X " +
+            "and Y are carried through into the document UNCHANGED -- " +
+            "his ruling -- because he authors them deliberately to fix " +
+            "the spin direction; never re-derived or normalised away. A " +
+            "reel with no matching axis here refuses ONLY that reel: the " +
+            "axis is authored, never inferred.",
+            GH_ParamAccess.list);
         parameters[6].Optional = true;
 
         parameters.AddPlaneParameter(
             "Routing",
             "RT",
-            "The wire's routing frames, tree path {side}{mechanism}" +
-            "{wire}: an ordered list of planes per wire, unit-local " +
-            "space, in threading order, planes[0] the NET END (his " +
-            "ruling; validated after placement, a reversed list is " +
-            "named). Each frame is classified against its own " +
-            "instance's Reel (RE): one lying within a reel's own " +
-            "radial neighbourhood of its axis (Reel Axis/AX) is owned " +
-            "by that reel, so the studio spins it with the drum; " +
-            "everything else is owned by the static body. Positions " +
-            "are never altered by this -- ownership is metadata, said " +
-            "on Status (ST) per mechanism, with an ambiguous frame " +
-            "named rather than silently assigned.",
+            "The ONE authored mechanism's wire frames, tree path " +
+            "{wire}: an ordered list of planes per wire (seven wires), " +
+            "unit-local space, in threading order, planes[0] the NET " +
+            "END. Wire 0's first frame is also the FIRST CORRESPONDENCE " +
+            "every Placement branch derives its instance transform from.",
             GH_ParamAccess.tree);
         parameters[7].Optional = true;
 
-        parameters.AddTextParameter(
-            "Reel Kind",
-            "RK",
-            "One word per instance, tree path {side}{mechanism} " +
-            "matching Placement (PL): \"edge\" or \"node\", naming which " +
-            "functional family this instance belongs to. Optional and " +
-            "purely informational: an unspecified instance is still " +
-            "built, tagged the generic kind \"mechanism\", and a chin " +
-            "remark says so.",
+        parameters.AddPlaneParameter(
+            "Placement",
+            "PL",
+            "Planes for ALL wires, world space, tree path {side}{group}: " +
+            "seven planes per branch, one mechanism instance per branch, " +
+            "plane i the world target for Routing wire i. The instance " +
+            "transform is DERIVED from plane 0 against Routing wire 0's " +
+            "own first frame and validated against the other six -- he " +
+            "no longer authors a placement frame directly.",
             GH_ParamAccess.tree);
         parameters[8].Optional = true;
     }
@@ -1344,11 +1237,13 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         parameters.AddTextParameter(
             "Status",
             "ST",
-            "What was received (the mechanism body, its reels, how many " +
-            "placements and wires, Anchor/Tension Tie rows, whether a " +
-            "Result was wired), then any named warning the door-guard or " +
-            "the axis check raised, then any note the chin owes about a " +
-            "default or a Brep meshed in passing.",
+            "What was received, then any named warning the door-guards " +
+            "raised (a bad branch count, a singular basis, an over-" +
+            "tolerance residual, a reel with no axis), then every " +
+            "instance's own derived-transform report (its max residual " +
+            "against the other six wires, and whether it came out a " +
+            "reflection), then any note the chin owes about a default or " +
+            "a Brep meshed in passing.",
             GH_ParamAccess.item);
     }
 
@@ -1359,33 +1254,29 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             var warnings = new List<string>();
             var notes = new List<string>();
 
-            bool hasResult = TryReadResult(data, out ResultDto? result);
-            List<MechanismAnchorRow>? rows =
-                hasResult ? MechanismGeometry.AnchorRows(result!) : null;
+            bool hasResult = TryReadResult(data, out _);
 
-            List<MechanismRowPartInput> anchors = ReadRowParts(data, 1, "AN", warnings);
-            List<MechanismRowPartInput> ties = ReadRowParts(data, 2, "TT", warnings);
             MechanismAssetInput asset = ReadAsset(data, warnings);
-            List<MechanismInstanceInput> instances = ReadInstances(data, warnings);
-            List<MechanismWireInput> wires = ReadWires(data, warnings);
-            (List<MechanismMeshBranch> reelMeshes, List<MechanismAxisBranch> reelAxes) =
-                ReadReels(data, warnings);
+            List<MechanismRoutingWire> routing = ReadRouting(data, warnings);
+            List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
-            string? payload = MechanismCollector.Build(
-                asset, reelMeshes, reelAxes, instances, wires, anchors, ties,
-                rows, warnings, notes);
+            string? payload = MechanismCollector.Build(asset, routing, placements, warnings, notes);
 
-            int reelMeshCount = reelMeshes.Sum(b => b.Meshes.Count);
+            int routedWireCount = routing.Count(w => w.Route.Count > 0);
             var status = new List<string>
             {
                 payload is null
                     ? "received: nothing wired; no mechanism document."
-                    : "received: mechanism body " +
-                      (asset.Body is null ? "not authored" : "authored") +
-                      $", {reelMeshCount} reel(s), " +
-                      $"{instances.Count} placement(s), {wires.Count} " +
-                      $"wire(s), {anchors.Count} anchor(s), {ties.Count} " +
-                      "tension tie(s), Result " +
+                    : "received: frame1 " +
+                      (asset.Frame1 is null ? "not authored" : "authored") +
+                      $", frame2 {asset.Frame2.Count} part(s), motors " +
+                      (asset.Motors is null ? "not authored" : "authored") +
+                      ", tension tie " +
+                      (asset.TensionTie is null ? "not authored" : "authored (fused anchor+tie)") +
+                      $", {asset.ReelMeshes.Count} reel(s) offered, " +
+                      $"{routedWireCount} of {MechanismCollector.PlacementGroupSize} " +
+                      $"routing wire(s) authored, {placements.Count} " +
+                      "placement branch(es), Result " +
                       (hasResult ? "wired." : "not wired."),
             };
             foreach (string warning in warnings)
@@ -1403,7 +1294,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             data.SetData(1, string.Join(Environment.NewLine, status));
             Message = payload is null
                 ? "nothing wired"
-                : $"{instances.Count} instance(s), {wires.Count} wire(s)";
+                : $"{placements.Count} placement branch(es), {routedWireCount} routed wire(s)";
         }
         catch (Exception error)
         {
@@ -1422,196 +1313,113 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return true;
     }
 
-    private List<MechanismRowPartInput> ReadRowParts(
-        IGH_DataAccess data, int index, string label, List<string> warnings)
-    {
-        var items = new List<object>();
-        data.GetDataList(index, items);
-        var parts = new List<MechanismRowPartInput>(items.Count);
-        for (int i = 0; i < items.Count; i++)
-        {
-            if (!TryMeshOrBrep(items[i], out MechanismMesh? mesh, out bool fromBrep) ||
-                mesh is null)
-            {
-                warnings.Add(
-                    $"{label}[{i}] did not resolve to a mesh or a closed " +
-                    "Brep; skipped.");
-                continue;
-            }
-            double[] centroid = MechanismCollector.BoundingBoxCenter(mesh);
-            parts.Add(new MechanismRowPartInput(i, mesh, centroid, fromBrep));
-        }
-        return parts;
-    }
-
     private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings)
     {
-        object? meItem = null;
-        data.GetData(3, ref meItem);
-        MechanismMesh? body = null;
-        bool bodyFromBrep = false;
-        if (meItem is not null)
+        object? ttItem = null;
+        data.GetData(1, ref ttItem);
+        MechanismMesh? tt = null;
+        bool ttBrep = false;
+        if (ttItem is not null)
         {
-            if (!TryMeshOrBrep(meItem, out body, out bodyFromBrep) || body is null)
+            if (!TryMeshOrBrep(ttItem, out tt, out ttBrep) || tt is null)
             {
-                warnings.Add(
-                    "Mechanism (ME) did not resolve to a mesh or a closed " +
-                    "Brep; the mechanism has no body.");
-                body = null;
+                warnings.Add("Tension Tie (TT) did not resolve to a mesh or a closed Brep; refused.");
+                tt = null;
             }
         }
 
-        return new MechanismAssetInput(body, bodyFromBrep);
+        object? f1Item = null;
+        data.GetData(2, ref f1Item);
+        MechanismMesh? f1 = null;
+        bool f1Brep = false;
+        if (f1Item is not null)
+        {
+            if (!TryMeshOrBrep(f1Item, out f1, out f1Brep) || f1 is null)
+            {
+                warnings.Add("Frame 1 (F1) did not resolve to a mesh or a closed Brep; refused.");
+                f1 = null;
+            }
+        }
+
+        var f2Items = new List<object>();
+        data.GetDataList(3, f2Items);
+        var f2 = new List<MechanismMesh>(f2Items.Count);
+        var f2Brep = new List<bool>(f2Items.Count);
+        for (int i = 0; i < f2Items.Count; i++)
+        {
+            if (!TryMeshOrBrep(f2Items[i], out MechanismMesh? m, out bool b) || m is null)
+            {
+                warnings.Add($"Frame 2 (F2)[{i}] did not resolve to a mesh or a closed Brep; skipped.");
+                continue;
+            }
+            f2.Add(m);
+            f2Brep.Add(b);
+        }
+
+        object? moItem = null;
+        data.GetData(4, ref moItem);
+        MechanismMesh? mo = null;
+        bool moBrep = false;
+        if (moItem is not null)
+        {
+            if (!TryMeshOrBrep(moItem, out mo, out moBrep) || mo is null)
+            {
+                warnings.Add("Motors (MO) did not resolve to a mesh or a closed Brep; refused.");
+                mo = null;
+            }
+        }
+
+        var reItems = new List<object>();
+        data.GetDataList(5, reItems);
+        var reMeshes = new List<MechanismMesh?>(reItems.Count);
+        var reBrep = new List<bool>(reItems.Count);
+        for (int i = 0; i < reItems.Count; i++)
+        {
+            if (!TryMeshOrBrep(reItems[i], out MechanismMesh? m, out bool b))
+            {
+                warnings.Add($"Reel (RE)[{i}] did not resolve to a mesh or a closed Brep; treated as missing.");
+                reMeshes.Add(null);
+                reBrep.Add(false);
+                continue;
+            }
+            reMeshes.Add(m);
+            reBrep.Add(b);
+        }
+
+        var axItems = new List<Plane>();
+        data.GetDataList(6, axItems);
+        var axes = new List<MechanismFrame?>(axItems.Count);
+        foreach (Plane plane in axItems)
+        {
+            axes.Add(new MechanismFrame(
+                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
+        }
+
+        return new MechanismAssetInput(
+            f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep, reMeshes, reBrep, axes);
     }
 
     /// <summary>
-    /// Reads Reel (RE) and Reel Axis (AX) as TREES, exactly as he
-    /// authors them: a genuine {side}{mechanism} branch per mechanism, or
-    /// GH's own default single-branch path for a bare flat list. Only the
-    /// raw shape is read here; the Rhino- and Grasshopper-free <see
-    /// cref="MechanismCollector.ResolveReelAuthoring"/> decides what it
-    /// means, so the same decision the harness drives by reflection is
-    /// exactly what runs live. The plane's X and Y are carried through
-    /// into <see cref="MechanismFrame"/> UNCHANGED (his ruling): only Z
-    /// is ever read as the rotation axis, and that reading happens
-    /// downstream, never here.
+    /// Reads Routing (RT) as a tree, path {wire}: the ONE authored
+    /// mechanism's own routing, never per instance now.
     /// </summary>
-    private (List<MechanismMeshBranch> Meshes, List<MechanismAxisBranch> Axes) ReadReels(
-        IGH_DataAccess data, List<string> warnings)
-    {
-        data.GetDataTree(5, out GH_Structure<IGH_Goo> reTree);
-        var meshBranches = new List<MechanismMeshBranch>();
-        foreach (GH_Path path in reTree.Paths)
-        {
-            IList branch = reTree.get_Branch(path);
-            var meshes = new List<MechanismMesh?>(branch.Count);
-            var fromBrep = new List<bool>(branch.Count);
-            for (int i = 0; i < branch.Count; i++)
-            {
-                object? value = (branch[i] as IGH_Goo)?.ScriptVariable();
-                if (!TryMeshOrBrep(value, out MechanismMesh? mesh, out bool brep))
-                {
-                    warnings.Add(
-                        $"Reel (RE)[{string.Join("][", path.Indices)}]" +
-                        $"[{i}] did not resolve to a mesh or a closed " +
-                        "Brep; treated as missing.");
-                    meshes.Add(null);
-                    fromBrep.Add(false);
-                    continue;
-                }
-                meshes.Add(mesh);
-                fromBrep.Add(brep);
-            }
-            meshBranches.Add(new MechanismMeshBranch(path.Indices, meshes, fromBrep));
-        }
-
-        data.GetDataTree(6, out GH_Structure<GH_Plane> axTree);
-        var axisBranches = new List<MechanismAxisBranch>();
-        foreach (GH_Path path in axTree.Paths)
-        {
-            var axes = new List<MechanismFrame?>();
-            foreach (GH_Plane planeGoo in axTree.get_Branch(path))
-            {
-                if (planeGoo is null)
-                {
-                    axes.Add(null);
-                    continue;
-                }
-                Plane plane = planeGoo.Value;
-                // HIS RULING, 2026-09-08 night: X and Y survive unchanged
-                // -- they carry his intended spin direction -- never
-                // reduced to a bare origin+direction.
-                axes.Add(new MechanismFrame(
-                    new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
-                    new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
-                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
-            }
-            axisBranches.Add(new MechanismAxisBranch(path.Indices, axes));
-        }
-
-        return (meshBranches, axisBranches);
-    }
-
-    private List<MechanismInstanceInput> ReadInstances(IGH_DataAccess data, List<string> warnings)
-    {
-        data.GetDataTree(4, out GH_Structure<GH_Plane> plTree);
-        data.GetDataTree(8, out GH_Structure<GH_String> rkTree);
-
-        var kinds = new Dictionary<(int Side, int Mechanism), string>();
-        foreach (GH_Path path in rkTree.Paths)
-        {
-            if (path.Indices.Length != 2)
-            {
-                warnings.Add(
-                    $"RK path {{{string.Join(",", path.Indices)}}} is not " +
-                    "a {side}{mechanism} two-level path; ignored.");
-                continue;
-            }
-            IList branch = rkTree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            GH_String? textGoo = branch[0] as GH_String;
-            if (textGoo is null || string.IsNullOrWhiteSpace(textGoo.Value))
-                continue;
-            kinds[(path.Indices[0], path.Indices[1])] = textGoo.Value;
-        }
-
-        var instances = new List<MechanismInstanceInput>();
-        foreach (GH_Path path in plTree.Paths)
-        {
-            if (path.Indices.Length != 2)
-            {
-                warnings.Add(
-                    $"PL path {{{string.Join(",", path.Indices)}}} is not " +
-                    "a {side}{mechanism} two-level path; ignored.");
-                continue;
-            }
-            int side = path.Indices[0];
-            int mechanism = path.Indices[1];
-            IList branch = plTree.get_Branch(path);
-            if (branch.Count == 0)
-                continue;
-            if (branch.Count > 1)
-            {
-                warnings.Add(
-                    $"PL[{side}][{mechanism}] carries {branch.Count} " +
-                    "planes; only the first is used (one plane per " +
-                    "instance).");
-            }
-            GH_Plane? planeGoo = branch[0] as GH_Plane;
-            if (planeGoo is null)
-            {
-                warnings.Add($"PL[{side}][{mechanism}] is null; instance skipped.");
-                continue;
-            }
-            Plane plane = planeGoo.Value;
-            var frame = new MechanismFrame(
-                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
-                new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
-                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z });
-            kinds.TryGetValue((side, mechanism), out string? kind);
-            instances.Add(new MechanismInstanceInput(
-                new MechanismInstanceId(side, mechanism), frame, kind));
-        }
-        return instances;
-    }
-
-    private List<MechanismWireInput> ReadWires(IGH_DataAccess data, List<string> warnings)
+    private List<MechanismRoutingWire> ReadRouting(IGH_DataAccess data, List<string> warnings)
     {
         data.GetDataTree(7, out GH_Structure<GH_Plane> rtTree);
-        var wires = new List<MechanismWireInput>();
+        var wires = new List<MechanismRoutingWire>();
         foreach (GH_Path path in rtTree.Paths)
         {
-            if (path.Indices.Length != 3)
+            if (path.Indices.Length != 1)
             {
                 warnings.Add(
                     $"RT path {{{string.Join(",", path.Indices)}}} is not " +
-                    "a {side}{mechanism}{wire} three-level path; ignored.");
+                    "a {wire} single-level path (Routing now belongs to " +
+                    "the ONE authored mechanism, indexed by wire alone); ignored.");
                 continue;
             }
-            int side = path.Indices[0];
-            int mechanism = path.Indices[1];
-            int wire = path.Indices[2];
+            int wire = path.Indices[0];
             var frames = new List<MechanismFrame>();
             foreach (GH_Plane planeGoo in rtTree.get_Branch(path))
             {
@@ -1623,17 +1431,52 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                     new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
                     new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z }));
             }
-            if (frames.Count == 0)
-            {
-                warnings.Add(
-                    $"RT[{side}][{mechanism}][{wire}] carries no routing " +
-                    "planes; wire dropped.");
-                continue;
-            }
-            wires.Add(new MechanismWireInput(
-                new MechanismInstanceId(side, mechanism), wire, frames));
+            wires.Add(new MechanismRoutingWire(wire, frames));
         }
         return wires;
+    }
+
+    /// <summary>
+    /// Reads Placement (PL) as a tree, path {side}{group}: the world
+    /// TARGET planes the placement maths derives every instance transform
+    /// from. Z is read TRUE off the Rhino plane, never re-derived --
+    /// see <see cref="MechanismPlacementPlane"/> for why.
+    /// </summary>
+    private List<MechanismPlacementBranch> ReadPlacements(IGH_DataAccess data, List<string> warnings)
+    {
+        data.GetDataTree(8, out GH_Structure<GH_Plane> plTree);
+        var branches = new List<MechanismPlacementBranch>();
+        foreach (GH_Path path in plTree.Paths)
+        {
+            if (path.Indices.Length != 2)
+            {
+                warnings.Add(
+                    $"PL path {{{string.Join(",", path.Indices)}}} is not " +
+                    "a {side}{group} two-level path; ignored.");
+                continue;
+            }
+            int side = path.Indices[0];
+            int group = path.Indices[1];
+            var planes = new List<MechanismPlacementPlane>();
+            IList branch = plTree.get_Branch(path);
+            for (int i = 0; i < branch.Count; i++)
+            {
+                GH_Plane? planeGoo = branch[i] as GH_Plane;
+                if (planeGoo is null)
+                {
+                    warnings.Add($"PL[{side}][{group}][{i}] is null; dropped from its branch.");
+                    continue;
+                }
+                Plane plane = planeGoo.Value;
+                planes.Add(new MechanismPlacementPlane(
+                    new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                    new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                    new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
+            }
+            branches.Add(new MechanismPlacementBranch(new MechanismInstanceId(side, group), planes));
+        }
+        return branches;
     }
 
     /// <summary>
