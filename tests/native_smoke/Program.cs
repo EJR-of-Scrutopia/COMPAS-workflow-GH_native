@@ -40893,6 +40893,26 @@ internal static partial class Program
             double treeSpoolRadius = treeDoc.RootElement.GetProperty("mechanism").GetProperty("spoolRadius").GetDouble();
             if (Math.Abs(treeSpoolRadius - 0.5) > 1e-9)
                 throw new InvalidOperationException($"tree-style spoolRadius must default to 0.5 from the first mechanism's driven reel; got {treeSpoolRadius}.");
+
+            // EVERY REEL CARRIES THE TAG THE STUDIO KEYS MATERIAL ON
+            // (mechanism spec section 7 / REPLY 4 point 7): permanence is
+            // structural -- a reel is part of the temporary machine, never
+            // the works that remain -- and this is the one check that
+            // proves the field actually reaches every entry rather than
+            // only the one this fixture happens to look at above.
+            foreach (JsonElement reel in reels.EnumerateArray())
+            {
+                string? reelPermanence = reel.GetProperty("permanence").GetString();
+                if (reelPermanence != "temporary")
+                {
+                    throw new InvalidOperationException(
+                        "Every mechanism.reels[] entry's permanence must " +
+                        $"be \"temporary\"; got {reelPermanence ?? "(absent)"} " +
+                        $"for side {reel.GetProperty("side").GetInt32()} " +
+                        $"mechanism {reel.GetProperty("mechanism").GetInt32()} " +
+                        $"reel {reel.GetProperty("reel").GetInt32()}.");
+                }
+            }
         }
 
         // CHECK 6: the reeve factor is ALWAYS named fixed and provisional,
