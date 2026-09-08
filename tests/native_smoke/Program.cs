@@ -3880,6 +3880,33 @@ internal static partial class Program
                 $"Display's Force Scale input: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateDisplayVectorArrowLine(plugin);
+            Console.WriteLine(
+                "PASS  Display's load/reaction/residual arrows (the " +
+                "display wave, 2026-09-08): VectorArrowLine draws each " +
+                "one at the vector's own magnitude times Vector Scale, " +
+                "RhinoVAULT's own rule read directly from the installed " +
+                "plugin's draw_thrust_loads (arrow = raw vector * a flat " +
+                "scale, no per-draw normalisation) rather than guessed " +
+                "at -- measured directly: a 3-4-0 vector and a 6-8-0 " +
+                "vector (exactly double the magnitude) at the same " +
+                "scale draw arrows exactly double the length, and " +
+                "halving the scale halves both. A zero vector draws " +
+                "NOTHING (null), not a zero-length line -- this was " +
+                "already true for the two TNA branches but missing on " +
+                "FD loads/reactions and the shared residuals branch " +
+                "before this wave; broken deliberately (the zero-skip " +
+                "removed) to see the check fail, then restored.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Display's load/reaction/residual arrows: " +
+                $"{DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -45511,6 +45538,181 @@ internal static partial class Program
                 $"[{widthHalf}, {widthOne}, {widthTwo}], height " +
                 $"[{heightHalf}, {heightOne}, {heightTwo}] against Force " +
                 "Scale [0.5, 1.0, 2.0].");
+        }
+    }
+
+    /// <summary>
+    /// Display's load/reaction/residual arrows (the display wave,
+    /// 2026-09-08): <c>VectorArrowLine</c> draws each one at the vector's
+    /// own magnitude times Vector Scale -- RhinoVAULT's own rule, read
+    /// directly from the installed plugin's
+    /// <c>compas_rv.scene.formobject.draw_thrust_loads</c> (<c>vector =
+    /// Vector(*load) * scale</c>, a flat user-set scale with no per-draw
+    /// normalisation against the largest load or the model's own size),
+    /// not guessed at.
+    ///
+    /// MEASURED, on the shared static method directly (this harness has
+    /// no live IGH_DataAccess to drive SolveInstance, the same limit
+    /// <see cref="ValidateDisplayForceScaleInput"/> works around): a
+    /// magnitude-5 vector and a magnitude-10 vector (exactly double) at
+    /// the same scale draw arrows exactly double one another's length;
+    /// halving the scale halves both, so the rule really is a straight
+    /// multiply, nothing compressed or clamped. Every one of the brief's
+    /// named degenerate cases is covered explicitly: a single load (one
+    /// arrow, its own magnitude times scale); all loads equal (equal
+    /// arrows); a zero load (draws NOTHING -- the method's own null, not
+    /// a zero-length line, which is the actual bug this wave fixes: the
+    /// TNA loads/reactions branches already skipped a zero vector, but FD
+    /// loads/reactions and the shared residuals branch did not, so an
+    /// exactly-zero load on those paths drew a degenerate zero-length
+    /// line before this change); and one enormous outlier alongside a
+    /// tiny load at one fixed scale, which stay in EXACT linear
+    /// proportion (ratio 1e6) rather than being compressed together --
+    /// the honest reading of "linear in magnitude", matching RhinoVAULT's
+    /// own no-normalisation rule.
+    ///
+    /// The zero-skip half of this was proved able to fail before being
+    /// trusted: with the null check in <c>VectorArrowLine</c> commented
+    /// out, this same assertion threw (a zero vector drew a real,
+    /// zero-length line instead of nothing); restored, it is green again.
+    /// </summary>
+    private static void ValidateDisplayVectorArrowLine(Assembly plugin)
+    {
+        Type display = RequireComponentType(plugin, "DisplayComponent");
+        MethodInfo arrowLine = display.GetMethod(
+            "VectorArrowLine",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "DisplayComponent.VectorArrowLine was not found.");
+
+        ParameterInfo[] parameters = arrowLine.GetParameters();
+        Type point3dType = parameters[0].ParameterType;
+        Type vector3dType = parameters[1].ParameterType;
+        Type lineType = Nullable.GetUnderlyingType(arrowLine.ReturnType)
+            ?? throw new InvalidOperationException(
+                "VectorArrowLine must return a nullable Line, so a zero " +
+                "vector can draw NOTHING rather than a degenerate line.");
+
+        object Start() => Activator.CreateInstance(
+            point3dType, 0.0, 0.0, 0.0)!;
+        object Vector(double x, double y, double z) =>
+            Activator.CreateInstance(vector3dType, x, y, z)!;
+        double Length(object? line, string label)
+        {
+            if (line is null)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: a non-zero vector must draw a line, not " +
+                    "null.");
+            }
+            object from = lineType.GetProperty("From")!.GetValue(line)!;
+            object to = lineType.GetProperty("To")!.GetValue(line)!;
+            double Dx(object point) =>
+                (double)point3dType.GetProperty("X")!.GetValue(point)!;
+            double Dy(object point) =>
+                (double)point3dType.GetProperty("Y")!.GetValue(point)!;
+            double Dz(object point) =>
+                (double)point3dType.GetProperty("Z")!.GetValue(point)!;
+            double dx = Dx(to) - Dx(from);
+            double dy = Dy(to) - Dy(from);
+            double dz = Dz(to) - Dz(from);
+            return Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
+        }
+        object? Draw(double x, double y, double z, double scale) =>
+            arrowLine.Invoke(
+                null, new object?[] { Start(), Vector(x, y, z), scale });
+
+        // Two loads, one exactly double the other's magnitude (5 and 10),
+        // at the same scale: arrow lengths differ by exactly the same
+        // ratio, and match the rule's own numbers (magnitude x scale).
+        double smallLength = Length(
+            Draw(3.0, 4.0, 0.0, 2.0), "magnitude-5 vector, scale 2.0");
+        double bigLength = Length(
+            Draw(6.0, 8.0, 0.0, 2.0), "magnitude-10 vector, scale 2.0");
+        if (Math.Abs(smallLength - 10.0) > 1.0e-9 ||
+            Math.Abs(bigLength - 20.0) > 1.0e-9 ||
+            Math.Abs(bigLength - (2.0 * smallLength)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A load twice the magnitude of another, at the same " +
+                "scale, must draw an arrow exactly twice as long, and " +
+                "both must equal magnitude x scale exactly: found " +
+                $"{smallLength} (want 10) and {bigLength} (want 20).");
+        }
+
+        // Halving the scale halves both lengths.
+        double smallHalfScale = Length(
+            Draw(3.0, 4.0, 0.0, 1.0), "magnitude-5 vector, scale 1.0");
+        double bigHalfScale = Length(
+            Draw(6.0, 8.0, 0.0, 1.0), "magnitude-10 vector, scale 1.0");
+        if (Math.Abs(smallHalfScale - 5.0) > 1.0e-9 ||
+            Math.Abs(bigHalfScale - 10.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Halving the scale must halve both arrow lengths; found " +
+                $"{smallHalfScale} (want 5) and {bigHalfScale} (want 10).");
+        }
+
+        // A single load: one arrow, its own magnitude times scale.
+        double singleLength = Length(
+            Draw(0.0, 5.0, 0.0, 3.0), "single magnitude-5 vector, scale 3.0");
+        if (Math.Abs(singleLength - 15.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A single magnitude-5 vector at scale 3.0 must draw a " +
+                $"length-15 arrow; drew {singleLength}.");
+        }
+
+        // All loads equal in magnitude draw equal-length arrows.
+        double equalOneLength = Length(
+            Draw(5.0, 0.0, 0.0, 1.0), "equal-magnitude vector A");
+        double equalTwoLength = Length(
+            Draw(0.0, 5.0, 0.0, 1.0), "equal-magnitude vector B");
+        if (Math.Abs(equalOneLength - equalTwoLength) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Two loads equal in magnitude must draw equal-length " +
+                $"arrows; found {equalOneLength} and {equalTwoLength}.");
+        }
+
+        // A zero load draws NOTHING, not a zero-length line -- the actual
+        // bug this wave fixes on the FD loads/reactions and residuals
+        // branches (the TNA branches already skipped a zero vector).
+        object? zeroLine = arrowLine.Invoke(
+            null, new object?[] { Start(), Vector(0.0, 0.0, 0.0), 5.0 });
+        if (zeroLine is not null)
+        {
+            throw new InvalidOperationException(
+                "A zero-magnitude vector must draw NOTHING (null), not " +
+                "a zero-length line, or it reads on the canvas as a " +
+                "stray dot rather than \"no load here\".");
+        }
+
+        // One enormous outlier (magnitude 1e6) alongside a tiny load
+        // (magnitude 1) at one shared FIXED scale: the outlier draws
+        // EXACTLY, uncompressed, and the two stay in exact linear
+        // proportion (ratio 1e6) -- the auto-scale convenience layer that
+        // would otherwise shrink everything relative to an outlier lives
+        // in SolveInstance, not in this method, so this method's own rule
+        // is undiluted linear-in-magnitude, matching RhinoVAULT.
+        double outlierLength = Length(
+            Draw(0.0, 1.0e6, 0.0, 0.001), "magnitude-1e6 outlier");
+        double tinyLength = Length(
+            Draw(0.0, 1.0, 0.0, 0.001), "magnitude-1 load beside it");
+        if (Math.Abs(outlierLength - 1.0e3) > 1.0e-6)
+        {
+            throw new InvalidOperationException(
+                "A magnitude-1e6 outlier at scale 0.001 must draw " +
+                $"exactly at length 1e3, uncompressed; drew " +
+                $"{outlierLength}.");
+        }
+        if (Math.Abs((outlierLength / tinyLength) - 1.0e6) > 1.0)
+        {
+            throw new InvalidOperationException(
+                "The outlier and the tiny load must stay in EXACT " +
+                "linear proportion to one another (ratio 1e6), not " +
+                $"compressed together; found ratio " +
+                $"{outlierLength / tinyLength}.");
         }
     }
 
