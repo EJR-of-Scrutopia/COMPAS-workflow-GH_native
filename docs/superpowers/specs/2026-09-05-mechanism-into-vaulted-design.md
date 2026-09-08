@@ -48,6 +48,29 @@ he says otherwise, wire branch order is taken as anchor order along the row, and
 chin PRINTS THE MATCHED DISTANCES so a wire latched to the wrong anchor is visible rather than
 silent.
 
+### The reeve factor, settled 2026-09-08 late. NOT YET BUILT, and 1.0 is currently WRONG
+
+THE GAP, found by the rebuild's own review: reeveFactor ships as a FIXED 1.0 with no author port.
+Param's unit has FOUR WHEELS, so 1.0 is very probably wrong for his machine, and the symptom is
+subtle rather than loud: every reel spins at the wrong RATE while the geometry, the wire paths and
+the timing all remain correct, so nothing looks broken, it just does not match the machine.
+
+THE SHAPE, ruled on the data rather than on convenience: PER WIRE, WITH A PER-MECHANISM DEFAULT.
+The factor is a property of how one wire is reeved through its block, not of the block, and his
+routing frames are ALREADY authored per wire (his tree is side, mechanism, wire, with a plane list
+inside), so a per-wire factor matches what he authors while a document-level number would govern
+42 individually specified wires with one value. The default is per mechanism because his seven
+wires through a unit are almost certainly reeved alike, and making him type one number seven times
+is how a transcription error arrives. THE DOCUMENT CARRIES THE RESOLVED VALUE ON EVERY WIRE, so
+the studio never inherits or infers: the same principle already applied to net_vertex.
+
+THE SANITY CHECK, the studio's idea and worth taking: a wire's wraps are visible in its route, so
+counting direction reversals gives a rough expected advantage to compare against the declared
+factor. THEIR CAVEAT IS THE IMPORTANT HALF and must be encoded as such: a wheel that merely guides
+gives no advantage while a wheel that moves with the load does, and geometry cannot tell them
+apart, so this can only ever flag a factor WILDLY at odds with the wrap count. It refuses nothing
+and warns by name, like the tension tie's proximity guard.
+
 ### Four rulings from the studio's REPLY 4, binding on the collector rebuild
 
 R1. EVERY WIRE CARRIES ITS OWN EXPLICIT net_vertex, whatever the tree groups it by. NON
