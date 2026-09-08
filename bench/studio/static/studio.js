@@ -1115,6 +1115,7 @@ function saveProps() {
       id: layer.id, name: layer.name, visible: layer.visible })),
     props: state.props.map((p) => ({
       type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation,
+      rotX: p.rotX || 0, rotY: p.rotY || 0,
       scale: p.scale || 1, layer: p.layer || 1 })),
   };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
@@ -1185,7 +1186,8 @@ function restoreProps() {
       continue;
     }
     const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
-      +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0);
+      +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
+      +entry.rotX || 0, +entry.rotY || 0);
     record.layer = +entry.layer || 1;
   }
   applyLayerVisibility();
@@ -1433,7 +1435,8 @@ function renderObjectPreview(object, canvasEl) {
   previewRig.camera.lookAt(0, 0, 0);
 }
 
-function placeProp(type, x, y, rotation, save, scale = 1, z = 0) {
+function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
+                   rotX = 0, rotY = 0) {
   const template = propTemplates.get(type);
   // A clone shares geometry and materials with its template, which is what
   // makes twenty figures cost one model; it is also why disposeProp does
@@ -1443,7 +1446,7 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0) {
   // ground and negative for the assets Param needs to sink into it
   // ("allowing them to clip below ground, as some assets need to do so").
   object.position.set(x, y, z);
-  object.rotation.z = rotation;
+  object.rotation.set(rotX, rotY, rotation);
   // A prop's feet are its origin (loadPropTemplate shifts min.z to 0), so
   // a uniform scale about the origin grows it from the GROUND UP -- the
   // rule Param set: "make sure they always stay attached to ground and
@@ -1451,7 +1454,7 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0) {
   object.scale.setScalar(scale);
   propsGroup.add(object);
   object.userData.fromLibrary = !!template;
-  const record = { type, x, y, z, rotation, scale,
+  const record = { type, x, y, z, rotation, rotX, rotY, scale,
     layer: state.activeLayer, object };
   object.visible = layerVisible(record.layer);
   state.props.push(record);
@@ -1512,6 +1515,21 @@ function clearPropGumball() {
   propGumball = null;
 }
 
+// Rhino's gumball, as Param drew it: an arrow per axis to move along,
+// an arc per axis to turn about, a small square per axis to scale by,
+// and a dot at the origin. Axis colours are Rhino's own and are not
+// negotiable to anyone who has used it -- X red, Y green, Z blue.
+//
+// WORLD ALIGNED, like Rhino's default: the gumball does not spin with
+// the object it is driving. A gumball that turned with its prop would
+// make "drag the red arrow" mean a different direction after every
+// rotation, which is exactly the confusion the fixed frame prevents.
+const GUMBALL_AXES = [
+  { key: "x", colour: 0xd63b3b, dir: [1, 0, 0] },
+  { key: "y", colour: 0x3faa4f, dir: [0, 1, 0] },
+  { key: "z", colour: 0x2f6fe4, dir: [0, 0, 1] },
+];
+
 function setPropGumball(record) {
   clearPropGumball();
   if (!record || !state.propEdit) return;
@@ -1519,67 +1537,85 @@ function setPropGumball(record) {
   const radius = Math.max(0.5,
     0.62 * Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y));
   propGumball = new THREE.Group();
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(radius, Math.max(0.02, radius * 0.03), 10, 96),
-    new THREE.MeshBasicMaterial({ color: 0x2f6fe4, transparent: true,
-      opacity: 0.85, depthTest: false }));
-  ring.renderOrder = 3;
-  ring.userData.handle = "rotate";
-  const grip = new THREE.Mesh(
-    new THREE.BoxGeometry(radius * 0.16, radius * 0.16, radius * 0.16),
-    new THREE.MeshBasicMaterial({ color: 0xd2a53c, transparent: true,
-      opacity: 0.95, depthTest: false }));
-  grip.renderOrder = 3;
-  grip.position.set(radius * 1.28, 0, 0);
-  grip.userData.handle = "scale";
-  // The LOOK is slim; the GRAB is generous. A two-centimetre tube needs
-  // pixel aim, so each visible handle hides a fat invisible twin that
-  // does the actual catching -- the same trick under Rhino's own gumball.
-  const grabRing = new THREE.Mesh(
-    new THREE.TorusGeometry(radius, Math.max(0.1, radius * 0.14), 8, 48),
-    new THREE.MeshBasicMaterial({ visible: false }));
-  grabRing.userData.handle = "rotate";
-  const grabGrip = new THREE.Mesh(
-    new THREE.BoxGeometry(radius * 0.45, radius * 0.45, radius * 0.45),
-    new THREE.MeshBasicMaterial({ visible: false }));
-  grabGrip.position.copy(grip.position);
-  grabGrip.userData.handle = "scale";
-  // The height arrow (Param: "add in a x,y,z arrow control on the objects
-  // when in edit mode. allowing them to clip below ground, as some assets
-  // need to do so"). Dragging the body already gives x and y; what the
-  // gumball could not say was UP. Double-headed on purpose, because
-  // sinking a prop is as ordinary a move as lifting one.
-  const stem = Math.max(0.6, radius * 1.1);
-  const axis = new THREE.Mesh(
-    new THREE.CylinderGeometry(Math.max(0.015, radius * 0.022),
-      Math.max(0.015, radius * 0.022), stem * 2, 8),
-    new THREE.MeshBasicMaterial({ color: 0x4fbf6a, transparent: true,
-      opacity: 0.9, depthTest: false }));
-  axis.rotation.x = Math.PI / 2;          // the cylinder stands up Z
-  axis.renderOrder = 3;
-  axis.userData.handle = "lift";
-  const coneSize = Math.max(0.05, radius * 0.09);
-  const heads = [];
-  for (const direction of [1, -1]) {
-    const head = new THREE.Mesh(
-      new THREE.ConeGeometry(coneSize, coneSize * 2.2, 10),
-      new THREE.MeshBasicMaterial({ color: 0x4fbf6a, transparent: true,
-        opacity: 0.95, depthTest: false }));
-    head.rotation.x = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
-    head.position.z = direction * (stem + coneSize);
-    head.renderOrder = 3;
-    head.userData.handle = "lift";
-    heads.push(head);
+  const slim = Math.max(0.012, radius * 0.02);
+  const fat = Math.max(0.08, radius * 0.1);       // the invisible grab
+  const stem = Math.max(0.55, radius * 1.05);
+  const head = Math.max(0.05, radius * 0.085);
+  const cube = Math.max(0.05, radius * 0.075);
+
+  const paint = (colour) => new THREE.MeshBasicMaterial({
+    color: colour, transparent: true, opacity: 0.92, depthTest: false });
+  const hidden = () => new THREE.MeshBasicMaterial({ visible: false });
+  // The LOOK is slim; the GRAB is generous. A one-centimetre tube needs
+  // pixel aim, so every visible handle hides a fat invisible twin that
+  // does the actual catching -- the trick under Rhino's own gumball.
+  const add = (mesh, handle, grab) => {
+    mesh.renderOrder = 3;
+    mesh.userData.handle = handle;
+    propGumball.add(mesh);
+    if (grab) {
+      grab.userData.handle = handle;
+      grab.position.copy(mesh.position);
+      grab.rotation.copy(mesh.rotation);
+      propGumball.add(grab);
+    }
+  };
+
+  for (const axis of GUMBALL_AXES) {
+    const direction = new THREE.Vector3(...axis.dir);
+    // Three.js cylinders and cones stand up +Y; turn each onto its axis.
+    const lie = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0), direction);
+
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(slim, slim, stem, 8), paint(axis.colour));
+    shaft.quaternion.copy(lie);
+    shaft.position.copy(direction).multiplyScalar(stem / 2);
+    const grabShaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(fat, fat, stem, 8), hidden());
+    grabShaft.quaternion.copy(lie);
+    add(shaft, "move-" + axis.key, grabShaft);
+
+    const tip = new THREE.Mesh(
+      new THREE.ConeGeometry(head, head * 2.4, 12), paint(axis.colour));
+    tip.quaternion.copy(lie);
+    tip.position.copy(direction).multiplyScalar(stem + head);
+    const grabTip = new THREE.Mesh(
+      new THREE.ConeGeometry(fat, head * 2.6, 8), hidden());
+    grabTip.quaternion.copy(lie);
+    add(tip, "move-" + axis.key, grabTip);
+
+    // The scale square, part way out, the way Rhino seats it inboard of
+    // the arrow so the two never fight for the same pixels.
+    const square = new THREE.Mesh(
+      new THREE.BoxGeometry(cube, cube, cube), paint(axis.colour));
+    square.position.copy(direction).multiplyScalar(stem * 0.62);
+    const grabSquare = new THREE.Mesh(
+      new THREE.BoxGeometry(fat * 2, fat * 2, fat * 2), hidden());
+    add(square, "scale-" + axis.key, grabSquare);
+
+    // The arc turns ABOUT this axis, so it is drawn in the plane the
+    // axis is normal to, and wears the axis colour.
+    const arc = new THREE.Mesh(
+      new THREE.TorusGeometry(stem * 0.78, slim, 8, 40, Math.PI / 2),
+      paint(axis.colour));
+    const grabArc = new THREE.Mesh(
+      new THREE.TorusGeometry(stem * 0.78, fat * 0.8, 6, 24, Math.PI / 2),
+      hidden());
+    // A torus is born in the XY plane about +Z; stand it about its axis.
+    arc.quaternion.copy(lie).multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)));
+    add(arc, "rot-" + axis.key, grabArc);
   }
-  const grabAxis = new THREE.Mesh(
-    new THREE.CylinderGeometry(Math.max(0.09, radius * 0.12),
-      Math.max(0.09, radius * 0.12), stem * 2.3, 8),
-    new THREE.MeshBasicMaterial({ visible: false }));
-  grabAxis.rotation.x = Math.PI / 2;
-  grabAxis.userData.handle = "lift";
-  propGumball.add(ring, grip, axis, ...heads, grabRing, grabGrip, grabAxis);
+
+  const origin = new THREE.Mesh(
+    new THREE.SphereGeometry(Math.max(0.035, radius * 0.05), 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xf4f4f4, transparent: true,
+      opacity: 0.95, depthTest: false }));
+  origin.renderOrder = 3;
+  propGumball.add(origin);
+
   propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02);
-  propGumball.rotation.z = record.rotation || 0;
   propsGroup.add(propGumball);
 }
 
@@ -1587,9 +1623,10 @@ function setPropGumball(record) {
 // A size change rebuilds instead (setPropGumball), so the ring re-fits.
 function refreshPropGumball() {
   if (!propGumball || !state.selectedProp) return;
+  // Position only. The gumball is world-aligned by design, so a turning
+  // prop must not carry it round (see setPropGumball).
   propGumball.position.set(state.selectedProp.x, state.selectedProp.y,
     (state.selectedProp.z || 0) + 0.02);
-  propGumball.rotation.z = state.selectedProp.rotation || 0;
 }
 
 function gumballHandleAt(event) {
@@ -1607,31 +1644,74 @@ function gumballHandleAt(event) {
   return hits.length ? hits[0].object.userData.handle : null;
 }
 
-// Where the pointer sits on the prop's own vertical line, in metres of
-// world z. The ray is met with an upright plane through the prop that
-// faces the camera, so the reading is stable at any camera pitch --
-// including the low, near-horizontal views where the ground plane gives
-// no vertical information at all. Null when the ray runs parallel to it.
-const liftPlane = new THREE.Plane();
-const liftHit = new THREE.Vector3();
+// The two readings every gumball drag needs, both taken against a plane
+// chosen for the gesture rather than against the ground. The ground plane
+// is useless for a vertical drag (the ray barely moves along it, and from
+// a low camera it reaches past infinity), and useless again for a
+// rotation about anything but Z.
+const gumballPlane = new THREE.Plane();
+const gumballHit = new THREE.Vector3();
+const AXIS_VECTORS = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, 0, 1),
+];
 
-function liftHeightAt(event, record) {
+function gumballOrigin(record) {
+  return new THREE.Vector3(record.x, record.y, record.z || 0);
+}
+
+function pointerRay(event) {
   const rect = canvas.getBoundingClientRect();
-  const ndc = new THREE.Vector2(
+  propRaycaster.setFromCamera(new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
-    -((event.clientY - rect.top) / rect.height) * 2 + 1);
-  propRaycaster.setFromCamera(ndc, camera);
-  // The plane's normal is the camera's own view direction flattened into
-  // plan: upright, and as square to the eye as an upright plane can be.
-  const facing = new THREE.Vector3();
-  camera.getWorldDirection(facing);
-  facing.z = 0;
-  if (facing.lengthSq() < 1e-9) facing.set(0, 1, 0);   // straight down
-  facing.normalize();
-  liftPlane.setFromNormalAndCoplanarPoint(facing,
-    new THREE.Vector3(record.x, record.y, record.z || 0));
-  return propRaycaster.ray.intersectPlane(liftPlane, liftHit)
-    ? liftHit.z : null;
+    -((event.clientY - rect.top) / rect.height) * 2 + 1), camera);
+  return propRaycaster.ray;
+}
+
+// How far along one world axis the pointer sits, in metres. The plane
+// CONTAINS the axis and is turned as square to the eye as a plane
+// containing that axis can be, which keeps the reading steady at any
+// camera angle. Null when the ray is parallel to it.
+function axisDistanceAt(event, record, index) {
+  const ray = pointerRay(event);
+  const direction = AXIS_VECTORS[index];
+  const view = new THREE.Vector3();
+  camera.getWorldDirection(view);
+  // The part of the view direction square to the axis: that is the
+  // normal of the plane we want.
+  const normal = view.clone().addScaledVector(direction,
+    -view.dot(direction));
+  if (normal.lengthSq() < 1e-9) return null;    // sighting down the axis
+  normal.normalize();
+  const origin = gumballOrigin(record);
+  gumballPlane.setFromNormalAndCoplanarPoint(normal, origin);
+  if (!ray.intersectPlane(gumballPlane, gumballHit)) return null;
+  return gumballHit.sub(origin).dot(direction);
+}
+
+// The pointer's angle about one world axis, measured in the plane that
+// axis is normal to. For Z this is the old ground-plane reading; for X
+// and Y it is the same idea stood on its side.
+function rotationAngleAt(event, record, index) {
+  const ray = pointerRay(event);
+  const normal = AXIS_VECTORS[index];
+  const origin = gumballOrigin(record);
+  gumballPlane.setFromNormalAndCoplanarPoint(normal, origin);
+  if (!ray.intersectPlane(gumballPlane, gumballHit)) return null;
+  const local = gumballHit.sub(origin);
+  const u = AXIS_VECTORS[(index + 1) % 3];
+  const v = AXIS_VECTORS[(index + 2) % 3];
+  if (local.lengthSq() < 1e-12) return null;
+  return Math.atan2(local.dot(v), local.dot(u));
+}
+
+// Every rotation the record carries, written onto the object at once.
+// Z is the old `rotation`, kept under its own name so scenes and layouts
+// saved before tilt existed still read.
+function applyPropRotation(record) {
+  record.object.rotation.set(record.rotX || 0, record.rotY || 0,
+    record.rotation || 0);
 }
 
 // How tall this prop stands, for bounding the lift. Measured from the
@@ -2346,6 +2426,7 @@ function collectScene() {
     props: state.props.map((record) => ({
       type: record.type, x: record.x, y: record.y, z: record.z || 0,
       rotation: record.rotation,
+      rotX: record.rotX || 0, rotY: record.rotY || 0,
       scale: record.scale, layer: record.layer || 1,
     })),
     propLayers: state.propLayers.map((layer) => ({
@@ -2461,7 +2542,8 @@ async function applyScene(record) {
     for (const entry of scene_.props) {
       if (!knownPropType(entry.type)) continue;
       const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
-        +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0);
+        +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
+        +entry.rotX || 0, +entry.rotY || 0);
       record.layer = +entry.layer || 1;
     }
     applyLayerVisibility();
@@ -7003,25 +7085,25 @@ canvas.addEventListener("pointerdown", (event) => {
     const handle = gumballHandleAt(event);
     if (handle) {
       const record = state.selectedProp;
-      // The lift handle cannot be measured against the ground plane: a
-      // vertical drag barely moves the point where the ray meets z = 0,
-      // and looks past infinity when the camera is low. It reads its own
-      // upright plane instead (liftHeightAt), so up is up whatever the
-      // camera is doing.
-      const ground = handle === "lift"
-        ? liftHeightAt(event, record) : groundPointAt(event);
-      if (ground !== null && ground !== undefined) {
-        state.gumball = {
-          mode: handle, record,
-          startRotation: record.rotation || 0,
-          startScale: record.scale || 1,
-          startZ: record.z || 0,
-          startLift: handle === "lift" ? ground : 0,
-          startAngle: handle === "lift" ? 0
-            : Math.atan2(ground.y - record.y, ground.x - record.x),
-          startDistance: handle === "lift" ? 1 : Math.max(0.05,
-            Math.hypot(ground.x - record.x, ground.y - record.y)),
-        };
+      // Every handle names its gesture and its axis, so one reader
+      // serves all nine: "move-x", "rot-z", "scale-y".
+      const [gesture, letter] = handle.split("-");
+      const index = { x: 0, y: 1, z: 2 }[letter];
+      const start = { mode: gesture, index, record,
+        startX: record.x, startY: record.y, startZ: record.z || 0,
+        startRotation: record.rotation || 0,
+        startRotX: record.rotX || 0, startRotY: record.rotY || 0,
+        startScale: record.scale || 1 };
+      let reading = null;
+      if (gesture === "move") reading = axisDistanceAt(event, record, index);
+      else if (gesture === "rot") reading = rotationAngleAt(event, record, index);
+      else {
+        const ground = groundPointAt(event);
+        reading = ground ? Math.max(0.05,
+          Math.hypot(ground.x - record.x, ground.y - record.y)) : null;
+      }
+      if (reading !== null) {
+        state.gumball = Object.assign(start, { startReading: reading });
         controls.enabled = false;
         canvas.setPointerCapture(event.pointerId);
       }
@@ -7055,32 +7137,40 @@ canvas.addEventListener("pointermove", (event) => {
   // both measured in plan about the prop's feet, the way Rhino reads a
   // gumball drag in top view.
   if (state.gumball) {
-    const { mode, record, startRotation, startScale, startAngle,
-      startDistance, startZ, startLift } = state.gumball;
-    if (mode === "lift") {
-      const height = liftHeightAt(event, record);
-      if (height === null) return;
-      // Free to go under the floor, which is the whole point, but bounded
-      // by the prop's own height so a drag cannot fling it out of sight:
-      // one body-length down buries anything, one up clears anything.
-      const reach = propHeightOf(record) + 1;
-      record.z = Math.min(reach, Math.max(-reach,
-        startZ + (height - startLift)));
-      record.object.position.set(record.x, record.y, record.z);
-      refreshPropOutline();
-      refreshPropGumball();
-      return;
-    }
-    const ground = groundPointAt(event);
-    if (!ground) return;
-    if (mode === "rotate") {
-      const angle = Math.atan2(ground.y - record.y, ground.x - record.x);
-      record.rotation = startRotation + (angle - startAngle);
-      record.object.rotation.z = record.rotation;
+    const { mode, index, record, startReading, startX, startY, startZ,
+      startRotation, startRotX, startRotY, startScale } = state.gumball;
+    if (mode === "move") {
+      const now = axisDistanceAt(event, record, index);
+      if (now === null) return;
+      const travel = now - startReading;
+      if (index === 0) record.x = startX + travel;
+      else if (index === 1) record.y = startY + travel;
+      else {
+        // Free to go under the floor, which is the point of the Z arrow,
+        // but bounded by the prop's own height so a drag cannot fling it
+        // out of sight: one body-length down buries anything.
+        const reach = propHeightOf(record) + 1;
+        record.z = Math.min(reach, Math.max(-reach, startZ + travel));
+      }
+      record.object.position.set(record.x, record.y, record.z || 0);
+    } else if (mode === "rot") {
+      const now = rotationAngleAt(event, record, index);
+      if (now === null) return;
+      const turned = now - startReading;
+      if (index === 0) record.rotX = startRotX + turned;
+      else if (index === 1) record.rotY = startRotY + turned;
+      else record.rotation = startRotation + turned;
+      applyPropRotation(record);
     } else {
+      const ground = groundPointAt(event);
+      if (!ground) return;
+      // Scale stays UNIFORM whichever square is dragged: a prop's size is
+      // one number in the record, and three independent ones would need
+      // the whole model, the layout and every saved scene to grow to
+      // carry them. Worth saying rather than pretending otherwise.
       const distance = Math.hypot(ground.x - record.x, ground.y - record.y);
       record.scale = Math.min(5, Math.max(0.2,
-        startScale * distance / startDistance));
+        startScale * distance / startReading));
       record.object.scale.setScalar(record.scale);
     }
     refreshPropOutline();
@@ -7103,21 +7193,22 @@ function endPropDrag(event) {
   }
   if (state.gumball) {
     const record = state.gumball.record;
-    const before = { rotation: state.gumball.startRotation,
-                     scale: state.gumball.startScale,
-                     z: state.gumball.startZ || 0 };
+    const before = { x: state.gumball.startX, y: state.gumball.startY,
+                     z: state.gumball.startZ || 0,
+                     rotation: state.gumball.startRotation,
+                     rotX: state.gumball.startRotX || 0,
+                     rotY: state.gumball.startRotY || 0,
+                     scale: state.gumball.startScale };
     state.gumball = null;
     controls.enabled = true;
-    if (Math.abs((record.rotation || 0) - before.rotation) > 1e-6
-        || Math.abs((record.scale || 1) - before.scale) > 1e-6
-        || Math.abs((record.z || 0) - before.z) > 1e-6) {
+    const moved = ["x", "y", "z", "rotation", "rotX", "rotY", "scale"]
+      .some((key) => Math.abs((record[key] || 0) - (before[key] || 0)) > 1e-6);
+    if (moved) {
       pushUndo("the adjustment", () => {
-        record.rotation = before.rotation;
-        record.scale = before.scale;
-        record.z = before.z;
-        record.object.rotation.z = before.rotation;
+        Object.assign(record, before);
+        applyPropRotation(record);
         record.object.scale.setScalar(before.scale);
-        record.object.position.set(record.x, record.y, before.z);
+        record.object.position.set(before.x, before.y, before.z);
         if (state.selectedProp === record) {
           refreshPropOutline();
           setPropGumball(record);
@@ -7165,7 +7256,7 @@ window.addEventListener("keydown", (event) => {
     // R turns one way, Shift+R the other: fifteen degrees a press.
     const step = event.shiftKey ? -Math.PI / 12 : Math.PI / 12;
     state.selectedProp.rotation += step;
-    state.selectedProp.object.rotation.z = state.selectedProp.rotation;
+    applyPropRotation(state.selectedProp);
     refreshPropOutline();
     refreshPropGumball();
     saveProps();
@@ -7184,13 +7275,14 @@ window.addEventListener("keydown", (event) => {
   } else if (event.key === "Delete" || event.key === "Backspace") {
     const record = state.selectedProp;
     const gone = { type: record.type, x: record.x, y: record.y,
-                   z: record.z || 0,
+                   z: record.z || 0, rotX: record.rotX || 0,
+                   rotY: record.rotY || 0,
                    rotation: record.rotation, scale: record.scale,
                    layer: record.layer };
     pushUndo("deleting the " + gone.type, async () => {
       await ensurePropTemplate(gone.type);
       const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
-        false, gone.scale, gone.z || 0);
+        false, gone.scale, gone.z || 0, gone.rotX || 0, gone.rotY || 0);
       again.layer = gone.layer;
       again.object.visible = layerVisible(again.layer);
       saveProps();

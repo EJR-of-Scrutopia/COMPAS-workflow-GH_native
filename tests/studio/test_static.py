@@ -2805,8 +2805,13 @@ def test_picking_survives_the_frame_it_was_born_in():
     assert "propsGroup.updateMatrixWorld(true);" in js
     assert "propOutline.raycast = () => {};" in js
     # The slim look hides a fat invisible grab twin, Rhino's own trick.
-    assert 'grabRing.userData.handle = "rotate";' in js
-    assert 'grabGrip.userData.handle = "scale";' in js
+    # Re-pinned 2026-09-08: the gumball became Rhino's, so its nine
+    # handles are built through one add(mesh, handle, grab) helper rather
+    # than by hand-written pairs. The invariant is unchanged -- a visible
+    # slim part and an invisible fat one answering the same handle name.
+    assert "const add = (mesh, handle, grab) => {" in js
+    assert "grab.userData.handle = handle;" in js
+    assert "const hidden = () => new THREE.MeshBasicMaterial({ visible: false });" in js
 
 
 def test_the_panel_faces_follow_silent_restores():

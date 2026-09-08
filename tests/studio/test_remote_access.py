@@ -778,44 +778,70 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     js = STUDIO_JS.read_text(encoding="utf-8")
 
     # A height on the record, defaulted, and written where x and y are.
-    assert "function placeProp(type, x, y, rotation, save, scale = 1, z = 0)" in js
+    assert ("function placeProp(type, x, y, rotation, save, scale = 1, z = 0,\n"
+            "                   rotX = 0, rotY = 0) {") in js
     assert "object.position.set(x, y, z);" in js
-    assert "const record = { type, x, y, z, rotation, scale," in js
+    assert "const record = { type, x, y, z, rotation, rotX, rotY, scale," in js
     # Persisted by BOTH memories: the per-study layout and a saved scene.
     assert "type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation," in js
     assert "type: record.type, x: record.x, y: record.y, z: record.z || 0," in js
     # And restored by every reader, or a sunk prop pops back to the floor.
-    assert js.count("+entry.scale || 1, +entry.z || 0)") == 2, (
+    assert js.count("+entry.scale || 1, +entry.z || 0,") == 2, (
         "restoreProps and applyScene both give a prop its height back")
-    assert "false, gone.scale, gone.z || 0)" in js, (
-        "undoing a delete restores the height too")
+    assert ("false, gone.scale, gone.z || 0, gone.rotX || 0, gone.rotY || 0)"
+            in js), "undoing a delete restores the height and the tilt too"
 
     # HIS SECOND RULING: a move keeps the height it was given.
     assert "carried.object.position.set(hit.x, hit.y, carried.z || 0);" in js
     assert "record.object.position.set(record.x, record.y, record.z || 0);" in js, (
         "the stamp rig moves at its own height too")
 
-    # The arrow: double-headed, because sinking is as ordinary as lifting.
+    # RHINO'S GUMBALL (Param: "lets copy rhinos version of it", with a
+    # sketch of three arrows and three arcs): an arrow to move along each
+    # axis, an arc to turn about each, a square to scale by, a dot at the
+    # origin, in Rhino's own axis colours.
+    assert ('{ key: "x", colour: 0xd63b3b, dir: [1, 0, 0] }' in js
+            and '{ key: "y", colour: 0x3faa4f, dir: [0, 1, 0] }' in js
+            and '{ key: "z", colour: 0x2f6fe4, dir: [0, 0, 1] }' in js), (
+        "X red, Y green, Z blue, which is not negotiable to a Rhino user")
     gumball = _js_function(js, "function setPropGumball(record)")
-    assert gumball.count('userData.handle = "lift"') == 3, (
-        "stem, both heads and the fat grab twin all answer to lift")
-    assert "for (const direction of [1, -1])" in gumball
-    assert "propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02)" in gumball
+    for gesture in ("move", "rot", "scale"):
+        assert '"%s-" + axis.key' % gesture in gumball
+    assert "for (const axis of GUMBALL_AXES)" in gumball
+    # World aligned, like Rhino's default: a gumball that span with its
+    # prop would make "drag the red arrow" mean a new direction each time.
+    assert "propGumball.rotation" not in gumball
+    follow = _js_function(js, "function refreshPropGumball()")
+    assert "propGumball.rotation" not in follow
 
-    # Read against an upright plane, not the ground: a vertical drag barely
-    # moves the ground hit and looks past infinity from a low camera.
-    lift = _js_function(js, "function liftHeightAt(event, record)")
-    assert "camera.getWorldDirection(facing);" in lift
-    assert "facing.z = 0;" in lift
-    assert "intersectPlane(liftPlane, liftHit)" in lift
+    # One reader per gesture, chosen for the gesture rather than the
+    # ground: the ground plane cannot measure a vertical drag, nor a
+    # rotation about anything but Z.
+    along = _js_function(js, "function axisDistanceAt(event, record, index)")
+    assert "camera.getWorldDirection(view);" in along
+    assert "-view.dot(direction));" in along, (
+        "the plane contains the axis and faces the camera as squarely as "
+        "a plane containing that axis can")
+    about = _js_function(js, "function rotationAngleAt(event, record, index)")
+    assert "AXIS_VECTORS[(index + 1) % 3]" in about
+    assert "Math.atan2(local.dot(v), local.dot(u))" in about
 
-    # Bounded by the prop's own height, so it can always be buried and can
-    # never be flung out of sight.
+    # Tilt is real state, not just a control: all three arcs turn something.
+    assert "function applyPropRotation(record)" in js
+    assert "record.object.rotation.set(record.rotX || 0, record.rotY || 0," in js
+    assert "rotX: p.rotX || 0, rotY: p.rotY || 0," in js, "the layout keeps tilt"
+    assert "rotX: record.rotX || 0, rotY: record.rotY || 0," in js, (
+        "a saved scene keeps tilt")
+    assert js.count("+entry.rotX || 0, +entry.rotY || 0)") == 2, (
+        "restoreProps and applyScene both give a prop its tilt back")
+
+    # Z travel is bounded by the prop's own height, so it can always be
+    # buried and can never be flung out of sight.
     assert "const reach = propHeightOf(record) + 1;" in js
-    assert "record.z = Math.min(reach, Math.max(-reach," in js
-    # And the height is undoable with the rest of the adjustment.
-    assert "z: state.gumball.startZ || 0 };" in js
-    assert "record.object.position.set(record.x, record.y, before.z);" in js
+    assert "record.z = Math.min(reach, Math.max(-reach, startZ + travel));" in js
+    # And the whole adjustment undoes as one, position, tilt and size.
+    assert '["x", "y", "z", "rotation", "rotX", "rotY", "scale"]' in js
+    assert "Object.assign(record, before);" in js
 
 
 def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
