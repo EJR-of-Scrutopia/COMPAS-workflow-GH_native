@@ -550,7 +550,12 @@ body.panel-collapsed #legend { right: var(--s4); }
    the row gives away. The cost is that a drag begun exactly on the
    number does not grab the slider; the number is a small target at the
    right end and typing into it is the point. */
-.scrub .scrub-value.typable { pointer-events: auto; cursor: text; }
+/* Above the range input, which is stretched over the whole row at
+   z-index 2 and would otherwise swallow every click aimed at the
+   number. pointer-events alone was not enough: the input was simply on
+   top. This is what made the first attempt look like it did nothing. */
+.scrub .scrub-value.typable { pointer-events: auto; cursor: text;
+  position: relative; z-index: 3; }
 .scrub .scrub-value.typable:hover { color: var(--ink); }
 .scrub .scrub-entry { width: 68px; margin: 0; padding: 0 4px;
   text-align: right; font: inherit; font-size: 11px;

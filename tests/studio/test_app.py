@@ -567,6 +567,14 @@ def test_size_out_of_range_is_rejected_by_name(tmp_path, monkeypatch):
     html = (Path(__file__).resolve().parents[2] / "bench" / "studio"
             / "static" / "index.html").read_text(encoding="utf-8")
     assert 'id="size-slider" type="range" min="{}"'.format(SIZE_MIN) in html
+    # Same rule for thickness, widened on his word ("the thickness of
+    # steel or copper on this scale probably can go down to 50mm or
+    # less"): a metal shell is sheet, and the slider must reach what the
+    # server allows or the floor exists only in the API.
+    from app import THICKNESS_MIN, THICKNESS_MAX
+    assert THICKNESS_MIN == 0.02 and THICKNESS_MAX == 0.5
+    assert 'id="thickness-input" type="range" min="{}" max="{}"'.format(
+        THICKNESS_MIN, THICKNESS_MAX) in html
 
 
 def test_an_unknown_pattern_is_rejected_by_name(tmp_path, monkeypatch):

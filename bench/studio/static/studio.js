@@ -2336,6 +2336,11 @@ function buildScene(bundle, preserve) {
   updateMaterialControls();
   restoreProps();
   updateHud();
+  // The weight line was written only when an appearance control was
+  // touched, so a freshly loaded study showed an empty row until you
+  // moved something -- exactly when you most want to know what the vault
+  // is being weighed as.
+  updateWeightNote();
 }
 
 // ---------- saved scenes ----------
@@ -3309,6 +3314,20 @@ function patternIsMonolithic() {
 // The readout: q = thickness x density x g, live under the thickness
 // slider. This is the number a true analysis load runs on, said where the
 // thickness is chosen.
+// Whose density the vault is being weighed by, in words: the library
+// skin's own label when it is wearing one, else the structural material
+// the select names.
+function weighedAsLabel() {
+  const skin = state.appearance.skin;
+  if (isLibraryKey(skin)) {
+    const entry = libraryEntry(skin);
+    if (entry && entry.label) return entry.label;
+  }
+  const select = document.getElementById("material-select");
+  const option = select && select.options[select.selectedIndex];
+  return option ? option.textContent : "the structural material";
+}
+
 function updateWeightNote() {
   const note = document.getElementById("weight-note");
   if (!note) return;
@@ -3316,9 +3335,17 @@ function updateWeightNote() {
   const thickness = state.thickness;
   const kgPerM2 = density * thickness;
   const kNPerM2 = kgPerM2 * 9.80665 / 1000;
-  note.textContent = "weight: " + density + " kg/m3 x "
-    + Math.round(thickness * 1000) + " mm = "
+  // Param: "just showing how much density and weight is added and what
+  // material. Nothing too detailed." So: the name first, because that is
+  // what he changed to get here, then the density it brings and the load
+  // that follows. One line, and the tooltip carries the rest.
+  note.textContent = weighedAsLabel() + ": " + Math.round(density)
+    + " kg/m3 x " + Math.round(thickness * 1000) + " mm = "
     + kNPerM2.toFixed(2) + " kN/m2 (" + Math.round(kgPerM2) + " kg/m2)";
+  note.title = Math.abs(density - structuralDensity()) > 1
+    ? "The skin's own density, and the weight the analysis is run at."
+    : "The structural material's density, and the weight the analysis "
+      + "is run at.";
 }
 
 // The size of one repeat, in metres, for whatever the vault is wearing.
@@ -8814,6 +8841,19 @@ async function undoLast() {
   }
 }
 document.getElementById("shelf-undo").addEventListener("click", undoLast);
+// Ctrl+Z as well as the tile (his ask), because that is the gesture
+// every other tool in his day answers to. Cmd+Z too, for the iPad's
+// keyboard. Kept off text entry: while a slider reading or a rename
+// prompt has focus, Ctrl+Z belongs to the text, not to the scene.
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "z" && event.key !== "Z") return;
+  if (!event.ctrlKey && !event.metaKey) return;
+  if (event.shiftKey) return;              // redo is not built; say nothing
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  event.preventDefault();
+  undoLast();
+});
 
 // The selects carry the sky, the environment, the skin and the floor, and
 // every road to them -- panel picker or drawer assign -- ends in a change

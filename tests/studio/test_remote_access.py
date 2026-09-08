@@ -838,6 +838,47 @@ def test_the_skin_is_weighed_in_the_analysis():
     assert "area * thickness * DENSITIES[bundle.material]" not in narrative
 
 
+def test_the_weight_note_names_the_material_and_shows_on_load():
+    """Param: "is there a density info you can add to the skin banner
+    menu. just showing how much density and weight is added and what
+    material. Nothing too detailed."
+
+    The note existed but said only the number, and only after an
+    appearance control was touched -- so a freshly loaded study showed an
+    empty row at exactly the moment the question is asked."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "function weighedAsLabel()" in js
+    label = _js_function(js, "function weighedAsLabel()")
+    assert "entry.label" in label, "a library skin answers with its own name"
+    note = _js_function(js, "function updateWeightNote()")
+    assert "weighedAsLabel() + \": \"" in note, "the name leads"
+    assert "kg/m3 x " in note and "kN/m2" in note
+    # Written on every study load, not only when a control moves. Pinned
+    # CONTIGUOUS with the call above it, so an early return slipped in
+    # between cannot leave the text standing while the row goes blank.
+    assert ("  updateHud();\n"
+            "  // The weight line was written only when an appearance") in js
+    scene = _js_function(js, "function buildScene(bundle, preserve)")
+    assert "updateWeightNote();" in scene
+
+
+def test_ctrl_z_undoes_as_well_as_the_tile():
+    """Param: "Can we also get ctrl + z to also run an undo instead of
+    just the button". Cmd+Z too, and never while text has focus, where
+    the gesture belongs to the text rather than to the scene."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    start = js.index('document.getElementById("shelf-undo").addEventListener')
+    block = js[start:start + 1200]
+    assert "event.ctrlKey || event.metaKey" in block.replace(
+        "!event.ctrlKey && !event.metaKey", "event.ctrlKey || event.metaKey")
+    assert 'if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;' in block
+    assert "if (event.shiftKey) return;" in block, "redo is not built"
+    assert "undoLast();" in block
+    assert "event.preventDefault();" in block
+
+
 def test_a_slider_reading_can_be_typed_into():
     """Param: "where the text is on the slider say the 10mm in this
     screenshot. i would like to be able to click on it and type in my own
@@ -863,8 +904,14 @@ def test_a_slider_reading_can_be_typed_into():
     assert 'if (event.key === "Enter")' in panel
     assert 'else if (event.key === "Escape")' in panel
     assert "event.stopPropagation();" in panel
-    # The reading has to take back the pointer the row gives away.
+    # The reading has to take back the pointer the row gives away AND sit
+    # above the range input, which is stretched over the whole row at
+    # z-index 2. pointer-events alone shipped a control that looked
+    # finished and did nothing: the input was simply on top of it.
     assert ".scrub .scrub-value.typable { pointer-events: auto;" in css
+    typable = css[css.index(".scrub .scrub-value.typable {"):]
+    typable = typable[:typable.index("}")]
+    assert "position: relative" in typable and "z-index: 3" in typable
 
 
 def test_props_carry_a_height_and_the_gumball_can_move_it():

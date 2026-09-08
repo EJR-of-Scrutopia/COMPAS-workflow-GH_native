@@ -134,6 +134,12 @@ MATERIALS = sorted(staging.DENSITIES)
 # before he waits for it.
 SIZE_MIN = 0.1
 SIZE_MAX = 3.0
+# 20 mm on his word ("the thickness of steel or copper on this scale
+# probably can go down to 50mm or less"). A metal shell is sheet, not
+# masonry, and the old 50 mm floor was already below what the SLIDER
+# could reach, so the control never let him near it.
+THICKNESS_MIN = 0.02
+THICKNESS_MAX = 0.5
 PATTERNS = sorted(generators.GENERATORS)
 
 
@@ -176,8 +182,9 @@ def _validate(export: str, material: str, pattern: str, size: float,
     if not SIZE_MIN <= size <= SIZE_MAX:
         raise HTTPException(400, "target piece size must be between {} and {} "
                                  "metres".format(SIZE_MIN, SIZE_MAX))
-    if not 0.05 <= thickness <= 0.5:
-        raise HTTPException(400, "thickness must be between 0.05 and 0.5 metres")
+    if not THICKNESS_MIN <= thickness <= THICKNESS_MAX:
+        raise HTTPException(400, "thickness must be between {} and {} "
+                                 "metres".format(THICKNESS_MIN, THICKNESS_MAX))
 
 
 # No route bounded its body, so a multi-hundred-megabyte PUT was read
