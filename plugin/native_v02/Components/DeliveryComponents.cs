@@ -753,14 +753,18 @@ public sealed class ExportComponent : NativeComponentBase
             // picks every one of these up for the Status (ST) line.
             if (built is not null)
             {
+                // THE BALLOON GETS THE HEADLINE, the Status (ST) line the
+                // whole thing: a mechanism line may carry its reasoning on
+                // further lines, and the balloon is not where reasoning is
+                // read.
                 foreach (string mechanismWarning in built.MechanismWarnings)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "Export mechanism: " + mechanismWarning);
+                        "Export mechanism: " + Headline(mechanismWarning));
                 }
                 foreach (string mechanismNote in built.MechanismNotes)
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, mechanismNote);
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, Headline(mechanismNote));
             }
 
             string uploaded;

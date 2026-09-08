@@ -776,192 +776,236 @@ internal static class MechanismCollector
                         maxResidual = residual;
                     validated++;
                 }
+                // ONE LINE PER BRANCH, AND ITS FIRST LINE IS THE WHOLE
+                // MESSAGE (2026-09-08, his own words on seeing this chin:
+                // "if it worked why is it orange ... make the bubble
+                // message only the fix and make that small. the ST can
+                // have more detail"). A chin line may carry further lines
+                // after the first; the component shows only the FIRST in
+                // Grasshopper's balloon and puts all of them in Status. So
+                // a placement that worked reads as one short line, the
+                // reasoning stays one port away, and a refit that SUCCEEDED
+                // is a remark rather than a warning -- work that came out
+                // right must not paint the component orange.
+                string Metres(double value) =>
+                    value.ToString("0.######", CultureInfo.InvariantCulture);
+                string headline;
+                string? detail = null;
+                bool placementFailed = false;
+
                 if (validated == 0)
                 {
-                    notes.Add(
-                        $"Placement (PL) {label}: residual check could not " +
-                        "run -- only Routing (RT)[0] carries frames, " +
-                        "nothing else to validate the placement against.");
+                    headline =
+                        $"Placement (PL) {label}: placed; residual not " +
+                        "checked, only Routing (RT)[0] carries frames.";
+                }
+                else if (maxResidual <= MaxResidualWarnMetres)
+                {
+                    headline =
+                        $"Placement (PL) {label}: placed, residual " +
+                        Metres(maxResidual) +
+                        $" m across {validated} of 6 other wire(s).";
                 }
                 else
                 {
-                    notes.Add(
-                        $"Placement (PL) {label}: max residual " +
-                        maxResidual.ToString("0.######", CultureInfo.InvariantCulture) +
-                        $" m across {validated} of 6 other wire(s).");
-                    if (maxResidual > MaxResidualWarnMetres)
+                    // WHY THE SETS DISAGREE, NOT JUST THAT THEY DO.
+                    // A residual alone cannot tell a wrongly oriented
+                    // placement from a wrongly ordered one or from planes
+                    // authored against different features: all three read
+                    // as "about a metre out". Edge lengths can, because
+                    // they survive any placement -- matched pairwise they
+                    // separate orientation from the rest, and sorted they
+                    // separate a reordering from a genuine shape
+                    // difference.
+                    var targetOrigins = new List<double[]?>(PlacementGroupSize);
+                    var targetAxes = new List<double[][]?>(PlacementGroupSize);
+                    foreach (MechanismPlacementPlane plane in branch.Planes)
                     {
-                        // WHY THE SETS DISAGREE, NOT JUST THAT THEY DO.
-                        // A residual alone cannot tell a wrongly oriented
-                        // placement from a wrongly ordered one or from
-                        // planes authored against different features -- all
-                        // three read as "about a metre out". Edge lengths
-                        // can, because they survive any placement: matched
-                        // pairwise they separate orientation from the rest,
-                        // and sorted they separate a reordering from a
-                        // genuine shape difference.
-                        var targetOrigins = new List<double[]?>(PlacementGroupSize);
-                        var targetAxes = new List<double[][]?>(PlacementGroupSize);
-                        foreach (MechanismPlacementPlane plane in branch.Planes)
+                        targetOrigins.Add(plane.Origin);
+                        targetAxes.Add(new[] { plane.XAxis, plane.YAxis });
+                    }
+
+                    double ordered = OrderedShapeMismatch(sourceFirstOrigins, targetOrigins);
+                    double unordered = UnorderedShapeMismatch(sourceFirstOrigins, targetOrigins);
+                    double orderedFromLast = OrderedShapeMismatch(sourceLastOrigins, targetOrigins);
+                    double authoredResidual = maxResidual;
+
+                    if (ordered <= ShapeCongruenceToleranceMetres)
+                    {
+                        (double[][] Linear, double[] Translation, double Residual)? fitted =
+                            FitTransformFromOrigins(sourceFirstOrigins, targetOrigins);
+
+                        // COLLINEAR ANCHORS ARE NOT A DEAD END, they are
+                        // two thirds of an answer: the line is exact and
+                        // only the spin about it wants another source.
+                        (double[][] Linear, double[] Translation, double Residual, double AxisDisagreementDegrees)? alongLine =
+                            fitted is null
+                                ? FitTransformAboutAnchorLine(
+                                    sourceFirstOrigins, targetOrigins, sourceFirstAxes, targetAxes)
+                                : null;
+
+                        if (fitted is not null && fitted.Value.Residual < authoredResidual)
                         {
-                            targetOrigins.Add(plane.Origin);
-                            targetAxes.Add(new[] { plane.XAxis, plane.YAxis });
+                            linear = fitted.Value.Linear;
+                            translation = fitted.Value.Translation;
+                            maxResidual = fitted.Value.Residual;
+                            det = Determinant3(linear);
+                            reflected = det < 0.0;
+                            headline =
+                                $"Placement (PL) {label}: placed from all " +
+                                "seven anchors, residual " +
+                                Metres(maxResidual) + " m (was " +
+                                Metres(authoredResidual) + " m).";
+                            detail =
+                                "The seven wire first-frames and the seven " +
+                                "placement planes ARE THE SAME SHAPE (worst " +
+                                "edge disagreement " + Metres(ordered) + " m), " +
+                                "so nothing is mis-ordered or mis-picked and " +
+                                "the whole residual was ORIENTATION: " +
+                                "placement plane [0]'s own X/Y do not " +
+                                "correspond to Routing (RT)[0] frame [0]'s " +
+                                "own X/Y, and the settled maths derive the " +
+                                "instance from that one pair alone. THE " +
+                                "TRANSFORM WAS REFITTED from all seven " +
+                                "origins instead, so the instance is placed " +
+                                "by the refit, not by plane [0]'s axes.";
                         }
-
-                        double ordered = OrderedShapeMismatch(sourceFirstOrigins, targetOrigins);
-                        double unordered = UnorderedShapeMismatch(sourceFirstOrigins, targetOrigins);
-                        double orderedFromLast = OrderedShapeMismatch(sourceLastOrigins, targetOrigins);
-                        string Metres(double value) =>
-                            value.ToString("0.######", CultureInfo.InvariantCulture);
-
-                        if (ordered <= ShapeCongruenceToleranceMetres)
+                        else if (alongLine is not null && alongLine.Value.Residual < authoredResidual)
                         {
-                            (double[][] Linear, double[] Translation, double Residual)? fitted =
-                                FitTransformFromOrigins(sourceFirstOrigins, targetOrigins);
-
-                            // COLLINEAR ANCHORS ARE NOT A DEAD END, they are
-                            // two thirds of an answer: the line is exact and
-                            // only the spin about it wants another source.
-                            (double[][] Linear, double[] Translation, double Residual, double AxisDisagreementDegrees)? alongLine =
-                                fitted is null
-                                    ? FitTransformAboutAnchorLine(
-                                        sourceFirstOrigins, targetOrigins, sourceFirstAxes, targetAxes)
-                                    : null;
-
-                            if (fitted is not null && fitted.Value.Residual < maxResidual)
-                            {
-                                warnings.Add(
-                                    $"Placement (PL) {label}: the seven wire " +
-                                    "first-frames and the seven placement " +
-                                    "planes ARE THE SAME SHAPE (worst edge " +
-                                    "disagreement " + Metres(ordered) + " m), so " +
-                                    "nothing is mis-ordered or mis-picked -- " +
-                                    "the whole " + Metres(maxResidual) + " m " +
-                                    "residual was ORIENTATION: placement plane " +
-                                    "[0]'s own X/Y do not correspond to Routing " +
-                                    "(RT)[0] frame [0]'s own X/Y, and the " +
-                                    "settled maths derive the instance from " +
-                                    "that one pair. THE TRANSFORM WAS REFITTED " +
-                                    "from all seven origins instead, residual " +
-                                    "now " + Metres(fitted.Value.Residual) + " m; " +
-                                    "the instance is placed by the refit, not " +
-                                    "by plane [0]'s axes.");
-                                linear = fitted.Value.Linear;
-                                translation = fitted.Value.Translation;
-                                maxResidual = fitted.Value.Residual;
-                                det = Determinant3(linear);
-                                reflected = det < 0.0;
-                            }
-                            else if (alongLine is not null && alongLine.Value.Residual < maxResidual)
-                            {
-                                warnings.Add(
-                                    $"Placement (PL) {label}: the seven wire " +
-                                    "first-frames and the seven placement planes " +
-                                    "ARE THE SAME SHAPE (worst edge disagreement " +
-                                    Metres(ordered) + " m), and the seven anchors " +
-                                    "sit IN A LINE. A line pins which way it " +
-                                    "points but not the SPIN about it, so the job " +
-                                    "splits. THE TRANSFORM WAS REFITTED: the " +
-                                    "origins carry the line, so every anchor now " +
-                                    "lands on its own plane (residual " +
-                                    Metres(alongLine.Value.Residual) + " m, was " +
-                                    Metres(maxResidual) + " m), and the spin about " +
-                                    "that line is taken from ALL SEVEN planes' own " +
-                                    "axes against all seven routing frames' own " +
-                                    "axes rather than from plane [0] alone. After " +
-                                    "the best spin those axes still disagree by " +
-                                    alongLine.Value.AxisDisagreementDegrees
-                                        .ToString("0.##", CultureInfo.InvariantCulture) +
-                                    " degrees on average: near zero means the spin " +
-                                    "is as well founded as the rest, and a large " +
-                                    "figure means your plane axes do not agree " +
-                                    "with your routing frames, so the mechanism " +
-                                    "may be ROLLED about the anchor line even " +
-                                    "though every anchor is exactly placed. Give " +
-                                    "your placement planes the same X/Y " +
-                                    "convention as your routing frames to settle " +
-                                    "that last degree of freedom.");
-                                linear = alongLine.Value.Linear;
-                                translation = alongLine.Value.Translation;
-                                maxResidual = alongLine.Value.Residual;
-                                det = Determinant3(linear);
-                                reflected = det < 0.0;
-                            }
-                            else
-                            {
-                                warnings.Add(
-                                    $"Placement (PL) {label}: the seven wire " +
-                                    "first-frames and the seven placement " +
-                                    "planes are the same shape (worst edge " +
-                                    "disagreement " + Metres(ordered) + " m), so " +
-                                    "the " + Metres(maxResidual) + " m residual " +
-                                    "is orientation alone -- but no better " +
-                                    "transform could be fitted from the origins " +
-                                    "at all (fewer than two wires carry frames, " +
-                                    "or every anchor sits on the same point). " +
-                                    "Plane [0]'s own axes still place this " +
-                                    "instance; give plane [0] the same X/Y as " +
-                                    "Routing (RT)[0] frame [0].");
-                            }
-                        }
-                        else if (unordered <= ShapeCongruenceToleranceMetres)
-                        {
-                            warnings.Add(
-                                $"Placement (PL) {label}: the seven placement " +
-                                "planes carry THE SAME EDGE LENGTHS as the " +
-                                "seven wire first-frames (worst disagreement " +
-                                Metres(unordered) + " m) but NOT PAIRED THE SAME " +
-                                "WAY (worst matched-pair disagreement " +
-                                Metres(ordered) + " m): the two branches are in " +
-                                "DIFFERENT ORDERS. Placement plane [i] must " +
-                                "correspond to Routing (RT)[i]; reorder one " +
-                                "branch to match the other. Nothing is refitted " +
-                                "here -- a fit onto the wrong pairing would " +
-                                "place a plausible, wrong machine.");
-                        }
-                        else if (orderedFromLast <= ShapeCongruenceToleranceMetres)
-                        {
-                            warnings.Add(
-                                $"Placement (PL) {label}: the placement planes " +
-                                "match each wire's LAST routing frame, not its " +
-                                "first (worst edge disagreement " +
-                                Metres(orderedFromLast) + " m against " +
-                                Metres(ordered) + " m for the first frames): " +
-                                "these routes are threaded the other way round. " +
-                                "Route[0] is the NET END by your own ruling, so " +
-                                "reverse the routing lists. Nothing is refitted " +
-                                "here.");
+                            linear = alongLine.Value.Linear;
+                            translation = alongLine.Value.Translation;
+                            maxResidual = alongLine.Value.Residual;
+                            det = Determinant3(linear);
+                            reflected = det < 0.0;
+                            string degrees = alongLine.Value.AxisDisagreementDegrees
+                                .ToString("0.##", CultureInfo.InvariantCulture);
+                            headline =
+                                $"Placement (PL) {label}: placed from all " +
+                                "seven anchors, residual " +
+                                Metres(maxResidual) + " m (was " +
+                                Metres(authoredResidual) + " m); anchors in a " +
+                                "line, so the roll about it comes from the " +
+                                $"authored axes and those are {degrees} " +
+                                "degrees out.";
+                            detail =
+                                "The seven wire first-frames and the seven " +
+                                "placement planes ARE THE SAME SHAPE (worst " +
+                                "edge disagreement " + Metres(ordered) + " m), " +
+                                "and the seven anchors sit IN A LINE. A line " +
+                                "pins which way it points but not the SPIN " +
+                                "about it, so the job splits. THE TRANSFORM " +
+                                "WAS REFITTED: the origins carry the line, so " +
+                                "every anchor now lands on its own plane, and " +
+                                "the spin about that line is taken from ALL " +
+                                "SEVEN planes' own axes against all seven " +
+                                "routing frames' own axes rather than from " +
+                                "plane [0] alone. After the best spin those " +
+                                $"axes still disagree by {degrees} degrees on " +
+                                "average. Near zero means the spin is as well " +
+                                "founded as the rest. A large figure means " +
+                                "your plane axes do not agree with your " +
+                                "routing frames, so the mechanism may be " +
+                                "ROLLED about the anchor line even though " +
+                                "every anchor is exactly placed -- the " +
+                                "placement is right and the machine may be " +
+                                "turned on its side. Give your placement " +
+                                "planes the same X/Y convention as your " +
+                                "routing frames to settle that last degree " +
+                                "of freedom.";
                         }
                         else
                         {
-                            warnings.Add(
-                                $"Placement (PL) {label}: max residual " +
-                                Metres(maxResidual) +
-                                $" m exceeds the {MaxResidualWarnMetres} m " +
-                                "door-guard, and the two seven-point sets are " +
-                                "NOT THE SAME SHAPE by any pairing (worst " +
-                                "matched-pair disagreement " + Metres(ordered) +
-                                " m, worst sorted-edge disagreement " +
-                                Metres(unordered) + " m, and " +
-                                Metres(orderedFromLast) + " m against the wires' " +
-                                "last frames). The placement planes and the " +
-                                "wire ends are different geometry -- authored " +
-                                "against different features, or on a different " +
-                                "mechanism than the one wired here. No " +
-                                "transform can satisfy all seven; this " +
-                                "placement is not well-founded.");
+                            placementFailed = true;
+                            headline =
+                                $"Placement (PL) {label}: NOT placed well -- " +
+                                "residual " + Metres(authoredResidual) +
+                                " m, orientation alone, and no better fit is " +
+                                "possible from these origins. See ST.";
+                            detail =
+                                "The seven wire first-frames and the seven " +
+                                "placement planes are the same shape (worst " +
+                                "edge disagreement " + Metres(ordered) + " m), " +
+                                "so the residual is orientation alone -- but " +
+                                "no better transform could be fitted from the " +
+                                "origins at all (fewer than two wires carry " +
+                                "frames, or every anchor sits on the same " +
+                                "point). Plane [0]'s own axes still place this " +
+                                "instance; give plane [0] the same X/Y as " +
+                                "Routing (RT)[0] frame [0].";
                         }
+                    }
+                    else if (unordered <= ShapeCongruenceToleranceMetres)
+                    {
+                        placementFailed = true;
+                        headline =
+                            $"Placement (PL) {label}: your placement planes " +
+                            "and your routing wires are in DIFFERENT ORDERS; " +
+                            "residual " + Metres(authoredResidual) +
+                            " m. Reorder one to match the other. See ST.";
+                        detail =
+                            "The seven placement planes carry THE SAME EDGE " +
+                            "LENGTHS as the seven wire first-frames (worst " +
+                            "disagreement " + Metres(unordered) + " m) but NOT " +
+                            "PAIRED THE SAME WAY (worst matched-pair " +
+                            "disagreement " + Metres(ordered) + " m). " +
+                            "Placement plane [i] must correspond to Routing " +
+                            "(RT)[i]. Nothing is refitted here, because a fit " +
+                            "onto the wrong pairing would place a plausible, " +
+                            "wrong machine.";
+                    }
+                    else if (orderedFromLast <= ShapeCongruenceToleranceMetres)
+                    {
+                        placementFailed = true;
+                        headline =
+                            $"Placement (PL) {label}: your routing lists are " +
+                            "threaded THE OTHER WAY ROUND; residual " +
+                            Metres(authoredResidual) +
+                            " m. Reverse them. See ST.";
+                        detail =
+                            "The placement planes match each wire's LAST " +
+                            "routing frame, not its first (worst edge " +
+                            "disagreement " + Metres(orderedFromLast) +
+                            " m against " + Metres(ordered) + " m for the " +
+                            "first frames). Route[0] is the NET END by your " +
+                            "own ruling, so reverse the routing lists. " +
+                            "Nothing is refitted here.";
+                    }
+                    else
+                    {
+                        placementFailed = true;
+                        headline =
+                            $"Placement (PL) {label}: your placement planes " +
+                            "and your wire ends are DIFFERENT GEOMETRY; " +
+                            "residual " + Metres(authoredResidual) +
+                            " m. See ST.";
+                        detail =
+                            "The two seven-point sets are NOT THE SAME SHAPE " +
+                            "by any pairing (worst matched-pair disagreement " +
+                            Metres(ordered) + " m, worst sorted-edge " +
+                            "disagreement " + Metres(unordered) + " m, and " +
+                            Metres(orderedFromLast) + " m against the wires' " +
+                            "last frames). They are authored against " +
+                            "different features, or on a different mechanism " +
+                            "than the one wired here. No transform can " +
+                            "satisfy all seven; this placement is not " +
+                            "well-founded.";
                     }
                 }
 
                 if (reflected)
                 {
-                    notes.Add(
-                        $"Placement (PL) {label}: derived transform is A " +
-                        "REFLECTION (determinant " +
+                    headline += " Mirrored side (reflection, determinant " +
                         det.ToString("0.###", CultureInfo.InvariantCulture) +
-                        "); expected for a mirrored side, not an error.");
+                        "), expected, not an error.";
                 }
+
+                string placementLine = detail is null
+                    ? headline
+                    : headline + Environment.NewLine + detail;
+                if (placementFailed)
+                    warnings.Add(placementLine);
+                else
+                    notes.Add(placementLine);
 
                 instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
@@ -2175,15 +2219,16 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                       "placement branch(es), Result " +
                       (hasResult ? "wired." : "not wired."),
             };
+            // THE BALLOON GETS THE HEADLINE, STATUS GETS ALL OF IT.
             foreach (string warning in warnings)
             {
                 status.Add(warning);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, warning);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, Headline(warning));
             }
             foreach (string note in notes)
             {
                 status.Add(note);
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, note);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, Headline(note));
             }
 
             data.SetData(0, payload ?? string.Empty);

@@ -1059,6 +1059,20 @@ internal static class MechanismDocument
         // document declares is finished ONCE here and instances above
         // carry only the id, never a second copy of what it names.
         var wiresOut = new List<Dictionary<string, object?>>();
+
+        // EVERY MATCH IS STILL PRINTED WITH ITS DISTANCE, but as the tail
+        // of ONE chin line rather than as forty-two of them (2026-09-08,
+        // his ruling on the balloon: "make the bubble message only the fix
+        // and make that small. the ST can have more detail"). Six instances
+        // of seven wires is forty-two routine confirmations, and a balloon
+        // that shows fifteen lines and then gives up buries the one line
+        // that is not routine. The headline carries the count and the worst
+        // case; the per-wire distances follow it and reach Status intact.
+        var matchLines = new List<string>();
+        double worstMatchDistance = -1.0;
+        string worstMatchId = string.Empty;
+        int worstMatchVertex = -1;
+
         for (int i = 0; i < wireEntries.Count; i++)
         {
             (int side, int mechanism, int wireIndex,
@@ -1096,11 +1110,17 @@ internal static class MechanismDocument
                 double[] netWorld = { netPoint.X, netPoint.Y, netPoint.Z };
                 double[] firstWorld = TransformLocal(route[0].Frame.Origin, instanceFrame);
                 double distFirst = MechanismCollector.Distance(firstWorld, netWorld);
-                notes.Add(
+                matchLines.Add(
                     $"wire {id}: matched net_vertex {netVertex}, first " +
                     "routing plane " +
                     distFirst.ToString("0.###", CultureInfo.InvariantCulture) +
                     " m from it.");
+                if (distFirst > worstMatchDistance)
+                {
+                    worstMatchDistance = distFirst;
+                    worstMatchId = id;
+                    worstMatchVertex = netVertex;
+                }
 
                 // THE MATCH-DISTANCE CHECK, PROMOTED (finding 3's second
                 // half): the note above is unconditional, "prints its
@@ -1189,6 +1209,18 @@ internal static class MechanismDocument
                 // unchanged).
                 [MechanismCollector.PermanenceField] = MechanismCollector.Temporary,
             });
+        }
+
+        if (matchLines.Count > 0)
+        {
+            notes.Add(
+                $"{matchLines.Count} wire(s) matched their net vertices; " +
+                "worst first-plane distance " +
+                worstMatchDistance.ToString("0.###", CultureInfo.InvariantCulture) +
+                $" m (wire {worstMatchId} to net_vertex {worstMatchVertex}). " +
+                "Every one is listed below, in Status." +
+                Environment.NewLine +
+                string.Join(Environment.NewLine, matchLines));
         }
 
         // DECLARE THE PRINCIPAL ROWS (studio's C6/A6): the ordered net

@@ -3385,7 +3385,9 @@ internal static partial class Program
                 + "planes is refused BY NAME, its count said, no instance "
                 + "produced; a branch with one plane shifted 0.01 m off "
                 + "its correspondence still places but its residual reads "
-                + "~0.01 m and is named against the 0.001 m door-guard; "
+                + "~0.01 m and, being past the 0.001 m door-guard and NOT "
+                + "refittable, stays a warning naming its own branch and "
+                + "its own residual; "
                 + "and, his own concern that the reels are separate "
                 + "meshes needing their placement kept exact, reel 0's own "
                 + "distance to Frame 1's own reference point survives "
@@ -41188,7 +41190,7 @@ internal static partial class Program
         if (payload is not string refitJson)
             throw new InvalidOperationException("The refit fixture must produce a payload.");
 
-        bool refitNamed = warnings.Any(w =>
+        bool refitNamed = notes.Any(w =>
             w.Contains("SAME SHAPE", StringComparison.Ordinal) &&
             w.Contains("REFITTED", StringComparison.Ordinal) &&
             w.Contains("ORIENTATION", StringComparison.Ordinal));
@@ -41197,8 +41199,9 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "A placement whose seven origins are congruent but whose " +
                 "plane [0] axes disagree must be NAMED as orientation-only " +
-                "and refitted, never left at its authored-axis residual; " +
-                "warnings were: " + string.Join(" | ", warnings));
+                "and refitted, never left at its authored-axis residual, " +
+                "and it is a REMARK not a warning because it WORKED; notes " +
+                "were: " + string.Join(" | ", notes));
         }
 
         JsonElement refitted = OnlyInstance(refitJson);
@@ -41283,12 +41286,14 @@ internal static partial class Program
                 "as a set but not pair for pair; warnings were: " +
                 string.Join(" | ", swapWarnings));
         }
-        if (swapWarnings.Any(w => w.Contains("REFITTED", StringComparison.Ordinal)))
+        if (swapWarnings.Concat(swapNotes).Any(
+                w => w.Contains("REFITTED", StringComparison.Ordinal)))
         {
             throw new InvalidOperationException(
-                "A wrongly ordered branch must NOT be refitted: a fit onto " +
-                "the wrong pairing places a plausible, wrong machine. " +
-                "Warnings were: " + string.Join(" | ", swapWarnings));
+                "A wrongly ordered branch must NOT be refitted, in a warning " +
+                "or in a remark: a fit onto the wrong pairing places a " +
+                "plausible, wrong machine. Chin was: " +
+                string.Join(" | ", swapWarnings.Concat(swapNotes)));
         }
         double swappedResidual = OnlyInstance(swapJson).GetProperty("residualM").GetDouble();
         if (swappedResidual <= 1.0e-9)
@@ -41353,7 +41358,7 @@ internal static partial class Program
         if (linePayload is not string lineJson)
             throw new InvalidOperationException("The collinear fixture must produce a payload.");
 
-        bool lineNamed = lineWarnings.Any(w =>
+        bool lineNamed = lineNotes.Any(w =>
             w.Contains("IN A LINE", StringComparison.Ordinal) &&
             w.Contains("REFITTED", StringComparison.Ordinal));
         if (!lineNamed)
@@ -41361,8 +41366,9 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "Seven collinear anchors must still be refitted -- the origins " +
                 "carry the line exactly and only the spin about it wants " +
-                "another source -- and the chin must say so; warnings were: " +
-                string.Join(" | ", lineWarnings));
+                "another source -- and the chin must say so as a REMARK, " +
+                "since it worked; notes were: " +
+                string.Join(" | ", lineNotes));
         }
 
         JsonElement lineFitted = OnlyInstance(lineJson);
@@ -41412,7 +41418,7 @@ internal static partial class Program
         // agree exactly and plane [0]'s two are 90 degrees out, so the mean
         // disagreement is pi / 14 radians, 12.86 degrees. Without that
         // figure a rolled mechanism looks identical to a placed one.
-        bool disagreementNamed = lineWarnings.Any(w =>
+        bool disagreementNamed = lineNotes.Any(w =>
             w.Contains("12.86 degrees", StringComparison.Ordinal));
         if (!disagreementNamed)
         {
@@ -41420,8 +41426,8 @@ internal static partial class Program
                 "The line refit must report how far the authored axes still " +
                 "disagree after the best spin (12.86 degrees here), because " +
                 "that is the only measure of the one degree of freedom the " +
-                "origins could not supply; warnings were: " +
-                string.Join(" | ", lineWarnings));
+                "origins could not supply; notes were: " +
+                string.Join(" | ", lineNotes));
         }
     }
 
@@ -42499,14 +42505,21 @@ internal static partial class Program
         double residualResidual = residualInstance.Value.GetProperty("residualM").GetDouble();
         if (Math.Abs(residualResidual - 0.01) > 1e-6)
             throw new InvalidOperationException($"The perturbed branch's own residual must read ~0.01 m; got {residualResidual} m.");
+        // A branch that crosses the guard and CANNOT be refitted stays a
+        // warning, named by branch, with its own residual in the headline.
+        // (A branch that crosses the guard and CAN be refitted is a
+        // different case entirely and is a remark: see
+        // ValidateMechanismPlacementRefit. Work that came out right does
+        // not paint the component orange, his ruling 2026-09-08.)
         bool residualNamed = warnings.Any(w =>
             w.Contains("side 0 group 2", StringComparison.Ordinal) &&
-            w.Contains("exceeds the 0.001 m door-guard", StringComparison.Ordinal));
+            w.Contains("residual 0.01 m", StringComparison.Ordinal));
         if (!residualNamed)
         {
             throw new InvalidOperationException(
-                "The over-tolerance branch's own residual must be named " +
-                "against the door-guard; warnings were: " + string.Join(" | ", warnings));
+                "The over-tolerance branch that cannot be refitted must stay " +
+                "a WARNING, named by branch, carrying its own residual in " +
+                "the headline; warnings were: " + string.Join(" | ", warnings));
         }
 
         // PROOF 5: THE REEL AXIS PSEUDOVECTOR CHECK. Apply each instance's
