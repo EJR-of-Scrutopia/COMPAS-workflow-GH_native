@@ -1037,3 +1037,67 @@ exactly why he expected the machine to make the animation "more
 consistent".
 
 ----------------------------------------------------------------------
+
+## 2026-09-08 -- THE LAYERS DRAWER, A HEIGHT AXIS, AND THE 48 METRE BEECH
+
+His walk over the props: edit from the layer tab without hunting for the
+Edit button; the Edit button in the drawer too; a deleted prop still
+showing its tile; then "dont auto turn on edit ... should be a one time
+placement"; then "add in a x,y,z arrow control ... allowing them to clip
+below ground"; then "if i drag an object down in z, when i click and
+move it around it should always stay at that z height".
+
+- LAYERS DRAWER (e1bb1ed): a tile click grants edit and selects; second
+  Edit button in #shelf-actions; both faces drive one setPropEdit so
+  they cannot disagree, and a reopened drawer shows the real mode. THE
+  GHOST: removePropRecord never told the drawer, so a deleted prop left
+  its tile behind. refreshLayersShelf() now runs from every writer of
+  state.props (delete, drop, clear, delete-undo) and only when the
+  drawer is on screen.
+- ONE-SHOT LOAN (b4c48f5): the tile grant is worth ONE action, not a
+  mode. propEditOneShot is set only when the click actually turned edit
+  on, and is spent by the placement that ends the move or by a delete;
+  a deliberate press of either Edit button clears it, making the mode
+  his to keep.
+- THE HEIGHT AXIS (b4c48f5): props carry z, default 0, free to go
+  negative. Threaded through saveProps, the scene capture, restoreProps,
+  applyScene, the delete/undo snapshot and the stamp rig. A CARRY KEEPS
+  IT (his ruling), so moving a sunk prop does not float it back to the
+  floor. Gumball gains a double-headed green arrow reading its own
+  UPRIGHT plane (camera direction flattened into plan) rather than the
+  ground: a vertical drag barely moves the ground hit and looks past
+  infinity from a low camera. Bounded by propHeightOf(record) + 1 so a
+  drag can always bury and can never fling. Height joins rotation and
+  scale in one undoable adjustment. 14 mutation kills.
+- ONEDRIVE ATE AN EDIT, AGAIN: a name-clash sibling of studio.js held
+  the NEWER content and the live file had lost exactly one line (the
+  delete-undo refresh). The suite stayed green because nothing watched
+  it. Re-applied, clash removed, and the line is now pinned
+  contiguously. The lesson stands: scan for clashes before believing a
+  green suite, and pin the line, not the function.
+
+THE BEECH, MEASURED RATHER THAN GUESSED. His report was "european beech
+tree 01 is struggling with the mesh". It is NOT a broken mesh: the GLB
+is structurally identical to its siblings (one node, one mesh, four
+primitives, four materials, KHR_mesh_quantization) and loads clean at
+219,430 triangles across 4 meshes with sane bounds. It is MIS-SCALED AT
+SOURCE. World heights measured in the scene, all placed at scale 1:
+
+    forest_01   48.44 m tall, 30.2 x 31.8 m spread
+    forest_04   31.62 m       15.6 x 14.4
+    forest_06   15.28 m        6.2 x  6.9
+    forest_07   13.52 m        7.0 x  7.8
+
+A real European beech tops out near 30-35 m, so 01 is roughly double a
+mature specimen and 3.2x its own sibling 06. Beside a 15 m vault its
+canopy fills the sky and reads as a flat sheet of leaves, which is what
+his screenshot shows. The GLB says so itself: node scale 24.22 over a
+mesh spanning local -1..+1, hence 48.44.
+
+His options, HIS CALL because tree size is a design decision: scale it
+to 0.5 with the existing control (giving 24 m, close to sibling 04's
+proportions); or a per-asset size correction applied at template load
+so the library is right by default; or leave it, if a giant is wanted
+for a forest backdrop. Nothing changed without his word.
+
+----------------------------------------------------------------------
