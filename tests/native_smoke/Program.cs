@@ -148,14 +148,15 @@ internal static partial class Program
                 // NO outputs. RequiredPreviewComponents and
                 // NativeVisibilityGuardComponents keep it, because the
                 // viewport is now the whole of it. Preset is APPENDED at 7
-                // by the display wave (2026-09-08), retiring StyleComponent:
-                // the six names before it must not move, which is what this
+                // by the display wave (2026-09-08), retiring StyleComponent,
+                // and Force Scale is APPENDED at 8 by the same wave: the
+                // seven names before it must not move, which is what this
                 // list says.
                 ["Ananke.COMPAS.Native.Components.DisplayComponent"] = (
                     new[]
                     {
                         "Result", "Style", "Elements", "Metric", "Weight",
-                        "Vector Scale", "Gap", "Preset"
+                        "Vector Scale", "Gap", "Preset", "Force Scale"
                     },
                     Array.Empty<string>()),
                 // Fit owns the geometry-against-the-solved-state half of
@@ -3856,6 +3857,27 @@ internal static partial class Program
         {
             failures.Add(
                 $"Display's Preset input: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDisplayForceScaleInput(plugin);
+            Console.WriteLine(
+                "PASS  Display's Force Scale input (the display wave, " +
+                "2026-09-08): APPENDED at input 9 (index 8) as a Number, " +
+                "'Force Scale' / 'FS', default 1.0. It multiplies " +
+                "ForceDiagramBaseFitFraction (pinned at 0.35, the exact " +
+                "literal Display always drew the force diagram at) into " +
+                "LayoutForceGraph's fitFraction argument, so 1.0 " +
+                "reproduces today's drawing bit-exact (hand-derived and " +
+                "checked directly) and the laid-out diagram's own span " +
+                "scales linearly with the input: doubling it doubles the " +
+                "span, halving it halves the span.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Display's Force Scale input: {DescribeException(exception)}");
         }
 
         // Every deferred assertion is reported here, at the suite level, so
@@ -45289,6 +45311,206 @@ internal static partial class Program
                 "neither Display's own input nor a Style is given -- the " +
                 "reading an archived Display, reopened with neither, " +
                 "drew before this wave.");
+        }
+    }
+
+    /// <summary>
+    /// Display's Force Scale input (the display wave, 2026-09-08): sizes
+    /// the reciprocal force diagram's own layout, against the form
+    /// diagram's span, independently of Vector Scale (arrow length).
+    /// APPENDED at input 8 -- Preset (input 7, the same wave) and every
+    /// port before it keep their slots.
+    ///
+    /// REGISTRATION: name, nickname, item access and the 1.0 default on a
+    /// fresh instance's own input port.
+    ///
+    /// MATH: <c>LayoutForceGraph</c> is the one place the register's
+    /// survey found the fixed 0.35 literal multiplying in (the second
+    /// argument), so it is measured directly rather than through a
+    /// SolveInstance this harness has no live IGH_DataAccess to drive.
+    /// <c>ForceDiagramBaseFitFraction</c> is pinned at 0.35 -- the literal
+    /// Display always drew the force diagram at before this input existed
+    /// -- and three coordinates are hand-derived (a 10x6 form triangle, a
+    /// 4x3 force triangle, gap 0.15, world XY plane) and checked bit-exact
+    /// at Force Scale 1.0 (today's drawing, unchanged), then re-derived by
+    /// hand a second and third time at Force Scale 2.0 and 0.5 to measure
+    /// that the laid-out diagram's own span (the id10-id11 width and the
+    /// id10-id12 height) scales LINEARLY with the input: doubling it
+    /// doubles the span, halving it halves the span.
+    /// </summary>
+    private static void ValidateDisplayForceScaleInput(Assembly plugin)
+    {
+        Type display = RequireComponentType(plugin, "DisplayComponent");
+        Type point3dType = RequireContractType(plugin, "Point3Dto");
+        Type analysisPlaneType = RequireContractType(plugin, "AnalysisPlaneDto");
+
+        // ---- registration: input 8, "Force Scale" / "FS", item access,
+        // default 1.0.
+        object fresh = Activator.CreateInstance(display)!;
+        try
+        {
+            object server = display.GetProperty("Params")!.GetValue(fresh)!;
+            IList inputs = (IList)server.GetType()
+                .GetProperty("Input")!.GetValue(server)!;
+            if (inputs.Count != 9)
+            {
+                throw new InvalidOperationException(
+                    "DisplayComponent must register nine inputs (Result, " +
+                    "Style, Elements, Metric, Weight, Vector Scale, Gap, " +
+                    $"Preset, Force Scale); it registers {inputs.Count}.");
+            }
+            object forceScalePort = inputs[8]!;
+            Type portType = forceScalePort.GetType();
+            string name = (string)portType.GetProperty("Name")!
+                .GetValue(forceScalePort)!;
+            string nickName = (string)portType.GetProperty("NickName")!
+                .GetValue(forceScalePort)!;
+            if (name != "Force Scale" || nickName != "FS")
+            {
+                throw new InvalidOperationException(
+                    "Input 8, APPENDED after Preset, must be Force Scale " +
+                    $"/ FS; found '{name}' / '{nickName}'.");
+            }
+            object persistent = portType.GetProperty("PersistentData")!
+                .GetValue(forceScalePort)!;
+            MethodInfo allData = persistent.GetType().GetMethod(
+                "AllData", new[] { typeof(bool) })
+                ?? throw new InvalidOperationException(
+                    "GH_Structure.AllData(bool) was not found.");
+            double[] defaults = ((IEnumerable)allData.Invoke(
+                    persistent, new object[] { true })!)
+                .Cast<object?>()
+                .Where(goo => goo is not null)
+                .Select(goo => Convert.ToDouble(
+                    goo!.GetType().GetProperty("Value")!.GetValue(goo),
+                    CultureInfo.InvariantCulture))
+                .ToArray();
+            if (!defaults.Any(value => Math.Abs(value - 1.0) <= 1.0e-12))
+            {
+                throw new InvalidOperationException(
+                    "Force Scale's own default must be 1.0, so an " +
+                    "existing canvas that never wires it draws exactly " +
+                    "what it drew before this input existed; found " +
+                    $"[{string.Join(", ", defaults)}].");
+            }
+        }
+        finally
+        {
+            if (fresh is IDisposable disposableFresh)
+                disposableFresh.Dispose();
+        }
+
+        // ---- math: ForceDiagramBaseFitFraction pinned at 0.35, the exact
+        // literal every Display drew the force diagram at before Force
+        // Scale existed.
+        FieldInfo baseFitField = display.GetField(
+            "ForceDiagramBaseFitFraction",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "DisplayComponent.ForceDiagramBaseFitFraction was not " +
+                "found.");
+        double baseFit = (double)baseFitField.GetValue(null)!;
+        if (Math.Abs(baseFit - 0.35) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "ForceDiagramBaseFitFraction must stay pinned at 0.35; " +
+                $"found {baseFit}. Force Scale multiplies it, so a moved " +
+                "base changes what Force Scale 1.0 draws.");
+        }
+
+        MethodInfo layout = RequireStatic(display, "LayoutForceGraph");
+        Type dictType = typeof(Dictionary<,>).MakeGenericType(
+            typeof(int), point3dType);
+        MethodInfo dictAdd = dictType.GetMethod(
+            "Add", new[] { typeof(int), point3dType })!;
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point3dType, x, y, z)!;
+        object Dict(params (int Id, object Point)[] items)
+        {
+            object dict = Activator.CreateInstance(dictType)!;
+            foreach ((int id, object point) in items)
+                dictAdd.Invoke(dict, new object[] { id, point });
+            return dict;
+        }
+
+        // A 10x6 form triangle and a 4x3 force triangle on the world XY
+        // plane, so the layout's own arithmetic (formSpan 10, rawSpan 4,
+        // centre (2, 1.5), reference 10, gap 0.15 of it) can be reproduced
+        // by hand rather than merely re-read from the code under test.
+        object formVertices = Dict(
+            (0, P(0.0, 0.0, 0.0)), (1, P(10.0, 0.0, 0.0)),
+            (2, P(0.0, 6.0, 0.0)));
+        object forceVertices = Dict(
+            (10, P(0.0, 0.0, 0.0)), (11, P(4.0, 0.0, 0.0)),
+            (12, P(0.0, 3.0, 0.0)));
+        object plane = Activator.CreateInstance(analysisPlaneType)!;
+
+        (double X, double Y) At(IDictionary laidOut, int id)
+        {
+            object point = laidOut[id]!;
+            double x = (double)point3dType.GetProperty("X")!
+                .GetValue(point)!;
+            double y = (double)point3dType.GetProperty("Y")!
+                .GetValue(point)!;
+            return (x, y);
+        }
+        void Expect((double X, double Y) actual, double x, double y, string label)
+        {
+            if (Math.Abs(actual.X - x) > 1.0e-9 ||
+                Math.Abs(actual.Y - y) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"{label} must land at ({x}, {y}); landed at " +
+                    $"({actual.X}, {actual.Y}).");
+            }
+        }
+
+        // Force Scale 1.0: fitFraction = 0.35 * 1.0 = 0.35, scale =
+        // 0.35 * 10 / 4 = 0.875. Hand-derived: today's drawing, unchanged.
+        IDictionary atOne = (IDictionary)layout.Invoke(
+            null,
+            new object[] { formVertices, forceVertices, plane, baseFit * 1.0, 0.15 })!;
+        Expect(At(atOne, 10), 11.5, 1.6875, "Force Scale 1.0, vertex 10");
+        Expect(At(atOne, 11), 15.0, 1.6875, "Force Scale 1.0, vertex 11");
+        Expect(At(atOne, 12), 11.5, 4.3125, "Force Scale 1.0, vertex 12");
+
+        // Force Scale 2.0: fitFraction = 0.70, scale = 1.75. The laid-out
+        // span (10-to-11 width, 10-to-12 height) must be exactly DOUBLE
+        // the Force Scale 1.0 span.
+        IDictionary atTwo = (IDictionary)layout.Invoke(
+            null,
+            new object[] { formVertices, forceVertices, plane, baseFit * 2.0, 0.15 })!;
+        Expect(At(atTwo, 10), 11.5, 0.375, "Force Scale 2.0, vertex 10");
+        Expect(At(atTwo, 11), 18.5, 0.375, "Force Scale 2.0, vertex 11");
+        Expect(At(atTwo, 12), 11.5, 5.625, "Force Scale 2.0, vertex 12");
+
+        // Force Scale 0.5: fitFraction = 0.175, scale = 0.4375. The span
+        // must be exactly HALF the Force Scale 1.0 span.
+        IDictionary atHalf = (IDictionary)layout.Invoke(
+            null,
+            new object[] { formVertices, forceVertices, plane, baseFit * 0.5, 0.15 })!;
+        Expect(At(atHalf, 10), 11.5, 2.34375, "Force Scale 0.5, vertex 10");
+        Expect(At(atHalf, 11), 13.25, 2.34375, "Force Scale 0.5, vertex 11");
+        Expect(At(atHalf, 12), 11.5, 3.65625, "Force Scale 0.5, vertex 12");
+
+        double widthOne = At(atOne, 11).X - At(atOne, 10).X;
+        double widthTwo = At(atTwo, 11).X - At(atTwo, 10).X;
+        double widthHalf = At(atHalf, 11).X - At(atHalf, 10).X;
+        double heightOne = At(atOne, 12).Y - At(atOne, 10).Y;
+        double heightTwo = At(atTwo, 12).Y - At(atTwo, 10).Y;
+        double heightHalf = At(atHalf, 12).Y - At(atHalf, 10).Y;
+        if (Math.Abs(widthTwo - 2.0 * widthOne) > 1.0e-9 ||
+            Math.Abs(heightTwo - 2.0 * heightOne) > 1.0e-9 ||
+            Math.Abs(widthHalf - 0.5 * widthOne) > 1.0e-9 ||
+            Math.Abs(heightHalf - 0.5 * heightOne) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The laid-out force diagram's own span must scale " +
+                "LINEARLY with Force Scale: width " +
+                $"[{widthHalf}, {widthOne}, {widthTwo}], height " +
+                $"[{heightHalf}, {heightOne}, {heightTwo}] against Force " +
+                "Scale [0.5, 1.0, 2.0].");
         }
     }
 
