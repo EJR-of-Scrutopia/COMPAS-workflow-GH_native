@@ -3297,6 +3297,35 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismPlacementRefit(plugin);
+            Console.WriteLine(
+                "PASS  MechanismCollector placement, the refit and its "
+                + "refusals (2026-09-08, from his own machine reading 1.36 m "
+                + "of residual on every branch): the settled maths derive an "
+                + "instance from ONE correspondence, so it inherits placement "
+                + "plane [0]'s own X and Y -- and a routing frame's own axes "
+                + "spin freely about the wire's tangent, so the two need not "
+                + "agree. Seven placement planes that are an EXACT rigid "
+                + "image of the seven wire first-frames (90 degrees about Z, "
+                + "moved to 10,20,30) with plane [0] left unturned are missed "
+                + "by 2 m under that one pair; the seven origins are "
+                + "congruent, so the transform is refitted from them and "
+                + "recovers the true turn and translation exactly, residual "
+                + "to zero, and NOT as a reflection -- both handednesses are "
+                + "tried and the proper one kept. The same seven planes with "
+                + "[1] and [2] SWAPPED carry the same edge lengths as a SET "
+                + "but not pair for pair: that branch is named a wrongly "
+                + "ordered one and REFUSED the refit, its residual left "
+                + "standing, because a fit onto the wrong pairing places a "
+                + "plausible, wrong machine.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismPlacementRefit: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -40994,6 +41023,284 @@ internal static partial class Program
     }
 
     /// <summary>
+    /// THE PLACEMENT REFIT AND ITS REFUSALS (2026-09-08, straight off his
+    /// own machine's chin, which read "max residual 1.364922 m across 6 of
+    /// 6 other wire(s)" on all three mechanisms of side 0 and 1.173451 m on
+    /// all three of side 1 -- identical within a side, so the three copies
+    /// agree with each other and the disagreement is between the AUTHORED
+    /// MECHANISM and the PLACEMENT PLANES).
+    ///
+    /// The settled maths derive the whole instance transform from ONE
+    /// correspondence, so the instance inherits placement plane [0]'s own X
+    /// and Y. A routing frame's own X and Y spin freely about the wire's
+    /// tangent and an anchor plane's own axes are whatever they were
+    /// authored as, so the two need not agree -- and when they do not,
+    /// every other wire lands rotated about plane [0] while all seven
+    /// origins sit exactly where they belong.
+    ///
+    /// Scenario 1, THE REFIT: seven placement planes that are an exact
+    /// rigid image of the seven wire first-frames (a 90 degree turn about
+    /// Z, then moved to (10, 20, 30)), with plane [0]'s own axes left
+    /// UNTURNED. The one-correspondence transform reads the identity and
+    /// misses by 2 m at its worst; the seven origins are congruent, so the
+    /// transform is refitted from them and must recover the true turn
+    /// exactly.
+    ///
+    /// Scenario 2, THE REFUSAL: the same seven planes with [1] and [2]
+    /// SWAPPED. The edge lengths still match as a SET (it is a permutation)
+    /// but not pair for pair, so this is a wrongly ordered branch, and a
+    /// fit onto the wrong pairing would place a plausible, wrong machine.
+    /// It must be named and NOT refitted.
+    /// </summary>
+    private static void ValidateMechanismPlacementRefit(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "Build");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(
+                frameType,
+                origin,
+                x,
+                y,
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
+        object PlaneOf(double[] origin, double[] x, double[] y, double[] z) =>
+            Activator.CreateInstance(placementPlaneType, origin, x, y, z)!;
+
+        double[] unitX = { 1.0, 0.0, 0.0 };
+        double[] unitY = { 0.0, 1.0, 0.0 };
+        double[] unitZ = { 0.0, 0.0, 1.0 };
+
+        // The seven wire first-frames, local: a corner and the six points
+        // around it, deliberately NOT coplanar so an orientation can be
+        // founded on them at all.
+        double[][] sourceOrigins =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 0.0, 1.0 },
+            new[] { 0.0, 1.0, 1.0 },
+        };
+
+        // Their exact rigid image: (x, y, z) -> (-y, x, z), then + (10, 20, 30).
+        double[][] targetOrigins =
+        {
+            new[] { 10.0, 20.0, 30.0 },
+            new[] { 10.0, 21.0, 30.0 },
+            new[] { 9.0, 20.0, 30.0 },
+            new[] { 10.0, 20.0, 31.0 },
+            new[] { 9.0, 21.0, 30.0 },
+            new[] { 10.0, 21.0, 31.0 },
+            new[] { 9.0, 20.0, 31.0 },
+        };
+
+        object[] routingWires = new object[7];
+        for (int i = 0; i < 7; i++)
+        {
+            routingWires[i] = Activator.CreateInstance(
+                routingWireType,
+                i,
+                MechanismListOf(frameType, FrameOf(sourceOrigins[i], unitX, unitY)))!;
+        }
+        object routing = MechanismListOf(routingWireType, routingWires);
+
+        // ONE reel, far from every routing frame, so ownership never enters
+        // this check: what is under test is the placement maths alone.
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new double[] { 0, 0, 0 }, new double[] { 1, 0, 0 },
+                new double[] { 0, 1, 0 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null,
+            false,
+            null,
+            false,
+            MechanismListOf(meshType, Mesh(new[]
+            {
+                new double[] { 1001, 1000, 1000 }, new double[] { 999, 1000, 1000 },
+                new double[] { 1000, 1001, 1001 }, new double[] { 1000, 999, 1001 },
+            })),
+            MechanismListOf(typeof(bool), false),
+            MechanismListOf(frameType, FrameOf(
+                new[] { 1000.0, 1000.0, 1000.0 }, unitX, unitY)))!;
+
+        object BranchOf(double[][] planeOrigins)
+        {
+            object[] planes = new object[7];
+            for (int i = 0; i < 7; i++)
+            {
+                // EVERY plane carries UNTURNED axes, plane [0] included:
+                // that is the mismatch under test. Only the origins say
+                // where the mechanism truly goes.
+                planes[i] = PlaneOf(planeOrigins[i], unitX, unitY, unitZ);
+            }
+            return Activator.CreateInstance(
+                placementBranchType,
+                Activator.CreateInstance(instanceIdType, 0, 0)!,
+                MechanismListOf(placementPlaneType, planes))!;
+        }
+
+        JsonElement OnlyInstance(string json)
+        {
+            using JsonDocument parsed = JsonDocument.Parse(json);
+            JsonElement instances = parsed.RootElement.GetProperty("instances");
+            if (instances.GetArrayLength() != 1)
+            {
+                throw new InvalidOperationException(
+                    "Exactly one mechanism instance must be derived from the " +
+                    "one placement branch; got " + json);
+            }
+            return instances[0].Clone();
+        }
+
+        // SCENARIO 1: congruent origins, plane [0]'s axes wrong.
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        object? payload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset, routing, MechanismListOf(placementBranchType, BranchOf(targetOrigins)),
+                warnings, notes,
+            });
+        if (payload is not string refitJson)
+            throw new InvalidOperationException("The refit fixture must produce a payload.");
+
+        bool refitNamed = warnings.Any(w =>
+            w.Contains("SAME SHAPE", StringComparison.Ordinal) &&
+            w.Contains("REFITTED", StringComparison.Ordinal) &&
+            w.Contains("ORIENTATION", StringComparison.Ordinal));
+        if (!refitNamed)
+        {
+            throw new InvalidOperationException(
+                "A placement whose seven origins are congruent but whose " +
+                "plane [0] axes disagree must be NAMED as orientation-only " +
+                "and refitted, never left at its authored-axis residual; " +
+                "warnings were: " + string.Join(" | ", warnings));
+        }
+
+        JsonElement refitted = OnlyInstance(refitJson);
+        double refittedResidual = refitted.GetProperty("residualM").GetDouble();
+        if (refittedResidual > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The refit is onto an EXACT rigid image, so its residual must " +
+                "collapse to zero, not merely improve; got " +
+                refittedResidual.ToString("0.######", CultureInfo.InvariantCulture) +
+                " m. The one-correspondence transform reads 2 m here.");
+        }
+
+        // THE TRANSFORM ITSELF, not just the message: the 90 degree turn
+        // about Z, recovered from the origins alone.
+        double[][] expectedLinear =
+        {
+            new[] { 0.0, -1.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 },
+        };
+        JsonElement linearOut = refitted.GetProperty("linear");
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 3; column++)
+            {
+                double got = linearOut[row][column].GetDouble();
+                if (Math.Abs(got - expectedLinear[row][column]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The refitted transform's row {row} column {column} " +
+                        $"must be {expectedLinear[row][column]}, the true 90 " +
+                        $"degree turn about Z read off the origins; got {got}.");
+                }
+            }
+        }
+        double[] gotTranslation = refitted.GetProperty("frame").GetProperty("origin")
+            .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        double[] expectedTranslation = { 10.0, 20.0, 30.0 };
+        for (int i = 0; i < 3; i++)
+        {
+            if (Math.Abs(gotTranslation[i] - expectedTranslation[i]) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "The refitted instance must sit at (10, 20, 30); got [" +
+                    string.Join(", ", gotTranslation) + "].");
+            }
+        }
+        if (refitted.GetProperty("reflected").GetBoolean())
+        {
+            throw new InvalidOperationException(
+                "A pure rotation must not be reported as a reflection; the " +
+                "refit tries both handednesses and must keep the proper one.");
+        }
+
+        // SCENARIO 2: the same seven planes, [1] and [2] swapped.
+        double[][] swapped =
+        {
+            targetOrigins[0], targetOrigins[2], targetOrigins[1], targetOrigins[3],
+            targetOrigins[4], targetOrigins[5], targetOrigins[6],
+        };
+        var swapWarnings = new List<string>();
+        var swapNotes = new List<string>();
+        object? swapPayload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset, routing, MechanismListOf(placementBranchType, BranchOf(swapped)),
+                swapWarnings, swapNotes,
+            });
+        if (swapPayload is not string swapJson)
+            throw new InvalidOperationException("The wrong-order fixture must produce a payload.");
+
+        bool orderNamed = swapWarnings.Any(w =>
+            w.Contains("DIFFERENT ORDERS", StringComparison.Ordinal) &&
+            w.Contains("SAME EDGE LENGTHS", StringComparison.Ordinal));
+        if (!orderNamed)
+        {
+            throw new InvalidOperationException(
+                "A placement branch carrying the right seven points in the " +
+                "WRONG ORDER must be named as such -- the edge lengths match " +
+                "as a set but not pair for pair; warnings were: " +
+                string.Join(" | ", swapWarnings));
+        }
+        if (swapWarnings.Any(w => w.Contains("REFITTED", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "A wrongly ordered branch must NOT be refitted: a fit onto " +
+                "the wrong pairing places a plausible, wrong machine. " +
+                "Warnings were: " + string.Join(" | ", swapWarnings));
+        }
+        double swappedResidual = OnlyInstance(swapJson).GetProperty("residualM").GetDouble();
+        if (swappedResidual <= 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The wrongly ordered branch's residual must stand as the loud " +
+                "number it is, not be quietly fitted away; got " +
+                swappedResidual.ToString("0.######", CultureInfo.InvariantCulture) + " m.");
+        }
+    }
+
+    /// <summary>
     /// Routing frame ownership (7c8db59, unchanged), reshaped to a FLAT
     /// reel list and a routing wire authored once for the ONE mechanism
     /// (rather than a per-{side}{mechanism} tree): a reel within another
@@ -41009,6 +41316,15 @@ internal static partial class Program
     ///   [1] (50, 50, 50): nowhere near any reel -- OWNED BY THE BODY.
     ///   [2] (-2.1, 0, 5): just OUTSIDE reel 0's own boundary -- body, but NAMED.
     ///   [3] (1.5, 0, 5): inside both reel 0's and reel 1's neighbourhoods -- NAMED, resolves reel 0.
+    ///   [4] (0.1, 0, 20): inside reel 0's own RADIUS but past its own END FACE -- OWNED BY THE BODY.
+    ///
+    /// Frame [4] is 2026-09-08's own addition, from his ten-reel mechanism:
+    /// the radial test measures distance to an INFINITE axis line, so
+    /// without an axial bound a reel claims a wire running parallel to it
+    /// however far past its own faces that wire sits -- and the studio would
+    /// then spin those frames with the drum. The reels here are modelled
+    /// with real ends (z 0 to 10) for the same reason: a flat reel has no
+    /// length to sit inside.
     /// </summary>
     private static void ValidateMechanismRouteOwnership(Assembly plugin)
     {
@@ -41055,23 +41371,28 @@ internal static partial class Program
                 reMeshes, reBrep, axes)!;
 
         // Reel 0: axis the world Z line through the origin; own mesh
-        // vertices 2 units out on X and Y -- radial extent 2.
+        // vertices 2 units out on X and Y -- radial extent 2 -- and
+        // spanning z 0 to 10, so the drum has real ENDS. Ownership is
+        // radial AND axial: a reel owns only what lies between its own
+        // faces, so a reel modelled flat (every vertex at one z) would own
+        // nothing at all and every assertion below would read backwards.
         object reel0Axis = IdentityAxis();
         object reel0Mesh = Mesh(new[]
         {
-            new double[] { 2, 0, 0 }, new double[] { -2, 0, 0 },
-            new double[] { 0, 2, 0 }, new double[] { 0, -2, 0 },
+            new double[] { 2, 0, 0 }, new double[] { -2, 0, 10 },
+            new double[] { 0, 2, 0 }, new double[] { 0, -2, 10 },
         });
 
         // Reel 1: axis the vertical line through (3, 0, 0); own mesh
         // vertices 2 units out from THAT line -- radial extent 2, chosen
-        // so reel 0's and reel 1's own neighbourhoods overlap.
+        // so reel 0's and reel 1's own neighbourhoods overlap -- over the
+        // same z 0 to 10 run.
         object reel1Axis = FrameOf(
             new[] { 3.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
         object reel1Mesh = Mesh(new[]
         {
-            new double[] { 5, 0, 0 }, new double[] { 1, 0, 0 },
-            new double[] { 3, 2, 0 }, new double[] { 3, -2, 0 },
+            new double[] { 5, 0, 0 }, new double[] { 1, 0, 10 },
+            new double[] { 3, 2, 0 }, new double[] { 3, -2, 10 },
         });
 
         // Reels 2 and 3: far off, never in play -- present so the chin's
@@ -41080,8 +41401,8 @@ internal static partial class Program
             new[] { 1000.0, 1000.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 });
         object reel23Mesh = Mesh(new[]
         {
-            new double[] { 1001, 1000, 0 }, new double[] { 999, 1000, 0 },
-            new double[] { 1000, 1001, 0 }, new double[] { 1000, 999, 0 },
+            new double[] { 1001, 1000, 0 }, new double[] { 999, 1000, 10 },
+            new double[] { 1000, 1001, 0 }, new double[] { 1000, 999, 10 },
         });
 
         object asset = Asset(
@@ -41101,6 +41422,12 @@ internal static partial class Program
         // axis (ratio 2.55, nowhere near ambiguous).
         double[] frame2Origin = { -2.1, 0.0, 5.0 };
         double[] frame3Origin = { 1.5, 0.0, 5.0 };
+        // BEYOND REEL 0'S OWN END FACE, and only 0.1 off its axis LINE
+        // (ratio 0.05, deep inside the radius): the case a radius-only test
+        // hands to reel 0 and this one must hand to the body. Found on his
+        // own ten-reel mechanism, where a wire running parallel to a drum
+        // read as riding on it.
+        double[] frame4Origin = { 0.1, 0.0, 20.0 };
         double[] routeX = { 1.0, 0.0, 0.0 };
         double[] routeY = { 0.0, 1.0, 0.0 };
         object routeFrames = MechanismListOf(
@@ -41108,7 +41435,8 @@ internal static partial class Program
             FrameOf(frame0Origin, routeX, routeY),
             FrameOf(frame1Origin, routeX, routeY),
             FrameOf(frame2Origin, routeX, routeY),
-            FrameOf(frame3Origin, routeX, routeY));
+            FrameOf(frame3Origin, routeX, routeY),
+            FrameOf(frame4Origin, routeX, routeY));
         object wire0 = Activator.CreateInstance(routingWireType, 0, routeFrames)!;
         object routing = MechanismListOf(routingWireType, wire0);
 
@@ -41148,8 +41476,8 @@ internal static partial class Program
         if (wire0Out is null)
             throw new InvalidOperationException("Wire 0 must be produced for the one placed instance; got " + json);
         JsonElement route = wire0Out.Value.GetProperty("route");
-        if (route.GetArrayLength() != 4)
-            throw new InvalidOperationException("Wire 0's route must carry all four authored frames; got " + json);
+        if (route.GetArrayLength() != 5)
+            throw new InvalidOperationException("Wire 0's route must carry all five authored frames; got " + json);
 
         void AssertPositionUnchanged(JsonElement frame, double[] origin, int index)
         {
@@ -41169,10 +41497,12 @@ internal static partial class Program
         JsonElement f1 = route[1];
         JsonElement f2 = route[2];
         JsonElement f3 = route[3];
+        JsonElement f4 = route[4];
         AssertPositionUnchanged(f0, frame0Origin, 0);
         AssertPositionUnchanged(f1, frame1Origin, 1);
         AssertPositionUnchanged(f2, frame2Origin, 2);
         AssertPositionUnchanged(f3, frame3Origin, 3);
+        AssertPositionUnchanged(f4, frame4Origin, 4);
 
         if (f0.GetProperty("owner").GetString() != "reel" || f0.GetProperty("ownerReel").GetInt32() != 0)
         {
@@ -41202,6 +41532,26 @@ internal static partial class Program
                 "neighbourhoods and must still resolve to ONE owner (reel 0, " +
                 $"first found on the tie); got owner={f3.GetProperty("owner")}, " +
                 $"ownerReel={f3.GetProperty("ownerReel")}.");
+        }
+        if (f4.GetProperty("owner").GetString() != "body" || f4.GetProperty("ownerReel").GetInt32() != -1)
+        {
+            throw new InvalidOperationException(
+                "frame [4] sits only 0.1 off reel 0's own axis LINE but ten " +
+                "units past that reel's own end face, and must be owned by " +
+                "the body -- a reel owns only what lies between its own " +
+                $"faces; got owner={f4.GetProperty("owner")}, " +
+                $"ownerReel={f4.GetProperty("ownerReel")}.");
+        }
+        bool beyondTheFacesNamed = notes.Any(n =>
+            n.Contains("Routing (RT)[0]", StringComparison.Ordinal) &&
+            n.Contains("BEYOND", StringComparison.Ordinal) &&
+            n.Contains("1 frame(s)", StringComparison.Ordinal));
+        if (!beyondTheFacesNamed)
+        {
+            throw new InvalidOperationException(
+                "The one frame inside a reel's own radius but past its own " +
+                "end face must be tallied in the chin, never dropped " +
+                "silently; notes were: " + string.Join(" | ", notes));
         }
 
         bool boundaryNamed = warnings.Any(w =>
@@ -41238,11 +41588,11 @@ internal static partial class Program
         }
 
         // THE CHIN'S OWN TALLY IS NOW GLOBAL (reels and routing are each
-        // authored once): body 2 (frames [1] and [2]), reel 0 2 (frames
-        // [0] and [3]), reels 1-3 zero.
+        // authored once): body 3 (frames [1], [2] and [4]), reel 0 2
+        // (frames [0] and [3]), reels 1-3 zero.
         bool tallyNamed = notes.Any(n =>
             n.Contains("routing frame ownership", StringComparison.Ordinal) &&
-            n.Contains("body 2", StringComparison.Ordinal) &&
+            n.Contains("body 3", StringComparison.Ordinal) &&
             n.Contains("reel 0 2", StringComparison.Ordinal) &&
             n.Contains("reel 1 0", StringComparison.Ordinal) &&
             n.Contains("reel 2 0", StringComparison.Ordinal) &&
@@ -41251,7 +41601,7 @@ internal static partial class Program
         {
             throw new InvalidOperationException(
                 "The chin must report the GLOBAL ownership tally " +
-                "(body 2, reel 0 2, reel 1/2/3 0); notes were: " +
+                "(body 3, reel 0 2, reel 1/2/3 0); notes were: " +
                 string.Join(" | ", notes));
         }
 
@@ -41294,7 +41644,7 @@ internal static partial class Program
         foreach (JsonElement w in finalWires.EnumerateArray())
         {
             if (w.GetProperty("id").GetString()!.EndsWith("-0", StringComparison.Ordinal) &&
-                w.GetProperty("route").GetArrayLength() == 4)
+                w.GetProperty("route").GetArrayLength() == 5)
             {
                 finalWire0 = w;
                 break;
@@ -41311,6 +41661,7 @@ internal static partial class Program
         AssertPositionUnchanged(finalRoute[1], frame1Origin, 1);
         AssertPositionUnchanged(finalRoute[2], frame2Origin, 2);
         AssertPositionUnchanged(finalRoute[3], frame3Origin, 3);
+        AssertPositionUnchanged(finalRoute[4], frame4Origin, 4);
         bool ownershipSurvived =
             finalRoute[0].GetProperty("owner").GetString() == "reel" &&
             finalRoute[0].GetProperty("ownerReel").GetInt32() == 0 &&
@@ -41319,7 +41670,9 @@ internal static partial class Program
             finalRoute[2].GetProperty("owner").GetString() == "body" &&
             finalRoute[2].GetProperty("ownerReel").GetInt32() == -1 &&
             finalRoute[3].GetProperty("owner").GetString() == "reel" &&
-            finalRoute[3].GetProperty("ownerReel").GetInt32() == 0;
+            finalRoute[3].GetProperty("ownerReel").GetInt32() == 0 &&
+            finalRoute[4].GetProperty("owner").GetString() == "body" &&
+            finalRoute[4].GetProperty("ownerReel").GetInt32() == -1;
         if (!ownershipSurvived)
         {
             throw new InvalidOperationException(

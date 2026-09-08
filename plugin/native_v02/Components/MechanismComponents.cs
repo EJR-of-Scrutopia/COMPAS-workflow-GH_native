@@ -210,6 +210,39 @@ internal static class MechanismCollector
     /// </summary>
     public const double RouteOwnerAmbiguityMargin = 0.15;
 
+    /// <summary>
+    /// How far past a reel's OWN END FACES, as a fraction of that reel's
+    /// own radius, a routing frame may still sit and be counted as riding
+    /// on it. A wire leaving a drum crosses the end face within about a
+    /// wire's thickness, so this is deliberately small.
+    ///
+    /// WHY AN AXIAL TEST EXISTS AT ALL (2026-09-08, found on his own ten-reel
+    /// mechanism): the radial test measures distance to an INFINITE axis
+    /// line. Without a bound along that line, a reel claims every frame
+    /// within its radius however far past its own faces the frame sits --
+    /// so a wire running parallel to a drum, a metre away along the axis,
+    /// read as riding on it and would have been spun by it in the studio's
+    /// animation. A reel owns only what lies between its own faces.
+    /// </summary>
+    public const double RouteOwnerAxialMarginFraction = 0.25;
+
+    /// <summary>
+    /// How far, in metres, two seven-point sets' own matching edge lengths
+    /// may disagree before they are called DIFFERENT SHAPES rather than the
+    /// same shape differently placed. Shared with
+    /// <see cref="MaxResidualWarnMetres"/>'s own scale on purpose: a set
+    /// congruent to within the placement guard is congruent for placement.
+    /// </summary>
+    public const double ShapeCongruenceToleranceMetres = MaxResidualWarnMetres;
+
+    /// <summary>
+    /// The smallest off-axis reach, as a fraction of a point set's own
+    /// spread, that still founds a third basis direction. Below it the
+    /// seven origins are effectively collinear and no orientation can be
+    /// fitted from them at all.
+    /// </summary>
+    public const double CollinearFitFraction = 1.0e-3;
+
     /// <summary>His machine: seven wires, seven placement planes, per mechanism instance.</summary>
     public const int PlacementGroupSize = 7;
 
@@ -475,29 +508,120 @@ internal static class MechanismCollector
         var ownerCounts = new Dictionary<string, int>(StringComparer.Ordinal) { [RouteOwnerBody] = 0 };
         for (int r = 0; r < reels.Count; r++)
             ownerCounts[$"reel {r}"] = 0;
+        ReelNeighbourhood[] neighbourhoods = BuildReelNeighbourhoods(reels);
         var classifiedRoutes = new Dictionary<int, List<(MechanismFrame Frame, string Owner, int OwnerReel)>>();
         for (int w = 0; w < PlacementGroupSize; w++)
         {
             if (!routingByIndex.TryGetValue(w, out MechanismRoutingWire? wire) || wire.Route.Count == 0)
                 continue;
             var classified = new List<(MechanismFrame, string, int)>(wire.Route.Count);
+
+            // AMBIGUITY IS GATHERED, THEN SAID ONCE PER WIRE (2026-09-08,
+            // his own ten-reel mechanism): a wire WRAPPED on a drum sits at
+            // that drum's own surface on every frame of the wrap, so a
+            // per-frame warning on "close to the boundary" fires on the
+            // normal case and buries the chin -- his read 15 rows deep and
+            // then "Further warnings not shown". What is worth a warning is
+            // where the answer could flip to different BEHAVIOUR: a frame
+            // just OUTSIDE a reel that the body therefore keeps still, and a
+            // frame two reels both reach. A frame just INSIDE the reel that
+            // owns it is the expected case and is tallied, not warned.
+            var justOutside = new Dictionary<int, (int Count, int WorstFrame, double Ratio, double Distance, double Radius)>();
+            var contested = new Dictionary<(int First, int Second), (int Count, int WorstFrame, double FirstRatio, double SecondRatio)>();
+            var onTheBoundary = new Dictionary<int, int>();
+            int beyondTheFaces = 0;
+
             for (int frameIndex = 0; frameIndex < wire.Route.Count; frameIndex++)
             {
                 MechanismFrame frame = wire.Route[frameIndex];
-                (string owner, int ownerReel, string? ambiguity) = ClassifyRouteFrameOwner(frame, reels);
-                string countKey = owner == RouteOwnerReel ? $"reel {ownerReel}" : RouteOwnerBody;
+                RouteOwnerVerdict verdict = ClassifyRouteFrameOwner(frame, neighbourhoods);
+                bool ownedByReel = verdict.Owner == RouteOwnerReel;
+                string countKey = ownedByReel ? $"reel {verdict.OwnerReel}" : RouteOwnerBody;
                 ownerCounts[countKey] = ownerCounts.GetValueOrDefault(countKey) + 1;
-                if (ambiguity is not null)
+
+                if (verdict.AxiallyExcluded)
+                    beyondTheFaces++;
+
+                if (!ownedByReel &&
+                    verdict.NearestReel >= 0 &&
+                    verdict.NearestRatio <= 1.0 + RouteOwnerAmbiguityMargin)
                 {
-                    warnings.Add(
-                        $"Routing (RT)[{w}] frame [{frameIndex}]: ownership " +
-                        $"is AMBIGUOUS ({ambiguity}); assigned " +
-                        (owner == RouteOwnerReel ? $"reel {ownerReel}" : "the body") +
-                        " as the nearest, never picked silently -- look at it.");
+                    (int count, int worstFrame, double ratio, double distance, double radius) =
+                        justOutside.GetValueOrDefault(
+                            verdict.NearestReel, (0, frameIndex, double.PositiveInfinity, 0.0, 0.0));
+                    justOutside[verdict.NearestReel] = verdict.NearestRatio < ratio
+                        ? (count + 1, frameIndex, verdict.NearestRatio, verdict.NearestDistance, verdict.NearestRadius)
+                        : (count + 1, worstFrame, ratio, distance, radius);
                 }
-                classified.Add((frame, owner, ownerReel));
+
+                if (ownedByReel &&
+                    verdict.SecondReel >= 0 &&
+                    verdict.SecondRatio <= 1.0 + RouteOwnerAmbiguityMargin)
+                {
+                    (int First, int Second) key = (verdict.OwnerReel, verdict.SecondReel);
+                    (int count, int worstFrame, double firstRatio, double secondRatio) =
+                        contested.GetValueOrDefault(key, (0, frameIndex, 0.0, double.PositiveInfinity));
+                    contested[key] = verdict.SecondRatio < secondRatio
+                        ? (count + 1, frameIndex, verdict.NearestRatio, verdict.SecondRatio)
+                        : (count + 1, worstFrame, firstRatio, secondRatio);
+                }
+
+                if (ownedByReel && verdict.NearestRatio >= 1.0 - RouteOwnerAmbiguityMargin)
+                    onTheBoundary[verdict.OwnerReel] = onTheBoundary.GetValueOrDefault(verdict.OwnerReel) + 1;
+
+                classified.Add((frame, verdict.Owner, verdict.OwnerReel));
             }
             classifiedRoutes[w] = classified;
+
+            foreach (KeyValuePair<int, (int Count, int WorstFrame, double Ratio, double Distance, double Radius)> entry
+                in justOutside.OrderBy(p => p.Key))
+            {
+                warnings.Add(
+                    $"Routing (RT)[{w}]: {entry.Value.Count} frame(s) sit JUST " +
+                    $"OUTSIDE reel {entry.Key}'s own radius and were given to " +
+                    "the body -- ownership AMBIGUOUS, closest at frame " +
+                    $"[{entry.Value.WorstFrame}] (distance " +
+                    entry.Value.Distance.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " against its own radius " +
+                    entry.Value.Radius.ToString("0.####", CultureInfo.InvariantCulture) +
+                    ", ratio " + entry.Value.Ratio.ToString("0.###", CultureInfo.InvariantCulture) +
+                    "); if the wire wraps that reel there, those frames should " +
+                    "turn with it rather than stand still.");
+            }
+            foreach (KeyValuePair<(int First, int Second), (int Count, int WorstFrame, double FirstRatio, double SecondRatio)> entry
+                in contested.OrderBy(p => p.Key.First).ThenBy(p => p.Key.Second))
+            {
+                warnings.Add(
+                    $"Routing (RT)[{w}]: {entry.Value.Count} frame(s) sit within " +
+                    $"reach of BOTH reel {entry.Key.First} and reel " +
+                    $"{entry.Key.Second} -- ownership AMBIGUOUS, closest at " +
+                    $"frame [{entry.Value.WorstFrame}] (reel {entry.Key.First} " +
+                    "ratio " +
+                    entry.Value.FirstRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                    $", reel {entry.Key.Second} ratio " +
+                    entry.Value.SecondRatio.ToString("0.###", CultureInfo.InvariantCulture) +
+                    $"); assigned reel {entry.Key.First} as the nearer, never " +
+                    "picked silently.");
+            }
+            foreach (KeyValuePair<int, int> entry in onTheBoundary.OrderBy(p => p.Key))
+            {
+                notes.Add(
+                    $"Routing (RT)[{w}]: {entry.Value} frame(s) ride reel " +
+                    $"{entry.Key} within " +
+                    RouteOwnerAmbiguityMargin.ToString("0.##", CultureInfo.InvariantCulture) +
+                    " of its own outer radius and were given to it -- expected " +
+                    "of a wire wrapped on a drum, whose wrap sits at that " +
+                    "drum's own surface by construction; tallied here rather " +
+                    "than warned frame by frame.");
+            }
+            if (beyondTheFaces > 0)
+            {
+                notes.Add(
+                    $"Routing (RT)[{w}]: {beyondTheFaces} frame(s) sat inside a " +
+                    "reel's own radius but BEYOND that reel's own end faces, so " +
+                    "the body keeps them -- a reel owns only what lies between " +
+                    "its own faces.");
+            }
         }
         if (classifiedRoutes.Count > 0)
         {
@@ -537,6 +661,24 @@ internal static class MechanismCollector
         if (mSInverse is not null)
         {
             MechanismFrame s0 = wire0!.Route[0];
+
+            // THE SEVEN AUTHORED CORRESPONDENCES, BOTH ENDS OF EACH WIRE.
+            // Route[0] is the NET END by his own ruling (R2), so the first
+            // frames are the set a placement branch's own planes should
+            // match; the last frames are carried only so that a route
+            // threaded the other way round can be RECOGNISED and named
+            // rather than left looking like broken geometry.
+            var sourceFirstOrigins = new List<double[]?>(PlacementGroupSize);
+            var sourceLastOrigins = new List<double[]?>(PlacementGroupSize);
+            for (int i = 0; i < PlacementGroupSize; i++)
+            {
+                bool present =
+                    routingByIndex.TryGetValue(i, out MechanismRoutingWire? wireI) &&
+                    wireI.Route.Count > 0;
+                sourceFirstOrigins.Add(present ? wireI!.Route[0].Origin : null);
+                sourceLastOrigins.Add(present ? wireI!.Route[wireI.Route.Count - 1].Origin : null);
+            }
+
             foreach (MechanismPlacementBranch branch in placements
                 .OrderBy(b => b.Id.Side).ThenBy(b => b.Id.Group))
             {
@@ -572,16 +714,12 @@ internal static class MechanismCollector
                     t0.Origin[1] - linearOs[1],
                     t0.Origin[2] - linearOs[2],
                 };
+                // The reflection is NAMED once the transform is settled, not
+                // here: a placement that falls back to the origin fit below
+                // can legitimately change handedness, and a note written
+                // before that would be stale.
                 double det = Determinant3(linear);
                 bool reflected = det < 0.0;
-                if (reflected)
-                {
-                    notes.Add(
-                        $"Placement (PL) {label}: derived transform is A " +
-                        "REFLECTION (determinant " +
-                        det.ToString("0.###", CultureInfo.InvariantCulture) +
-                        "); expected for a mirrored side, not an error.");
-                }
 
                 // VALIDATE WITH THE OTHER SIX: the redundancy that makes a
                 // bad placement plane show as a number, never a silently
@@ -619,13 +757,126 @@ internal static class MechanismCollector
                         $" m across {validated} of 6 other wire(s).");
                     if (maxResidual > MaxResidualWarnMetres)
                     {
-                        warnings.Add(
-                            $"Placement (PL) {label}: max residual " +
-                            maxResidual.ToString("0.######", CultureInfo.InvariantCulture) +
-                            $" m exceeds the {MaxResidualWarnMetres} m " +
-                            "door-guard -- this placement plane set may " +
-                            "not be well-founded.");
+                        // WHY THE SETS DISAGREE, NOT JUST THAT THEY DO.
+                        // A residual alone cannot tell a wrongly oriented
+                        // placement from a wrongly ordered one or from
+                        // planes authored against different features -- all
+                        // three read as "about a metre out". Edge lengths
+                        // can, because they survive any placement: matched
+                        // pairwise they separate orientation from the rest,
+                        // and sorted they separate a reordering from a
+                        // genuine shape difference.
+                        var targetOrigins = new List<double[]?>(PlacementGroupSize);
+                        foreach (MechanismPlacementPlane plane in branch.Planes)
+                            targetOrigins.Add(plane.Origin);
+
+                        double ordered = OrderedShapeMismatch(sourceFirstOrigins, targetOrigins);
+                        double unordered = UnorderedShapeMismatch(sourceFirstOrigins, targetOrigins);
+                        double orderedFromLast = OrderedShapeMismatch(sourceLastOrigins, targetOrigins);
+                        string Metres(double value) =>
+                            value.ToString("0.######", CultureInfo.InvariantCulture);
+
+                        if (ordered <= ShapeCongruenceToleranceMetres)
+                        {
+                            (double[][] Linear, double[] Translation, double Residual)? fitted =
+                                FitTransformFromOrigins(sourceFirstOrigins, targetOrigins);
+                            if (fitted is not null && fitted.Value.Residual < maxResidual)
+                            {
+                                warnings.Add(
+                                    $"Placement (PL) {label}: the seven wire " +
+                                    "first-frames and the seven placement " +
+                                    "planes ARE THE SAME SHAPE (worst edge " +
+                                    "disagreement " + Metres(ordered) + " m), so " +
+                                    "nothing is mis-ordered or mis-picked -- " +
+                                    "the whole " + Metres(maxResidual) + " m " +
+                                    "residual was ORIENTATION: placement plane " +
+                                    "[0]'s own X/Y do not correspond to Routing " +
+                                    "(RT)[0] frame [0]'s own X/Y, and the " +
+                                    "settled maths derive the instance from " +
+                                    "that one pair. THE TRANSFORM WAS REFITTED " +
+                                    "from all seven origins instead, residual " +
+                                    "now " + Metres(fitted.Value.Residual) + " m; " +
+                                    "the instance is placed by the refit, not " +
+                                    "by plane [0]'s axes.");
+                                linear = fitted.Value.Linear;
+                                translation = fitted.Value.Translation;
+                                maxResidual = fitted.Value.Residual;
+                                det = Determinant3(linear);
+                                reflected = det < 0.0;
+                            }
+                            else
+                            {
+                                warnings.Add(
+                                    $"Placement (PL) {label}: the seven wire " +
+                                    "first-frames and the seven placement " +
+                                    "planes are the same shape (worst edge " +
+                                    "disagreement " + Metres(ordered) + " m), so " +
+                                    "the " + Metres(maxResidual) + " m residual " +
+                                    "is orientation alone -- but no better " +
+                                    "transform could be fitted from the origins " +
+                                    "(they are collinear, or too few wires " +
+                                    "carry frames). Plane [0]'s own axes still " +
+                                    "place this instance; give plane [0] the " +
+                                    "same X/Y as Routing (RT)[0] frame [0].");
+                            }
+                        }
+                        else if (unordered <= ShapeCongruenceToleranceMetres)
+                        {
+                            warnings.Add(
+                                $"Placement (PL) {label}: the seven placement " +
+                                "planes carry THE SAME EDGE LENGTHS as the " +
+                                "seven wire first-frames (worst disagreement " +
+                                Metres(unordered) + " m) but NOT PAIRED THE SAME " +
+                                "WAY (worst matched-pair disagreement " +
+                                Metres(ordered) + " m): the two branches are in " +
+                                "DIFFERENT ORDERS. Placement plane [i] must " +
+                                "correspond to Routing (RT)[i]; reorder one " +
+                                "branch to match the other. Nothing is refitted " +
+                                "here -- a fit onto the wrong pairing would " +
+                                "place a plausible, wrong machine.");
+                        }
+                        else if (orderedFromLast <= ShapeCongruenceToleranceMetres)
+                        {
+                            warnings.Add(
+                                $"Placement (PL) {label}: the placement planes " +
+                                "match each wire's LAST routing frame, not its " +
+                                "first (worst edge disagreement " +
+                                Metres(orderedFromLast) + " m against " +
+                                Metres(ordered) + " m for the first frames): " +
+                                "these routes are threaded the other way round. " +
+                                "Route[0] is the NET END by your own ruling, so " +
+                                "reverse the routing lists. Nothing is refitted " +
+                                "here.");
+                        }
+                        else
+                        {
+                            warnings.Add(
+                                $"Placement (PL) {label}: max residual " +
+                                Metres(maxResidual) +
+                                $" m exceeds the {MaxResidualWarnMetres} m " +
+                                "door-guard, and the two seven-point sets are " +
+                                "NOT THE SAME SHAPE by any pairing (worst " +
+                                "matched-pair disagreement " + Metres(ordered) +
+                                " m, worst sorted-edge disagreement " +
+                                Metres(unordered) + " m, and " +
+                                Metres(orderedFromLast) + " m against the wires' " +
+                                "last frames). The placement planes and the " +
+                                "wire ends are different geometry -- authored " +
+                                "against different features, or on a different " +
+                                "mechanism than the one wired here. No " +
+                                "transform can satisfy all seven; this " +
+                                "placement is not well-founded.");
+                        }
                     }
+                }
+
+                if (reflected)
+                {
+                    notes.Add(
+                        $"Placement (PL) {label}: derived transform is A " +
+                        "REFLECTION (determinant " +
+                        det.ToString("0.###", CultureInfo.InvariantCulture) +
+                        "); expected for a mirrored side, not an error.");
                 }
 
                 instancesOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -866,6 +1117,37 @@ internal static class MechanismCollector
     }
 
     /// <summary>
+    /// A REEL'S OWN NEIGHBOURHOOD, MEASURED ONCE: its axis direction, the
+    /// furthest any of its OWN mesh vertices sits from its OWN axis line
+    /// (the radius), and how far those vertices reach ALONG that line from
+    /// the axis frame's own origin (the two end faces).
+    ///
+    /// Measured once per reel rather than once per reel PER FRAME, which is
+    /// what the first cut did: his own mechanism walks 1,400 routing frames
+    /// against ten reels, so re-walking every reel mesh inside that loop
+    /// cost several thousand mesh traversals for an answer that never
+    /// changes.
+    /// </summary>
+    internal readonly record struct ReelNeighbourhood(
+        double[] AxisOrigin, double[] AxisDirection, double Radius, double AxialMin, double AxialMax);
+
+    /// <summary>
+    /// One routing frame's ownership, decided: who owns it, who was nearest
+    /// whether they own it or not, and the runners-up the caller needs to
+    /// report an ambiguity honestly without re-deriving any of it.
+    /// </summary>
+    internal readonly record struct RouteOwnerVerdict(
+        string Owner,
+        int OwnerReel,
+        int NearestReel,
+        double NearestRatio,
+        double NearestDistance,
+        double NearestRadius,
+        int SecondReel,
+        double SecondRatio,
+        bool AxiallyExcluded);
+
+    /// <summary>
     /// A REEL'S OWN RADIAL NEIGHBOURHOOD: the furthest any of its OWN mesh
     /// vertices sits from its OWN axis line, measured perpendicular to
     /// that axis. Floored, like spoolRadius, so an empty or degenerate
@@ -885,87 +1167,127 @@ internal static class MechanismCollector
     }
 
     /// <summary>
-    /// THE OWNERSHIP RULE (7c8db59, unchanged): a routing frame belongs to
-    /// the reel whose own radial neighbourhood it sits nearest, relative to
-    /// that reel's own size. WARNS, NEVER GUESSES SILENTLY, on a frame
-    /// close to the 1.0 boundary or near two reels at once.
+    /// A REEL'S OWN END FACES: how far its OWN mesh vertices reach along
+    /// its OWN axis, signed from the axis frame's own origin. An empty mesh
+    /// collapses to a point at that origin, which the ownership rule then
+    /// treats as a reel with no length -- it owns nothing, which is the
+    /// honest answer for a reel with no geometry.
     /// </summary>
-    internal static (string Owner, int OwnerReel, string? Ambiguity) ClassifyRouteFrameOwner(
-        MechanismFrame frame, IReadOnlyList<MechanismReelEntry> reels)
+    internal static (double Min, double Max) ReelAxialExtent(MechanismMesh mesh, MechanismFrame axis)
+    {
+        double[] direction = NormalizeOrZ(CrossProduct(axis.XAxis, axis.YAxis));
+        double min = double.PositiveInfinity;
+        double max = double.NegativeInfinity;
+        foreach (double[] vertex in mesh.Vertices)
+        {
+            double along = AlongAxis(vertex, axis.Origin, direction);
+            if (along < min)
+                min = along;
+            if (along > max)
+                max = along;
+        }
+        return double.IsPositiveInfinity(min) ? (0.0, 0.0) : (min, max);
+    }
+
+    /// <summary>Where a point sits along a line, signed, given a UNIT direction.</summary>
+    internal static double AlongAxis(double[] point, double[] lineOrigin, double[] lineDirectionUnit) =>
+        ((point[0] - lineOrigin[0]) * lineDirectionUnit[0]) +
+        ((point[1] - lineOrigin[1]) * lineDirectionUnit[1]) +
+        ((point[2] - lineOrigin[2]) * lineDirectionUnit[2]);
+
+    /// <summary>Every reel's own neighbourhood, measured once, in reel order.</summary>
+    internal static ReelNeighbourhood[] BuildReelNeighbourhoods(IReadOnlyList<MechanismReelEntry> reels)
+    {
+        var built = new ReelNeighbourhood[reels.Count];
+        for (int i = 0; i < reels.Count; i++)
+        {
+            double[] direction = NormalizeOrZ(
+                CrossProduct(reels[i].Axis.XAxis, reels[i].Axis.YAxis));
+            (double axialMin, double axialMax) = ReelAxialExtent(reels[i].Mesh, reels[i].Axis);
+            built[i] = new ReelNeighbourhood(
+                reels[i].Axis.Origin,
+                direction,
+                ReelRadialExtent(reels[i].Mesh, reels[i].Axis),
+                axialMin,
+                axialMax);
+        }
+        return built;
+    }
+
+    /// <summary>
+    /// THE OWNERSHIP RULE: a routing frame belongs to the reel whose own
+    /// neighbourhood it sits nearest, relative to that reel's own size --
+    /// inside its radius AND between its own end faces, since the radial
+    /// test alone measures an infinite line (see
+    /// <see cref="RouteOwnerAxialMarginFraction"/>). Decides only; the
+    /// caller does the reporting, so that a wire wrapped on a drum -- which
+    /// sits at that drum's own boundary by construction, on every one of
+    /// its frames -- is tallied once rather than warned about a hundred
+    /// times over.
+    /// </summary>
+    internal static RouteOwnerVerdict ClassifyRouteFrameOwner(
+        MechanismFrame frame, IReadOnlyList<ReelNeighbourhood> reels)
     {
         if (reels.Count == 0)
-            return (RouteOwnerBody, NoOwnerReel, null);
+        {
+            return new RouteOwnerVerdict(
+                RouteOwnerBody, NoOwnerReel, NoOwnerReel,
+                double.PositiveInfinity, 0.0, 0.0,
+                NoOwnerReel, double.PositiveInfinity, false);
+        }
 
         double bestRatio = double.PositiveInfinity;
-        int bestIndex = -1;
+        int bestIndex = NoOwnerReel;
         double bestDistance = 0.0;
         double bestRadius = 0.0;
         double secondRatio = double.PositiveInfinity;
-        int secondIndex = -1;
-        double secondDistance = 0.0;
-        double secondRadius = 0.0;
+        int secondIndex = NoOwnerReel;
+        bool axiallyExcluded = false;
 
         for (int i = 0; i < reels.Count; i++)
         {
-            double[] axisDirection = NormalizeOrZ(
-                CrossProduct(reels[i].Axis.XAxis, reels[i].Axis.YAxis));
+            ReelNeighbourhood reel = reels[i];
             double distance = PerpendicularDistanceToLine(
-                frame.Origin, reels[i].Axis.Origin, axisDirection);
-            double radius = ReelRadialExtent(reels[i].Mesh, reels[i].Axis);
-            double ratio = distance / radius;
+                frame.Origin, reel.AxisOrigin, reel.AxisDirection);
+            double ratio = distance / reel.Radius;
+
+            // BETWEEN ITS OWN FACES, or it is not on this reel at all.
+            double along = AlongAxis(frame.Origin, reel.AxisOrigin, reel.AxisDirection);
+            double axialMargin = RouteOwnerAxialMarginFraction * reel.Radius;
+            if (along < reel.AxialMin - axialMargin || along > reel.AxialMax + axialMargin)
+            {
+                if (ratio <= 1.0)
+                    axiallyExcluded = true;
+                continue;
+            }
+
             if (ratio < bestRatio)
             {
                 secondRatio = bestRatio;
                 secondIndex = bestIndex;
-                secondDistance = bestDistance;
-                secondRadius = bestRadius;
                 bestRatio = ratio;
                 bestIndex = i;
                 bestDistance = distance;
-                bestRadius = radius;
+                bestRadius = reel.Radius;
             }
             else if (ratio < secondRatio)
             {
                 secondRatio = ratio;
                 secondIndex = i;
-                secondDistance = distance;
-                secondRadius = radius;
             }
         }
 
-        bool ownedByReel = bestRatio <= 1.0;
-        string owner = ownedByReel ? RouteOwnerReel : RouteOwnerBody;
-        int ownerReel = ownedByReel ? bestIndex : NoOwnerReel;
-
-        bool nearBoundary = Math.Abs(bestRatio - 1.0) <= RouteOwnerAmbiguityMargin;
-        bool nearTwoReels = secondIndex >= 0 && secondRatio <= 1.0 + RouteOwnerAmbiguityMargin;
-        string? ambiguity = null;
-        if (nearBoundary || nearTwoReels)
-        {
-            var pieces = new List<string>();
-            if (nearBoundary)
-            {
-                pieces.Add(
-                    $"reel {bestIndex} at distance " +
-                    bestDistance.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " against its own radius " +
-                    bestRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " (ratio " + bestRatio.ToString("0.###", CultureInfo.InvariantCulture) +
-                    ", within " + RouteOwnerAmbiguityMargin.ToString("0.##", CultureInfo.InvariantCulture) +
-                    " of the 1.0 boundary)");
-            }
-            if (nearTwoReels)
-            {
-                pieces.Add(
-                    $"also within reach of reel {secondIndex} at distance " +
-                    secondDistance.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " against its own radius " +
-                    secondRadius.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " (ratio " + secondRatio.ToString("0.###", CultureInfo.InvariantCulture) + ")");
-            }
-            ambiguity = string.Join("; ", pieces);
-        }
-        return (owner, ownerReel, ambiguity);
+        bool ownedByReel = bestIndex >= 0 && bestRatio <= 1.0;
+        return new RouteOwnerVerdict(
+            ownedByReel ? RouteOwnerReel : RouteOwnerBody,
+            ownedByReel ? bestIndex : NoOwnerReel,
+            bestIndex,
+            bestRatio,
+            bestDistance,
+            bestRadius,
+            secondIndex,
+            secondRatio,
+            axiallyExcluded);
     }
 
     /// <summary>
@@ -1060,6 +1382,241 @@ internal static class MechanismCollector
     };
 
     internal static double[] Column3(double[][] m, int col) => new[] { m[0][col], m[1][col], m[2][col] };
+
+    internal static double[][] Transpose3(double[][] m) => new[]
+    {
+        new[] { m[0][0], m[1][0], m[2][0] },
+        new[] { m[0][1], m[1][1], m[2][1] },
+        new[] { m[0][2], m[1][2], m[2][2] },
+    };
+
+    /// <summary>
+    /// HOW FAR TWO POINT SETS ARE FROM BEING THE SAME SHAPE, pair by
+    /// matching pair: the worst disagreement between the distance from
+    /// a[i] to a[j] and the distance from b[i] to b[j], over every pair
+    /// BOTH sets carry. Placement-free by construction -- edge lengths do
+    /// not care where or how a set is placed, or whether it is mirrored --
+    /// so this separates "the same seven points, wrongly oriented" from
+    /// "not the same seven points at all", which a residual alone cannot.
+    /// </summary>
+    internal static double OrderedShapeMismatch(
+        IReadOnlyList<double[]?> a, IReadOnlyList<double[]?> b)
+    {
+        double worst = 0.0;
+        int count = Math.Min(a.Count, b.Count);
+        for (int i = 0; i < count; i++)
+        {
+            if (a[i] is null || b[i] is null)
+                continue;
+            for (int j = i + 1; j < count; j++)
+            {
+                if (a[j] is null || b[j] is null)
+                    continue;
+                double gap = Math.Abs(Distance(a[i]!, a[j]!) - Distance(b[i]!, b[j]!));
+                if (gap > worst)
+                    worst = gap;
+            }
+        }
+        return worst;
+    }
+
+    /// <summary>
+    /// The same measure with the PAIRING THROWN AWAY: both sets' own edge
+    /// lengths sorted, then compared in order. Small here while
+    /// <see cref="OrderedShapeMismatch"/> is large means the two sets are
+    /// the same shape carrying the same edges -- just not matched up the
+    /// same way, which is what a wrongly ordered branch looks like.
+    /// </summary>
+    internal static double UnorderedShapeMismatch(
+        IReadOnlyList<double[]?> a, IReadOnlyList<double[]?> b)
+    {
+        var left = new List<double>();
+        var right = new List<double>();
+        int count = Math.Min(a.Count, b.Count);
+        for (int i = 0; i < count; i++)
+        {
+            if (a[i] is null || b[i] is null)
+                continue;
+            for (int j = i + 1; j < count; j++)
+            {
+                if (a[j] is null || b[j] is null)
+                    continue;
+                left.Add(Distance(a[i]!, a[j]!));
+                right.Add(Distance(b[i]!, b[j]!));
+            }
+        }
+        if (left.Count == 0)
+            return double.PositiveInfinity;
+        left.Sort();
+        right.Sort();
+        double worst = 0.0;
+        for (int k = 0; k < left.Count; k++)
+        {
+            double gap = Math.Abs(left[k] - right[k]);
+            if (gap > worst)
+                worst = gap;
+        }
+        return worst;
+    }
+
+    /// <summary>
+    /// An orthonormal basis founded on THREE POINTS: X along the first
+    /// offset, Y the second offset's own component across it, Z their cross
+    /// product. Null when the three are coincident or collinear, which
+    /// founds no basis at all.
+    /// </summary>
+    internal static double[][]? OrthonormalBasisFromPoints(
+        double[] origin, double[] alongX, double[] inPlane)
+    {
+        double[] u =
+        {
+            alongX[0] - origin[0], alongX[1] - origin[1], alongX[2] - origin[2],
+        };
+        double lengthU = Math.Sqrt((u[0] * u[0]) + (u[1] * u[1]) + (u[2] * u[2]));
+        if (lengthU < 1.0e-12)
+            return null;
+        double[] e1 = { u[0] / lengthU, u[1] / lengthU, u[2] / lengthU };
+
+        double[] v =
+        {
+            inPlane[0] - origin[0], inPlane[1] - origin[1], inPlane[2] - origin[2],
+        };
+        double along = (v[0] * e1[0]) + (v[1] * e1[1]) + (v[2] * e1[2]);
+        double[] w =
+        {
+            v[0] - (along * e1[0]), v[1] - (along * e1[1]), v[2] - (along * e1[2]),
+        };
+        double lengthW = Math.Sqrt((w[0] * w[0]) + (w[1] * w[1]) + (w[2] * w[2]));
+        if (lengthW < 1.0e-12)
+            return null;
+        double[] e2 = { w[0] / lengthW, w[1] / lengthW, w[2] / lengthW };
+        return BasisFromColumns(e1, e2, CrossProduct(e1, e2));
+    }
+
+    /// <summary>
+    /// THE FALLBACK PLACEMENT FIT, founded on the seven ORIGINS rather than
+    /// on one authored plane's own axes.
+    ///
+    /// WHY IT EXISTS (2026-09-08, his own machine): the settled maths derive
+    /// the whole instance transform from ONE correspondence -- Routing
+    /// (RT)[0]'s own first frame against placement plane [0] -- so the
+    /// instance inherits that one plane's own X and Y. A routing frame's own
+    /// X and Y spin freely about the wire's tangent (a perp-frame on a curve
+    /// picks them arbitrarily), and an anchor plane's own axes are whatever
+    /// they were authored as. There is no reason for the two to agree, and
+    /// when they do not, every one of the other six wires lands rotated
+    /// about plane [0] -- which on his machine read as 1.36 m of residual
+    /// while all seven origins sat exactly where they belong.
+    ///
+    /// The seven origins carry that orientation redundantly and without
+    /// convention, so they can found it instead. Both handednesses are
+    /// tried and the better kept, which means a genuinely mirrored side
+    /// still yields a genuine reflection -- derived from where its own
+    /// anchors sit rather than from a hand-authored left-handed plane.
+    ///
+    /// Returns null when fewer than three correspondences exist or when the
+    /// points are effectively collinear, since neither founds an
+    /// orientation. The caller keeps the authored-axis transform then.
+    /// </summary>
+    internal static (double[][] Linear, double[] Translation, double Residual)? FitTransformFromOrigins(
+        IReadOnlyList<double[]?> source, IReadOnlyList<double[]?> target)
+    {
+        var shared = new List<int>();
+        int count = Math.Min(source.Count, target.Count);
+        for (int i = 0; i < count; i++)
+        {
+            if (source[i] is not null && target[i] is not null)
+                shared.Add(i);
+        }
+        if (shared.Count < 3)
+            return null;
+
+        int baseIndex = shared[0];
+        double[] sourceBase = source[baseIndex]!;
+        double[] targetBase = target[baseIndex]!;
+
+        // The furthest correspondence founds the first direction.
+        int firstIndex = -1;
+        double spread = 0.0;
+        foreach (int i in shared)
+        {
+            if (i == baseIndex)
+                continue;
+            double length = Distance(source[i]!, sourceBase);
+            if (length > spread)
+            {
+                spread = length;
+                firstIndex = i;
+            }
+        }
+        if (firstIndex < 0 || spread <= 0.0)
+            return null;
+
+        // The most OFF-axis correspondence founds the second, so the basis
+        // is as well conditioned as the seven points allow.
+        int secondIndex = -1;
+        double bestReach = 0.0;
+        double[] axis = NormalizeOrZ(new[]
+        {
+            source[firstIndex]![0] - sourceBase[0],
+            source[firstIndex]![1] - sourceBase[1],
+            source[firstIndex]![2] - sourceBase[2],
+        });
+        foreach (int i in shared)
+        {
+            if (i == baseIndex || i == firstIndex)
+                continue;
+            double reach = PerpendicularDistanceToLine(source[i]!, sourceBase, axis);
+            if (reach > bestReach)
+            {
+                bestReach = reach;
+                secondIndex = i;
+            }
+        }
+        if (secondIndex < 0 || bestReach < CollinearFitFraction * spread)
+            return null;
+
+        double[][]? sourceBasis = OrthonormalBasisFromPoints(
+            sourceBase, source[firstIndex]!, source[secondIndex]!);
+        double[][]? targetBasis = OrthonormalBasisFromPoints(
+            targetBase, target[firstIndex]!, target[secondIndex]!);
+        if (sourceBasis is null || targetBasis is null)
+            return null;
+
+        double[][] sourceBasisTransposed = Transpose3(sourceBasis);
+        double[] f1 = Column3(targetBasis, 0);
+        double[] f2 = Column3(targetBasis, 1);
+        double[] f3 = Column3(targetBasis, 2);
+
+        (double[][] Linear, double[] Translation, double Residual)? best = null;
+        foreach (double handedness in new[] { 1.0, -1.0 })
+        {
+            double[][] handed = BasisFromColumns(
+                f1, f2, new[] { handedness * f3[0], handedness * f3[1], handedness * f3[2] });
+            double[][] linear = Multiply3(handed, sourceBasisTransposed);
+            double[] mapped = MultiplyVector3(linear, sourceBase);
+            double[] translation =
+            {
+                targetBase[0] - mapped[0],
+                targetBase[1] - mapped[1],
+                targetBase[2] - mapped[2],
+            };
+            double residual = 0.0;
+            foreach (int i in shared)
+            {
+                double[] predicted = MultiplyVector3(linear, source[i]!);
+                predicted[0] += translation[0];
+                predicted[1] += translation[1];
+                predicted[2] += translation[2];
+                double gap = Distance(predicted, target[i]!);
+                if (gap > residual)
+                    residual = gap;
+            }
+            if (best is null || residual < best.Value.Residual)
+                best = (linear, translation, residual);
+        }
+        return best;
+    }
 }
 
 /// <summary>
