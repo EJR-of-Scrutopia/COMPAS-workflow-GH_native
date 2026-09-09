@@ -1764,19 +1764,35 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         directory.mkdir(parents=True, exist_ok=True)
         if frame == 1:
             # A shorter re-recording must not inherit the previous take's
-            # tail: ffmpeg globs frame-*.png in numeric order and stitches
-            # whatever is on disk, so a stale frame-000047.png from a longer
-            # first take would silently survive into the new video.
-            for stale in directory.glob("frame-*.png"):
-                stale.unlink()
+            # tail: ffmpeg reads frame-000001 upward and stitches whatever
+            # is on disk, so a stale frame-000047 from a longer first take
+            # would silently survive into the new video. BOTH suffixes go,
+            # or a take that changed format would stitch the old one's
+            # frames instead of failing.
+            for pattern in ("frame-*.png", "frame-*.jpg"):
+                for stale in directory.glob(pattern):
+                    stale.unlink()
         body = await request.body()
-        (directory / "frame-{:06d}.png".format(frame)).write_bytes(body)
+        # The extension follows the BYTES, not the caller's word for them.
+        # ffmpeg chooses its decoder from the file name, so a JPEG written
+        # as .png stitches into nothing and says very little about why.
+        suffix = ".jpg" if body[:3] == b"\xff\xd8\xff" else ".png"
+        (directory / "frame-{:06d}{}".format(frame, suffix)).write_bytes(body)
         return {"frame": frame}
 
     @app.post("/api/frames/{run_id}/stitch")
     def stitch(run_id: str, fps: int = Query(60)):
         directory = frames_dir(run_id)
-        if not directory.is_dir() or not any(directory.glob("frame-*.png")):
+        # Whichever format the take actually wrote. Frames are JPEG from
+        # 2026-09-09, but a folder left by an older take is still stitchable
+        # rather than reported as empty.
+        suffix = None
+        if directory.is_dir():
+            for candidate in (".jpg", ".png"):
+                if any(directory.glob("frame-*" + candidate)):
+                    suffix = candidate
+                    break
+        if suffix is None:
             raise HTTPException(404, "no frames recorded for run {}".format(run_id))
         if not _ffmpeg_present():
             raise HTTPException(
@@ -1784,7 +1800,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         video = directory.parent / "recording.mp4"
         completed = subprocess.run(
             ["ffmpeg", "-y", "-framerate", str(fps),
-             "-i", str(directory / "frame-%06d.png"),
+             "-i", str(directory / ("frame-%06d" + suffix)),
              "-pix_fmt", "yuv420p", str(video)],
             capture_output=True, text=True,
         )

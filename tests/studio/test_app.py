@@ -375,6 +375,116 @@ def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_pat
     assert client.post("/api/frames/nonsense/stitch").status_code == 404
 
 
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def test_a_frame_is_named_after_its_own_bytes(tmp_path, monkeypatch):
+    """Frames are JPEG from 2026-09-09 -- Param's take was running at over
+    ten seconds a frame, and PNG's lossless deflate on a gravel ground was
+    most of it.
+
+    The extension follows the BYTES rather than the caller's word for
+    them, because ffmpeg chooses its decoder from the file name: a JPEG
+    written as .png stitches into nothing and says very little about why.
+    """
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    # The study directory has to exist before frames can land in it.
+    client.get("/api/studies/Tiny/bundle", params={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    frames = studies / "tiny" / "studio" / "frames"
+    post = lambda n, body: client.post(
+        "/api/frames/study-tiny?frame={}".format(n), content=body,
+        headers={"content-type": "application/octet-stream"})
+
+    assert post(1, JPEG_MAGIC + b" fake jpeg").status_code == 200
+    assert (frames / "frame-000001.jpg").is_file()
+    assert not (frames / "frame-000001.png").exists()
+    # Anything that is not a JPEG keeps the old name, so an older client
+    # against a newer server still records.
+    assert post(2, b"\x89PNG fake bytes").status_code == 200
+    assert (frames / "frame-000002.png").is_file()
+
+
+def test_frame_one_clears_the_other_format_too(tmp_path, monkeypatch):
+    """A take that changed format must not stitch the previous take's
+    frames. Clearing only the matching suffix would leave a full set of
+    PNGs beside one JPEG, and the stitch would pick the PNGs -- silently
+    producing the OLD video from a recording that appeared to succeed."""
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    # The study directory has to exist before frames can land in it.
+    client.get("/api/studies/Tiny/bundle", params={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    frames = studies / "tiny" / "studio" / "frames"
+    post = lambda n, body: client.post(
+        "/api/frames/study-tiny?frame={}".format(n), content=body,
+        headers={"content-type": "application/octet-stream"})
+
+    for n in (1, 2, 3):
+        assert post(n, b"\x89PNG old take").status_code == 200
+    assert len(list(frames.glob("frame-*.png"))) == 3
+
+    assert post(1, JPEG_MAGIC + b" new take").status_code == 200
+    assert sorted(p.name for p in frames.glob("frame-*")) == ["frame-000001.jpg"], (
+        "the previous take's PNGs go, not just its JPEGs")
+
+    # AND THE OTHER WAY ROUND, which is the direction that actually bites
+    # now that JPEG is the default: a long JPEG take followed by a short
+    # PNG one would otherwise stitch the old JPEGs, because the stitch
+    # prefers .jpg when any are present.
+    for n in (2, 3, 4):
+        assert post(n, JPEG_MAGIC + b" jpeg take").status_code == 200
+    assert len(list(frames.glob("frame-*.jpg"))) == 4
+    assert post(1, b"\x89PNG later take").status_code == 200
+    assert sorted(p.name for p in frames.glob("frame-*")) == ["frame-000001.png"], (
+        "the previous take's JPEGs go too")
+
+
+def test_the_stitch_reads_whichever_format_the_take_wrote(tmp_path, monkeypatch):
+    """ffmpeg is handed a numbered pattern, not a glob, so the suffix has
+    to be chosen from what is actually on disk. A folder left by an older
+    PNG take is still stitchable rather than reported as empty."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    # The study directory has to exist before frames can land in it.
+    client.get("/api/studies/Tiny/bundle", params={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    frames = studies / "tiny" / "studio" / "frames"
+    seen = {}
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(args, **kwargs):
+        seen["input"] = args[args.index("-i") + 1]
+        Path(args[-1]).write_bytes(b"mp4")
+        return Done()
+
+    monkeypatch.setattr(app_module, "_ffmpeg_present", lambda: True)
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+
+    # Nothing on disk is still a 404, not a stitch of nothing.
+    assert client.post("/api/frames/study-tiny/stitch").status_code == 404
+
+    client.post("/api/frames/study-tiny?frame=1", content=JPEG_MAGIC + b" x",
+                headers={"content-type": "application/octet-stream"})
+    assert client.post("/api/frames/study-tiny/stitch").status_code == 200
+    assert seen["input"].endswith("frame-%06d.jpg"), seen["input"]
+
+    # An older take's folder, PNG only.
+    for path in frames.glob("frame-*"):
+        path.unlink()
+    (frames / "frame-000001.png").write_bytes(b"\x89PNG")
+    assert client.post("/api/frames/study-tiny/stitch").status_code == 200
+    assert seen["input"].endswith("frame-%06d.png"), seen["input"]
+
+
 def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
     client, studies = make_client(tmp_path, monkeypatch)
     client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})

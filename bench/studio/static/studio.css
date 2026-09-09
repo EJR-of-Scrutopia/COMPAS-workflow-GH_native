@@ -993,6 +993,11 @@ body.panel-collapsed #legend { right: var(--s4); }
   border: 1px solid var(--line); border-radius: var(--radius); }
 #shelf-actions button:hover:not(:disabled) { border-color: var(--line-lit); }
 #shelf-actions button:disabled { color: var(--ink-3); cursor: default; }
+/* The record tile while a take runs: filled red at rest, like the panel's
+   own button, because stopping is the only thing it does then. */
+#shelf-actions button.recording,
+#shelf-actions button.recording:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
 /* The drawer's Edit toggle lights the same way the panel's does, since
    it is the same mode wearing two faces. */
 #shelf-actions #shelf-prop-edit.active { background: var(--accent-bg);

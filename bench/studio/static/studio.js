@@ -10137,6 +10137,19 @@ function applyTimeline(t) {
 }
 
 // ---------- record mode ----------
+// Param, on a take running at over ten seconds a frame: "i want high
+// quality but its taking 10seconds plus a frame which is too long."
+//
+// The frames are JPEG at 0.95, his ruling. PNG is lossless deflate, and
+// his ground is fine gravel: high-frequency noise is the WORST case for
+// it, because it barely compresses, so the encoder does maximum work for
+// a maximum-size file. That is also why it grew worse towards the end --
+// the opening frames are smooth sky and compress in an instant. Nothing
+// is lost that survives the stitch: ffmpeg re-encodes every take to
+// H.264 4:2:0, which throws away far more than 0.95 does.
+const RECORD_MIME = "image/jpeg";
+const RECORD_QUALITY = 0.95;
+
 async function recordAnimation() {
   const status = document.getElementById("record-status");
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
@@ -10150,7 +10163,7 @@ async function recordAnimation() {
   const speed = state.timeline.speed;
   const total = Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at " + recordingFrame().width + "x"
-    + recordingFrame().height + " (a few MB each on disk)";
+    + recordingFrame().height;
   const wasPlaying = state.timeline.playing;
   // F2: a live day cycle must not keep advancing off frame()'s wall clock
   // while the recording also drives it off frameIndex -- two clocks racing
@@ -10174,14 +10187,45 @@ async function recordAnimation() {
   // The chosen frame rides into the take: ratio, FOV and the grade are
   // all camera truths the recording must keep.
   const frame = recordingFrame();
+  // A RECORDING IS MEASURED IN OUTPUT PIXELS. The viewport renders at the
+  // display's own device pixel ratio, and setSize multiplies by it, so on
+  // a 2x screen "1080p" was really a 3840x2160 buffer: four times the
+  // shading, four times the readback and four times the encode, for a
+  // video the button calls 1080p and ffmpeg then wrote at 4K. Pinned to 1
+  // for the take and put back afterwards. Edge quality is unaffected --
+  // it comes from the composer target's 4x MSAA, which is untouched.
+  //
+  // The composer keeps its OWN copy of the ratio, taken when it was
+  // built, so setting it on the renderer alone would leave every pass
+  // still running at the old size.
+  const wasPixelRatio = renderer.getPixelRatio();
+  renderer.setPixelRatio(1);
+  composer.setPixelRatio(1);
   renderer.setSize(frame.width, frame.height, false);
   composer.setSize(frame.width, frame.height);
   camera.aspect = frame.width / frame.height;
   camera.updateProjectionMatrix();
+  // Measured, not guessed at: the next time a take is slow, the log says
+  // which of the three is eating it rather than leaving us to reason.
+  const spent = { render: 0, encode: 0, upload: 0 };
+  const began = performance.now();
   state.recording = true;   // resize() must skip while this is set
   state.recordStop = false;
   paintRecordButton();
   let stopped = -1;
+  // The previous frame's upload, still in flight. Awaiting it AFTER the
+  // next frame has rendered and encoded is what lets the network overlap
+  // the GPU instead of taking its turn after it.
+  let inFlight = null;
+  const settle = async () => {
+    if (!inFlight) return;
+    const pending = inFlight;
+    inFlight = null;
+    const at = performance.now();
+    const response = await pending;
+    spent.upload += performance.now() - at;
+    if (!response.ok) throw new Error("frame upload failed: " + response.status);
+  };
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
       // Param: "if recording and i want to stop theres no way out". Read
@@ -10198,14 +10242,26 @@ async function recordAnimation() {
         applyDayCycle(frameIndex / Math.max(1, total - 1));
         if (state.environmentMode === "sky" && frameIndex % 30 === 0) regenerateEnvironment();
       }
+      let at = performance.now();
       applyTimeline(frameIndex * speed / fps);
       renderView();
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      const response = await fetch(
+      spent.render += performance.now() - at;
+      at = performance.now();
+      const blob = await new Promise(
+        (resolve) => canvas.toBlob(resolve, RECORD_MIME, RECORD_QUALITY));
+      spent.encode += performance.now() - at;
+      // Last frame's upload lands here, having run under this frame's
+      // render and encode.
+      await settle();
+      inFlight = fetch(
         "/api/frames/" + target + "?frame=" + (frameIndex + 1),
         { method: "POST", body: blob });
-      if (!response.ok) throw new Error("frame upload failed: " + response.status);
-      if (frameIndex % 30 === 0) status.textContent = "frame " + frameIndex + " / " + total;
+      if (frameIndex % 30 === 0) {
+        const each = (performance.now() - began) / 1000 / (frameIndex + 1);
+        status.textContent = "frame " + frameIndex + " / " + total
+          + " -- " + each.toFixed(2) + " s each, "
+          + Math.round(each * (total - frameIndex) / 60) + " min left";
+      }
     }
     if (state.dayCycle.record) {
       // F4: persist the recording's own final sun state, the same way
@@ -10215,6 +10271,13 @@ async function recordAnimation() {
       state.sunColourOverride = document.getElementById("sun-colour").value;
       state.sunIntensityOverride = sun.intensity;
     }
+    await settle();                      // the last frame is still in the air
+    const each = (performance.now() - began) / 1000 / Math.max(1, total);
+    logStudio("recording: " + total + " frames at " + frame.width + "x" + frame.height
+      + ", " + each.toFixed(3) + " s each -- render "
+      + Math.round(spent.render / 1000) + " s, encode "
+      + Math.round(spent.encode / 1000) + " s, waiting on uploads "
+      + Math.round(spent.upload / 1000) + " s");
     if (stopped >= 0) {
       // Nothing is stitched: he pressed stop because the take was wrong,
       // and handing him a video of it anyway would be a surprise. The
@@ -10240,6 +10303,8 @@ async function recordAnimation() {
     state.recording = false;
     state.recordStop = false;
     paintRecordButton();
+    renderer.setPixelRatio(wasPixelRatio);
+    composer.setPixelRatio(wasPixelRatio);
     state.timeline.playing = wasPlaying;
     state.dayCycle.playing = wasDayCyclePlaying;
     state.showMode = wasShowMode;
@@ -10252,9 +10317,21 @@ async function recordAnimation() {
 // press he reaches for when he wants out is the one he just pressed.
 function paintRecordButton() {
   const button = document.getElementById("record-button");
-  if (!button) return;
-  button.textContent = state.recording ? "Stop recording" : "Record 1080p";
-  button.classList.toggle("recording", state.recording);
+  if (button) {
+    button.textContent = state.recording ? "Stop recording" : "Record 1080p";
+    button.classList.toggle("recording", state.recording);
+  }
+  // The shelf tile is the one under his hand while a take runs -- the
+  // panel may not even be open. Param: "the stop record needs to happen
+  // on the record tile too not just in the banner menu. show a stop icon
+  // when the recording is going." It already delegates its click to the
+  // button above, so it stops the take; what it lacked was saying so.
+  const tile = document.getElementById("shelf-record");
+  if (tile) {
+    tile.textContent = state.recording ? "\u25a0" : "\u25cf";
+    tile.title = state.recording ? "Stop the recording" : "Record the animation";
+    tile.classList.toggle("recording", state.recording);
+  }
 }
 
 document.getElementById("record-button").addEventListener("click", () => {

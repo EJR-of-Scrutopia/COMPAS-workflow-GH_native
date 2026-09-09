@@ -1167,6 +1167,64 @@ def test_the_client_size_floor_still_mirrors_the_server():
     assert float(client.group(2)) == float(server_max.group(1))
 
 
+def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
+    """Param: "i want high quality but its taking 10seconds plus a frame
+    which is too long ... how do we get this whole recording to finish in
+    5 mins max, but retain best quality we can."
+
+    Three costs stacked. PNG is lossless deflate and his ground is fine
+    gravel -- high-frequency noise is its worst case, so the encoder did
+    maximum work for a maximum-size file, and it grew worse as the vault
+    filled. The buffer was also four times the size the button claimed,
+    because setSize multiplies by the display's device pixel ratio. And
+    nothing overlapped: render, wait for encode, wait for upload, repeat.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    # JPEG at 0.95, his ruling. ffmpeg re-encodes every take to H.264
+    # 4:2:0, which throws away far more than 0.95 does.
+    assert 'const RECORD_MIME = "image/jpeg";' in js
+    assert "const RECORD_QUALITY = 0.95;" in js
+    assert '(resolve) => canvas.toBlob(resolve, RECORD_MIME, RECORD_QUALITY));' in js
+    assert 'canvas.toBlob(resolve, "image/png")' not in js
+
+    # A TRUE 1080p BUFFER. The composer keeps its own copy of the ratio,
+    # taken when it was built, so setting it on the renderer alone would
+    # leave every pass still running at the old size.
+    assert "  renderer.setPixelRatio(1);\n  composer.setPixelRatio(1);" in js
+    assert "    renderer.setPixelRatio(wasPixelRatio);\n" \
+        "    composer.setPixelRatio(wasPixelRatio);" in js, (
+            "and the viewport gets its own density back afterwards")
+
+    # THE UPLOAD OVERLAPS THE NEXT FRAME. The previous frame's request is
+    # awaited only after this one has rendered and encoded.
+    assert "  let inFlight = null;" in js
+    assert "      await settle();\n      inFlight = fetch(" in js
+    assert "    await settle();                      // the last frame is still in the air" in js
+
+    # MEASURED, so the next slow take is answerable from the log.
+    assert "  const spent = { render: 0, encode: 0, upload: 0 };" in js
+    assert '      + ", " + each.toFixed(3) + " s each -- render "' in js
+    # And he can see the estimate while it runs, not only afterwards.
+    assert '          + Math.round(each * (total - frameIndex) / 60) + " min left";' in js
+
+
+def test_the_shelf_record_tile_becomes_a_stop_button():
+    """Param: "the stop record needs to happen on the record tile too not
+    just in the banner menu. show a stop icon when the recording is
+    going." The tile already delegated its click to the panel button, so
+    it always stopped the take; what it lacked was saying so."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert '    tile.textContent = state.recording ? "\\u25a0" : "\\u25cf";' in js, (
+        "a filled square while recording, a filled circle at rest")
+    assert '    tile.classList.toggle("recording", state.recording);' in js
+    assert '    tile.title = state.recording ? "Stop the recording" : "Record the animation";' in js
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
+    assert "#shelf-actions button.recording," in css, (
+        "filled red at rest while a take runs, like the panel's own button")
+
+
 def test_refresh_reloads_the_vault_on_screen_not_just_the_listing():
     """Param: "when i press refresh in the import menu, i expect it to
     refresh the loaded vault too, because i upload a new file and it doesnt
