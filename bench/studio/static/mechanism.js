@@ -35,16 +35,22 @@ export const PART_KINDS = [
   // ONE library set under both frames, because anodising is a coat over
   // the same mill aluminium and the grain should agree across the two;
   // only the darkness of the coat differs, which is what the tint is.
-  // The tint MULTIPLIES the albedo map, so each rendered frame comes out
-  // NO LIGHTER than its own tint value. Frame 2's tint is therefore set
-  // below the 0x8d9298 he was looking at when he said "not as light as it
-  // is now": that makes "darker than the grey he objected to" a guarantee
-  // that holds whatever this library set's albedo turns out to be, rather
-  // than an estimate of it. Frame 1 sits darker again.
+  // The tint MULTIPLIES the albedo map, so the rendered grey is the
+  // PRODUCT of the two, not the tint. The first pass at these numbers
+  // picked them as though they were the finished colours, and since his
+  // metal/aluminium-mill-grey averages 0.3511 linear luminance (measured
+  // from the library's own colour.jpg) frame 1 rendered at about sRGB 46
+  // -- near black, on a part he had asked to be dark GREY. Param: "the
+  // color scheme changed again, needs fixing".
+  //
+  // These are solved backwards from where he wants them to land:
+  //   frame 1  0.3511 * tint -> about sRGB 95,  a dark anodised grey
+  //   frame 2  0.3511 * tint -> about sRGB 125, lighter, and still below
+  //                             the 0x8d9298 (141) he called too light
   { key: "frame1", kind: "frame1", material: "metal/aluminium-mill-grey",
-    tint: 0x4e5155 },
+    tint: 0x9a9da2 },
   { key: "frame2", kind: "frame2", material: "metal/aluminium-mill-grey",
-    tint: 0x83878b },
+    tint: 0xc8cbcf },
   // "the motors are a deep black like a nema motor": a NEMA case is cast
   // and powder coated, near-black rather than pure black, which would
   // read as a hole punched in the render.

@@ -1229,8 +1229,11 @@ def test_the_machine_draws_the_way_he_asked():
     assert "function skinMachine(group, mine) {" in js
     assert "  skinMachine(group, mine);" in build, (
         "a finished build asks for its materials")
-    assert "    ensureLibraryMaterial(key).then((set) => {" in js
-    assert "      if (!set || mine !== machineBuild) return;" in js, (
+    assert "    jobs.push(ensureLibraryMaterial(key).then((set) => {" in js
+    # Counted and SAID, so a part left in the fallback grey is answerable
+    # from the log rather than from a screenshot.
+    assert '      + " library materials"' in js
+    assert "      if (!set || mine !== machineBuild) return null;" in js, (
         "a set landing after a newer build must not repaint the old one")
     assert "  mesh.userData.machineSkin = part.material;" in js, (
         "each mesh remembers the set it asked for, so it can be re-skinned")
@@ -1238,6 +1241,33 @@ def test_the_machine_draws_the_way_he_asked():
     # holds five at once against a cache that used to hold six.
     assert "  for (const key of wanted.keys()) libraryPins.add(key);" in js
     assert "      if (libraryPins.has(oldest)) continue;" in js
+    # Cleared at the TOP of the build, not after it: the wire material
+    # adds its own pin part way through, and clearing afterwards wiped it,
+    # leaving the cables' metal open to eviction on every build.
+    assert "  disposeMachine();\n" in build
+    assert build.index("libraryPins.clear();") < build.index("libraryPins.add(PRINCIPAL_SKIN);"), (
+        "the pins are cleared before anything adds one, not after")
+    # And a name looked up against a list still in flight must WAIT.
+    # Losing that race is why which parts got skinned varied by reload.
+    assert "  if (!state.materialLibrary.length && materialLibraryReady) {\n" \
+        "    await materialLibraryReady;" in js
+    assert "materialLibraryReady = refreshMaterialLibrary().catch(" in js
+    assert '    logStudio("material " + key + " is not in the library folder");' in js, (
+        "and a genuine miss is said out loud rather than returning a "
+        "silent null")
+
+    # THE MOTOR BANK IS STAMPED ONCE WHEN THE BODY IS ALREADY THE BANK.
+    # His single motors body spans 0.965 m along the bank line while the
+    # seven spools span 0.820 m, so stamping it per spool made 49 motors a
+    # machine (Param: "I also have found way too many motors?").
+    assert "const MOTOR_BANK_SHARE = 0.5;" in js
+    assert "  if (hi - lo > span * MOTOR_BANK_SHARE) return [[0, 0, 0]];" in js
+    shifts = _js_function(js, "function motorShifts(model)")
+    assert "      if (d > span) { span = d; axis = [dx / d, dy / d, dz / d]; }" in shifts, (
+        "the bank's line is the two spools furthest apart, since the home "
+        "reel need not be an end one")
+    assert "    const along = v[i] * axis[0] + v[i + 1] * axis[1] + v[i + 2] * axis[2];" in shifts, (
+        "and the body's reach is measured along that line")
     # The anodising tint has to survive the re-skin. Without this the
     # frames arrive in raw mill aluminium the moment the set lands --
     # which would look like the load having failed all over again.
@@ -1256,6 +1286,24 @@ def test_the_machine_draws_the_way_he_asked():
         "the old one-wire-radius offset is gone")
     # And the reel radius the writer now measures per reel wins.
     assert "    part.contactRadius = part.windingRadius\n" in build
+
+    # THERE IS A WAY OUT OF A RECORDING. Param: "if recording and i want
+    # to stop theres no way out, so the recording button needs to become a
+    # stop button." One button, both jobs, and the flag is read at the TOP
+    # of each frame so a press lands within one frame rather than after
+    # another render and upload.
+    assert "  recordStop: false," in js
+    assert "      if (state.recordStop) { stopped = frameIndex; break; }" in js
+    assert 'button.textContent = state.recording ? "Stop recording" : "Record 1080p";' in js
+    assert '  button.classList.toggle("recording", state.recording);' in js
+    assert "    state.recordStop = true;" in js, "a second press stops the take"
+    # A stopped take is not stitched: he pressed stop because it was
+    # wrong, and handing him a video of it anyway would be a surprise.
+    assert '      status.textContent = "stopped at frame " + stopped + " of " + total' in js
+    # And the button goes back to Record however the take ended.
+    assert "    state.recording = false;\n" \
+        "    state.recordStop = false;\n" \
+        "    paintRecordButton();" in js
 
     # THE STRIKE REVERSES THE PLANT OUT, it does not drop it through the
     # floor. Param: "have the mechanism go backwards from its position on
@@ -1328,10 +1376,12 @@ def test_the_machine_draws_the_way_he_asked():
     measure = _js_function(js, "function measureSpoolRadius(part)")
     assert "if (r > 1e-3 && r < nearest) nearest = r;" in measure, "the barrel, not the flange"
 
-    # SEVEN MOTORS FROM ONE BODY, said out loud.
+    # ONE MOTOR BODY, and WHICH READING WAS TAKEN said out loud: stamped
+    # per spool when it is one motor, once when it is already the bank.
     assert "const shifts = motorShifts(model);" in build
     assert 'const placements = part.kind === "motor" ? shifts : [[0, 0, 0]];' in build
-    assert 'logStudio("machine: the document carries ONE motor body; it is stamped "' in build
+    assert 'logStudio("machine: the document carries ONE motor body, and it is "' in build
+    assert 'logStudio("machine: the motor body already reaches across the spool "' in build
 
     # THE FLOOR: lifted so the lowest point sits on the studio's floor,
     # and the log names which part that was and where it was authored.

@@ -531,14 +531,48 @@ def test_the_material_table_matches_his_rulings():
         "the pulleys are metal now, not the reels' birch")
 
 
+# His metal/aluminium-mill-grey, measured from the library's own
+# colour.jpg: mean sRGB (156, 160, 165), 0.3511 linear luminance.
+ALUMINIUM_ALBEDO = 0.3511
+
+# The flat fallback grey he was looking at when he said "not as light as
+# it is now", and again when he said the parts were all one colour.
+FALLBACK_GREY = 0x8d9298
+
+
+def _to_linear(byte):
+    c = byte / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _to_srgb_byte(linear):
+    if linear <= 0.0031308:
+        return round(255 * 12.92 * linear)
+    return round(255 * (1.055 * linear ** (1 / 2.4) - 0.055))
+
+
+def _rendered(tint, albedo=ALUMINIUM_ALBEDO):
+    """What a tint actually LANDS at, as an sRGB byte: three.js multiplies
+    the tint into the albedo map in linear space, so the rendered grey is
+    the product of the two and never the tint on its own."""
+    grey = ((tint >> 16) & 255) * 0.2126 + ((tint >> 8) & 255) * 0.7152 \
+        + (tint & 255) * 0.0722
+    return _to_srgb_byte(albedo * _to_linear(grey))
+
+
 @needs_node
 def test_the_two_frames_are_one_aluminium_under_two_depths_of_coat():
     """"the aluminium frames are a anodised aluminium coated, a dark grey
     if we can, make the frame 2 a lighter grey but not as light as it is
     now." Anodising is a coat over the same mill aluminium, so the two
-    frames share a set and differ only by tint. The tint multiplies the
-    albedo, so both land darker than their own value -- which is what puts
-    frame 2 below the 0x8d9298 fallback grey he was objecting to."""
+    frames share a set and differ only by tint.
+
+    The tint MULTIPLIES the albedo, and the first pass at these numbers
+    picked them as though they were the finished colours. Against a 0.3511
+    albedo that rendered frame 1 at about sRGB 46 -- near black, on a part
+    he had asked to be dark GREY -- and he came back with "the color
+    scheme changed again, needs fixing". So this checks where the tints
+    LAND, which is the thing he can see, rather than what they are."""
 
     source = MODULE.read_text(encoding="utf-8")
     one = _part_block(source, "frame1")
@@ -547,10 +581,32 @@ def test_the_two_frames_are_one_aluminium_under_two_depths_of_coat():
         "one aluminium under both, so the grain agrees across the frames")
     tint = lambda block: int(
         block.split("tint: 0x")[1].split(",")[0].split("\n")[0].strip(), 16)
-    dark, light = tint(one), tint(two)
-    assert dark < light, "frame 2 reads lighter than frame 1"
-    assert light < 0x8d9298, (
-        "and still darker than the flat grey he called too light")
+    dark, light = _rendered(tint(one)), _rendered(tint(two))
+    assert dark < light, (
+        "frame 2 must READ lighter than frame 1: %d vs %d" % (light, dark))
+    assert light < _rendered(FALLBACK_GREY, 1.0), (
+        "and still darker than the flat grey he called too light: "
+        "%d against %d" % (light, _rendered(FALLBACK_GREY, 1.0)))
+    # Dark GREY, not black. This is the assertion the first pass failed.
+    assert dark > 70, (
+        "frame 1 renders at sRGB %d, which is a black frame, not the dark "
+        "anodised grey he asked for" % dark)
+
+
+@needs_node
+def test_the_motors_are_black_but_not_a_hole_in_the_render():
+    """"the motors are a deep black like a nema motor". A NEMA case is
+    cast and powder coated: near-black, with enough left to catch an edge.
+    Its library set is already dark (0.0270 linear), so the tint has very
+    little room and is checked against that set rather than the
+    aluminium's."""
+
+    source = MODULE.read_text(encoding="utf-8")
+    block = _part_block(source, "motors")
+    assert "metal/steel-powder-coated-black" in block
+    tint = int(block.split("tint: 0x")[1].split(",")[0].split("\n")[0].strip(), 16)
+    landed = _rendered(tint, 0.0270)
+    assert landed < 40, "a NEMA case is near-black: sRGB %d" % landed
 
 
 def test_every_material_the_table_names_exists_in_his_library():

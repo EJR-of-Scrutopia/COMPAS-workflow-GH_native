@@ -191,6 +191,7 @@ const state = {
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
+  recordStop: false,   // set by pressing the button again; the loop checks it each frame
   analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1,
                      thrustScale: 1 },
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
@@ -3537,6 +3538,15 @@ const libraryCache = new Map();
 const libraryLoads = new Map();     // key -> in-flight promise, so a double
                                     // click does not fetch the set twice
 
+// The boot fetch of the material LIST, so anything needing a library
+// material can wait for it. It is deliberately not awaited at boot -- the
+// studio is usable before it arrives -- and that is a race the machine
+// can lose: buildMachine runs on study open, and a name looked up against
+// a list still in flight misses, returns null, and gives up FOR GOOD. It
+// is a race, so which parts end up skinned varies between reloads, which
+// is what "the color scheme changed again" looks like from the outside.
+let materialLibraryReady = null;
+
 function libraryEntry(key) {
   return state.materialLibrary.find((entry) => entry.key === key) || null;
 }
@@ -3561,8 +3571,22 @@ async function ensureLibraryMaterial(key) {
     return set;
   }
   if (libraryLoads.has(key)) return libraryLoads.get(key);
+  // A key that is real but not yet LISTED must wait, not fail: an empty
+  // list means the boot fetch is still in flight, not that the folder is
+  // empty. Re-checked after the wait, since another caller may have
+  // started the same load while this one waited.
+  if (!state.materialLibrary.length && materialLibraryReady) {
+    await materialLibraryReady;
+    if (libraryCache.has(key)) return libraryCache.get(key);
+    if (libraryLoads.has(key)) return libraryLoads.get(key);
+  }
   const entry = libraryEntry(key);
-  if (!entry) return null;
+  if (!entry) {
+    // Said out loud. A silent null here is what let a whole machine wear
+    // the fallback grey through two rounds of fixes without a word.
+    logStudio("material " + key + " is not in the library folder");
+    return null;
+  }
   const done = beginLoading("Loading " + (entry.label || "material"));
   const loading = loadLibraryMaterial(entry, {
     px: VIEWPORT_PX,
@@ -9072,9 +9096,10 @@ function skinMachine(group, mine) {
     wanted.get(key).push(object);
   });
   for (const key of wanted.keys()) libraryPins.add(key);
+  const jobs = [];
   for (const [key, meshes] of wanted) {
-    ensureLibraryMaterial(key).then((set) => {
-      if (!set || mine !== machineBuild) return;
+    jobs.push(ensureLibraryMaterial(key).then((set) => {
+      if (!set || mine !== machineBuild) return null;
       for (const mesh of meshes) {
         const worn = set.material.clone();
         // The tint multiplies the albedo, so the grain survives and only
@@ -9084,9 +9109,19 @@ function skinMachine(group, mine) {
         mesh.material.dispose();
         mesh.material = worn;
       }
-      renderView();
-    });
+      return key;
+    }));
   }
+  // Counted and said, so "the colour scheme changed again" is answerable
+  // from the log instead of from a screenshot.
+  Promise.all(jobs).then((worn) => {
+    if (mine !== machineBuild) return;
+    const landed = worn.filter(Boolean).length;
+    logStudio("machine: wearing " + landed + " of " + wanted.size
+      + " library materials"
+      + (landed < wanted.size ? "; the rest kept the fallback grey" : ""));
+    renderView();
+  });
 }
 
 // A reel's winding radius when no wire tells us: the nearest any of its
@@ -9129,6 +9164,12 @@ function measureSpoolRadius(part) {
 // each spool's axis origin relative to the spool it was authored beside.
 // That is what he modelled -- a drive on every spool -- and the log says
 // it was done here rather than read.
+// How much of the bank a single motor body has to cover before it is
+// read as being the whole bank rather than one motor of it. Half is a
+// wide margin either way: his body reaches 118% of the bank, and one
+// motor of seven would reach about 17%.
+const MOTOR_BANK_SHARE = 0.5;
+
 function motorShifts(model) {
   const motors = model.parts.filter((part) => part.kind === "motor");
   const reels = model.parts.filter((part) => part.kind === "reel" && part.axis);
@@ -9151,11 +9192,44 @@ function motorShifts(model) {
     return d[0] * hd[0] + d[1] * hd[1] + d[2] * hd[2] > 0.999;
   });
   if (bank.length < 2) return [[0, 0, 0]];
-  return bank.map((reel) => [
+  const shifts = bank.map((reel) => [
     reel.axis.origin[0] - home.axis.origin[0],
     reel.axis.origin[1] - home.axis.origin[1],
     reel.axis.origin[2] - home.axis.origin[2],
   ]);
+
+  // IS THE ONE BODY ONE MOTOR, OR THE WHOLE BANK? Measured, not assumed.
+  //
+  // The bank's own line is the two spool positions furthest apart; the
+  // body's reach along that line is compared with it. On his file the
+  // seven spools span 0.820 m and the motor body spans 0.965 m along the
+  // same line -- so the single body IS the bank, with all seven motors
+  // already modelled in it. Stamping it at each spool made 49 motors a
+  // machine and 294 across the site (Param: "I also have found way too
+  // many motors?"). It is stamped ONCE.
+  //
+  // A body that is genuinely one motor is a small fraction of the bank
+  // and still gets stamped at every spool, which is what the earlier
+  // reading was for and what a later export may well send.
+  let axis = null, span = 0;
+  for (let i = 0; i < shifts.length; i++) {
+    for (let j = i + 1; j < shifts.length; j++) {
+      const dx = shifts[j][0] - shifts[i][0];
+      const dy = shifts[j][1] - shifts[i][1];
+      const dz = shifts[j][2] - shifts[i][2];
+      const d = Math.hypot(dx, dy, dz);
+      if (d > span) { span = d; axis = [dx / d, dy / d, dz / d]; }
+    }
+  }
+  if (!axis || span < 1e-6) return [[0, 0, 0]];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i + 2 < v.length; i += 3) {
+    const along = v[i] * axis[0] + v[i + 1] * axis[1] + v[i + 2] * axis[2];
+    if (along < lo) lo = along;
+    if (along > hi) hi = along;
+  }
+  if (hi - lo > span * MOTOR_BANK_SHARE) return [[0, 0, 0]];
+  return shifts;
 }
 
 const machineShift = new THREE.Matrix4();
@@ -9185,6 +9259,11 @@ let machineBuild = 0;
 async function buildMachine() {
   const mine = ++machineBuild;
   disposeMachine();
+  // Cleared HERE, at the top, not after the build: the wire material adds
+  // its own pin part way through, and clearing afterwards wiped it --
+  // leaving the cables' metal, which the principal bars wear too, open to
+  // eviction on every build.
+  libraryPins.clear();
   // The machine needs the document alone. This used to also wait on
   // state.bundle, and on a fresh page the formwork objects are rebuilt
   // BEFORE the bundle lands, so the first build of every session quietly
@@ -9389,15 +9468,18 @@ async function buildMachine() {
   scene.add(group);
   machineObjects = { group, permanent, temporary, sides, retreats, spinners,
     wires, model, wireMaterial, lift };
-  libraryPins.clear();
   skinMachine(group, mine);
   const row = document.getElementById("machine-row");
   if (row) row.classList.remove("hidden");
   logStudio("machine: " + model.parts.length + " parts, "
     + instances.length + " instances, " + model.wires.length + " wires");
   if (shifts.length > 1) {
-    logStudio("machine: the document carries ONE motor body; it is stamped "
-      + "at " + shifts.length + " spools here until the exporter authors them");
+    logStudio("machine: the document carries ONE motor body, and it is "
+      + "narrower than the spool bank, so it is stamped at "
+      + shifts.length + " spools until the exporter authors them");
+  } else {
+    logStudio("machine: the motor body already reaches across the spool "
+      + "bank, so it is the whole bank and is drawn once per machine");
   }
   if (Number.isFinite(lowest)) {
     logStudio("machine: lifted " + Math.round(lift * 1000) + " mm so its lowest "
@@ -10004,8 +10086,17 @@ async function recordAnimation() {
   camera.aspect = frame.width / frame.height;
   camera.updateProjectionMatrix();
   state.recording = true;   // resize() must skip while this is set
+  state.recordStop = false;
+  paintRecordButton();
+  let stopped = -1;
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
+      // Param: "if recording and i want to stop theres no way out". Read
+      // at the TOP of the frame, before the render and the upload, so a
+      // press lands within one frame rather than after another second of
+      // work. A take of 900 frames could otherwise only be escaped by
+      // closing the tab.
+      if (state.recordStop) { stopped = frameIndex; break; }
       if (state.dayCycle.record) {
         // Deterministic: frameIndex alone drives u, so a recording is
         // reproducible frame for frame like applyTimeline already is. The
@@ -10031,6 +10122,15 @@ async function recordAnimation() {
       state.sunColourOverride = document.getElementById("sun-colour").value;
       state.sunIntensityOverride = sun.intensity;
     }
+    if (stopped >= 0) {
+      // Nothing is stitched: he pressed stop because the take was wrong,
+      // and handing him a video of it anyway would be a surprise. The
+      // frames already uploaded stay where they are and the next take to
+      // the same name writes over them.
+      status.textContent = "stopped at frame " + stopped + " of " + total
+        + "; nothing stitched";
+      return;
+    }
     status.textContent = "stitching...";
     const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps, { method: "POST" });
     const body = await stitched.json();
@@ -10045,6 +10145,8 @@ async function recordAnimation() {
     // (including the composer, via the resize() edit above) on the very
     // next frame().
     state.recording = false;
+    state.recordStop = false;
+    paintRecordButton();
     state.timeline.playing = wasPlaying;
     state.dayCycle.playing = wasDayCyclePlaying;
     state.showMode = wasShowMode;
@@ -10052,7 +10154,24 @@ async function recordAnimation() {
     applyShowMode();
   }
 }
-document.getElementById("record-button").addEventListener("click", recordAnimation);
+// The one button is both: Record at rest, Stop while a take runs. A
+// separate stop button would be dead nine tenths of the time, and the
+// press he reaches for when he wants out is the one he just pressed.
+function paintRecordButton() {
+  const button = document.getElementById("record-button");
+  if (!button) return;
+  button.textContent = state.recording ? "Stop recording" : "Record 1080p";
+  button.classList.toggle("recording", state.recording);
+}
+
+document.getElementById("record-button").addEventListener("click", () => {
+  if (state.recording) {
+    state.recordStop = true;
+    document.getElementById("record-status").textContent = "stopping...";
+    return;
+  }
+  recordAnimation();
+});
 
 // ---------- day cycle ----------
 // S5: frame() is the only wall-clock advancer (see below); this button
@@ -10406,7 +10525,7 @@ guarded("the panel groups", buildGroups);
 // arrives, a folder with nothing in it simply leaves the old props, and no
 // material folder chosen leaves the four built-in skins.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
-refreshMaterialLibrary().catch(
+materialLibraryReady = refreshMaterialLibrary().catch(
   (error) => logStudio("material library: " + error.message));
 // Said once at boot, and printed in the panel. A page that reports the same
 // build after an edit is a cached page, which is a different problem from a

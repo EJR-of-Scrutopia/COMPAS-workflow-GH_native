@@ -821,6 +821,13 @@ body.panel-collapsed #legend { right: var(--s4); }
   border-color: var(--accent-hover); }
 #panel button.danger:hover { background: var(--danger);
   border-color: var(--danger); color: #fff; }
+/* Recording is the one state where the destructive colour is worn AT
+   REST rather than on hover: while a take is running, stopping it is the
+   only thing the button does, and he has to be able to see that without
+   hovering to find out. */
+#panel button.recording,
+#panel button.recording:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
 
 /* The theme toggle and the build stamp, on one line above everything. The
    stamp is there for a specific reported problem: "nothing has changed on
