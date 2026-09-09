@@ -477,3 +477,129 @@ residual.
 The three-dimensional fit of 10b stays primary and is tried first; the line fit engages only where
 the origins are collinear. Both are fallbacks behind the settled one-correspondence derivation, and
 neither is ever silent.
+
+## 11. The night of 2026-09-08 to 09: placement stops being authored
+
+His ruling, verbatim: the placement planes "just flip randomly, and its so hard to create rules so they
+each follow them, theres so many in the script to fix that way". Nothing that is authored can be stopped
+from flipping. Everything below follows from deriving instead.
+
+### 11a. Placement (PL) is optional, and derived when it is empty
+
+Both ends of the correspondence are built by the SAME construction, which is the whole content of the
+rule: X along the line of anchors, Z the world's own up taken across X, Y = Z cross X, and X's sign
+settled by which side of that line the MACHINE sits on. In the machine's own space Y must point from its
+wire ends toward its body; in the world Y must point away from the net. Those are the same physical
+statement, which is what makes the two frames comparable.
+
+An earlier version used "toward the net's centre" in the world against "toward the wire's net end" in the
+machine. Those are NOT the same direction and it put every anchor 0.97 of a unit out. It was caught by
+prototyping the rule against his own exported study before any C# was written.
+
+Every derived placement is a PROPER ROTATION, never a reflection: he builds one machine and turns it
+round rather than a mirror-image second product. Rows are filled at seven wires a machine, from the
+machine's own wire count, and leftover anchors are reported and left unplaced rather than half-filling a
+machine. Measured on his 2 Sided Vault: all six instances place their anchors to 0.000000 m, and side 0
+reproduces his hand-authored placement exactly.
+
+### 11b. Anchor rows are found by SPACING, not by edges
+
+MechanismGeometry.AnchorRowIndices walks the net's own edges. On his study ZERO of 800 edges join two
+supports: every anchor connects only to interior vertices, never to its neighbour along the springing. It
+therefore returns 42 groups of one, all too small to carry a machine, and his first derived export placed
+NOTHING while every schema check passed.
+
+Topology is asked first. Where no row it returns is long enough, the anchors are grouped by their own
+spacing: joined within three times the set's median nearest-neighbour distance, connected groups taken as
+rows. On his study that is 0.15 m along a springing against 16 m between springings. The chin says which
+reading was used, because it changes where every machine comes from.
+
+Deriving nothing now WARNS. A well-formed document with no machines in it is the worst shape this can
+fail in: every check passes and the absence appears three steps downstream.
+
+### 11c. One anchor per machine, from one authored body
+
+His ruling: one anchor per machine, in front of it, holding the whole bank of seven, and NOT one per
+cable, because the reels bank in sevens. A row of twenty-one anchors carries three.
+
+The Anchor (AN) port takes one typical body. Its declared convention: authored in its own local space,
++Z up, X along the bank, and its own ORIGIN at the CENTRE of the seven cables it holds. A bearing face on
+the z=0 plane then sits on the ground wherever the net meets it. That origin degrades correctly: the
+centre of a bank of one is the cable, if one per cable is ever ruled instead.
+
+The body travels ONCE under mechanism.anchor; each entry in the top-level anchors array carries side,
+mechanism, the seven net_vertices it holds, its frame, a ref to the body and permanence "permanent". They
+pair with instances by side and mechanism.
+
+### 11d. The cable, and what a routing plane means
+
+The cable is 0.02 m as a RADIUS, 40 mm across, and it is THE SAME CABLE THE NET IS PULLED BY: the
+machine's wire and the vault's cable meet at a net vertex and must arrive there the same size. Both
+cableRadius and cableThickness are emitted, the same fact stated twice, because this number was halved or
+doubled by somebody three times in one day.
+
+Frame Meaning (FM) is AUTHORED, with a value list of centreline, top and contact, defaulting to
+centreline. It is written into the document and the studio obeys it. It has to be authored because the
+answer changed three times in a day and because it does not compose freely with him offsetting the planes
+himself: an offset already applied must not be applied again by a reader. He offsets, so the planes ARE
+the centreline and a reader adds nothing.
+
+Wire Start (WS), optional, tree path {wire}: one plane per wire, its true start at the anchor BEFORE any
+offset, prepended to that wire's route. Offsetting the planes off the drums moves the first plane, and
+the first plane is the anchor the placement, the net-vertex match and the residual are all read from.
+Skipping it costs about 20 mm between each cable end and its node, which the placement absorbs rather
+than stretches.
+
+### 11e. Rotation, and the wrap
+
+The settled formula measured the free span from the net vertex to the first routing frame. That span is
+ZERO on every study, because route[0] IS the anchor and an anchor is a fixed support, so it could only
+ever return about nothing. It now reads the run of net cable each wire pulls, halved between the two
+machines that pull it, against the owning reel's own windingRadius.
+
+THE WRAP IS ALREADY AUTHORED, his ruling: "the frames i give you already spool for you. I dont wish for
+you to spool any more or less, just assume with rotation that the spooling happens". A reader draws the
+frames as they arrive and never synthesises turns, unwinds authored ones, or pays wire on or off. The
+turns are what the DRUM does, not a driver of the wire's geometry.
+
+### 11f. Winding radius is measured, and says where it came from
+
+spoolRadius defaulted from reel[0]'s bounding box over four, giving 0.030 on his file, a number matching
+nothing in it: his barrels read 0.050 and his pulleys 0.170, 0.200 and 0.300. Each reel now carries its
+own windingRadius, the MEDIAN perpendicular distance of the routing frames it owns from its own axis, and
+spoolRadius is the median across the reels carrying wire. A median rather than a mean because nearly all
+of a wrap's frames sit at the drum's radius and a handful sit on the run in and out.
+
+A reel owning no routing frame states the furthest its own mesh reaches from its axis instead.
+windingRadiusSource says which every reel got, "frames" or "mesh", and windingRadiusSamples how many
+frames a measured one rests on. It is never null: a null forced the studio to interpret an absence, and
+its first interpretation gave a bank of eight for a machine with seven spools.
+
+A consumer must NOT use source alone to decide what is a spool. On a document carrying no wires every
+reel falls back to "mesh", so such a rule empties the bank on exactly the documents that need it most.
+Radius classifies; source breaks ties among reels that already pass.
+
+### 11g. Reading what he wired, rather than what was expected
+
+A port meaning ONE PIECE takes a LIST and joins it. Frame 1 was item access and he wired seventeen
+meshes; Grasshopper solved the whole component once per item and the last won, so a 55 mm bracket
+exported in place of his frame, silently, and seventeen payloads out of ME made Export iterate and warn
+about its Result. The Motors lost six of seven the same way. Frame 1, the Tension Tie, the Motors and the
+Anchor now join what they are given, as a REMARK and not a warning, because joining is what they are for.
+
+A routing tree is read at ANY DEPTH: the wire is the LAST index of the path and anything above it is
+grouping. It used to demand a single-level {wire} path and IGNORE every branch that was not one, so when
+his rebuilt routing came out as {0;wire} the whole document went out with no wires and no machines. The
+grouping is now a pure function with its own test, because that seam had none.
+
+### 11h. Who places what
+
+THE DOCUMENT IS AUTHORITATIVE WHEN IT CARRIES INSTANCES; THE STUDIO DERIVES ONLY WHEN IT CARRIES NONE.
+One source of truth per study. The exporter holds the full Result including topology and support ids, and
+he can SEE a wrong placement in the Rhino viewport before exporting, which no importer can offer. A study
+whose document carries no mechanism at all is the studio's.
+
+principalRows is NOT a source of anchor rows. It carries the principal curves HE DRAWS by hand, so it is
+empty for a study where he drew none, its count is whatever he drew, and on his 2 Sided Vault the two
+runs are RIBS crossing the springings at right angles. Deriving machine rows from it would stand every
+machine along the wrong axis and look almost plausible.
