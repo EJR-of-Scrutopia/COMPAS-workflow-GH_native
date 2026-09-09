@@ -881,7 +881,7 @@ export function betweenFrames(source, target) {
 // distance to read, and says so rather than guessing one.
 export function derivePlacements(supports, spools, netCentre) {
   const notes = [];
-  const out = { instances: [], wires: [], rows: [], notes };
+  const out = { instances: [], wires: [], anchors: [], rows: [], notes };
   if (!Array.isArray(supports) || supports.length < 2) {
     notes.push("this study has fewer than two supports, so there is no "
       + "springing to stand a machine against");
@@ -973,6 +973,24 @@ export function derivePlacements(supports, spools, netCentre) {
           side, mechanism: machine, spool: k, support: served[k],
         });
       }
+      // THE ANCHOR for this machine, in the writer's own convention: its
+      // origin is the CENTRE of the cables this bank holds, its X runs
+      // along the bank and its Z is up, and it carries THE FRAME ITS
+      // MACHINE WAS PLACED BY. That puts it in front of the machine by
+      // construction rather than by an offset, since the machine stands
+      // back from the very same line -- and it means an anchor and the
+      // machine behind it can never disagree about which way is out.
+      //
+      // One per machine, on his ruling: "One per machine, in front of
+      // it", not one per cable. `ref` is null because a derived anchor
+      // names no body of its own; whatever the mechanism carries under
+      // mechanism.anchor is what stands on these frames.
+      out.anchors.push({
+        side, mechanism: machine,
+        netVertices: served.slice(),
+        matrix: outwardFrame(servedCentre, outward),
+        ref: null, mirrored: false,
+      });
       if (served.length < perMachine) {
         notes.push("a machine on side " + side + " pulls only "
           + served.length + " of its " + perMachine + " spools, because the "
@@ -982,7 +1000,8 @@ export function derivePlacements(supports, spools, netCentre) {
     side += 1;
   }
   notes.push("derived " + out.instances.length + " machines over "
-    + rows.length + " springings, pulling " + out.wires.length + " cables");
+    + rows.length + " springings, pulling " + out.wires.length + " cables, "
+    + "on " + out.anchors.length + " anchors");
   return out;
 }
 

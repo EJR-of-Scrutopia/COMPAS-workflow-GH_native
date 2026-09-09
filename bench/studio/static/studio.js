@@ -9447,6 +9447,9 @@ function deriveMachines(model) {
   for (const instance of derived.instances) {
     instance.netVertices = instance.netVertices.map((i) => ids[i]);
   }
+  for (const anchor of derived.anchors) {
+    anchor.netVertices = anchor.netVertices.map((i) => ids[i]);
+  }
   derived.wires = derived.wires.map((wire) => ({
     id: wire.id,
     netVertex: ids[wire.support],
@@ -9510,6 +9513,10 @@ async function buildMachine() {
   const derived = model.instances.length ? null : deriveMachines(model);
   if (derived) {
     model.wires = derived.wires;
+    // Anchors are READ before they are derived, the same rule as the
+    // instances: the writer emits them whenever a result is wired, and
+    // a document that carries its own is never second-guessed.
+    if (!model.anchors.length) model.anchors = derived.anchors;
     showBanner("This mechanism carries no placements, so the machines are "
       + "derived from the vault's own supports: " + derived.instances.length
       + " machines pulling " + derived.wires.length + " cables", "info");

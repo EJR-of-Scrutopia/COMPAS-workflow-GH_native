@@ -652,6 +652,34 @@ CHECK = textwrap.dedent("""
       "and the leftover is the last one, not the first: "
       + first[1].netVertices.join());
 
+    // ONE ANCHOR PER MACHINE, on his ruling, carrying the frame its own
+    // machine was placed by -- so the two can never disagree about which
+    // way is out -- with its origin at the CENTRE of the cables that
+    // bank holds, which is the writer's declared convention.
+    expect(placed.anchors.length === placed.instances.length,
+      "one anchor a machine, not one a cable: " + placed.anchors.length);
+    const anchor = placed.anchors.find((a) => a.side === 0);
+    const held = anchor.netVertices.map((i) => twoRows[i]);
+    const heldCentre = held.reduce((a, q) => [a[0] + q[0] / held.length,
+      a[1] + q[1] / held.length, a[2] + q[2] / held.length], [0, 0, 0]);
+    near(anchor.matrix[12], heldCentre[0], 1e-9,
+      "the anchor stands on the centre of the cables it holds");
+    near(anchor.matrix[13], heldCentre[1], 1e-9, "along the row too");
+    near(det(anchor.matrix), 1, 1e-12, "and with no reflection in it");
+    // In FRONT of its machine: the machine stands back from the same
+    // line, so the anchor is nearer the net by exactly the setback.
+    const mine = placed.instances.find((i) => i.side === 0);
+    const machineSpools = spools.map((s) => put(mine.matrix, s));
+    const mc = machineSpools.reduce((a, q) => [a[0] + q[0] / machineSpools.length,
+      a[1] + q[1] / machineSpools.length, 0], [0, 0, 0]);
+    expect(Math.hypot(anchor.matrix[12], anchor.matrix[13])
+      < Math.hypot(mc[0], mc[1]),
+      "the anchor is nearer the net than the machine behind it");
+    expect(anchor.ref === null,
+      "a derived anchor names no body of its own");
+    expect(placed.notes.some((n) => n.indexOf(" anchors") >= 0),
+      "and the summary counts them beside the machines and the cables");
+
     // A bank bigger than the row still serves it, short-handed and said.
     const short = derivePlacements(twoRows, [[-9, 0, 1], [-9, 0.15, 1],
       [-9, 0.3, 1], [-9, 0.45, 1]], [0, 0, 0]);

@@ -1258,6 +1258,14 @@ def test_the_machines_are_derived_when_the_document_places_none():
     # every cable to the wrong vertex and still look like a machine.
     assert "    instance.netVertices = instance.netVertices.map((i) => ids[i]);" in js
     assert "    netVertex: ids[wire.support]," in js
+    assert "    anchor.netVertices = anchor.netVertices.map((i) => ids[i]);" in js, (
+        "the anchors are renumbered too, or each would name the wrong "
+        "cables it holds")
+
+    # ANCHORS ARE READ BEFORE THEY ARE DERIVED, the same ownership rule
+    # as the instances: the writer emits them whenever a result is wired,
+    # and a document carrying its own is never second-guessed.
+    assert "    if (!model.anchors.length) model.anchors = derived.anchors;" in build
 
     # ONE frame per derived wire, at the spool it leaves from. A derived
     # wire knows where the cable ends and nothing about how it wraps, so
