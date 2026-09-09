@@ -450,6 +450,22 @@
       "source": "https://polyhaven.com/a/fir_sapling_medium"
     },
     {
+      "key": "flower_empodium",
+      "label": "Empodium",
+      "file": "flower_empodium.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.323,
+        0.268,
+        0.284
+      ],
+      "triangles": 3053,
+      "bytes": 112588,
+      "credit": "Empodium by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_empodium"
+    },
+    {
       "key": "flower_gazania",
       "label": "Gazania",
       "file": "flower_gazania.glb",
@@ -466,6 +482,22 @@
       "source": "https://polyhaven.com/a/flower_gazania"
     },
     {
+      "key": "flower_heliophila",
+      "label": "Heliophila",
+      "file": "flower_heliophila.glb",
+      "group": "planting",
+      "sizeMetres": [
+        2.743,
+        0.395,
+        1.414
+      ],
+      "triangles": 23219,
+      "bytes": 577716,
+      "credit": "Heliophila by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_heliophila"
+    },
+    {
       "key": "flower_ursinia",
       "label": "Ursinia",
       "file": "flower_ursinia.glb",
@@ -480,6 +512,22 @@
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
+    },
+    {
+      "key": "grass_bermuda_01",
+      "label": "Bermuda grass",
+      "file": "grass_bermuda_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.686,
+        0.158,
+        0.142
+      ],
+      "triangles": 941,
+      "bytes": 60820,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
     },
     {
       "key": "grass_medium_01",
@@ -512,6 +560,22 @@
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "moss_01",
+      "label": "Moss",
+      "file": "moss_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.215,
+        0.04,
+        0.029
+      ],
+      "triangles": 204,
+      "bytes": 28788,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
     },
     {
       "key": "ms_tree_high_poly",
@@ -848,6 +912,22 @@
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_04"
+    },
+    {
+      "key": "shrub_sorrel_01",
+      "label": "Sorrel",
+      "file": "shrub_sorrel_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.352,
+        0.058,
+        0.146
+      ],
+      "triangles": 3319,
+      "bytes": 105464,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
     },
     {
       "key": "single_root",

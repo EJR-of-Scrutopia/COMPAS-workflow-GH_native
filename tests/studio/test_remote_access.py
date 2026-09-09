@@ -973,11 +973,19 @@ def test_the_voussoirs_can_be_inked_with_an_outline():
         encoding="utf-8")
     js = STUDIO_JS.read_text(encoding="utf-8")
 
-    # In the Scene section, where he asked for it.
+    # In the SKIN section. It sat in Scene until 2026-09-09, when he moved
+    # it: "can you also move the outline slider to actually go into the
+    # skin menu". Right, too: it draws on the voussoirs, so it belongs
+    # beside the other controls that change how they look rather than
+    # beside the sky and the floor.
+    skin = html[html.index('<details id="study-section"'):]
+    skin = skin[:skin.index("</details>")]
+    assert 'id="outline-width"' in skin, "the slider lives in the Skin menu"
     scene = html[html.index('<details id="scene-section">'):]
     scene = scene[:scene.index("</details>")]
-    assert 'id="outline-width"' in scene, "the slider lives in the Scene menu"
-    row = scene[scene.index('id="outline-width"'):]
+    assert 'id="outline-width"' not in scene, (
+        "and it is not left behind in Scene as a second copy")
+    row = skin[skin.index('id="outline-width"'):]
     row = row[:row.index(">")]
     assert 'min="0"' in row, "zero is a real setting: no line at all"
 
@@ -2092,3 +2100,109 @@ def test_the_waker_stays_on_loopback_and_stays_silent():
     assert '("127.0.0.1", WAKER_PORT)' in body
     assert waker.WakerHandler.log_message is not (
         BaseHTTPRequestHandler.log_message)
+
+
+def test_the_scatter_is_its_own_tab_with_the_controls_he_named():
+    """Param: "we should have a scatter tile next to props that allows us
+    to select the props we want, how often each one appears, the size
+    ratio we pick, and some other relevant settings".
+
+    A tab of its own rather than a button inside Layers, because choosing
+    species is browsing and browsing is what the shelf is for."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    tabs = html[html.index('<div id="shelf-tabs">'):]
+    tabs = tabs[:tabs.index("</div>")]
+    assert 'data-shelf="scatter"' in tabs, "the tab is beside Props"
+    assert tabs.index('data-shelf="scatter"') > tabs.index('data-shelf="props"')
+    assert tabs.index('data-shelf="scatter"') < tabs.index('data-shelf="materials"')
+
+    # The four things he asked for by name, plus the region and the dice.
+    for control in ('id="scatter-species"',      # which props
+                    'id="scatter-chosen"',       # how often each appears
+                    'id="scatter-size-min"', 'id="scatter-size-max"',
+                    'id="scatter-spacing"', 'id="scatter-clump"',
+                    'id="scatter-seed"', 'id="scatter-dice"',
+                    'id="scatter-area"', 'id="scatter-all"'):
+        assert control in html, control
+
+    assert 'if (shelfKind === "scatter") { cats.innerHTML = ""; ' \
+        'renderShelfScatter(); return; }' in js, "the tab has to render"
+
+
+def test_the_scatter_seed_uses_a_generator_that_is_exact_in_32_bits():
+    """Determinism is the whole value of a seed, and the idiom already in
+    this file is not one: `seed * 1103515245` reaches about 2**61, far
+    past Number.MAX_SAFE_INTEGER, so it silently loses its low bits.
+    Math.imul is exact."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(js, "function scatterRandom(seed)")
+    assert "Math.imul" in body
+    assert "1103515245" not in body
+    assert "Math.random" not in body, (
+        "a seeded field that consulted Math.random could not be re-dealt")
+
+
+def test_the_scatter_stops_at_a_measured_budget_and_says_why():
+    """The ceiling is TRIANGLES, not instances: props-hd runs from a 94
+    triangle bollard to a 219,430 triangle beech, so a count means
+    nothing across it. 35 M manifest triangles is six of the sixteen
+    point seven millisecond frame, measured on the 4090 by
+    bench/scripts/scatter_budget.mjs, not guessed."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const SCATTER_BUDGET_TRIANGLES = 35e6;" in js
+    solve = _js_function(js, "function scatterSolve(region)")
+    assert "if (triangles >= SCATTER_BUDGET_TRIANGLES) break;" in solve
+    assert "if (placed.length >= SCATTER_MAX_ITEMS) break;" in solve
+    paint = _js_function(js, "function paintScatter(solved)")
+    assert "stopped at" in paint, (
+        "a guard rail with no explanation reads as a broken tool")
+
+
+def test_the_scatter_region_outline_cannot_steal_a_click():
+    """propRecordAt raycasts propsGroup RECURSIVELY and, when a hit maps
+    to no record, continues to the next hit rather than returning -- so a
+    stray pickable child in that group causes a WRONG selection, not a
+    clean miss. That is why the prop outline's raycast is a no-op, and
+    the region outline gets the same treatment plus a home in the scene."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    show = _js_function(js, "function showScatterOutline(region)")
+    assert "scene.add(scatterOutline);" in show
+    assert "propsGroup.add" not in show
+    assert "scatterOutline.raycast = () => {};" in show
+
+
+def test_leaving_the_scatter_tab_puts_the_region_drag_down():
+    """The drag listens in CAPTURE phase, because OrbitControls and the
+    studio's own prop handling both bound pointerdown at boot and a later
+    listener sees a press they have already acted on. A capture listener
+    left behind would eat his next click on a prop."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'canvas.addEventListener("pointerdown", onScatterDown, true);' in js
+    assert 'canvas.removeEventListener("pointerdown", onScatterDown, true);' in js
+    assert 'if (shelfKind !== "scatter" && state.scatterArmed) ' \
+        'disarmScatterArea();' in js
+
+
+def test_a_scattered_prop_is_an_ordinary_prop():
+    """The reason the gumball, the drag, Delete, the layer eye, undo and
+    the scene round trip all work on a scattered tree with no new code:
+    it goes through placeProp into state.props like anything else, and
+    there is no second universe of pickable things to keep in step."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    run = _js_function(js, "async function runScatter(region)")
+    assert "placeProp(" in run
+    assert "InstancedMesh" not in run
+    assert "pushUndo(" in run, "one undo entry for the whole field"
+    assert "saveProps();" in run
+    # Templates in hand BEFORE placing, or placeProp falls back to
+    # makeProp and plants a primitive instead of the model.
+    assert run.index("await ensurePropTemplate") < run.index("scatterSolve(")

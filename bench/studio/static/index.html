@@ -53,6 +53,47 @@
       <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
+    <!-- The scatter drawer. Param: "we should have a scatter tile next to
+         props that allows us to select the props we want, how often each
+         one appears, the size ratio we pick, and some other relevant
+         settings". A tab of its own rather than a button inside Layers,
+         because choosing species is browsing, and browsing is what the
+         shelf is for. -->
+    <div id="scatter-panel" class="hidden">
+      <div id="scatter-species" class="tile-grid"></div>
+      <div id="scatter-chosen"></div>
+      <div id="scatter-controls">
+        <label title="The clear gap between items, as a multiple of each one's own width. Not metres: the library runs from a 4 cm moss patch to a 30 m tree.">Spacing
+          <input id="scatter-spacing" type="range" min="0.6" max="3" step="0.05" value="1.2">
+          <span id="scatter-spacing-value">1.2</span>x</label>
+        <label title="Every item is scaled somewhere in this range, about its feet, so a stand does not read as one model repeated">Size
+          <input id="scatter-size-min" type="range" min="0.3" max="1" step="0.05" value="0.8">
+          <input id="scatter-size-max" type="range" min="1" max="3" step="0.05" value="1.3">
+          <span id="scatter-size-value">0.80 to 1.30</span>x</label>
+        <label title="0 spreads them evenly, 100 gathers them into tight stands with clear ground between">Clumping
+          <input id="scatter-clump" type="range" min="0" max="100" step="5" value="30">
+          <span id="scatter-clump-value">30</span>%</label>
+        <label title="How wide a clump is, across">Clump size
+          <input id="scatter-clump-size" type="range" min="1" max="20" step="0.5" value="6">
+          <span id="scatter-clump-size-value">6</span> m</label>
+        <label title="Nothing is planted inside the vault, or within this much of it">Keep clear
+          <input id="scatter-clearance" type="range" min="0" max="8" step="0.25" value="1.5">
+          <span id="scatter-clearance-value">1.5</span> m</label>
+        <label class="named"><span>Turn</span><select id="scatter-turn">
+          <option value="360" selected>Any way</option>
+          <option value="0">All the same</option>
+        </select></label>
+        <label title="The same seed lays out the same field. The dice deals a new one.">Seed
+          <input id="scatter-seed" type="number" min="1" max="99999" step="1" value="1">
+          <button id="scatter-dice" title="Deal a new arrangement, same rules">Dice</button></label>
+      </div>
+      <div id="scatter-actions">
+        <button id="scatter-area" class="primary" title="Drag a rectangle on the ground to fill it">Drag an area</button>
+        <button id="scatter-all" title="Fill the whole floor disc, keeping clear of the vault">Whole floor</button>
+        <button id="scatter-undo-last" title="Remove the last scatter" disabled>Remove last</button>
+      </div>
+      <div id="scatter-readout">pick one or more species to scatter</div>
+    </div>
     <div id="shelf-grid" class="tile-grid hidden"></div>
     <div id="scene-list" class="hidden"></div>
     <div id="prop-credit"></div>
@@ -63,6 +104,7 @@
   <div id="shelf-tabs">
     <button id="shelf-undo" class="shelf-act" title="Nothing to undo yet" disabled>&#8630;</button>
     <button data-shelf="props" title="Browse and place props">Props</button>
+    <button data-shelf="scatter" title="Scatter props over an area: pick the species, how often each appears and how their size varies">Scatter</button>
     <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
     <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
@@ -176,6 +218,17 @@
     <label>Relief <input id="material-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
     <label>Occlusion <input id="material-occlusion" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
     <label>Variation <input id="material-variation" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
+    <!-- Param: "a outline slider... it will just add a dark line around
+         the vault voussoirs as an outline. the slider goes from a 0 line
+         to thicker line". It rests at zero, which is why it declares its
+         own unit: a slider sitting at 0 cannot say whether its reading is
+         millimetres or metres, so the typed-value factor cannot be
+         derived from it.
+
+         It sat under ENVIRONMENT until Param moved it here, and he was
+         right: it draws on the voussoirs, so it belongs with the other
+         controls that change how they look, not with the sky. -->
+    <label id="outline-row">Outline <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000"> <span id="outline-value">0</span> mm</label>
     <label title="Run the picture's grain up the slope of each voussoir, the way boards would be laid along each leg"><input id="material-grain" type="checkbox"> Match grain</label>
     <button id="uv-randomise" title="Re-deal every voussoir's window of the sheet so no two wear the same patch">Randomise texture</button>
     <button id="material-reset">Reset appearance</button>
@@ -297,13 +350,8 @@
            Skies drawer: they belong beside the pictures they tune. -->
     </div>
     <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
-    <!-- Param: "a outline slider... it will just add a dark line around
-         the vault voussoirs as an outline. the slider goes from a 0 line
-         to thicker line". It rests at zero, which is why it declares its
-         own unit: a slider sitting at 0 cannot say whether its reading is
-         millimetres or metres, so the typed-value factor cannot be
-         derived from it. -->
-    <label id="outline-row">Outline <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000"> <span id="outline-value">0</span> mm</label>
+    <!-- Outline moved to the Skin section, where the voussoirs it draws
+         around actually live. -->
 
     <!-- Brightness and contrast moved to the Camera section: they are
          the grade on the lens, not the light in the scene. -->

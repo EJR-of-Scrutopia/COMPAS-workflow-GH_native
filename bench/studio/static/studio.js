@@ -168,6 +168,16 @@ const state = {
   propLayers: [{ id: 1, name: "Layer 1", visible: true }],
   activeLayer: 1,
   nextLayerId: 2,
+  // The scatter's rules. Param: "select the props we want, how often each
+  // one appears, the size ratio we pick, and some other relevant
+  // settings". species is [{ type, weight }]; everything else is the
+  // recipe a Dice re-rolls without changing.
+  scatter: {
+    species: [], spacing: 1.2, sizeMin: 0.8, sizeMax: 1.3,
+    clump: 30, clumpSize: 6, clearance: 1.5, turn: 360, seed: 1,
+  },
+  scatterRuns: [],      // [{ layer, records }], newest last, for Remove last
+  scatterArmed: false,  // waiting for him to drag a rectangle on the floor
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
@@ -4192,11 +4202,17 @@ function renderShelf() {
   document.getElementById("scene-list").classList
     .toggle("hidden", shelfKind !== "scenes");
   propHolder.classList.toggle("hidden", shelfKind !== "props");
+  document.getElementById("scatter-panel").classList
+    .toggle("hidden", shelfKind !== "scatter");
+  // Leaving the drawer must put the region drag down, or the canvas keeps
+  // a capture-phase listener that eats his next click on a prop.
+  if (shelfKind !== "scatter" && state.scatterArmed) disarmScatterArea();
   grid.classList.toggle("hidden",
-    shelfKind === "props" || shelfKind === "scenes");
+    shelfKind === "props" || shelfKind === "scenes" || shelfKind === "scatter");
   grid.classList.toggle("wide", shelfKind === "skies");
   document.getElementById("prop-credit").textContent = "";
   if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
+  if (shelfKind === "scatter") { cats.innerHTML = ""; renderShelfScatter(); return; }
   if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
   if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); return; }
   if (shelfKind === "layers") { cats.innerHTML = ""; renderShelfLayers(grid); return; }
@@ -4377,6 +4393,410 @@ function deleteLayer(id) {
   renderShelf();
 }
 
+// ---------- the scatter ----------
+// Param: "we should have a scatter tile next to props that allows us to
+// select the props we want, how often each one appears, the size ratio we
+// pick, and some other relevant settings".
+//
+// What it draws is ORDINARY PROP RECORDS through placeProp, not an
+// InstancedMesh. That is the whole reason the gumball, the drag, R, plus
+// and minus, Delete, the layer eye, undo and the scene round trip all work
+// on a scattered tree with no new code: it is a prop like any other, and
+// there is no second universe of pickable things to keep in step.
+//
+// The ceiling is TRIANGLES, not instances, and it is measured rather than
+// argued (bench/scripts/scatter_budget.mjs, on the 4090 at 1080p):
+// 0.117 ms per million manifest triangles for something that does not cast
+// a shadow, 0.175 for something that does, because a caster is drawn again
+// for the shadow map. Six of the sixteen-point-seven millisecond frame is
+// 35 million manifest triangles, which is about 37,000 of the 941-triangle
+// bermuda grass, 1,270 of a median prop, or 175 of the heaviest tree.
+const SCATTER_BUDGET_TRIANGLES = 35e6;
+const SCATTER_MAX_ITEMS = 6000;
+
+// mulberry32 through Math.imul, which is exact in 32 bits. Do NOT copy the
+// seed idiom used by the ground randomiser above: seed * 1103515245 passes
+// 2^53 and silently loses its low bits, so it is not the generator it
+// looks like.
+function scatterRandom(seed) {
+  let a = (seed >>> 0) || 1;
+  return function next() {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function propEntry(type) {
+  return (state.propLibrary || []).find((entry) => entry.key === type) || null;
+}
+
+// The plan radius of one item, from the manifest's own bounds. sizeMetres
+// is the model's [x, y, z] in ITS space, where y is up, so the footprint is
+// x and z and the height is y. Getting that pair the wrong way round makes
+// a 15 cm root plate claim to be two metres tall.
+function propFootprint(type) {
+  const entry = propEntry(type);
+  if (!entry || !entry.sizeMetres) return 0.5;
+  return Math.max(entry.sizeMetres[0], entry.sizeMetres[2]) / 2 || 0.5;
+}
+
+function propTriangles(type) {
+  const entry = propEntry(type);
+  return (entry && entry.triangles) || 20000;
+}
+
+// Everything already standing that a new item must not grow through: the
+// vault and its works, plus every prop already placed. Boxes rather than
+// meshes, because this runs once per candidate and a Box3 test is a
+// handful of compares.
+function scatterKeepOut(clearance) {
+  const discs = [];
+  const box = new THREE.Box3();
+  const parts = [state.objects.shell, state.objects.columns,
+    state.objects.falsework].filter(Boolean);
+  for (const part of parts) {
+    box.setFromObject(part);
+    if (!isFinite(box.min.x)) continue;
+    const cx = (box.min.x + box.max.x) / 2;
+    const cy = (box.min.y + box.max.y) / 2;
+    const r = Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y) / 2;
+    discs.push([cx, cy, r + clearance]);
+  }
+  for (const record of state.props) {
+    discs.push([record.x, record.y, propFootprint(record.type) * 0.6]);
+  }
+  return discs;
+}
+
+function clearOf(discs, x, y, radius) {
+  for (let i = 0; i < discs.length; i++) {
+    const d = discs[i];
+    const dx = x - d[0];
+    const dy = y - d[1];
+    const reach = d[2] + radius;
+    if (dx * dx + dy * dy < reach * reach) return false;
+  }
+  return true;
+}
+
+// Dart throwing against a growing list, with a share of the darts thrown
+// NEXT TO an item already placed rather than anywhere in the region. That
+// second kind is the clumping: at 0 the field is even, at 100 it gathers
+// into stands with open ground between, which is what makes planting read
+// as planting rather than as sprinkling.
+function scatterSolve(region) {
+  const rules = state.scatter;
+  const chosen = rules.species.filter((s) => propEntry(s.type));
+  if (!chosen.length) return { items: [], note: "no species chosen" };
+  const random = scatterRandom(rules.seed);
+  const total = chosen.reduce((sum, s) => sum + Math.max(1, s.weight), 0);
+  const pick = () => {
+    let roll = random() * total;
+    for (const s of chosen) {
+      roll -= Math.max(1, s.weight);
+      if (roll <= 0) return s.type;
+    }
+    return chosen[chosen.length - 1].type;
+  };
+
+  const discs = scatterKeepOut(rules.clearance);
+  const placed = [];
+  let triangles = 0;
+  let refused = 0;
+  const area = region.kind === "disc"
+    ? Math.PI * region.r * region.r
+    : Math.abs(region.x1 - region.x0) * Math.abs(region.y1 - region.y0);
+  // Enough darts to fill the area at the tightest spacing, capped so a
+  // huge region cannot spin the tab. Every dart is one cheap test.
+  const darts = Math.min(160000, Math.max(4000, Math.round(area * 40)));
+  const clumpShare = rules.clump / 100;
+
+  for (let i = 0; i < darts; i++) {
+    if (placed.length >= SCATTER_MAX_ITEMS) break;
+    if (triangles >= SCATTER_BUDGET_TRIANGLES) break;
+    let x, y;
+    if (placed.length && random() < clumpShare) {
+      const near = placed[Math.floor(random() * placed.length)];
+      const angle = random() * Math.PI * 2;
+      const reach = random() * rules.clumpSize / 2;
+      x = near.x + Math.cos(angle) * reach;
+      y = near.y + Math.sin(angle) * reach;
+    } else if (region.kind === "disc") {
+      const angle = random() * Math.PI * 2;
+      const reach = Math.sqrt(random()) * region.r;
+      x = region.x + Math.cos(angle) * reach;
+      y = region.y + Math.sin(angle) * reach;
+    } else {
+      x = region.x0 + random() * (region.x1 - region.x0);
+      y = region.y0 + random() * (region.y1 - region.y0);
+    }
+    if (!withinRegion(region, x, y)) { refused += 1; continue; }
+    const type = pick();
+    const scale = rules.sizeMin + random() * (rules.sizeMax - rules.sizeMin);
+    const radius = propFootprint(type) * scale * rules.spacing;
+    if (!clearOf(discs, x, y, radius)) { refused += 1; continue; }
+    discs.push([x, y, radius]);
+    placed.push({ type, x, y, scale,
+      rotation: rules.turn ? random() * Math.PI * 2 : 0 });
+    triangles += propTriangles(type);
+  }
+  const stopped = placed.length >= SCATTER_MAX_ITEMS ? "the six thousand item cap"
+    : triangles >= SCATTER_BUDGET_TRIANGLES ? "the triangle budget"
+      : null;
+  return { items: placed, triangles, refused, stopped };
+}
+
+function withinRegion(region, x, y) {
+  if (region.kind === "disc") {
+    return Math.hypot(x - region.x, y - region.y) <= region.r;
+  }
+  return x >= Math.min(region.x0, region.x1) && x <= Math.max(region.x0, region.x1)
+    && y >= Math.min(region.y0, region.y1) && y <= Math.max(region.y0, region.y1);
+}
+
+async function runScatter(region) {
+  const rules = state.scatter;
+  if (!rules.species.length) { paintScatter(); return; }
+  // Every template has to be in hand BEFORE placing, or placeProp falls
+  // back to makeProp and plants a primitive instead of the model.
+  for (const s of rules.species) await ensurePropTemplate(s.type);
+
+  const solved = scatterSolve(region);
+  if (!solved.items.length) {
+    document.getElementById("scatter-readout").textContent =
+      "nothing fitted: loosen the spacing, or draw a bigger area";
+    return;
+  }
+  const home = newLayer("Scatter " + (state.scatterRuns.length + 1));
+  const records = solved.items.map((item) => placeProp(
+    item.type, item.x, item.y, item.rotation, false, item.scale));
+  state.scatterRuns.push({ layer: home.id, records });
+  pushUndo("scattering " + records.length + " props", () => {
+    for (const record of records) removePropRecord(record);
+    state.scatterRuns = state.scatterRuns.filter((run) => run.records !== records);
+    paintScatter();
+  });
+  saveProps();
+  renderShelf();
+  logStudio("scattered " + records.length + " props onto " + home.name);
+  paintScatter(solved);
+}
+
+function paintScatter(solved) {
+  const readout = document.getElementById("scatter-readout");
+  if (!readout) return;
+  const rules = state.scatter;
+  document.getElementById("scatter-undo-last").disabled = !state.scatterRuns.length;
+  if (!rules.species.length) {
+    readout.textContent = "pick one or more species to scatter";
+    return;
+  }
+  if (!solved) {
+    const names = rules.species.map((s) => {
+      const entry = propEntry(s.type);
+      return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
+    });
+    readout.textContent = names.join(", ")
+      + "  --  drag an area, or fill the whole floor";
+    return;
+  }
+  readout.textContent = solved.items.length + " placed, "
+    + (solved.triangles / 1e6).toFixed(1) + " M triangles"
+    + (solved.stopped ? "  --  stopped at " + solved.stopped
+      + ", loosen the spacing or pick something lighter" : "");
+}
+
+// The species grid. Only what is worth scattering: the manifest's own
+// height rules out a 48 m forest scan, and a lamp is refused outright
+// because each one is a real PointLight and the light count is baked into
+// every shader program's cache key.
+function renderShelfScatter() {
+  const grid = document.getElementById("scatter-species");
+  const chosen = document.getElementById("scatter-chosen");
+  if (!grid || !chosen) return;
+  grid.innerHTML = "";
+  const ordered = [...(state.propLibrary || [])]
+    .filter((entry) => !LAMP_TYPES.has(entry.key))
+    .filter((entry) => !entry.sizeMetres || entry.sizeMetres[1] <= 12)
+    .sort((a, b) => (a.sizeMetres ? a.sizeMetres[1] : 0)
+      - (b.sizeMetres ? b.sizeMetres[1] : 0));
+  for (const entry of ordered) {
+    const tile = previewTile("scatter-" + entry.key, entry.label || entry.key,
+      (canvasEl) => {
+        fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+        const picture = new Image();
+        picture.onload = () => canvasEl.getContext("2d")
+          .drawImage(picture, 0, 0, canvasEl.width, canvasEl.height);
+        picture.onerror = () => ensurePropTemplate(entry.key)
+          .then((template) => { if (template) renderObjectPreview(template, canvasEl); });
+        picture.src = "/api/props/" + encodeURIComponent(entry.file + ".thumb.png");
+      });
+    // The label lies about size and the size is what decides whether a
+    // thing is scatterable: "Pine roots" is a 15 cm root plate 1.9 m
+    // across. So the real dimensions go on the tile.
+    const size = entry.sizeMetres;
+    tile.title = (entry.label || entry.key)
+      + (size ? "  " + size[1].toFixed(2) + " m tall, "
+        + Math.max(size[0], size[2]).toFixed(2) + " m across" : "")
+      + "  --  " + (entry.triangles || 0).toLocaleString() + " triangles";
+    tile.classList.toggle("active",
+      state.scatter.species.some((s) => s.type === entry.key));
+    tile.addEventListener("click", () => {
+      const at = state.scatter.species.findIndex((s) => s.type === entry.key);
+      if (at >= 0) state.scatter.species.splice(at, 1);
+      else state.scatter.species.push({ type: entry.key, weight: 1 });
+      renderShelfScatter();
+    });
+    grid.appendChild(tile);
+  }
+  // The chosen species, each with how often it appears.
+  chosen.innerHTML = "";
+  for (const species of state.scatter.species) {
+    const entry = propEntry(species.type);
+    const chip = document.createElement("span");
+    chip.className = "scatter-chip";
+    const name = document.createElement("span");
+    name.textContent = entry ? entry.label || entry.key : species.type;
+    const weight = document.createElement("input");
+    weight.type = "number";
+    weight.min = "1";
+    weight.max = "9";
+    weight.value = String(species.weight);
+    weight.title = "How often this one appears, against the others";
+    weight.addEventListener("input", () => {
+      species.weight = Math.max(1, Math.min(9, +weight.value || 1));
+      paintScatter();
+    });
+    const drop = document.createElement("button");
+    drop.textContent = "✕";
+    drop.title = "Take this one out of the mix";
+    drop.addEventListener("click", () => {
+      state.scatter.species = state.scatter.species
+        .filter((s) => s !== species);
+      renderShelfScatter();
+    });
+    chip.append(name, weight, drop);
+    chosen.appendChild(chip);
+  }
+  paintScatter();
+}
+
+// Dragging the region. Its listeners go on in CAPTURE phase and come off
+// again the moment the drag ends, rather than being woven into the
+// existing pointer handling: OrbitControls binds its own pointerdown at
+// boot and the studio's prop handling binds another, so anything that
+// merely listens later sees a press both of them have already acted on.
+let scatterDrag = null;
+let scatterOutline = null;
+
+function showScatterOutline(region) {
+  hideScatterOutline();
+  if (!region) return;
+  const points = [];
+  if (region.kind === "disc") {
+    for (let i = 0; i <= 64; i++) {
+      const a = (i / 64) * Math.PI * 2;
+      points.push(new THREE.Vector3(region.x + Math.cos(a) * region.r,
+        region.y + Math.sin(a) * region.r, groundLevel() + 0.005));
+    }
+  } else {
+    const z = groundLevel() + 0.005;
+    points.push(new THREE.Vector3(region.x0, region.y0, z),
+      new THREE.Vector3(region.x1, region.y0, z),
+      new THREE.Vector3(region.x1, region.y1, z),
+      new THREE.Vector3(region.x0, region.y1, z),
+      new THREE.Vector3(region.x0, region.y0, z));
+  }
+  scatterOutline = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color: 0x93a6bb, depthTest: false }));
+  scatterOutline.renderOrder = 3;
+  // In the SCENE, never in propsGroup: propRecordAt raycasts that group
+  // recursively and a stray pickable child there causes a wrong selection
+  // rather than a clean miss, which is why the prop outline's raycast is
+  // a no-op too.
+  scatterOutline.raycast = () => {};
+  scene.add(scatterOutline);
+}
+
+function hideScatterOutline() {
+  if (!scatterOutline) return;
+  scene.remove(scatterOutline);
+  scatterOutline.geometry.dispose();
+  scatterOutline.material.dispose();
+  scatterOutline = null;
+}
+
+function armScatterArea() {
+  if (state.scatterArmed) { disarmScatterArea(); return; }
+  if (!state.scatter.species.length) {
+    logStudio("scatter: pick a species first");
+    return;
+  }
+  state.scatterArmed = true;
+  controls.enabled = false;
+  document.getElementById("scatter-area").classList.add("active");
+  document.getElementById("scatter-readout").textContent =
+    "drag a rectangle on the floor; Escape to stop";
+  canvas.addEventListener("pointerdown", onScatterDown, true);
+  window.addEventListener("keydown", onScatterKey, true);
+}
+
+function disarmScatterArea() {
+  state.scatterArmed = false;
+  scatterDrag = null;
+  controls.enabled = true;
+  hideScatterOutline();
+  const button = document.getElementById("scatter-area");
+  if (button) button.classList.remove("active");
+  canvas.removeEventListener("pointerdown", onScatterDown, true);
+  window.removeEventListener("keydown", onScatterKey, true);
+  window.removeEventListener("pointermove", onScatterMove, true);
+  window.removeEventListener("pointerup", onScatterUp, true);
+  paintScatter();
+}
+
+function onScatterKey(event) {
+  if (event.key === "Escape") { event.stopPropagation(); disarmScatterArea(); }
+}
+
+function onScatterDown(event) {
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  event.preventDefault();
+  event.stopPropagation();
+  scatterDrag = { x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y, kind: "rect" };
+  window.addEventListener("pointermove", onScatterMove, true);
+  window.addEventListener("pointerup", onScatterUp, true);
+}
+
+function onScatterMove(event) {
+  if (!scatterDrag) return;
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  scatterDrag.x1 = hit.x;
+  scatterDrag.y1 = hit.y;
+  showScatterOutline(scatterDrag);
+  const w = Math.abs(scatterDrag.x1 - scatterDrag.x0);
+  const h = Math.abs(scatterDrag.y1 - scatterDrag.y0);
+  document.getElementById("scatter-readout").textContent =
+    w.toFixed(1) + " by " + h.toFixed(1) + " m";
+}
+
+function onScatterUp() {
+  const region = scatterDrag;
+  disarmScatterArea();
+  if (!region) return;
+  if (Math.abs(region.x1 - region.x0) < 0.5
+      || Math.abs(region.y1 - region.y0) < 0.5) {
+    logStudio("scatter: that area was too small to fill");
+    return;
+  }
+  runScatter(region);
+}
+
 // ---------- the stamp ----------
 // Ticked objects become one rubber stamp (Param: "i grab 3 random
 // objects from the layer tile and then group and duplicate, i can then
@@ -4452,6 +4872,79 @@ function endStamp() {
 }
 
 document.getElementById("stamp-group").addEventListener("click", beginStamp);
+
+// ---------- the scatter's controls ----------
+// Each slider writes its number and repaints the readout; none of them
+// re-solves, because re-solving on every drag tick would place and remove
+// thousands of props while his finger is still moving.
+for (const [id, key, digits, suffix] of [
+  ["scatter-spacing", "spacing", 2, "x"],
+  ["scatter-clump", "clump", 0, ""],
+  ["scatter-clump-size", "clumpSize", 1, ""],
+  ["scatter-clearance", "clearance", 2, ""],
+]) {
+  const input = document.getElementById(id);
+  if (!input) continue;
+  input.addEventListener("input", () => {
+    state.scatter[key] = +input.value;
+    const readout = document.getElementById(id + "-value");
+    if (readout) readout.textContent = (+input.value).toFixed(digits) + suffix;
+    paintScatter();
+  });
+}
+
+function syncScatterSize() {
+  const low = document.getElementById("scatter-size-min");
+  const high = document.getElementById("scatter-size-max");
+  state.scatter.sizeMin = Math.min(+low.value, +high.value);
+  state.scatter.sizeMax = Math.max(+low.value, +high.value);
+  document.getElementById("scatter-size-value").textContent =
+    state.scatter.sizeMin.toFixed(2) + " to " + state.scatter.sizeMax.toFixed(2);
+  paintScatter();
+}
+for (const id of ["scatter-size-min", "scatter-size-max"]) {
+  const input = document.getElementById(id);
+  if (input) input.addEventListener("input", syncScatterSize);
+}
+
+const scatterTurn = document.getElementById("scatter-turn");
+if (scatterTurn) {
+  scatterTurn.addEventListener("change", () => {
+    state.scatter.turn = +scatterTurn.value;
+  });
+}
+
+const scatterSeed = document.getElementById("scatter-seed");
+if (scatterSeed) {
+  scatterSeed.addEventListener("input", () => {
+    state.scatter.seed = Math.max(1, +scatterSeed.value || 1);
+  });
+}
+
+document.getElementById("scatter-dice").addEventListener("click", () => {
+  // A fresh deal, said out loud in the box so the seed that produced a
+  // field he liked can be typed back in.
+  state.scatter.seed = 1 + Math.floor(Math.random() * 99998);
+  scatterSeed.value = String(state.scatter.seed);
+  paintScatter();
+});
+
+document.getElementById("scatter-area").addEventListener("click", armScatterArea);
+
+document.getElementById("scatter-all").addEventListener("click", () => {
+  if (!state.bundle) { logStudio("scatter: open a vault first"); return; }
+  runScatter({ kind: "disc", x: 0, y: 0, r: state.groundRadius });
+});
+
+document.getElementById("scatter-undo-last").addEventListener("click", () => {
+  const run = state.scatterRuns.pop();
+  if (!run) return;
+  for (const record of run.records) removePropRecord(record);
+  saveProps();
+  renderShelf();
+  paintScatter();
+  logStudio("removed the last scatter, " + run.records.length + " props");
+});
 
 function renderShelfProps(cats, holder) {
   const groups = [...new Set(state.propLibrary.map(

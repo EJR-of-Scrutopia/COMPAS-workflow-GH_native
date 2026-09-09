@@ -1,0 +1,45 @@
+{
+ "dir": "C:/Users/Param/AppData/Local/Temp/claude/c--Users-Param-OneDrive---Ananke-eidos-Documents-Ananke-Eidos-Studio-VS-code-Random-comfyui/eef1adad-d09f-4ae7-8695-89370827e60b/scratchpad/ue_export/megaplants",
+ "group": "site",
+ "credit": "Quixel Megascans (Epic Games), via Fab",
+ "licence": "Fab Standard License",
+ "source": "https://www.fab.com/sellers/Quixel",
+ "keyPrefix": "ms",
+ "renames": {
+  "uldubik_tier_0": {
+   "key": "ms_desert_rock_cluster",
+   "label": "Desert rock cluster"
+  },
+  "tletcalfa_tier_0": {
+   "key": "ms_forest_terrain",
+   "label": "Forest terrain patch"
+  },
+  "venjcjyqx_tier_0": {
+   "key": "ms_beach_boulder",
+   "label": "Nordic beach boulder"
+  },
+  "xisgcic_tier_0": {
+   "key": "ms_forest_cluster",
+   "label": "Nordic forest cluster"
+  },
+  "xjijdiz_tier_0": {
+   "key": "ms_forest_rocks_small",
+   "label": "Nordic forest rocks"
+  },
+  "SM_HP_Tree": {
+   "key": "ms_tree_high_poly",
+   "label": "Broadleaf study tree",
+   "group": "planting"
+  }
+ },
+ "sizes": [
+  {
+   "match": "HP_Tree",
+   "size": "canopy"
+  },
+  {
+   "match": ".",
+   "size": "hero"
+  }
+ ]
+}

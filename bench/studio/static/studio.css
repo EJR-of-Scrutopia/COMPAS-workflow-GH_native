@@ -1039,6 +1039,41 @@ body.panel-collapsed #legend { right: var(--s4); }
 #layer-tabs .layer-delete:hover { background: var(--danger); color: #fff; }
 
 
+/* ---------- the scatter drawer ----------
+   Its own tab beside Props, because choosing species is browsing and
+   browsing is what the shelf is for. The species grid scrolls; the
+   controls and the readout below it stay in view while he picks. */
+#scatter-panel { display: flex; flex-direction: column; min-height: 0; }
+#scatter-panel.hidden { display: none; }
+#scatter-panel #scatter-species { flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; }
+#scatter-chosen { display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px 0; }
+#scatter-chosen:empty { padding: 0; }
+.scatter-chip { display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 10px; font-size: 11px; color: var(--ink);
+  background: var(--accent-bg); border: 1px solid var(--accent);
+  border-radius: 12px; }
+.scatter-chip input { width: 38px; margin: 0; padding: 1px 4px;
+  font-size: 11px; text-align: center; background: var(--raised);
+  color: var(--ink); border: 1px solid var(--line); border-radius: 3px; }
+.scatter-chip button { width: auto; margin: 0; padding: 0 4px;
+  font-size: 11px; line-height: 1; background: transparent;
+  color: var(--ink-3); border: 0; }
+.scatter-chip button:hover { color: var(--danger); }
+#scatter-controls { display: grid; grid-template-columns: 1fr 1fr;
+  gap: 2px 12px; padding: 8px 10px 0; }
+#scatter-controls label { margin: 0; font-size: 11px; }
+#scatter-actions { display: flex; gap: 6px; padding: 8px 10px 0; }
+#scatter-actions button { width: auto; margin: 0; }
+/* Lit while it waits for the drag, so a press that armed it stays
+   visible even after the drawer scrolls. */
+#scatter-actions button.active { background: var(--accent);
+  border-color: var(--accent); color: #fff; }
+#scatter-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-2); }
+
+
 /* ---------- device fit, first pass ----------
    The studio now travels: the tailnet serves it to an iPad as readily as
    to this desktop. Two adjustments where one size did not fit: fingers

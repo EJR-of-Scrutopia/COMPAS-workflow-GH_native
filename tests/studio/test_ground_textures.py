@@ -46,25 +46,29 @@ def test_sixteen_bits_come_down_to_eight_by_scaling_not_clipping():
     """The whole bug in one assertion. Clipping sends everything above
     255 to 255, so a map whose values run to 65535 arrives white."""
 
+    import numpy as np
+
     module = tool()
     image = sixteen_bit([0, 32768, 65535, 16384])
     got = module._to_mode(image, "L")
     assert got.mode == "L"
     assert got.getextrema() == (0, 255), (
         "a 16-bit range must map onto the whole 8-bit range")
-    assert sorted(got.getdata()) == [0, 64, 128, 255]
+    assert sorted(np.asarray(got).ravel().tolist()) == [0, 64, 128, 255]
 
 
 def test_a_height_map_keeps_all_sixteen_of_its_bits():
     """The library stores height as I;16 (measured on every existing
     material), because a displacement quantised to 256 steps terraces."""
 
+    import numpy as np
+
     module = tool()
     image = sixteen_bit([0, 32768, 65535, 16384])
     got = module._to_mode(image, "I;16")
     assert got.mode == "I;16"
     assert got.getextrema() == (0, 65535)
-    assert sorted(got.getdata()) == [0, 16384, 32768, 65535]
+    assert sorted(np.asarray(got).ravel().tolist()) == [0, 16384, 32768, 65535]
 
 
 def test_eight_bits_widen_so_white_stays_white():

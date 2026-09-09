@@ -152,6 +152,22 @@ const LIST = [
   { slug: "celandine_01",        label: "Celandine",        group: "planting", size: "clutter" },
   { slug: "grass_medium_01",     label: "Grass clumps",     group: "planting", size: "clutter" },
   { slug: "grass_medium_02",     label: "Grass tufts",      group: "planting", size: "clutter" },
+  // Ground cover for the scatter, added 2026-09-09 on Param's word: "i was
+  // hoping that we can actually bring in grass types to be used as 3d
+  // meshes in the scatter ... not just a 2d plane".
+  //
+  // These are photoscans, so they are real geometry rather than crossed
+  // billboards, which is the whole point of asking for them. It is also
+  // the whole of what exists: of Poly Haven's 521 models, grass_bermuda_01
+  // and moss_01 are the ONLY ground-cover meshes the library did not
+  // already have. There is no third grass to fetch. The rest below are
+  // what makes a scattered field read as a meadow rather than a lawn --
+  // small flowering things to mix in among the tufts at a low weight.
+  { slug: "grass_bermuda_01",    label: "Bermuda grass",    group: "planting", size: "clutter" },
+  { slug: "moss_01",             label: "Moss",             group: "planting", size: "clutter" },
+  { slug: "shrub_sorrel_01",     label: "Sorrel",           group: "planting", size: "clutter" },
+  { slug: "flower_heliophila",   label: "Heliophila",       group: "planting", size: "clutter" },
+  { slug: "flower_empodium",     label: "Empodium",         group: "planting", size: "clutter" },
   { slug: "potted_plant_02",     label: "Planter plant",    group: "planting", size: "mid" },
   { slug: "potted_plant_04",     label: "Potted aloe",      group: "planting", size: "clutter" },
   { slug: "planter_box_01",      label: "Planter box",      group: "planting", size: "clutter" },
