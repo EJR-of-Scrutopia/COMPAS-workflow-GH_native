@@ -63,8 +63,12 @@ def tiny_export(tmp_path):
     return contract_path, geometry_path
 
 
-def run_stage(tmp_path, placed_faces, include_export_loads=True):
+def run_stage(tmp_path, placed_faces, include_export_loads=True,
+              with_geometry=True):
     contract_path, geometry_path = tiny_export(tmp_path)
+    if not with_geometry:
+        # What staging passes for an export that has no COMPAS half.
+        geometry_path = ""
     workdir = tmp_path / "work-{}".format("-".join(map(str, placed_faces)) or "none")
     workdir.mkdir()
     request = {
@@ -85,6 +89,81 @@ def run_stage(tmp_path, placed_faces, include_export_loads=True):
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(out_path.read_text(encoding="utf-8"))
+
+
+def test_a_stage_solves_when_the_export_has_no_compas_half():
+    """Param's 2 Sided Vault staged all nineteen courses and coloured
+    nothing: every stage died on "load_thrust_mesh("")".
+
+    The exporter's newer three-document set (form, skin, formwork) does
+    not include the COMPAS half, and available_exports only sets
+    entry["geometry"] when a "-compas.json" is actually there, so
+    staging passed "" and the solver read a mesh from the empty path.
+    The run still reported done, because a failed stage is recorded
+    rather than raised, so the only symptom was empty heatmaps.
+
+    A study with no COMPAS half must solve from the contract's own mesh
+    and produce real fields, not a polite failure."""
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        result = run_stage(Path(tmp), [0, 1, 2, 3], with_geometry=False)
+
+    assert result["converged"] is True, result.get("message")
+    assert result["placed_face_count"] == 4
+    assert result["support_count"] == 4
+    # The fields the heatmaps colour. Empty ones are the bug itself.
+    assert sorted(result["stresses"]) == ["0", "1", "2", "3"]
+    assert len(result["displacements"]) == 9
+    assert result["peak_displacement"] > 0.0
+
+
+def test_the_derived_surface_is_the_same_surface_as_the_compas_half():
+    """Deriving is only safe because the two are the same mesh.
+
+    Measured on Param's own exports that carry both documents (Aramdillo
+    style, 801 vertices and 1481 faces; Column diagnosis, 661 and 600):
+    identical counts, face_vertices identical face for face, and a worst
+    coordinate difference of 0.0 m. This holds the claim on a fixture
+    that travels with the repo.
+
+    Face ORDER is the load-bearing part: the stage plan names placed
+    faces by the contract's own index and solve_stage looks them up with
+    face_vertices(i), so a surface whose faces came back in a different
+    order would solve the wrong cells without ever failing."""
+
+    import tempfile
+
+    from ananke_fea import mesh as fea_reader
+
+    with tempfile.TemporaryDirectory() as tmp:
+        contract_path, geometry_path = tiny_export(Path(tmp))
+        contract = fea_reader.load_contract(contract_path)
+        loaded = fea_reader.load_thrust_mesh(geometry_path)
+        derived = fea_reader.thrust_mesh_from_contract(contract)
+
+        assert derived.number_of_vertices() == loaded.number_of_vertices()
+        assert derived.number_of_faces() == loaded.number_of_faces()
+        assert sorted(derived.faces()) == list(range(derived.number_of_faces()))
+        for key in loaded.faces():
+            assert list(derived.face_vertices(key)) \
+                == list(loaded.face_vertices(key)), key
+        for key in loaded.vertices():
+            assert derived.vertex_coordinates(key) \
+                == loaded.vertex_coordinates(key), key
+
+
+def test_a_contract_with_no_faces_says_so_rather_than_solving_nothing():
+    """The derivation needs the form graph's faces. A contract without
+    them must name that, not hand back an empty surface that reads as a
+    vault with nothing placed."""
+
+    from ananke_fea import mesh as fea_reader
+
+    with pytest.raises(ValueError, match="formGraph faces"):
+        fea_reader.thrust_mesh_from_contract(
+            {"equilibrium": {"vertices": [{"x": 0.0, "y": 0.0, "z": 0.0}]}})
 
 
 def test_the_full_patch_solves_with_fields_for_every_node_and_face():

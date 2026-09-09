@@ -40,7 +40,17 @@ def solve(request: dict) -> dict:
     preset = PRESETS[request["material"]]
     thickness = float(request["thickness"])
     contract = reader.load_contract(request["contract_path"])
-    full = reader.load_thrust_mesh(request["geometry_path"])
+    # The COMPAS half when there is one, the contract's own mesh when
+    # there is not. staging passes "" for a study whose export carries no
+    # -compas.json, which is every study written by the exporter's newer
+    # three-document set, and Path("").read_text() ended all nineteen
+    # stages of Param's 2 Sided Vault before a single one solved. The run
+    # still reported done, so the failure surfaced only as heatmaps with
+    # nothing in them. See reader.thrust_mesh_from_contract: the two are
+    # the same surface, measured, not assumed.
+    geometry_path = request.get("geometry_path") or ""
+    full = (reader.load_thrust_mesh(geometry_path) if geometry_path
+            else reader.thrust_mesh_from_contract(contract))
 
     echo = {
         "combination": "ULS",

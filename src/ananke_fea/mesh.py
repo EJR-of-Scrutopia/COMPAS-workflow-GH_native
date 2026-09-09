@@ -110,6 +110,52 @@ def edges(contract: Mapping[str, Any]) -> List[Tuple[int, int]]:
     ]
 
 
+def faces(contract: Mapping[str, Any]) -> List[List[int]]:
+    """The form graph's faces, each a ring of vertex indices."""
+
+    form = contract.get("formGraph") or {}
+    raw = form.get("faces")
+    if not raw:
+        raise ValueError(
+            "this contract has no formGraph faces to build a surface from")
+    return [[int(index) for index in face["vertices"]] for face in raw]
+
+
+def thrust_mesh_from_contract(contract: Mapping[str, Any]):
+    """The thrust surface, rebuilt from the contract's own mesh.
+
+    The COMPAS half of an export carries a serialised Mesh, and for as
+    long as it was always written this module read the surface from
+    there. The exporter's newer three-document set (form, skin,
+    formwork) does not include it, so a study exported that way reached
+    solve_stage with an EMPTY geometry path and every stage died reading
+    it: no converged stage, and therefore no stress and no deflection to
+    colour, on a run that otherwise reported nineteen of nineteen done.
+
+    Deriving it here is not a substitute for the real surface, it IS the
+    real surface. Measured on both of Param's exports that carry both
+    documents, the serialised thrustMesh and the contract's own
+    equilibrium vertices and formGraph faces agree exactly: same vertex
+    and face counts, face_vertices identical face for face, and a worst
+    coordinate difference of 0.0 m. The COMPAS half was a second copy.
+
+    Face keys must come out 0..n-1 in the contract's own order, because
+    the stage plan names placed faces by that index and solve_stage looks
+    them up with face_vertices(i). Passing dicts keyed by position is
+    what holds that, rather than trusting a list's insertion order.
+    """
+
+    from compas.datastructures import Mesh
+
+    points = vertices(contract)
+    if not points:
+        raise ValueError("this contract has no vertices to build a surface from")
+    return Mesh.from_vertices_and_faces(
+        {index: list(point) for index, point in enumerate(points)},
+        {index: ring for index, ring in enumerate(faces(contract))},
+    )
+
+
 def _vector_map(contract: Mapping[str, Any], key: str) -> Dict[int, Vector]:
     """Helper to extract and convert vector maps from contract."""
 
