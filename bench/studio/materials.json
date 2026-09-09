@@ -631,6 +631,26 @@
     "timber/weathered-silver": [
       0.0708,
       0.4846
+    ],
+    "vegetation/grass-aerial": [
+      15.0,
+      15.0
+    ],
+    "vegetation/grass-dry": [
+      2.0,
+      2.0
+    ],
+    "vegetation/grass-lawn": [
+      2.0,
+      2.0
+    ],
+    "vegetation/grass-path": [
+      1.0,
+      1.0
+    ],
+    "vegetation/grass-sparse": [
+      2.0,
+      2.0
     ]
   },
   "tileSource": {
@@ -791,6 +811,11 @@
     "timber/weathered-dark": "Poly Haven weathered_brown_planks, cropped",
     "timber/weathered-grey": "Poly Haven brown_planks_03, cropped",
     "timber/weathered-mottled": "Poly Haven wood_planks_dirt, cropped",
-    "timber/weathered-silver": "Poly Haven rough_wood, cropped"
+    "timber/weathered-silver": "Poly Haven rough_wood, cropped",
+    "vegetation/grass-aerial": "Poly Haven aerial_grass_rock",
+    "vegetation/grass-dry": "Poly Haven withered_grass",
+    "vegetation/grass-lawn": "Poly Haven leafy_grass",
+    "vegetation/grass-path": "Poly Haven grass_path_2",
+    "vegetation/grass-sparse": "Poly Haven sparse_grass"
   }
 }
