@@ -146,13 +146,12 @@ def check_index_spaces(contract: Mapping[str, Any]) -> None:
                 "surface would be built from the wrong "
                 "vertices".format(form_id, equilibrium_id))
 
+    # Face ids are deliberately not compared with array positions; see
+    # the studio's geometry.check_index_spaces for why. Nothing reads
+    # face["id"], the cut binds geometrically, and refusing an
+    # out-of-order form graph would fail a study the exporter reads
+    # correctly.
     for position, face in enumerate((contract.get("formGraph") or {}).get("faces") or []):
-        face_id = face.get("id")
-        if face_id is not None and int(face_id) != position:
-            raise ValueError(
-                "this export's formGraph faces are not in id order (face at "
-                "position {} carries id {}), and the stage plan names placed "
-                "faces by position".format(position, face_id))
         for index in face.get("vertices", []):
             if not 0 <= int(index) < count:
                 raise ValueError(

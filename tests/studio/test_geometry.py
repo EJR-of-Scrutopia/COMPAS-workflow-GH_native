@@ -72,15 +72,34 @@ def test_a_permuted_vertex_space_is_refused_rather_than_drawn():
         g.mesh_arrays(contract)
 
 
-def test_faces_out_of_id_order_are_refused():
-    """The stage plan names placed faces by POSITION. Faces arriving in
-    another order would stage the wrong cells and never fail."""
+def test_faces_out_of_id_order_are_read_not_refused():
+    """A face id that disagrees with its array position is IGNORED DATA.
+
+    The guard refused these for about an hour, and it was wrong to. The
+    exporter session pointed out that its own readers sort formGraph by
+    id, so an out-of-order form graph is ordinary input on their side,
+    and measuring the studio confirmed it: nothing here reads
+    face["id"] at all. The cut binds cells to faces geometrically
+    (tessellation.point_in_ring), and the stage plan then numbers faces
+    by position in a numbering that never leaves this codebase.
+
+    Refusing them would have failed a study the plugin reads correctly
+    and blamed his export for a limit of this reader, which is the same
+    fault as the "Upload one from the Skin component" message that
+    started this morning. Pinned so it does not come back."""
 
     g = studio()
     contract = tiny_contract()
-    contract["formGraph"]["faces"][2]["id"] = 9
-    with pytest.raises(ValueError, match="not in id order"):
-        g.mesh_arrays(contract)
+    contract["formGraph"]["faces"][2]["id"] = 9        # not its position
+    arrays = g.mesh_arrays(contract)
+    assert arrays["faces"] == [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6],
+                               [4, 5, 8, 7]], (
+        "the faces are read in array order, ids untouched")
+
+    # Even with no id at all, which is what the older exports carry.
+    for face in contract["formGraph"]["faces"]:
+        face.pop("id", None)
+    assert g.mesh_arrays(contract)["faces"][0] == [0, 1, 4, 3]
 
 
 def test_a_face_naming_a_vertex_that_is_not_there_is_refused():

@@ -219,13 +219,22 @@ def check_index_spaces(contract: Mapping[str, Any]) -> None:
                 "Reading it would draw and solve the wrong "
                 "surface.".format(form_id, equilibrium_id))
 
+    # A face's own id is DELIBERATELY not compared with its array
+    # position, and this is the one clause that was here and was wrong.
+    #
+    # Nothing in the studio or in ananke_fea ever reads face["id"]: the
+    # cut binding joins cells to faces geometrically (point_in_ring), and
+    # the stage plan then names faces by position in a numbering that is
+    # entirely the studio's own. A face id that disagrees with its
+    # position is therefore ignored data, not a hazard, and the
+    # exporter's readers sort by id precisely because out-of-order faces
+    # are ordinary input to them.
+    #
+    # Refusing them would have failed a study the plugin reads correctly,
+    # and blamed his file for a limit of this reader -- which is the same
+    # sentence that started all of this: "Upload one from the Skin
+    # component", said of a study whose skin was already on disk.
     for position, face in enumerate(contract.get("formGraph", {}).get("faces") or []):
-        face_id = face.get("id")
-        if face_id is not None and int(face_id) != position:
-            raise ValueError(
-                "this export's formGraph faces are not in id order (face at "
-                "position {} carries id {}), and the stage plan names placed "
-                "faces by position".format(position, face_id))
         for index in face.get("vertices", []):
             if not 0 <= int(index) < count:
                 raise ValueError(
