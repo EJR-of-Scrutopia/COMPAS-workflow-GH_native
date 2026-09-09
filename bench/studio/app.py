@@ -1234,7 +1234,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         row = {
             "export": path.name[: -len("-mechanism.json")],
             "bytes": stat.st_size, "ok": True, "reason": "",
-            "spools": 0, "reels": 0, "parts": [],
+            "spools": 0, "unstated": 0, "reels": 0, "parts": [],
             "instances": 0, "wires": 0, "anchors": 0,
         }
         try:
@@ -1251,22 +1251,43 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         body = body if isinstance(body, dict) else {}
         reels = body.get("reels")
         reels = reels if isinstance(reels, list) else ([reels] if reels else [])
-        # A SPOOL is a drum small enough to be one. The bank of spools is
-        # what decides how many cables one machine can pull, which is the
-        # whole basis of choosing between mechanisms. A reel that states
-        # no winding radius is counted as a spool: an unstated radius is
-        # far more likely to be a drum than a pulley, and counting it out
-        # would quietly shrink the bank.
-        spools = 0
+        # A SPOOL is a drum small enough to be one. The bank of spools
+        # decides how many cables one machine can pull, which is the whole
+        # basis of choosing between mechanisms.
+        #
+        # A reel that states NO winding radius means two different things
+        # depending on the company it keeps, and getting this wrong
+        # miscounts the bank in one direction or the other:
+        #
+        #   no reel in the document states one -- an export from before
+        #     the writer measured them, so every reel is taken as a drum
+        #     and the bank is the whole list;
+        #   some reels state one and this does not -- measured on his file
+        #     of 2026-09-09 02:xx, where reels 0-6 wind at 0.033, reels 7
+        #     and 9 at 0.20 and 0.27, and reel 8 states null while sitting
+        #     on the pulleys' own axis. Counting it in gave a bank of
+        #     EIGHT for a machine with seven spools, and would have chosen
+        #     the wrong mechanism for every study.
+        #
+        # So an unstated radius among stated ones is not counted, and is
+        # reported, because a reel the reader cannot place is a fact he
+        # can act on rather than a number quietly one too high.
+        stated = [reel.get("windingRadius") for reel in reels
+                  if isinstance(reel, dict)]
+        stated = [v for v in stated if isinstance(v, (int, float))
+                  and not isinstance(v, bool)]
+        spools, unstated = 0, 0
         for reel in reels:
             radius = reel.get("windingRadius") if isinstance(reel, dict) else None
-            try:
-                if radius is None or float(radius) < mechanism.SPOOL_RADIUS_LIMIT:
+            if isinstance(radius, (int, float)) and not isinstance(radius, bool):
+                if float(radius) < mechanism.SPOOL_RADIUS_LIMIT:
                     spools += 1
-            except (TypeError, ValueError):
+            elif stated:
+                unstated += 1
+            else:
                 spools += 1
         row.update(
-            spools=spools, reels=len(reels),
+            spools=spools, unstated=unstated, reels=len(reels),
             parts=sorted(k for k, v in body.items() if isinstance(v, (dict, list))),
             instances=len(document.get("instances") or []),
             wires=len(document.get("wires") or []),

@@ -431,10 +431,10 @@ def test_the_mechanism_library_says_what_each_machine_is(tmp_path, monkeypatch):
 
     assert by_name["Five"]["spools"] == 5
 
-    # A REEL THAT STATES NO WINDING RADIUS COUNTS INTO THE BANK. An
-    # unstated radius is far more likely to be a drum than a pulley --
-    # every export before 2026-09-09 stated none at all -- and counting
-    # it out would quietly shrink the bank and pick the wrong machine.
+    # A REEL STATING NO WINDING RADIUS MEANS TWO DIFFERENT THINGS.
+    #
+    # When NO reel states one, the document predates the writer measuring
+    # them and every reel is a drum.
     (bundle.UPLOAD_DIR / "Silent-mechanism.json").write_text(
         _json.dumps({
             "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
@@ -442,8 +442,36 @@ def test_the_mechanism_library_says_what_each_machine_is(tmp_path, monkeypatch):
         }), encoding="utf-8")
     silent = {row["export"]: row
               for row in client.get("/api/mechanisms").json()["mechanisms"]}["Silent"]
-    assert silent["spools"] == 3, "an unstated radius is a drum, not a pulley"
-    assert silent["reels"] == 3
+    assert silent["spools"] == 3, "with none stated, every reel is a drum"
+    assert silent["unstated"] == 0
+
+    # When SOME state one and one does not, it cannot be placed and is not
+    # counted. Measured on his real file: reels 0-6 wind at 0.033, reels 7
+    # and 9 at 0.20 and 0.27, and reel 8 states null while sitting on the
+    # PULLEYS' own axis. Counting it in gave a bank of eight for a machine
+    # with seven spools, which would have chosen the wrong mechanism for
+    # every study.
+    (bundle.UPLOAD_DIR / "Partial-mechanism.json").write_text(
+        _json.dumps({
+            "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
+            "mechanism": {"reels": [
+                {"reel": 0, "windingRadius": 0.033},
+                {"reel": 1, "windingRadius": 0.033},
+                {"reel": 2, "windingRadius": 0.20},
+                {"reel": 3, "windingRadius": None},
+                # JSON true. In Python isinstance(True, int) is True, so
+                # without a guard this reads as a radius of 1.0 -- not a
+                # spool, and not reported as unplaceable either, which is
+                # the worst of both: a reel that silently vanishes from
+                # the count with nothing said about it.
+                {"reel": 4, "windingRadius": True},
+            ]},
+        }), encoding="utf-8")
+    partial = {row["export"]: row
+               for row in client.get("/api/mechanisms").json()["mechanisms"]}["Partial"]
+    assert partial["spools"] == 2, "the unstated reel is not counted into the bank"
+    assert partial["unstated"] == 2, "and it is reported rather than absorbed"
+    assert partial["reels"] == 5
 
     # A damaged mechanism is LISTED and says why, not skipped: it is his
     # work, and one that silently vanishes from the picker is worse than
