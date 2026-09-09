@@ -40911,7 +40911,7 @@ internal static partial class Program
             object reMeshes, object reBrep, object axes) =>
             Activator.CreateInstance(
                 assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
-                reMeshes, reBrep, axes)!;
+                reMeshes, reBrep, axes, null, false)!;
         object EmptyAsset() => Asset(
             null, false,
             MechanismListOf(meshType), MechanismListOf(typeof(bool)),
@@ -41203,7 +41203,9 @@ internal static partial class Program
             null, false, null, false,
             MechanismListOf(meshType),
             MechanismListOf(typeof(bool)),
-            MechanismListOf(frameType))!;
+            MechanismListOf(frameType),
+            null,
+            false)!;
 
         var warnings = new List<string>();
         var notes = new List<string>();
@@ -41328,6 +41330,82 @@ internal static partial class Program
                 "reading that composes safely with him offsetting the " +
                 "planes himself: an offset already applied must not be " +
                 $"applied again by a reader. Got \"{meaning}\".");
+        }
+
+        // ONE ANCHOR PER MACHINE, NOT ONE PER CABLE (his ruling): a bank
+        // of seven reels is held by one anchor in front of it, so this
+        // fixture's two rows of seven give TWO anchors and not fourteen.
+        JsonElement anchorsOut = doc.RootElement.GetProperty("anchors");
+        if (anchorsOut.GetArrayLength() != 2)
+        {
+            throw new InvalidOperationException(
+                "Two rows of seven anchors carry ONE machine each and so " +
+                "ONE anchor each, in front of it, holding the whole bank " +
+                $"of seven. Got {anchorsOut.GetArrayLength()}, which if it " +
+                "is 14 means it reverted to one per cable.");
+        }
+        foreach (JsonElement anchor in anchorsOut.EnumerateArray())
+        {
+            int[] held = anchor.GetProperty("net_vertices")
+                .EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            if (held.Length != 7)
+            {
+                throw new InvalidOperationException(
+                    "An anchor holds its machine's whole bank, so it must " +
+                    $"name all seven net vertices; got {held.Length}.");
+            }
+            double[] centre = new double[3];
+            foreach (int id in held)
+            {
+                double[] at = all[id];
+                for (int i = 0; i < 3; i++)
+                    centre[i] += at[i] / held.Length;
+            }
+            double[] origin = anchor.GetProperty("frame").GetProperty("origin")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            for (int i = 0; i < 3; i++)
+            {
+                if (Math.Abs(origin[i] - centre[i]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "An anchor's own origin is the CENTRE of the seven " +
+                        "cables it holds, which is the convention an " +
+                        "authored anchor body is modelled to. Expected [" +
+                        string.Join(", ", centre) + "], got [" +
+                        string.Join(", ", origin) + "].");
+                }
+            }
+            // It must pair with a machine, since it stands in front of one.
+            int side = anchor.GetProperty("side").GetInt32();
+            int machine = anchor.GetProperty("mechanism").GetInt32();
+            bool paired = instances.EnumerateArray().Any(e =>
+                e.GetProperty("side").GetInt32() == side &&
+                e.GetProperty("mechanism").GetInt32() == machine);
+            if (!paired)
+            {
+                throw new InvalidOperationException(
+                    $"Anchor (side {side}, mechanism {machine}) names no " +
+                    "machine. An anchor stands in front of a machine, so " +
+                    "the two must pair by side and mechanism.");
+            }
+            if (anchor.GetProperty("permanence").GetString() != "permanent")
+            {
+                throw new InvalidOperationException(
+                    "An anchor is works that REMAIN, not machine that comes " +
+                    "away, so its permanence is \"permanent\".");
+            }
+        }
+
+        bool anchorsNamed = notes.Any(n =>
+            n.Contains("ONE PER MACHINE", StringComparison.Ordinal) &&
+            n.Contains("not one per cable", StringComparison.Ordinal));
+        if (!anchorsNamed)
+        {
+            throw new InvalidOperationException(
+                "The chin must say the anchors are one per machine rather " +
+                "than one per cable, since that is his ruling and the " +
+                "difference is a factor of seven; notes were: " +
+                string.Join(" | ", notes));
         }
 
         bool derivationNamed = notes.Any(n =>
@@ -41562,7 +41640,9 @@ internal static partial class Program
             null, false, null, false,
             MechanismListOf(meshType),
             MechanismListOf(typeof(bool)),
-            MechanismListOf(frameType))!;
+            MechanismListOf(frameType),
+            null,
+            false)!;
 
         object branch = Activator.CreateInstance(
             placementBranchType,
@@ -41786,7 +41866,9 @@ internal static partial class Program
             })),
             MechanismListOf(typeof(bool), false),
             MechanismListOf(frameType, FrameOf(
-                new[] { 1000.0, 1000.0, 1000.0 }, unitX, unitY)))!;
+                new[] { 1000.0, 1000.0, 1000.0 }, unitX, unitY)),
+            null,
+            false)!;
 
         object BranchOf(double[][] planeOrigins)
         {
@@ -42139,7 +42221,7 @@ internal static partial class Program
             object reMeshes, object reBrep, object axes) =>
             Activator.CreateInstance(
                 assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
-                reMeshes, reBrep, axes)!;
+                reMeshes, reBrep, axes, null, false)!;
 
         // Reel 0: axis the world Z line through the origin; own mesh
         // vertices 2 units out on X and Y -- radial extent 2 -- and
@@ -42939,7 +43021,7 @@ internal static partial class Program
             object reMeshes, object reBrep, object axes) =>
             Activator.CreateInstance(
                 assetType, f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
-                reMeshes, reBrep, axes)!;
+                reMeshes, reBrep, axes, null, false)!;
         object InstanceId(int side, int group) =>
             Activator.CreateInstance(instanceIdType, side, group)!;
         object Branch(int side, int group, object planes) =>
