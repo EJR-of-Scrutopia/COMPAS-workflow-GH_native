@@ -798,15 +798,53 @@ internal static class MechanismCollector
             mechanismOut.TryGetValue("reels", out object? reelsObject) &&
             reelsObject is List<Dictionary<string, object?>> reelsPayload)
         {
+            // EVERY REEL STATES A RADIUS, NEVER NULL (2026-09-09, and the
+            // studio session had to write a rule around the null before I
+            // fixed it -- counting an unstated radius as a drum gave it a
+            // bank of eight for a machine with seven spools, which would
+            // have chosen the wrong mechanism for every study).
+            //
+            // A reel that owns no routing frame has nothing to MEASURE, but
+            // it still has a size: the furthest its own mesh reaches from
+            // its own axis. That is a weaker number than a measurement and
+            // is labelled as such rather than passed off as one, because a
+            // reader that cannot tell them apart will trust the wrong one.
+            var fellBack = new List<int>();
             for (int r = 0; r < reelsPayload.Count; r++)
             {
-                double? measured =
-                    ownedRadii.TryGetValue(r, out List<double>? radii) && radii.Count > 0
-                        ? MedianOf(radii)
-                        : null;
-                reelsPayload[r]["windingRadius"] = measured;
-                if (measured is not null)
-                    measuredRadii.Add(measured.Value);
+                bool haveFrames =
+                    ownedRadii.TryGetValue(r, out List<double>? radii) && radii.Count > 0;
+                if (haveFrames)
+                {
+                    double measured = MedianOf(radii!);
+                    reelsPayload[r]["windingRadius"] = measured;
+                    reelsPayload[r]["windingRadiusSource"] = "frames";
+                    reelsPayload[r]["windingRadiusSamples"] = radii!.Count;
+                    measuredRadii.Add(measured);
+                }
+                else
+                {
+                    reelsPayload[r]["windingRadius"] = r < reels.Count
+                        ? ReelRadialExtent(reels[r].Mesh, reels[r].Axis)
+                        : MinimumSpoolRadius;
+                    reelsPayload[r]["windingRadiusSource"] = "mesh";
+                    reelsPayload[r]["windingRadiusSamples"] = 0;
+                    fellBack.Add(r);
+                }
+            }
+            if (fellBack.Count > 0)
+            {
+                notes.Add(
+                    "mechanism: reel(s) " + string.Join(", ", fellBack) +
+                    " own no routing frame, so their windingRadius is the " +
+                    "furthest their OWN MESH reaches from their own axis " +
+                    "rather than a measurement of where the wire runs. " +
+                    "windingRadiusSource says which every reel got, " +
+                    "\"frames\" or \"mesh\", and windingRadiusSamples how " +
+                    "many frames the measured ones rest on. A reel owning " +
+                    "no frame is worth a look: either no wire passes it, or " +
+                    "its neighbours are close enough to have claimed the " +
+                    "frames that are really its own.");
             }
         }
         if (measuredRadii.Count > 0 && mechanismOut is not null)
