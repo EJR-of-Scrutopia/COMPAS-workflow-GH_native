@@ -1209,6 +1209,42 @@ def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
     assert '          + Math.round(each * (total - frameIndex) / 60) + " min left";' in js
 
 
+def test_the_recorder_owns_the_camera_and_the_canvas_during_a_take():
+    """Param: "the animation recording, as long as it took, didnt do the
+    same animation as i get when i play the animation directly? why? it
+    should be the same please."
+
+    Because the turntable's ownership was gated on state.timeline.playing,
+    which recordAnimation deliberately sets FALSE -- two clocks racing the
+    same state is worse. So during every take controls.update() ran on
+    each animation frame and its leftover damping dragged the camera off
+    the bearing applyTimeline had just pinned. Same function, same t,
+    different camera.
+
+    And renderView() then drew that camera over the frame the recorder had
+    just composed, in the window between its render and its pixel read."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "  const turntableOwns = state.timeline\n" \
+        "    && (state.timeline.playing || state.recording)" in js, (
+            "a take owns the camera exactly as a play does")
+    assert "  if (!state.recording) renderView();" in js, (
+        "and the loop keeps its hands off the canvas until the take ends")
+    # The clock itself was never the difference: live advances by
+    # delta * speed, the recorder by frameIndex * speed / fps, which is
+    # the same range at the same rate.
+    assert "applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed," in js
+    assert "      applyTimeline(frameIndex * speed / fps);" in js
+
+
+def test_the_recordings_output_folder_has_a_button():
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
+    assert '<button id="recordings-folder-choose"' in html
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'showLibraryFolder("recordings", "recordings-folder-path", "recordings");' in js
+    assert 'chooseLibraryFolder("recordings", "recordings-folder-path", "recordings",' in js
+
+
 def test_the_shelf_record_tile_becomes_a_stop_button():
     """Param: "the stop record needs to happen on the record tile too not
     just in the banner menu. show a stop icon when the recording is

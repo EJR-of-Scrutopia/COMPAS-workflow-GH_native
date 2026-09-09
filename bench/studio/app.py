@@ -270,6 +270,7 @@ FOLDER_TITLES = {
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
     "mechanism_folder": "Choose your mechanism library folder",
+    "recordings_folder": "Choose where finished recordings are saved",
 }
 
 
@@ -368,7 +369,7 @@ def apply_saved_folders() -> dict:
     """
 
     global MATERIALS_DIR, GROUND_MATERIALS_DIR, HDRI_DIR, PROPS_DIR
-    global MECHANISMS_DIR
+    global MECHANISMS_DIR, RECORDINGS_DIR
 
     applied = {}
     chosen = apply_saved_folder()
@@ -379,7 +380,8 @@ def apply_saved_folders() -> dict:
                         ("ground_folder", "GROUND_MATERIALS_DIR"),
                         ("hdri_folder", "HDRI_DIR"),
                         ("props_folder", "PROPS_DIR"),
-                        ("mechanism_folder", "MECHANISMS_DIR")):
+                        ("mechanism_folder", "MECHANISMS_DIR"),
+                        ("recordings_folder", "RECORDINGS_DIR")):
         raw = stored.get(key)
         if not raw:
             continue
@@ -1313,6 +1315,23 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     # declaration order, so with these second the word "folder" would be
     # read as the name of a machine. The same trap the props and hdri
     # routes are already arranged around.
+    # Where finished takes are saved. Param: "we need a recorder output
+    # folder button too to select where it gets directed." The setting
+    # existed already and deliver_recording has always read it; what was
+    # missing was any way to see or change it without editing JSON.
+    @app.get("/api/recordings/folder")
+    def recordings_folder():
+        return _library_row("recordings")
+
+    @app.post("/api/recordings/folder")
+    def set_recordings_folder(body: dict):
+        return _set_library_folder(
+            "recordings", body, "recordings_folder", "RECORDINGS_DIR")
+
+    @app.post("/api/recordings/folder/browse")
+    def browse_recordings_folder():
+        return {"path": ask_for_folder(title=FOLDER_TITLES["recordings_folder"])}
+
     @app.get("/api/mechanisms/folder")
     def mechanism_folder():
         return _library_row("mechanisms")
@@ -1413,6 +1432,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         elif kind == "hdri":
             directory, counter = HDRI_DIR, (
                 lambda d: len([p for p in d.glob("*.hdr") if p.is_file()]))
+        elif kind == "recordings":
+            directory, counter = RECORDINGS_DIR, (
+                lambda d: len([p for p in d.glob("*.mp4") if p.is_file()]))
         elif kind == "mechanisms":
             directory, counter = MECHANISMS_DIR, (
                 lambda d: len([p for p in d.glob("*-mechanism.json")
@@ -1996,6 +2018,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if completed.returncode != 0:
             raise HTTPException(500, "ffmpeg failed: {}".format(
                 completed.stderr[-2000:]))
+        # A SUCCESSFUL EXIT IS NOT A VIDEO. His 2-sided-vault take left a
+        # recording.mp4 of zero bytes beside 3,617 frames, and an empty
+        # file delivered under a stamped name is indistinguishable from a
+        # take that worked until he tries to play it. Checked here so the
+        # failure is named at the moment it happens rather than found in
+        # a folder later.
+        if not video.is_file() or video.stat().st_size == 0:
+            raise HTTPException(
+                500, "ffmpeg exited cleanly but wrote no video; the frames "
+                     "are still in {}".format(directory))
         return {"video": str(deliver_recording(run_id, video))}
 
     @app.get("/")

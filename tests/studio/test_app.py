@@ -33,6 +33,19 @@ def make_client(tmp_path, monkeypatch, runner=None):
     (upload / "Tiny-compas.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(bundle, "UPLOAD_DIR", upload)
     monkeypatch.setattr(bundle, "STUDIES_DIR", studies)
+    # HIS FOLDERS ARE OUT OF REACH OF EVERY TEST.
+    #
+    # deliver_recording copies each stitched take to RECORDINGS_DIR, and
+    # RECORDINGS_DIR defaults to his real PhD Animation folder. A stitch
+    # test with a faked ffmpeg therefore wrote a three-byte stub there on
+    # every run, and 137 of them had accumulated before he found them and
+    # asked why his animations folder was full of unplayable videos.
+    #
+    # SETTINGS_PATH goes with it: deliver_recording reads
+    # recordings_folder from the settings file, so patching only the
+    # default would still send a take wherever he had last pointed it.
+    monkeypatch.setattr(app_module, "RECORDINGS_DIR", tmp_path / "recordings")
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
     app_module.RUNS.clear()
     if runner is None:
         runner = lambda request: {"converged": True, "message": ""}
@@ -759,6 +772,103 @@ def test_the_stitch_reads_whichever_format_the_take_wrote(tmp_path, monkeypatch)
     (frames / "frame-000001.png").write_bytes(b"\x89PNG")
     assert client.post("/api/frames/study-tiny/stitch").status_code == 200
     assert seen["input"].endswith("frame-%06d.png"), seen["input"]
+
+
+def test_no_test_can_reach_his_real_folders(tmp_path, monkeypatch):
+    """The guard that should have existed before a faked ffmpeg wrote 137
+    three-byte videos into his PhD Animation folder.
+
+    deliver_recording copies each stitched take to RECORDINGS_DIR, whose
+    default is that real folder, and reads recordings_folder from the
+    settings file besides -- so patching only the default would still send
+    a take wherever he had last pointed it."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    assert tmp_path in Path(app_module.RECORDINGS_DIR).parents, (
+        "RECORDINGS_DIR still points outside the test's own folder")
+    assert tmp_path in Path(app_module.SETTINGS_PATH).parents, (
+        "the settings file a test reads must be the test's own")
+    # And the client is alive, so the guard has not broken the fixture.
+    assert client.get("/api/studies").status_code == 200
+
+
+def test_a_stitch_that_writes_no_video_says_so(tmp_path, monkeypatch):
+    """His 2-sided-vault take left a recording.mp4 of ZERO BYTES beside
+    3,617 frames. An empty file delivered under a stamped name is
+    indistinguishable from a take that worked until he tries to play it,
+    so a clean exit with no video is now a failure at the moment it
+    happens rather than a discovery in a folder later."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    client.get("/api/studies/Tiny/bundle", params={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    client.post("/api/frames/study-tiny?frame=1", content=JPEG_MAGIC + b" x",
+                headers={"content-type": "application/octet-stream"})
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+    def wrote_nothing(args, **kwargs):
+        Path(args[-1]).write_bytes(b"")        # a clean exit, an empty file
+        return Done()
+
+    monkeypatch.setattr(app_module, "_ffmpeg_present", lambda: True)
+    monkeypatch.setattr(app_module.subprocess, "run", wrote_nothing)
+    failed = client.post("/api/frames/study-tiny/stitch")
+    assert failed.status_code == 500
+    assert "no video" in failed.json()["detail"]
+    assert "frames are still in" in failed.json()["detail"], (
+        "and it says where the frames are, so a long take is not lost")
+    # Nothing was delivered under a stamped name.
+    delivered = Path(app_module.RECORDINGS_DIR)
+    assert not delivered.is_dir() or not list(delivered.glob("*.mp4"))
+
+
+def test_the_recordings_have_an_output_folder(tmp_path, monkeypatch):
+    """Param: "we need a recorder output folder button too to select where
+    it gets directed." The setting existed and deliver_recording has
+    always read it; what was missing was any way to see or change it."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    where = tmp_path / "animations"
+    where.mkdir()
+    (where / "an-old-take.mp4").write_bytes(b"0" * 10)
+
+    set_to = client.post("/api/recordings/folder", json={"path": str(where)})
+    assert set_to.status_code == 200, set_to.text
+    row = client.get("/api/recordings/folder").json()
+    assert row["path"] == str(where)
+    assert row["exists"] is True
+    assert row["count"] == 1, "it counts the takes already there"
+    assert Path(app_module.RECORDINGS_DIR) == where
+    # And it is remembered, like every other folder.
+    import json as _json
+    stored = _json.loads(Path(app_module.SETTINGS_PATH).read_text(encoding="utf-8"))
+    assert stored["recordings_folder"] == str(where)
+    # A path that is not a folder is refused rather than silently kept.
+    assert client.post("/api/recordings/folder",
+                       json={"path": str(where / "nope")}).status_code == 400
+
+    # AND IT SURVIVES A RESTART. Written is not applied: apply_saved_folders
+    # is what points the roots at their remembered paths, and it is called
+    # by serve.py rather than by create_app, so nothing else reaches it.
+    monkeypatch.setattr(app_module, "RECORDINGS_DIR", tmp_path / "somewhere-else")
+    applied = app_module.apply_saved_folders()
+    assert applied.get("recordings_folder") == where
+    assert Path(app_module.RECORDINGS_DIR) == where
 
 
 def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):

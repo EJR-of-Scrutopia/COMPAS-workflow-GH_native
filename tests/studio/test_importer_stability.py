@@ -56,6 +56,11 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.setattr(bundle, "STUDIES_DIR", studies)
     monkeypatch.setattr(app, "COLUMNS_DIR", tmp_path / "columns")
     monkeypatch.setattr(app, "SCENES_DIR", tmp_path / "scenes")
+    # Out of reach of his real folders, for the reason recorded in
+    # test_app's own make_client: a faked ffmpeg wrote 137 stub videos
+    # into his PhD Animation folder before anyone noticed.
+    monkeypatch.setattr(app, "RECORDINGS_DIR", tmp_path / "recordings")
+    monkeypatch.setattr(app, "SETTINGS_PATH", tmp_path / "settings.json")
     monkeypatch.setattr(app, "HDRI_DIR", tmp_path / "hdri")
     bundle.clear_cut_memo()
     client = TestClient(app.create_app(runner=lambda request: {

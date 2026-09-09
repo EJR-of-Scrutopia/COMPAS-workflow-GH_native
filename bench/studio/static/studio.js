@@ -10882,11 +10882,27 @@ function frame(now) {
   // also steer it: their damping re-applies whatever inertia remains,
   // every frame, on top of the pinned orbit. A drag mid-take hands
   // ownership back (userDragging), and its end settles and recaptures.
-  const turntableOwns = state.timeline && state.timeline.playing
+  // THE RECORDER OWNS THE CAMERA AND THE CANVAS while a take runs, and
+  // this is why a recording did not match what he saw on Play.
+  //
+  // Ownership was gated on state.timeline.playing, which recordAnimation
+  // deliberately sets FALSE -- two clocks racing the same state is worse.
+  // So during every take this read false, controls.update() ran on each
+  // animation frame, and its leftover damping dragged the camera off the
+  // bearing applyTimeline had just pinned it to. Live, with playing true,
+  // the turntable holds it. Same function, same t, different camera.
+  //
+  // And renderView() then drew that camera over the frame the recorder
+  // had just composed, in the window between its render and its pixel
+  // read -- so the file could receive a picture nobody asked for. The
+  // recorder renders every frame itself; the loop must keep its hands off
+  // the canvas until the take ends.
+  const turntableOwns = state.timeline
+    && (state.timeline.playing || state.recording)
     && state.timeline.orbitBase && state.timeline.autoSpin
     && !state.userDragging;
   if (!turntableOwns) controls.update();
-  renderView();
+  if (!state.recording) renderView();
   requestAnimationFrame(frame);
 }
 
@@ -10913,6 +10929,10 @@ try {
 refreshMechanisms().catch(
   (error) => logStudio("mechanism library: " + error.message));
 showLibraryFolder("mechanisms", "mechanism-folder-path", "machines");
+showLibraryFolder("recordings", "recordings-folder-path", "recordings");
+document.getElementById("recordings-folder-choose").addEventListener("click", () =>
+  chooseLibraryFolder("recordings", "recordings-folder-path", "recordings",
+    async () => {}));
 document.getElementById("mechanism-folder-choose").addEventListener("click", () =>
   chooseLibraryFolder("mechanisms", "mechanism-folder-path", "machines",
     async () => {
