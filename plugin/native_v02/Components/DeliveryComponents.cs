@@ -155,7 +155,8 @@ public sealed record ExportInputs(
     bool Live,
     string Studio,
     double Radius,
-    string Mechanism);
+    string Mechanism,
+    string MachineFolder);
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -528,6 +529,26 @@ public sealed class ExportComponent : NativeComponentBase
             GH_ParamAccess.item,
             string.Empty);
         parameters[8].Optional = true;
+
+        parameters.AddTextParameter(
+            "Machine Folder",
+            "MF",
+            "OPTIONAL: where <Name>-mechanism.json is written. Leave it " +
+            "blank and it goes to a \"Mechanisms\" folder inside Path, " +
+            "which keeps the machine OUT of the vault folder while still " +
+            "travelling with the study set. His ruling, 2026-09-09: the " +
+            "mechanism goes to its own folder and the skin and the vault " +
+            "go to the COMPAS export folder. It is not tidiness -- a " +
+            "mechanism document is ten megabytes against about one for a " +
+            "form, it is the same machine on every study rather than a " +
+            "property of any one of them, and the studio's own folder scan " +
+            "opens every unrecognised JSON in the vault folder to decide " +
+            "what it is. Point this at the Machine folder the studio " +
+            "reads and the two agree with no copying. APPENDED after " +
+            "Mechanism, so no archived wire moves.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[9].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -694,8 +715,13 @@ public sealed class ExportComponent : NativeComponentBase
                 built = uploader.BuildNow(pending);
                 if (built is not null)
                 {
-                    ExportSetWrite outcome =
-                        WriteSet(folder!, name, built.Payloads);
+                    ExportSetWrite outcome = WriteSetInto(
+                        folder!,
+                        string.IsNullOrWhiteSpace(inputs.MachineFolder)
+                            ? MechanismFolderUnder(folder!)
+                            : inputs.MachineFolder.Trim(),
+                        name,
+                        built.Payloads);
                     if (outcome.Error is not null)
                     {
                         AddRuntimeMessage(
@@ -1049,6 +1075,7 @@ public sealed class ExportComponent : NativeComponentBase
         string studioInput = DefaultStudio;
         double radiusInput = DefaultColumnRadius;
         string mechanismInput = string.Empty;
+        string machineFolderInput = string.Empty;
         List<string> errors;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
@@ -1068,6 +1095,7 @@ public sealed class ExportComponent : NativeComponentBase
         data.GetData(6, ref liveInput);
         data.GetData(7, ref writeInput);
         data.GetData(8, ref mechanismInput);
+        data.GetData(9, ref machineFolderInput);
 
         errors = new List<string>(resultValue.Validate());
         // THE COURSES ARE THE BRANCH PATHS AND NOTHING ELSE. The Courses
@@ -1181,7 +1209,8 @@ public sealed class ExportComponent : NativeComponentBase
             liveInput,
             studio,
             radius,
-            mechanismInput ?? string.Empty);
+            mechanismInput ?? string.Empty,
+            machineFolderInput ?? string.Empty);
         return true;
     }
 
@@ -1391,6 +1420,28 @@ public sealed class ExportComponent : NativeComponentBase
     internal static ExportSetWrite WriteSet(
         string folder,
         string name,
+        IReadOnlyList<(string Kind, string Json)> payloads) =>
+        WriteSetInto(folder, MechanismFolderUnder(folder), name, payloads);
+
+    /// <summary>
+    /// THE MACHINE KEEPS ITS OWN FOLDER (his ruling, 2026-09-09: "the
+    /// mechanism needs to be seperated now and goes to its own folder, the
+    /// skin and the vault needs to go to the compas export folder").
+    ///
+    /// It is not tidiness. A mechanism document is TEN MEGABYTES against
+    /// about one for a form, it is the same machine on every study rather
+    /// than a property of any one of them, and the studio's own folder scan
+    /// opens every unrecognised JSON in the vault folder to decide what it
+    /// is. Keeping the machine out of that folder is what makes the scan
+    /// cheap and what lets a Machine folder be pointed at separately.
+    /// </summary>
+    internal static string MechanismFolderUnder(string folder) =>
+        Path.Combine(folder, "Mechanisms");
+
+    internal static ExportSetWrite WriteSetInto(
+        string folder,
+        string mechanismFolder,
+        string name,
         IReadOnlyList<(string Kind, string Json)> payloads)
     {
         var written = new List<string>(payloads.Count);
@@ -1398,9 +1449,20 @@ public sealed class ExportComponent : NativeComponentBase
         try
         {
             Directory.CreateDirectory(folder);
+            bool madeMechanismFolder = false;
             foreach ((string kind, string json) in payloads)
             {
-                string target = Path.Combine(folder, $"{name}-{kind}.json");
+                string into = folder;
+                if (kind == ExportPlan.MechanismKind)
+                {
+                    into = mechanismFolder;
+                    if (!madeMechanismFolder)
+                    {
+                        Directory.CreateDirectory(into);
+                        madeMechanismFolder = true;
+                    }
+                }
+                string target = Path.Combine(into, $"{name}-{kind}.json");
                 failedTarget = target;
                 AtomicFile.Write(target, json);
                 written.Add(target);
