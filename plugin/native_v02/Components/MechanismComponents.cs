@@ -2889,7 +2889,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             bool hasResult = TryReadResult(data, out ResultDto? solved);
 
             MechanismAssetInput asset = ReadAsset(data, warnings, notes);
-            List<MechanismRoutingWire> routing = ReadRouting(data, warnings);
+            List<MechanismRoutingWire> routing = ReadRouting(data, warnings, notes);
 
             // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route, so
             // an offset path still begins at the anchor everything else in
@@ -3128,20 +3128,14 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         data.GetDataTree(9, out GH_Structure<GH_Plane> wsTree);
         foreach (GH_Path path in wsTree.Paths)
         {
-            if (path.Indices.Length != 1)
-            {
-                warnings.Add(
-                    $"Wire Start (WS) path {{{string.Join(",", path.Indices)}}} " +
-                    "is not a {wire} single-level path, the same shape " +
-                    "Routing uses; ignored.");
+            if (path.Indices.Length == 0)
                 continue;
-            }
             foreach (GH_Plane planeGoo in wsTree.get_Branch(path))
             {
                 if (planeGoo is null)
                     continue;
                 Plane plane = planeGoo.Value;
-                starts[path.Indices[0]] = new MechanismFrame(
+                starts[path.Indices[path.Indices.Length - 1]] = new MechanismFrame(
                     new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
                     new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
                     new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
@@ -3152,22 +3146,46 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return starts;
     }
 
-    private List<MechanismRoutingWire> ReadRouting(IGH_DataAccess data, List<string> warnings)
+    /// <summary>
+    /// THE WIRE IS THE LAST INDEX OF THE PATH, whatever depth the tree has.
+    ///
+    /// This used to demand a single-level {wire} path and IGNORE every
+    /// branch that was not one. On 2026-09-09 he rebuilt his routing for the
+    /// offset and the higher frame resolution, it came out two levels deep
+    /// as {0;wire}, and the reader silently threw away all of it -- so there
+    /// were no wire first-frames, so no correspondence, so NOTHING was
+    /// placed, with PL wired or not. The chin filled with one warning per
+    /// branch saying the path was the wrong shape, which is true and useless:
+    /// a tree with a grouping level above the wire is an ordinary thing for
+    /// an author to build, and refusing it costs the whole document.
+    ///
+    /// Routing belongs to the ONE authored mechanism and is indexed by wire,
+    /// so any levels ABOVE the wire are grouping and are read through. Two
+    /// branches that land on the same wire are joined in path order rather
+    /// than one silently winning. What was found is REPORTED, once, with the
+    /// shape it had.
+    /// </summary>
+    private List<MechanismRoutingWire> ReadRouting(
+        IGH_DataAccess data, List<string> warnings, List<string> notes)
     {
         data.GetDataTree(7, out GH_Structure<GH_Plane> rtTree);
-        var wires = new List<MechanismRoutingWire>();
+        var byWire = new SortedDictionary<int, List<MechanismFrame>>();
+        int deepest = 0;
+        int emptyPaths = 0;
         foreach (GH_Path path in rtTree.Paths)
         {
-            if (path.Indices.Length != 1)
+            if (path.Indices.Length == 0)
             {
-                warnings.Add(
-                    $"RT path {{{string.Join(",", path.Indices)}}} is not " +
-                    "a {wire} single-level path (Routing now belongs to " +
-                    "the ONE authored mechanism, indexed by wire alone); ignored.");
+                emptyPaths++;
                 continue;
             }
-            int wire = path.Indices[0];
-            var frames = new List<MechanismFrame>();
+            deepest = Math.Max(deepest, path.Indices.Length);
+            int wire = path.Indices[path.Indices.Length - 1];
+            if (!byWire.TryGetValue(wire, out List<MechanismFrame>? frames))
+            {
+                frames = new List<MechanismFrame>();
+                byWire[wire] = frames;
+            }
             foreach (GH_Plane planeGoo in rtTree.get_Branch(path))
             {
                 if (planeGoo is null)
@@ -3179,7 +3197,39 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                     new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
                     new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
             }
-            wires.Add(new MechanismRoutingWire(wire, frames));
+        }
+        if (emptyPaths > 0)
+            warnings.Add($"Routing (RT): {emptyPaths} branch(es) carry no path indices; ignored.");
+
+        var wires = new List<MechanismRoutingWire>(byWire.Count);
+        foreach (KeyValuePair<int, List<MechanismFrame>> entry in byWire)
+            wires.Add(new MechanismRoutingWire(entry.Key, entry.Value));
+
+        if (wires.Count > 0)
+        {
+            notes.Add(
+                $"Routing (RT): {rtTree.Paths.Count} branch(es) " +
+                (deepest > 1
+                    ? $"{deepest} level(s) deep, read as {{...;wire}} -- the " +
+                      "LAST index of each path is the wire and anything " +
+                      "above it is grouping"
+                    : "one level deep, read as {wire}") +
+                $", giving {wires.Count} wire(s) numbered " +
+                string.Join(", ", wires.Select(w => w.Wire)) +
+                ", carrying " +
+                string.Join(", ", wires.Select(w => w.Route.Count)) +
+                " frame(s) each.");
+            if (wires.Count != MechanismCollector.PlacementGroupSize)
+            {
+                warnings.Add(
+                    $"Routing (RT) resolved {wires.Count} wire(s), not the " +
+                    $"{MechanismCollector.PlacementGroupSize} a mechanism instance needs. " +
+                    "Placement pairs one wire with one anchor, so a count " +
+                    "that is not seven cannot be placed. The wire numbers " +
+                    "found were " + string.Join(", ", wires.Select(w => w.Wire)) +
+                    "; if your tree groups the wires under something else, " +
+                    "it is the LAST path index that must be the wire.");
+            }
         }
         return wires;
     }
