@@ -948,6 +948,32 @@ internal static partial class Program
 
         try
         {
+            ValidateFormGraphReadOrder(plugin);
+            Console.WriteLine(
+                "PASS  A diagram graph is read BY ID, never by array "
+                + "position (2026-09-09), which the studio session asked "
+                + "about and no fixture here could answer: every other net "
+                + "in this harness lists its form vertices in ascending "
+                + "order and carries ONE face, so array order and id order "
+                + "agreed in all of them and the OrderBy in both readers "
+                + "was measuring nothing. Here the four form vertices "
+                + "arrive as 12, 10, 13, 11 and the two faces arrive id 1 "
+                + "first, with the map to equilibrium left flat so that "
+                + "ORDER is the only thing in the fixture that can move an "
+                + "answer. All four readings that turn on it are held: the "
+                + "net's positions, its faces, its rim and its force "
+                + "edges. Each fails as a WRONG ANSWER and not an error -- "
+                + "a net read in array order is a complete, plausible, "
+                + "differently-shaped net.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Form graph read order: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinResultRecord(plugin);
             Console.WriteLine(
                 "PASS  Skin result record: rule 9.3.6's twenty-one members " +
@@ -20515,6 +20541,239 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "An FD Result carries no faces and must give a NULL net, " +
                 "so the component can name the reason.");
+        }
+    }
+
+    /// <summary>
+    /// THE READ ORDER (2026-09-09): a diagram graph is read BY ID, never by
+    /// array position. Both readers say so --
+    /// <c>SkinPatterns.ReadNet</c> and
+    /// <c>MouldGeometry.ThrustMeshFromResult</c> each walk
+    /// <c>OrderBy(item => item.Id)</c> over vertices AND faces -- and until
+    /// now neither said it anywhere a fixture could hear.
+    ///
+    /// ASKED, THEN FOUND UNPINNED. The studio session asked whether
+    /// formGraph.faces arrives in the order its own face indexing uses. It
+    /// does on all four real exports, where every id is its own position.
+    /// So does every fixture in this harness: ValidateSkinNet and
+    /// ValidateSkinRimIndexSpace both list form vertices 10, 11, 12, 13 in
+    /// ascending order and carry a SINGLE face, which means array order and
+    /// id order agree in both and the OrderBy in each reader was measuring
+    /// nothing at all. Deleting it would have kept this suite green.
+    ///
+    /// THE FIXTURE INVERTS BOTH ORDERS AND NOTHING ELSE. The four form
+    /// vertices arrive as 12, 10, 13, 11, and the two faces arrive with id
+    /// 1 first and id 0 second. The map to equilibrium is 10 to 0, 11 to 1,
+    /// 12 to 2 and 13 to 3, deliberately flat: the index-space JOIN is
+    /// already pinned by the two checks above, and leaving it flat here
+    /// means the only thing in this fixture that can move an answer is the
+    /// order the arrays are walked in.
+    ///
+    /// FOUR READINGS TURN ON THAT ORDER and all four are asserted: the
+    /// net's vertex positions, its faces, its rim and its force edges. Each
+    /// fails as a WRONG ANSWER rather than an error, because a net read in
+    /// array order is a complete, plausible, differently-shaped net that
+    /// draws, measures and cuts without complaint.
+    ///
+    /// WHAT IS NOT PROVED HERE. ThrustMeshFromResult makes the identical
+    /// walk and cannot be measured in this console: it builds a RhinoCommon
+    /// Mesh, whose native core this harness deliberately does not launch,
+    /// and its own catch would turn that into a null rather than a failure.
+    /// ReadNet is the pure half of that same walk, which is the half this
+    /// check can hold to account.
+    /// </summary>
+    private static void ValidateFormGraphReadOrder(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeDtoType = RequireContractType(plugin, "EdgeDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType =
+            RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphFaceType = RequireContractType(plugin, "TnaGraphFaceDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type vertexMappingType =
+            RequireContractType(plugin, "TnaSourceVertexMappingDto");
+        Type supportMappingType =
+            RequireContractType(plugin, "TnaSupportMappingDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        // The unit square in equilibrium order, so that a net walked in the
+        // wrong order is a DIFFERENT square rather than a broken one.
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(1, 1, 0), P(0, 1, 0)));
+        // Two edges in EQUILIBRIUM space. Composed through the net they are
+        // (0,1) and (2,3) when the graph is read by id, and (1,3) and (0,2)
+        // when it is read by array position: both are legal-looking edge
+        // lists on this net, which is the whole difficulty.
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeDtoType,
+                Activator.CreateInstance(edgeDtoType, 0, 1)!,
+                Activator.CreateInstance(edgeDtoType, 2, 3)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 5.0, -6.0 });
+
+        object GraphVertex(int id)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            return vertex;
+        }
+        object Face(int id, int[] formIds)
+        {
+            object item = CreateInstance(graphFaceType);
+            SetContractProperty(item, graphFaceType, "Id", id);
+            SetContractProperty(item, graphFaceType, "Vertices", formIds);
+            return item;
+        }
+
+        object formGraph = CreateInstance(graphType);
+        // OUT OF ID ORDER, which is the point of the fixture.
+        SetContractProperty(formGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                GraphVertex(12), GraphVertex(10),
+                GraphVertex(13), GraphVertex(11)));
+        // Face id 1 FIRST and face id 0 second. Both are triangles, so
+        // triangulation passes them through untouched and the only thing
+        // that can reorder them is the read.
+        SetContractProperty(formGraph, graphType, "Faces",
+            Of(graphFaceType,
+                Face(1, new[] { 10, 11, 12 }),
+                Face(0, new[] { 10, 12, 13 })));
+
+        object Mapping(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(vertexMappingType);
+            SetContractProperty(
+                item, vertexMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, vertexMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object Support(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(supportMappingType);
+            SetContractProperty(
+                item, supportMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, supportMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object mappings = CreateInstance(mappingsType);
+        SetContractProperty(mappings, mappingsType,
+            "SourceVertexToFormVertex",
+            Of(vertexMappingType,
+                Mapping(10, 0), Mapping(11, 1),
+                Mapping(12, 2), Mapping(13, 3)));
+        SetContractProperty(mappings, mappingsType, "Supports",
+            Of(supportMappingType, Support(11, 1), Support(13, 3)));
+
+        object result = CreateResultDto(
+            resultType, "tna", equilibrium,
+            CreateInstance(graphType), CreateInstance(graphType));
+        SetContractProperty(result, resultType, "FormGraph", formGraph);
+        SetContractProperty(result, resultType, "Mappings", mappings);
+
+        object net = readNet.Invoke(null, new[] { result })
+            ?? throw new InvalidOperationException(
+                "A TNA Result with faces must give a net; null came back.");
+
+        // 1. THE VERTICES. Net order is FORM ID order, so net 0 is form 10
+        // is equilibrium 0 is the origin. Read in array order the first
+        // form vertex would be 12, and net 0 would be (1, 1, 0).
+        IList vertices = Reading<IList>(net, "Vertices");
+        if (vertices.Count != 4)
+        {
+            throw new InvalidOperationException(
+                $"Four form vertices went in; {vertices.Count} came back.");
+        }
+        double[] first = (double[])vertices[0]!;
+        double[] second = (double[])vertices[1]!;
+        if (Math.Abs(first[0]) > 1.0e-12 || Math.Abs(first[1]) > 1.0e-12 ||
+            Math.Abs(second[0] - 1.0) > 1.0e-12 ||
+            Math.Abs(second[1]) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Net vertices are the equilibrium positions in FORM ID " +
+                "order, so net 0 is form 10 at (0, 0, 0) and net 1 is form " +
+                "11 at (1, 0, 0). Read in ARRAY order the graph's first " +
+                "vertex is form 12 and net 0 would be (1, 1, 0). Got (" +
+                string.Join(", ", first) + ") and (" +
+                string.Join(", ", second) + ").");
+        }
+
+        // 2. THE FACES, in face-id order: id 0 is [10, 12, 13], which is
+        // net [0, 2, 3], and it must come FIRST even though it is written
+        // second.
+        IList faces = Reading<IList>(net, "Faces");
+        if (faces.Count != 2 ||
+            !((int[])faces[0]!).SequenceEqual(new[] { 0, 2, 3 }) ||
+            !((int[])faces[1]!).SequenceEqual(new[] { 0, 1, 2 }))
+        {
+            throw new InvalidOperationException(
+                "Faces are read in ID order: face 0 is [10,12,13] as net " +
+                "[0,2,3] and comes first, face 1 is [10,11,12] as net " +
+                "[0,1,2] and comes second, though they are written the " +
+                "other way round. Got " +
+                string.Join(" and ", faces.Cast<int[]>().Select(
+                    face => "[" + string.Join(",", face) + "]")) + ".");
+        }
+
+        // 3. THE RIM, named by FORM vertex id and resolved through the same
+        // net ordering (rule 1.3.1). Supports at form 11 and form 13 are
+        // net 1 and net 3; walked in array order they would be net 3 and
+        // net 2, which is a rim of real vertices in the wrong corners.
+        int[] rim = Reading<IList>(net, "Rim").Cast<int>().ToArray();
+        if (!rim.SequenceEqual(new[] { 1, 3 }) ||
+            Reading<int>(net, "RimDropped") != 0)
+        {
+            throw new InvalidOperationException(
+                "The rim is the supports' FORM ids through this method's " +
+                "own net ordering: form 11 and form 13 are net 1 and net " +
+                $"3, none dropped. Got [{string.Join(",", rim)}] with " +
+                $"{Reading<int>(net, "RimDropped")} dropped.");
+        }
+
+        // 4. THE FORCE EDGES, which arrive in EQUILIBRIUM space and are
+        // composed into net space through the same ordering (rule 1.3.5).
+        IList edges = Reading<IList>(net, "Edges");
+        (int A, int B, double Force)[] read = edges
+            .Cast<object>()
+            .Select(edge => (
+                Reading<int>(edge, "A"),
+                Reading<int>(edge, "B"),
+                Reading<double>(edge, "Force")))
+            .ToArray();
+        if (read.Length != 2 ||
+            read[0] != (0, 1, 5.0) ||
+            read[1] != (2, 3, -6.0) ||
+            Reading<int>(net, "EdgesDropped") != 0)
+        {
+            throw new InvalidOperationException(
+                "Force edges compose equilibrium space into net space " +
+                "through the id-ordered net: (0,1) carrying 5 and (2,3) " +
+                "carrying -6, none dropped. In ARRAY order the same two " +
+                "edges land on net (1,3) and (0,2), which is a plausible " +
+                "edge list on the wrong members. Got " +
+                string.Join(" and ", read.Select(
+                    e => $"({e.A},{e.B}) carrying {e.Force}")) + " with " +
+                $"{Reading<int>(net, "EdgesDropped")} dropped.");
         }
     }
 
