@@ -4385,6 +4385,16 @@ function renderShelf() {
 // click to select and unselect several. The layers themselves are tabs
 // along the drawer's bottom edge; the open tab is where newly placed
 // props land, and its eye hides the whole set.
+// Above this many props on a layer the drawer stops drawing a picture of
+// each one. 40 is two screens of tiles, and forty offscreen renders is
+// already the most anyone should pay to look at a list.
+const LAYER_TILE_CAP = 40;
+
+function layerName(id) {
+  const layer = layerById(id);
+  return layer ? layer.name : "This layer";
+}
+
 const gatheredProps = new Set();
 // The index a shift-click measures its run from, in the layer's own
 // member order. Reset whenever the drawer is rebuilt for a new layer.
@@ -4415,6 +4425,26 @@ function renderShelfLayers(grid) {
     empty.className = "tile-family";
     empty.textContent = "nothing on this layer yet -- placed props land here";
     grid.appendChild(empty);
+  }
+  // A LAYER CAN NOW HOLD HUNDREDS. Each tile here clones its template
+  // and runs a full offscreen WebGL render, and refreshLayersShelf
+  // re-runs the whole drawer after every placement -- so a scatter layer
+  // of six hundred would try six hundred renders and hang the tab he was
+  // told to use. Above the cap the drawer says what is on the layer
+  // instead of drawing it, and the tab strip, the eye and the cross all
+  // keep working, which is what he opens Layers for on a scatter anyway.
+  if (members.length > LAYER_TILE_CAP) {
+    const kinds = [...new Set(members.map((r) => r.type))];
+    const summary = document.createElement("div");
+    summary.className = "tile-family";
+    summary.textContent = layerName(state.activeLayer) + " -- "
+      + members.length + " props, "
+      + kinds.length + (kinds.length === 1 ? " kind" : " kinds")
+      + ". Too many to picture; use the viewport to pick one.";
+    grid.appendChild(summary);
+    renderLayerTabs();
+    paintStampButton();
+    return;
   }
   members.forEach((record, index) => {
     const template = propTemplates.get(record.type);

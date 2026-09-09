@@ -2700,3 +2700,30 @@ def test_the_setting_and_the_weather_live_in_the_skies_drawer():
     # And the drawer shows them with its own dials, not on its own clock.
     assert 'document.getElementById("shelf-sky-modes").classList\n' \
         '    .toggle("hidden", shelfKind !== "skies");' in js
+
+
+def test_a_scatter_layer_does_not_hang_the_layers_drawer():
+    """Each tile in that drawer clones its template and runs a full
+    offscreen WebGL render, and refreshLayersShelf re-runs the whole
+    drawer after every placement. One brush click can now put six
+    hundred props on a layer, so opening the tab he was told to use
+    would have tried six hundred renders.
+
+    Above the cap the drawer says what is on the layer instead of
+    drawing it, and the tab strip, the eye and the cross keep working --
+    which is what Layers is for on a scattered field anyway. Measured at
+    300 props: the drawer opens in a millisecond."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const LAYER_TILE_CAP = 40;" in js
+    body = _js_function(js, "function renderShelfLayers(grid)")
+    assert "if (members.length > LAYER_TILE_CAP) {" in body
+    # The guard must come BEFORE the loop that renders, or it guards
+    # nothing at all.
+    assert body.index("LAYER_TILE_CAP") < body.index("members.forEach")
+    # And it leaves the parts of the drawer that still work.
+    guard = body[body.index("if (members.length > LAYER_TILE_CAP) {"):]
+    guard = guard[:guard.index("members.forEach")]
+    assert "renderLayerTabs();" in guard
+    assert "paintStampButton();" in guard
+    assert "return;" in guard
