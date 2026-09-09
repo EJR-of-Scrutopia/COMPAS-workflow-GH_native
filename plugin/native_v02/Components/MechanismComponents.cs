@@ -236,6 +236,14 @@ internal static class MechanismCollector
     public const string DefaultRoutingFrameMeaning = "centreline";
 
     /// <summary>
+    /// How far apart two anchors may sit, as a multiple of the anchor set's
+    /// own median nearest-neighbour distance, and still belong to the same
+    /// row. Generous enough to survive an uneven springing, far short of
+    /// the gap between one springing and another.
+    /// </summary>
+    public const double AnchorRowReachFactor = 3.0;
+
+    /// <summary>
     /// How close a frame's own distance-to-axis, relative to that reel's
     /// own radius, may sit to the 1.0 ownership boundary -- or how close a
     /// SECOND reel's own ratio may also sit at or under it -- before the
@@ -1914,6 +1922,75 @@ internal static class MechanismCollector
     internal static double Dot3(double[] a, double[] b) =>
         (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 
+    /// <summary>
+    /// ANCHOR ROWS FOUND BY SPACING, for a net whose springings are not
+    /// meshed along themselves and so give the edge walk nothing to follow.
+    ///
+    /// Each anchor is joined to every other anchor within a multiple of the
+    /// set's own MEDIAN NEAREST-NEIGHBOUR distance, and the connected
+    /// groups of that are the rows. Using the set's own spacing rather than
+    /// any fixed distance is what lets it work at any scale: on his study
+    /// the anchors sit 0.15 m apart along a springing while the two
+    /// springings stand 16 m apart, so the rows separate by a factor of a
+    /// hundred.
+    /// </summary>
+    internal static List<List<int>> ClusterAnchorsBySpacing(
+        IReadOnlyList<int> anchors, IReadOnlyList<double[]> points)
+    {
+        var rows = new List<List<int>>();
+        if (anchors.Count == 0)
+            return rows;
+        if (anchors.Count == 1)
+        {
+            rows.Add(new List<int> { anchors[0] });
+            return rows;
+        }
+
+        var nearest = new List<double>(anchors.Count);
+        for (int i = 0; i < anchors.Count; i++)
+        {
+            double best = double.PositiveInfinity;
+            for (int j = 0; j < anchors.Count; j++)
+            {
+                if (i == j)
+                    continue;
+                double gap = Distance(points[anchors[i]], points[anchors[j]]);
+                if (gap < best)
+                    best = gap;
+            }
+            if (!double.IsPositiveInfinity(best))
+                nearest.Add(best);
+        }
+        if (nearest.Count == 0)
+            return rows;
+        double reach = MedianOf(nearest) * AnchorRowReachFactor;
+
+        var unvisited = new HashSet<int>(Enumerable.Range(0, anchors.Count));
+        while (unvisited.Count > 0)
+        {
+            int seed = unvisited.First();
+            unvisited.Remove(seed);
+            var queue = new Queue<int>();
+            queue.Enqueue(seed);
+            var row = new List<int>();
+            while (queue.Count > 0)
+            {
+                int at = queue.Dequeue();
+                row.Add(anchors[at]);
+                var reached = unvisited
+                    .Where(other => Distance(points[anchors[at]], points[anchors[other]]) <= reach)
+                    .ToList();
+                foreach (int other in reached)
+                {
+                    unvisited.Remove(other);
+                    queue.Enqueue(other);
+                }
+            }
+            rows.Add(row);
+        }
+        return rows;
+    }
+
     /// <summary>The world's own up, the one direction a machine standing on a foundation does not have to be told.</summary>
     internal static readonly double[] WorldUp = { 0.0, 0.0, 1.0 };
 
@@ -2103,26 +2180,63 @@ internal static class MechanismCollector
             netPoints.Add(new[] { v.X, v.Y, v.Z });
         double[] netCentre = CentroidOf(netPoints);
 
+        // THE ROWS, FOUND BY GEOMETRY WHEN TOPOLOGY CANNOT FIND THEM
+        // (2026-09-09, measured on his own 2 Sided Vault and the reason his
+        // first derived export placed NOTHING). AnchorRowIndices walks the
+        // net's own edges, and on his study ZERO edges join two supports:
+        // every anchor is connected only to interior vertices, never to its
+        // neighbour along the springing. So it returns 42 groups of one,
+        // every one shorter than the seven a machine needs.
+        //
+        // Nothing had depended on that before. The document's own wire
+        // matching FLATTENS every row and pairs by order, so fragmentation
+        // cost it nothing and stayed invisible. This is the first code to
+        // need a row to actually be a row.
+        //
+        // Topology is still asked first, since where it does answer it
+        // answers with the net's own structure. Where it cannot, the
+        // anchors are clustered by their own spacing instead, which needs
+        // no edges at all.
         List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
+        int topologicalRowCount = rows.Count;
+        bool rowsFromTopology = rows.Any(row => row.Count >= PlacementGroupSize);
+        if (!rowsFromTopology)
+        {
+            var anchorIds = new List<int>();
+            foreach (int id in eq.ResolvedSupportNodeIds)
+            {
+                if (id >= 0 && id < netPoints.Count)
+                    anchorIds.Add(id);
+            }
+            rows = ClusterAnchorsBySpacing(anchorIds, netPoints);
+            notes.Add(
+                "Placement (PL): the net's own edges join no two anchors on " +
+                $"this study, so its {topologicalRowCount} topological " +
+                "anchor group(s) are all too small to place a machine on. " +
+                $"The {anchorIds.Count} anchors were grouped by their own " +
+                $"spacing instead, giving {rows.Count} row(s) of " +
+                string.Join(", ", rows.Select(r => r.Count)) +
+                ". This needs no edges between anchors and is the reading " +
+                "to expect on any net whose springing is not meshed along " +
+                "itself.");
+        }
         if (rows.Count == 0)
         {
             warnings.Add(
                 "Placement (PL) is not authored and none could be derived: " +
-                "the solved Result carries no anchor rows.");
+                "the solved Result carries no anchors to read rows from.");
             return derived;
         }
 
         int placedTotal = 0;
+        var shortRows = new List<int>();
         for (int side = 0; side < rows.Count; side++)
         {
             List<int> row = rows[side];
             var rowPoints = row.Select(id => netPoints[id]).ToList();
             if (row.Count < PlacementGroupSize)
             {
-                warnings.Add(
-                    $"Anchor row {side} holds {row.Count} anchor(s), fewer " +
-                    $"than the {PlacementGroupSize} one machine needs; no " +
-                    "mechanism is placed on it.");
+                shortRows.Add(row.Count);
                 continue;
             }
 
@@ -2196,6 +2310,34 @@ internal static class MechanismCollector
                     "half-filled to use them up; add or remove anchors if you " +
                     "want the row filled exactly.");
             }
+        }
+
+        if (shortRows.Count > 0)
+        {
+            string shortLine =
+                $"{shortRows.Count} anchor row(s) hold fewer than the " +
+                $"{PlacementGroupSize} anchors one machine needs (" +
+                string.Join(", ", shortRows) + ") and carry no mechanism.";
+            if (placedTotal == 0)
+                warnings.Add(shortLine);
+            else
+                notes.Add(shortLine);
+        }
+
+        // AN EXPORTER THAT WRITES A WELL-FORMED DOCUMENT WITH NO MACHINES
+        // IN IT IS THE WORST SHAPE THIS CAN FAIL IN: every schema check
+        // passes and the absence only shows three steps downstream, as a
+        // missing machine in the studio. So it is said here, in as many
+        // words, as a warning.
+        if (placedTotal == 0)
+        {
+            warnings.Add(
+                "Placement (PL) is not authored and NO MECHANISM WAS " +
+                "DERIVED, so this document carries no instances and no " +
+                "wires at all: the machine's bodies travel but nothing is " +
+                "placed, nothing is wired to the net, and no reel can " +
+                "turn. Wire Placement (PL) directly, or see the row report " +
+                "above for why the net's anchors could not be read as rows.");
         }
 
         if (placedTotal > 0)

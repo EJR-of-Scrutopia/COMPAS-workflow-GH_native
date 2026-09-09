@@ -41292,6 +41292,44 @@ internal static partial class Program
                 "mirror'. Got " + json);
         }
 
+        // THE CABLE, PINNED TO LITERALS. Deliberately not compared against
+        // MechanismCollector's own constants: a test that reads the value
+        // under test moves with it and pins nothing, which is the trap the
+        // studio session hit on this very number and reported. This figure
+        // has been wrong three times in a day -- 0.01 as a diameter, 0.02
+        // read as either, 0.005 drawn -- so the literal is the whole point.
+        JsonElement mechanismBlock = doc.RootElement.GetProperty("mechanism");
+        double cableRadius = mechanismBlock.GetProperty("cableRadius").GetDouble();
+        double cableThickness = mechanismBlock.GetProperty("cableThickness").GetDouble();
+        if (Math.Abs(cableRadius - 0.02) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "cableRadius must be 0.02 m, his settled figure, read as a " +
+                $"RADIUS so the cable is 40 mm across; got {cableRadius}.");
+        }
+        if (Math.Abs(cableThickness - 0.04) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "cableThickness must be 0.04 m, the same fact as the radius " +
+                "stated a second way so no reader has to know which " +
+                $"convention a lone number follows; got {cableThickness}.");
+        }
+        if (Math.Abs(cableThickness - (2.0 * cableRadius)) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "The two cable keys must always be the SAME fact: thickness " +
+                $"is twice the radius. Got {cableThickness} against {cableRadius}.");
+        }
+        string meaning = mechanismBlock.GetProperty("routingFrameMeaning").GetString()!;
+        if (meaning != "centreline")
+        {
+            throw new InvalidOperationException(
+                "routingFrameMeaning must default to \"centreline\", the " +
+                "reading that composes safely with him offsetting the " +
+                "planes himself: an offset already applied must not be " +
+                $"applied again by a reader. Got \"{meaning}\".");
+        }
+
         bool derivationNamed = notes.Any(n =>
             n.Contains("DERIVED", StringComparison.Ordinal) &&
             n.Contains("anchor rows", StringComparison.Ordinal));
@@ -41302,6 +41340,74 @@ internal static partial class Program
                 "rather than authored, since it is the difference between a " +
                 "machine he placed and one the exporter placed; notes were: " +
                 string.Join(" | ", notes));
+        }
+
+        // HIS OWN NET'S SHAPE: NO EDGE JOINS TWO ANCHORS (2026-09-09,
+        // measured on 2 Sided Vault -- 42 supports, 800 edges, and ZERO of
+        // them between two supports; every anchor is connected only to
+        // interior vertices). The topological row walk therefore returns 42
+        // groups of one, all shorter than the seven a machine needs, and
+        // the first derived export he ran placed NOTHING.
+        //
+        // The same fourteen anchors, now edged only to a crown vertex, must
+        // still derive two machines: the rows are found by the anchors' own
+        // spacing when the edges cannot find them.
+        Array crownVertices = Array.CreateInstance(point, all.Count + 1);
+        for (int i = 0; i < all.Count; i++)
+            crownVertices.SetValue(P(all[i]), i);
+        crownVertices.SetValue(P(new[] { 0.0, 0.0, 4.0 }), all.Count);
+
+        Array crownEdges = Array.CreateInstance(edgeType, all.Count);
+        for (int i = 0; i < all.Count; i++)
+            crownEdges.SetValue(Activator.CreateInstance(edgeType, i, all.Count), i);
+
+        object crownEquilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(crownEquilibrium, equilibriumType, "Vertices", crownVertices);
+        SetContractProperty(crownEquilibrium, equilibriumType, "Edges", crownEdges);
+        SetContractProperty(crownEquilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, all.Count).ToArray());
+        SetContractProperty(crownEquilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(0, all.Count).ToArray());
+        object crownResult = CreateResultDto(resultType, "fd", crownEquilibrium, null, null);
+
+        var crownWarnings = new List<string>();
+        var crownNotes = new List<string>();
+        object? crownPayload = build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                MechanismListOf(placementBranchType),
+                crownWarnings, crownNotes, crownResult, null,
+            });
+        if (crownPayload is not string crownJson)
+            throw new InvalidOperationException("The no-anchor-edges fixture must produce a payload.");
+        using (JsonDocument crownDoc = JsonDocument.Parse(crownJson))
+        {
+            int placed = crownDoc.RootElement.GetProperty("instances").GetArrayLength();
+            if (placed != 2)
+            {
+                throw new InvalidOperationException(
+                    "A net whose edges join NO two anchors -- which is his " +
+                    "own 2 Sided Vault, 42 supports and not one edge " +
+                    "between two of them -- must still derive one machine " +
+                    "per springing, by grouping the anchors on their own " +
+                    $"spacing. Got {placed} instead of 2. This is exactly " +
+                    "the shape that made his first derived export place " +
+                    "nothing at all.");
+            }
+        }
+        bool spacingNamed = crownNotes.Any(n =>
+            n.Contains("join no two anchors", StringComparison.Ordinal) &&
+            n.Contains("spacing", StringComparison.Ordinal));
+        if (!spacingNamed)
+        {
+            throw new InvalidOperationException(
+                "Falling back from the net's edges to the anchors' own " +
+                "spacing changes where every machine comes from, so it must " +
+                "be said in the chin rather than done quietly; notes were: " +
+                string.Join(" | ", crownNotes));
         }
 
         // AUTHORED PLACEMENT STILL WINS. Derivation fills a gap; it never
@@ -41325,6 +41431,40 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "With no Result wired there is no net to derive from, so no " +
                 "instance may be invented; got " + noResultJson);
+        }
+
+        // A DOCUMENT WITH NO MACHINES IN IT MUST SAY SO, LOUDLY. It is the
+        // worst shape this can fail in: every schema check passes and the
+        // absence only shows three steps downstream as a missing machine in
+        // the studio, which is how his first derived export was found -- by
+        // him asking why there was one mechanism, not by the exporter.
+        var emptyWarnings = new List<string>();
+        var emptyNotes = new List<string>();
+        object emptyEquilibrium = CreateInstance(equilibriumType);
+        Array oneVertex = Array.CreateInstance(point, 1);
+        oneVertex.SetValue(P(new[] { 0.0, 0.0, 0.0 }), 0);
+        SetContractProperty(emptyEquilibrium, equilibriumType, "Vertices", oneVertex);
+        SetContractProperty(emptyEquilibrium, equilibriumType, "Edges", Array.CreateInstance(edgeType, 0));
+        SetContractProperty(emptyEquilibrium, equilibriumType, "MemberForces", Array.Empty<double>());
+        SetContractProperty(emptyEquilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0 });
+        build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                MechanismListOf(placementBranchType),
+                emptyWarnings, emptyNotes,
+                CreateResultDto(resultType, "fd", emptyEquilibrium, null, null), null,
+            });
+        bool emptyNamed = emptyWarnings.Any(w =>
+            w.Contains("NO MECHANISM WAS DERIVED", StringComparison.Ordinal));
+        if (!emptyNamed)
+        {
+            throw new InvalidOperationException(
+                "Deriving nothing must raise a WARNING saying the document " +
+                "will carry no instances and no wires, not pass quietly; " +
+                "warnings were: " + string.Join(" | ", emptyWarnings));
         }
     }
 
