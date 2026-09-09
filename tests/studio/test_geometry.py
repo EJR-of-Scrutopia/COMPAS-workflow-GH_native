@@ -37,6 +37,63 @@ def test_mesh_arrays_reads_the_synthetic_contract():
     assert len(arrays["edges"]) == 12
 
 
+def test_a_permuted_vertex_space_is_refused_rather_than_drawn():
+    """formGraph.faces carry FORM vertex ids, and form vertices and
+    equilibrium vertices are two index spaces joined by
+    mappings.sourceVertexToFormVertex. This module indexes faces into
+    equilibrium.vertices DIRECTLY, which is right only while the two
+    coincide.
+
+    They do on every export in existence (measured 2026-09-09: 2 Sided
+    Vault 441, Aramdillo style 801, Column diagnosis 661, Round trip
+    check 441, every mapping the identity). The exporter guarantees
+    nothing, and its own plugin readers sort by id rather than trusting
+    array position.
+
+    Indexing by position must NOT change, because the stage plan names
+    placed faces by position and solve_stage looks them up the same way,
+    so a reader that resolved ids differently would put the cut and the
+    analysis on different meshes. The day the spaces diverge is refused
+    instead: a permuted vertex space would draw a scrambled vault and
+    solve one nobody designed, and every number would still look like a
+    number."""
+
+    g = studio()
+    contract = tiny_contract()
+    # The identity mapping every real export carries: read, allowed.
+    contract["mappings"] = {"sourceVertexToFormVertex": [
+        {"formVertexId": i, "equilibriumVertexId": i} for i in range(9)]}
+    assert len(g.mesh_arrays(contract)["vertices"]) == 9
+
+    # One vertex that is not where its id says: refused, and it says which.
+    contract["mappings"]["sourceVertexToFormVertex"][3] = {
+        "formVertexId": 3, "equilibriumVertexId": 7}
+    with pytest.raises(ValueError, match="different index spaces"):
+        g.mesh_arrays(contract)
+
+
+def test_faces_out_of_id_order_are_refused():
+    """The stage plan names placed faces by POSITION. Faces arriving in
+    another order would stage the wrong cells and never fail."""
+
+    g = studio()
+    contract = tiny_contract()
+    contract["formGraph"]["faces"][2]["id"] = 9
+    with pytest.raises(ValueError, match="not in id order"):
+        g.mesh_arrays(contract)
+
+
+def test_a_face_naming_a_vertex_that_is_not_there_is_refused():
+    """An out-of-range id is the same fault caught one step earlier than
+    the IndexError it would otherwise become, with the export named."""
+
+    g = studio()
+    contract = tiny_contract()
+    contract["formGraph"]["faces"][1]["vertices"] = [1, 2, 5, 99]
+    with pytest.raises(ValueError, match="outside this export"):
+        g.mesh_arrays(contract)
+
+
 def test_loads_are_converted_to_newtons_exactly_once():
     g = studio()
     loads = g.node_loads_newtons(tiny_contract())

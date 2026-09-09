@@ -154,6 +154,36 @@ def test_the_derived_surface_is_the_same_surface_as_the_compas_half():
                 == loaded.vertex_coordinates(key), key
 
 
+def test_the_derived_surface_refuses_a_permuted_vertex_space():
+    """The paired half of test_geometry's own guard: geometry.py and
+    ananke_fea may not share code (tests/studio/test_studio_guard.py), so
+    each copy is pinned by its own test.
+
+    formGraph.faces carry FORM vertex ids, joined to equilibrium vertices
+    by mappings.sourceVertexToFormVertex. Identity on every export in
+    existence, guaranteed by nothing. Building the surface by direct
+    index is what keeps this reader on the same mesh the stage plan was
+    built from, so the divergent case is refused rather than resolved
+    differently here."""
+
+    from ananke_fea import mesh as fea_reader
+
+    contract = {
+        "equilibrium": {"vertices": [
+            {"x": float(i), "y": 0.0, "z": 0.0} for i in range(4)]},
+        "formGraph": {"faces": [{"id": 0, "vertices": [0, 1, 2, 3]}]},
+        "mappings": {"sourceVertexToFormVertex": [
+            {"formVertexId": i, "equilibriumVertexId": i} for i in range(4)]},
+    }
+    # The identity mapping builds a surface.
+    assert fea_reader.thrust_mesh_from_contract(contract).number_of_faces() == 1
+
+    contract["mappings"]["sourceVertexToFormVertex"][2] = {
+        "formVertexId": 2, "equilibriumVertexId": 0}
+    with pytest.raises(ValueError, match="different index spaces"):
+        fea_reader.thrust_mesh_from_contract(contract)
+
+
 def test_a_contract_with_no_faces_says_so_rather_than_solving_nothing():
     """The derivation needs the form graph's faces. A contract without
     them must name that, not hand back an empty surface that reads as a

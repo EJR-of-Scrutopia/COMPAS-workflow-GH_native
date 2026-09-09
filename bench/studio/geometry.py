@@ -10,6 +10,9 @@ Geometry facts this module relies on (verified against Trial 2):
   id order (id 0 is index 0).
 - formGraph.faces[i]["vertices"] index directly into equilibrium.vertices.
   formGraph's own vertex z is the flat form diagram and is never read.
+  These two are ASSUMPTIONS about ids matching array positions, and
+  check_index_spaces now refuses an export that breaks them rather than
+  letting it draw and solve a surface built from the wrong vertices.
 - equilibrium.edges are {u, v} node id pairs.
 - Forces are kilonewtons; they become newtons here, exactly once.
 """
@@ -173,9 +176,67 @@ def _equilibrium(contract: Mapping[str, Any]) -> Mapping[str, Any]:
     return block
 
 
+def check_index_spaces(contract: Mapping[str, Any]) -> None:
+    """Refuse a contract whose ids do not line up with array positions.
+
+    The module docstring's second and third facts are ASSUMPTIONS, not
+    guarantees. formGraph.faces carry FORM vertex ids, and form vertices
+    and equilibrium vertices are two index spaces joined by
+    mappings.sourceVertexToFormVertex; the exporter's own plugin readers
+    sort by id rather than trusting array position, in both
+    MouldComponents and SkinPatterns, which is as clear a statement as
+    the contract makes that position is not the key.
+
+    The two spaces are the identity on every export in existence
+    (measured 2026-09-09: 2 Sided Vault 441, Aramdillo style 801, Column
+    diagnosis 661, Round trip check 441, all identity, all face ids
+    0..n-1 in array order). So this is a no-op today, and the studio goes
+    on indexing by position, which it must: the stage plan names placed
+    faces by position and solve_stage looks them up the same way, so
+    changing one reader alone would put the cut and the analysis on
+    different meshes.
+
+    What this refuses is the day that stops being true. A permuted vertex
+    space would draw a scrambled vault and solve a vault nobody designed,
+    and the numbers would still look like numbers. Named here instead, at
+    the one door every reader comes through.
+    """
+
+    equilibrium = _equilibrium(contract)
+    count = len(equilibrium.get("vertices", []))
+
+    mappings = contract.get("mappings") or {}
+    for entry in mappings.get("sourceVertexToFormVertex") or []:
+        form_id = entry.get("formVertexId")
+        equilibrium_id = entry.get("equilibriumVertexId")
+        if form_id is None or equilibrium_id is None:
+            continue
+        if int(form_id) != int(equilibrium_id):
+            raise ValueError(
+                "this export's form and equilibrium vertices are different "
+                "index spaces (form vertex {} is equilibrium vertex {}), and "
+                "the studio indexes faces into equilibrium.vertices directly. "
+                "Reading it would draw and solve the wrong "
+                "surface.".format(form_id, equilibrium_id))
+
+    for position, face in enumerate(contract.get("formGraph", {}).get("faces") or []):
+        face_id = face.get("id")
+        if face_id is not None and int(face_id) != position:
+            raise ValueError(
+                "this export's formGraph faces are not in id order (face at "
+                "position {} carries id {}), and the stage plan names placed "
+                "faces by position".format(position, face_id))
+        for index in face.get("vertices", []):
+            if not 0 <= int(index) < count:
+                raise ValueError(
+                    "face {} names vertex {}, which is outside this export's "
+                    "{} equilibrium vertices".format(position, index, count))
+
+
 def mesh_arrays(contract: Mapping[str, Any]) -> Dict[str, list]:
     """Vertices, quad faces, and edges as plain lists for JSON shipping."""
 
+    check_index_spaces(contract)
     equilibrium = _equilibrium(contract)
     vertices = [
         [float(v["x"]), float(v["y"]), float(v["z"])]

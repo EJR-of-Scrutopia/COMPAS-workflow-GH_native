@@ -110,6 +110,56 @@ def edges(contract: Mapping[str, Any]) -> List[Tuple[int, int]]:
     ]
 
 
+def check_index_spaces(contract: Mapping[str, Any]) -> None:
+    """Refuse a contract whose ids do not line up with array positions.
+
+    The studio's geometry.py carries this same check, deliberately: the
+    two may not share code, and each copy is pinned by its own test.
+
+    formGraph.faces carry FORM vertex ids, and form vertices and
+    equilibrium vertices are two index spaces joined by
+    mappings.sourceVertexToFormVertex. They are the identity on every
+    export in existence (measured 2026-09-09 across all four), so
+    indexing directly is correct today and is what the studio does. The
+    stage plan names placed faces by position and solve_stage looks them
+    up the same way, so this reader must not resolve ids differently from
+    the reader that produced the plan.
+
+    On the day the spaces diverge, indexing directly would solve a
+    surface built from the wrong vertices and return numbers that look
+    like numbers. This says so instead.
+    """
+
+    equilibrium = _equilibrium(contract)
+    count = len(equilibrium.get("vertices", []))
+
+    mappings = contract.get("mappings") or {}
+    for entry in mappings.get("sourceVertexToFormVertex") or []:
+        form_id = entry.get("formVertexId")
+        equilibrium_id = entry.get("equilibriumVertexId")
+        if form_id is None or equilibrium_id is None:
+            continue
+        if int(form_id) != int(equilibrium_id):
+            raise ValueError(
+                "this export's form and equilibrium vertices are different "
+                "index spaces (form vertex {} is equilibrium vertex {}); the "
+                "surface would be built from the wrong "
+                "vertices".format(form_id, equilibrium_id))
+
+    for position, face in enumerate((contract.get("formGraph") or {}).get("faces") or []):
+        face_id = face.get("id")
+        if face_id is not None and int(face_id) != position:
+            raise ValueError(
+                "this export's formGraph faces are not in id order (face at "
+                "position {} carries id {}), and the stage plan names placed "
+                "faces by position".format(position, face_id))
+        for index in face.get("vertices", []):
+            if not 0 <= int(index) < count:
+                raise ValueError(
+                    "face {} names vertex {}, which is outside this export's "
+                    "{} equilibrium vertices".format(position, index, count))
+
+
 def faces(contract: Mapping[str, Any]) -> List[List[int]]:
     """The form graph's faces, each a ring of vertex indices."""
 
@@ -147,6 +197,7 @@ def thrust_mesh_from_contract(contract: Mapping[str, Any]):
 
     from compas.datastructures import Mesh
 
+    check_index_spaces(contract)
     points = vertices(contract)
     if not points:
         raise ValueError("this contract has no vertices to build a surface from")
