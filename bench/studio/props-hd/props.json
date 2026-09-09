@@ -2,6 +2,166 @@
   "library": "Poly Haven, CC0. Decimated and packed by tools/props/fetch.mjs.",
   "props": [
     {
+      "key": "decal-cracks",
+      "label": "Cracked ground",
+      "file": "decal-cracks.glb",
+      "group": "decals",
+      "sizeMetres": [
+        1.6,
+        0.002,
+        1.6
+      ],
+      "triangles": 2,
+      "bytes": 2504920,
+      "credit": "Cracked ground by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=AsphaltDamage001"
+    },
+    {
+      "key": "decal-drain",
+      "label": "Drain cover",
+      "file": "decal-drain.glb",
+      "group": "decals",
+      "sizeMetres": [
+        0.6,
+        0.002,
+        0.6
+      ],
+      "triangles": 2,
+      "bytes": 1365384,
+      "credit": "Drain cover by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=ManholeCover001"
+    },
+    {
+      "key": "decal-gum",
+      "label": "Ground litter",
+      "file": "decal-gum.glb",
+      "group": "decals",
+      "sizeMetres": [
+        0.35,
+        0.002,
+        0.35
+      ],
+      "triangles": 2,
+      "bytes": 650244,
+      "credit": "Ground litter by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=ChewingGum001"
+    },
+    {
+      "key": "decal-inspection",
+      "label": "Inspection cover",
+      "file": "decal-inspection.glb",
+      "group": "decals",
+      "sizeMetres": [
+        0.75,
+        0.002,
+        0.75
+      ],
+      "triangles": 2,
+      "bytes": 1973276,
+      "credit": "Inspection cover by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=ManholeCover008"
+    },
+    {
+      "key": "decal-line-white",
+      "label": "Painted line",
+      "file": "decal-line-white.glb",
+      "group": "decals",
+      "sizeMetres": [
+        2.0,
+        0.002,
+        2.0
+      ],
+      "triangles": 2,
+      "bytes": 1772752,
+      "credit": "Painted line by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=RoadLines019A"
+    },
+    {
+      "key": "decal-line-worn",
+      "label": "Worn line",
+      "file": "decal-line-worn.glb",
+      "group": "decals",
+      "sizeMetres": [
+        2.0,
+        0.002,
+        2.0
+      ],
+      "triangles": 2,
+      "bytes": 1715072,
+      "credit": "Worn line by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=RoadLines022A"
+    },
+    {
+      "key": "decal-manhole",
+      "label": "Manhole cover",
+      "file": "decal-manhole.glb",
+      "group": "decals",
+      "sizeMetres": [
+        0.8,
+        0.002,
+        0.8
+      ],
+      "triangles": 2,
+      "bytes": 2034888,
+      "credit": "Manhole cover by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=ManholeCover011"
+    },
+    {
+      "key": "decal-manhole-square",
+      "label": "Square cover",
+      "file": "decal-manhole-square.glb",
+      "group": "decals",
+      "sizeMetres": [
+        0.7,
+        0.002,
+        0.7
+      ],
+      "triangles": 2,
+      "bytes": 2212364,
+      "credit": "Square cover by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=ManholeCover004"
+    },
+    {
+      "key": "decal-paving-edge",
+      "label": "Paving edge",
+      "file": "decal-paving-edge.glb",
+      "group": "decals",
+      "sizeMetres": [
+        2.0,
+        0.002,
+        2.0
+      ],
+      "triangles": 2,
+      "bytes": 1018664,
+      "credit": "Paving edge by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=PavingEdge001"
+    },
+    {
+      "key": "decal-paving-edge-2",
+      "label": "Paving edge 2",
+      "file": "decal-paving-edge-2.glb",
+      "group": "decals",
+      "sizeMetres": [
+        2.0,
+        0.002,
+        2.0
+      ],
+      "triangles": 2,
+      "bytes": 787108,
+      "credit": "Paving edge 2 by ambientCG",
+      "licence": "CC0 1.0",
+      "source": "https://ambientcg.com/view?id=PavingEdge002"
+    },
+    {
       "key": "anthurium_botany_01",
       "label": "Anthurium",
       "file": "anthurium_botany_01.glb",
@@ -1042,6 +1202,22 @@
       "source": "https://polyhaven.com/a/Barrel_02"
     },
     {
+      "key": "WetFloorSign_01",
+      "label": "Wet floor sign",
+      "file": "WetFloorSign_01.glb",
+      "group": "site",
+      "sizeMetres": [
+        0.3,
+        0.63,
+        0.359
+      ],
+      "triangles": 228,
+      "bytes": 35600,
+      "credit": "Wet floor sign by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/WetFloorSign_01"
+    },
+    {
       "key": "boulder_01",
       "label": "Small boulder",
       "file": "boulder_01.glb",
@@ -1680,22 +1856,6 @@
       "credit": "Stone by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/stone_01"
-    },
-    {
-      "key": "WetFloorSign_01",
-      "label": "Wet floor sign",
-      "file": "WetFloorSign_01.glb",
-      "group": "site",
-      "sizeMetres": [
-        0.3,
-        0.63,
-        0.359
-      ],
-      "triangles": 228,
-      "bytes": 35600,
-      "credit": "Wet floor sign by Poly Haven",
-      "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/WetFloorSign_01"
     },
     {
       "key": "concrete_road_barrier",

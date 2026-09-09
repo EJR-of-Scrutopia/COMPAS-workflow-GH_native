@@ -1844,8 +1844,33 @@ function renderObjectPreview(object, canvasEl) {
   previewRig.camera.lookAt(0, 0, 0);
 }
 
+// A decal is a prop whose geometry is a plane, which is what lets it
+// have the gumball, the layers, the scatter and the undo for nothing.
+// The one thing it cannot inherit is where it sits.
+//
+// loadPropTemplate stands every prop on its feet by shifting min.z to 0,
+// and propsGroup sits AT groundLevel, so a prop placed at z = 0 is
+// exactly coplanar with the floor. For anything solid that is right. For
+// a plane it is z-fighting, and the two millimetres baked into the GLB
+// were eaten by that same normalisation: the plane's lowest point WAS
+// the lift, so shifting it to zero cancelled it exactly.
+//
+// So the lift is applied here instead, where the floor is known. Two
+// millimetres is invisible from any camera that can see the vault and
+// settles the depth test outright -- the same trick, and the same
+// reasoning, as HDRI_DROP.
+const DECAL_LIFT = 0.002;
+
+function isDecal(type) {
+  const entry = (state.propLibrary || []).find((e) => e.key === type);
+  return !!entry && entry.group === "decals";
+}
+
 function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
                    rotX = 0, rotY = 0) {
+  // Falsy rather than undefined: a restore hands back the saved 0.002,
+  // which is truthy and kept, while a fresh placement passes nothing.
+  if (!z && isDecal(type)) z = DECAL_LIFT;
   const template = propTemplates.get(type);
   // A clone shares geometry and materials with its template, which is what
   // makes twenty figures cost one model; it is also why disposeProp does

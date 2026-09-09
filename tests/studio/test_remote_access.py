@@ -2727,3 +2727,59 @@ def test_a_scatter_layer_does_not_hang_the_layers_drawer():
     assert "renderLayerTabs();" in guard
     assert "paintStampButton();" in guard
     assert "return;" in guard
+
+
+def test_a_decal_is_a_prop_that_lies_on_the_floor():
+    """Param: "Can we include some decals too in the props".
+
+    A DECAL IS A PROP WHOSE GEOMETRY IS A PLANE, which is the whole
+    design: arriving as an ordinary GLB it goes through placeProp and
+    inherits the gumball, the layers, rotation, scale, undo, the scene
+    round trip and the scatter brush with no new client code, and gets
+    the right shadow behaviour free because castsShadow keys on height.
+
+    The one thing it cannot inherit is where it sits. loadPropTemplate
+    stands every prop on its feet by shifting min.z to 0, and propsGroup
+    sits AT groundLevel, so a plane placed at z = 0 is exactly coplanar
+    with the floor and z-fights. The two millimetres baked into the GLB
+    were eaten by that same normalisation -- the plane's lowest point WAS
+    the lift -- so the lift is applied at placement instead."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const DECAL_LIFT = 0.002;" in js
+    place = _js_function(js, "function isDecal(type)")
+    assert 'entry.group === "decals"' in place
+    assert "  if (!z && isDecal(type)) z = DECAL_LIFT;" in js, (
+        "falsy rather than undefined: a restore hands back the saved "
+        "0.002, which is truthy and kept")
+    # No DecalGeometry, and there should not be: it projects onto
+    # arbitrary meshes and the floor is a flat disc.
+    assert "DecalGeometry" not in js
+
+
+def test_the_decal_importer_refuses_anything_without_a_cutout():
+    """Not every ambientCG asset filed under Decal is one. The whole
+    Leaking family is a surface texture -- colour, normal, roughness,
+    and nothing saying which part is stain. Composited with a white
+    alpha it lays an opaque grey square on the floor, which loads
+    without complaint and reads as a bug in the studio. Four of the
+    first ten came out that way."""
+
+    tool = (REPO / "tools" / "props" / "fetch_decals.py").read_text(
+        encoding="utf-8")
+    assert "no opacity map: this is a surface texture, not a decal" in tool
+    assert "the opacity map is flat at" in tool
+    # An ACTIVE entry, not the string: the set names TireTracks001 in a
+    # comment saying why it is absent, and testing for the bare word
+    # would fail on the explanation.
+    block = tool.split("CURATED = [")[1].split(chr(10) + "]")[0]
+    active = [line.strip() for line in block.splitlines()
+              if line.strip().startswith("(")]
+    assert not any("TireTracks" in line or "Leaking" in line
+                   for line in active), (
+        "the ones with no cutout are out of the curated set, not merely "
+        "guarded against")
+    assert len(active) >= 8, "the set is still a set"
+    # And the manifest merges by key, as fetch.mjs does, so a later prop
+    # run adds to the decals rather than replacing them.
+    assert "by_key[entry[\"key\"]] = entry" in tool
