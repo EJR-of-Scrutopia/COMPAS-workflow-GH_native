@@ -1167,6 +1167,58 @@ def test_the_client_size_floor_still_mirrors_the_server():
     assert float(client.group(2)) == float(server_max.group(1))
 
 
+def test_refresh_reloads_the_vault_on_screen_not_just_the_listing():
+    """Param: "when i press refresh in the import menu, i expect it to
+    refresh the loaded vault too, because i upload a new file and it doesnt
+    update even after pushing refresh."
+
+    It only re-read the folder LISTING. A re-export of the vault already
+    open changed the file on disk and nothing else: the listing came back
+    identical, so nothing on screen was touched and the studio went on
+    drawing the bundle it had loaded minutes before."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    handler = js[js.index('document.getElementById("study-refresh")'):]
+    handler = handler[:handler.index("\n});")]
+    assert "const standing = select.value;" in handler
+    assert "await refreshStudies(standing);" in handler, (
+        "the vault on screen keeps its place in the refilled list")
+    assert "    await loadStudy(standing);" in handler, (
+        "and is actually RELOADED, which is what the button promises")
+    # Only if it is still there: a vault deleted from the folder between
+    # exports must not be reloaded out of the listing it just left.
+    assert "if (standing && names.includes(standing)) {" in handler
+
+
+def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
+    """Param: "add a refrsh button to the scenes too ... a little refresh
+    icon appears in the bottom right corner of the thumbnail which allows
+    me to update that scene with what i have."
+
+    PUT, not POST: POST mints a new id, which would leave a copy behind."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'update.className = "scene-update";' in js
+    assert '"/api/scenes/" + encodeURIComponent(row.id),\n' \
+        '        { method: "PUT", headers: { "content-type": "application/json" },' in js, (
+            "an update replaces the scene he pointed at rather than "
+            "saving a second one beside it")
+    assert "state: collectScene(), thumbnail: captureThumbnail() }) });" in js, (
+        "the view on screen now, still and all")
+    # The tile underneath restores the scene, so the pip must not do both.
+    assert "      event.stopPropagation();\n" \
+        "      if (!state.bundle) {\n" \
+        '        showBanner("Load a study before updating a scene", "error");' in js
+    assert "      await refreshScenes();\n    });\n    const holder" in js, (
+        "the list is re-read so the new still appears at once")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
+    # Bottom right, diagonally opposite the delete cross, so one slip
+    # cannot reach the destructive control.
+    assert "#panel .scene-update {\n" \
+        "  position: absolute; right: var(--s2); bottom: var(--s2);" in css
+    assert "#panel .scene-delete {" in css and "top: var(--s2); right: var(--s2)" in css
+
+
 def test_the_machine_draws_the_way_he_asked():
     """Param, on first seeing his machine in the app, 2026-09-09: the
     anchor once; the machine always there with the formwork and it was

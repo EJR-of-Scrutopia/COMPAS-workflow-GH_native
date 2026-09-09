@@ -1136,6 +1136,65 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             raise HTTPException(
                 400, "{} is damaged and cannot be read ({})".format(path.name, error))
 
+    @app.put("/api/scenes/{scene_id}")
+    async def update_scene(scene_id: str, request: Request):
+        """Overwrite a saved scene with the view on screen now, keeping its
+        id and its name.
+
+        Param: "a little refresh icon appears in the bottom right corner of
+        the thumbnail which allows me to update that scene with what i
+        have". Re-saving through POST could not do this: it mints a new id
+        every time, so the old scene would be left standing beside the new
+        one under a second name. That is a copy, not an update.
+
+        The NAME is the scene's identity to him, so an update replaces what
+        the scene looks at and never what it is called.
+        """
+
+        path = _scene_path(scene_id, ".json")
+        if not path.is_file():
+            raise HTTPException(404, "no scene {}".format(scene_id))
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # A damaged record is REPAIRED by an update rather than refused.
+            # Overwriting it with a good one is the only way back, and the
+            # name is the only thing that cannot be recovered.
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        body = await request.body()
+        if len(body) > MAX_SCENE_BYTES:
+            raise HTTPException(
+                413, "the scene is {} bytes; the limit is {}.".format(
+                    len(body), MAX_SCENE_BYTES))
+        try:
+            document = json.loads(body)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "not valid JSON")
+        if not isinstance(document, dict):
+            raise HTTPException(400, "a scene must be a JSON object")
+        settings = document.get("state")
+        if not isinstance(settings, dict) or not settings:
+            raise HTTPException(400, "a scene needs a state block")
+        image = None
+        if document.get("thumbnail") is not None:
+            image = _decode_thumbnail(document["thumbnail"])
+        record = {
+            "schema": SCENE_SCHEMA,
+            "id": scene_id,
+            "name": str(existing.get("name") or scene_id),
+            "study": str(document.get("study") or existing.get("study") or ""),
+            "saved": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "state": settings,
+        }
+        SCENES_DIR.mkdir(parents=True, exist_ok=True)
+        if image is not None:
+            (SCENES_DIR / (scene_id + ".jpg")).write_bytes(image)
+        bundle.write_json_atomically(path, record)
+        return {"scene": _scene_row(
+            record, _scene_path(scene_id, ".jpg").is_file())}
+
     @app.get("/api/scenes/{scene_id}/thumbnail")
     def scene_thumbnail(scene_id: str):
         path = _scene_path(scene_id, ".jpg")

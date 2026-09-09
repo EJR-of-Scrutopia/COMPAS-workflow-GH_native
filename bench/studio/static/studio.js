@@ -3132,10 +3132,44 @@ function renderSceneList() {
       logStudio("deleted scene " + row.name);
       await refreshScenes();
     });
+    // Update in place: the view on screen now, written over this scene,
+    // keeping its name. Param: "a little refresh icon appears in the
+    // bottom right corner of the thumbnail which allows me to update that
+    // scene with what i have."
+    //
+    // It sits at the tile's BOTTOM right, diagonally opposite the delete
+    // cross, so the destructive control and the one he will reach for
+    // often can never be caught by the same slip of a click.
+    const update = document.createElement("button");
+    update.className = "scene-update";
+    update.textContent = "\u27f3";        // the reload glyph, needing no legend
+    update.title = "Update this scene with the view on screen now";
+    update.addEventListener("click", async (event) => {
+      // The tile beneath restores the scene; this must not do both.
+      event.stopPropagation();
+      if (!state.bundle) {
+        showBanner("Load a study before updating a scene", "error");
+        return;
+      }
+      const response = await fetch(
+        "/api/scenes/" + encodeURIComponent(row.id),
+        { method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            study: document.getElementById("study-select").value,
+            state: collectScene(), thumbnail: captureThumbnail() }) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        showBanner("Scene not updated: " + (body.detail || response.status), "error");
+        return;
+      }
+      logStudio("updated scene " + row.name);
+      await refreshScenes();
+    });
     const holder = document.createElement("div");
     holder.style.position = "relative";
     holder.appendChild(tile);
     holder.appendChild(remove);
+    holder.appendChild(update);
     list.appendChild(holder);
   }
 }
@@ -6591,8 +6625,24 @@ document.getElementById("folder-choose").addEventListener("click", async () => {
 });
 
 document.getElementById("study-refresh").addEventListener("click", async () => {
-  const names = await refreshStudies(null);
+  // Param: "when i press refresh in the import menu, i expect it to
+  // refresh the loaded vault too, because i upload a new file and it
+  // doesnt update even after pushing refresh."
+  //
+  // It only ever re-read the FOLDER LISTING, so a re-export of the vault
+  // already on screen changed the file on disk and nothing else: the
+  // listing was identical, and the studio went on drawing the bundle it
+  // had loaded minutes earlier. Refresh now reloads the standing vault as
+  // well, which is what the button appears to promise.
+  const select = document.getElementById("study-select");
+  const standing = select.value;
+  const names = await refreshStudies(standing);
   logStudio("folder re-read: " + names.length + " vaults");
+  if (standing && names.includes(standing)) {
+    select.value = standing;
+    await loadStudy(standing);
+    logStudio("reloaded " + standing + " from the folder");
+  }
 });
 
 // The hand-upload path is gone with its controls (Param, 2026-09-04: the

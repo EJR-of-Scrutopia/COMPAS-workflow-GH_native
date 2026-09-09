@@ -880,6 +880,78 @@ def test_a_scene_survives_a_round_trip(tmp_path, monkeypatch):
     assert client.get("/api/scenes/" + scene_id).status_code == 404
 
 
+def test_a_scene_can_be_updated_in_place_keeping_its_name(tmp_path, monkeypatch):
+    """Param: "a little refresh icon appears in the bottom right corner of
+    the thumbnail which allows me to update that scene with what i have."
+
+    POST could not do this: it mints a new id every time, so the old scene
+    would be left standing beside the new one under a second name. That is
+    a copy, not an update. PUT keeps the id AND the name -- the name is the
+    scene's identity to him -- and replaces the state, the study and the
+    thumbnail."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    first = {"camera": {"position": [1.0, 2.0, 3.0]}, "cut": {"size": 0.9}}
+    saved = client.post("/api/scenes", json={
+        "name": "Crown, evening", "study": "Tiny",
+        "state": first, "thumbnail": THUMBNAIL})
+    assert saved.status_code == 201, saved.text
+    scene_id = saved.json()["scene"]["id"]
+
+    second = {"camera": {"position": [9.0, 8.0, 7.0]}, "cut": {"size": 0.2}}
+    updated = client.put("/api/scenes/" + scene_id, json={
+        "study": "Tiny", "state": second, "thumbnail": THUMBNAIL})
+    assert updated.status_code == 200, updated.text
+    # THE SAME SCENE, not a second one.
+    listed = client.get("/api/scenes").json()["scenes"]
+    assert [row["id"] for row in listed] == [scene_id], (
+        "an update must not leave a copy behind")
+    assert listed[0]["name"] == "Crown, evening", (
+        "the name is the scene's identity to him and an update keeps it")
+    whole = client.get("/api/scenes/" + scene_id).json()
+    assert whole["state"] == second, "the view on screen now, written over it"
+    assert whole["study"] == "Tiny"
+
+    # A scene that is not there cannot be updated into existence. The id
+    # is well formed, so this is a genuine 404 and not the path guard's
+    # 400 for a malformed one.
+    assert client.put("/api/scenes/scene-" + "a" * 12, json={
+        "state": second}).status_code == 404
+    # And the same refusals the save path makes.
+    assert client.put("/api/scenes/" + scene_id, json={"state": {}}).status_code == 400
+    assert client.put("/api/scenes/" + scene_id,
+                      json={"state": "everything"}).status_code == 400
+
+
+def test_an_update_repairs_a_damaged_scene_rather_than_refusing_it(tmp_path, monkeypatch):
+    """A damaged record cannot be restored and cannot be re-read, so the
+    only way back is to write a good one over it. Refusing the update would
+    leave him with a tile that can only be deleted."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    app_module = studio()[0]
+    saved = client.post("/api/scenes", json={
+        "name": "Crown", "study": "Tiny", "state": {"camera": {}}})
+    scene_id = saved.json()["scene"]["id"]
+    listed = client.get("/api/scenes").json()["scenes"]
+    assert not listed[0].get("unreadable")
+
+    # Damage it the way a half-written file would be.
+    path = app_module.SCENES_DIR / (scene_id + ".json")
+    path.write_text("{not json", encoding="utf-8")
+    assert client.get("/api/scenes").json()["scenes"][0]["unreadable"] is True
+
+    healed = client.put("/api/scenes/" + scene_id,
+                        json={"study": "Tiny", "state": {"camera": {"fov": 45}}})
+    assert healed.status_code == 200, healed.text
+    rows = client.get("/api/scenes").json()["scenes"]
+    assert len(rows) == 1 and not rows[0].get("unreadable"), (
+        "the update repaired it rather than leaving a tile he can only delete")
+    # The name could not survive the damage, so the id stands in for it
+    # rather than the scene arriving nameless.
+    assert rows[0]["name"] == scene_id
+
+
 def test_a_scene_refuses_what_it_cannot_store(tmp_path, monkeypatch):
     """Every refusal names the thing that is wrong. The thumbnail guards
     matter most: the field is a data URL from a browser canvas, so its mime
