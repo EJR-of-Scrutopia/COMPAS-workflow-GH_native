@@ -756,6 +756,236 @@ export function chainLength(vertices, chain) {
   return length;
 }
 
+// ---------- deriving where the machines stand ----------
+// Param: "if i dont add in a mechanism to the json, i need you to be able
+// to add in the mechanisms and anchors where applicable ... the anchors
+// dont play fair in my script with many chnaging forms."
+//
+// Runs ONLY when the document carries no instances. When it carries them
+// they are authoritative: he can see a wrong placement in the Rhino
+// viewport before exporting, which no importer can offer.
+//
+// Everything here is derived from the SUPPORTS, which every solved study
+// has, and never from principalRows -- those come from principal curves
+// he draws by hand, are empty when he draws none, and on his two-sided
+// vault are RIBS running over the crown at right angles to the
+// springings. A machine placed off them would stand on the wrong axis
+// and look almost plausible.
+
+// How much further apart than usual two supports may be and still count
+// as neighbours in the same springing. Measured on his study: the
+// supports sit at a uniform 0.150 m along a row and the two rows are
+// 16.000 m apart, so any factor between about 1 and 100 gives the same
+// answer. Three is chosen for a row that is not perfectly regular.
+export const ROW_JOIN_FACTOR = 3;
+
+// The springing rows, recovered from the supports alone.
+//
+// NOT by walking the net's edges, which is the approach a reader reaches
+// for first: measured on his form document, ZERO of its 800 edges join
+// two supports. Every anchor connects only to interior vertices, so an
+// edge walk returns 42 rows of one and looks like a topology problem
+// rather than a wrong question. Their own spacing separates them by a
+// factor of a hundred.
+export function supportRows(points, factor) {
+  const n = points.length;
+  if (n < 2) return n ? [[0]] : [];
+  const gap = (a, b) => Math.hypot(
+    points[a][0] - points[b][0],
+    points[a][1] - points[b][1],
+    points[a][2] - points[b][2]);
+  const nearest = [];
+  for (let i = 0; i < n; i++) {
+    let best = Infinity;
+    for (let j = 0; j < n; j++) if (j !== i) best = Math.min(best, gap(i, j));
+    nearest.push(best);
+  }
+  const sorted = nearest.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const limit = (Number.isFinite(+factor) ? +factor : ROW_JOIN_FACTOR) * median;
+  const seen = new Set();
+  const rows = [];
+  for (let start = 0; start < n; start++) {
+    if (seen.has(start)) continue;
+    const stack = [start], row = [];
+    seen.add(start);
+    while (stack.length) {
+      const current = stack.pop();
+      row.push(current);
+      for (let j = 0; j < n; j++) {
+        if (!seen.has(j) && gap(current, j) <= limit) { seen.add(j); stack.push(j); }
+      }
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// A machine's frame: Y away from the net, Z the world's own up, X the
+// cross of the two.
+//
+// The authored machine and every derived one are built by this SAME
+// rule, so the transform between them is a turn about Z and never a
+// reflection. That is what keeps the far side from lighting from the
+// inside, which a mirrored placement does.
+export function outwardFrame(origin, outward) {
+  const up = [0, 0, 1];
+  const y = normalise([outward[0], outward[1], 0]) || [0, 1, 0];
+  const x = cross(y, up);
+  return [
+    x[0], x[1], x[2], 0,
+    y[0], y[1], y[2], 0,
+    up[0], up[1], up[2], 0,
+    origin[0], origin[1], origin[2], 1,
+  ];
+}
+
+// The rigid transform carrying `source` onto `target`, both frames in the
+// column-major shape above. Rotation transposed and the translation
+// carried through it: a general inverse would work but would invite a
+// scale to creep in, and a machine that is 1.001 times itself is a bug
+// nobody sees until the wires miss.
+export function betweenFrames(source, target) {
+  const r = [];
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 3; row++) {
+      let sum = 0;
+      // target[:, col] . source[:, row] -- the transpose is taken here.
+      for (let k = 0; k < 3; k++) sum += target[4 * col + k] * source[4 * row + k];
+      r[4 * col + row] = sum;
+    }
+    r[4 * col + 3] = 0;
+  }
+  const s = [source[12], source[13], source[14]];
+  for (let axis = 0; axis < 3; axis++) {
+    let sum = target[12 + axis];
+    for (let k = 0; k < 3; k++) sum -= r[4 * k + axis] * s[k];
+    r[12 + axis] = sum;
+  }
+  r[15] = 1;
+  return r;
+}
+
+// Where the machines stand, given the supports and the machine's own
+// spool line.
+//
+// `supports`  world points, one per cable the net needs pulled
+// `spools`    the machine's spool axis origins, in the BODY's own space
+// `netCentre` the middle of the net, which decides which way is out
+//
+// The setback is not invented. His machine body is authored in WORLD
+// coordinates at one of its real positions -- measured, its spool line
+// sits 1.697 m outside the springing at x = -8 -- so the body's own
+// distance from the nearest row IS his setback, and every derived
+// machine inherits it. A body authored at the origin instead has no such
+// distance to read, and says so rather than guessing one.
+export function derivePlacements(supports, spools, netCentre) {
+  const notes = [];
+  const out = { instances: [], wires: [], rows: [], notes };
+  if (!Array.isArray(supports) || supports.length < 2) {
+    notes.push("this study has fewer than two supports, so there is no "
+      + "springing to stand a machine against");
+    return out;
+  }
+  if (!Array.isArray(spools) || !spools.length) {
+    notes.push("this mechanism carries no reel axes, so it has no spool "
+      + "line to place it by and can only be drawn where it was authored");
+    return out;
+  }
+  const centre = (points) => {
+    const sum = [0, 0, 0];
+    for (const q of points) { sum[0] += q[0]; sum[1] += q[1]; sum[2] += q[2]; }
+    return sum.map((c) => c / points.length);
+  };
+  const net = Array.isArray(netCentre) ? netCentre : centre(supports);
+  const rows = supportRows(supports);
+  out.rows = rows;
+
+  // The machine's own frame, and the setback its body already states.
+  const spoolCentre = centre(spools);
+  let authored = null, authoredGap = Infinity;
+  for (const row of rows) {
+    const rowCentre = centre(row.map((i) => supports[i]));
+    const gap = Math.hypot(spoolCentre[0] - rowCentre[0], spoolCentre[1] - rowCentre[1]);
+    if (gap < authoredGap) { authoredGap = gap; authored = rowCentre; }
+  }
+  // OUTWARD IS A PROPERTY OF THE ROW, not of where the machine happens
+  // to stand along it. Taken from the body's own offset to the net
+  // centre it tilts by however far the machine sits off the row's
+  // middle: on his study that tilt inflated a 1.697 m setback to 1.800,
+  // and every derived machine stood 103 mm too far out.
+  const bodyOut = normalise(authored
+    ? [authored[0] - net[0], authored[1] - net[1], 0]
+    : [spoolCentre[0] - net[0], spoolCentre[1] - net[1], 0]);
+  if (!bodyOut) {
+    notes.push("this mechanism's spools sit on the net's own centre, so "
+      + "there is no outward direction to place it by");
+    return out;
+  }
+  const source = outwardFrame(spoolCentre, bodyOut);
+  const setback = authored
+    ? (spoolCentre[0] - authored[0]) * bodyOut[0]
+      + (spoolCentre[1] - authored[1]) * bodyOut[1]
+    : 0;
+  notes.push("machines placed from the supports: setback "
+    + setback.toFixed(3) + " m, read from where this machine's own body "
+    + "stands against its nearest springing");
+
+  const perMachine = spools.length;
+  let side = 0;
+  for (const row of rows) {
+    if (row.length < 2) {
+      notes.push("a support with no neighbours was left unserved");
+      continue;
+    }
+    const rowCentre = centre(row.map((i) => supports[i]));
+    const outward = normalise([rowCentre[0] - net[0], rowCentre[1] - net[1], 0])
+      || bodyOut;
+    // Ordered ALONG the frame's own X, so spool k pulls support k and no
+    // two cables in a bank cross.
+    const along = outwardFrame([0, 0, 0], outward);
+    const axis = [along[0], along[1], along[2]];
+    const ordered = row.slice().sort((a, b) =>
+      (supports[a][0] * axis[0] + supports[a][1] * axis[1])
+      - (supports[b][0] * axis[0] + supports[b][1] * axis[1]));
+    for (let at = 0, machine = 0; at < ordered.length; at += perMachine, machine++) {
+      // A final short run gets a machine of its own rather than being
+      // dropped: an unserved support is a cable nobody pulls.
+      const served = ordered.slice(at, at + perMachine);
+      const servedCentre = centre(served.map((i) => supports[i]));
+      const origin = [
+        servedCentre[0] + outward[0] * setback,
+        servedCentre[1] + outward[1] * setback,
+        spoolCentre[2],
+      ];
+      const target = outwardFrame(origin, outward);
+      out.instances.push({
+        side, mechanism: machine,
+        matrix: betweenFrames(source, target),
+        mirrored: false,
+        wireIds: served.map((i) => "d-" + side + "-" + machine + "-" + i),
+        netVertices: served.slice(),
+        short: served.length < perMachine,
+      });
+      for (let k = 0; k < served.length; k++) {
+        out.wires.push({
+          id: "d-" + side + "-" + machine + "-" + served[k],
+          side, mechanism: machine, spool: k, support: served[k],
+        });
+      }
+      if (served.length < perMachine) {
+        notes.push("a machine on side " + side + " pulls only "
+          + served.length + " of its " + perMachine + " spools, because the "
+          + "row does not divide evenly");
+      }
+    }
+    side += 1;
+  }
+  notes.push("derived " + out.instances.length + " machines over "
+    + rows.length + " springings, pulling " + out.wires.length + " cables");
+  return out;
+}
+
 // ---------- choosing a mechanism ----------
 // Param: "the mechanism itself wants to become an asset ... we can pick
 // and chose or you can auto chose the best one. this will likely be ones

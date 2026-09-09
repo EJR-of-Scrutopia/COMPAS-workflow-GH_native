@@ -1225,6 +1225,51 @@ def test_the_shelf_record_tile_becomes_a_stop_button():
         "filled red at rest while a take runs, like the panel's own button")
 
 
+def test_the_machines_are_derived_when_the_document_places_none():
+    """Param: "if i dont add in a mechanism to the json, i need you to be
+    able to add in the mechanisms and anchors where applicable ... the
+    anchors dont play fair in my script with many chnaging forms."
+
+    Runs ONLY on a document with no instances, which is the ownership
+    rule agreed with the exporter: the document is authoritative when it
+    carries them, and the studio derives only when it does not."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    build = js[js.index("async function buildMachine() {"):
+               js.index("// Where a wire first meets the machine")]
+    assert "  const derived = model.instances.length ? null : deriveMachines(model);" in build, (
+        "a document that places its own machines is never second-guessed")
+    assert "  const instances = model.instances.length ? model.instances\n" \
+        "    : (derived ? derived.instances" in build
+    # A derived placement is a studio OPINION and must never be mistaken
+    # for his authoring, so it says so where he will see it.
+    assert '    showBanner("This mechanism carries no placements, so the machines are "' in build
+
+    # A SPOOL, not a pulley: they arrive under the same `reels` key and
+    # only the winding radius separates them. The writer's own figure
+    # first, the studio's own measurement behind it.
+    assert "    const radius = Number.isFinite(+part.windingRadius)\n" \
+        "      ? +part.windingRadius : measureSpoolRadius(part);" in js
+    assert "    if (radius < SPOOL_RADIUS_LIMIT) spools.push(part.axis.origin);" in js
+
+    # Back into the net's OWN numbering. derivePlacements works in
+    # indices into the support list it was handed, and every consumer
+    # downstream speaks net vertex indices; confusing the two would draw
+    # every cable to the wrong vertex and still look like a machine.
+    assert "    instance.netVertices = instance.netVertices.map((i) => ids[i]);" in js
+    assert "    netVertex: ids[wire.support]," in js
+
+    # ONE frame per derived wire, at the spool it leaves from. A derived
+    # wire knows where the cable ends and nothing about how it wraps, so
+    # the free span is drawn and the routed portion is not -- the honest
+    # picture rather than an invented wrap.
+    assert "      owner: \"reel\", ownerReel: wire.spool," in js
+    # A support the net does not carry means the two documents disagree,
+    # and deriving from them anyway would place machines off a net that
+    # is not there.
+    assert "    if (!v) return null;               // a support the net does not carry" in js
+
+
 def test_a_mechanism_is_chosen_rather_than_inherited():
     """Param: "the mechanism itself wants to become an asset, so add to
     import the mechanism as a drop down selection, so if i export any

@@ -102,6 +102,7 @@ CHECK = textwrap.dedent("""
       turnsFor, readMechanism, checkNetVertices, checkRouteDirection,
       wireCentreline, reelContactRadius, SPOOL_STEPS, PULLEY_STEPS,
       ribChain, chainLength, DEFAULT_CABLE_RADIUS, chooseMechanism,
+      supportRows, outwardFrame, betweenFrames, derivePlacements,
     } from %MODULE%;
 
     function expect(condition, message) {
@@ -549,6 +550,133 @@ CHECK = textwrap.dedent("""
     expect(bare.ok === true && bare.anchors.length === 0,
       "a document carrying no anchors reads as none");
 
+    // ---------- deriving where the machines stand ----------
+    // Two springings of three, 16 m apart, the shape of his own study in
+    // miniature. NOT grouped by edges: on his form document zero of 800
+    // edges join two supports, so an edge walk returns 42 rows of one.
+    const twoRows = [
+      [-8, -0.15, 0], [-8, 0, 0], [-8, 0.15, 0],
+      [8, -0.15, 0], [8, 0, 0], [8, 0.15, 0],
+    ];
+    const grouped = supportRows(twoRows);
+    expect(grouped.length === 2, "two springings, not six: " + grouped.length);
+    expect(grouped.every((r) => r.length === 3), "three supports each");
+    expect(supportRows([[0, 0, 0]]).length === 1, "one support is one row");
+    expect(supportRows([]).length === 0, "and none is none, not a crash");
+
+    // The frame: Y away from the net, Z up, X their cross. Built by the
+    // same rule for the authored machine and every derived one, so the
+    // transform between them is a TURN and never a reflection -- which
+    // is what stops the far side lighting from the inside.
+    const f = outwardFrame([1, 2, 3], [-1, 0, 0]);
+    near(f[12], 1, 1e-12, "the frame's origin");
+    near(f[4], -1, 1e-12, "Y is outward");
+    near(f[10], 1, 1e-12, "Z is up");
+    near(f[0], 0, 1e-12, "X is Y cross Z");
+    near(f[1], 1, 1e-12, "which points along the row");
+    const det = (m4) => m4[0] * (m4[5] * m4[10] - m4[6] * m4[9])
+      - m4[4] * (m4[1] * m4[10] - m4[2] * m4[9])
+      + m4[8] * (m4[1] * m4[6] - m4[2] * m4[5]);
+    near(det(f), 1, 1e-12, "a frame with no reflection in it");
+    // OUTWARD IS A PLAN DIRECTION. A springing that climbs, or a net
+    // centroid well above the ground -- his is at z 3.030 -- gives an
+    // outward with a large z in it, and following that would stand the
+    // machine on its nose while still looking like a valid frame.
+    const leaning = outwardFrame([0, 0, 0], [-3, 0, 9]);
+    near(leaning[6], 0, 1e-12, "Y stays in the ground plane");
+    near(leaning[4], -1, 1e-12, "keeping only its plan direction");
+    near(leaning[10], 1, 1e-12, "and Z is still the world's own up");
+    near(det(outwardFrame([0, 0, 0], [1, 0, 0])), 1, 1e-12,
+      "and the same on the opposite side");
+
+    // betweenFrames carries source onto target exactly.
+    const src = outwardFrame([1, 2, 3], [-1, 0, 0]);
+    const dst = outwardFrame([-4, 5, 6], [0, 1, 0]);
+    const between = betweenFrames(src, dst);
+    near(det(between), 1, 1e-12, "a rigid turn, no reflection and no scale");
+    const put = (m4, p) => [
+      m4[0] * p[0] + m4[4] * p[1] + m4[8] * p[2] + m4[12],
+      m4[1] * p[0] + m4[5] * p[1] + m4[9] * p[2] + m4[13],
+      m4[2] * p[0] + m4[6] * p[1] + m4[10] * p[2] + m4[14],
+    ];
+    const moved = put(between, [1, 2, 3]);
+    near(moved[0], -4, 1e-9, "the source origin lands on the target's");
+    near(moved[1], 5, 1e-9, "y");
+    near(moved[2], 6, 1e-9, "z");
+    // A POINT OFF THE ORIGIN, which is what actually pins the rotation.
+    // The translation is solved FROM the rotation, so mapping the origin
+    // alone is satisfied by any rotation at all -- including a
+    // transposed one, which is orthonormal and unit-determinant and
+    // therefore passes every other check here.
+    const along2 = (frame, k) => [frame[0] * k, frame[1] * k, frame[2] * k];
+    const from = along2(src, 2);
+    const to = along2(dst, 2);
+    const off = put(between, [1 + from[0], 2 + from[1], 3 + from[2]]);
+    near(off[0], -4 + to[0], 1e-9, "two metres along the source X ...");
+    near(off[1], 5 + to[1], 1e-9, "... lands two along the target X");
+    near(off[2], 6 + to[2], 1e-9, "z");
+
+    // The whole derivation on the miniature: two rows of three, a bank
+    // of three spools, so one machine a side.
+    const spools = [[-9, -0.15, 1], [-9, 0, 1], [-9, 0.15, 1]];
+    const placed = derivePlacements(twoRows, spools, [0, 0, 0]);
+    expect(placed.instances.length === 2,
+      "one machine a side: " + placed.instances.length);
+    expect(placed.wires.length === 6, "one cable per support");
+    expect(placed.instances.every((i) => i.mirrored === false),
+      "neither side is a reflection");
+    // The authored machine lands back on its own spools: the setback is
+    // READ from where its body already stands against its own row, so
+    // the side it was authored on is reproduced rather than moved.
+    const home = placed.instances.find((i) => i.side === 0);
+    const back = spools.map((s) => put(home.matrix, s));
+    near(back[1][0], -9, 1e-9, "the authored machine is put back where it was");
+    near(back[1][1], 0, 1e-9, "along the row too");
+    // ORDERED ALONG THE ROW, so spool k pulls support k and no two
+    // cables in a bank cross. Checked on a row that does NOT divide
+    // evenly: reverse an even row and you get the same machines in the
+    // other order, so it proves nothing.
+    const four = [
+      [-8, 0, 0], [-8, 0.15, 0], [-8, 0.3, 0], [-8, 0.45, 0],
+      [8, 0, 0], [8, 0.15, 0],
+    ];
+    const run = derivePlacements(four, [[-9, 0, 1], [-9, 0.15, 1], [-9, 0.3, 1]],
+      [0, 0, 0]);
+    const first = run.instances.filter((i) => i.side === 0)
+      .sort((a, b) => a.mechanism - b.mechanism);
+    expect(first.length === 2, "four supports, a bank of three: two machines");
+    expect(first[0].netVertices.join() === "0,1,2",
+      "the first machine takes the first three ALONG the row: "
+      + first[0].netVertices.join());
+    expect(first[1].netVertices.join() === "3",
+      "and the leftover is the last one, not the first: "
+      + first[1].netVertices.join());
+
+    // A bank bigger than the row still serves it, short-handed and said.
+    const short = derivePlacements(twoRows, [[-9, 0, 1], [-9, 0.15, 1],
+      [-9, 0.3, 1], [-9, 0.45, 1]], [0, 0, 0]);
+    expect(short.instances.length === 2, "still one machine a side");
+    expect(short.instances[0].short === true, "and it knows it is short-handed");
+    expect(short.notes.some((n) => n.indexOf("does not divide evenly") >= 0),
+      "and says so rather than dropping the leftover supports");
+    expect(short.wires.length === 6, "no support goes unserved");
+    // Nothing to work from is said, never guessed.
+    expect(derivePlacements([[0, 0, 0]], spools, [0, 0, 0]).instances.length === 0,
+      "one support is no springing");
+    // Not an array at all: a study with no form document reaches here as
+    // null, and the guard is the difference between a note and a throw
+    // out of the build.
+    for (const nothing of [null, undefined, "supports"]) {
+      const bare = derivePlacements(nothing, spools, [0, 0, 0]);
+      expect(bare && bare.instances.length === 0,
+        "no supports means no machines, not a crash");
+      expect(bare.notes.some((n) => n.indexOf("fewer than two supports") >= 0),
+        "and it says which of the two inputs was missing");
+    }
+    expect(derivePlacements(twoRows, [], [0, 0, 0]).notes.some(
+      (n) => n.indexOf("no reel axes") >= 0),
+      "a mechanism with no spool line says so");
+
     // ---------- choosing a mechanism ----------
     // "we can pick and chose or you can auto chose the best one. this
     // will likely be ones with different wire configs to deal with un
@@ -751,6 +879,131 @@ def test_every_material_the_table_names_exists_in_his_library():
         family, _, name = key.partition("/")
         assert (root / family / name).is_dir(), (
             "%s is named in PART_KINDS but is not in %s" % (key, folder))
+
+
+REAL_STUDY = r"""
+import { readFileSync } from "node:fs";
+import {
+  supportRows, derivePlacements,
+} from %MODULE%;
+
+const fail = (m) => { console.log("FAIL: " + m); process.exit(1); };
+const near = (a, b, tol, what) => {
+  if (!(Math.abs(a - b) <= tol)) fail(what + ": " + a + " vs " + b);
+};
+
+const form = JSON.parse(readFileSync(%FORM%, "utf-8"));
+const mech = JSON.parse(readFileSync(%MECH%, "utf-8"));
+const eq = form.equilibrium;
+const ids = eq.resolvedSupportNodeIds;
+const supports = ids.map((i) => {
+  const v = eq.vertices[i];
+  return [v.x, v.y, v.z];
+});
+const n = eq.vertices.length;
+const centre = eq.vertices.reduce(
+  (a, v) => [a[0] + v.x / n, a[1] + v.y / n, a[2] + v.z / n], [0, 0, 0]);
+
+// A spool, not a pulley. His reels arrive under one key.
+const reels = mech.mechanism.reels || [];
+const stated = reels.map((r) => r.windingRadius)
+  .filter((v) => typeof v === "number");
+const spools = reels.filter((r) => {
+  const v = r.windingRadius;
+  return typeof v === "number" ? v < 0.1 : stated.length === 0;
+}).map((r) => r.axis.origin);
+
+// ZERO of his 800 edges join two supports, which is why the rows cannot
+// be walked and must be grouped by their own spacing.
+const support = new Set(ids);
+const joined = eq.edges.filter((e) => support.has(e.u) && support.has(e.v)).length;
+if (joined !== 0) fail("edges joining two supports: " + joined);
+
+const rows = supportRows(supports);
+if (rows.length !== 2) fail("springings: " + rows.length);
+if (!rows.every((r) => r.length === supports.length / 2)) {
+  fail("row sizes: " + rows.map((r) => r.length).join(","));
+}
+
+const out = derivePlacements(supports, spools, centre);
+const perMachine = spools.length;
+const want = Math.ceil(supports.length / 2 / perMachine) * 2;
+if (out.instances.length !== want) {
+  fail("machines: " + out.instances.length + " wanted " + want);
+}
+if (out.wires.length !== supports.length) {
+  fail("cables: " + out.wires.length + " wanted " + supports.length);
+}
+if (out.instances.some((i) => i.mirrored)) fail("a side came out mirrored");
+
+const put = (m4, p) => [
+  m4[0] * p[0] + m4[4] * p[1] + m4[8] * p[2] + m4[12],
+  m4[1] * p[0] + m4[5] * p[1] + m4[9] * p[2] + m4[13],
+  m4[2] * p[0] + m4[6] * p[1] + m4[10] * p[2] + m4[14],
+];
+const det = (m4) => m4[0] * (m4[5] * m4[10] - m4[6] * m4[9])
+  - m4[4] * (m4[1] * m4[10] - m4[2] * m4[9])
+  + m4[8] * (m4[1] * m4[6] - m4[2] * m4[5]);
+
+// THE MACHINE HE AUTHORED MUST LAND BACK ON ITSELF. The setback is read
+// from where that body already stands against its own springing, so the
+// side it was authored on is reproduced rather than moved, and the rest
+// are derived from it.
+const home = spools.reduce((a, q) => [a[0] + q[0] / spools.length,
+  a[1] + q[1] / spools.length, a[2] + q[2] / spools.length], [0, 0, 0]);
+let best = Infinity;
+for (const inst of out.instances) {
+  near(det(inst.matrix), 1, 1e-9, "a placement with a reflection in it");
+  const moved = spools.map((s) => put(inst.matrix, s));
+  const c = moved.reduce((a, q) => [a[0] + q[0] / moved.length,
+    a[1] + q[1] / moved.length, a[2] + q[2] / moved.length], [0, 0, 0]);
+  best = Math.min(best, Math.hypot(c[0] - home[0], c[1] - home[1], c[2] - home[2]));
+}
+near(best, 0, 1e-6, "the authored machine is not put back where he authored it");
+console.log("ok " + out.instances.length + " machines, "
+  + out.wires.length + " cables, " + rows.length + " springings");
+"""
+
+
+@needs_node
+def test_the_derivation_reproduces_his_own_placement(tmp_path):
+    """The whole derivation, against his real study rather than a fixture.
+
+    His authored export carried six machines of seven cables. This asks
+    the derivation for the same answer from the same study's supports,
+    and for the machine HE authored to land back on its own spool centre
+    -- which it must, because the setback is read from where that body
+    already stands against its own springing.
+
+    Skipped when the export is not mounted, the shape the material
+    library test already uses: it pins the derivation against the real
+    thing on his machine without making the suite depend on a path that
+    exists nowhere else.
+    """
+
+    settings = REPO / "bench" / "studio" / "settings.json"
+    if not settings.exists():
+        pytest.skip("no studio settings to name the export folder")
+    folder = json.loads(settings.read_text(encoding="utf-8")).get("upload_folder")
+    if not folder or not Path(folder).is_dir():
+        pytest.skip("his export folder is not mounted here")
+    root = Path(folder)
+    pairs = [(p, root / p.name.replace("-mechanism.json", "-form.json"))
+             for p in sorted(root.glob("*-mechanism.json"))]
+    pairs = [(mech, form) for mech, form in pairs if form.is_file()]
+    if not pairs:
+        pytest.skip("no study in the folder carries both a form and a mechanism")
+    mech, form = pairs[0]
+    script = tmp_path / "real.mjs"
+    script.write_text(
+        REAL_STUDY.replace("%MODULE%", json.dumps(MODULE.as_uri()))
+        .replace("%FORM%", json.dumps(str(form)))
+        .replace("%MECH%", json.dumps(str(mech))),
+        encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(script)], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok " in result.stdout, result.stdout
 
 
 # ---------- the route ----------

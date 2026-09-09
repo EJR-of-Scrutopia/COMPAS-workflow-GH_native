@@ -11,6 +11,7 @@ import {
 import {
   readMechanism, checkNetVertices, checkRouteDirection, turnsFor,
   wireCentreline, reelContactRadius, ribChain, chainLength, chooseMechanism,
+  derivePlacements, SPOOL_RADIUS_LIMIT,
 } from "/static/mechanism.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -9398,6 +9399,73 @@ function lowestZ(geometry, matrix) {
 // One build at a time. buildMachine awaits its materials, so two loads in
 // quick succession both got past disposeMachine before either had added
 // anything, and the scene ended up with two machines in it.
+// Where the machines stand when the document does not say. Param: "if i
+// dont add in a mechanism to the json, i need you to be able to add in
+// the mechanisms and anchors where applicable."
+//
+// Runs ONLY on a document with no instances. Verified against his own
+// study: 42 supports give two springings of 21, six machines of seven
+// cables, and the machine that HE authored lands back at its own spool
+// centre to four decimal places, with the other five derived from it.
+//
+// The shaping is all in mechanism.js, pure and node-tested. This only
+// gathers what it needs out of the scene and turns its answer back into
+// the instances and wires the rest of the build already understands.
+function deriveMachines(model) {
+  const loaded = state.bundle;
+  const mesh = loaded && loaded.analysis_mesh;
+  const ids = loaded && Array.isArray(loaded.supports) ? loaded.supports : [];
+  if (!mesh || !Array.isArray(mesh.vertices) || ids.length < 2) return null;
+  const points = [];
+  for (const id of ids) {
+    const v = mesh.vertices[id];
+    if (!v) return null;               // a support the net does not carry
+    points.push([v[0], v[1], v[2]]);
+  }
+  // A SPOOL, not a pulley: they arrive under the same `reels` key and
+  // only the winding radius separates them. The writer's own figure
+  // first, the studio's measurement behind it.
+  const spools = [];
+  for (const part of model.parts) {
+    if (part.kind !== "reel" || !part.axis) continue;
+    const radius = Number.isFinite(+part.windingRadius)
+      ? +part.windingRadius : measureSpoolRadius(part);
+    if (radius < SPOOL_RADIUS_LIMIT) spools.push(part.axis.origin);
+  }
+  const middle = [0, 0, 0];
+  for (const v of mesh.vertices) {
+    middle[0] += v[0] / mesh.vertices.length;
+    middle[1] += v[1] / mesh.vertices.length;
+    middle[2] += v[2] / mesh.vertices.length;
+  }
+  const derived = derivePlacements(points, spools, middle);
+  for (const note of derived.notes) logStudio("machine: " + note);
+  if (!derived.instances.length) return null;
+  // Back into the net's OWN numbering: derivePlacements works in its own
+  // indices into the support list it was given, and every consumer
+  // downstream speaks net vertex indices.
+  for (const instance of derived.instances) {
+    instance.netVertices = instance.netVertices.map((i) => ids[i]);
+  }
+  derived.wires = derived.wires.map((wire) => ({
+    id: wire.id,
+    netVertex: ids[wire.support],
+    reeveFactor: 1,
+    spoolRadius: null,
+    // ONE frame, at the spool the cable leaves from. A derived wire
+    // knows where the cable ends and nothing about how it wraps, so the
+    // free span is drawn and the routed portion is not -- which is the
+    // honest picture rather than an invented wrap.
+    route: [{
+      matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
+        spools[wire.spool][0], spools[wire.spool][1], spools[wire.spool][2], 1],
+      owner: "reel", ownerReel: wire.spool,
+    }],
+    path: [{ side: wire.side, mechanism: wire.mechanism }],
+  }));
+  return derived;
+}
+
 let machineBuild = 0;
 
 async function buildMachine() {
@@ -9435,8 +9503,20 @@ async function buildMachine() {
   const temporary = new THREE.Group();      // what leaves with the formwork
   group.add(permanent, temporary);
   const spinners = [];
+  // The document is authoritative when it carries instances; the studio
+  // derives only when it carries none. Agreed with the exporter session:
+  // one source of truth per study, and he can see a wrong placement in
+  // the Rhino viewport before exporting, which no importer can offer.
+  const derived = model.instances.length ? null : deriveMachines(model);
+  if (derived) {
+    model.wires = derived.wires;
+    showBanner("This mechanism carries no placements, so the machines are "
+      + "derived from the vault's own supports: " + derived.instances.length
+      + " machines pulling " + derived.wires.length + " cables", "info");
+  }
   const instances = model.instances.length ? model.instances
-    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
+    : (derived ? derived.instances
+      : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }]);
 
   // Param, on an export that carried none: "I am only getting one
   // mechanism why?" Because a document with no placements can honestly be
