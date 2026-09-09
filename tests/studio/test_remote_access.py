@@ -2783,3 +2783,31 @@ def test_the_decal_importer_refuses_anything_without_a_cutout():
     # And the manifest merges by key, as fetch.mjs does, so a later prop
     # run adds to the decals rather than replacing them.
     assert "by_key[entry[\"key\"]] = entry" in tool
+
+
+def test_the_scatter_remembers_its_rules_but_not_its_output():
+    """The props a scatter made are already saved as ordinary records.
+    What would otherwise be lost on a reload is the species he picked,
+    the spacing he tuned and the seed that produced a field he liked --
+    and a dice with no seed to go back to is not a dice.
+
+    Species are filtered against the library that is actually present: a
+    layout written when a prop pack was installed must not put a species
+    in the mix that nothing can place, or the first brush stroke fails
+    with nothing to say why."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    save = _js_function(js, "function saveProps()")
+    assert "scatter: state.scatter," in save
+    adopt = _js_function(js, "function adoptScatter(saved)")
+    assert "known.has(one.type)" in adopt, "species checked against the library"
+    assert "Math.max(1, Math.min(9, +one.weight || 1))" in adopt
+    assert "Math.max(1, Math.min(99999," in adopt, "a seed out of range is clamped"
+    assert "adoptScatter(layout.scatter);" in js
+    # And the dials show the restored rules, or each states a value the
+    # scene does not have -- section 3 of the interface language.
+    sync = _js_function(js, "function syncScatterControls()")
+    for dial in ("scatter-radius", "scatter-spacing", "scatter-clump",
+                 "scatter-clump-size", "scatter-clearance"):
+        assert dial in sync, dial
+    assert "syncScatterControls();" in _js_function(js, "function renderShelfScatter()")

@@ -1476,6 +1476,12 @@ function saveProps() {
       scale: p.scale || 1, layer: p.layer || 1,
       // Only a fixture carries these three, and a fixture always does.
       size: p.size, lumens: p.lumens, kelvin: p.kelvin })),
+    // The scatter's RULES, not its output. The props it made are already
+    // in the list above as ordinary records; what would otherwise be
+    // lost on a reload is the species he picked, the spacing he tuned
+    // and the seed that produced a field he liked -- and a dice with no
+    // seed to go back to is not a dice.
+    scatter: state.scatter,
   };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
@@ -1508,6 +1514,38 @@ function knownPropType(type) {
   return propTemplates.has(type) || !!PROP_BUILDERS[type];
 }
 
+// The scatter's rules, as they were left. Species are filtered against
+// the library that is actually here: a layout written when a prop pack
+// was installed must not put a species in the mix that nothing can
+// place, or the first brush stroke fails with nothing to say why.
+function adoptScatter(saved) {
+  if (!saved || typeof saved !== "object") return;
+  const known = new Set((state.propLibrary || []).map((entry) => entry.key));
+  const species = Array.isArray(saved.species)
+    ? saved.species
+      .filter((one) => one && known.has(one.type))
+      .map((one) => ({ type: one.type,
+        weight: Math.max(1, Math.min(9, +one.weight || 1)) }))
+    : [];
+  const number = (key, low, high) => {
+    const value = +saved[key];
+    if (!Number.isFinite(value)) return state.scatter[key];
+    return Math.max(low, Math.min(high, value));
+  };
+  state.scatter = {
+    species,
+    spacing: number("spacing", 0.6, 3),
+    sizeMin: number("sizeMin", 0.3, 1),
+    sizeMax: number("sizeMax", 1, 3),
+    clump: number("clump", 0, 100),
+    clumpSize: number("clumpSize", 1, 20),
+    clearance: number("clearance", 0, 8),
+    turn: saved.turn === 0 ? 0 : 360,
+    seed: Math.max(1, Math.min(99999, Math.round(+saved.seed) || 1)),
+    radius: number("radius", 0.5, 20),
+  };
+}
+
 function restoreProps() {
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
@@ -1525,6 +1563,7 @@ function restoreProps() {
   let entries = layout;
   if (!Array.isArray(layout) && layout && Array.isArray(layout.props)) {
     adoptLayers(layout.layers);
+    adoptScatter(layout.scatter);
     entries = layout.props;
   } else {
     adoptLayers(null);
@@ -5137,7 +5176,43 @@ function renderShelfScatter() {
     chip.append(name, weight, drop);
     chosen.appendChild(chip);
   }
+  syncScatterControls();
   paintScatter();
+}
+
+// The dials, from the rules. Without this a restored layout brings back
+// his species and his seed while every slider still shows the default,
+// which is the "dial states a value the scene does not have" fault the
+// interface language names in section 3.
+function syncScatterControls() {
+  const rules = state.scatter;
+  const write = (id, value, digits, suffix) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.value = value;
+    paintScrub(input);
+    const reading = document.getElementById(id + "-value");
+    if (reading) reading.textContent = (+value).toFixed(digits) + (suffix || "");
+  };
+  write("scatter-radius", rules.radius, 1);
+  write("scatter-spacing", rules.spacing, 2);
+  write("scatter-clump", rules.clump, 0);
+  write("scatter-clump-size", rules.clumpSize, 1);
+  write("scatter-clearance", rules.clearance, 2);
+  const low = document.getElementById("scatter-size-min");
+  const high = document.getElementById("scatter-size-max");
+  if (low && high) {
+    low.value = rules.sizeMin;
+    high.value = rules.sizeMax;
+    paintScrub(low);
+    paintScrub(high);
+    document.getElementById("scatter-size-value").textContent =
+      rules.sizeMin.toFixed(2) + " to " + rules.sizeMax.toFixed(2);
+  }
+  const turn = document.getElementById("scatter-turn");
+  if (turn) turn.value = String(rules.turn);
+  const seed = document.getElementById("scatter-seed");
+  if (seed) seed.value = String(rules.seed);
 }
 
 // Dragging the region. Its listeners go on in CAPTURE phase and come off
