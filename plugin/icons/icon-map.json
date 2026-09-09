@@ -240,6 +240,12 @@
       "label": "ME",
       "category": "05 Deliver",
       "filename": "mechanism.png"
+    },
+    {
+      "key": "machine",
+      "label": "MC",
+      "category": "05 Deliver",
+      "filename": "machine.png"
     }
   ]
 }

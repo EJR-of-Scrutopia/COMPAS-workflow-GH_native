@@ -383,6 +383,7 @@ internal static partial class Program
             ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
             ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
             ["Ananke.COMPAS.Native.Components.MechanismCollectorComponent"] = ("mechanism", "ME"),
+            ["Ananke.COMPAS.Native.Components.MachineComponent"] = ("machine", "MC"),
         };
 
     public static int Main(string[] args)
@@ -586,7 +587,7 @@ internal static partial class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 22)
+        if (componentTypes.Length != 23)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
@@ -601,9 +602,12 @@ internal static partial class Program
             // wave (2026-09-08) retires StyleComponent, its own Preset
             // dropdown moved onto Display as an appended input rather than
             // a new component, so the count returns to 22 for a different
-            // reason than the first time it was 22.
+            // reason than the first time it was 22. It is 23 from
+            // 2026-09-09: MachineComponent, which writes the machine ALONE
+            // to its own file, because a machine is not a property of a
+            // study and had no business riding through a study exporter.
             failures.Add(
-                $"Expected 22 concrete public components, found " +
+                $"Expected 23 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
