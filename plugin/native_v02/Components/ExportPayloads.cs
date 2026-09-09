@@ -1292,17 +1292,37 @@ internal static class MechanismDocument
                     "in and the wire's routed length shortens. Negative " +
                     "pays out.",
                 ["formula"] = "turns = (length_at(frame0) - length_at(t)) " +
-                    "* reeveFactor / (2 * pi * spoolRadius), where " +
-                    "length_at(t) is the wire's own FREE span at frame t, " +
-                    "the run from its net vertex to where it first meets " +
-                    "the machine; the wrapped portion is not counted, " +
-                    "being constant. THE SUBTRACTION IS frame0 MINUS t, " +
-                    "not the other way about, so that taking up reads " +
+                    "* reeveFactor / (2 * pi * windingRadius), where " +
+                    "length_at(t) is the run of NET CABLE the wire pulls " +
+                    "at frame t -- the rib leaving its anchor and climbing " +
+                    "the vault -- halved between the two machines that " +
+                    "pull it. Use the owning reel's own windingRadius; " +
+                    "mechanism.spoolRadius is only the median across the " +
+                    "reels that carry wire, and a pulley and a spool do " +
+                    "not share a radius. THE SUBTRACTION IS frame0 MINUS " +
+                    "t, not the other way about, so that taking up reads " +
                     "POSITIVE and agrees with the sign sentence: reeling " +
-                    "in SHORTENS the free span, so frame0 minus t grows. " +
-                    "The delta is always measured from frame " +
-                    "0, never the previous frame, so the result is a pure " +
-                    "function of t and safe to scrub or play out of order.",
+                    "in SHORTENS what is pulled, so frame0 minus t grows. " +
+                    "The delta is always measured from frame 0, never the " +
+                    "previous frame, so the result is a pure function of t " +
+                    "and safe to scrub or play out of order. THIS " +
+                    "DEFINITION REPLACES 'the free span from the net " +
+                    "vertex to the first routing frame', which is ZERO at " +
+                    "every frame on every study: route[0] IS the anchor, " +
+                    "and an anchor is a fixed support, so that reading can " +
+                    "only ever return about nothing.",
+                ["wrapIsAuthored"] = true,
+                ["wrapNote"] = "THE WIRE'S WRAP IS ALREADY IN THE FRAMES " +
+                    "(his ruling, 2026-09-09, verbatim: \"the frames i " +
+                    "give you already spool for you. I dont wish for you " +
+                    "to spool any more or less, just assume with rotation " +
+                    "that the spooling happens\"). The routing planes " +
+                    "carry the wire as it is wound, so a reader draws them " +
+                    "as they arrive and NEVER synthesises further turns, " +
+                    "unwinds the authored ones, or pays wire on or off as " +
+                    "the rotation changes. The turns above are what the " +
+                    "DRUM does; they are not a driver of the wire's own " +
+                    "geometry, which is authored and final.",
             },
             ["principalRows"] = principalRowsOut,
             ["mechanism"] = mechanismOut,
