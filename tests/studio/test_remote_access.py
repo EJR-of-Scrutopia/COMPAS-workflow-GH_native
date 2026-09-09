@@ -1239,8 +1239,19 @@ def test_the_machines_are_derived_when_the_document_places_none():
                js.index("// Where a wire first meets the machine")]
     assert "  const derived = model.instances.length ? null : deriveMachines(model);" in build, (
         "a document that places its own machines is never second-guessed")
+    # The derived placement becomes THE MODEL's. Held only in a local it
+    # is invisible to everything that reads the model: the checks put a
+    # wire's head into world space through model.instances, so with none
+    # there every derived wire was reported 18 m from the vertex it names,
+    # and the "missing placements" banner fired on a machine that had in
+    # fact been placed.
+    assert "    model.instances = derived.instances;\n" \
+        "    model.wires = derived.wires;" in build
     assert "  const instances = model.instances.length ? model.instances\n" \
-        "    : (derived ? derived.instances" in build
+        "    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];" in build
+    assert "derived ? derived.instances" not in build, (
+        "the derived instances reach the build through the model, not "
+        "past it")
     # A derived placement is a studio OPINION and must never be mistaken
     # for his authoring, so it says so where he will see it.
     assert '    showBanner("This mechanism carries no placements, so the machines are "' in build

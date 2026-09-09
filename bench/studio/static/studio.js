@@ -9512,6 +9512,21 @@ async function buildMachine() {
   // the Rhino viewport before exporting, which no importer can offer.
   const derived = model.instances.length ? null : deriveMachines(model);
   if (derived) {
+    // THE DERIVED PLACEMENT BECOMES THE MODEL'S, not a parallel copy
+    // beside it. Held only in a local it was invisible to everything
+    // that reads the model, and two things went wrong at once, both
+    // measured on his study with the derivation forced:
+    //
+    //   reportMachineChecks puts a wire's head into world space through
+    //   model.instances, so with none there the head stayed in the
+    //   BODY's own space and every derived wire was reported 18 m from
+    //   the vertex it names -- a wall of false alarms about correct work;
+    //
+    //   and the "missing placements" banner below tests the same field,
+    //   so it fired on a machine that had in fact been placed, telling
+    //   him the machine "is drawn once and does not run" while six of
+    //   them stood on screen.
+    model.instances = derived.instances;
     model.wires = derived.wires;
     // Anchors are READ before they are derived, the same rule as the
     // instances: the writer emits them whenever a result is wired, and
@@ -9522,8 +9537,7 @@ async function buildMachine() {
       + " machines pulling " + derived.wires.length + " cables", "info");
   }
   const instances = model.instances.length ? model.instances
-    : (derived ? derived.instances
-      : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }]);
+    : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
 
   // Param, on an export that carried none: "I am only getting one
   // mechanism why?" Because a document with no placements can honestly be
