@@ -2231,6 +2231,14 @@ const PRINCIPAL_SKIN = "metal/steel-polished-dark";
 // dark steel above, so the metal's own grain still reads through.
 const CABLE_BLACK = 0x24262a;
 
+// How far the plant reverses out over the strike. Param: "have the
+// mechanism go backwards from its position on each side (backwards
+// mirrored) when the collapse and fade of the mechanism happens instead
+// of having it fall under the ground." It fades as it goes, so this only
+// has to read as driving away -- far enough to leave the springing, not
+// so far it is a speck before the fade finishes.
+const MACHINE_RETREAT = 8;
+
 function principalEdges() {
   const members = state.columnMembers || [];
   const bundle = state.bundle;
@@ -9228,6 +9236,37 @@ async function buildMachine() {
   let lowest = Infinity, lowestKind = null;
   const note = (kind, z) => { if (z < lowest) { lowest = z; lowestKind = kind; } };
 
+  // One group per instance under `temporary`, so the strike can drive
+  // each side backwards along its OWN direction. A single translation of
+  // `temporary` could only ever move both rows the same way, which is
+  // why the old strike dropped the lot through the floor instead.
+  const sides = instances.map(() => new THREE.Group());
+  for (const side of sides) temporary.add(side);
+
+  // Backwards is OUTWARD: away from the middle of the rows. Taking the
+  // direction from the mean of the instance origins makes the two sides
+  // mirror each other without anything having to declare which side it is
+  // on, and it stays right for one row or three. Horizontal only, so the
+  // machine drives off across the floor rather than into it.
+  const middle = [0, 0];
+  for (const instance of instances) {
+    middle[0] += instance.matrix ? instance.matrix[12] : 0;
+    middle[1] += instance.matrix ? instance.matrix[13] : 0;
+  }
+  if (instances.length) {
+    middle[0] /= instances.length;
+    middle[1] /= instances.length;
+  }
+  const retreats = instances.map((instance) => {
+    const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];
+    const dy = (instance.matrix ? instance.matrix[13] : 0) - middle[1];
+    const d = Math.hypot(dx, dy);
+    // One machine, or one standing exactly on the middle, has no outward
+    // direction to take: it fades where it stands rather than being sent
+    // off in an arbitrary one.
+    return d > 1e-6 ? [dx / d, dy / d] : [0, 0];
+  });
+
   for (const part of model.parts) {
     const geometry = geometryFromPart(part);
     // The permanent works are authored ONCE, at row scale, in the body's
@@ -9255,7 +9294,7 @@ async function buildMachine() {
         // A mirrored instance has its winding reversed by the transform,
         // so its faces light from the inside unless the material knows.
         if (instance.mirrored) mesh.material.side = THREE.DoubleSide;
-        temporary.add(mesh);
+        sides[instances.indexOf(instance)].add(mesh);
         note(part.kind, lowestZ(geometry, mesh.matrix));
         if (part.spins) spinners.push({ mesh, part, instance, turns: 0 });
       }
@@ -9312,6 +9351,9 @@ async function buildMachine() {
       || instances.find((candidate) => step
         && candidate.side === step.side && candidate.mechanism === step.mechanism)
       || instances[0];
+    // The wire travels with the machine that pulls it, so it retreats
+    // with that side rather than being left stretched across the site.
+    const side = sides[instances.indexOf(instance)] || temporary;
     const routed = loftWire(
       wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);
     let mesh = null;
@@ -9321,14 +9363,14 @@ async function buildMachine() {
         mesh.matrixAutoUpdate = false;
         mesh.matrix.fromArray(instance.matrix);
       }
-      temporary.add(mesh);
+      side.add(mesh);
     }
     const free = new THREE.Mesh(
       new THREE.CylinderGeometry(state.wireRadius, state.wireRadius, 1, WIRE_SIDES, 1, true),
       wireMaterial);
     free.visible = false;
-    temporary.add(free);
-    wires.push({ wire, instance, mesh, free, rib: null, ribAtFrame0: null });
+    side.add(free);
+    wires.push({ wire, instance, side, mesh, free, rib: null, ribAtFrame0: null });
   }
 
   // The floor (Param: "I must have the bottom of the machine and anchor to
@@ -9345,8 +9387,8 @@ async function buildMachine() {
 
   if (mine !== machineBuild) return;      // a newer build owns the scene
   scene.add(group);
-  machineObjects = { group, permanent, temporary, spinners, wires, model,
-    wireMaterial, lift };
+  machineObjects = { group, permanent, temporary, sides, retreats, spinners,
+    wires, model, wireMaterial, lift };
   libraryPins.clear();
   skinMachine(group, mine);
   const row = document.getElementById("machine-row");
@@ -9399,8 +9441,9 @@ function wireHead(entry, into) {
   if (entry.instance && entry.instance.matrix) {
     into.applyMatrix4(machineMatrix.fromArray(entry.instance.matrix));
   }
-  // The machine stands lifted to the floor and drops on the strike; the
-  // head has to be where the machine actually is.
+  // The machine stands lifted to the floor and reverses out on the
+  // strike; the head has to be where the machine actually is.
+  if (entry.side) into.add(entry.side.position);
   into.z += machineObjects.group.position.z + machineObjects.temporary.position.z;
   return into;
 }
@@ -9465,9 +9508,16 @@ function applyMachineAct(t, strikeU) {
     temporary.visible = true;             // standing, as the finished net is
   }
   permanent.visible = true;               // the permanent works remain
-  // The machine leaves with the columns and the net, on the same fade and
-  // the same drop, because it is one machine leaving.
-  temporary.position.z = -1.5 * struck;
+  // The machine leaves with the columns and the net, on the same fade,
+  // because it is one machine leaving. It REVERSES OUT rather than
+  // dropping: "have the mechanism go backwards from its position on each
+  // side (backwards mirrored) ... instead of having it fall under the
+  // ground." The permanent works do not move -- they are cast in.
+  for (let i = 0; i < machineObjects.sides.length; i++) {
+    const away = machineObjects.retreats[i];
+    machineObjects.sides[i].position.set(
+      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);
+  }
   wireMaterial.opacity = 1 - struck;
 
   const doc = state.formwork;
@@ -9511,6 +9561,9 @@ function applyMachineAct(t, strikeU) {
       // geometry for every span at every frame.
       entry.free.position.copy(machineTail).lerp(head, 0.5);
       entry.free.position.z -= parentZ;
+      // Written in the SIDE's space now, not the group's, since the span
+      // hangs off a group that walks away during the strike.
+      if (entry.side) entry.free.position.sub(entry.side.position);
       entry.free.scale.set(1, span, 1);
       entry.free.quaternion.setFromUnitVectors(
         SEGMENT_UP, machineHead.clone().sub(machineTail).normalize());

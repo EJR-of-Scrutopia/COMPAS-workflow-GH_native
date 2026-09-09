@@ -1257,6 +1257,35 @@ def test_the_machine_draws_the_way_he_asked():
     # And the reel radius the writer now measures per reel wins.
     assert "    part.contactRadius = part.windingRadius\n" in build
 
+    # THE STRIKE REVERSES THE PLANT OUT, it does not drop it through the
+    # floor. Param: "have the mechanism go backwards from its position on
+    # each side (backwards mirrored) when the collapse and fade of the
+    # mechanism happens instead of having it fall under the ground."
+    #
+    # One group per instance is what makes that possible at all: a single
+    # translation of `temporary` can only move both rows the same way,
+    # which is exactly why the old strike dropped the lot downwards.
+    assert "  const sides = instances.map(() => new THREE.Group());" in build
+    assert "  for (const side of sides) temporary.add(side);" in build
+    assert "        sides[instances.indexOf(instance)].add(mesh);" in build, (
+        "the parts ride with their own side, not with the whole machine")
+    assert "temporary.position.z = -1.5 * struck;" not in act, (
+        "the machine no longer falls under the ground")
+    assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
+        "horizontal only: it drives off across the floor, not into it")
+    # MIRRORED WITHOUT BEING TOLD WHICH SIDE IT IS ON: the direction is
+    # taken outward from the mean of the instance origins, so two rows
+    # mirror by construction and one row or three still behave.
+    assert "    const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];" in build
+    assert "    return d > 1e-6 ? [dx / d, dy / d] : [0, 0];" in build, (
+        "a machine with no outward direction fades where it stands")
+    # The wires travel with the machine that pulls them, head and span
+    # both, or they would be left stretched across the site.
+    assert "  if (entry.side) into.add(entry.side.position);" in js
+    assert "      if (entry.side) entry.free.position.sub(entry.side.position);" in act
+    # And the permanent works do not move: they are cast in.
+    assert "permanent.position" not in act
+
     # THE CABLES ARE BLACK, and black by WEARING THE FORMWORK'S OWN
     # METAL rather than a colour picked to imitate it: the principal
     # lines' polished dark steel is what reads black on his formwork.
