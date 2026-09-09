@@ -2255,6 +2255,11 @@ def test_the_fixtures_are_emitters_with_no_furniture_on_them():
         assert maker in js, maker
     legacy = _js_function(js, "function propOrbLight()")
     assert "return lightSphere();" in legacy
+    # Built at 3000 K, not white. applyPropLight writes the real colour
+    # once one is placed, but a tile's preview never gets that call, so a
+    # white emitter came out white on the pale tile and Param said he
+    # could barely see it.
+    assert "color: kelvinColour(LAMP_KELVIN)" in body
 
 
 def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():
@@ -2390,3 +2395,160 @@ def test_shift_takes_the_whole_run_between_two_clicks():
     # The anchor is the last click WITHOUT shift, or a run cannot be widened.
     assert "scatterAnchor = here;" in js
     assert "layersAnchor = index;" in js
+
+
+def _dial_blocks(html):
+    """Every .dial-block in the page, as (id, inner html)."""
+
+    import re
+
+    out = []
+    # EITHER ORDER of id and class. The first cut required id first, and
+    # the Scatter and Lights blocks are written class first, so it found
+    # only the Skies block and reported coverage it did not have: every
+    # mutation to a scatter dial walked straight through it.
+    for match in re.finditer(r'<div(?=[^>]*class="[^"]*dial-block)'
+                             r'(?=[^>]*id="([^"]+)")[^>]*>', html):
+        start = match.end()
+        depth = 1
+        i = start
+        while depth and i < len(html):
+            nxt_open = html.find("<div", i)
+            nxt_close = html.find("</div>", i)
+            if nxt_close == -1:
+                break
+            if nxt_open != -1 and nxt_open < nxt_close:
+                depth += 1
+                i = nxt_open + 4
+            else:
+                depth -= 1
+                i = nxt_close + 6
+        out.append((match.group(1), html[start:i]))
+    return out
+
+
+def test_every_dial_wears_the_four_part_shape():
+    """docs/studio-interface-language.md section 3, made executable.
+
+    Name, dial, reading, unit -- in that order, inside a .dial-block, so
+    the four columns line up down the whole block instead of each row
+    finding its own edges. A dial with no reading can be neither read nor
+    typed into, and makeValueTypable needs the cell to exist.
+
+    Written because three shapes had accumulated: 13 sliders in the old
+    form, 11 in this one, and 9 with no readout markup at all."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    blocks = _dial_blocks(html)
+    names = [name for name, _ in blocks]
+    # Named, not counted: "at least one" is what let this test cover a
+    # third of what it claimed to.
+    for expected in ("scatter-controls", "lights-controls",
+                     "shelf-sky-settings"):
+        assert expected in names, expected
+    for name, body in blocks:
+        for label in re.findall(r"<label[^>]*>(.*?)</label>", body, re.S):
+            if 'type="range"' not in label:
+                continue          # a select or a number box, not a dial
+            assert re.match(r"\s*<span>", label), (
+                "{}: a dial names itself in a <span> first".format(name))
+            slider = re.search(r'<input[^>]*id="([^"]+)"[^>]*type="range"', label)
+            assert slider, name
+            ident = slider.group(1)
+            # A paired range -- a low and a high sharing one reading, as
+            # the size ratio does -- is one dial with two grips, so one
+            # reading between them is the shape rather than a missing one.
+            pair = len(re.findall(r'type="range"', label)) == 2
+            shared = re.search(r'<b id="([^"]+)-value"', label)
+            if pair and shared and ident.startswith(shared.group(1)):
+                pass
+            else:
+                assert '<b id="{}-value"'.format(ident) in label, (
+                    "{}: {} has no reading, so it cannot be read or typed "
+                    "into".format(name, ident))
+            assert "<em>" in label, (
+                "{}: {} states no unit".format(name, ident))
+
+
+def test_a_dial_that_can_rest_at_zero_declares_its_unit():
+    """panel.js derives the unit factor from shown / raw, and at zero the
+    derivation gives up: 0 mm and 0 m read the same, so a typed 20 lands
+    as a raw 20. Any dial whose floor is zero declares the factor.
+
+    And a dial that CANNOT reach zero must not declare one, or a later
+    change to its handler silently stops being honoured."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    for name, body in _dial_blocks(html):
+        for tag in re.findall(r"<input([^>]*type=\"range\"[^>]*)>", body):
+            ident = re.search(r'id="([^"]+)"', tag)
+            low = re.search(r'min="([^"]+)"', tag)
+            unit = re.search(r'data-unit="([^"]+)"', tag)
+            if not ident or not low:
+                continue
+            if float(low.group(1)) != 0:
+                assert not unit, (
+                    "{}: {} cannot reach zero, so its factor derives "
+                    "itself; declaring one freezes it".format(
+                        name, ident.group(1)))
+                continue
+            # Zero alone is not the test. Where the reading IS the raw
+            # value the derivation returns 1, which is right, and a
+            # declared factor would be wrong: data-unit="100" on a dial
+            # already reading 100 makes a typed 50 set the slider to 0.5,
+            # which its own step then rounds away. That was a real bug in
+            # sky-brightness, found by this test on the day it was
+            # written.
+            shown = re.search(
+                r'<b id="' + re.escape(ident.group(1))
+                + r'-value">\s*([-\d.]+)', body)
+            raw = re.search(r'value="([^"]+)"', tag)
+            if not shown or not raw:
+                continue
+            if abs(float(shown.group(1)) - float(raw.group(1))) <= 1e-9:
+                assert not unit, (
+                    "{}: {} reads its own raw value, so the derived factor "
+                    "is already 1 and a declared one breaks typing".format(
+                        name, ident.group(1)))
+                continue
+            if abs(float(shown.group(1)) - float(raw.group(1))) > 1e-9:
+                assert unit, (
+                    "{}: {} rests at zero and its reading is not its raw "
+                    "value, so typing into it needs data-unit".format(
+                        name, ident.group(1)))
+
+
+def test_a_restored_scene_moves_the_readings_with_the_sliders():
+    """A dial whose slider jumps and whose number does not is worse than
+    one that shows nothing: it states a value the scene does not have."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'const reading = document.getElementById(id + "-value");' in js, (
+        "the HDRI restore writes each dial's reading by the id pairing")
+    assert "paintScrub(control(id));" in js
+
+
+def test_the_interface_language_is_written_down():
+    """Param: "spend a while writing a md or specific document that
+    describes a language style for how all types of objects and
+    interfaces should be made for this application"."""
+
+    doc = REPO / "docs" / "studio-interface-language.md"
+    assert doc.is_file()
+    text = doc.read_text(encoding="utf-8")
+    # The HEADINGS, not the words. "Tiles" appears in the body of its own
+    # section, so testing for the bare word passed even with the heading
+    # renamed.
+    for heading in ("## 1. The four planes",
+                    "## 3. A dial is always the same four things",
+                    "## 4. Naming", "## 5. Buttons", "## 6. Tiles",
+                    "## 7. Drawers", "## 8. Messages",
+                    "## 9. What must never regress", "## 10. The sweep"):
+        assert heading in text, heading
+    assert "\u2014" not in text, "no em dashes, in the interface or the source"

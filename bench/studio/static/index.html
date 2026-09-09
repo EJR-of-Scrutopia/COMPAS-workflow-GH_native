@@ -55,19 +55,28 @@
       </div>
       <button id="shelf-close" title="Collapse">&#10005;</button>
     </div>
-    <div id="shelf-sky-settings" class="hidden">
-      <label class="named"><span>Projection</span> <select id="hdri-projection">
-        <option value="projected" selected>Projected</option>
-        <option value="infinite">Infinite</option>
-      </select></label>
-      <label id="hdri-scale-row">Scale <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60"></label>
-      <label id="hdri-height-row">Height <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2"></label>
-      <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
-      <!-- The dial that was missing. Param: "if i want to darken the hdri
-           so that its dark enough for the lights to work well, we dont
-           have that option". It multiplies whatever the environment mode
-           already set, so the presets keep their relationship. -->
-      <label>Brightness <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100"> <span id="sky-brightness-value">100</span>%</label>
+    <!-- Brought to the dial language on 2026-09-09: name, dial, reading,
+         unit, in one .dial-block so the columns line up. Every one of
+         these had a slider and no number before, so none of them could
+         be read or typed into. -->
+    <div id="shelf-sky-settings" class="dial-block hidden">
+      <label title="A grounded dome puts the photograph&#39;s own floor under the vault; infinite leaves it as a flat backdrop"><span>Projection</span>
+        <select id="hdri-projection">
+          <option value="projected" selected>Projected</option>
+          <option value="infinite">Infinite</option>
+        </select></label>
+      <label title="How bright the sky lights the scene, and how bright it looks behind it. Turn it down to let the fixtures read."><span>Brightness</span>
+        <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100">
+        <b id="sky-brightness-value">100</b><em>%</em></label>
+      <label id="hdri-scale-row" title="The dome&#39;s radius: how far away the photographed world sits"><span>Scale</span>
+        <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60">
+        <b id="hdri-scale-value">60</b><em>m</em></label>
+      <label id="hdri-height-row" title="Camera height above the ground in the source photograph"><span>Height</span>
+        <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2">
+        <b id="hdri-height-value">2.0</b><em>m</em></label>
+      <label title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
+        <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0">
+        <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
     <!-- The scatter drawer. Param: "we should have a scatter tile next to
@@ -126,14 +135,14 @@
       <div id="lights-kinds" class="tile-grid"></div>
       <div class="dial-block" id="lights-controls">
         <label><span>Output</span>
-          <input id="lamp-lumens" type="range" data-unit="1" min="0" max="6000" step="50" value="1600">
+          <input id="lamp-lumens" type="range" min="0" max="6000" step="50" value="1600">
           <b id="lamp-lumens-value">1600</b><em>lm</em></label>
         <label><span>Warmth</span>
           <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
           <b id="lamp-kelvin-value">3000</b><em>K</em></label>
         <label><span>Glow</span>
           <input id="glow-strength" type="range" data-unit="100" min="0" max="1.5" step="0.05" value="0.6">
-          <b id="glow-value">60</b><em>%</em></label>
+          <b id="glow-strength-value">60</b><em>%</em></label>
         <label><span>Size</span>
           <input id="light-size" type="range" min="0.1" max="6" step="0.05" value="1">
           <b id="light-size-value">1.00</b><em>x</em></label>

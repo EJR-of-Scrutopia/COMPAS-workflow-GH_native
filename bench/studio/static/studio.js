@@ -1214,8 +1214,15 @@ function lightEmitter(geometry, lift) {
   // UNLIT (MeshBasicMaterial): it is the source, so nothing in the scene
   // should be shading it, and its colour is pushed above 1 so the bloom
   // threshold has something to catch.
+  // Built WARM rather than white. applyPropLight writes the real colour
+  // from the fixture's own kelvin the moment one is placed, but a tile's
+  // preview never gets that call, so a pure white emitter came out white
+  // on the pale tile ground and Param could barely see it. 3000 K is the
+  // default it will wear anyway, so the tile now shows what he is about
+  // to place rather than a blank.
   const globe = new THREE.Mesh(geometry,
-    new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+    new THREE.MeshBasicMaterial({ color: kelvinColour(LAMP_KELVIN),
+      toneMapped: false }));
   globe.position.z = lift;
   globe.userData.lampGlobe = true;
   globe.castShadow = globe.receiveShadow = false;
@@ -3063,11 +3070,20 @@ async function applyScene(record) {
   if (hdri.projection) {
     state.hdriProjection = hdri.projection; control("hdri-projection").value = hdri.projection;
   }
+  // The readings follow the sliders on restore as well, or a scene comes
+  // back showing the last scene's numbers beside the right dials.
   for (const [key, id] of [["scale", "hdri-scale"], ["height", "hdri-height"],
                            ["rotation", "hdri-rotation"]]) {
     if (typeof hdri[key] === "number") {
       state["hdri" + key[0].toUpperCase() + key.slice(1)] = hdri[key];
       control(id).value = hdri[key];
+      paintScrub(control(id));
+      // The dial's own reading, by the id pairing every dial keeps.
+      const reading = document.getElementById(id + "-value");
+      if (reading) {
+        reading.textContent = key === "height"
+          ? hdri[key].toFixed(1) : String(Math.round(hdri[key]));
+      }
     }
   }
   if (state.environmentMode === "hdri" && hdri.name && state.hdriName !== hdri.name) {
@@ -8487,9 +8503,20 @@ document.getElementById("hdri-projection").addEventListener("change", (e) => {
   state.hdriProjection = e.target.value;
   applyHdriBackdrop();
 });
+// The readings are written on INPUT and the work done on CHANGE: the
+// number must follow his thumb, but rebuilding the dome on every tick of
+// a drag would not.
+document.getElementById("hdri-scale").addEventListener("input", (e) => {
+  document.getElementById("hdri-scale-value").textContent =
+    Math.round(+e.target.value);
+});
 document.getElementById("hdri-scale").addEventListener("change", (e) => {
   state.hdriScale = +e.target.value;
   applyHdriBackdrop();
+});
+document.getElementById("hdri-height").addEventListener("input", (e) => {
+  document.getElementById("hdri-height-value").textContent =
+    (+e.target.value).toFixed(1);
 });
 document.getElementById("hdri-height").addEventListener("change", (e) => {
   state.hdriHeight = +e.target.value;
@@ -8500,6 +8527,8 @@ document.getElementById("hdri-height").addEventListener("change", (e) => {
 // stored pixel-estimate azimuth, the same formula loadHdri uses.
 document.getElementById("hdri-rotation").addEventListener("input", (e) => {
   state.hdriRotation = +e.target.value;
+  document.getElementById("hdri-rotation-value").textContent =
+    Math.round(state.hdriRotation);
   const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
   scene.environmentRotation.set(Math.PI / 2, 0, rotation);
   if (hdriDome) {
