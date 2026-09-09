@@ -806,17 +806,33 @@ body.panel-collapsed #legend { right: var(--s4); }
 #panel .scene-tile:hover { border-color: var(--line-lit); color: var(--ink); }
 /* The update pip, bottom right, diagonally opposite the delete cross so
    a slip cannot hit the destructive one. It rests invisible and appears
-   on hover: it is a per-tile action, and eight of them showing at once
-   would read as decoration rather than as controls. */
+   on hover: it is a per-tile action, and eight showing at once would read
+   as decoration rather than as controls.
+
+   POSITIONING IS UNSCOPED, the shape .scene-delete already uses, because
+   the scene list is drawn in TWO places -- the panel and the shelf's
+   Scenes drawer -- and a rule scoped to #panel left the shelf's pips
+   unpositioned, flowing out below their tiles at the left. The BOX is
+   restated per container instead, because each has a blanket button rule
+   that would otherwise flatten it: the same fault the scene tile itself
+   hit five times. */
+.scene-holder { position: relative; }
+.scene-update { position: absolute; right: var(--s2); bottom: var(--s2);
+  cursor: pointer; opacity: 0; transition: opacity 120ms ease; }
+.scene-holder:hover .scene-update,
+.scene-update:focus-visible { opacity: 1; }
+
 #panel .scene-update {
-  position: absolute; right: var(--s2); bottom: var(--s2);
   width: 18px; height: 18px; margin: 0; padding: 0; border: none;
   border-radius: var(--radius-s); background: var(--scrim);
-  color: #fff; font-size: 12px; line-height: 1; cursor: pointer;
-  opacity: 0; transition: opacity 120ms ease; }
-#panel .scene-tile:hover + .scene-update,
-#panel .scene-update:hover, #panel .scene-update:focus-visible { opacity: 1; }
-#panel .scene-update:hover { background: var(--accent); }
+  color: #fff; font-size: 12px; line-height: 1; }
+#panel .scene-update:hover { background: var(--accent); color: #fff; }
+
+#shelf-body .scene-update {
+  width: 18px; height: 18px; margin: 0; padding: 0; border: none;
+  border-radius: 3px; background: var(--scrim);
+  color: var(--ink-2); font-size: 12px; line-height: 1; }
+#shelf-body .scene-update:hover { background: var(--accent); color: #fff; }
 
 #panel .scene-delete {
   width: 18px; height: 18px; margin: 0; padding: 0; border: none;

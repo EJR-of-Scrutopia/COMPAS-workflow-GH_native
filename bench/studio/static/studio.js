@@ -3159,13 +3159,26 @@ function renderSceneList() {
             state: collectScene(), thumbnail: captureThumbnail() }) });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        showBanner("Scene not updated: " + (body.detail || response.status), "error");
+        // 405 does not mean anything is wrong with the scene: it means the
+        // ROUTE is missing from the running server. The studio serves its
+        // JavaScript fresh from disk on every load, but the Python process
+        // keeps the routes it started with, so a NEW route reaches the
+        // browser long before it reaches the server. "Method Not Allowed"
+        // is the least useful thing that could be said about that.
+        showBanner(response.status === 405
+          ? "Scene not updated: this studio server was started before the "
+            + "update route existed. Restart it and this will work."
+          : "Scene not updated: " + (body.detail || response.status), "error");
         return;
       }
       logStudio("updated scene " + row.name);
       await refreshScenes();
     });
     const holder = document.createElement("div");
+    // Named, so the pip can be revealed by hovering ANYWHERE on the tile.
+    // A sibling selector cannot do it: the delete cross sits between the
+    // tile and the pip in the DOM, so "+" never matches.
+    holder.className = "scene-holder";
     holder.style.position = "relative";
     holder.appendChild(tile);
     holder.appendChild(remove);

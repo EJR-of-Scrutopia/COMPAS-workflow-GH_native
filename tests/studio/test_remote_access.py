@@ -1211,11 +1211,35 @@ def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
         '        showBanner("Load a study before updating a scene", "error");' in js
     assert "      await refreshScenes();\n    });\n    const holder" in js, (
         "the list is re-read so the new still appears at once")
+    # Hovering ANYWHERE on the tile reveals the pip. A sibling selector
+    # cannot do it: the delete cross sits between the tile and the pip in
+    # the DOM, so "+" never matches.
+    assert '    holder.className = "scene-holder";' in js
+    # A 405 means the running server predates the route, not that the
+    # scene is bad. "Method Not Allowed" is the least useful thing that
+    # could be said about that, and it is what he was shown.
+    assert "        showBanner(response.status === 405" in js
+    assert '            + "update route existed. Restart it and this will work."' in js
+
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
-    # Bottom right, diagonally opposite the delete cross, so one slip
-    # cannot reach the destructive control.
-    assert "#panel .scene-update {\n" \
-        "  position: absolute; right: var(--s2); bottom: var(--s2);" in css
+    # POSITIONING UNSCOPED, because the scene list is drawn in two places:
+    # the panel and the shelf's Scenes drawer. Scoped to #panel, the
+    # shelf's pips had no positioning at all and flowed out below their
+    # tiles at the left, which is exactly how he first saw them.
+    # Anchored to the START OF A LINE. Written as a bare substring this
+    # passed with the rule scoped back to "#panel .scene-update", since
+    # that string still CONTAINS ".scene-update {" -- so the test agreed
+    # with the very fault he reported.
+    assert "\n.scene-update { position: absolute; right: var(--s2); bottom: var(--s2);" in css, (
+        "the positioning rule must be unscoped, or the shelf's pips have none")
+    assert ".scene-holder { position: relative; }" in css
+    assert ".scene-holder:hover .scene-update," in css
+    assert "#panel .scene-tile:hover + .scene-update" not in css, (
+        "the delete cross sits between them, so + never matched")
+    # The BOX is restated per container, because each has a blanket button
+    # rule that outranks an unscoped class and would flatten it.
+    for scope in ("#panel", "#shelf-body"):
+        assert scope + " .scene-update {\n  width: 18px; height: 18px;" in css, scope
     assert "#panel .scene-delete {" in css and "top: var(--s2); right: var(--s2)" in css
 
 
