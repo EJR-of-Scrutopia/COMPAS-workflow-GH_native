@@ -1,8 +1,39 @@
 # Mechanism assets and derived placement
 
-**Status:** design, awaiting Param's review. Written overnight on his
-instruction: "right im going to bed you take over the fixes and the new
-placement mechanism."
+**Status:** BUILT overnight on his instruction -- "right im going to bed
+you take over the fixes and the new placement mechanism" -- and awaiting
+his review of both the design and what it does on screen.
+
+Delivered in four commits: the anchor stamps read (a087e0a), the
+mechanism library and its chooser (ab523d6), the derived placement
+(d9bc31b), and the derived anchors (e391a50), with one correction to the
+spool count along the way (beb90e6). 773 tests pass; 45 mutations were
+killed across the four rounds.
+
+What was verified rather than assumed, all against his own files:
+
+- the derivation reproduces his authored placement exactly. 42 supports
+  give two springings of 21, six machines of seven cables, and the
+  machine HE authored lands back on its own spool centre to within a
+  micron. A test runs the whole chain on the real export and skips when
+  it is not mounted.
+- the live bundle carries `supports` as 42 integer indices, every one
+  indexing the 441-vertex analysis mesh, all at z 0.
+- zero of the 800 edges join two supports, so the rows genuinely cannot
+  be walked.
+
+Two departures from this document as first written, both forced by
+measurement:
+
+- **The setback is READ, not defaulted.** His machine body is authored in
+  world coordinates at one of its real positions, so its own 1.697 m
+  distance from the nearest springing is his setback and every derived
+  machine inherits it. Section 5.4 called for a setback without saying
+  where it came from.
+- **Outward belongs to the ROW, not the machine.** Taking it from the
+  body's own offset to the net centre tilts it by however far the machine
+  sits off the row's middle: on his study that inflated 1.697 m to 1.800
+  and put every derived machine 103 mm too far out.
 
 ## 1 The problem
 
