@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Ananke.COMPAS.Native.Contracts;
@@ -2239,6 +2240,286 @@ internal static class MechanismCollector
         return new MechanismMesh(vertices, faces);
     }
 
+    /// <summary>The machine document's own schema, the fifth kind and the first that is NOT a study.</summary>
+    public const string MachineSchema = "bench.machine/1";
+
+    /// <summary>
+    /// THE MACHINE ALONE, with no study anywhere in it (his ruling,
+    /// 2026-09-09: "one component purely deals with the mechanism and its
+    /// own export write, so it doesnt collide with anything").
+    ///
+    /// A machine is not a property of a vault. It is a thing he owns, that
+    /// outlives any study, and that he may have several of at different
+    /// sizes. The mechanism document confused the two: bodies and routing
+    /// beside net vertices and world placements, ten megabytes of it,
+    /// rewritten whole on every solve of every study.
+    ///
+    /// WHAT MAKES IT SELF-DESCRIBING, so a five-wire machine and a
+    /// twelve-wire machine both lay out with no code change anywhere:
+    ///
+    ///   wireCount   cables one machine takes. Every layout decision turns
+    ///               on this one number.
+    ///   bank        which reels are DRIVEN SPOOLS and which are idler
+    ///               pulleys, grouped by shared axis direction and radius
+    ///               rather than guessed from size alone, and cross-checked
+    ///               against wireCount.
+    ///   footprint   its span along the cable line and how far it reaches
+    ///               BEHIND that line, so a layout can tell whether a
+    ///               bigger machine still fits a row and space several
+    ///               without collision.
+    ///   datum       the wire first-frames. The machine's real datum, and
+    ///               NOT the body origin, which means nothing.
+    /// </summary>
+    public static string BuildMachine(
+        MechanismAssetInput asset,
+        IReadOnlyList<MechanismRoutingWire> routing,
+        string name,
+        string? routingFrameMeaning,
+        List<string> warnings,
+        List<string> notes)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+        ArgumentNullException.ThrowIfNull(routing);
+
+        // The bodies, the reels, the cable and the measured radii all come
+        // from the SAME build the study document uses, so the two can never
+        // disagree about the machine. It is handed no Result and no
+        // placement, so it produces no instances and no wires.
+        string? shape = BuildWithResult(
+            asset,
+            routing,
+            Array.Empty<MechanismPlacementBranch>(),
+            warnings,
+            notes,
+            null,
+            routingFrameMeaning);
+        if (shape is null)
+            return string.Empty;
+
+        using JsonDocument built = JsonDocument.Parse(shape);
+        JsonElement machineBlock = built.RootElement.GetProperty("mechanism");
+
+        var wires = routing
+            .Where(w => w.Route.Count > 0)
+            .OrderBy(w => w.Wire)
+            .ToList();
+
+        // THE BANK: the largest group of reels sharing one axis direction
+        // AND one winding radius. That is what a bank of spools IS, and it
+        // needs no threshold on size -- the pulleys differ from the spools
+        // and from each other, so they cannot outnumber them by accident.
+        var spools = new List<int>();
+        var idlers = new List<int>();
+        double bankRadius = 0.0;
+        double[] bankAxis = { 0.0, 0.0, 1.0 };
+        if (machineBlock.TryGetProperty("reels", out JsonElement reelsBlock) &&
+            reelsBlock.ValueKind == JsonValueKind.Array)
+        {
+            var described = new List<(int Index, double[] Axis, double Radius)>();
+            int at = 0;
+            foreach (JsonElement reel in reelsBlock.EnumerateArray())
+            {
+                double radius = reel.TryGetProperty("windingRadius", out JsonElement r) &&
+                    r.ValueKind == JsonValueKind.Number
+                        ? r.GetDouble()
+                        : 0.0;
+                double[] axis = { 0.0, 0.0, 1.0 };
+                if (reel.TryGetProperty("axis", out JsonElement axisFrame))
+                {
+                    double[] x = ReadVector(axisFrame, "xAxis");
+                    double[] y = ReadVector(axisFrame, "yAxis");
+                    axis = NormalizeOrZ(CrossProduct(x, y));
+                }
+                described.Add((at++, axis, radius));
+            }
+
+            List<(int Index, double[] Axis, double Radius)>? biggest = null;
+            foreach ((int _, double[] axis, double radius) in described)
+            {
+                var alike = described
+                    .Where(d =>
+                        Math.Abs(Math.Abs(Dot3(d.Axis, axis)) - 1.0) < 1.0e-6 &&
+                        Math.Abs(d.Radius - radius) <= Math.Max(radius, 1.0e-9) * 0.05)
+                    .ToList();
+                if (biggest is null || alike.Count > biggest.Count)
+                {
+                    biggest = alike;
+                    bankRadius = radius;
+                    bankAxis = axis;
+                }
+            }
+            if (biggest is not null)
+            {
+                spools.AddRange(biggest.Select(b => b.Index));
+                idlers.AddRange(described
+                    .Select(d => d.Index)
+                    .Where(i => !spools.Contains(i)));
+            }
+        }
+
+        if (spools.Count > 0 && wires.Count > 0 && spools.Count != wires.Count)
+        {
+            warnings.Add(
+                $"Machine \"{name}\": its bank reads {spools.Count} driven " +
+                $"spool(s) but it routes {wires.Count} wire(s). One spool " +
+                "drives one cable, so a machine whose two counts disagree " +
+                "will lay out on a row by one number and be built to the " +
+                "other. Check which reels the wires actually ride.");
+        }
+
+        // THE FOOTPRINT, in the machine's OWN canonical frame: X along the
+        // cable line, Z the world's up across it, Y toward the body. Only
+        // then does "how far it reaches behind the cables" mean anything.
+        var first = wires.Select(w => w.Route[0].Origin).ToList();
+        var far = wires.Select(w => w.Route[w.Route.Count - 1].Origin).ToList();
+        Dictionary<string, object?>? footprint = null;
+        double[]? datumSpan = null;
+        if (first.Count >= 2)
+        {
+            double[] machineX = NormalizeOrZ(Difference3(first[first.Count - 1], first[0]));
+            double[] machineZ = AcrossAxis(WorldUp, machineX);
+            double[] machineY = CrossProduct(machineZ, machineX);
+            if (Dot3(machineY, Difference3(CentroidOf(far), CentroidOf(first))) < 0.0)
+            {
+                machineX = Negate3(machineX);
+                machineY = CrossProduct(machineZ, machineX);
+            }
+            double[] origin = CentroidOf(first);
+
+            var everyVertex = new List<double[]>();
+            void Take(MechanismMesh? mesh)
+            {
+                if (mesh is not null)
+                    everyVertex.AddRange(mesh.Vertices);
+            }
+            Take(asset.Frame1);
+            foreach (MechanismMesh part in asset.Frame2)
+                Take(part);
+            Take(asset.Motors);
+            Take(asset.TensionTie);
+            Take(asset.Anchor);
+            foreach (MechanismMesh? reel in asset.ReelMeshes)
+                Take(reel);
+
+            if (everyVertex.Count > 0)
+            {
+                double[] low = { double.MaxValue, double.MaxValue, double.MaxValue };
+                double[] high = { double.MinValue, double.MinValue, double.MinValue };
+                foreach (double[] v in everyVertex)
+                {
+                    double[] local =
+                    {
+                        Dot3(Difference3(v, origin), machineX),
+                        Dot3(Difference3(v, origin), machineY),
+                        Dot3(Difference3(v, origin), machineZ),
+                    };
+                    for (int i = 0; i < 3; i++)
+                    {
+                        if (local[i] < low[i])
+                            low[i] = local[i];
+                        if (local[i] > high[i])
+                            high[i] = local[i];
+                    }
+                }
+                footprint = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["frame"] = "the machine's own: X along the cable line, " +
+                        "Y toward the body, Z up. Its origin is the centre " +
+                        "of the wire first-frames.",
+                    ["min"] = low,
+                    ["max"] = high,
+                    ["cableSpan"] = Distance(first[0], first[first.Count - 1]),
+                    ["setback"] = high[1],
+                };
+            }
+            datumSpan = machineX;
+        }
+
+        var document = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["schema"] = MachineSchema,
+            ["id"] = name,
+            ["units"] = "m",
+            ["lengthUnitToMetres"] = 1.0,
+            ["wireCount"] = wires.Count,
+            ["bank"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["spools"] = spools,
+                ["idlers"] = idlers,
+                ["radius"] = bankRadius,
+                ["axis"] = bankAxis,
+                ["how"] = "the largest group of reels sharing one axis " +
+                    "direction and one winding radius; cross-checked " +
+                    "against wireCount, since one spool drives one cable.",
+            },
+            ["footprint"] = footprint,
+            ["datum"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["what"] = "the wire first-frames, in order of wire. THE " +
+                    "machine's datum: placement pins to these, never to a " +
+                    "body origin, which means nothing.",
+                ["direction"] = datumSpan,
+                ["frames"] = wires.Select(w => FramePayload(w.Route[0])).ToList(),
+            },
+            ["machine"] = ToPlainObject(machineBlock),
+            ["routing"] = wires
+                .Select(w => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["wire"] = w.Wire,
+                    ["route"] = w.Route.Select(FramePayload).ToList(),
+                })
+                .ToList(),
+        };
+
+        notes.Add(
+            $"machine \"{name}\": {wires.Count} wire(s), {spools.Count} " +
+            $"driven spool(s) and {idlers.Count} idler(s), " +
+            (footprint is not null
+                ? "cable span " +
+                  ((double)footprint["cableSpan"]!).ToString("0.###", CultureInfo.InvariantCulture) +
+                  " m, reaching " +
+                  ((double)footprint["setback"]!).ToString("0.###", CultureInfo.InvariantCulture) +
+                  " m behind the cable line"
+                : "no footprint, since fewer than two wires carry frames") +
+            ". This document carries NO STUDY: no net vertices, no world " +
+            "placement, nothing that belongs to one vault. It is the " +
+            "machine, and a study says which machine it was laid out for.");
+        return JsonSerializer.Serialize(document, ContractJson.Options);
+    }
+
+    private static double[] ReadVector(JsonElement frame, string key) =>
+        frame.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Select(e => e.GetDouble()).ToArray()
+            : new[] { 0.0, 0.0, 0.0 };
+
+    /// <summary>A parsed JSON element back to plain objects, so it can be re-serialised inside another document.</summary>
+    private static object? ToPlainObject(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (JsonProperty property in element.EnumerateObject())
+                    map[property.Name] = ToPlainObject(property.Value);
+                return map;
+            case JsonValueKind.Array:
+                var items = new List<object?>();
+                foreach (JsonElement item in element.EnumerateArray())
+                    items.Add(ToPlainObject(item));
+                return items;
+            case JsonValueKind.String:
+                return element.GetString();
+            case JsonValueKind.Number:
+                return element.GetDouble();
+            case JsonValueKind.True:
+                return true;
+            case JsonValueKind.False:
+                return false;
+            default:
+                return null;
+        }
+    }
+
     /// <summary>
     /// GROUP ROUTING BRANCHES BY WIRE, at whatever depth the tree has: the
     /// wire is the LAST index of each path and anything above it is
@@ -3575,6 +3856,9 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return item;
     }
 
+    internal static bool TryMeshOrBrepPublic(object? item, out MechanismMesh? mesh, out bool fromBrep) =>
+        TryMeshOrBrep(item, out mesh, out fromBrep);
+
     private static bool TryMeshOrBrep(object? item, out MechanismMesh? mesh, out bool fromBrep)
     {
         fromBrep = false;
@@ -3616,5 +3900,383 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                 : new[] { face.A, face.B, face.C, face.D });
         }
         return new MechanismMesh(vertices, faces);
+    }
+}
+
+/// <summary>
+/// MACHINE ("MC"): the machine ALONE, written to its own file, with no
+/// study anywhere near it.
+///
+/// His ruling, 2026-09-09: "one component purely deals with the mechanism
+/// and its own export write, so it doesnt collide with anything ... i might
+/// make several different ones that might deal with different amounts of
+/// wires each, smaller, larger etc."
+///
+/// So this writes bench.machine/1 and nothing else. It takes no Result, it
+/// derives no placement, it names no net vertex. What it produces is the
+/// thing he owns and may own several of, and a study says which machine it
+/// was laid out for rather than carrying a copy of one.
+///
+/// It writes its OWN file rather than travelling through Export, which is
+/// what stops it colliding: a machine changes when he changes the machine,
+/// not when a vault re-solves, and a ten megabyte document has no business
+/// being rewritten by every study.
+/// </summary>
+public sealed class MachineComponent : NativeComponentBase
+{
+    public MachineComponent()
+        : base(
+            "Machine",
+            "MC",
+            "The machine alone -- bodies, reels and axes, routing, the " +
+            "anchor and tie -- written to its own bench.machine/1 file. " +
+            "No Result, no placement, no study: this is the thing you own " +
+            "and may own several of, at different wire counts, and a study " +
+            "says which one it was laid out for.",
+            ComponentCategories.Deliver,
+            "machine")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("7c4f1a28-5d63-4e90-8b17-2af6c05d9e33");
+
+    protected override void RegisterInputParams(GH_InputParamManager parameters)
+    {
+        parameters.AddTextParameter(
+            "Name",
+            "N",
+            "The machine's own name, which becomes its id and its file " +
+            "name: <Name>-machine.json. Name it for what it IS -- the " +
+            "seven-wire bank, the twelve -- since this is what a study " +
+            "will cite and what a chooser will list.",
+            GH_ParamAccess.item,
+            "machine");
+
+        parameters.AddTextParameter(
+            "Folder",
+            "F",
+            "Where to write it. Keep every machine in ONE folder: that " +
+            "folder is the library, and the studio scans it to offer them.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[1].Optional = true;
+
+        parameters.AddBooleanParameter(
+            "Write",
+            "W",
+            "True writes the file. A machine changes when you change the " +
+            "machine, not when a vault re-solves, so this is deliberate " +
+            "rather than automatic.",
+            GH_ParamAccess.item,
+            false);
+        parameters[2].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Tension Tie",
+            "TT",
+            "The tension tie, one piece; several objects are joined. It " +
+            "travels INSIDE the machine, so when you weld it into the " +
+            "anchor wire it there instead and leave this empty.",
+            GH_ParamAccess.list);
+        parameters[3].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Anchor",
+            "AN",
+            "The foundation anchor, one piece; several objects are joined. " +
+            "+Z up, X along the row, its own origin at the centre of the " +
+            "cables it holds. This is the body a study stamps once a side.",
+            GH_ParamAccess.list);
+        parameters[4].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Frame 1", "F1", "The machine frame, one piece; several objects are joined.",
+            GH_ParamAccess.list);
+        parameters[5].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Frame 2", "F2", "A second frame part in a different material, a list.",
+            GH_ParamAccess.list);
+        parameters[6].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Motors", "MO", "The motors, one piece; several objects are joined.",
+            GH_ParamAccess.list);
+        parameters[7].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Reel", "RE", "The reels, SEPARATE meshes, one per reel, in reel order.",
+            GH_ParamAccess.list);
+        parameters[8].Optional = true;
+
+        parameters.AddPlaneParameter(
+            "Reel Axis",
+            "AX",
+            "Each reel's own rotation axis, zipped BY POSITION with Reel.",
+            GH_ParamAccess.list);
+        parameters[9].Optional = true;
+
+        parameters.AddPlaneParameter(
+            "Routing",
+            "RT",
+            "The wire frames, tree path {wire} or grouped above it: the " +
+            "wire is the LAST index. planes[0] is the NET END. HOW MANY " +
+            "WIRES YOU GIVE IS THE MACHINE'S wireCount, and every layout " +
+            "decision downstream turns on it, so a five-wire machine and a " +
+            "twelve-wire one need no change anywhere else.",
+            GH_ParamAccess.tree);
+        parameters[10].Optional = true;
+
+        parameters.AddTextParameter(
+            "Frame Meaning",
+            "FM",
+            "What a routing plane's origin marks on the cable: " +
+            "\"centreline\" (default), \"top\" or \"contact\".",
+            GH_ParamAccess.item,
+            MechanismCollector.DefaultRoutingFrameMeaning);
+        parameters[11].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(GH_OutputParamManager parameters)
+    {
+        parameters.AddTextParameter(
+            "Machine",
+            "MC",
+            "The bench.machine/1 document, whether or not it was written. " +
+            "Wire it straight into a study's exporter to lay this machine " +
+            "out on that vault without going near a file.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Status",
+            "ST",
+            "What it read, what it measured and where it wrote, then every " +
+            "warning and note in full.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        try
+        {
+            var warnings = new List<string>();
+            var notes = new List<string>();
+
+            string name = "machine";
+            string folder = string.Empty;
+            bool write = false;
+            string meaning = string.Empty;
+            data.GetData(0, ref name);
+            data.GetData(1, ref folder);
+            data.GetData(2, ref write);
+            data.GetData(11, ref meaning);
+
+            MechanismAssetInput asset = ReadAsset(data, warnings, notes);
+            List<MechanismRoutingWire> routing = ReadRouting(data, warnings, notes);
+
+            string document = MechanismCollector.BuildMachine(
+                asset, routing, StudyName(name), meaning, warnings, notes);
+
+            var status = new List<string>
+            {
+                document.Length == 0
+                    ? "received: nothing wired; no machine document."
+                    : $"received: machine \"{StudyName(name)}\", " +
+                      $"{routing.Count(w => w.Route.Count > 0)} wire(s) routed.",
+            };
+
+            if (write && document.Length > 0)
+            {
+                if (string.IsNullOrWhiteSpace(folder))
+                {
+                    warnings.Add(
+                        "Write is True but Folder is empty, so there is " +
+                        "nowhere to write the machine; nothing was written.");
+                }
+                else
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(folder);
+                        string target = Path.Combine(
+                            folder, $"{StudyName(name)}-machine.json");
+                        AtomicFile.Write(target, document);
+                        status.Add($"written: {target}");
+                    }
+                    catch (Exception writeError)
+                    {
+                        warnings.Add(
+                            "The machine could not be written: " + writeError.Message);
+                    }
+                }
+            }
+            else
+            {
+                status.Add("written: nothing.");
+            }
+
+            foreach (string warning in warnings)
+            {
+                status.Add(warning);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, Headline(warning));
+            }
+            foreach (string note in notes)
+            {
+                status.Add(note);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, Headline(note));
+            }
+
+            data.SetData(0, document);
+            data.SetData(1, string.Join(Environment.NewLine, status));
+            Message = document.Length == 0
+                ? "nothing wired"
+                : $"{routing.Count(w => w.Route.Count > 0)} wire(s)";
+        }
+        catch (Exception error)
+        {
+            Message = "Failed";
+            ReportException("Machine failed", error);
+        }
+    }
+
+    /// <summary>
+    /// A name that is ONE path segment, since it becomes a file name. The
+    /// same rule Export's own Name follows, for the same reason.
+    /// </summary>
+    private static string StudyName(string name)
+    {
+        string trimmed = (name ?? string.Empty).Trim();
+        return ExportPlan.NameIsOneSegment(trimmed) ? trimmed : "machine";
+    }
+
+    private MechanismAssetInput ReadAsset(
+        IGH_DataAccess data, List<string> warnings, List<string> notes)
+    {
+        MechanismMesh? tt = ReadOnePiece(data, 3, "Tension Tie (TT)", warnings, notes, out bool ttBrep);
+        MechanismMesh? an = ReadOnePiece(data, 4, "Anchor (AN)", warnings, notes, out bool anBrep);
+        MechanismMesh? f1 = ReadOnePiece(data, 5, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
+
+        var f2Items = new List<object>();
+        data.GetDataList(6, f2Items);
+        var f2 = new List<MechanismMesh>(f2Items.Count);
+        var f2Brep = new List<bool>(f2Items.Count);
+        for (int i = 0; i < f2Items.Count; i++)
+        {
+            if (!MechanismCollectorComponent.TryMeshOrBrepPublic(f2Items[i], out MechanismMesh? m, out bool b) ||
+                m is null)
+            {
+                warnings.Add($"Frame 2 (F2)[{i}] did not resolve to a mesh or a closed Brep; skipped.");
+                continue;
+            }
+            f2.Add(m);
+            f2Brep.Add(b);
+        }
+
+        MechanismMesh? mo = ReadOnePiece(data, 7, "Motors (MO)", warnings, notes, out bool moBrep);
+
+        var reItems = new List<object>();
+        data.GetDataList(8, reItems);
+        var reMeshes = new List<MechanismMesh?>(reItems.Count);
+        var reBrep = new List<bool>(reItems.Count);
+        for (int i = 0; i < reItems.Count; i++)
+        {
+            if (!MechanismCollectorComponent.TryMeshOrBrepPublic(reItems[i], out MechanismMesh? m, out bool b))
+            {
+                warnings.Add($"Reel (RE)[{i}] did not resolve to a mesh or a closed Brep; refused.");
+                reMeshes.Add(null);
+                reBrep.Add(false);
+                continue;
+            }
+            reMeshes.Add(m);
+            reBrep.Add(b);
+        }
+
+        var axItems = new List<Plane>();
+        data.GetDataList(9, axItems);
+        var axes = new List<MechanismFrame?>(axItems.Count);
+        foreach (Plane plane in axItems)
+        {
+            axes.Add(new MechanismFrame(
+                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
+        }
+
+        return new MechanismAssetInput(
+            f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
+            reMeshes, reBrep, axes, an, anBrep);
+    }
+
+    private MechanismMesh? ReadOnePiece(
+        IGH_DataAccess data, int port, string label,
+        List<string> warnings, List<string> notes, out bool fromBrep)
+    {
+        fromBrep = false;
+        var items = new List<object>();
+        data.GetDataList(port, items);
+        var parts = new List<MechanismMesh>(items.Count);
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (!MechanismCollectorComponent.TryMeshOrBrepPublic(items[i], out MechanismMesh? part, out bool b) ||
+                part is null)
+            {
+                warnings.Add(
+                    $"{label}" + (items.Count > 1 ? $"[{i}]" : string.Empty) +
+                    " did not resolve to a mesh or a closed Brep; " +
+                    (items.Count > 1 ? "skipped." : "refused."));
+                continue;
+            }
+            parts.Add(part);
+            fromBrep |= b;
+        }
+        if (parts.Count == 0)
+            return null;
+        if (parts.Count == 1)
+            return parts[0];
+        notes.Add(
+            $"{label} arrived as {parts.Count} separate objects and was " +
+            $"joined here into one piece ({parts.Sum(x => x.Vertices.Count)} " +
+            "vertices), which is what this port is for.");
+        return MechanismCollector.JoinMeshes(parts);
+    }
+
+    private List<MechanismRoutingWire> ReadRouting(
+        IGH_DataAccess data, List<string> warnings, List<string> notes)
+    {
+        data.GetDataTree(10, out GH_Structure<GH_Plane> rtTree);
+        var branches = new List<(IReadOnlyList<int>, IReadOnlyList<MechanismFrame>)>();
+        int deepest = 0;
+        foreach (GH_Path path in rtTree.Paths)
+        {
+            if (path.Indices.Length == 0)
+                continue;
+            deepest = Math.Max(deepest, path.Indices.Length);
+            var frames = new List<MechanismFrame>();
+            foreach (GH_Plane planeGoo in rtTree.get_Branch(path))
+            {
+                if (planeGoo is null)
+                    continue;
+                Plane plane = planeGoo.Value;
+                frames.Add(new MechanismFrame(
+                    new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                    new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                    new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
+            }
+            branches.Add((path.Indices, frames));
+        }
+        List<MechanismRoutingWire> wires =
+            MechanismCollector.GroupRouteBranchesByWire(branches);
+        if (wires.Count > 0)
+        {
+            notes.Add(
+                $"Routing (RT): {rtTree.Paths.Count} branch(es) " +
+                (deepest > 1 ? $"{deepest} level(s) deep" : "one level deep") +
+                $", giving {wires.Count} wire(s) carrying " +
+                string.Join(", ", wires.Select(w => w.Route.Count)) +
+                " frame(s) each. THIS COUNT IS THE MACHINE'S wireCount.");
+        }
+        return wires;
     }
 }
