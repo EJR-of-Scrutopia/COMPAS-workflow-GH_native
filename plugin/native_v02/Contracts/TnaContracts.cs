@@ -122,6 +122,20 @@ public sealed record AnalysisPlaneDto
     public Point3Dto ZAxis { get; init; } = new(0.0, 0.0, 1.0);
 }
 
+/// <summary>
+/// One vertex of a diagram graph. <see cref="Id"/> IS THE IDENTITY and the
+/// array position is NOT: read a graph by id, never by where a vertex
+/// happens to sit in the list. Both of this plugin's own readers do
+/// (<c>MouldGeometry.ThrustMeshFromResult</c> and
+/// <c>SkinPatterns.ReadNet</c>, each <c>OrderBy(item => item.Id)</c>), and
+/// that agreement is the contract rather than a coincidence.
+///
+/// <see cref="Point"/> is the FORM diagram's own position, which is a
+/// diagram and not the vault: the built surface is at
+/// <c>Equilibrium.Vertices</c>, reached through
+/// <see cref="TnaMappingsDto.SourceVertexToFormVertex"/>. A reader wanting
+/// geometry wants that, not this.
+/// </summary>
 public sealed record TnaGraphVertexDto
 {
     public int Id { get; init; }
@@ -148,6 +162,33 @@ public sealed record TnaGraphEdgeDto
         Array.Empty<int>();
 }
 
+/// <summary>
+/// One face of a diagram graph, and the sharpest index-space trap the
+/// contract carries.
+///
+/// <see cref="Vertices"/> holds FORM VERTEX IDS. They are not positions in
+/// the face array, and they are NOT indices into
+/// <c>Equilibrium.Vertices</c>: form vertices and equilibrium vertices are
+/// two different numberings of the same points, and the ONLY bridge between
+/// them is <see cref="TnaMappingsDto.SourceVertexToFormVertex"/>. Resolve
+/// every entry through it, form id to equilibrium id, before touching a
+/// coordinate.
+///
+/// IT MATTERS BECAUSE THE SHORTCUT FAILS AS A WRONG ANSWER RATHER THAN AN
+/// ERROR. On a net whose two spaces happen to have the same count -- which
+/// every study exported so far does, with the mapping the identity on every
+/// vertex -- feeding a form id straight into an equilibrium lookup indexes
+/// the wrong vertex SILENTLY, and builds a surface that renders, measures
+/// and analyses without complaint. A reader that takes the shortcut
+/// therefore passes its own tests, passes review, and breaks on the first
+/// study whose two spaces diverge.
+///
+/// <see cref="Id"/> is the identity here too, exactly as on
+/// <see cref="TnaGraphVertexDto"/>: order faces by it rather than trusting
+/// their array position. Ids are positional on every contract written to
+/// date, which is precisely why a reader that trusts position looks correct
+/// for as long as anyone has checked.
+/// </summary>
 public sealed record TnaGraphFaceDto
 {
     public int Id { get; init; }
@@ -251,6 +292,26 @@ public sealed record TnaLoadMappingDto
     public Point3Dto Vector { get; init; } = new(0.0, 0.0, 0.0);
 }
 
+/// <summary>
+/// THE JOINS BETWEEN THE CONTRACT'S INDEX SPACES, and the reason they have
+/// to exist at all. One point of the vault is numbered THREE different ways:
+/// as a SOURCE vertex (his input net), as a FORM vertex (the form diagram's
+/// graph, whose faces are written in this numbering), and as an EQUILIBRIUM
+/// vertex, which is a POSITION in <c>Equilibrium.Vertices</c> -- that array
+/// carries no ids, so its index IS its equilibrium id. Nothing outside this
+/// block says which numbering a given integer belongs to.
+///
+/// <see cref="SourceVertexToFormVertex"/> is the one a geometry reader
+/// needs: its entries carry both <c>FormVertexId</c> and
+/// <c>EquilibriumVertexId</c>, so it is what turns a face's form vertex ids
+/// into coordinates. <see cref="Supports"/> names its vertices in BOTH
+/// spaces for the same reason.
+///
+/// Every one of these joins is the identity on every study exported to
+/// date, which is exactly what makes skipping them survive testing. See
+/// <see cref="TnaGraphFaceDto"/> for what that costs when it stops being
+/// true.
+/// </summary>
 public sealed record TnaMappingsDto
 {
     public IReadOnlyList<TnaSourceVertexMappingDto>
