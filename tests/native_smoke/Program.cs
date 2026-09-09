@@ -41411,6 +41411,19 @@ internal static partial class Program
     /// footprint is measured in the machine's OWN frame, so "how far it
     /// reaches behind the cable line" means something; and the datum is the
     /// wire first-frames, never the body origin.
+    ///
+    /// WHAT THIS DOES NOT YET PROVE, and Task 2 closes: the fixture wires no
+    /// tie and no anchor, because the ports that accept them still exist on
+    /// the Machine component. The recursive refusal above WILL catch them
+    /// the moment they are actually wired (a NON-NULL "tensionTie" or
+    /// "anchor" anywhere in the document), which is why it walks the whole
+    /// document rather than the root; it deliberately does NOT fire on the
+    /// null placeholder those two keys carry today, since Dictionary&lt;
+    /// string, object?&gt; writes an explicit JSON null for an unwired part
+    /// rather than omitting the key, and refusing on the bare key NAME
+    /// would fail on every machine document this codebase has ever built,
+    /// wired or not -- a check that fires on correct input is a defect, not
+    /// a safeguard.
     /// </summary>
     private static void ValidateMachineDocument(Assembly plugin)
     {
@@ -41436,9 +41449,10 @@ internal static partial class Program
         double[] unitX = { 1.0, 0.0, 0.0 };
         double[] unitY = { 0.0, 1.0, 0.0 };
 
-        // SEVEN CABLES, running from the cable line at y = 0 back into the
-        // body at y = 1, so which side the machine sits on is a fact about
-        // the machine rather than a convention.
+        // SEVEN CABLES. Each runs from the cable line at y = 0 back into the
+        // body, and ENDS ON ITS OWN SPOOL, because the bank, the driven flag
+        // and the winding radius are all measured from reel-owned frames and
+        // a fixture whose routes own nothing proves none of them.
         object[] wires = new object[7];
         for (int k = 0; k < 7; k++)
         {
@@ -41448,31 +41462,65 @@ internal static partial class Program
                 MechanismListOf(
                     frameType,
                     FrameOf(new[] { 0.15 * k, 0.0, 0.0 }, unitX, unitY),
-                    FrameOf(new[] { 0.15 * k, 1.0, 0.5 }, unitX, unitY)))!;
+                    FrameOf(new[] { 0.15 * k, 0.6, 0.2 }, unitX, unitY),
+                    // ON the spool: one radius out from the axis at (0.15k,
+                    // 0.8, 0.2). The offset is carried in Y, not Z: the
+                    // axis direction (X cross Y with X = unitX, Y = unitY)
+                    // is world Z, so a frame's perpendicular distance to
+                    // that axis line ignores Z entirely and reads only its
+                    // X, Y offset. A Z-only offset from the axis origin
+                    // sits AT the axis (distance zero), which is the
+                    // degenerate "not a radius" case the reel-ownership
+                    // code itself refuses to trust; a Y offset is the
+                    // genuine radial one and measures 0.05 for real.
+                    FrameOf(new[] { 0.15 * k, 0.85, 0.2 }, unitX, unitY)))!;
         }
 
         // TEN REELS: seven spools sharing an axis AND a radius of 0.05, and
         // three pulleys on a different axis at 0.17, 0.20 and 0.30. The
         // bank must be the seven, and it must NOT be found by size alone --
         // the pulleys are bigger, but they also disagree with each other.
+        //
+        // EACH REEL'S OWN MESH is centred ON its own axis line (y = 0.8),
+        // so ClassifyRouteFrameOwner reads a TRUE 0.05 m ownership window
+        // for every one of the seven, not an inflated one: a window
+        // inflated by even one wire-spacing (0.15 m here) reaches an
+        // adjacent wire's own frame and steals it, which a bounding-box
+        // radius would hide and only a fixture that measures the actual
+        // window would catch.
         double[][] ReelAt(double centreX, double radius) => new[]
         {
-            new[] { centreX + radius, 0.5, 0.0 },
-            new[] { centreX - radius, 0.5, 0.0 },
-            new[] { centreX, 0.5 + radius, 0.0 },
-            new[] { centreX, 0.5 - radius, 0.4 },
+            new[] { centreX + radius, 0.8, 0.0 },
+            new[] { centreX - radius, 0.8, 0.0 },
+            new[] { centreX, 0.8 + radius, 0.0 },
+            new[] { centreX, 0.8 - radius, 0.4 },
         };
         var reelMeshes = new List<object>();
         var reelAxes = new List<object>();
         for (int k = 0; k < 7; k++)
         {
             reelMeshes.Add(Mesh(ReelAt(0.15 * k, 0.05)));
-            // OFF the cable line on purpose: a frame lying on a reel's
-            // own axis measures a winding radius of zero, which is not a
-            // radius, and a fixture that does it is testing a machine
-            // nobody would build.
-            reelAxes.Add(FrameOf(new[] { 0.15 * k, 0.5, 0.2 }, unitX, unitY));
+            // ON the route line now: each wire's third frame lands one
+            // radius out, in Y, from this axis, which is what makes it a
+            // frame the reel actually owns rather than a frame 11.7 radii
+            // away that ClassifyRouteFrameOwner could never claim.
+            reelAxes.Add(FrameOf(new[] { 0.15 * k, 0.8, 0.2 }, unitX, unitY));
         }
+
+        // WIRE 3 TERMINATES ON BODY 5, deliberately. With wire k on spool k
+        // the mapping is the identity permutation and a build that wrote
+        // "wire = bodyIndex" would pass this fixture unchanged. Swapping
+        // two spools' MESH AND AXIS TOGETHER (never the axis alone) is
+        // what makes the mapping observable while leaving every reel's own
+        // ownership window at the true 0.05 m: an axis moved without its
+        // mesh reads its own radius against a mesh 0.3 m away, inflates to
+        // several times the true window, and that inflated reel then
+        // reaches past its neighbours and claims THEIR wires' frames too,
+        // corrupting the very measurement this fixture exists to exercise.
+        // Reel 3 and reel 5 swap identity wholesale instead: each is still
+        // a coherent body, sitting where the other one used to.
+        (reelMeshes[3], reelMeshes[5]) = (reelMeshes[5], reelMeshes[3]);
+        (reelAxes[3], reelAxes[5]) = (reelAxes[5], reelAxes[3]);
         double[] pulleyRadii = { 0.17, 0.20, 0.30 };
         foreach (double radius in pulleyRadii)
         {
@@ -41492,6 +41540,27 @@ internal static partial class Program
                 new[] { 0.0, 0.0, 1.0 }));
         }
 
+        // A MIRRORED PLANE: X cross Y points OPPOSITE the carried Z. Rhino
+        // leaves a mirrored plane's stored ZAxis genuinely left-handed and
+        // this codebase reads that as a signal (MechanismComponents.cs:78-79).
+        // Task 3 refuses it; here it only has to survive the build.
+        //
+        // ITS OWN RADIUS IS 0.08, NOT 0.05: no wire terminates anywhere
+        // near it, so its windingRadius always falls back to its own
+        // mesh's radial extent about its own (aligned) axis rather than a
+        // measurement, and that fallback must not land on 0.05 or this
+        // eleventh reel would silently join the seven-spool bank it is
+        // not part of. A fixture fact, not a claim about a real mirrored
+        // reel's own size, which Task 3's determinant refusal makes moot
+        // in any case.
+        reelMeshes.Add(Mesh(ReelAt(1.05, 0.08)));
+        reelAxes.Add(Activator.CreateInstance(
+            frameType,
+            new[] { 1.05, 0.8, 0.2 },
+            unitX,
+            unitY,
+            new[] { 0.0, 0.0, -1.0 })!);   // Z flipped: det(X, Y, Z) = -1
+
         object asset = Activator.CreateInstance(
             assetType,
             Mesh(new[]
@@ -41504,7 +41573,7 @@ internal static partial class Program
             MechanismListOf(typeof(bool)),
             null, false, null, false,
             MechanismListOf(meshType, reelMeshes.ToArray()),
-            MechanismListOf(typeof(bool), Enumerable.Repeat((object)false, 10).ToArray()),
+            MechanismListOf(typeof(bool), Enumerable.Repeat((object)false, 11).ToArray()),
             MechanismListOf(frameType, reelAxes.ToArray()),
             null,
             false)!;
@@ -41543,17 +41612,51 @@ internal static partial class Program
         }
 
         // THE NEGATIVE INVARIANT, and the reason this document exists.
-        foreach (string studyKey in new[] { "instances", "wires", "anchors", "principalRows", "study" })
+        // WALKED IN FULL rather than at the root: the tie and the anchor are
+        // written one level down, inside the "machine" block, so a root-only
+        // scan is blind to exactly the leak this check is named after.
+        //
+        // A NULL VALUE DOES NOT COUNT AS CARRYING ONE. "frame1", "motors",
+        // "tensionTie" and "anchor" are ALWAYS written under "machine", with
+        // JSON null standing for an unwired port (the same shape the study
+        // document already leaves this codebase reading, MechanismComponents
+        // .cs:454-521): the property NAME survives even where nothing is
+        // wired, since Dictionary<string, object?> writes an explicit JSON
+        // null rather than omitting the key, so refusing on the name alone
+        // would fail on every machine document ever built. Refusing only a
+        // NON-NULL "tensionTie" or "anchor" is what "carries" means here,
+        // and is what makes the fixture's own null-wired tie and anchor
+        // (below) survive this check while a genuinely wired one would not.
+        static void RefuseAnywhere(JsonElement at, string path, string[] forbidden)
         {
-            if (root.TryGetProperty(studyKey, out _))
+            if (at.ValueKind == JsonValueKind.Object)
             {
-                throw new InvalidOperationException(
-                    $"A machine document must carry NO STUDY, and it carries " +
-                    $"\"{studyKey}\". A machine is not a property of a vault: " +
-                    "that confusion is what made the mechanism document ten " +
-                    "megabytes and rewritten on every solve of every study.");
+                foreach (JsonProperty p in at.EnumerateObject())
+                {
+                    if (forbidden.Contains(p.Name, StringComparer.Ordinal) &&
+                        p.Value.ValueKind != JsonValueKind.Null)
+                    {
+                        throw new InvalidOperationException(
+                            $"A machine document must carry NO STUDY and no " +
+                            $"permanent work, and it carries \"{p.Name}\" at " +
+                            $"{path}/{p.Name}. A machine is not a property of " +
+                            "a vault, and the anchor and the tie are the works " +
+                            "that REMAIN when the machine is taken away.");
+                    }
+                    RefuseAnywhere(p.Value, $"{path}/{p.Name}", forbidden);
+                }
+            }
+            else if (at.ValueKind == JsonValueKind.Array)
+            {
+                int i = 0;
+                foreach (JsonElement item in at.EnumerateArray())
+                    RefuseAnywhere(item, $"{path}[{i++}]", forbidden);
             }
         }
+        RefuseAnywhere(
+            root,
+            "",
+            new[] { "instances", "wires", "anchors", "principalRows", "study", "tensionTie", "anchor" });
         if (document.Contains("net_vertex", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
@@ -41572,13 +41675,22 @@ internal static partial class Program
         JsonElement bank = root.GetProperty("bank");
         int[] spools = bank.GetProperty("spools").EnumerateArray().Select(e => e.GetInt32()).ToArray();
         int[] idlers = bank.GetProperty("idlers").EnumerateArray().Select(e => e.GetInt32()).ToArray();
-        if (spools.Length != 7 || idlers.Length != 3)
+        // IDLERS ARE FOUR, NOT THREE, since 2026-09-09's mirrored eleventh
+        // reel (fixture step 3) carries no wire of its own to measure a
+        // real winding radius from, so it falls back to its own mesh's
+        // radial extent about its axis -- which does not land on 0.05,
+        // the spools' bank -- and joins the three pulleys as a fourth
+        // idler. That is a fact about THIS FIXTURE'S geometry, exactly
+        // like the eleven-reel count below, and not a claim about the
+        // real machine.
+        if (spools.Length != 7 || idlers.Length != 4)
         {
             throw new InvalidOperationException(
                 "The bank is the largest group of reels sharing one axis " +
                 "direction AND one winding radius: seven spools at 0.05 " +
-                "here, and three pulleys that are bigger but disagree with " +
-                $"each other. Got {spools.Length} spool(s) and " +
+                "here, and four idlers, the three pulleys plus the " +
+                "mirrored eleventh reel, that disagree with the bank and " +
+                $"with each other. Got {spools.Length} spool(s) and " +
                 $"{idlers.Length} idler(s), which if it is 3 and 7 means it " +
                 "chose by size.");
         }
@@ -41632,12 +41744,18 @@ internal static partial class Program
 
         // AND THE BODIES ARE STILL THERE, from the same build the study
         // document uses, so the two can never disagree about the machine.
+        //
+        // ELEVEN, NOT TEN: this fixture's own eleventh reel (2026-09-09,
+        // spec 9.3) is the deliberately mirrored body Task 3's determinant
+        // refusal needs something to refuse. Eleven is a property of THIS
+        // FIXTURE, not a claim that a real machine carries eleven reels.
         JsonElement machine = root.GetProperty("machine");
-        if (machine.GetProperty("reels").GetArrayLength() != 10 ||
+        if (machine.GetProperty("reels").GetArrayLength() != 11 ||
             machine.GetProperty("frame1").ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
-                "The machine block carries the bodies and all ten reels, " +
+                "The machine block carries the bodies and all eleven " +
+                "reels (ten plus the deliberately mirrored eleventh), " +
                 "built by the same path the study document uses.");
         }
     }
