@@ -1209,6 +1209,44 @@ def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
     assert '          + Math.round(each * (total - frameIndex) / 60) + " min left";' in js
 
 
+def test_turning_the_machine_off_never_depends_on_the_server():
+    """Param: "can you allow no machine to be placed in the web app, this
+    can be done by having an option in the machine drop down which says no
+    mechanism."
+
+    It already existed. He could not SEE it, because refreshMechanisms
+    fetched the library first and returned on failure before adding a
+    single entry -- and his studio's server predates /api/mechanisms, so
+    the fetch threw and the control was left entirely empty.
+
+    Auto and No mechanism need no folder, no library and no server.
+    Turning the machine off is the one choice that must never depend on
+    anything being reachable."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    build = js[js.index("async function refreshMechanisms() {"):
+               js.index("function fetchMechanismFor(")]
+    # The two fixed entries are added BEFORE the fetch is even attempted.
+    added = build.index('add("auto"')
+    fetched = build.index('fetchJson("/api/mechanisms")')
+    assert added < fetched, (
+        "Auto and No mechanism must be written before the library is asked "
+        "for, or a server that cannot answer empties the control")
+    assert build.index('add("none"') < fetched
+    # And a failed listing costs the borrowed machines and nothing else.
+    assert "    return;                        // no folder chosen; the control stays empty" not in build, (
+        "a failed listing must no longer abandon the whole control")
+    assert 'logStudio("mechanism library: the machines could not be listed ("' in build
+    assert "    state.mechanismLibrary = [];" in build
+    # Choosing it draws no machine at all, and the old one is taken down:
+    # buildMachine disposes before it reads the document.
+    assert '  if (state.mechanismChoice === "none") return null;' in js
+    machine = js[js.index("async function buildMachine() {"):]
+    assert machine.index("disposeMachine();") < machine.index("if (!state.mechanism) return;"), (
+        "the standing machine is taken down before the new document is read, "
+        "or No mechanism would leave the old one on screen")
+
+
 def test_the_recorder_owns_the_camera_and_the_canvas_during_a_take():
     """Param: "the animation recording, as long as it took, didnt do the
     same animation as i get when i play the animation directly? why? it
@@ -1356,7 +1394,8 @@ def test_a_mechanism_is_chosen_rather_than_inherited():
     assert '  return fetch("/api/mechanisms/" + encodeURIComponent(name))' in js
     assert '"/api/studies/" + encodeURIComponent(exportName) + "/mechanism")\n' \
         "    .then((r) => (r.ok ? r.json() : null))" not in js
-    assert '  add("auto", "Auto",' in js and '  add("none", "None",' in js
+    assert '  add("auto", "Auto",' in js
+    assert '  add("none", "No mechanism", "Draw no machine at all");' in js
     # The facts a choice is made on go in the LABEL: a dropdown of bare
     # study names says nothing about which machine suits which vault.
     assert '      : entry.spools + " spools" + (entry.instances ? ", places itself" : "");' in js

@@ -3066,13 +3066,6 @@ document.addEventListener("visibilitychange", () => {
 const MECHANISM_CHOICE_KEY = "vaulted.mechanism.choice";
 
 async function refreshMechanisms() {
-  let payload = null;
-  try {
-    payload = await fetchJson("/api/mechanisms");
-  } catch (error) {
-    return;                        // no folder chosen; the control stays empty
-  }
-  state.mechanismLibrary = payload.mechanisms || [];
   const select = document.getElementById("mechanism-select");
   if (!select) return;
   select.innerHTML = "";
@@ -3083,8 +3076,33 @@ async function refreshMechanisms() {
     if (title) option.title = title;
     select.appendChild(option);
   };
+  // AUTO AND NO MECHANISM ARE STUDIO-SIDE FACTS. Neither needs a folder,
+  // a library or a server, so both are written FIRST and unconditionally.
+  //
+  // Written after the fetch instead, a server that could not answer left
+  // the control entirely EMPTY -- and that is how Param came to ask for
+  // an option that already existed: "can you allow no machine to be
+  // placed in the web app, this can be done by having an option in the
+  // machine drop down which says no mechanism". It was there. He could
+  // not see it, because his studio's server predates /api/mechanisms, the
+  // fetch threw, and the function returned before adding a single entry.
+  //
+  // Turning the machine OFF is the one choice that must never depend on
+  // anything being reachable.
   add("auto", "Auto", "Fit the bank of spools to this vault's supports");
-  add("none", "None", "Draw no machine at all");
+  add("none", "No mechanism", "Draw no machine at all");
+  let payload = null;
+  try {
+    payload = await fetchJson("/api/mechanisms");
+  } catch (error) {
+    // A library that cannot be listed costs him the borrowed machines and
+    // nothing else. Said, because a picker with two entries where there
+    // were five looks like a lost folder.
+    logStudio("mechanism library: the machines could not be listed ("
+      + error.message + "); Auto and No mechanism still work");
+    state.mechanismLibrary = [];
+  }
+  state.mechanismLibrary = payload ? (payload.mechanisms || []) : [];
   for (const entry of state.mechanismLibrary) {
     // The facts a choice is actually made on, in the label itself: a
     // dropdown of bare study names says nothing about which machine
