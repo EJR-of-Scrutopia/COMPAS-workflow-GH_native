@@ -1358,6 +1358,26 @@ def test_the_machine_draws_the_way_he_asked():
         "    state.recordStop = false;\n" \
         "    paintRecordButton();" in js
 
+    # AN EMPTY EXPORT SAYS SO RATHER THAN LOOKING LIKE A LOST MACHINE.
+    # Param, on an export carrying no instances at all: "I am only getting
+    # one mechanism why?" The fallback that draws the body once is right --
+    # it is the only honest reading of a document with no placements -- but
+    # in silence it is indistinguishable from the studio dropping five.
+    assert "  const instances = model.instances.length ? model.instances\n" in build
+    assert "  if (!model.instances.length) {\n" \
+        '    logStudio("machine: this document carries NO instances, so the machine "' in build
+    assert '      + "the exporter, so this is a gap in the export rather than in the "' in build, (
+        "and it names where placements come from, so the next question "
+        "starts in the right place")
+    assert "  if (!model.wires.length) {\n" \
+        '    logStudio("machine: this document carries NO wires, so no cables are "' in build
+    assert "  if (!model.instances.length || !model.wires.length) {\n" in build
+    assert '      + ", so the machine is drawn once and does not run", "error");' in build, (
+        "loud enough to answer the question before he has to ask it")
+    assert '[model.instances.length ? null : "machine placements",\n' \
+        '         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")' in build, (
+            "and it names which of the two is missing, not both blindly")
+
     # THE STRIKE REVERSES THE PLANT OUT, it does not drop it through the
     # floor. Param: "have the mechanism go backwards from its position on
     # each side (backwards mirrored) when the collapse and fade of the

@@ -9344,6 +9344,34 @@ async function buildMachine() {
   const instances = model.instances.length ? model.instances
     : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
 
+  // Param, on an export that carried none: "I am only getting one
+  // mechanism why?" Because a document with no placements can honestly be
+  // drawn only one way -- the body once, where it was authored -- and the
+  // fallback above does exactly that. But a SILENT fallback is
+  // indistinguishable from a studio that has lost five machines, which is
+  // why he had to ask. It says so now, in the banner as well as the log,
+  // and names the exporter as where placements come from so the next
+  // question starts in the right place.
+  if (!model.instances.length) {
+    logStudio("machine: this document carries NO instances, so the machine "
+      + "is drawn ONCE, where its body was authored. Placements come from "
+      + "the exporter, so this is a gap in the export rather than in the "
+      + "studio.");
+  }
+  if (!model.wires.length) {
+    logStudio("machine: this document carries NO wires, so no cables are "
+      + "drawn and the reels have nothing to measure a take-up against; "
+      + "they will not turn.");
+  }
+  if (!model.instances.length || !model.wires.length) {
+    // showBanner logs the text itself, so the two lines above carry the
+    // detail and this one carries only what he needs at a glance.
+    showBanner("This mechanism export is missing its "
+      + [model.instances.length ? null : "machine placements",
+         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")
+      + ", so the machine is drawn once and does not run", "error");
+  }
+
   // The drums' axes, and the radius each actually winds at, taken from the
   // routing frames it owns: 0.050 on the spools and 0.170 / 0.200 / 0.300
   // on the pulleys, measured, where the document's spoolRadius of 0.030
