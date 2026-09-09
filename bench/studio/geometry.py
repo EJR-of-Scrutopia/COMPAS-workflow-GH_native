@@ -62,6 +62,36 @@ KIND_SUFFIXES = (
     "-contract.json", "-compas.json", "-tessellation.json", "-frames.json",
     "-form.json", "-skin.json", "-formwork.json", "-mechanism.json")
 
+# The two spellings of the document that carries the form, newest first, so
+# a study written both ways lands on the newer one.
+CONTRACT_SUFFIXES = ("-form.json", "-contract.json")
+
+
+def export_name_from_contract(path) -> str:
+    """The export a contract file belongs to.
+
+    ONE rule for naming a study, because there were two and they
+    disagreed. The suffix is MATCHED, never assumed: a caller that
+    subtracts the length of the old "-contract.json" from a name that
+    ends in the new "-form.json" eats the four-character difference in
+    silence, and takes real letters of the study's name with it.
+
+    That is what reached Param. His "2 Sided Vault" arrived at the cut as
+    "2 Sided V", so the run went looking for the skin of a study nobody
+    has and reported that he had never authored one -- while the same
+    study, named correctly by available_exports, was on screen wearing
+    its authored cut of 215 pieces. The name is recovered here now, once,
+    and both callers use it.
+    """
+
+    name = Path(path).name
+    for suffix in CONTRACT_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    # A file dropped in under its own name is a study too (see
+    # available_exports), and its stem is the whole name.
+    return Path(path).stem
+
 # Verdicts for the loose scan below, keyed by path, size and mtime. The
 # browser polls the study list every two seconds and a contract runs to
 # megabytes, so each file is read once and re-read only when it changes.
@@ -116,9 +146,9 @@ def available_exports(directory) -> Dict[str, Dict[str, Path]]:
     pairs: Dict[str, Dict[str, Path]] = {}
     # -form.json is the new name for what -contract.json holds, and it is
     # read first so a study that has both lands on the newer document.
-    for suffix in ("-form.json", "-contract.json"):
+    for suffix in CONTRACT_SUFFIXES:
         for contract in sorted(directory.glob("*" + suffix)):
-            name = contract.name[: -len(suffix)]
+            name = export_name_from_contract(contract)
             if name in pairs:
                 continue
             entry: Dict[str, Path] = {"contract": contract}

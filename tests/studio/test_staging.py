@@ -269,6 +269,80 @@ def test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed(tmp_pa
     assert summary["orphan_weight_newtons"] > 0.0
 
 
+def test_the_study_keeps_its_whole_name_through_the_newer_document_set(
+        tmp_path, monkeypatch):
+    """Param's staged run refused a study whose skin was sitting right there.
+
+    "this study has no authored tessellation to cut from: no
+    contract-embedded block and no 2 Sided V-tessellation.json beside the
+    export. Upload one from the Skin component" -- said of "2 Sided
+    Vault", while "2 Sided Vault-skin.json" was on disk and its 215
+    authored cells were on his screen at that moment.
+
+    run_staging is handed the file PAIR rather than the name, so it
+    recovers the name from the contract's filename. It subtracted
+    len("-contract.json"), fourteen characters, from a name that ends in
+    the exporter's newer "-form.json", which is ten. The four-character
+    difference is the "ault", and the cut then asked for the skin of a
+    study nobody has.
+
+    Every other test in this file names its contract "-contract.json",
+    which is exactly why the rename never showed up here: the old
+    spelling is the one case where subtracting the wrong length is
+    right.
+    """
+
+    g, staging = studio()
+    bundle = studio_module("bundle")
+    contract_path = tmp_path / "2 Sided Vault-form.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+
+    seen = {}
+    real = bundle.build_tessellation_for
+
+    def capture(export_name, *args, **kwargs):
+        seen["name"] = export_name
+        return real(export_name, *args, **kwargs)
+
+    monkeypatch.setattr(bundle, "build_tessellation_for", capture)
+    staging.run_staging(
+        {"contract": contract_path},
+        material="concrete", pattern="bonded-courses", size=0.9,
+        out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+
+    assert seen["name"] == "2 Sided Vault", (
+        "the cut was asked about a study called {!r}".format(seen.get("name")))
+    # And the name is only useful if it finds the file: this is the exact
+    # lookup that failed, one call further on. His skin sits beside the
+    # form, named for the whole study, which is why the truncated name
+    # could never have found it.
+    (tmp_path / "2 Sided Vault-skin.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(bundle, "UPLOAD_DIR", tmp_path)
+    assert bundle.tessellation_sidecar(seen["name"]).name \
+        == "2 Sided Vault-skin.json"
+
+
+def test_the_older_contract_spelling_still_names_its_study(tmp_path):
+    """The rename must not cost him the studies he already has.
+
+    Both spellings resolve side by side for exactly as long as old
+    exports exist in his folder, so the fix for "-form.json" is only a
+    fix if "-contract.json" still comes back whole.
+    """
+
+    g, _staging = studio()
+    assert g.export_name_from_contract(
+        tmp_path / "2 Sided Vault-contract.json") == "2 Sided Vault"
+    assert g.export_name_from_contract(
+        tmp_path / "2 Sided Vault-form.json") == "2 Sided Vault"
+    # A file dropped in under its own name is a study too, and keeps it.
+    assert g.export_name_from_contract(
+        tmp_path / "2 Sided Vault.json") == "2 Sided Vault"
+
+
 def test_a_cut_with_no_orphans_reports_a_zero_shortfall(tmp_path):
     """The weights are always shipped, so zero is a stated zero.
 

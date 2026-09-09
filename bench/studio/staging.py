@@ -363,11 +363,16 @@ def run_staging(
     # the meshes the bundle does or a study can be drawn but never
     # staged.
     render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
-    # The export name (for the tessellation sidecar path), recovered from
-    # the contract filename the same way geometry.available_exports names
-    # it: run_staging is only ever handed the file pair, not the name.
-    contract_name = Path(export_pair["contract"]).name
-    export_name = contract_name[: -len("-contract.json")]
+    # The export name (for the tessellation sidecar path), recovered by
+    # the SAME function available_exports names studies with:
+    # run_staging is only ever handed the file pair, not the name.
+    #
+    # It used to subtract len("-contract.json") here, which was right
+    # while that was the only spelling and wrong the day the exporter
+    # started writing "-form.json". Fourteen characters came off a suffix
+    # that is ten, so every study of the new three-document set lost the
+    # last four letters of its name on the way into the cut.
+    export_name = geometry.export_name_from_contract(export_pair["contract"])
     # bundle.build_tessellation_for is the one cut, built once: staging and
     # the drawn pieces must never diverge onto two different cuts, or a
     # stage plan could name cells the pieces do not have.
