@@ -407,13 +407,18 @@ export function readMechanism(document) {
     notes.push("this reader does not use the key \"" + key + "\"");
   }
 
-  // Param's ruling, 2026-09-09, relayed by the writer verbatim: "the
-  // routing for the spool via framing is its center line. the defualt
-  // cable thickness is 0.01". Read as a DIAMETER, the ordinary reading of
-  // a thickness. His stated defaults stand in when a document predates
-  // the declaration, which is every file exported so far.
+  // Param, 2026-09-09, revising his own ruling of that morning once he
+  // could see the cables wrap: "we should treat the wire frames not as
+  // centerlines but as the top of the circle". So the frame sits on the
+  // cable's OUTER surface -- the point of its section furthest from the
+  // drum axis -- and the centreline is one radius INWARD. That is the
+  // opposite sign to "contact", which put the frame on the drum beneath
+  // the cable, and it is the default now that he has looked at it.
+  //
+  // The cable thickness is his stated default of 0.01, read as a
+  // DIAMETER, which is the ordinary reading of a thickness.
   const meaning = typeof document.routingFrameMeaning === "string"
-    ? document.routingFrameMeaning.toLowerCase() : "centreline";
+    ? document.routingFrameMeaning.toLowerCase() : "top";
   return { ok: true, scale, parts, instances, wires, notes,
     routingFrameMeaning: meaning,
     cableRadius: (Number.isFinite(+document.cableThickness)
@@ -509,14 +514,19 @@ function turn(v, u, angle) {
 // The wire's centreline as a list of [x, y, z] points in the body's own
 // space. `reelAxes` maps a reel index to {origin, direction}.
 //
-// `surfaceOffset` pushes each drum-owned frame out radially by that much.
-// It is ZERO under Param's ruling of 2026-09-09 -- "the routing for the
-// spool via framing is its center line" -- so the frames are swept
-// exactly as they arrive. The machinery stays live because the document
-// now DECLARES which it means, and a file saying "contact" gets the
-// offset back without a code change. The measured evidence that argued
-// for contact (spool frames at 0.049988 against a 0.0500 barrel) is
-// recorded in the contract and loses to his ruling.
+// `surfaceOffset` moves each drum-owned frame radially by that much:
+// POSITIVE is away from the drum axis, NEGATIVE towards it. The three
+// readings a document can declare are
+//
+//   "top"        the frame is the top of the cable's section, so the
+//                centreline is one radius IN   (negative) -- his ruling
+//   "centreline" the frame is the centreline, so nothing moves (zero)
+//   "contact"    the frame is where the cable touches the drum, so the
+//                centreline is one radius OUT  (positive)
+//
+// The measured evidence (spool frames at 0.049988 against a 0.0500
+// barrel) is recorded in the contract; his eye on the wrapped cable
+// settles it over the measurement.
 export function wireCentreline(route, reelAxes, surfaceOffset) {
   const n = route.length;
   if (!n) return [];

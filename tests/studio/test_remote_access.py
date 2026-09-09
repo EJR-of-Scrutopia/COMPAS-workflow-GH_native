@@ -1243,20 +1243,42 @@ def test_the_machine_draws_the_way_he_asked():
     # which would look like the load having failed all over again.
     assert "        if (mesh.userData.machineTint) worn.color.set(mesh.userData.machineTint);" in js
 
-    # THE ROUTING FRAMES ARE THE CENTRELINE (his ruling, 2026-09-09), so
-    # nothing is pushed out. The document declares which it means, and a
-    # file saying "contact" gets the offset back with no code change.
-    assert '  const routingOffset = model.routingFrameMeaning === "contact"\n' \
-        "    ? model.cableRadius : 0;" in build
+    # THE ROUTING FRAMES ARE THE TOP OF THE CABLE'S SECTION (his ruling
+    # of 2026-09-09, after watching the cables wrap), so the centreline
+    # drops one DRAWN radius towards the drum axis. Negative, the opposite
+    # sign to the contact reading. The document can still declare either
+    # of the other two and get them with no code change.
+    assert '  const routingOffset = model.routingFrameMeaning === "centreline" ? 0\n' \
+        '    : model.routingFrameMeaning === "contact" ? state.wireRadius\n' \
+        "    : -state.wireRadius;" in build
     assert "      wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);" in build
     assert "wireCentreline(wire.route, reelAxes, state.wireRadius)" not in build, (
         "the old one-wire-radius offset is gone")
     # And the reel radius the writer now measures per reel wins.
     assert "    part.contactRadius = part.windingRadius\n" in build
 
+    # THE CABLES ARE BLACK, and black by WEARING THE FORMWORK'S OWN
+    # METAL rather than a colour picked to imitate it: the principal
+    # lines' polished dark steel is what reads black on his formwork.
+    # Param: "the cables should be black to match the cables used on
+    # formwork".
+    assert "const CABLE_BLACK = 0x24262a;" in js
+    assert "  wireMaterial.color.set(CABLE_BLACK);" in build
+    assert "  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {" in build, (
+        "the same key the principal bars wear, so a re-skin of one is a "
+        "re-skin of both")
+    assert "  libraryPins.add(PRINCIPAL_SKIN);" in build, (
+        "and it cannot be evicted from under the wires")
+    # ONE material for every wire, with the library's maps copied ONTO it:
+    # applyMachineAct fades the whole net through this single opacity, so
+    # a per-mesh re-skin would break the strike.
+    assert "    wireMaterial.map = set.material.map;" in build
+    assert "    wireMaterial.needsUpdate = true;" in build
+
     # THE WIRES ARE THE CABLES: the same steel the net clones, transparent
     # from birth, and never vertexColors.
     assert "  const wireMaterial = materials.steel.clone();\n" \
+        "  wireMaterial.color.set(CABLE_BLACK);\n" \
         "  wireMaterial.transparent = true;" in build
     assert "vertexColors = true" not in build, (
         "the net needs that for setColorAt; a plain Mesh with no colour "

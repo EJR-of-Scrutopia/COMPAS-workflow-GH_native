@@ -2225,6 +2225,12 @@ function syncNetShadow(object) {
 // arrives, a plain darker silver until then.
 const PRINCIPAL_SKIN = "metal/steel-polished-dark";
 
+// What a cable is: near-black, not the net's bright silver. Param, on
+// seeing the machine's wires against his formwork: "the cables should be
+// black to match the cables used on formwork". It multiplies the polished
+// dark steel above, so the metal's own grain still reads through.
+const CABLE_BLACK = 0x24262a;
+
 function principalEdges() {
   const members = state.columnMembers || [];
   const bundle = state.bundle;
@@ -9264,14 +9270,38 @@ async function buildMachine() {
   // per wire from the corrected centreline and stamped with its instance;
   // the free span from the net vertex to the first frame is redrawn every
   // frame.
+  // "the cables should be black to match the cables used on formwork."
+  // The formwork's cables read black because the principal lines wear the
+  // library's polished dark steel, so the machine's wires are given THE
+  // SAME KEY rather than a colour chosen to imitate it -- match by
+  // sharing, so a re-skin of one is a re-skin of both.
+  //
+  // One material for every wire, not one per mesh: applyMachineAct fades
+  // the whole net out on the strike through this single opacity, and a
+  // per-mesh re-skin would break that. So the library's maps are copied
+  // ONTO it when they land instead of replacing it.
   const wireMaterial = materials.steel.clone();
+  wireMaterial.color.set(CABLE_BLACK);
   wireMaterial.transparent = true;
-  // His ruling: the routing frames ARE the cable's centreline, so nothing
-  // is pushed out. A document declaring "contact" instead gets the old
-  // one-radius offset back, from ITS OWN stated cable thickness rather
-  // than from the studio's drawn wire size.
-  const routingOffset = model.routingFrameMeaning === "contact"
-    ? model.cableRadius : 0;
+  libraryPins.add(PRINCIPAL_SKIN);
+  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {
+    if (!set || mine !== machineBuild) return;
+    wireMaterial.map = set.material.map;
+    wireMaterial.normalMap = set.material.normalMap;
+    wireMaterial.roughnessMap = set.material.roughnessMap;
+    wireMaterial.roughness = set.material.roughness;
+    wireMaterial.metalness = set.material.metalness;
+    wireMaterial.needsUpdate = true;
+    renderView();
+  });
+  // "we should treat the wire frames not as centerlines but as the top of
+  // the circle": the centreline drops one radius towards the drum axis.
+  // Measured with the radius actually DRAWN, not the document's stated
+  // thickness, because what has to land on the frame is the top of the
+  // tube on screen.
+  const routingOffset = model.routingFrameMeaning === "centreline" ? 0
+    : model.routingFrameMeaning === "contact" ? state.wireRadius
+    : -state.wireRadius;
   const wires = [];
   for (const wire of model.wires) {
     // The instance NAMES the wires it carries; the path is the fallback

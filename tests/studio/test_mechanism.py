@@ -263,10 +263,11 @@ CHECK = textwrap.dedent("""
 
     // HIS TWO DECLARED FACTS, and their defaults. This document carries
     // neither key, as every file exported before 2026-09-09 does, so it
-    // must read as his stated ruling: the frames ARE the centreline and
-    // the cable is 10 mm thick, read as a diameter.
-    expect(read.routingFrameMeaning === "centreline",
-      "a silent document means centreline, his ruling: " + read.routingFrameMeaning);
+    // must read as his ruling once he had seen the cables wrap: the
+    // frames are the TOP of the cable's section, and the cable is 10 mm
+    // thick, read as a diameter.
+    expect(read.routingFrameMeaning === "top",
+      "a silent document means top-of-circle, his ruling: " + read.routingFrameMeaning);
     near(read.cableRadius, 0.005, 1e-12, "his 0.01 default, halved to a radius");
     const declared = readMechanism(Object.assign({}, document, {
       routingFrameMeaning: "Contact", cableThickness: 0.02 }));
