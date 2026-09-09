@@ -256,7 +256,53 @@ def merge(entries, say):
     manifest["props"] = sorted(
         by_key.values(), key=lambda p: (p.get("group", ""), p["key"]))
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_notice(manifest)
     say("  props.json now holds {} props".format(len(manifest["props"])))
+
+
+def write_notice(manifest) -> None:
+    """The credits, FROM THE MANIFEST, the same way fetch.mjs writes them.
+
+    Deliberately duplicated across the two tools rather than shared: they
+    are a Python script and a Node one, and this repo's own convention is
+    that a duplicated piece is pinned by its own test.
+
+    The header must describe what is ACTUALLY in the folder. It used to
+    be a hard-coded "Every model in this folder is from Poly Haven and is
+    CC0 1.0", which a five-grass run restated over twenty Quixel
+    Megascans assets under the Fab Standard License. The entries were
+    right; the sentence above them was false, which is the worse half to
+    get wrong.
+    """
+
+    props = manifest.get("props", [])
+    libraries = {}
+    for prop in props:
+        source = prop.get("source") or ""
+        if "polyhaven" in source:
+            where = "Poly Haven"
+        elif "ambientcg" in source.lower():
+            where = "ambientCG"
+        elif "fab.com" in source:
+            where = "Quixel Megascans, via Fab"
+        else:
+            where = "other"
+        line = "{} -- {}".format(where, prop.get("licence") or "licence unstated")
+        libraries[line] = libraries.get(line, 0) + 1
+
+    lines = ["Models in this folder come from more than one library. Each is",
+             "credited below; the licences they arrived under are:"]
+    for line in sorted(libraries):
+        lines.append("  {}  ({})".format(line, libraries[line]))
+    lines += ["",
+              "Poly Haven and ambientCG ask for no credit and this file is offered",
+              "anyway. The Fab Standard License needs a free Epic account and",
+              "permits use with any compatible tool, which the glTF export is.",
+              ""]
+    for prop in props:
+        lines.append("{}\n  {}\n  {}".format(
+            prop["key"], prop.get("label", prop["key"]), prop.get("source", "")))
+    (OUT / "NOTICE.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main(argv=None) -> int:

@@ -160,3 +160,45 @@ def test_the_fetch_script_pins_one_sharp():
     assert not manifest["dependencies"]["sharp"].startswith("^"), (
         "a range would let npm resolve two versions again"
     )
+
+
+def test_the_notice_names_every_library_actually_in_the_folder():
+    """A licence claim nobody checks is exactly the kind that gets
+    believed, so this one is checked.
+
+    NOTICE.txt used to open with the hard-coded sentence "Every model in
+    this folder is from Poly Haven and is CC0 1.0". fetch.mjs rewrites
+    the file on any run, so fetching five grasses restated that over a
+    library holding twenty Quixel Megascans assets under the Fab
+    Standard License. The per-model ENTRIES were right the whole time --
+    they come from the merged manifest -- but the sentence above them
+    was false, which is the worse half to get wrong.
+    """
+
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "bench" / "studio" / "props-hd"
+    manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+    notice = (root / "NOTICE.txt").read_text(encoding="utf-8")
+
+    wanted = set()
+    for prop in manifest["props"]:
+        source = prop.get("source") or ""
+        if "polyhaven" in source:
+            wanted.add("Poly Haven")
+        elif "ambientcg" in source.lower():
+            wanted.add("ambientCG")
+        elif "fab.com" in source:
+            wanted.add("Quixel Megascans, via Fab")
+    assert wanted, "the manifest names no sources at all"
+    for library in wanted:
+        assert library in notice, (
+            "{} is in the folder and not in the notice".format(library))
+
+    # And the false claim cannot come back.
+    assert "Every model in this folder is from Poly Haven" not in notice
+
+    # Every model is credited by name, not merely counted.
+    for prop in manifest["props"]:
+        assert prop["key"] in notice, prop["key"]

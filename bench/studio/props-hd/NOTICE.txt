@@ -1,25 +1,51 @@
-Models in this folder come from two libraries:
-  - Poly Haven, CC0 1.0 (no credit required; offered anyway)
-  - Quixel Megascans by Epic Games, via Fab, under the Fab Standard
-    License (free Epic account; usable with any compatible tool)
+Models in this folder come from more than one library. Each is
+credited below; the licences they arrived under are:
+  Poly Haven -- CC0 1.0  (94)
+  Quixel Megascans, via Fab -- Fab Standard License  (20)
+  ambientCG -- CC0 1.0  (10)
 
+Poly Haven and ambientCG ask for no credit and this file is offered
+anyway. The Fab Standard License needs a free Epic account and
+permits use with any compatible tool, which the glTF export is.
+
+decal-cracks
+  Cracked ground
+  https://ambientcg.com/view?id=AsphaltDamage001
+decal-drain
+  Drain cover
+  https://ambientcg.com/view?id=ManholeCover001
+decal-gum
+  Ground litter
+  https://ambientcg.com/view?id=ChewingGum001
+decal-inspection
+  Inspection cover
+  https://ambientcg.com/view?id=ManholeCover008
+decal-line-white
+  Painted line
+  https://ambientcg.com/view?id=RoadLines019A
+decal-line-worn
+  Worn line
+  https://ambientcg.com/view?id=RoadLines022A
+decal-manhole
+  Manhole cover
+  https://ambientcg.com/view?id=ManholeCover011
+decal-manhole-square
+  Square cover
+  https://ambientcg.com/view?id=ManholeCover004
+decal-paving-edge
+  Paving edge
+  https://ambientcg.com/view?id=PavingEdge001
+decal-paving-edge-2
+  Paving edge 2
+  https://ambientcg.com/view?id=PavingEdge002
 anthurium_botany_01
   Anthurium
   https://polyhaven.com/a/anthurium_botany_01
 bark_debris_01
   Bark debris
   https://polyhaven.com/a/bark_debris_01
-beech_european_beech_field_01
-  European Beech Field 01
-  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
 beech_european_beech_forest_01
   European Beech Forest 01
-  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
-beech_european_beech_forest_02
-  European Beech Forest 02
-  https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
-beech_european_beech_forest_03
-  European Beech Forest 03
   https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
 beech_european_beech_forest_04
   European Beech Forest 04
@@ -96,18 +122,30 @@ fir_sapling
 fir_sapling_medium
   Fir sapling
   https://polyhaven.com/a/fir_sapling_medium
+flower_empodium
+  Empodium
+  https://polyhaven.com/a/flower_empodium
 flower_gazania
   Gazania
   https://polyhaven.com/a/flower_gazania
+flower_heliophila
+  Heliophila
+  https://polyhaven.com/a/flower_heliophila
 flower_ursinia
   Ursinia
   https://polyhaven.com/a/flower_ursinia
+grass_bermuda_01
+  Bermuda grass
+  https://polyhaven.com/a/grass_bermuda_01
 grass_medium_01
   Grass clumps
   https://polyhaven.com/a/grass_medium_01
 grass_medium_02
   Grass tufts
   https://polyhaven.com/a/grass_medium_02
+moss_01
+  Moss
+  https://polyhaven.com/a/moss_01
 ms_tree_high_poly
   Broadleaf study tree
   https://www.fab.com/sellers/Quixel
@@ -171,6 +209,9 @@ shrub_03
 shrub_04
   Undergrowth
   https://polyhaven.com/a/shrub_04
+shrub_sorrel_01
+  Sorrel
+  https://polyhaven.com/a/shrub_sorrel_01
 single_root
   Single root
   https://polyhaven.com/a/single_root
@@ -192,6 +233,9 @@ wild_rooibos_bush
 Barrel_02
   Barrel
   https://polyhaven.com/a/Barrel_02
+WetFloorSign_01
+  Wet floor sign
+  https://polyhaven.com/a/WetFloorSign_01
 boulder_01
   Small boulder
   https://polyhaven.com/a/boulder_01
@@ -312,9 +356,6 @@ sand_rocks_small_01
 stone_01
   Stone
   https://polyhaven.com/a/stone_01
-WetFloorSign_01
-  Wet floor sign
-  https://polyhaven.com/a/WetFloorSign_01
 concrete_road_barrier
   Road barrier
   https://polyhaven.com/a/concrete_road_barrier
