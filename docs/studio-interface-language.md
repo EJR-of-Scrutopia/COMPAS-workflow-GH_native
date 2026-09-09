@@ -77,21 +77,27 @@ exist. Eighteen sliders had none when this was written.
 is there: `panel.js` derives the unit factor from `shown / raw`, so no
 table of sliders has to be kept in step with any labels.
 
-**Declare `data-unit` when the dial can rest at zero AND its reading is
-not its raw value.** Two conditions, not one, and the second is the part
-that is easy to get wrong.
+**The rule turns on where the dial RESTS, not on its `min`.**
 
-At zero the derivation gives up -- 0 mm and 0 m read the same -- so a
-dial whose reading is millimetres of a value held in metres declares
-`data-unit="1000"`. But where the reading IS the raw value the
-derivation returns 1, which is already right, and declaring a factor
-there is actively wrong: `data-unit="100"` on a dial reading 100 makes a
-typed 50 set the slider to 0.5, which its own `step` then rounds away.
-That was a real bug in `sky-brightness`, written and caught on the same
-day by the test that enforces this section.
+- **Resting at zero: state the factor.** At zero the derivation gives up
+  -- 0 mm and 0 m read the same -- and the markup cannot be inspected to
+  find out either, because the reading and the raw value are both 0.
+  `outline-width` rests at zero and is millimetres of a metre;
+  `contrast` rests at zero and is a percentage of a multiplier. Neither
+  is inferable, so both say so.
+- **Resting away from zero, with the reading equal to the raw value:
+  state nothing.** The derived factor is already 1, and declaring one is
+  actively wrong.
+- **Resting away from zero, with the reading unequal:** the derivation
+  works. A declaration is optional and usually noise.
 
-A dial whose `min` is not zero must NOT declare one at all, or a later
-change to its handler silently stops being honoured.
+`data-unit="100"` on a dial already reading 100 makes a typed 50 set the
+slider to 0.5, which its own `step` then rounds away. That was a real bug
+in `sky-brightness`, written and caught on the same day by the test that
+enforces this section.
+
+Note that "can rest at zero" is about the RANGE, not the floor:
+`contrast` runs from -0.5 to 0.5 straight through it.
 
 **A paired range** -- a low and a high sharing one reading, as the size
 ratio does -- is one dial with two grips. One reading between them is
@@ -208,33 +214,52 @@ state, not an instruction, once there is state to report: "18 placed,
 
 ## 10. The sweep, 2026-09-09
 
-Measured across `index.html`, 48 labels and 37 sliders.
+Measured across `index.html` before: 48 labels, 37 sliders, and THREE
+slider shapes coexisting -- 13 in the old `name slider <span>value</span>
+unit` form, 11 in the four-part form, and 9 with no readout markup at all.
+Eighteen sliders carried no reading, so they could be neither read nor
+typed into.
 
-**Three slider shapes coexisted:** 13 in the old `name slider
-<span>value</span> unit` form, 11 in the new four-part form, and 9 with
-no readout markup at all.
+After: **31 of 37 sliders are in the language**, and the other six are
+accounted for rather than outstanding.
 
-**Eighteen sliders carried no reading**, so they could be neither read
-nor typed into:
+    Skies      Projection, Brightness, Scale, Height, Rotation
+    Skin       Shine, Relief, Occlusion, Variation, Outline,
+               Piece size, Thickness
+    Analysis   Deflection
+    Animation  Timeline speed, Spin rate
+    Camera     Field of view, Brightness, Contrast
+    Scene      Background, Size, Scale, Relief
+    Scatter    Brush, Spacing, Size, Clumping, Clump size, Keep clear
+    Lights     Output, Warmth, Glow, Size, Length
 
-    hdri-scale, hdri-height, hdri-rotation, scatter-size-min,
-    scatter-size-max, glow-strength, outline-width, size-slider,
-    thickness-input, exaggeration, timeline-scrubber, orbit-speed,
-    brightness, contrast, day-cycle-seconds, sun-azimuth, sun-elevation,
-    background-tone
+Three are HIDDEN inputs -- `sun-azimuth`, `sun-elevation` and
+`day-cycle-seconds` -- which are the model behind the sun dial widget
+rather than dials anyone reads. Three are exempt for stated reasons:
+`timeline-scrubber` is a transport whose position IS the time, and
+`scatter-size-min` and `-max` are one dial with two grips sharing the
+reading "0.80 to 1.30".
 
-Some of those are deliberate -- `timeline-scrubber` is a transport, not a
-dial, and reads its position elsewhere. The rest are the backlog.
+Two tests are the ratchet. `test_the_sweep_is_finished_and_stays_finished`
+fails on any new visible slider that is not in the language, and
+`test_no_slider_keeps_the_old_reading_shape` fails on any return to the
+old `<span id="..-value">` form. A fourth dialect cannot start.
 
-**Eight sliders can rest at zero and do not declare `data-unit`**, so
-typing into them lands the raw number:
+**What the sweep found, beyond shape.** Four defects surfaced only
+because the standard was written down, and two of them were live:
 
-    hdri-rotation, sky-brightness, scatter-clump, scatter-clearance,
-    timeline-scrubber, orbit-speed, sun-azimuth, background-tone
+- `glow-strength` had its reading at `id="glow-value"`, and
+  `syncLightControls` writes to `<slider-id>-value`. Nothing pointed at
+  either id. The Glow number had shown a static 60 since the day it was
+  written and had never once moved.
+- `sky-brightness` was given `data-unit="100"` while its reading IS its
+  raw value, so typing 50 set the slider to 0.5, which its own step
+  rounded away. Written and caught the same day.
+- `hdri-rotation` and `lamp-lumens` declared redundant factors of 1.
 
-Where a dial is a plain count or a percentage of itself the factor is 1
-and nothing is wrong; where it is not, typing is broken today.
+Three readings were also renamed to keep the pairing rule true rather
+than carve an exception into it: `outline-value`, `size-value` and
+`thickness-value` became `outline-width-value`, `size-slider-value` and
+`thickness-input-value`, with their writers and tests moved with them.
 
-The Scatter and Lights drawers are the reference implementation. Bring
-the rest to them a section at a time rather than in one sweep, because
-each one needs its handler checked against its new reading cell.
+Scatter and Lights remain the reference implementation.

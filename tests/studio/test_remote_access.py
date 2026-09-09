@@ -2446,9 +2446,19 @@ def test_every_dial_wears_the_four_part_shape():
     names = [name for name, _ in blocks]
     # Named, not counted: "at least one" is what let this test cover a
     # third of what it claimed to.
+    # NAMED, and all of them. The first cut asserted "at least one" and
+    # scanned one block of three; the second scanned only the blocks that
+    # happened to carry an id, so every dial converted in the sweep went
+    # unchecked. Scan the population, not the containers you know about.
     for expected in ("scatter-controls", "lights-controls",
-                     "shelf-sky-settings"):
+                     "shelf-sky-settings", "skin-appearance-dials",
+                     "skin-outline-dials", "skin-cut-dials",
+                     "analysis-dials", "animation-dials", "camera-dials",
+                     "scene-background-dials", "scene-ground-dials"):
         assert expected in names, expected
+    import re as _re
+    assert len(names) == len(_re.findall(r'class="[^"]*dial-block', html)), (
+        "every dial-block is named, or the scan silently skips it")
     for name, body in blocks:
         for label in re.findall(r"<label[^>]*>(.*?)</label>", body, re.S):
             if 'type="range"' not in label:
@@ -2489,10 +2499,15 @@ def test_a_dial_that_can_rest_at_zero_declares_its_unit():
         for tag in re.findall(r"<input([^>]*type=\"range\"[^>]*)>", body):
             ident = re.search(r'id="([^"]+)"', tag)
             low = re.search(r'min="([^"]+)"', tag)
+            high = re.search(r'max="([^"]+)"', tag)
             unit = re.search(r'data-unit="([^"]+)"', tag)
-            if not ident or not low:
+            if not ident or not low or not high:
                 continue
-            if float(low.group(1)) != 0:
+            # "Can rest at zero" is about the RANGE, not the floor: the
+            # derivation fails at a raw value of zero whatever min says,
+            # and contrast runs from -0.5 to 0.5 through it.
+            spans_zero = float(low.group(1)) <= 0 <= float(high.group(1))
+            if not spans_zero:
                 assert not unit, (
                     "{}: {} cannot reach zero, so its factor derives "
                     "itself; declaring one freezes it".format(
@@ -2511,6 +2526,22 @@ def test_a_dial_that_can_rest_at_zero_declares_its_unit():
             raw = re.search(r'value="([^"]+)"', tag)
             if not shown or not raw:
                 continue
+            # THE RESTING VALUE decides, not the comparison. A dial that
+            # rests AT zero shows 0 beside a raw 0, which says nothing
+            # about its factor, and the derivation gives up there anyway:
+            # so it states its factor outright. outline-width rests at
+            # zero and is millimetres of a metre; contrast rests at zero
+            # and is a percentage of a multiplier. Neither could be
+            # inferred from the markup at rest.
+            if abs(float(raw.group(1))) <= 1e-9:
+                assert unit, (
+                    "{}: {} rests at zero, where the factor cannot be "
+                    "derived, so it must state one".format(
+                        name, ident.group(1)))
+                continue
+            # Away from zero the markup DOES say: a reading equal to its
+            # raw value has a factor of 1 already, and declaring one there
+            # is what broke sky-brightness.
             if abs(float(shown.group(1)) - float(raw.group(1))) <= 1e-9:
                 assert not unit, (
                     "{}: {} reads its own raw value, so the derived factor "
@@ -2534,6 +2565,24 @@ def test_a_restored_scene_moves_the_readings_with_the_sliders():
     assert "paintScrub(control(id));" in js
 
 
+def test_every_reading_has_something_that_writes_it():
+    """A reading cell with no writer is the Glow bug: a number that looks
+    live, has never moved, and fails silently for ever. Each of these had
+    no writer because until the sweep it had no cell."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    for reading in ("exaggeration-value", "orbit-speed-value",
+                    "background-tone-value", "hdri-scale-value",
+                    "hdri-height-value", "hdri-rotation-value",
+                    "brightness-value", "contrast-value"):
+        assert reading in js, (
+            "{} is a reading nothing writes".format(reading))
+    # And the grade follows a restored scene, or a dial states a value
+    # the scene does not have.
+    assert js.count("paintGradeReadings();") >= 3, (
+        "written on both dials and on the scene restore")
+
+
 def test_the_interface_language_is_written_down():
     """Param: "spend a while writing a md or specific document that
     describes a language style for how all types of objects and
@@ -2552,3 +2601,71 @@ def test_the_interface_language_is_written_down():
                     "## 9. What must never regress", "## 10. The sweep"):
         assert heading in text, heading
     assert "\u2014" not in text, "no em dashes, in the interface or the source"
+
+
+def test_the_sweep_is_finished_and_stays_finished():
+    """Param: "then do a sweep to check all the ui as it is to make sure
+    that new standard is being used."
+
+    It is. Every visible slider now names itself, shows a reading and
+    states a unit, except three that are exempt for stated reasons. This
+    test is the ratchet: a new slider added in the old shape fails here
+    rather than quietly becoming the fourth dialect.
+    """
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    # The three exemptions, each for a reason, not for convenience.
+    #
+    # timeline-scrubber is a TRANSPORT, not a dial: its position is the
+    # time and it is read off the animation's own readout.
+    # scatter-size-min and -max are one dial with two grips, sharing the
+    # single reading "0.80 to 1.30".
+    exempt = {"timeline-scrubber", "scatter-size-min", "scatter-size-max"}
+
+    stragglers = []
+    for match in re.finditer(r"<input([^>]*type=\"range\"[^>]*)>", html):
+        tag = match.group(1)
+        ident = re.search(r'id="([^"]+)"', tag)
+        if not ident:
+            stragglers.append("a slider with no id at all")
+            continue
+        ident = ident.group(1)
+        if ident in exempt:
+            continue
+        # A hidden input is the model behind a custom control (the sun
+        # dial drives three of them), not a dial anyone reads.
+        if 'class="hidden"' in tag:
+            continue
+        label = re.search(r"<label[^>]*>(?:(?!</label>).)*id=\"" + re.escape(ident)
+                          + r"\"(?:(?!</label>).)*</label>", html, re.S)
+        body = label.group(0) if label else ""
+        if '<b id="{}-value"'.format(ident) not in body:
+            stragglers.append(ident)
+
+    assert not stragglers, (
+        "these sliders are not in the interface language: "
+        + ", ".join(stragglers))
+
+
+def test_no_slider_keeps_the_old_reading_shape():
+    """The old form put the reading in a <span id="..-value"> beside bare
+    text. Thirteen sliders used it, and mixing three dialects is what the
+    document was written to end."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    old = re.findall(r'<span id="([a-z0-9-]+)-value"', html)
+    # sun-time and sun-angles are the sun dial's compound readout, not a
+    # slider reading, and camera-mm and the piece counts sit INSIDE a
+    # unit cell as the equivalent focal length and the cut's own tally.
+    allowed = {"sun-time", "sun-angles", "camera-mm", "size-units",
+               "piece-count", "course-count"}
+    left = [name for name in old if name not in allowed]
+    assert not left, (
+        "still in the old reading shape: " + ", ".join(left))

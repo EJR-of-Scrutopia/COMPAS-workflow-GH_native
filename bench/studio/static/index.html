@@ -75,7 +75,7 @@
         <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2">
         <b id="hdri-height-value">2.0</b><em>m</em></label>
       <label title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
-        <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0">
+        <input id="hdri-rotation" type="range" data-unit="1" min="0" max="360" step="1" value="0">
         <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
@@ -276,10 +276,20 @@
       <option value="none" selected>None (material)</option>
     </select>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
-    <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
-    <label>Relief <input id="material-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
-    <label>Occlusion <input id="material-occlusion" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
-    <label>Variation <input id="material-variation" type="range" data-unit="100" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
+    <div class="dial-block" id="skin-appearance-dials">
+    <label title="How glossy the skin reads, from matt to polished"><span>Shine</span>
+      <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5">
+      <b id="material-finish-value">50</b><em>%</em></label>
+    <label title="How deep the skin&#39;s bump reads. QS&#39;s own convention is that 1 means 10 mm."><span>Relief</span>
+      <input id="material-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1">
+      <b id="material-relief-value">10</b><em>mm</em></label>
+    <label title="How strongly the material&#39;s own shadowing reads"><span>Occlusion</span>
+      <input id="material-occlusion" type="range" data-unit="100" min="0" max="2" step="0.05" value="1">
+      <b id="material-occlusion-value">100</b><em>%</em></label>
+    <label title="How much each voussoir&#39;s patch of the sheet differs from its neighbour&#39;s"><span>Variation</span>
+      <input id="material-variation" type="range" data-unit="100" min="0" max="2" step="0.05" value="1">
+      <b id="material-variation-value">100</b><em>%</em></label>
+    </div>
     <!-- Param: "a outline slider... it will just add a dark line around
          the vault voussoirs as an outline. the slider goes from a 0 line
          to thicker line". It rests at zero, which is why it declares its
@@ -290,17 +300,25 @@
          It sat under ENVIRONMENT until Param moved it here, and he was
          right: it draws on the voussoirs, so it belongs with the other
          controls that change how they look, not with the sky. -->
-    <label id="outline-row">Outline <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000"> <span id="outline-value">0</span> mm</label>
+    <div class="dial-block" id="skin-outline-dials">
+    <label id="outline-row" title="A dark line inked around every voussoir. Zero is no line at all."><span>Outline</span>
+      <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000">
+      <b id="outline-width-value">0</b><em>mm</em></label>
+    </div>
     <label title="Run the picture's grain up the slope of each voussoir, the way boards would be laid along each leg"><input id="material-grain" type="checkbox"> Match grain</label>
     <button id="uv-randomise" title="Re-deal every voussoir's window of the sheet so no two wear the same patch">Randomise texture</button>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note" class="hidden"></div>
     <div class="named"><span>Pattern</span><select id="pattern-select"></select></div>
     <div id="pattern-note"></div>
-    <label>Piece size <input id="size-slider" type="range" min="0.1" max="3" step="0.05" value="0.9">
-      <span id="size-value">900</span><span id="size-units"> mm target</span>, <span id="piece-count">0</span> pieces in
-      <span id="course-count">0</span> courses</label>
-    <label>Thickness <input id="thickness-input" type="range" min="0.02" max="0.5" step="0.01" value="0.2"> <span id="thickness-value">200</span> mm</label>
+    <div class="dial-block" id="skin-cut-dials">
+    <label title="The target size of one voussoir. An authored cut ignores it."><span>Piece size</span>
+      <input id="size-slider" type="range" min="0.1" max="3" step="0.05" value="0.9">
+      <b id="size-slider-value">900</b><em><span id="size-units">mm target</span>, <span id="piece-count">0</span> pieces in <span id="course-count">0</span> courses</em></label>
+    <label title="The shell&#39;s thickness, which the analysis weighs it by"><span>Thickness</span>
+      <input id="thickness-input" type="range" min="0.02" max="0.5" step="0.01" value="0.2">
+      <b id="thickness-input-value">200</b><em>mm</em></label>
+    </div>
     <div id="weight-note" title="Areal load from the skin's density and the thickness: the q a true analysis runs on"></div>
   </details>
   <details id="analysis-section">
@@ -317,7 +335,11 @@
     <!-- Parked here hidden; buildLayerToggles moves it under the
          Deflection button when that layer is active, so the slider lives
          with the thing it exaggerates. -->
-    <label id="exaggeration-row" class="hidden">Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
+    <div class="dial-block" id="analysis-dials">
+    <label id="exaggeration-row" class="hidden" title="How far the deflection is exaggerated, so a millimetre reads on screen"><span>Deflection</span>
+      <input id="exaggeration" type="range" min="1" max="500" step="1" value="100">
+      <b id="exaggeration-value">100</b><em>x</em></label>
+    </div>
     <button id="data-button">Data</button>
     <!-- The old floating overlay card, reading in place under the Data
          button now (Param: "text that just reads below the data button"). -->
@@ -330,8 +352,14 @@
     <button id="play-button">Play</button>
     <button id="restart-button">Restart</button>
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
-    <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
-    <label>Spin rate <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
+    <div class="dial-block" id="animation-dials">
+    <label title="How fast the build plays back"><span>Timeline speed</span>
+      <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1">
+      <b id="timeline-speed-value">1.00</b><em>x</em></label>
+    <label title="How fast the turntable orbits while the animation plays"><span>Spin rate</span>
+      <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3">
+      <b id="orbit-speed-value">0.3</b><em>x</em></label>
+    </div>
     <!-- The machine rides with the formwork (Param's ruling), and this is
          the way to get it out of the way for a shell render. Hidden until
          a study actually carries a mechanism document, so it is not a
@@ -346,7 +374,10 @@
   </details>
   <details id="camera-section">
     <summary>Camera</summary>
-    <label>Field of view <input id="camera-fov" type="range" min="15" max="100" step="1" value="45"> <span id="camera-fov-value">45</span>&deg; &#8776; <span id="camera-mm">29</span> mm</label>
+    <div class="dial-block" id="camera-dials">
+    <label title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
+      <input id="camera-fov" type="range" min="15" max="100" step="1" value="45">
+      <b id="camera-fov-value">45</b><em>&deg; &#8776; <span id="camera-mm">29</span> mm</em></label>
     <!-- The frame: preset screen ratios, letterboxed live and honoured by
          the recording. Fill is the whole viewport, as it always was. -->
     <select id="camera-aspect" class="hidden" title="Frame ratio">
@@ -358,8 +389,13 @@
       <option value="0.5625">9:16</option>
     </select>
     <div id="camera-aspect-segments" class="segmented"></div>
-    <label>Brightness <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1"></label>
-    <label>Contrast <input id="contrast" type="range" min="-0.5" max="0.5" step="0.02" value="0"></label>
+    <label title="The grade on the lens, not the light in the scene"><span>Brightness</span>
+      <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1">
+      <b id="brightness-value">100</b><em>%</em></label>
+    <label title="Lifts the blacks or crushes them, after the tone mapper"><span>Contrast</span>
+      <input id="contrast" type="range" data-unit="100" min="-0.5" max="0.5" step="0.02" value="0">
+      <b id="contrast-value">0</b><em>%</em></label>
+    </div>
   </details>
   <details id="scene-section">
     <summary>Scene</summary>
@@ -411,7 +447,11 @@
       <!-- Projection, scale, height and rotation moved to the shelf's
            Skies drawer: they belong beside the pictures they tune. -->
     </div>
-    <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
+    <div class="dial-block" id="scene-background-dials">
+    <label id="background-row" title="How light the studio backdrop sits behind the vault"><span>Background</span>
+      <input id="background-tone" type="range" min="0" max="100" step="1" value="85">
+      <b id="background-tone-value">85</b><em>%</em></label>
+    </div>
     <!-- Outline moved to the Skin section, where the voussoirs it draws
          around actually live. -->
 
@@ -436,9 +476,17 @@
     <label class="hidden">Surface <select id="ground-preset">
       <option value="dark-studio" selected>Dark studio</option>
     </select></label>
-    <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
-    <label>Scale <input id="ground-scale" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-value">100</span>%</label>
-    <label>Relief <input id="ground-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
+    <div class="dial-block" id="scene-ground-dials">
+    <label title="The floor disc&#39;s radius: how much flooring there is"><span>Size</span>
+      <input id="ground-radius" type="range" min="2" max="200" step="1" value="60">
+      <b id="ground-radius-value">60</b><em>m radius</em></label>
+    <label title="Stretches the floor pattern, so a paver can read larger or smaller than its photograph"><span>Scale</span>
+      <input id="ground-scale" type="range" min="0.05" max="4" step="0.05" value="1">
+      <b id="ground-scale-value">100</b><em>%</em></label>
+    <label title="How deep the floor&#39;s bump reads. QS&#39;s own convention is that 1 means 10 mm."><span>Relief</span>
+      <input id="ground-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1">
+      <b id="ground-relief-value">10</b><em>mm</em></label>
+    </div>
     <button id="ground-randomise" title="Turn and slide the floor pattern to a fresh lay angle">Randomise floor</button>
 
     <span class="row-heading">Props</span>

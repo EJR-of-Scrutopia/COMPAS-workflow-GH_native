@@ -3048,6 +3048,7 @@ async function applyScene(record) {
   }
   if (typeof scene_.contrast === "number") {
     state.contrast = scene_.contrast; control("contrast").value = scene_.contrast;
+    paintGradeReadings();
   }
   // After loadStudy, which rebuilt the pieces: the ribbons this turns on
   // have to exist before they can be shown.
@@ -6046,7 +6047,7 @@ function applyCut(preserve) {
   if (typeof size === "number" && Number.isFinite(size) && size >= SIZE_MIN && size <= SIZE_MAX) {
     state.size = size;
     document.getElementById("size-slider").value = size;
-    document.getElementById("size-value").textContent = Math.round(size * 1000);
+    document.getElementById("size-slider-value").textContent = Math.round(size * 1000);
   }
   // bundle.py is explicit that document["size"] is the REQUESTED size and
   // that an authored cut ignores it (its own target_size is None). The
@@ -8344,14 +8345,14 @@ document.getElementById("pattern-select").addEventListener("change", (e) => {
 // through scheduleReload's settle window rather than asking the server
 // directly.
 document.getElementById("size-slider").addEventListener("input", (e) => {
-  document.getElementById("size-value").textContent = Math.round(+e.target.value * 1000);
+  document.getElementById("size-slider-value").textContent = Math.round(+e.target.value * 1000);
 });
 document.getElementById("size-slider").addEventListener("change", (e) => {
   state.size = +e.target.value;
   scheduleReload();
 });
 document.getElementById("thickness-input").addEventListener("input", (e) => {
-  document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
+  document.getElementById("thickness-input-value").textContent = Math.round(+e.target.value * 1000);
   // The weight readout tracks the drag live: it is the number the
   // thickness is being chosen FOR.
   state.thickness = +e.target.value;
@@ -8398,7 +8399,11 @@ document.getElementById("show-machine").addEventListener("change", (e) => {
   state.showMachine = !!e.target.checked;
   if (state.timeline) applySceneAtTime(state.timeline.t);
 });
-document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+document.getElementById("background-tone").addEventListener("input", (e) => {
+  document.getElementById("background-tone-value").textContent =
+    Math.round(+e.target.value);
+  applyEnvironment();
+});
 // The inked outline. Only a uniform moves, so this is free to drag.
 document.getElementById("outline-width").addEventListener("input", (e) => {
   state.outline = Math.max(0, +e.target.value);
@@ -8477,12 +8482,24 @@ document.getElementById("glow-strength").addEventListener("input", (e) => {
   applyGlow();
   syncLightControls();
 });
+// Both read as percentages because that is how a grade is discussed,
+// and both are held as multipliers. Contrast declares its factor: its
+// range SPANS zero, and at zero the derivation gives up.
+function paintGradeReadings() {
+  document.getElementById("brightness-value").textContent =
+    Math.round(state.brightness * 100);
+  document.getElementById("contrast-value").textContent =
+    Math.round(state.contrast * 100);
+}
+
 document.getElementById("brightness").addEventListener("input", (e) => {
   state.brightness = +e.target.value;
+  paintGradeReadings();
   applyGrade();
 });
 document.getElementById("contrast").addEventListener("input", (e) => {
   state.contrast = +e.target.value;
+  paintGradeReadings();
   applyGrade();
 });
 document.getElementById("environment-mode").addEventListener("change", async (e) => {
@@ -8990,7 +9007,18 @@ window.addEventListener("keydown", (event) => {
 // other slider that rebuilds something, and this one re-runs the recolour
 // over every casting's geometry. On the real export that is 233 of them per
 // event, which a drag fires dozens of.
+// Two readings that had none: nothing wrote them because there was
+// nowhere to write. The work stays on change; only the number follows
+// the thumb.
+document.getElementById("exaggeration").addEventListener("input", (e) => {
+  document.getElementById("exaggeration-value").textContent =
+    Math.round(+e.target.value);
+});
 document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
+document.getElementById("orbit-speed").addEventListener("input", (e) => {
+  document.getElementById("orbit-speed-value").textContent =
+    (+e.target.value).toFixed(1);
+});
 document.getElementById("overlays-box").addEventListener("change", (e) => {
   setLayer("overlays", e.target.checked);
 });
@@ -9161,9 +9189,9 @@ function applyRunParamsToControls({ material, pattern, size, thickness }) {
     state.patternNotes[material] || "";
   document.getElementById("pattern-select").value = pattern;
   document.getElementById("size-slider").value = size;
-  document.getElementById("size-value").textContent = Math.round(size * 1000);
+  document.getElementById("size-slider-value").textContent = Math.round(size * 1000);
   document.getElementById("thickness-input").value = thickness;
-  document.getElementById("thickness-value").textContent = Math.round(thickness * 1000);
+  document.getElementById("thickness-input-value").textContent = Math.round(thickness * 1000);
   state.pattern = pattern;
   state.size = size;
   state.thickness = thickness;
@@ -9580,7 +9608,7 @@ function setOutlineVisible(on) {
 
 function applyOutline() {
   outlineWidth.value = state.outline;
-  document.getElementById("outline-value").textContent =
+  document.getElementById("outline-width-value").textContent =
     Math.round(state.outline * 1000);
   // A restored scene writes the slider straight, which leaves the row's
   // fill behind unless it is repainted here.

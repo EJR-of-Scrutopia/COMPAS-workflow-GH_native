@@ -209,7 +209,7 @@ def test_import_controls_exist_and_wire_the_uploads_endpoint():
 def test_thickness_control_is_wired_and_honest():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="thickness-input"' in html and 'id="thickness-value"' in html
+    assert 'id="thickness-input"' in html and 'id="thickness-input-value"' in html
     assert "state.thickness" in js
     assert "thickness=" in js, "loadStudy must send the thickness parameter"
     assert "verified run used" in js, "the HUD must flag a thickness mismatch"
@@ -613,7 +613,7 @@ def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     input_start = js.index('getElementById("size-slider").addEventListener("input"')
     input_body = js[input_start:js.index("\n});", input_start)]
-    assert "size-value" in input_body, "input must still move the live label"
+    assert "size-slider-value" in input_body, "input must still move the live label"
     for forbidden in ("applyCut", "loadStudy", "state.size ="):
         assert forbidden not in input_body, (
             "the size slider must not {} on every input event".format(forbidden)
