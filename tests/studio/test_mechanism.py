@@ -652,13 +652,19 @@ CHECK = textwrap.dedent("""
       "and the leftover is the last one, not the first: "
       + first[1].netVertices.join());
 
-    // ONE ANCHOR PER MACHINE, on his ruling, carrying the frame its own
-    // machine was placed by -- so the two can never disagree about which
-    // way is out -- with its origin at the CENTRE of the cables that
-    // bank holds, which is the writer's declared convention.
-    expect(placed.anchors.length === placed.instances.length,
-      "one anchor a machine, not one a cable: " + placed.anchors.length);
+    // ONE ANCHOR PER SIDE. Param's correction on seeing the first
+    // version: "It's one anchor per side, and the tension tie is fixed
+    // to the anchor ... The anchor itself is just the shape of the skin
+    // edge on the first row." So it is one welded body a springing, not
+    // a pad in front of each machine, and what is derived is only where
+    // it stands and which way it faces -- a rail for the body he
+    // intends to author.
+    expect(placed.anchors.length === placed.rows.length,
+      "one anchor a SIDE, not one a machine: " + placed.anchors.length);
     const anchor = placed.anchors.find((a) => a.side === 0);
+    expect(anchor.netVertices.length === 3,
+      "and it holds the whole row, not one machine's bank: "
+      + anchor.netVertices.length);
     const held = anchor.netVertices.map((i) => twoRows[i]);
     const heldCentre = held.reduce((a, q) => [a[0] + q[0] / held.length,
       a[1] + q[1] / held.length, a[2] + q[2] / held.length], [0, 0, 0]);
@@ -674,7 +680,7 @@ CHECK = textwrap.dedent("""
       a[1] + q[1] / machineSpools.length, 0], [0, 0, 0]);
     expect(Math.hypot(anchor.matrix[12], anchor.matrix[13])
       < Math.hypot(mc[0], mc[1]),
-      "the anchor is nearer the net than the machine behind it");
+      "the anchor is nearer the net than the machines behind it");
     expect(anchor.ref === null,
       "a derived anchor names no body of its own");
     expect(placed.notes.some((n) => n.indexOf(" anchors") >= 0),
@@ -688,6 +694,8 @@ CHECK = textwrap.dedent("""
     expect(short.notes.some((n) => n.indexOf("does not divide evenly") >= 0),
       "and says so rather than dropping the leftover supports");
     expect(short.wires.length === 6, "no support goes unserved");
+    expect(short.anchors.length === 2,
+      "still one anchor a side however the row divides: " + short.anchors.length);
     // Nothing to work from is said, never guessed.
     expect(derivePlacements([[0, 0, 0]], spools, [0, 0, 0]).instances.length === 0,
       "one support is no springing");

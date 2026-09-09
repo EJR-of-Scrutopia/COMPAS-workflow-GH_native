@@ -973,30 +973,40 @@ export function derivePlacements(supports, spools, netCentre) {
           side, mechanism: machine, spool: k, support: served[k],
         });
       }
-      // THE ANCHOR for this machine, in the writer's own convention: its
-      // origin is the CENTRE of the cables this bank holds, its X runs
-      // along the bank and its Z is up, and it carries THE FRAME ITS
-      // MACHINE WAS PLACED BY. That puts it in front of the machine by
-      // construction rather than by an offset, since the machine stands
-      // back from the very same line -- and it means an anchor and the
-      // machine behind it can never disagree about which way is out.
-      //
-      // One per machine, on his ruling: "One per machine, in front of
-      // it", not one per cable. `ref` is null because a derived anchor
-      // names no body of its own; whatever the mechanism carries under
-      // mechanism.anchor is what stands on these frames.
-      out.anchors.push({
-        side, mechanism: machine,
-        netVertices: served.slice(),
-        matrix: outwardFrame(servedCentre, outward),
-        ref: null, mirrored: false,
-      });
       if (served.length < perMachine) {
         notes.push("a machine on side " + side + " pulls only "
           + served.length + " of its " + perMachine + " spools, because the "
           + "row does not divide evenly");
       }
     }
+    // THE ANCHOR FOR THIS SIDE, and there is exactly one. Param, on
+    // seeing the first version: "It's one anchor per side, and the
+    // tension tie is fixed to the anchor but it's based off the
+    // perimeter lines and rides under the columns as a rectangular mass.
+    // The anchor itself is just the shape of the skin edge on the first
+    // row, so they sit cleanly on it. Then it becomes a box."
+    //
+    // So it is a single body per springing with the tie welded into it,
+    // not a pad in front of each machine, and its shape comes from the
+    // skin edge -- which no reader can derive. What CAN be derived is
+    // where it stands and which way it faces, and that is all this is: a
+    // rail for the one body he intends to author, placed once a side and
+    // mirrored, which is exactly the arrangement he asked for ("I can
+    // provide always 1 anchor shape, the full tension tie in welded to
+    // the anchor ... so you just mirror the placement for each side").
+    //
+    // Its origin is the CENTRE OF THE WHOLE ROW, its X runs along that
+    // row and its Z is up -- the writer's declared convention, kept, so
+    // an authored anchor and a derived one are placed by the same rule.
+    // `ref` is null: a derived anchor names no body of its own, and
+    // until he authors one under mechanism.anchor these frames draw
+    // nothing at all.
+    out.anchors.push({
+      side, mechanism: 0,
+      netVertices: ordered.slice(),
+      matrix: outwardFrame(centre(ordered.map((i) => supports[i])), outward),
+      ref: null, mirrored: false,
+    });
     side += 1;
   }
   notes.push("derived " + out.instances.length + " machines over "
