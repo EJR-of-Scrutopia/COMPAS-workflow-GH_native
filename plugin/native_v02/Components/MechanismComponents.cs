@@ -83,15 +83,16 @@ internal sealed record MechanismPlacementPlane(
 /// net has (2026-09-09, his ask: "I can do tension tie, but the anchors
 /// dont play fair in my script with many chnaging forms").
 ///
-/// ONE PER MACHINE, NOT ONE PER CABLE (his ruling): a bank of seven reels
-/// is held by one anchor in front of it, so a row of twenty-one anchors
-/// carries three.
+/// ONE PER SIDE (his corrected model, 2026-09-09): the anchor is one
+/// continuous mass under the whole springing, the shape of the skin edge
+/// on the first row, so the machines sit cleanly on it. It is not one per
+/// machine and it is not one per cable.
 ///
 /// ITS DECLARED CONVENTION, so nothing downstream infers it from a mesh:
-/// authored in its own local space, +Z is UP, X runs ALONG THE BANK of
-/// seven cables, and THE LOCAL ORIGIN IS THE CENTRE OF THAT BANK at the
-/// line where the cables attach. Model its bearing face on the z=0 plane
-/// and it sits on the ground wherever the net meets it.
+/// authored in its own local space, +Z is UP, X runs ALONG THE ROW, and
+/// THE LOCAL ORIGIN IS THE CENTRE OF THE ROW it spans. Model its bearing
+/// face on the z=0 plane and it sits on the ground wherever the net meets
+/// it.
 /// </summary>
 internal sealed record MechanismReelEntry(
     MechanismMesh Mesh,
@@ -1323,15 +1324,14 @@ internal static class MechanismCollector
         var anchorsOut = new List<Dictionary<string, object?>>();
         if (result is not null)
         {
-            foreach ((int side, int machine, IReadOnlyList<int> netVertices, MechanismFrame frame) in
+            foreach ((int side, IReadOnlyList<int> netVertices, MechanismFrame frame) in
                 DeriveAnchorFrames(result, notes))
             {
                 anchorsOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    // PAIRS WITH instances[] BY THESE TWO, so an anchor and
-                    // the machine standing behind it are found together.
+                    // ONE PER SIDE, so it pairs with every instance carrying
+                    // this side rather than with one of them.
                     ["side"] = side,
-                    ["mechanism"] = machine,
                     ["net_vertices"] = netVertices,
                     ["frame"] = FramePayload(frame),
                     ["placement"] = "instance",
@@ -2025,31 +2025,38 @@ internal static class MechanismCollector
         (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 
     /// <summary>
-    /// ONE ANCHOR PER MACHINE, in front of it, holding the whole bank of
-    /// seven cables. His ruling, 2026-09-09, and NOT one per cable: the
-    /// reels bank in sevens, so the works that stay in the ground do too.
+    /// ONE ANCHOR PER SIDE, spanning the whole springing. His corrected
+    /// model, 2026-09-09 morning, verbatim: "It's one anchor per side, and
+    /// the tension tie is fixed to the anchor but it's based off the
+    /// perimeter lines and rides under the columns as a rectangular mass.
+    /// The anchor itself is just the shape of the skin edge on the first
+    /// row, so they sit cleanly on it. Then it becomes a box."
     ///
-    /// The frame is the one its machine is placed by -- X along the anchor
+    /// THIS REPLACES ONE PER MACHINE, which is what he ruled the night
+    /// before and what was built then. A side's anchor is one continuous
+    /// mass under the whole row rather than three separate blocks in front
+    /// of three machines, so its origin is the ROW's own centre and it
+    /// names every anchor on that row.
+    ///
+    /// The frame is the same rule everything else here uses: X along the
     /// row, Z the world's own up taken across X, Y = Z cross X with X's
-    /// sign settled so Y points AWAY from the net -- and its ORIGIN is the
-    /// CENTRE OF THE SEVEN net vertices that bank holds. So an anchor and
-    /// the machine beside it can never disagree about which way is out, and
-    /// the anchor sits in front of the machine by construction, because the
-    /// machine's own body reaches outward from that same cable line.
+    /// sign settled so Y points AWAY from the net. So the anchor, the
+    /// machines standing on it and the tie welded into it cannot disagree
+    /// about which way is out.
     ///
-    /// The centre of the seven is also the convention an authored anchor
-    /// body is modelled to, and it degrades correctly: if he ever rules one
-    /// anchor per cable instead, the same origin means the same thing for a
-    /// bank of one.
-    ///
-    /// Grouped exactly as the machines are, so the two lists pair by (side,
-    /// machine). A tail of anchors too short to carry a machine carries no
-    /// anchor either -- there is no machine there for it to be in front of.
+    /// STILL OPEN, and deliberately not built until he authors it: he
+    /// intends the tension tie WELDED INTO this body ("I can provide always
+    /// 1 anchor shape, the full tension tie in welded to the anchor"). When
+    /// that arrives, mechanism.tensionTie must stop being emitted
+    /// separately or a reader draws the tie twice, once inside the anchor
+    /// and once on its own. He has not authored it yet and said the two
+    /// hours are hours he does not have, so the port keeps its own life
+    /// until then.
     /// </summary>
-    internal static List<(int Side, int Machine, IReadOnlyList<int> NetVertices, MechanismFrame Frame)>
+    internal static List<(int Side, IReadOnlyList<int> NetVertices, MechanismFrame Frame)>
         DeriveAnchorFrames(ResultDto result, List<string> notes)
     {
-        var placed = new List<(int, int, IReadOnlyList<int>, MechanismFrame)>();
+        var placed = new List<(int, IReadOnlyList<int>, MechanismFrame)>();
         EquilibriumResultDto? eq = result.Equilibrium;
         if (eq is null || eq.Vertices.Count == 0)
             return placed;
@@ -2078,7 +2085,7 @@ internal static class MechanismCollector
                 continue;
             var rowPoints = row.Select(id => netPoints[id]).ToList();
 
-            double[] rowDirection = NormalizeOrZ(Difference3(rowPoints[1], rowPoints[0]));
+            double[] rowX = NormalizeOrZ(Difference3(rowPoints[1], rowPoints[0]));
             double widest = 0.0;
             for (int a = 0; a < rowPoints.Count; a++)
             {
@@ -2088,52 +2095,39 @@ internal static class MechanismCollector
                     if (span > widest)
                     {
                         widest = span;
-                        rowDirection = NormalizeOrZ(Difference3(rowPoints[b], rowPoints[a]));
+                        rowX = NormalizeOrZ(Difference3(rowPoints[b], rowPoints[a]));
                     }
                 }
             }
-            List<int> sorted = Enumerable.Range(0, row.Count)
-                .OrderBy(i => Dot3(rowPoints[i], rowDirection))
-                .ToList();
 
-            for (int machine = 0; machine < row.Count / PlacementGroupSize; machine++)
+            double[] rowZ = AcrossAxis(WorldUp, rowX);
+            double[] rowY = CrossProduct(rowZ, rowX);
+            double[] rowCentre = CentroidOf(rowPoints);
+            if (Dot3(rowY, Difference3(netCentre, rowCentre)) > 0.0)
             {
-                var ids = new List<int>(PlacementGroupSize);
-                var points = new List<double[]>(PlacementGroupSize);
-                for (int k = 0; k < PlacementGroupSize; k++)
-                {
-                    int at = sorted[(machine * PlacementGroupSize) + k];
-                    ids.Add(row[at]);
-                    points.Add(rowPoints[at]);
-                }
-
-                double[] bankX = NormalizeOrZ(
-                    Difference3(points[PlacementGroupSize - 1], points[0]));
-                double[] bankZ = AcrossAxis(WorldUp, bankX);
-                double[] bankY = CrossProduct(bankZ, bankX);
-                double[] centre = CentroidOf(points);
-                if (Dot3(bankY, Difference3(netCentre, centre)) > 0.0)
-                {
-                    bankX = Negate3(bankX);
-                    bankY = CrossProduct(bankZ, bankX);
-                }
-                placed.Add((side, machine, ids,
-                    new MechanismFrame(centre, bankX, bankY, bankZ)));
+                rowX = Negate3(rowX);
+                rowY = CrossProduct(rowZ, rowX);
             }
+
+            var ordered = Enumerable.Range(0, row.Count)
+                .OrderBy(i => Dot3(rowPoints[i], rowX))
+                .Select(i => row[i])
+                .ToList();
+            placed.Add((side, ordered, new MechanismFrame(rowCentre, rowX, rowY, rowZ)));
         }
 
         if (placed.Count > 0)
         {
             notes.Add(
-                $"anchors: {placed.Count} anchor(s) derived, ONE PER MACHINE " +
-                "and not one per cable (his ruling: the reels bank in " +
-                "sevens, so the works that stay in the ground do too). Each " +
-                "sits at the CENTRE of the seven net vertices its bank " +
-                "holds, in front of its own machine, carrying the same frame " +
-                "that machine is placed by -- X along the anchor row, Z the " +
-                "world's up across it, Y away from the net -- so an anchor " +
-                "and its machine cannot disagree about which way is out. " +
-                "They pair with instances by side and machine.");
+                $"anchors: {placed.Count} anchor(s) derived, ONE PER SIDE " +
+                "and not one per machine (his corrected model: the anchor " +
+                "is one continuous mass under the whole springing, the " +
+                "shape of the skin edge on the first row, with the tension " +
+                "tie riding under the columns and welded into it). Each " +
+                "sits at the CENTRE of its own row, names every anchor on " +
+                "that row in order along it, and carries the same frame the " +
+                "machines standing on it are placed by -- X along the row, " +
+                "Z the world's up across it, Y away from the net.");
         }
         return placed;
     }
@@ -3095,11 +3089,12 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "Anchor",
             "AN",
             "OPTIONAL: ONE typical foundation anchor, stamped ONCE PER " +
-            "MACHINE -- in front of it, holding that machine's whole bank " +
-            "of seven cables, not one per cable. Authored in its own local " +
-            "space with +Z UP, X ALONG THE BANK, and its OWN ORIGIN AT THE " +
-            "CENTRE of the seven cables it holds; model its bearing face " +
-            "on the z=0 plane and it sits on the ground too. " +
+            "SIDE -- one continuous mass under the whole springing, the " +
+            "shape of the skin edge on the first row, so the machines sit " +
+            "cleanly on it. Authored in its own local space with +Z UP, X " +
+            "ALONG THE ROW, and its OWN ORIGIN AT THE CENTRE of the row it " +
+            "spans; model its bearing face on the z=0 plane and it sits on " +
+            "the ground too. " +
             "Wire several objects and they are joined into one piece. The " +
             "body travels ONCE in the document and every anchor references " +
             "it, so a hundred anchors cost one mesh. Permanence " +

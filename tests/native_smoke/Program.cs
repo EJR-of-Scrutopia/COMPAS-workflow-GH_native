@@ -41294,9 +41294,15 @@ internal static partial class Program
         // THE NET: two rows of seven anchors, at x = -8 and x = +8, running
         // in y. Nothing else, so the net's own centre sits between them and
         // "away from the net" is unambiguous on each side.
+        // FOURTEEN a row, not seven, so that ONE PER SIDE and ONE PER
+        // MACHINE genuinely differ. At seven they coincide exactly -- same
+        // count, same centre, same vertices -- and a check that passes on
+        // both pins neither. Fourteen gives two machines a row, so a
+        // per-side anchor names all fourteen at the row's centre while a
+        // per-machine one would name seven at a bank's centre.
         var anchorsNear = new List<double[]>();
         var anchorsFar = new List<double[]>();
-        for (int k = 0; k < 7; k++)
+        for (int k = 0; k < 14; k++)
         {
             anchorsNear.Add(new[] { -8.0, -1.5 + (0.15 * k), 0.0 });
             anchorsFar.Add(new[] { 8.0, -1.5 + (0.15 * k), 0.0 });
@@ -41313,10 +41319,10 @@ internal static partial class Program
         // Chained WITHIN each row and never across, so the two rows are two
         // connected groups and the anchor-row derivation finds both.
         var edgePairs = new List<(int, int)>();
-        for (int k = 0; k + 1 < 7; k++)
+        for (int k = 0; k + 1 < 14; k++)
         {
             edgePairs.Add((k, k + 1));
-            edgePairs.Add((7 + k, 8 + k));
+            edgePairs.Add((14 + k, 15 + k));
         }
         Array edgeArray = Array.CreateInstance(edgeType, edgePairs.Count);
         for (int i = 0; i < edgePairs.Count; i++)
@@ -41382,11 +41388,12 @@ internal static partial class Program
 
         using JsonDocument doc = JsonDocument.Parse(json);
         JsonElement instances = doc.RootElement.GetProperty("instances");
-        if (instances.GetArrayLength() != 2)
+        if (instances.GetArrayLength() != 4)
         {
             throw new InvalidOperationException(
-                "Two anchor rows of seven must derive exactly two placements, " +
-                "one machine each, with no Placement (PL) authored; got " +
+                "Two anchor rows of FOURTEEN carry two machines each at " +
+                "seven cables a machine, so four placements must derive " +
+                "with no Placement (PL) authored; got " +
                 instances.GetArrayLength() + " in " + json);
         }
 
@@ -41491,27 +41498,34 @@ internal static partial class Program
                 $"applied again by a reader. Got \"{meaning}\".");
         }
 
-        // ONE ANCHOR PER MACHINE, NOT ONE PER CABLE (his ruling): a bank
-        // of seven reels is held by one anchor in front of it, so this
-        // fixture's two rows of seven give TWO anchors and not fourteen.
+        // ONE ANCHOR PER SIDE (his corrected model, 2026-09-09 morning):
+        // the anchor is one continuous mass under the whole springing, the
+        // shape of the skin edge on the first row. This fixture's two rows
+        // give two anchors -- which is also what one-per-machine gave here,
+        // since each row carries one machine, so the count alone does not
+        // pin it. What pins it is the ORIGIN and the vertices NAMED: a
+        // per-side anchor sits at the centre of its WHOLE row and names
+        // every anchor on it.
         JsonElement anchorsOut = doc.RootElement.GetProperty("anchors");
         if (anchorsOut.GetArrayLength() != 2)
         {
             throw new InvalidOperationException(
-                "Two rows of seven anchors carry ONE machine each and so " +
-                "ONE anchor each, in front of it, holding the whole bank " +
-                $"of seven. Got {anchorsOut.GetArrayLength()}, which if it " +
-                "is 14 means it reverted to one per cable.");
+                "Two springings carry ONE anchor each, one continuous " +
+                "mass under the whole row. Got " +
+                $"{anchorsOut.GetArrayLength()}: 4 means one per machine, " +
+                "28 means one per cable.");
         }
         foreach (JsonElement anchor in anchorsOut.EnumerateArray())
         {
             int[] held = anchor.GetProperty("net_vertices")
                 .EnumerateArray().Select(e => e.GetInt32()).ToArray();
-            if (held.Length != 7)
+            if (held.Length != 14)
             {
                 throw new InvalidOperationException(
-                    "An anchor holds its machine's whole bank, so it must " +
-                    $"name all seven net vertices; got {held.Length}.");
+                    "An anchor spans its WHOLE springing, so it must name " +
+                    "every anchor on that row -- fourteen here, across two " +
+                    $"machines. Got {held.Length}, and 7 means it is still " +
+                    "one anchor per machine.");
             }
             double[] centre = new double[3];
             foreach (int id in held)
@@ -41534,18 +41548,25 @@ internal static partial class Program
                         string.Join(", ", origin) + "].");
                 }
             }
-            // It must pair with a machine, since it stands in front of one.
+            // It belongs to a SIDE, and every machine on that side stands
+            // on it, so it must not carry a machine identity of its own.
             int side = anchor.GetProperty("side").GetInt32();
-            int machine = anchor.GetProperty("mechanism").GetInt32();
-            bool paired = instances.EnumerateArray().Any(e =>
-                e.GetProperty("side").GetInt32() == side &&
-                e.GetProperty("mechanism").GetInt32() == machine);
-            if (!paired)
+            if (anchor.TryGetProperty("mechanism", out _))
             {
                 throw new InvalidOperationException(
-                    $"Anchor (side {side}, mechanism {machine}) names no " +
-                    "machine. An anchor stands in front of a machine, so " +
-                    "the two must pair by side and mechanism.");
+                    "A per-side anchor spans the whole springing and every " +
+                    "machine on it stands on the same mass, so it must NOT " +
+                    "carry a mechanism index; that is the one-per-machine " +
+                    "shape it replaced.");
+            }
+            bool onASide = instances.EnumerateArray().Any(e =>
+                e.GetProperty("side").GetInt32() == side);
+            if (!onASide)
+            {
+                throw new InvalidOperationException(
+                    $"Anchor for side {side} carries no machine at all. An " +
+                    "anchor is what the machines of a side stand on, so a " +
+                    "side with an anchor and no machine is a contradiction.");
             }
             if (anchor.GetProperty("permanence").GetString() != "permanent")
             {
@@ -41556,14 +41577,15 @@ internal static partial class Program
         }
 
         bool anchorsNamed = notes.Any(n =>
-            n.Contains("ONE PER MACHINE", StringComparison.Ordinal) &&
-            n.Contains("not one per cable", StringComparison.Ordinal));
+            n.Contains("ONE PER SIDE", StringComparison.Ordinal) &&
+            n.Contains("not one per machine", StringComparison.Ordinal));
         if (!anchorsNamed)
         {
             throw new InvalidOperationException(
-                "The chin must say the anchors are one per machine rather " +
-                "than one per cable, since that is his ruling and the " +
-                "difference is a factor of seven; notes were: " +
+                "The chin must say the anchors are one per SIDE rather " +
+                "than one per machine, since that is his corrected model " +
+                "and the difference is a factor of three on his own study; " +
+                "notes were: " +
                 string.Join(" | ", notes));
         }
 
@@ -41623,16 +41645,16 @@ internal static partial class Program
         using (JsonDocument crownDoc = JsonDocument.Parse(crownJson))
         {
             int placed = crownDoc.RootElement.GetProperty("instances").GetArrayLength();
-            if (placed != 2)
+            if (placed != 4)
             {
                 throw new InvalidOperationException(
                     "A net whose edges join NO two anchors -- which is his " +
                     "own 2 Sided Vault, 42 supports and not one edge " +
-                    "between two of them -- must still derive one machine " +
-                    "per springing, by grouping the anchors on their own " +
-                    $"spacing. Got {placed} instead of 2. This is exactly " +
-                    "the shape that made his first derived export place " +
-                    "nothing at all.");
+                    "between two of them -- must still derive its machines " +
+                    "by grouping the anchors on their own spacing: two rows " +
+                    "of fourteen at seven cables a machine is four. Got " +
+                    $"{placed}. This is exactly the shape that made his " +
+                    "first derived export place nothing at all.");
             }
         }
         bool spacingNamed = crownNotes.Any(n =>
