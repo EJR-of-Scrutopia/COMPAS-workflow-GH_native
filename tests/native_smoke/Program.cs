@@ -41214,7 +41214,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),   // NOTHING AUTHORED
-                warnings, notes, result,
+                warnings, notes, result, null,
             });
         if (payload is not string json)
             throw new InvalidOperationException("A mechanism with no authored placement must still produce a payload.");
@@ -41315,7 +41315,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
-                authoredWarnings, authoredNotes, null,
+                authoredWarnings, authoredNotes, null, null,
             });
         if (authoredPayload is not string noResultJson)
             throw new InvalidOperationException("A mechanism with no Result must still produce a payload.");

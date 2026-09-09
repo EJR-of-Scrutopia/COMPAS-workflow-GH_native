@@ -228,6 +228,14 @@ internal static class MechanismCollector
     public const double DefaultCableRadiusMetres = 0.02;
 
     /// <summary>
+    /// What a routing plane's origin marks on the cable, when he does not
+    /// say. CENTRELINE, because that is the reading that composes safely
+    /// with him offsetting the planes himself: an offset he has already
+    /// applied must not be applied again by a reader.
+    /// </summary>
+    public const string DefaultRoutingFrameMeaning = "centreline";
+
+    /// <summary>
     /// How close a frame's own distance-to-axis, relative to that reel's
     /// own radius, may sit to the 1.0 ownership boundary -- or how close a
     /// SECOND reel's own ratio may also sit at or under it -- before the
@@ -313,7 +321,9 @@ internal static class MechanismCollector
         IReadOnlyList<MechanismPlacementBranch> placements,
         List<string> warnings,
         List<string> notes) =>
-        BuildWithResult(asset, routing, placements, warnings, notes, null);
+        BuildWithResult(
+            asset, routing, placements, warnings, notes, null,
+            DefaultRoutingFrameMeaning);
 
     /// <summary>
     /// The same build, with the solved Result available so that placement
@@ -328,9 +338,23 @@ internal static class MechanismCollector
         IReadOnlyList<MechanismPlacementBranch> placements,
         List<string> warnings,
         List<string> notes,
-        ResultDto? result)
+        ResultDto? result,
+        string? routingFrameMeaning)
     {
         ArgumentNullException.ThrowIfNull(asset);
+        string meaning = (routingFrameMeaning ?? string.Empty).Trim().ToLowerInvariant();
+        if (meaning.Length == 0)
+        {
+            meaning = DefaultRoutingFrameMeaning;
+        }
+        else if (meaning != "centreline" && meaning != "top" && meaning != "contact")
+        {
+            warnings.Add(
+                $"Frame Meaning (FM) \"{routingFrameMeaning}\" is not one " +
+                "of centreline, top or contact; read as " +
+                $"\"{DefaultRoutingFrameMeaning}\".");
+            meaning = DefaultRoutingFrameMeaning;
+        }
         ArgumentNullException.ThrowIfNull(routing);
         ArgumentNullException.ThrowIfNull(placements);
         ArgumentNullException.ThrowIfNull(warnings);
@@ -530,12 +554,30 @@ internal static class MechanismCollector
                 "meet at a net vertex and must arrive there the same size. " +
                 "cableThickness carries the diameter, the same fact stated " +
                 "twice so nobody halves or doubles it. A default, not " +
-                "authored per study and not measured from anything.");
+                "authored per study and not measured from anything." +
+                Environment.NewLine +
+                $"Frame Meaning (FM) is \"{meaning}\": " +
+                (meaning == "centreline"
+                    ? "a plane's origin is where the cable's CENTRE runs, " +
+                      "so a reader draws on the planes as they arrive and " +
+                      "adds nothing. This is the reading to keep if YOU " +
+                      "have offset the planes to clear the machine, since " +
+                      "your offset has already put them where the centre " +
+                      "goes and a second offset would double it."
+                    : meaning == "top"
+                        ? "the cable hangs one radius INWARD of each plane. " +
+                          "Check that against your drums: routing planes " +
+                          "sitting ON a barrel read this way put the whole " +
+                          "cable INSIDE it."
+                        : "the cable sits one radius OUTWARD of each plane, " +
+                          "so a plane is where it touches the drum. Do NOT " +
+                          "combine this with offsetting the planes " +
+                          "yourself, or the cable stands off by two radii."));
 
             mechanismOut["cableRadius"] = DefaultCableRadiusMetres;
             mechanismOut["cableThickness"] = DefaultCableRadiusMetres * 2.0;
             mechanismOut["cableMatchesNetCable"] = true;
-            mechanismOut["routingFrameMeaning"] = "centreline";
+            mechanismOut["routingFrameMeaning"] = meaning;
             mechanismOut["reeveFactor"] = 1.0;
             mechanismOut["spoolRadius"] = spoolRadius;
         }
@@ -2615,7 +2657,59 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "against the other six.",
             GH_ParamAccess.tree);
         parameters[8].Optional = true;
+
+        parameters.AddPlaneParameter(
+            "Wire Start",
+            "WS",
+            "OPTIONAL, tree path {wire}: ONE plane per wire, the wire's " +
+            "true start at its net anchor, BEFORE any offset. Wire it when " +
+            "you have pushed the routing planes off the machine's own " +
+            "surfaces so the drawn cable stops cutting through the drums " +
+            "and the frame -- that offset moves the first plane too, and " +
+            "the first plane is the anchor every correspondence in this " +
+            "document is built on. The plane wired here is PREPENDED to " +
+            "that wire's route, so the cable is drawn from its real anchor " +
+            "out onto the offset path, and the placement, the net-vertex " +
+            "matching and the residual all keep reading a route whose " +
+            "planes[0] is genuinely the net end. Only the first plane of " +
+            "each branch is read.",
+            GH_ParamAccess.tree);
+        parameters[9].Optional = true;
+
+        parameters.AddTextParameter(
+            "Frame Meaning",
+            "FM",
+            "What a routing plane's ORIGIN marks on the cable: " +
+            "\"centreline\" (default), \"top\" (the cable hangs one " +
+            "radius INWARD of the plane) or \"contact\" (the cable sits " +
+            "one radius OUTWARD, so the plane is where it touches the " +
+            "drum). It is written into the document and the studio obeys " +
+            "it, so this is the one place the question is answered. " +
+            "IF YOU OFFSET THE PLANES YOURSELF to stop the cable cutting " +
+            "through the machine, leave this at \"centreline\": your " +
+            "offset has already put them where the cable's centre goes, " +
+            "and any further offset here would double it.",
+            GH_ParamAccess.item,
+            MechanismCollector.DefaultRoutingFrameMeaning);
+        parameters[10].Optional = true;
     }
+
+    private static readonly ComponentValueListSpec[] MeaningValueLists =
+    {
+        new(
+            10,
+            "Frame Meaning",
+            new (string Label, string Value)[]
+            {
+                ("Centreline", "centreline"),
+                ("Top of the cable", "top"),
+                ("Contact with the drum", "contact"),
+            },
+            MechanismCollector.DefaultRoutingFrameMeaning),
+    };
+
+    private protected override IReadOnlyList<ComponentValueListSpec>
+        SuggestedValueLists => MeaningValueLists;
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
     {
@@ -2654,10 +2748,61 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
 
             MechanismAssetInput asset = ReadAsset(data, warnings, notes);
             List<MechanismRoutingWire> routing = ReadRouting(data, warnings);
+
+            // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route, so
+            // an offset path still begins at the anchor everything else in
+            // this document is pinned to.
+            Dictionary<int, MechanismFrame> wireStarts = ReadWireStarts(data, warnings);
+            if (wireStarts.Count > 0)
+            {
+                var rejoined = new List<MechanismRoutingWire>(routing.Count);
+                int prepended = 0;
+                double worstJump = 0.0;
+                foreach (MechanismRoutingWire wire in routing)
+                {
+                    if (!wireStarts.TryGetValue(wire.Wire, out MechanismFrame? start) ||
+                        wire.Route.Count == 0)
+                    {
+                        rejoined.Add(wire);
+                        continue;
+                    }
+                    var route = new List<MechanismFrame>(wire.Route.Count + 1) { start };
+                    route.AddRange(wire.Route);
+                    rejoined.Add(new MechanismRoutingWire(wire.Wire, route));
+                    prepended++;
+                    double jump = MechanismCollector.Distance(
+                        start.Origin, wire.Route[0].Origin);
+                    if (jump > worstJump)
+                        worstJump = jump;
+                }
+                routing = rejoined;
+                var missing = routing
+                    .Where(w => w.Route.Count > 0 && !wireStarts.ContainsKey(w.Wire))
+                    .Select(w => w.Wire)
+                    .ToList();
+                notes.Add(
+                    $"Wire Start (WS): {prepended} wire(s) had their true " +
+                    "start prepended, so an offset routing path still " +
+                    "begins at the anchor the placement and the net-vertex " +
+                    "match are read from. The furthest a start sits from " +
+                    "the first offset plane is " +
+                    worstJump.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " m, which is the step the drawn cable takes leaving " +
+                    "its anchor and should be about the offset you applied." +
+                    (missing.Count > 0
+                        ? " Wire(s) " + string.Join(", ", missing) +
+                          " carry routing but NO start, so their route " +
+                          "still begins at the offset plane and their " +
+                          "anchor will read as moved."
+                        : string.Empty));
+            }
             List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
+            string meaning = string.Empty;
+            data.GetData(10, ref meaning);
+
             string? payload = MechanismCollector.BuildWithResult(
-                asset, routing, placements, warnings, notes, solved);
+                asset, routing, placements, warnings, notes, solved, meaning);
 
             int routedWireCount = routing.Count(w => w.Route.Count > 0);
             var status = new List<string>
@@ -2820,6 +2965,51 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// Reads Routing (RT) as a tree, path {wire}: the ONE authored
     /// mechanism's own routing, never per instance now.
     /// </summary>
+    /// <summary>
+    /// THE WIRE'S TRUE START, one plane per wire, read off the tree the same
+    /// way Routing is (path {wire}, first plane of the branch).
+    ///
+    /// WHY IT EXISTS (2026-09-09, his own words): "the cables keep cutting
+    /// through the geometry on the web app. so i need to offset the wires by
+    /// 0.02. but this means the starting frame isnt right." Offsetting the
+    /// routing planes off the drums is the right fix for a cable drawn at a
+    /// real radius, but it moves the FIRST plane too -- and that plane is
+    /// the anchor this whole document is pinned to: the placement
+    /// correspondence, the net-vertex match and the residual all read it.
+    /// Prepending the un-offset plane gives the drawn cable its real start
+    /// and leaves every one of those readings exactly as it was.
+    /// </summary>
+    private Dictionary<int, MechanismFrame> ReadWireStarts(
+        IGH_DataAccess data, List<string> warnings)
+    {
+        var starts = new Dictionary<int, MechanismFrame>();
+        data.GetDataTree(9, out GH_Structure<GH_Plane> wsTree);
+        foreach (GH_Path path in wsTree.Paths)
+        {
+            if (path.Indices.Length != 1)
+            {
+                warnings.Add(
+                    $"Wire Start (WS) path {{{string.Join(",", path.Indices)}}} " +
+                    "is not a {wire} single-level path, the same shape " +
+                    "Routing uses; ignored.");
+                continue;
+            }
+            foreach (GH_Plane planeGoo in wsTree.get_Branch(path))
+            {
+                if (planeGoo is null)
+                    continue;
+                Plane plane = planeGoo.Value;
+                starts[path.Indices[0]] = new MechanismFrame(
+                    new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
+                    new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
+                    new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
+                    new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z });
+                break;
+            }
+        }
+        return starts;
+    }
+
     private List<MechanismRoutingWire> ReadRouting(IGH_DataAccess data, List<string> warnings)
     {
         data.GetDataTree(7, out GH_Structure<GH_Plane> rtTree);
