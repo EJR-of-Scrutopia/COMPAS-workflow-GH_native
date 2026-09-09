@@ -89,6 +89,16 @@ MATERIALS_DIR = None
 # it simple." Same folder shape, same reader, different root.
 GROUND_MATERIALS_DIR = None
 
+# The machines, as a library of their own. Param: "Ok make a directory and
+# export it there, I can then wire in other mechanisms there too."
+#
+# A mechanism stopped being a property of one vault the moment he wanted
+# to choose between them, so it gets a root like the skins and the props
+# rather than being read out of whichever folder the vaults happen to sit
+# in. Both are still read: a study's own mechanism, exported beside it,
+# stays available without his having to file it anywhere.
+MECHANISMS_DIR = None
+
 # What the studio knows about materials it does not own. The library is read
 # and never written, so a tile size typed into the panel has to live
 # somewhere else, and it lives here, keyed by "family/name". SHARED by both
@@ -259,6 +269,7 @@ FOLDER_TITLES = {
     "ground_folder": "Choose your ground material folder",
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
+    "mechanism_folder": "Choose your mechanism library folder",
 }
 
 
@@ -357,6 +368,7 @@ def apply_saved_folders() -> dict:
     """
 
     global MATERIALS_DIR, GROUND_MATERIALS_DIR, HDRI_DIR, PROPS_DIR
+    global MECHANISMS_DIR
 
     applied = {}
     chosen = apply_saved_folder()
@@ -366,7 +378,8 @@ def apply_saved_folders() -> dict:
     for key, setter in (("material_folder", "MATERIALS_DIR"),
                         ("ground_folder", "GROUND_MATERIALS_DIR"),
                         ("hdri_folder", "HDRI_DIR"),
-                        ("props_folder", "PROPS_DIR")):
+                        ("props_folder", "PROPS_DIR"),
+                        ("mechanism_folder", "MECHANISMS_DIR")):
         raw = stored.get(key)
         if not raw:
             continue
@@ -1296,6 +1309,64 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         _mechanism_summaries[path.name] = (key, row)
         return row
 
+    # Declared ABOVE /api/mechanisms/{name}: FastAPI matches in
+    # declaration order, so with these second the word "folder" would be
+    # read as the name of a machine. The same trap the props and hdri
+    # routes are already arranged around.
+    @app.get("/api/mechanisms/folder")
+    def mechanism_folder():
+        return _library_row("mechanisms")
+
+    @app.post("/api/mechanisms/folder")
+    def set_mechanism_folder(body: dict):
+        return _set_library_folder(
+            "mechanisms", body, "mechanism_folder", "MECHANISMS_DIR")
+
+    @app.post("/api/mechanisms/folder/browse")
+    def browse_mechanism_folder():
+        return {"path": ask_for_folder(title=FOLDER_TITLES["mechanism_folder"])}
+
+    def _mechanism_roots():
+        """Where a machine may be found, library first.
+
+        Both roots are read. The library is where he files the machines he
+        wants to choose between; the vault folder is where the exporter
+        puts a study's own, and that one should not have to be filed
+        anywhere to be usable.
+        """
+
+        roots = []
+        for root in (MECHANISMS_DIR, bundle.UPLOAD_DIR):
+            if root is None:
+                continue
+            path = Path(root)
+            if path.is_dir() and not any(path == seen for seen in roots):
+                roots.append(path)
+        return roots
+
+    @app.get("/api/mechanisms/{name}")
+    def mechanism_by_name(name: str):
+        """One machine by name, from either root.
+
+        Keyed by NAME rather than by study, because a machine in the
+        library belongs to no study -- which is the whole point of the
+        library.
+        """
+
+        if "/" in name or "\\" in name or ".." in name:
+            raise HTTPException(400, "bad mechanism name")
+        for root in _mechanism_roots():
+            path = root / "{}-mechanism.json".format(name)
+            if not path.is_file():
+                continue
+            try:
+                return mechanism.validate_mechanism_document(
+                    json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError) as error:
+                raise HTTPException(
+                    404, "the mechanism {} is unusable: {}".format(name, error))
+        raise HTTPException(404, "no mechanism named {}".format(name))
+
     @app.get("/api/mechanisms")
     def mechanism_library():
         """Every mechanism document in the folder, as a choosable asset.
@@ -1311,16 +1382,26 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         is there and what each one is, which is what a chooser needs.
         """
 
-        root = bundle.UPLOAD_DIR
-        rows = []
-        if root is not None and Path(root).is_dir():
-            for path in sorted(Path(root).glob("*-mechanism.json")):
-                rows.append(_mechanism_summary(path))
-        return {"root": str(root) if root else "", "mechanisms": rows}
+        rows, seen = [], set()
+        for root in _mechanism_roots():
+            for path in sorted(root.glob("*-mechanism.json")):
+                row = _mechanism_summary(path)
+                # A machine filed in the library WINS over one of the same
+                # name beside a vault: the library is the curated copy, and
+                # two entries under one name in a picker is worse than
+                # either of them.
+                if row["export"] in seen:
+                    continue
+                seen.add(row["export"])
+                row["root"] = str(root)
+                rows.append(row)
+        rows.sort(key=lambda row: row["export"].lower())
+        first = _mechanism_roots()
+        return {"root": str(first[0]) if first else "", "mechanisms": rows}
 
     def _library_row(kind: str):
         """Where a library reads from, whether it is there, and how much is
-        in it. The same three facts for all four folders, so one client
+        in it. The same three facts for all five folders, so one client
         handler can paint any of them."""
 
         if kind == "materials":
@@ -1332,6 +1413,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         elif kind == "hdri":
             directory, counter = HDRI_DIR, (
                 lambda d: len([p for p in d.glob("*.hdr") if p.is_file()]))
+        elif kind == "mechanisms":
+            directory, counter = MECHANISMS_DIR, (
+                lambda d: len([p for p in d.glob("*-mechanism.json")
+                               if p.is_file()]))
         else:
             directory, counter = PROPS_DIR, (
                 lambda d: len([p for p in d.glob("*.glb") if p.is_file()]))

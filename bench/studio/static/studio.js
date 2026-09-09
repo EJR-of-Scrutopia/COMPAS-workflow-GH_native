@@ -3107,8 +3107,13 @@ async function refreshMechanisms() {
   }
 }
 
-function fetchMechanismFor(exportName) {
-  return fetch("/api/studies/" + encodeURIComponent(exportName) + "/mechanism")
+// Keyed by the machine's NAME, not by a study's, because a machine filed
+// in the library belongs to no study -- which is the whole point of the
+// library. The route reads the library folder first and the vault folder
+// behind it, so a study's own mechanism still resolves without his having
+// filed it anywhere.
+function fetchMechanismFor(name) {
+  return fetch("/api/mechanisms/" + encodeURIComponent(name))
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 }
@@ -10907,6 +10912,17 @@ try {
 } catch (error) { /* private browsing: Auto stands */ }
 refreshMechanisms().catch(
   (error) => logStudio("mechanism library: " + error.message));
+showLibraryFolder("mechanisms", "mechanism-folder-path", "machines");
+document.getElementById("mechanism-folder-choose").addEventListener("click", () =>
+  chooseLibraryFolder("mechanisms", "mechanism-folder-path", "machines",
+    async () => {
+      await refreshMechanisms();
+      // A new folder can mean a different machine under the same name,
+      // so the vault on screen is re-dressed rather than left wearing
+      // one that came out of the old folder.
+      const study = document.getElementById("study-select").value;
+      if (study) await loadStudy(study);
+    }));
 document.getElementById("mechanism-select").addEventListener("change", async (e) => {
   state.mechanismChoice = e.target.value;
   try {

@@ -481,6 +481,136 @@ def test_the_mechanism_library_says_what_each_machine_is(tmp_path, monkeypatch):
     assert by_name["Broken"]["spools"] == 0
 
 
+def test_the_mechanisms_have_a_library_folder_of_their_own(tmp_path, monkeypatch):
+    """Param: "Ok make a directory and export it there, I can then wire in
+    other mechanisms there too."
+
+    A mechanism stopped being a property of one vault the moment he wanted
+    to choose between them, so it gets a root like the skins and the
+    props. BOTH roots are read: a study's own mechanism, exported beside
+    it, should not have to be filed anywhere to be usable.
+    """
+
+    import json as _json
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+    import bundle
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    library = tmp_path / "machines"
+    library.mkdir()
+    monkeypatch.setattr(app_module, "MECHANISMS_DIR", library)
+
+    (library / "Seven spool winch-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
+    (bundle.UPLOAD_DIR / "Tiny-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 3)), encoding="utf-8")
+
+    # The folder reports itself the way every other library does.
+    row = client.get("/api/mechanisms/folder").json()
+    assert row["path"] == str(library)
+    assert row["exists"] is True
+    assert row["count"] == 1, "one machine filed, whatever sits beside the vaults"
+
+    # And BOTH roots are listed.
+    names = [r["export"] for r in client.get("/api/mechanisms").json()["mechanisms"]]
+    assert names == ["Seven spool winch", "Tiny"], names
+
+
+def test_the_folder_route_is_not_read_as_the_name_of_a_machine(tmp_path, monkeypatch):
+    """/api/mechanisms/folder and /api/mechanisms/{name} share a prefix,
+    and FastAPI matches in declaration order. With the name route first,
+    "folder" is a machine nobody has -- a 404 on the control panel that
+    looks like a broken folder rather than a routing mistake. The props
+    and hdri routes are already arranged around this same trap."""
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    assert client.get("/api/mechanisms/folder").status_code == 200
+    assert "path" in client.get("/api/mechanisms/folder").json()
+
+
+def test_a_machine_is_fetched_by_name_from_either_root(tmp_path, monkeypatch):
+    """Keyed by NAME rather than by study, because a machine in the
+    library belongs to no study -- which is the whole point of the
+    library. The library is read first, so a curated copy wins over one
+    that happens to sit beside a vault under the same name."""
+
+    import json as _json
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+    import bundle
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    library = tmp_path / "machines"
+    library.mkdir()
+    monkeypatch.setattr(app_module, "MECHANISMS_DIR", library)
+
+    (library / "Shared-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
+    (bundle.UPLOAD_DIR / "Shared-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 2)), encoding="utf-8")
+    (bundle.UPLOAD_DIR / "Only-beside-a-vault-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 4)), encoding="utf-8")
+
+    got = client.get("/api/mechanisms/Shared")
+    assert got.status_code == 200
+    assert len(got.json()["mechanism"]["reels"]) == 7, (
+        "the library's copy wins over the one beside the vault")
+    # A machine that lives only beside a vault is still reachable.
+    beside = client.get("/api/mechanisms/Only-beside-a-vault")
+    assert beside.status_code == 200
+    assert len(beside.json()["mechanism"]["reels"]) == 4
+    # And one that is nowhere says so.
+    assert client.get("/api/mechanisms/Nothing").status_code == 404
+
+    # A NAME CANNOT CLIMB OUT OF EITHER ROOT. A bare ".." proves nothing:
+    # it names a file that is not there, so a 404 arrives with or without
+    # a guard. An ENCODED separator is what the guard is actually for --
+    # Starlette decodes %2F into the path parameter, so without the check
+    # the name reaches the filesystem carrying a directory separator.
+    outside = tmp_path / "outside-mechanism.json"
+    outside.write_text(_json.dumps(_mechanism([0.05])), encoding="utf-8")
+    for attempt in ("..%2Foutside", "..%5Coutside", "..%2F..%2Foutside"):
+        got = client.get("/api/mechanisms/" + attempt)
+        assert got.status_code in (400, 404), (attempt, got.status_code)
+        assert "mechanism" not in got.json(), (
+            "a name reached outside its root: " + attempt)
+
+
+def test_the_mechanism_folder_is_remembered_between_runs(tmp_path, monkeypatch):
+    """Every other library root survives a restart, and this one has to as
+    well or he re-points it every morning. apply_saved_folders is the one
+    that does it, and it is called by serve.py rather than by create_app,
+    so it is exercised directly here."""
+
+    import json as _json
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    library = tmp_path / "machines"
+    library.mkdir()
+    settings = tmp_path / "settings.json"
+    settings.write_text(_json.dumps({"mechanism_folder": str(library)}),
+                        encoding="utf-8")
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
+
+    applied = app_module.apply_saved_folders()
+    assert applied.get("mechanism_folder") == library
+    assert app_module.MECHANISMS_DIR == library
+
+    # A folder that has since gone is reported and left alone, not set to
+    # a path that is not there.
+    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
+    settings.write_text(_json.dumps({"mechanism_folder": str(tmp_path / "gone")}),
+                        encoding="utf-8")
+    assert "mechanism_folder" not in app_module.apply_saved_folders()
+    assert app_module.MECHANISMS_DIR is None
+
+
 def test_a_mechanism_summary_is_memoised_but_a_re_export_invalidates_it(
         tmp_path, monkeypatch):
     """His mechanism document is 25 MB, almost all of it vertices. Listing

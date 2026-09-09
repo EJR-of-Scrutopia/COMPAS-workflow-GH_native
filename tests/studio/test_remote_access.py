@@ -1304,6 +1304,22 @@ def test_a_mechanism_is_chosen_rather_than_inherited():
     assert '<select id="mechanism-select"' in html
     js = STUDIO_JS.read_text(encoding="utf-8")
     assert 'fetchJson("/api/mechanisms")' in js
+    # A FOLDER OF THEIR OWN, on the same two helpers every other library
+    # uses. Param: "Ok make a directory and export it there, I can then
+    # wire in other mechanisms there too."
+    assert '<button id="mechanism-folder-choose"' in html
+    assert 'showLibraryFolder("mechanisms", "mechanism-folder-path", "machines");' in js
+    assert 'chooseLibraryFolder("mechanisms", "mechanism-folder-path", "machines",' in js
+    # A new folder can mean a different machine under the same name, so
+    # the vault on screen is re-dressed rather than left wearing one out
+    # of the old folder.
+    assert "      await refreshMechanisms();\n" \
+        "      // A new folder can mean a different machine under the same name," in js
+    # The document is fetched by the MACHINE's name, not by a study's: a
+    # machine in the library belongs to no study.
+    assert '  return fetch("/api/mechanisms/" + encodeURIComponent(name))' in js
+    assert '"/api/studies/" + encodeURIComponent(exportName) + "/mechanism")\n' \
+        "    .then((r) => (r.ok ? r.json() : null))" not in js
     assert '  add("auto", "Auto",' in js and '  add("none", "None",' in js
     # The facts a choice is made on go in the LABEL: a dropdown of bare
     # study names says nothing about which machine suits which vault.
