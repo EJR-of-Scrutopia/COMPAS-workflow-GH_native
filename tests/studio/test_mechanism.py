@@ -101,7 +101,7 @@ CHECK = textwrap.dedent("""
       SCHEMA, PART_KINDS, readGeometry, placementMatrix, isReflection,
       turnsFor, readMechanism, checkNetVertices, checkRouteDirection,
       wireCentreline, reelContactRadius, SPOOL_STEPS, PULLEY_STEPS,
-      ribChain, chainLength,
+      ribChain, chainLength, DEFAULT_CABLE_RADIUS,
     } from %MODULE%;
 
     function expect(condition, message) {
@@ -268,15 +268,40 @@ CHECK = textwrap.dedent("""
     // cable is 10 mm thick, read as a diameter.
     expect(read.routingFrameMeaning === "centreline",
       "a silent document means centreline, his ruling: " + read.routingFrameMeaning);
-    near(read.cableRadius, 0.005, 1e-12, "his 0.01 default, halved to a radius");
+    // The LITERAL, not the constant: comparing the reader's output with
+    // DEFAULT_CABLE_RADIUS moves both sides together and pins nothing,
+    // which is how a mutation of the constant survived this line once.
+    near(read.cableRadius, 0.02, 1e-12,
+      "a file stating neither figure gets his settled 0.02 radius, not "
+      + "the 0.01 he has since corrected");
+    near(DEFAULT_CABLE_RADIUS, 0.02, 1e-12, "and that is what the constant says");
     const declared = readMechanism(Object.assign({}, document, {
       routingFrameMeaning: "Contact", cableThickness: 0.02 }));
     expect(declared.routingFrameMeaning === "contact",
       "a declaration is read, and case does not matter");
-    near(declared.cableRadius, 0.01, 1e-12, "and its own thickness, halved");
-    expect(!declared.notes.some((n) => n.indexOf("cableThickness") >= 0
+    near(declared.cableRadius, 0.01, 1e-12,
+      "a file carrying only a thickness has it halved");
+    // THE EXPLICIT RADIUS WINS over the thickness beside it. Both are
+    // emitted from 2026-09-09, thickness exactly twice radius, because
+    // this number was halved or doubled three times in a day and a lone
+    // figure does not say which convention it follows. A reader that
+    // halved the thickness regardless would draw at half size the moment
+    // the two ever disagreed.
+    const both = readMechanism(Object.assign({}, document, {
+      cableRadius: 0.02, cableThickness: 0.04 }));
+    near(both.cableRadius, 0.02, 1e-12, "the stated radius, not the halved thickness");
+    const disagreeing = readMechanism(Object.assign({}, document, {
+      cableRadius: 0.02, cableThickness: 0.5 }));
+    near(disagreeing.cableRadius, 0.02, 1e-12,
+      "and it still wins when the two disagree");
+    // Both scale with the document's units like every other length.
+    const inMillimetres = readMechanism(Object.assign({}, document, {
+      lengthUnitToMetres: 0.001, cableRadius: 20 }));
+    near(inMillimetres.cableRadius, 0.02, 1e-12, "a radius is a length");
+    expect(!both.notes.some((n) => n.indexOf("cableRadius") >= 0
+      || n.indexOf("cableThickness") >= 0
       || n.indexOf("routingFrameMeaning") >= 0),
-      "neither declared key is reported as one the reader does not use");
+      "no declared key is reported as one the reader does not use");
     const tie = read.parts.find((p) => p.kind === "tie");
     expect(tie.permanent === true,
       "the tie DECLARES its permanence and it is read, not inferred");

@@ -108,8 +108,9 @@ const KNOWN_KEYS = new Set([
   "vertexCount", "columnNodeCount", "anchors", "tensionTies",
   "notes", "warnings", "provenance",
   // Declared by the writer from 2026-09-09 so no consumer has to infer
-  // either from where frames happen to sit against a drum mesh.
-  "cableThickness", "routingFrameMeaning",
+  // any of them from where frames happen to sit against a drum mesh. The
+  // cable is stated TWICE, as a radius and as a thickness; see below.
+  "cableRadius", "cableThickness", "routingFrameMeaning",
 ]);
 
 // ---------- geometry ----------
@@ -431,14 +432,30 @@ export function readMechanism(document) {
   // offsetting fixes it everywhere, which is why "centreline" is both the
   // default and the reading his exporter now declares.
   //
-  // The cable thickness is his stated default of 0.01, read as a
-  // DIAMETER, which is the ordinary reading of a thickness.
   const meaning = typeof document.routingFrameMeaning === "string"
     ? document.routingFrameMeaning.toLowerCase() : "centreline";
+  // THE CABLE, stated TWICE in the document from 2026-09-09: an explicit
+  // cableRadius, and a cableThickness that is exactly twice it. That
+  // redundancy is deliberate on both sides, because this one number was
+  // halved or doubled by somebody three times in a day and a lone figure
+  // does not say which convention it follows.
+  //
+  // He first said 0.01, then corrected himself to 0.02, and 0.02 is
+  // ambiguous between a radius and a diameter in a way that decides the
+  // drawing by a factor of two. It is settled as a RADIUS, and his own
+  // Grasshopper offset proves it without anyone having to be asked: an
+  // offset from the contact surface out to the centreline IS the radius,
+  // and he offsets by 0.02.
+  //
+  // The explicit radius wins; a thickness is halved only for a file that
+  // predates it; his settled figure stands in for a file with neither,
+  // rather than the 0.01 he has since corrected.
+  const cableRadius = Number.isFinite(+document.cableRadius)
+    ? +document.cableRadius * scale
+    : (Number.isFinite(+document.cableThickness)
+      ? +document.cableThickness * scale / 2 : DEFAULT_CABLE_RADIUS);
   return { ok: true, scale, parts, instances, wires, notes,
-    routingFrameMeaning: meaning,
-    cableRadius: (Number.isFinite(+document.cableThickness)
-      ? +document.cableThickness * scale : 0.01) / 2,
+    routingFrameMeaning: meaning, cableRadius,
     rotation: document.rotation || null,
     numbering: document.numbering || null };
 }
@@ -478,6 +495,11 @@ function readAxis(entry, scale) {
 export const SPOOL_STEPS = 8;
 export const PULLEY_STEPS = 4;
 export const SPOOL_RADIUS_LIMIT = 0.1;   // below this a drum counts as a spool
+
+// His settled cable, for a document that states neither figure. A RADIUS:
+// 0.02, which is also the size the studio draws the net's own cables at,
+// so the machine's wire meets the net without a step.
+export const DEFAULT_CABLE_RADIUS = 0.02;
 
 function originOf(frame) {
   return [frame.matrix[12], frame.matrix[13], frame.matrix[14]];
