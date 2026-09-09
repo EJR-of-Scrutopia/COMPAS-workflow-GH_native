@@ -1191,7 +1191,17 @@ def test_the_machine_draws_the_way_he_asked():
     # now the formwork's own lens in the timeline, and standing in the
     # rest modes, exactly as the finished net is.
     assert "formworkVisibility({ t, seconds, strikeU," in act
-    assert 'state.showMode !== "shell"' in act, "shell is the vault alone"
+    # SHELL SHOWS THE ANCHORS (Param, 2026-09-09: "when i show shell i
+    # expect to see the anchors too"). The permanent works are cast into
+    # the finished building; only the plant is temporary. So the gate no
+    # longer hides the whole group in shell -- it hides `temporary` and
+    # leaves `permanent` standing.
+    assert 'const wanted = state.showMachine !== false;' in act
+    assert 'state.showMode !== "shell"' not in act, (
+        "shell must no longer hide the anchor and tie with the machine")
+    assert '  if (state.showMode === "shell") {\n' \
+        '    temporary.visible = false;' in act
+    assert "  permanent.visible = true;" in act
     assert "    temporary.visible = true;             // standing, as the finished net is" in act
     # The build lands after the load's own scene pass (it awaits its
     # materials), so it applies the clock itself or stands in a pose the
@@ -1206,9 +1216,43 @@ def test_the_machine_draws_the_way_he_asked():
     # THE ANCHOR ONCE. The tie is authored at row scale in the body frame;
     # stamped per instance it appeared three times a side.
     assert "    if (part.permanent) {\n" \
-        "      const mesh = new THREE.Mesh(geometry, machineMaterial(part));\n" \
-        "      mesh.castShadow = mesh.receiveShadow = true;\n" \
+        "      const mesh = machineMesh(geometry, part);\n" \
         "      permanent.add(mesh);" in build
+
+    # THE SKINS ARE FETCHED, NOT MERELY HOPED FOR. This is the fault
+    # behind "the material we have now is so ugly": machineMaterial only
+    # ever READ libraryCache, nothing ever asked for the machine's
+    # materials, so all seven names missed and every part wore the same
+    # 0x8d9298 fallback grey. A build must ask for them and wear them.
+    # skinMachine stands above buildMachine in the file, so these are
+    # pinned against the whole of studio.js rather than the build's slice.
+    assert "function skinMachine(group, mine) {" in js
+    assert "  skinMachine(group, mine);" in build, (
+        "a finished build asks for its materials")
+    assert "    ensureLibraryMaterial(key).then((set) => {" in js
+    assert "      if (!set || mine !== machineBuild) return;" in js, (
+        "a set landing after a newer build must not repaint the old one")
+    assert "  mesh.userData.machineSkin = part.material;" in js, (
+        "each mesh remembers the set it asked for, so it can be re-skinned")
+    # And the sets it wears cannot be evicted from under it: the machine
+    # holds five at once against a cache that used to hold six.
+    assert "  for (const key of wanted.keys()) libraryPins.add(key);" in js
+    assert "      if (libraryPins.has(oldest)) continue;" in js
+    # The anodising tint has to survive the re-skin. Without this the
+    # frames arrive in raw mill aluminium the moment the set lands --
+    # which would look like the load having failed all over again.
+    assert "        if (mesh.userData.machineTint) worn.color.set(mesh.userData.machineTint);" in js
+
+    # THE ROUTING FRAMES ARE THE CENTRELINE (his ruling, 2026-09-09), so
+    # nothing is pushed out. The document declares which it means, and a
+    # file saying "contact" gets the offset back with no code change.
+    assert '  const routingOffset = model.routingFrameMeaning === "contact"\n' \
+        "    ? model.cableRadius : 0;" in build
+    assert "      wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);" in build
+    assert "wireCentreline(wire.route, reelAxes, state.wireRadius)" not in build, (
+        "the old one-wire-radius offset is gone")
+    # And the reel radius the writer now measures per reel wins.
+    assert "    part.contactRadius = part.windingRadius\n" in build
 
     # THE WIRES ARE THE CABLES: the same steel the net clones, transparent
     # from birth, and never vertexColors.
@@ -1218,9 +1262,10 @@ def test_the_machine_draws_the_way_he_asked():
         "the net needs that for setColorAt; a plain Mesh with no colour "
         "attribute would multiply by nothing and go black")
 
-    # THE CENTRELINE IS CORRECTED BEFORE IT IS LOFTED, and the loft sweeps
-    # a rotation-minimising frame rather than trusting the exported x/y.
-    assert "wireCentreline(wire.route, reelAxes, state.wireRadius), state.wireRadius);" in build
+    # THE CENTRELINE IS PREPARED BEFORE IT IS LOFTED -- subdivided across
+    # every drum span, and no longer pushed out, since Param ruled the
+    # frames ARE the centreline. The loft sweeps a rotation-minimising
+    # frame rather than trusting the exported x/y.
     loft = _js_function(js, "function loftWire(points, radius)")
     assert "x = [x[0] - tn[0] * along, x[1] - tn[1] * along, x[2] - tn[2] * along];" in loft, (
         "parallel transport: the previous x with its along-tangent part removed")
@@ -1228,7 +1273,7 @@ def test_the_machine_draws_the_way_he_asked():
     # THE RADIUS A REEL WINDS AT comes from the frames it owns, not from
     # the document's spoolRadius (0.030, which matches nothing in the
     # file) and not from the flange.
-    assert "part.contactRadius = reelContactRadius(model.wires, part.index, part.axis)" in build
+    assert "      || reelContactRadius(model.wires, part.index, part.axis)" in build
     measure = _js_function(js, "function measureSpoolRadius(part)")
     assert "if (r > 1e-3 && r < nearest) nearest = r;" in measure, "the barrel, not the flange"
 

@@ -29,20 +29,41 @@ export const SCHEMA = "bench.mechanism/1";
 // goes away with the columns and formwork. the tension tie / anchor
 // stays").
 export const PART_KINDS = [
-  // Param, on seeing it: "Make the frame 1 the same metal and colour as
-  // principle line bars" -- which wear metal/steel-polished-dark.
-  { key: "frame1", kind: "frame1", material: "metal/steel-polished-dark" },
-  { key: "frame2", kind: "frame2", material: "metal/steel-mill-grey" },
-  { key: "motors", kind: "motor", material: "metal/steel-powder-coated-black" },
+  // Param, 2026-09-09, on seeing every part wearing one flat grey: "the
+  // aluminium frames are a anodised aluminium coated, a dark grey if we
+  // can, make the frame 2 a lighter grey but not as light as it is now."
+  // ONE library set under both frames, because anodising is a coat over
+  // the same mill aluminium and the grain should agree across the two;
+  // only the darkness of the coat differs, which is what the tint is.
+  // The tint MULTIPLIES the albedo map, so each rendered frame comes out
+  // NO LIGHTER than its own tint value. Frame 2's tint is therefore set
+  // below the 0x8d9298 he was looking at when he said "not as light as it
+  // is now": that makes "darker than the grey he objected to" a guarantee
+  // that holds whatever this library set's albedo turns out to be, rather
+  // than an estimate of it. Frame 1 sits darker again.
+  { key: "frame1", kind: "frame1", material: "metal/aluminium-mill-grey",
+    tint: 0x4e5155 },
+  { key: "frame2", kind: "frame2", material: "metal/aluminium-mill-grey",
+    tint: 0x83878b },
+  // "the motors are a deep black like a nema motor": a NEMA case is cast
+  // and powder coated, near-black rather than pure black, which would
+  // read as a hole punched in the render.
+  { key: "motors", kind: "motor", material: "metal/steel-powder-coated-black",
+    tint: 0x1c1c1e },
+  // "except the the reels are a find grain timber"
   { key: "reels", kind: "reel", material: "timber/birch-pale-fine", spins: true },
-  { key: "pulleys", kind: "pulley", material: "timber/birch-pale-fine" },
-  // "The anchor is a solid black steel, let it have some character too
-  // with the scratches and slight wear / weld colouration." The aged
-  // blackened steel in the library is exactly that picture; no tint, so
-  // its own wear reads through.
-  { key: "tensionTie", kind: "tie", material: "metal/steel-blackened-aged",
+  // "the others are metal": the pulleys had been wearing the reels'
+  // timber, which is what put birch grain on a sheave.
+  { key: "pulleys", kind: "pulley", material: "metal/steel-brushed" },
+  // "Shiny ish metalic, like we used for the principle line bars, dark.
+  // This is for the anchor / tie." The principal bars wear
+  // metal/steel-polished-dark (PRINCIPAL_SKIN in studio.js), so the two
+  // permanent works now wear it too. This REPLACES the blackened aged
+  // steel he asked for on 08 September; he has seen that name in the
+  // panel and asked for the bars' metal instead, so the newer word wins.
+  { key: "tensionTie", kind: "tie", material: "metal/steel-polished-dark",
     permanent: true },
-  { key: "anchor", kind: "anchor", material: "metal/steel-blackened-aged",
+  { key: "anchor", kind: "anchor", material: "metal/steel-polished-dark",
     permanent: true },
 ];
 
@@ -80,6 +101,9 @@ const KNOWN_KEYS = new Set([
   "principalRows", "mechanism", "instances", "wires", "study", "generated",
   "vertexCount", "columnNodeCount", "anchors", "tensionTies",
   "notes", "warnings", "provenance",
+  // Declared by the writer from 2026-09-09 so no consumer has to infer
+  // either from where frames happen to sit against a drum mesh.
+  "cableThickness", "routingFrameMeaning",
 ]);
 
 // ---------- geometry ----------
@@ -285,6 +309,13 @@ export function readMechanism(document) {
         permanent: declared ? declared === "permanent" : !!spec.permanent,
         spins: !!spec.spins,
         driven: entry.driven !== false,
+        // The writer now measures each reel's own winding radius (median
+        // perpendicular distance of the routing frames it owns from its
+        // own axis) rather than sharing one bounding-box figure across
+        // four. That is the same quantity the studio measures for itself,
+        // so it is trusted first and the measurement stays as the fallback.
+        windingRadius: Number.isFinite(+entry.windingRadius)
+          ? +entry.windingRadius * scale : null,
         axis: readAxis(entry, scale),
       });
       index += 1;
@@ -376,7 +407,17 @@ export function readMechanism(document) {
     notes.push("this reader does not use the key \"" + key + "\"");
   }
 
+  // Param's ruling, 2026-09-09, relayed by the writer verbatim: "the
+  // routing for the spool via framing is its center line. the defualt
+  // cable thickness is 0.01". Read as a DIAMETER, the ordinary reading of
+  // a thickness. His stated defaults stand in when a document predates
+  // the declaration, which is every file exported so far.
+  const meaning = typeof document.routingFrameMeaning === "string"
+    ? document.routingFrameMeaning.toLowerCase() : "centreline";
   return { ok: true, scale, parts, instances, wires, notes,
+    routingFrameMeaning: meaning,
+    cableRadius: (Number.isFinite(+document.cableThickness)
+      ? +document.cableThickness * scale : 0.01) / 2,
     rotation: document.rotation || null,
     numbering: document.numbering || null };
 }
@@ -467,7 +508,16 @@ function turn(v, u, angle) {
 
 // The wire's centreline as a list of [x, y, z] points in the body's own
 // space. `reelAxes` maps a reel index to {origin, direction}.
-export function wireCentreline(route, reelAxes, wireRadius) {
+//
+// `surfaceOffset` pushes each drum-owned frame out radially by that much.
+// It is ZERO under Param's ruling of 2026-09-09 -- "the routing for the
+// spool via framing is its center line" -- so the frames are swept
+// exactly as they arrive. The machinery stays live because the document
+// now DECLARES which it means, and a file saying "contact" gets the
+// offset back without a code change. The measured evidence that argued
+// for contact (spool frames at 0.049988 against a 0.0500 barrel) is
+// recorded in the contract and loses to his ruling.
+export function wireCentreline(route, reelAxes, surfaceOffset) {
   const n = route.length;
   if (!n) return [];
   const offsets = new Array(n).fill(null);
@@ -478,7 +528,7 @@ export function wireCentreline(route, reelAxes, wireRadius) {
     if (!axis) continue;
     const about = aboutAxis(originOf(frame), axis);
     if (about.radius < 1e-9) continue;
-    const k = wireRadius / about.radius;
+    const k = (+surfaceOffset || 0) / about.radius;
     offsets[i] = [about.radial[0] * k, about.radial[1] * k, about.radial[2] * k];
     known.push(i);
   }

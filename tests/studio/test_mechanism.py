@@ -210,7 +210,8 @@ CHECK = textwrap.dedent("""
           { reel: 0, mesh: bodyGeom, permanence: "temporary", driven: true,
             axis: { origin: [0,0,0], xAxis: [1,0,0], yAxis: [0,1,0],
               zAxis: [0,0,1] } },
-          { reel: 1, mesh: bodyGeom, permanence: "temporary", driven: true },
+          { reel: 1, mesh: bodyGeom, permanence: "temporary", driven: true,
+            windingRadius: 0.17 },
         ],
         motors: { vertices: bodyGeom.vertices, faces: bodyGeom.faces,
           permanence: "temporary" },
@@ -249,6 +250,32 @@ CHECK = textwrap.dedent("""
     const reel = read.parts.find((p) => p.kind === "reel");
     expect(reel.spins === true, "a reel spins");
     expect(reel.material === "timber/birch-pale-fine", "his ruling: birch reels");
+    // THE WINDING RADIUS PER REEL. The writer measures each reel's own
+    // (median perpendicular distance of the routing frames it owns from
+    // its own axis) rather than sharing one bounding-box figure across
+    // four -- the old global 0.030 matched nothing in the real file. A
+    // reel that does not state one says so with null, so the studio can
+    // fall back to measuring rather than inherit a neighbour's number.
+    const reels = read.parts.filter((p) => p.kind === "reel");
+    near(reels[1].windingRadius, 0.17, 1e-12, "the reel's stated winding radius");
+    expect(reels[0].windingRadius === null,
+      "a reel that states none says null, not a borrowed figure");
+
+    // HIS TWO DECLARED FACTS, and their defaults. This document carries
+    // neither key, as every file exported before 2026-09-09 does, so it
+    // must read as his stated ruling: the frames ARE the centreline and
+    // the cable is 10 mm thick, read as a diameter.
+    expect(read.routingFrameMeaning === "centreline",
+      "a silent document means centreline, his ruling: " + read.routingFrameMeaning);
+    near(read.cableRadius, 0.005, 1e-12, "his 0.01 default, halved to a radius");
+    const declared = readMechanism(Object.assign({}, document, {
+      routingFrameMeaning: "Contact", cableThickness: 0.02 }));
+    expect(declared.routingFrameMeaning === "contact",
+      "a declaration is read, and case does not matter");
+    near(declared.cableRadius, 0.01, 1e-12, "and its own thickness, halved");
+    expect(!declared.notes.some((n) => n.indexOf("cableThickness") >= 0
+      || n.indexOf("routingFrameMeaning") >= 0),
+      "neither declared key is reported as one the reader does not use");
     const tie = read.parts.find((p) => p.kind === "tie");
     expect(tie.permanent === true,
       "the tie DECLARES its permanence and it is read, not inferred");
@@ -469,31 +496,87 @@ def test_the_reader_reads(tmp_path):
     assert "ok" in result.stdout
 
 
+def _part_block(source, port):
+    """The one table entry for a port, as text."""
+    assert 'key: "%s"' % port in source, port
+    block = source[source.index('key: "%s"' % port):]
+    return block[:block.index("}")]
+
+
 @needs_node
 def test_the_material_table_matches_his_rulings():
-    """Param's answers, 2026-09-08: mill steel frames, black motors, birch
-    reels; then on seeing it, frame 1 in the principal bars' polished dark
-    steel and the permanent works in aged blackened steel."""
+    """Param, 2026-09-09, on seeing every part in one flat grey: the
+    anchor and tie in the principal bars' shiny dark metal, the frames in
+    anodised aluminium (frame 2 lighter than frame 1 but darker than the
+    grey he was looking at), NEMA-black motors, fine-grain timber ONLY on
+    the reels, and metal everywhere else -- which moves the pulleys off
+    the birch they had been sharing with the reels."""
 
     source = MODULE.read_text(encoding="utf-8")
-    # Revised on seeing the real machine, 2026-09-08 late: frame 1 wears
-    # the principal bars' metal; the anchor and tie wear aged blackened
-    # steel, so the scratches and weld colour he asked for come from the
-    # texture rather than from a tint over plain aluminium.
     for port, material in (
-            ("frame1", "metal/steel-polished-dark"),
-            ("frame2", "metal/steel-mill-grey"),
+            ("frame1", "metal/aluminium-mill-grey"),
+            ("frame2", "metal/aluminium-mill-grey"),
             ("motors", "metal/steel-powder-coated-black"),
             ("reels", "timber/birch-pale-fine"),
-            ("pulleys", "timber/birch-pale-fine"),
-            ("anchor", "metal/steel-blackened-aged"),
-            ("tensionTie", "metal/steel-blackened-aged")):
-        line = [row for row in source.splitlines()
-                if 'key: "%s"' % port in row]
-        assert line, port
-        block = source[source.index('key: "%s"' % port):]
-        block = block[:block.index("}")]
+            # "the others are metal": a sheave is not a timber part.
+            ("pulleys", "metal/steel-brushed"),
+            # "Shiny ish metalic, like we used for the principle line
+            # bars, dark. This is for the anchor / tie."
+            ("anchor", "metal/steel-polished-dark"),
+            ("tensionTie", "metal/steel-polished-dark")):
+        block = _part_block(source, port)
         assert material in block, "%s should wear %s" % (port, material)
+    assert "timber/" not in _part_block(source, "pulleys"), (
+        "the pulleys are metal now, not the reels' birch")
+
+
+@needs_node
+def test_the_two_frames_are_one_aluminium_under_two_depths_of_coat():
+    """"the aluminium frames are a anodised aluminium coated, a dark grey
+    if we can, make the frame 2 a lighter grey but not as light as it is
+    now." Anodising is a coat over the same mill aluminium, so the two
+    frames share a set and differ only by tint. The tint multiplies the
+    albedo, so both land darker than their own value -- which is what puts
+    frame 2 below the 0x8d9298 fallback grey he was objecting to."""
+
+    source = MODULE.read_text(encoding="utf-8")
+    one = _part_block(source, "frame1")
+    two = _part_block(source, "frame2")
+    assert "metal/aluminium-mill-grey" in one and "metal/aluminium-mill-grey" in two, (
+        "one aluminium under both, so the grain agrees across the frames")
+    tint = lambda block: int(
+        block.split("tint: 0x")[1].split(",")[0].split("\n")[0].strip(), 16)
+    dark, light = tint(one), tint(two)
+    assert dark < light, "frame 2 reads lighter than frame 1"
+    assert light < 0x8d9298, (
+        "and still darker than the flat grey he called too light")
+
+
+def test_every_material_the_table_names_exists_in_his_library():
+    """The fault that produced the flat-grey machine was a LOAD failure,
+    not a naming one -- but a name with no folder behind it fails exactly
+    the same way and looks identical on screen. His library is the
+    authority, so the table is checked against it when it is reachable.
+
+    Skipped rather than failed when the folder is not mounted: this pins
+    the table against the real library on his machine without making the
+    suite depend on a OneDrive path everywhere else."""
+
+    import re
+    settings = REPO / "bench" / "studio" / "settings.json"
+    if not settings.exists():
+        pytest.skip("no studio settings to name the library folder")
+    folder = json.loads(settings.read_text(encoding="utf-8")).get("material_folder")
+    if not folder or not Path(folder).is_dir():
+        pytest.skip("his material library folder is not mounted here")
+    root = Path(folder)
+    source = MODULE.read_text(encoding="utf-8")
+    named = set(re.findall(r'material: "([^"]+)"', source))
+    assert named, "the table names materials"
+    for key in sorted(named):
+        family, _, name = key.partition("/")
+        assert (root / family / name).is_dir(), (
+            "%s is named in PART_KINDS but is not in %s" % (key, folder))
 
 
 # ---------- the route ----------

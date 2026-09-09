@@ -177,10 +177,18 @@ def test_the_loaded_set_cache_is_bounded_and_evicts_by_disposing():
     caches. The one exception is the material currently being worn."""
 
     source = studio()
-    assert "const LIBRARY_CACHE_LIMIT = 6;" in source
-    assert "while (libraryCache.size > LIBRARY_CACHE_LIMIT)" in source
+    # Raised from 6 when the machine arrived wearing five sets at once:
+    # with the vault skin and a ground preset also resident, six evicted
+    # and DISPOSED a texture that live machine meshes still pointed at.
+    assert "const LIBRARY_CACHE_LIMIT = 12;" in source
+    assert "      if (libraryCache.size <= LIBRARY_CACHE_LIMIT) break;" in source
     assert "disposeLibraryMaterial(libraryCache.get(oldest));" in source
-    assert "if (oldest === key || oldest === state.appearance.skin) break;" in source
+    assert "      if (oldest === key || oldest === state.appearance.skin) continue;" in source
+    # Walked, not looped on the head: a protected key at the head must be
+    # stepped over, not treated as a reason to stop evicting, or one pin
+    # would let the cache grow without bound.
+    assert "    for (const oldest of [...libraryCache.keys()]) {" in source
+    assert "while (libraryCache.size > LIBRARY_CACHE_LIMIT)" not in source
 
 
 def test_a_double_click_does_not_fetch_the_same_set_twice():

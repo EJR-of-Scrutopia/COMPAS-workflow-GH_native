@@ -3508,7 +3508,17 @@ function applyTheme(theme) {
 // nothing in this studio looks at more than one or two at a time. Eviction
 // DISPOSES, unlike the QS plugin's caches, because a WebGL texture is not
 // reclaimed by dropping a reference the way a GDI+ bitmap is.
-const LIBRARY_CACHE_LIMIT = 6;
+// Raised from 6 when the machine arrived: it wears FIVE library sets at
+// once (two aluminium frames share one), and with the vault's skin and a
+// ground preset also resident, a limit of six evicted -- and DISPOSED --
+// a texture that live machine meshes still pointed at. Twelve sets is
+// about 250 MB of video memory, which this machine has in abundance.
+const LIBRARY_CACHE_LIMIT = 12;
+
+// Keys something on screen is still WEARING. Eviction skips these: the
+// cache is least-recently-used, and "least recently loaded" is not the
+// same as "no longer needed" once a build wears five sets at once.
+const libraryPins = new Set();
 const libraryCache = new Map();
 const libraryLoads = new Map();     // key -> in-flight promise, so a double
                                     // click does not fetch the set twice
@@ -3550,9 +3560,13 @@ async function ensureLibraryMaterial(key) {
     occlusion: state.occlusion,
   }).then((set) => {
     libraryCache.set(key, set);
-    while (libraryCache.size > LIBRARY_CACHE_LIMIT) {
-      const oldest = libraryCache.keys().next().value;
-      if (oldest === key || oldest === state.appearance.skin) break;
+    // Walked rather than looped on the head: a pinned or protected key at
+    // the head must be STEPPED OVER, not treated as a reason to stop, or
+    // one pin would keep the cache growing without bound.
+    for (const oldest of [...libraryCache.keys()]) {
+      if (libraryCache.size <= LIBRARY_CACHE_LIMIT) break;
+      if (oldest === key || oldest === state.appearance.skin) continue;
+      if (libraryPins.has(oldest)) continue;
       disposeLibraryMaterial(libraryCache.get(oldest));
       libraryCache.delete(oldest);
     }
@@ -8899,11 +8913,11 @@ function disposeMachine() {
   machineObjects = null;
 }
 
-// The wire, from a centreline the pure reader has already corrected (see
-// wireCentreline in mechanism.js: the frames' origins sit on the drum
-// SURFACE, so the centreline is pushed out by one wire radius, and the
-// spools' five-frames-a-turn sampling is subdivided by rotation about the
-// drum axis). This function only sweeps a circle along that line.
+// The wire, from a centreline the pure reader has already prepared (see
+// wireCentreline in mechanism.js: the frames ARE the centreline by
+// Param's ruling, so nothing is offset, and the spools' five-frames-a-turn
+// sampling is subdivided by rotation about the drum axis). This function
+// only sweeps a circle along that line.
 //
 // The ring's own axes come from parallel transport, not from the frames:
 // each ring's x is the previous ring's x with its along-tangent part
@@ -9012,6 +9026,53 @@ function machineMaterial(part) {
     : new THREE.MeshStandardMaterial({ color: 0x8d9298, roughness: 0.55, metalness: 0.6 });
   if (part.tint) material.color.set(part.tint);
   return material;
+}
+
+// One machine mesh, remembering which library set it wants and what tint
+// goes over it, so skinMachine can re-skin it in place when the set lands.
+function machineMesh(geometry, part) {
+  const mesh = new THREE.Mesh(geometry, machineMaterial(part));
+  mesh.userData.machineSkin = part.material;
+  mesh.userData.machineTint = part.tint || null;
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
+
+// THE fault behind "the material we have now is so ugly": machineMaterial
+// only ever READ libraryCache, and nothing had ever asked for the
+// machine's materials, so all seven names missed and every part fell
+// through to the same 0x8d9298 grey -- frames, motors, reels, pulleys and
+// anchor alike, one flat colour on the lot. The names were never wrong;
+// all seven exist in his studio-skin folder. buildPrincipalBars has
+// fetched its set this way since the bars were added, which is exactly
+// why THEY looked right in the same render.
+//
+// Fetched once per distinct key, worn on every mesh that asked for it,
+// and pinned so the cache cannot dispose a set a live mesh points at.
+function skinMachine(group, mine) {
+  const wanted = new Map();
+  group.traverse((object) => {
+    const key = object.userData && object.userData.machineSkin;
+    if (!key || !isLibraryKey(key)) return;
+    if (!wanted.has(key)) wanted.set(key, []);
+    wanted.get(key).push(object);
+  });
+  for (const key of wanted.keys()) libraryPins.add(key);
+  for (const [key, meshes] of wanted) {
+    ensureLibraryMaterial(key).then((set) => {
+      if (!set || mine !== machineBuild) return;
+      for (const mesh of meshes) {
+        const worn = set.material.clone();
+        // The tint multiplies the albedo, so the grain survives and only
+        // the coat's darkness changes -- what anodising actually does.
+        if (mesh.userData.machineTint) worn.color.set(mesh.userData.machineTint);
+        if (mesh.material.side === THREE.DoubleSide) worn.side = THREE.DoubleSide;
+        mesh.material.dispose();
+        mesh.material = worn;
+      }
+      renderView();
+    });
+  }
 }
 
 // A reel's winding radius when no wire tells us: the nearest any of its
@@ -9148,7 +9209,12 @@ async function buildMachine() {
   for (const part of model.parts) {
     if (part.kind !== "reel" || !part.axis) continue;
     reelAxes[part.index] = part.axis;
-    part.contactRadius = reelContactRadius(model.wires, part.index, part.axis)
+    // The writer's own measurement first (windingRadius, per reel, from
+    // 2026-09-09), then the studio's identical measurement, then the
+    // body's bounding box. The document's old global spoolRadius of 0.030
+    // matched nothing in the file, which is why it is not in this chain.
+    part.contactRadius = part.windingRadius
+      || reelContactRadius(model.wires, part.index, part.axis)
       || measureSpoolRadius(part);
   }
   const shifts = motorShifts(model);
@@ -9166,8 +9232,7 @@ async function buildMachine() {
     // stamped once, untransformed (Param: "The anchor should only appear
     // once").
     if (part.permanent) {
-      const mesh = new THREE.Mesh(geometry, machineMaterial(part));
-      mesh.castShadow = mesh.receiveShadow = true;
+      const mesh = machineMesh(geometry, part);
       permanent.add(mesh);
       note(part.kind, lowestZ(geometry, null));
       continue;
@@ -9175,8 +9240,7 @@ async function buildMachine() {
     const placements = part.kind === "motor" ? shifts : [[0, 0, 0]];
     for (const instance of instances) {
       for (const shift of placements) {
-        const mesh = new THREE.Mesh(geometry, machineMaterial(part));
-        mesh.castShadow = mesh.receiveShadow = true;
+        const mesh = machineMesh(geometry, part);
         mesh.matrixAutoUpdate = false;
         if (instance.matrix) mesh.matrix.fromArray(instance.matrix);
         if (shift[0] || shift[1] || shift[2]) {
@@ -9202,6 +9266,12 @@ async function buildMachine() {
   // frame.
   const wireMaterial = materials.steel.clone();
   wireMaterial.transparent = true;
+  // His ruling: the routing frames ARE the cable's centreline, so nothing
+  // is pushed out. A document declaring "contact" instead gets the old
+  // one-radius offset back, from ITS OWN stated cable thickness rather
+  // than from the studio's drawn wire size.
+  const routingOffset = model.routingFrameMeaning === "contact"
+    ? model.cableRadius : 0;
   const wires = [];
   for (const wire of model.wires) {
     // The instance NAMES the wires it carries; the path is the fallback
@@ -9213,7 +9283,7 @@ async function buildMachine() {
         && candidate.side === step.side && candidate.mechanism === step.mechanism)
       || instances[0];
     const routed = loftWire(
-      wireCentreline(wire.route, reelAxes, state.wireRadius), state.wireRadius);
+      wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);
     let mesh = null;
     if (routed) {
       mesh = new THREE.Mesh(routed, wireMaterial);
@@ -9247,6 +9317,8 @@ async function buildMachine() {
   scene.add(group);
   machineObjects = { group, permanent, temporary, spinners, wires, model,
     wireMaterial, lift };
+  libraryPins.clear();
+  skinMachine(group, mine);
   const row = document.getElementById("machine-row");
   if (row) row.classList.remove("hidden");
   logStudio("machine: " + model.parts.length + " parts, "
@@ -9341,14 +9413,20 @@ const spinAxis = new THREE.Vector3();
 function applyMachineAct(t, strikeU) {
   if (!machineObjects) return;
   const { group, permanent, temporary, wireMaterial } = machineObjects;
-  // Shell is the vault alone: no machine, and no anchors either, the same
-  // rule the columns follow in formworkVisibility.
-  const wanted = state.showMachine !== false && state.showMode !== "shell";
+  // Param, 2026-09-09: "when i show shell i expect to see the anchors
+  // too". The anchor and the tension tie are the PERMANENT works -- they
+  // are cast into the finished building and do not leave with the plant
+  // -- so shell shows them and hides only what is temporary. This is the
+  // one place the machine parts company with formworkVisibility, which
+  // has no permanent half to keep.
+  const wanted = state.showMachine !== false;
   group.visible = wanted;
   if (!wanted) return;
   const seconds = formworkSeconds();
   let struck = 0;
-  if (state.showMode === "timeline") {
+  if (state.showMode === "shell") {
+    temporary.visible = false;            // the plant has gone; its works stay
+  } else if (state.showMode === "timeline") {
     const show = formworkVisibility({ t, seconds, strikeU,
       showMode: state.showMode, hasMembers: true, hasColumnMesh: false });
     temporary.visible = show.group;
