@@ -49804,6 +49804,81 @@ internal static partial class Program
         }
     }
 
+    /// <summary>
+    /// The registered studies whose files are ON DISK, with the absent ones
+    /// named rather than fatal.
+    ///
+    /// WHY THIS EXISTS (2026-09-09). Every check over his eight studies used
+    /// to throw the skip from INSIDE its own loop, on the first study whose
+    /// files were missing. Rule 1 registers them alphabetically, so a single
+    /// absent study -- '2 sided vault Hex', first in the table after the one
+    /// he had -- aborted the whole loop and every study after it went
+    /// unmeasured. The suite reported one tidy SKIP line naming one study
+    /// and silently measured NONE of them.
+    ///
+    /// It cost him directly: he re-exported '3 sided vault' and '5 sided
+    /// vault' on 2026-09-09, both matching their registered ground truth
+    /// exactly, and the harness went on skipping wholesale and telling him
+    /// only about the Hex study he had not got to yet. Work done, no credit,
+    /// no signal.
+    ///
+    /// So: measure everything present, name everything absent, and skip only
+    /// when NOTHING is measurable -- which is still the honest answer on a
+    /// machine with no OneDrive, the case the skip was built for. The
+    /// coverage line is printed rather than optional, because a run that
+    /// measured three of eight and said "PASS" without saying which three is
+    /// the same silent-shrinkage failure in a new place.
+    /// </summary>
+    private static (List<HisNetFixture> Present, List<string> Absent)
+        HisNetsOnDisk(params string[] suffixes)
+    {
+        if (!Directory.Exists(HisExportsRoot))
+        {
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
+                "(no OneDrive on this machine, or not yet synced).");
+        }
+
+        var present = new List<HisNetFixture>();
+        var absent = new List<string>();
+        foreach (HisNetFixture fixture in HisNetFixtures)
+        {
+            bool complete = suffixes.All(suffix => File.Exists(
+                Path.Combine(HisExportsRoot, $"{fixture.Study}{suffix}")));
+            if (complete)
+                present.Add(fixture);
+            else
+                absent.Add(fixture.Study);
+        }
+
+        if (present.Count == 0)
+        {
+            throw new HisNetsUnavailableException(
+                $"none of the {HisNetFixtures.Length} registered studies is " +
+                $"on disk under '{HisExportsRoot}' (each needs " +
+                string.Join(" and ", suffixes) + "): " +
+                string.Join(", ", absent) + ".");
+        }
+        return (present, absent);
+    }
+
+    /// <summary>Say what was measured and what was NOT, every time the
+    /// coverage is partial. A check that quietly narrows its own fixture set
+    /// and still prints PASS is the failure this whole helper exists to
+    /// stop.</summary>
+    private static void ReportHisNetsCoverage(
+        string label, int measured, IReadOnlyList<string> absent)
+    {
+        if (absent.Count == 0)
+            return;
+        Console.WriteLine(
+            $"NOTE  {label}: measured {measured} of the " +
+            $"{HisNetFixtures.Length} registered studies. NOT MEASURED, " +
+            "because they are not on disk: " + string.Join(", ", absent) +
+            ". That is a gap in coverage rather than a pass; re-export " +
+            "them and this check widens on its own.");
+    }
+
     /// <summary>The document's own ground truth for one study, read by a
     /// SECOND, unrelated parse path (a plain JsonDocument walk over the raw
     /// -form.json), never through the loader under test
@@ -49922,12 +49997,8 @@ internal static partial class Program
     /// </summary>
     private static void ValidateHisNetsFixtures(Assembly plugin)
     {
-        if (!Directory.Exists(HisExportsRoot))
-        {
-            throw new HisNetsUnavailableException(
-                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
-                "(no OneDrive on this machine, or not yet synced).");
-        }
+        (List<HisNetFixture> onDisk, List<string> absent) =
+            HisNetsOnDisk("-form.json", "-skin.json");
 
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
@@ -49944,18 +50015,12 @@ internal static partial class Program
         const double CourseHeight = 0.5;
         const double MinPiece = 0.20;
 
-        foreach (HisNetFixture fixture in HisNetFixtures)
+        foreach (HisNetFixture fixture in onDisk)
         {
             string formPath =
                 Path.Combine(HisExportsRoot, $"{fixture.Study}-form.json");
             string skinPath =
                 Path.Combine(HisExportsRoot, $"{fixture.Study}-skin.json");
-            if (!File.Exists(formPath) || !File.Exists(skinPath))
-            {
-                throw new HisNetsUnavailableException(
-                    $"'{fixture.Study}' is missing its -form.json or " +
-                    $"-skin.json under '{HisExportsRoot}'.");
-            }
 
             HisNetGroundTruth truth = ReadHisNetGroundTruth(formPath);
             if (truth.FormVertices != fixture.FormVertices ||
@@ -50107,6 +50172,9 @@ internal static partial class Program
                 }
             }
         }
+
+        ReportHisNetsCoverage(
+            "His nets, round four rule 1", onDisk.Count, absent);
     }
 
     /// <summary>
@@ -50221,12 +50289,8 @@ internal static partial class Program
     /// </summary>
     private static void ValidateRoundFourRule4ZeroWidthCells(Assembly plugin)
     {
-        if (!Directory.Exists(HisExportsRoot))
-        {
-            throw new HisNetsUnavailableException(
-                $"COMPAS Exports folder not found at '{HisExportsRoot}' " +
-                "(no OneDrive on this machine, or not yet synced).");
-        }
+        (List<HisNetFixture> onDisk, List<string> absent) =
+            HisNetsOnDisk("-form.json");
 
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
@@ -50242,16 +50306,10 @@ internal static partial class Program
         const double CourseHeight = 0.5;
         const double MinPiece = 0.20;
 
-        foreach (HisNetFixture fixture in HisNetFixtures)
+        foreach (HisNetFixture fixture in onDisk)
         {
             string formPath =
                 Path.Combine(HisExportsRoot, $"{fixture.Study}-form.json");
-            if (!File.Exists(formPath))
-            {
-                throw new HisNetsUnavailableException(
-                    $"'{fixture.Study}' is missing its -form.json under " +
-                    $"'{HisExportsRoot}'.");
-            }
             object resultDto = DeserializeContract(
                 plugin, resultType,
                 HisNetExtractResultContractJson(formPath));
@@ -50331,6 +50389,9 @@ internal static partial class Program
                     $"below 1e-3 m2: {string.Join("; ", zeroAreaCells)}.");
             }
         }
+
+        ReportHisNetsCoverage(
+            "Round four rule 4", onDisk.Count, absent);
     }
 
     /// <summary>
