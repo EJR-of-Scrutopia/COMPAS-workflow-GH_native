@@ -3379,6 +3379,31 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismRoutingTreeDepth(plugin);
+            Console.WriteLine(
+                "PASS  A routing tree is read at ANY DEPTH (2026-09-09, "
+                + "after it cost him two export cycles): the reader demanded "
+                + "a single-level {wire} path and IGNORED every branch that "
+                + "was not one, so when his routing came out two levels deep "
+                + "as {0;wire} it threw all of it away -- no wire "
+                + "first-frames, no correspondence, nothing placed, "
+                + "identically with Placement wired and unwired, and a chin "
+                + "full of warnings about path shapes pointing away from the "
+                + "cause. The deciding is now a pure function so it can be "
+                + "tested at all: a flat {wire} tree and a grouped "
+                + "{group;wire} tree of the same wires give the same answer, "
+                + "two branches landing on one wire are JOINED in the order "
+                + "given rather than one winning silently, wires come back "
+                + "in wire order whatever order they arrive in, and a path "
+                + "with no indices is ignored rather than throwing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismRoutingTreeDepth: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41074,6 +41099,140 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "Routing (RT)[0] carrying no frames must be named as " +
                 "fatal to every placement; warnings were: " + string.Join(" | ", f1Warnings));
+        }
+    }
+
+    /// <summary>
+    /// A ROUTING TREE IS READ AT ANY DEPTH (2026-09-09, and it cost him two
+    /// export cycles). The reader demanded a single-level {wire} path and
+    /// IGNORED every branch that was not one. He rebuilt his routing for the
+    /// wire offset and the higher frame resolution, it came out two levels
+    /// deep as {0;wire}, and every branch was thrown away -- so no wire
+    /// first-frames, so no correspondence, so NOTHING placed, identically
+    /// with Placement wired and unwired. The chin filled with one warning
+    /// per branch about the path shape: true, useless, and pointing away
+    /// from the cause.
+    ///
+    /// The deciding is now a pure function so it can be tested at all; the
+    /// component only reads the tree. Asserted here: a flat {wire} tree and
+    /// a grouped {0;wire} tree of the same wires give the SAME answer, the
+    /// wire is the last index whatever sits above it, two branches landing
+    /// on one wire are joined in the order given rather than one winning
+    /// silently, wires come back in wire order whatever order they arrive
+    /// in, and a path with no indices is ignored rather than throwing.
+    /// </summary>
+    private static void ValidateMechanismRoutingTreeDepth(Assembly plugin)
+    {
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo group = RequirePublicStatic(collectorType, "GroupRouteBranchesByWire");
+        Type wireType = RequireComponentType(plugin, "MechanismRoutingWire");
+
+        object FrameAt(double x) => Activator.CreateInstance(
+            frameType,
+            new[] { x, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        Type tupleType = typeof(ValueTuple<,>).MakeGenericType(
+            typeof(IReadOnlyList<int>),
+            typeof(IReadOnlyList<>).MakeGenericType(frameType));
+        Type listType = typeof(List<>).MakeGenericType(tupleType);
+
+        object Branches(params (int[] Path, double[] Xs)[] items)
+        {
+            object list = Activator.CreateInstance(listType)!;
+            var add = listType.GetMethod("Add")!;
+            foreach ((int[] path, double[] xs) in items)
+            {
+                Type frameListType = typeof(List<>).MakeGenericType(frameType);
+                object frames = Activator.CreateInstance(frameListType)!;
+                var addFrame = frameListType.GetMethod("Add")!;
+                foreach (double x in xs)
+                    addFrame.Invoke(frames, new[] { FrameAt(x) });
+                object tuple = Activator.CreateInstance(tupleType, path, frames)!;
+                add.Invoke(list, new[] { tuple });
+            }
+            return list;
+        }
+
+        (int Wire, int Count, double First)[] Read(object result)
+        {
+            var read = new List<(int, int, double)>();
+            foreach (object? wire in (System.Collections.IEnumerable)result)
+            {
+                int index = (int)wireType.GetProperty("Wire")!.GetValue(wire)!;
+                var route = (System.Collections.IEnumerable)wireType
+                    .GetProperty("Route")!.GetValue(wire)!;
+                int count = 0;
+                double first = double.NaN;
+                foreach (object? f in route)
+                {
+                    if (count == 0)
+                        first = ((double[])frameType.GetProperty("Origin")!.GetValue(f)!)[0];
+                    count++;
+                }
+                read.Add((index, count, first));
+            }
+            return read.ToArray();
+        }
+
+        // A FLAT TREE AND A GROUPED TREE OF THE SAME WIRES AGREE.
+        var flat = Read(group.Invoke(null, new object?[]
+        {
+            Branches(
+                (new[] { 0 }, new[] { 1.0, 2.0 }),
+                (new[] { 1 }, new[] { 3.0 })),
+        })!);
+        var grouped = Read(group.Invoke(null, new object?[]
+        {
+            Branches(
+                (new[] { 0, 0 }, new[] { 1.0, 2.0 }),
+                (new[] { 0, 1 }, new[] { 3.0 })),
+        })!);
+        if (flat.Length != 2 || grouped.Length != 2 ||
+            flat[0] != grouped[0] || flat[1] != grouped[1])
+        {
+            throw new InvalidOperationException(
+                "A {wire} tree and a {group;wire} tree carrying the same " +
+                "wires must give the SAME answer: the wire is the LAST " +
+                "index of the path and anything above it is grouping. Flat " +
+                "read " + string.Join(", ", flat) + "; grouped read " +
+                string.Join(", ", grouped) + ".");
+        }
+
+        // TWO BRANCHES ON ONE WIRE ARE JOINED, IN ORDER, not one silently won.
+        var joined = Read(group.Invoke(null, new object?[]
+        {
+            Branches(
+                (new[] { 0, 3 }, new[] { 10.0 }),
+                (new[] { 1, 3 }, new[] { 11.0 })),
+        })!);
+        if (joined.Length != 1 || joined[0].Wire != 3 ||
+            joined[0].Count != 2 || Math.Abs(joined[0].First - 10.0) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Two branches landing on wire 3 must be JOINED into one " +
+                "wire of two frames, in the order given, rather than one " +
+                "silently winning; got " + string.Join(", ", joined) + ".");
+        }
+
+        // WIRE ORDER OUT, WHATEVER ORDER IN, and an empty path is ignored.
+        var ordered = Read(group.Invoke(null, new object?[]
+        {
+            Branches(
+                (new[] { 5 }, new[] { 50.0 }),
+                (Array.Empty<int>(), new[] { 99.0 }),
+                (new[] { 2 }, new[] { 20.0 })),
+        })!);
+        if (ordered.Length != 2 || ordered[0].Wire != 2 || ordered[1].Wire != 5)
+        {
+            throw new InvalidOperationException(
+                "Wires must come back in wire order whatever order the " +
+                "paths arrived in, and a path with no indices must be " +
+                "ignored rather than throwing; got " +
+                string.Join(", ", ordered) + ".");
         }
     }
 

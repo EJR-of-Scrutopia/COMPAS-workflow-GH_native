@@ -2208,6 +2208,46 @@ internal static class MechanismCollector
     }
 
     /// <summary>
+    /// GROUP ROUTING BRANCHES BY WIRE, at whatever depth the tree has: the
+    /// wire is the LAST index of each path and anything above it is
+    /// grouping, read through.
+    ///
+    /// Pure on purpose. This logic used to live inside the component, where
+    /// it needed an IGH_DataAccess and a Grasshopper tree and so could not
+    /// be tested at all -- and it was WRONG for a year of canvases: it
+    /// demanded a single-level path and silently ignored every branch that
+    /// was not one. On 2026-09-09 his routing came out two levels deep,
+    /// every branch was thrown away, and the whole document went out with
+    /// no wires and no machines in it. The component now does the reading
+    /// and this does the deciding, so the deciding has a test.
+    ///
+    /// Branches landing on the same wire are joined IN THE ORDER GIVEN,
+    /// rather than one silently winning, and wires come back in wire order
+    /// whatever order the paths arrived in.
+    /// </summary>
+    public static List<MechanismRoutingWire> GroupRouteBranchesByWire(
+        IReadOnlyList<(IReadOnlyList<int> Path, IReadOnlyList<MechanismFrame> Frames)> branches)
+    {
+        var byWire = new SortedDictionary<int, List<MechanismFrame>>();
+        foreach ((IReadOnlyList<int> path, IReadOnlyList<MechanismFrame> frames) in branches)
+        {
+            if (path.Count == 0)
+                continue;
+            int wire = path[path.Count - 1];
+            if (!byWire.TryGetValue(wire, out List<MechanismFrame>? gathered))
+            {
+                gathered = new List<MechanismFrame>();
+                byWire[wire] = gathered;
+            }
+            gathered.AddRange(frames);
+        }
+        var wires = new List<MechanismRoutingWire>(byWire.Count);
+        foreach (KeyValuePair<int, List<MechanismFrame>> entry in byWire)
+            wires.Add(new MechanismRoutingWire(entry.Key, entry.Value));
+        return wires;
+    }
+
+    /// <summary>
     /// The MEDIAN of a set of values, which is what a winding radius wants
     /// rather than a mean: a wire's frames are nearly all at the drum's own
     /// radius and a handful sit on the run in and out, and a median ignores
@@ -3366,7 +3406,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         IGH_DataAccess data, List<string> warnings, List<string> notes)
     {
         data.GetDataTree(7, out GH_Structure<GH_Plane> rtTree);
-        var byWire = new SortedDictionary<int, List<MechanismFrame>>();
+        var branches = new List<(IReadOnlyList<int>, IReadOnlyList<MechanismFrame>)>();
         int deepest = 0;
         int emptyPaths = 0;
         foreach (GH_Path path in rtTree.Paths)
@@ -3377,12 +3417,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                 continue;
             }
             deepest = Math.Max(deepest, path.Indices.Length);
-            int wire = path.Indices[path.Indices.Length - 1];
-            if (!byWire.TryGetValue(wire, out List<MechanismFrame>? frames))
-            {
-                frames = new List<MechanismFrame>();
-                byWire[wire] = frames;
-            }
+            var frames = new List<MechanismFrame>();
             foreach (GH_Plane planeGoo in rtTree.get_Branch(path))
             {
                 if (planeGoo is null)
@@ -3394,13 +3429,13 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                     new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
                     new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
             }
+            branches.Add((path.Indices, frames));
         }
         if (emptyPaths > 0)
             warnings.Add($"Routing (RT): {emptyPaths} branch(es) carry no path indices; ignored.");
 
-        var wires = new List<MechanismRoutingWire>(byWire.Count);
-        foreach (KeyValuePair<int, List<MechanismFrame>> entry in byWire)
-            wires.Add(new MechanismRoutingWire(entry.Key, entry.Value));
+        List<MechanismRoutingWire> wires =
+            MechanismCollector.GroupRouteBranchesByWire(branches);
 
         if (wires.Count > 0)
         {
