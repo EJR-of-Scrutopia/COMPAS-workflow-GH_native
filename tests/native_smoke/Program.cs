@@ -226,15 +226,17 @@ internal static partial class Program
                 // 2026-09-04 section 2, which is what slides every archived
                 // wire after it up one and is why the Live hold is checked
                 // against a definition archived with the old count.
-                // Mechanism is APPENDED last (the mechanism spec), so no
-                // existing wire moved. The outputs are one JSON list and one
+                // Mechanism, then Machine Folder, are APPENDED last (the
+                // mechanism spec, and his 2026-09-09 ruling that the
+                // machine keeps its own folder), so no existing wire moved. The outputs are one JSON list and one
                 // Status, and a reader tells the documents apart by the
                 // schema key each text carries rather than by slot.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
                     new[]
                     {
                         "Result", "Cells", "Column Radius", "Name",
-                        "Path", "Studio", "Live", "Write", "Mechanism"
+                        "Path", "Studio", "Live", "Write", "Mechanism",
+                        "Machine Folder"
                     },
                     new[] { "JSON", "Status" })
             };
@@ -39247,7 +39249,7 @@ internal static partial class Program
         string[] newInputs =
         {
             "Result", "Cells", "Column Radius", "Name", "Path", "Studio",
-            "Live", "Write", "Mechanism"
+            "Live", "Write", "Mechanism", "Machine Folder"
         };
         string[] outputs = { "JSON", "Status" };
 
@@ -39323,7 +39325,7 @@ internal static partial class Program
         if (Hold(newInputs, true))
         {
             throw new InvalidOperationException(
-                "A definition archived against TODAY's nine inputs must "
+                "A definition archived against TODAY's ten inputs must "
                 + "not be held: every wire came back where it left, and a "
                 + "hold there is a false alarm on every file saved after "
                 + "this wave.");
@@ -39477,13 +39479,14 @@ internal static partial class Program
         string[] expected =
         {
             "Result", "Cells", "Column Radius", "Name", "Path",
-            "Studio", "Live", "Write", "Mechanism"
+            "Studio", "Live", "Write", "Mechanism", "Machine Folder"
         };
         if (inputs.Count != expected.Length)
         {
             throw new InvalidOperationException(
                 $"Export registers {expected.Length} inputs now that the "
-                + $"Courses port is gone and Mechanism is appended; it "
+                + $"Courses port is gone and Mechanism then Machine "
+                + $"Folder are appended; it "
                 + $"registers {inputs.Count}.");
         }
         for (int at = 0; at < expected.Length; at++)
@@ -49196,13 +49199,73 @@ internal static partial class Program
         new("6 sided vault", 0, 1321, 1200, 2400, 126, 6),
     };
 
-    /// <summary>Where Param's eight studies live. Not configurable: the
-    /// point of rule 1 is that HIS nets are the fixtures, at the one place
-    /// he exports them to, and a harness that let this be overridden would
-    /// let a future run quietly measure something else and call it his
-    /// data.</summary>
-    private const string HisExportsRoot =
-        @"C:\Users\Param\OneDrive - Ananke-eidos\Documents\Kinetic AI\PHD robotics\COMPAS Exports";
+    /// <summary>
+    /// Where Param's eight studies live. STILL NOT CONFIGURABLE: the point
+    /// of rule 1 is that HIS nets are the fixtures, at the place he exports
+    /// them to, and a harness that could be pointed anywhere would let a
+    /// future run quietly measure something else and call it his data. So
+    /// there is no override, no environment variable and no argument.
+    ///
+    /// It does now FOLLOW THE FILES ACROSS DRIVES, because on 2026-09-09
+    /// OneDrive moved his from C: to D: and the constant went on naming a
+    /// folder that had been emptied. The suite kept reporting exit 0 while
+    /// six of its skin checks quietly skipped: a harness testing less than
+    /// it did and saying nothing, which is worse than one that fails.
+    ///
+    /// The candidates are the SAME relative path under each drive his
+    /// OneDrive has lived on, never an arbitrary folder, and the one
+    /// carrying studies wins. Where more than one does, the newest wins and
+    /// the choice is PRINTED, so a run can never measure one silently.
+    /// </summary>
+    private static readonly string[] HisExportsCandidates =
+    {
+        @"C:\Users\Param\OneDrive - Ananke-eidos\Documents\Kinetic AI\PHD robotics\COMPAS Exports",
+        @"D:\OneDrive - Ananke-eidos\Documents\Kinetic AI\PHD robotics\COMPAS Exports",
+    };
+
+    private static string? _hisExportsRoot;
+
+    private static string HisExportsRoot
+    {
+        get
+        {
+            if (_hisExportsRoot is not null)
+                return _hisExportsRoot;
+            var carrying = new List<(string Root, DateTime Newest, int Studies)>();
+            foreach (string candidate in HisExportsCandidates)
+            {
+                if (!Directory.Exists(candidate))
+                    continue;
+                string[] forms = Directory.GetFiles(candidate, "*-form.json");
+                if (forms.Length == 0)
+                    continue;
+                carrying.Add((
+                    candidate,
+                    forms.Max(f => File.GetLastWriteTimeUtc(f)),
+                    forms.Length));
+            }
+            if (carrying.Count == 0)
+            {
+                _hisExportsRoot = HisExportsCandidates[0];
+                return _hisExportsRoot;
+            }
+            (string root, _, int studies) =
+                carrying.OrderByDescending(c => c.Newest).First();
+            _hisExportsRoot = root;
+            if (carrying.Count > 1)
+            {
+                Console.WriteLine(
+                    $"NOTE  His studies were found in {carrying.Count} places "
+                    + "at the same relative path; reading the one with the "
+                    + $"newest export: '{root}' ({studies} study "
+                    + "document(s)). The others: "
+                    + string.Join(", ", carrying
+                        .Where(c => c.Root != root)
+                        .Select(c => $"'{c.Root}' ({c.Studies})")) + ".");
+            }
+            return _hisExportsRoot;
+        }
+    }
 
     /// <summary>The document's own ground truth for one study, read by a
     /// SECOND, unrelated parse path (a plain JsonDocument walk over the raw
