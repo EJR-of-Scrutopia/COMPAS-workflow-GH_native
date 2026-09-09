@@ -756,6 +756,51 @@ export function chainLength(vertices, chain) {
   return length;
 }
 
+// ---------- choosing a mechanism ----------
+// Param: "the mechanism itself wants to become an asset ... we can pick
+// and chose or you can auto chose the best one. this will likely be ones
+// with different wire configs to deal with un even numbers of wires."
+//
+// A study needs ONE CABLE PER SUPPORT, and one machine pulls a bank of
+// spools, so a mechanism's fit is how evenly its bank divides the
+// supports. Forty-two supports are served exactly by a bank of seven and
+// leave two over on a bank of five.
+//
+// Ties go to the LARGER bank, because fewer machines is the simpler site.
+// A study's OWN document wins a tie outright, so borrowing never quietly
+// overrides his authoring -- but it does not win on fit, or "auto" would
+// mean "his own, always" and the control would be pointless.
+//
+// Returns the chosen entry, or null when nothing usable was offered.
+export function chooseMechanism(library, ownExport, supportCount) {
+  const usable = (library || []).filter(
+    (entry) => entry && entry.ok !== false && +entry.spools > 0);
+  if (!usable.length) return null;
+  const supports = Number.isFinite(+supportCount) ? Math.max(0, +supportCount) : 0;
+  // Compared ELEMENT BY ELEMENT. JavaScript's `<` on two arrays compares
+  // their STRING forms, so [0, -5] sorted after [0, -4] and a bank of
+  // four beat a bank of five on an equal fit. The test caught it; the
+  // operator looks right and is not.
+  const better = (a, b) => {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i];
+    }
+    return false;
+  };
+  let best = null, bestKey = null;
+  for (const entry of usable) {
+    const spools = +entry.spools;
+    const key = [
+      supports > 0 ? supports % spools : 0,   // the cables left unserved
+      -spools,                                 // then the larger bank
+      entry.export === ownExport ? 0 : 1,      // then his own
+      String(entry.export),                    // then by name, so it is stable
+    ];
+    if (!bestKey || better(key, bestKey)) { best = entry; bestKey = key; }
+  }
+  return best;
+}
+
 // ---------- the checks the contract asks for ----------
 // Both derived values the writer sends are re-checked here and REPORTED,
 // never corrected. The writer derives net_vertex by matching wire order

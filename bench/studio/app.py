@@ -1214,6 +1214,89 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 removed.append(path.name)
         return {"deleted": scene_id, "removed": removed}
 
+    _mechanism_summaries: dict = {}
+
+    def _mechanism_summary(path: Path) -> dict:
+        """What a mechanism document IS, cheaply enough to list.
+
+        These are large -- his 2 Sided Vault is 25 MB, almost all of it
+        vertices -- so each summary is memoised on the file's own mtime
+        and size. The first listing after a restart pays one parse per
+        file; every listing after that is free, and a re-export
+        invalidates itself because its mtime moves.
+        """
+
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        cached = _mechanism_summaries.get(path.name)
+        if cached and cached[0] == key:
+            return cached[1]
+        row = {
+            "export": path.name[: -len("-mechanism.json")],
+            "bytes": stat.st_size, "ok": True, "reason": "",
+            "spools": 0, "reels": 0, "parts": [],
+            "instances": 0, "wires": 0, "anchors": 0,
+        }
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            mechanism.validate_mechanism_document(document)
+        except (OSError, ValueError) as error:
+            # LISTED, not skipped: a damaged mechanism is still his work,
+            # and one that silently vanishes from the picker is worse than
+            # one that says why it cannot be chosen.
+            row.update(ok=False, reason=str(error))
+            _mechanism_summaries[path.name] = (key, row)
+            return row
+        body = document.get("mechanism")
+        body = body if isinstance(body, dict) else {}
+        reels = body.get("reels")
+        reels = reels if isinstance(reels, list) else ([reels] if reels else [])
+        # A SPOOL is a drum small enough to be one. The bank of spools is
+        # what decides how many cables one machine can pull, which is the
+        # whole basis of choosing between mechanisms. A reel that states
+        # no winding radius is counted as a spool: an unstated radius is
+        # far more likely to be a drum than a pulley, and counting it out
+        # would quietly shrink the bank.
+        spools = 0
+        for reel in reels:
+            radius = reel.get("windingRadius") if isinstance(reel, dict) else None
+            try:
+                if radius is None or float(radius) < mechanism.SPOOL_RADIUS_LIMIT:
+                    spools += 1
+            except (TypeError, ValueError):
+                spools += 1
+        row.update(
+            spools=spools, reels=len(reels),
+            parts=sorted(k for k, v in body.items() if isinstance(v, (dict, list))),
+            instances=len(document.get("instances") or []),
+            wires=len(document.get("wires") or []),
+            anchors=len(document.get("anchors") or []),
+        )
+        _mechanism_summaries[path.name] = (key, row)
+        return row
+
+    @app.get("/api/mechanisms")
+    def mechanism_library():
+        """Every mechanism document in the folder, as a choosable asset.
+
+        Param: "the mechanism itself wants to become an asset, so add to
+        import the mechanism as a drop down selection, so if i export any
+        other types of mechanisms, we can pick and chose or you can auto
+        chose the best one."
+
+        The documents themselves are still fetched one at a time through
+        /api/studies/{export}/mechanism, which is already keyed by export
+        name and so already serves any of them. This route only says what
+        is there and what each one is, which is what a chooser needs.
+        """
+
+        root = bundle.UPLOAD_DIR
+        rows = []
+        if root is not None and Path(root).is_dir():
+            for path in sorted(Path(root).glob("*-mechanism.json")):
+                rows.append(_mechanism_summary(path))
+        return {"root": str(root) if root else "", "mechanisms": rows}
+
     def _library_row(kind: str):
         """Where a library reads from, whether it is there, and how much is
         in it. The same three facts for all four folders, so one client

@@ -111,6 +111,14 @@
       <select id="study-select"></select>
       <button id="study-refresh" title="Re-read the folder for new saves">Refresh</button>
     </div>
+    <!-- Which machine this vault wears. A mechanism stopped being a
+         property of one study when Param asked to "pick and chose"
+         between them; Auto reads the folder and fits the bank of spools
+         to the number of supports. -->
+    <div id="mechanism-row">
+      <label for="mechanism-select">Machine</label>
+      <select id="mechanism-select" title="Which mechanism this vault wears"></select>
+    </div>
     <div id="vault-tools">
       <button id="live-toggle" class="on" title="Live: follow Grasshopper"><span class="beacon"></span>LIVE</button>
       <button id="delete-study" class="danger" title="Delete this vault's JSON from the folder">Delete</button>

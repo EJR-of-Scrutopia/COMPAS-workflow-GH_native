@@ -26,6 +26,14 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping
 
 SCHEMA_PREFIX = "bench.mechanism/"
+# Below this winding radius a drum counts as a SPOOL rather than a
+# pulley. Mirrors SPOOL_RADIUS_LIMIT in static/mechanism.js, and the two
+# are held to each other by a test: on his file the seven spools wind at
+# 0.050 and the three pulleys at 0.170 upward, and they all arrive under
+# the same `reels` key, so the number that separates them must not drift
+# between the reader and the server.
+SPOOL_RADIUS_LIMIT = 0.1
+
 SCHEMA = "bench.mechanism/1"
 
 

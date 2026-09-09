@@ -101,7 +101,7 @@ CHECK = textwrap.dedent("""
       SCHEMA, PART_KINDS, readGeometry, placementMatrix, isReflection,
       turnsFor, readMechanism, checkNetVertices, checkRouteDirection,
       wireCentreline, reelContactRadius, SPOOL_STEPS, PULLEY_STEPS,
-      ribChain, chainLength, DEFAULT_CABLE_RADIUS,
+      ribChain, chainLength, DEFAULT_CABLE_RADIUS, chooseMechanism,
     } from %MODULE%;
 
     function expect(condition, message) {
@@ -548,6 +548,55 @@ CHECK = textwrap.dedent("""
       mechanism: { frame1: { vertices: bodyGeom.vertices, faces: bodyGeom.faces } } });
     expect(bare.ok === true && bare.anchors.length === 0,
       "a document carrying no anchors reads as none");
+
+    // ---------- choosing a mechanism ----------
+    // "we can pick and chose or you can auto chose the best one. this
+    // will likely be ones with different wire configs to deal with un
+    // even numbers of wires."
+    const shelf = [
+      { export: "Seven", spools: 7, ok: true },
+      { export: "Five", spools: 5, ok: true },
+      { export: "Four", spools: 4, ok: true },
+      { export: "Broken", spools: 0, ok: false },
+    ];
+    // 42 supports divide exactly by seven and leave two on five.
+    expect(chooseMechanism(shelf, null, 42).export === "Seven",
+      "a bank of seven serves 42 supports exactly");
+    // 20 leaves nothing on five or four; the LARGER bank wins, because
+    // fewer machines is the simpler site.
+    expect(chooseMechanism(shelf, null, 20).export === "Five",
+      "a tie on fit goes to the larger bank: "
+      + chooseMechanism(shelf, null, 20).export);
+    // 21 divides by seven, not by five or four.
+    expect(chooseMechanism(shelf, null, 21).export === "Seven",
+      "21 is three banks of seven");
+    // His OWN document wins a tie, but never on fit -- or "auto" would
+    // mean "his own, always" and the control would be pointless.
+    expect(chooseMechanism(
+      [{ export: "A", spools: 5, ok: true }, { export: "B", spools: 5, ok: true }],
+      "B", 20).export === "B", "his own wins an equal fit");
+    expect(chooseMechanism(
+      [{ export: "A", spools: 7, ok: true }, { export: "B", spools: 5, ok: true }],
+      "B", 42).export === "A", "but does not win on a worse fit");
+    // An unreadable one is never chosen, and neither is one with no bank.
+    expect(chooseMechanism([{ export: "Broken", spools: 0, ok: false }], null, 42) === null,
+      "nothing usable means nothing chosen, not a guess");
+    // A mechanism that READS PERFECTLY WELL but carries no spools pulls
+    // nothing, and dividing by its bank is a division by zero. It is not
+    // a candidate, and this is a different refusal from the unreadable
+    // one above.
+    expect(chooseMechanism([{ export: "Bodyless", spools: 0, ok: true }], null, 42) === null,
+      "a machine with no bank pulls nothing and is never chosen");
+    expect(chooseMechanism(
+      [{ export: "Bodyless", spools: 0, ok: true },
+       { export: "Five", spools: 5, ok: true }], null, 42).export === "Five",
+      "and it never displaces one that can");
+    expect(chooseMechanism([], null, 42) === null, "an empty shelf chooses nothing");
+    expect(chooseMechanism(null, null, 42) === null, "and so does no shelf at all");
+    // A study whose supports are unknown still gets a machine: every
+    // remainder is zero, so the largest bank wins.
+    expect(chooseMechanism(shelf, null, 0).export === "Seven",
+      "with no support count the largest bank stands in");
 
     console.log("ok");
 """)

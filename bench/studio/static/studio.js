@@ -10,7 +10,7 @@ import {
 } from "/static/panel.js";
 import {
   readMechanism, checkNetVertices, checkRouteDirection, turnsFor,
-  wireCentreline, reelContactRadius, ribChain, chainLength,
+  wireCentreline, reelContactRadius, ribChain, chainLength, chooseMechanism,
 } from "/static/mechanism.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -190,6 +190,11 @@ const state = {
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
+  // Which mechanism a study wears: "auto", "none", or an export name.
+  // Remembered across sessions, because a chosen machine is a setting
+  // rather than a property of whichever vault happens to be open.
+  mechanismChoice: "auto",
+  mechanismLibrary: [],   // the summaries from /api/mechanisms
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
   recordStop: false,   // set by pressing the button again; the loop checks it each frame
   analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1,
@@ -3056,6 +3061,78 @@ window.addEventListener("beforeunload", rememberSession);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") rememberSession();
 });
+
+const MECHANISM_CHOICE_KEY = "vaulted.mechanism.choice";
+
+async function refreshMechanisms() {
+  let payload = null;
+  try {
+    payload = await fetchJson("/api/mechanisms");
+  } catch (error) {
+    return;                        // no folder chosen; the control stays empty
+  }
+  state.mechanismLibrary = payload.mechanisms || [];
+  const select = document.getElementById("mechanism-select");
+  if (!select) return;
+  select.innerHTML = "";
+  const add = (value, label, title) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    if (title) option.title = title;
+    select.appendChild(option);
+  };
+  add("auto", "Auto", "Fit the bank of spools to this vault's supports");
+  add("none", "None", "Draw no machine at all");
+  for (const entry of state.mechanismLibrary) {
+    // The facts a choice is actually made on, in the label itself: a
+    // dropdown of bare study names says nothing about which machine
+    // suits which vault.
+    const detail = entry.ok === false
+      ? "unreadable"
+      : entry.spools + " spools" + (entry.instances ? ", places itself" : "");
+    add(entry.export, entry.export + "  (" + detail + ")",
+      entry.ok === false ? entry.reason : "");
+  }
+  select.value = state.mechanismChoice;
+  if (!select.value) {
+    // The remembered choice names an export that is no longer in the
+    // folder. Auto rather than a silent blank, and said, because a
+    // machine quietly changing is worse than one that changed loudly.
+    logStudio("mechanism: \"" + state.mechanismChoice + "\" is no longer in "
+      + "the folder, so Auto is used");
+    state.mechanismChoice = "auto";
+    select.value = "auto";
+  }
+}
+
+function fetchMechanismFor(exportName) {
+  return fetch("/api/studies/" + encodeURIComponent(exportName) + "/mechanism")
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+}
+
+// Which mechanism document this study wears. His own is fetched in
+// parallel with the bundle, since that is the common case; only a choice
+// landing on a DIFFERENT export costs a second request.
+async function resolveMechanism(own, exportName, loaded) {
+  if (state.mechanismChoice === "none") return null;
+  if (state.mechanismChoice && state.mechanismChoice !== "auto") {
+    if (state.mechanismChoice === exportName) return own;
+    return (await fetchMechanismFor(state.mechanismChoice)) || own;
+  }
+  // Auto. A document that brings its OWN placements is already the right
+  // answer for this study, and nothing borrowed can beat it.
+  if (own && Array.isArray(own.instances) && own.instances.length) return own;
+  const supports = loaded && Array.isArray(loaded.supports)
+    ? loaded.supports.length : 0;
+  const pick = chooseMechanism(state.mechanismLibrary, exportName, supports);
+  if (!pick || pick.export === exportName) return own;
+  logStudio("mechanism: this study places no machines of its own, so "
+    + pick.export + " is borrowed -- " + pick.spools + " spools against "
+    + supports + " supports");
+  return (await fetchMechanismFor(pick.export)) || own;
+}
 
 async function refreshScenes() {
   const payload = await fetchJson("/api/scenes");
@@ -6464,7 +6541,9 @@ async function loadStudy(exportName) {
     // before the check, a superseded load clobbered the winning study's
     // formwork with its own.
     const formwork = await formworkPromise;
-    const mechanismDocument = await mechanismPromise;
+    const ownMechanism = await mechanismPromise;
+    if (sequence !== state.loadSequence) return "superseded";
+    const mechanismDocument = await resolveMechanism(ownMechanism, exportName, fresh);
     if (sequence !== state.loadSequence) return "superseded";
     state.formwork = formwork;
     state.mechanism = mechanismDocument;
@@ -6650,7 +6729,9 @@ document.getElementById("study-refresh").addEventListener("click", async () => {
   const select = document.getElementById("study-select");
   const standing = select.value;
   const names = await refreshStudies(standing);
-  logStudio("folder re-read: " + names.length + " vaults");
+  await refreshMechanisms();
+  logStudio("folder re-read: " + names.length + " vaults, "
+    + state.mechanismLibrary.length + " machines");
   if (standing && names.includes(standing)) {
     select.value = standing;
     await loadStudy(standing);
@@ -10719,6 +10800,20 @@ guarded("the panel groups", buildGroups);
 // arrives, a folder with nothing in it simply leaves the old props, and no
 // material folder chosen leaves the four built-in skins.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
+try {
+  const remembered = localStorage.getItem(MECHANISM_CHOICE_KEY);
+  if (remembered) state.mechanismChoice = remembered;
+} catch (error) { /* private browsing: Auto stands */ }
+refreshMechanisms().catch(
+  (error) => logStudio("mechanism library: " + error.message));
+document.getElementById("mechanism-select").addEventListener("change", async (e) => {
+  state.mechanismChoice = e.target.value;
+  try {
+    localStorage.setItem(MECHANISM_CHOICE_KEY, state.mechanismChoice);
+  } catch (error) { /* nothing to remember with; the choice still applies */ }
+  const study = document.getElementById("study-select").value;
+  if (study) await loadStudy(study);
+});
 materialLibraryReady = refreshMaterialLibrary().catch(
   (error) => logStudio("material library: " + error.message));
 // Said once at boot, and printed in the panel. A page that reports the same

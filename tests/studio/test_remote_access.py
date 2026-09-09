@@ -1225,6 +1225,52 @@ def test_the_shelf_record_tile_becomes_a_stop_button():
         "filled red at rest while a take runs, like the panel's own button")
 
 
+def test_a_mechanism_is_chosen_rather_than_inherited():
+    """Param: "the mechanism itself wants to become an asset, so add to
+    import the mechanism as a drop down selection, so if i export any
+    other types of mechanisms, we can pick and chose or you can auto chose
+    the best one."
+
+    A mechanism stopped being a property of one study. The document is
+    still fetched through /api/studies/{export}/mechanism, which was
+    already keyed by export name and so already served any of them; what
+    was missing was a listing to choose from and somewhere to choose."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
+    assert '<select id="mechanism-select"' in html
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'fetchJson("/api/mechanisms")' in js
+    assert '  add("auto", "Auto",' in js and '  add("none", "None",' in js
+    # The facts a choice is made on go in the LABEL: a dropdown of bare
+    # study names says nothing about which machine suits which vault.
+    assert '      : entry.spools + " spools" + (entry.instances ? ", places itself" : "");' in js
+
+    # AUTO NEVER OVERRIDES A DOCUMENT THAT PLACES ITSELF. Agreed with the
+    # exporter session: the document is authoritative when it carries
+    # instances, and the studio only chooses when it carries none.
+    assert "  if (own && Array.isArray(own.instances) && own.instances.length) return own;" in js
+    assert '  if (state.mechanismChoice === "none") return null;' in js
+    # Only a choice landing on a DIFFERENT export costs a second request;
+    # his own is already in flight beside the bundle.
+    assert "    if (state.mechanismChoice === exportName) return own;" in js
+    assert "  if (!pick || pick.export === exportName) return own;" in js
+    # And a borrow is SAID, with the arithmetic that justified it.
+    assert '    + pick.export + " is borrowed -- " + pick.spools + " spools against "' in js
+
+    # The choice outlives the session, since a chosen machine is a setting
+    # rather than a property of whichever vault happens to be open.
+    assert 'const MECHANISM_CHOICE_KEY = "vaulted.mechanism.choice";' in js
+    assert "    localStorage.setItem(MECHANISM_CHOICE_KEY, state.mechanismChoice);" in js
+    # A remembered choice naming an export that has since left the folder
+    # falls back to Auto and SAYS so: a machine quietly changing is worse
+    # than one that changed loudly.
+    assert "  if (!select.value) {" in js
+    assert '      + "the folder, so Auto is used");' in js
+    # Refresh re-reads the machines beside the vaults, or a newly
+    # exported machine would not appear until a reload.
+    assert "  await refreshMechanisms();" in js
+
+
 def test_refresh_reloads_the_vault_on_screen_not_just_the_listing():
     """Param: "when i press refresh in the import menu, i expect it to
     refresh the loaded vault too, because i upload a new file and it doesnt

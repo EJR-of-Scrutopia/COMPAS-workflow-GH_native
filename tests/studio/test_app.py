@@ -375,6 +375,124 @@ def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_pat
     assert client.post("/api/frames/nonsense/stitch").status_code == 404
 
 
+def _mechanism(spool_radii, instances=0, wires=0, anchors=0, schema=None):
+    """A mechanism document with a bank of spools of the given radii."""
+    return {
+        "schema": schema or "bench.mechanism/1",
+        "lengthUnitToMetres": 1,
+        "mechanism": {
+            "frame1": {"vertices": [[0, 0, 0]], "faces": [[0, 0, 0]]},
+            "reels": [{"reel": i, "windingRadius": r}
+                      for i, r in enumerate(spool_radii)],
+        },
+        "instances": [{"side": 0, "mechanism": 0} for _ in range(instances)],
+        "wires": [{"id": str(i)} for i in range(wires)],
+        "anchors": [{"side": 0} for _ in range(anchors)],
+    }
+
+
+def test_the_mechanism_library_says_what_each_machine_is(tmp_path, monkeypatch):
+    """Param: "the mechanism itself wants to become an asset, so add to
+    import the mechanism as a drop down selection".
+
+    A dropdown of bare study names says nothing about which machine suits
+    which vault, so the listing carries the facts a choice is made on --
+    above all the SPOOL count, since one machine pulls one bank.
+    """
+
+    import json as _json
+    client, _studies = make_client(tmp_path, monkeypatch)
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import bundle
+
+    # Seven spools and three pulleys, exactly the shape of his real file:
+    # they all arrive under `reels`, and only the winding radius separates
+    # them.
+    (bundle.UPLOAD_DIR / "Tiny-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 7 + [0.17, 0.2, 0.3],
+                               instances=6, wires=42, anchors=6)),
+        encoding="utf-8")
+    (bundle.UPLOAD_DIR / "Five-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05] * 5)), encoding="utf-8")
+    (bundle.UPLOAD_DIR / "Broken-mechanism.json").write_text(
+        "{not json", encoding="utf-8")
+
+    rows = client.get("/api/mechanisms").json()["mechanisms"]
+    by_name = {row["export"]: row for row in rows}
+    assert sorted(by_name) == ["Broken", "Five", "Tiny"]
+
+    tiny = by_name["Tiny"]
+    assert tiny["spools"] == 7, "the pulleys are not part of the bank"
+    assert tiny["reels"] == 10, "though they are still reels"
+    assert tiny["instances"] == 6 and tiny["wires"] == 42 and tiny["anchors"] == 6
+    assert "reels" in tiny["parts"] and "frame1" in tiny["parts"]
+    assert tiny["ok"] is True
+
+    assert by_name["Five"]["spools"] == 5
+
+    # A REEL THAT STATES NO WINDING RADIUS COUNTS INTO THE BANK. An
+    # unstated radius is far more likely to be a drum than a pulley --
+    # every export before 2026-09-09 stated none at all -- and counting
+    # it out would quietly shrink the bank and pick the wrong machine.
+    (bundle.UPLOAD_DIR / "Silent-mechanism.json").write_text(
+        _json.dumps({
+            "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
+            "mechanism": {"reels": [{"reel": 0}, {"reel": 1}, {"reel": 2}]},
+        }), encoding="utf-8")
+    silent = {row["export"]: row
+              for row in client.get("/api/mechanisms").json()["mechanisms"]}["Silent"]
+    assert silent["spools"] == 3, "an unstated radius is a drum, not a pulley"
+    assert silent["reels"] == 3
+
+    # A damaged mechanism is LISTED and says why, not skipped: it is his
+    # work, and one that silently vanishes from the picker is worse than
+    # one that cannot be chosen.
+    assert by_name["Broken"]["ok"] is False
+    assert by_name["Broken"]["reason"]
+    assert by_name["Broken"]["spools"] == 0
+
+
+def test_a_mechanism_summary_is_memoised_but_a_re_export_invalidates_it(
+        tmp_path, monkeypatch):
+    """His mechanism document is 25 MB, almost all of it vertices. Listing
+    would be unusable if every call re-parsed every file, and stale if the
+    memo never let go."""
+
+    import json as _json
+    client, _studies = make_client(tmp_path, monkeypatch)
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import bundle
+
+    path = bundle.UPLOAD_DIR / "Tiny-mechanism.json"
+    path.write_text(_json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
+    assert client.get("/api/mechanisms").json()["mechanisms"][0]["spools"] == 7
+
+    # A re-export moves the mtime and changes the size, so the memo lets
+    # go without anyone having to clear it.
+    path.write_text(_json.dumps(_mechanism([0.05] * 3, wires=1)), encoding="utf-8")
+    row = client.get("/api/mechanisms").json()["mechanisms"][0]
+    assert row["spools"] == 3, "a re-export is seen"
+    assert row["wires"] == 1
+
+
+def test_a_mechanism_of_an_unsupported_schema_is_listed_not_hidden(
+        tmp_path, monkeypatch):
+    import json as _json
+    client, _studies = make_client(tmp_path, monkeypatch)
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import bundle
+
+    (bundle.UPLOAD_DIR / "Future-mechanism.json").write_text(
+        _json.dumps(_mechanism([0.05], schema="bench.mechanism/9")),
+        encoding="utf-8")
+    row = client.get("/api/mechanisms").json()["mechanisms"][0]
+    assert row["ok"] is False
+    assert "bench.mechanism/9" in row["reason"], row["reason"]
+
+
 JPEG_MAGIC = b"\xff\xd8\xff"
 
 
