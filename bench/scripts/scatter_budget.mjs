@@ -13,6 +13,30 @@
 //
 //   node bench/scripts/scatter_budget.mjs
 //
+// MEASURED AND REJECTED, 2026-09-10: gating renderer.shadowMap.autoUpdate.
+//
+// The scatter design named it "the highest-leverage change available in
+// this file" and expected it to roughly halve the per-frame cost, on the
+// reasoning that a 2048 square map is rebuilt every frame even on a still
+// camera and every caster is therefore drawn twice. The reasoning is
+// correct and the conclusion is not. Measured on the 4090 at 1080p, with
+// shrub_02 as the caster:
+//
+//     props   autoUpdate ON    OFF      saved
+//         0        5.2 ms      5.2       0%
+//       200        5.3         5.4      -2%   (noise)
+//       500        5.5         5.3       4%   (0.2 ms)
+//
+// Nothing worth having, against a change to shared render state that the
+// recorder, the timeline and the formwork act all sit on, and that needs
+// an invalidation call at every point anything casting moves.
+//
+// The number underneath is the one worth keeping: an EMPTY scene costs
+// 5.2 ms and 500 shadow-casting shrubs cost 5.5. The frame is dominated
+// by the composer's own passes at 1080p, not by the scene, which is why
+// a scattered field feels free and why the triangle budget binds long
+// before the frame does.
+//
 // Leaves the scene as it found it: every prop it places is removed again.
 import { pathToFileURL } from "node:url";
 
