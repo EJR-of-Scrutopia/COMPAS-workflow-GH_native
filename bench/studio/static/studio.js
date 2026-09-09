@@ -175,7 +175,10 @@ const state = {
   scatter: {
     species: [], spacing: 1.2, sizeMin: 0.8, sizeMax: 1.3,
     clump: 30, clumpSize: 6, clearance: 1.5, turn: 360, seed: 1,
+    radius: 4,
   },
+  scatterStroke: 0,     // bumped per brush click, mixed into the seed
+  scatterBrushLayer: null,  // one layer per painting session, not per click
   scatterRuns: [],      // [{ layer, records }], newest last, for Remove last
   scatterArmed: false,  // waiting for him to drag a rectangle on the floor
   propDrag: false,
@@ -185,6 +188,7 @@ const state = {
   hdriScale: 60,       // GroundedSkybox radius, metres
   hdriHeight: 2,        // GroundedSkybox height (camera height above ground in the source photo), metres
   hdriRotation: 0,      // degrees, spins the dome/background about the world vertical
+  skyBrightness: 1,     // multiplies the environment mode's own intensity
   hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
   sunColourOverride: null,   // S5: hex string once the sun-colour input is touched; null lets a preset choose the colour again
   sunIntensityOverride: null, // F4: sun.intensity captured once a day cycle finishes; null lets a preset choose the intensity again, exactly like sunColourOverride
@@ -308,6 +312,27 @@ const propRaycaster = new THREE.Raycaster();
 const pmrem = new THREE.PMREMGenerator(renderer);
 const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
+
+// How bright the environment is, as the MODE'S OWN base times his dial.
+// Param: "if i want to darken the hdri so that its dark enough for the
+// lights to work well, we dont have that option". There was none: each
+// environment mode wrote environmentIntensity outright and nothing could
+// move it afterwards, so a sky bright enough to see by drowned every
+// fixture placed under it. The base is remembered here so the dial
+// multiplies the preset rather than replacing it, and the background is
+// dimmed with it or a dark scene sits inside a blazing photograph.
+let environmentBase = 1.0;
+
+function setEnvironmentIntensity(base) {
+  environmentBase = base;
+  applySkyBrightness();
+}
+
+function applySkyBrightness() {
+  const dial = state.skyBrightness;
+  scene.environmentIntensity = environmentBase * dial;
+  scene.backgroundIntensity = dial;
+}
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
 
@@ -560,14 +585,14 @@ function applyEnvironment() {
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
     state.exposureBase = preset.exposure;
-    scene.environmentIntensity = 0.6;
+    setEnvironmentIntensity(0.6);
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
     scene.fog = null;
     applyHdriBackdrop();
     hemi.intensity = 0.25;
     state.exposureBase = 0.7;
-    scene.environmentIntensity = 1.0;
+    setEnvironmentIntensity(1.0);
   } else {
     sky.visible = false;
     scene.fog = null;
@@ -585,7 +610,7 @@ function applyEnvironment() {
     // Light concretes were clipping to white under the room environment plus
     // filmic tone mapping, which made three different presets look identical.
     state.exposureBase = 0.85;
-    scene.environmentIntensity = 0.6;
+    setEnvironmentIntensity(0.6);
   }
   applyGrade();
   // The environment's presets write the sun's colour and intensity as a
@@ -1168,11 +1193,75 @@ function kelvinColour(kelvin) {
     THREE.SRGBColorSpace);
 }
 
-function propOrbLight() {
+// The three fixtures. Param: "i didnt want the orb light with a lamp end.
+// i wanted a sphere light only, lamp strip where we can resize it, cube
+// lamp ... resize all of these actually."
+//
+// So: no stem, no foot, no furniture. Each one is EMITTER PLUS LIGHT and
+// nothing else, and each is sized by the record's own size vector, which
+// is what makes a strip a strip rather than a sphere stretched by eye.
+//
+// One PointLight per fixture, at the emitter's centre. three.js does have
+// RectAreaLight, which is the physically right answer for a strip and a
+// panel, but it lights only Standard and Physical materials, casts no
+// shadow at all, and needs its uniforms library initialised before first
+// use. A point light at the centre of a two metre strip is an
+// approximation, and it is the honest one to start from; if the falloff
+// along a long strip ever reads wrong, the fix is several lights sharing
+// the power, not a different light type.
+function lightEmitter(geometry, lift) {
   const group = new THREE.Group();
-  // The globe is UNLIT (MeshBasicMaterial): it is the source, so nothing
-  // in the scene should be shading it, and its colour is pushed above 1
-  // so the bloom threshold has something to catch.
+  // UNLIT (MeshBasicMaterial): it is the source, so nothing in the scene
+  // should be shading it, and its colour is pushed above 1 so the bloom
+  // threshold has something to catch.
+  const globe = new THREE.Mesh(geometry,
+    new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+  globe.position.z = lift;
+  globe.userData.lampGlobe = true;
+  globe.castShadow = globe.receiveShadow = false;
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: lampHaloTexture(), transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  halo.position.z = lift;
+  halo.userData.lampHalo = true;
+  const light = new THREE.PointLight(0xffffff, 1, 0, 2);
+  light.position.z = lift;
+  light.userData.lampLight = true;
+  // A point light's shadow is six renders of the whole scene, every
+  // frame. Deliberately off: the lights are for mood, and the sun is what
+  // the shadow study is for.
+  light.castShadow = false;
+  group.add(globe, halo, light);
+  return group;
+}
+
+// A sphere of light, hanging where he puts it. 0.25 m radius, so the
+// default reads as a bare bulb rather than a beach ball.
+function lightSphere() {
+  return lightEmitter(new THREE.SphereGeometry(0.25, 24, 16), 0.25);
+}
+
+// A strip: two metres by sixty by sixty, the shape of a real linear
+// fitting. Long in X, so a rotation about Z aims it the way he wants.
+function lightStrip() {
+  return lightEmitter(new THREE.BoxGeometry(2.0, 0.06, 0.06), 0.03);
+}
+
+// A cube of light, for a light box or a glowing plinth.
+function lightCube() {
+  return lightEmitter(new THREE.BoxGeometry(0.4, 0.4, 0.4), 0.2);
+}
+
+// The old fixture, kept ONLY so a scene saved before 2026-09-09 still
+// opens: its props name "orb-light", and a type with no builder is drawn
+// as nothing at all. It builds the sphere now, without the stem and foot
+// he did not want.
+function propOrbLight() {
+  return lightSphere();
+}
+
+function propOrbLightOld() {
+  const group = new THREE.Group();
   const globe = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14),
     new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
   globe.position.z = 0.9;
@@ -1210,14 +1299,46 @@ function propOrbLight() {
 const PROP_BUILDERS = {
   figure: propFigure, tree: propTree, pallets: propPallets,
   barrier: propBarrier, cone: propCone, "orb-light": propOrbLight,
+  "light-sphere": lightSphere, "light-strip": lightStrip,
+  "light-cube": lightCube,
 };
+
+// The fixtures the Lights tab offers. They are code, not files, so they
+// need no folder and no fetch, and they are deliberately NOT in the prop
+// library: Param asked for them out of Props and in a tab of their own.
+// sizeMetres is the built geometry's own size, which the tab's sliders
+// then stretch through record.size.
+const LIGHT_KINDS = [
+  { key: "light-sphere", label: "Sphere", sizeMetres: [0.5, 0.5, 0.5] },
+  { key: "light-strip", label: "Strip", sizeMetres: [2.0, 0.06, 0.06] },
+  { key: "light-cube", label: "Cube", sizeMetres: [0.4, 0.4, 0.4] },
+];
 
 // Which prop types are lamps. A set rather than a name test, so a second
 // lamp (a downlight, a strip) is one builder and one entry here.
-const LAMP_TYPES = new Set(["orb-light"]);
+// "orb-light" stays for one reason only: a scene saved before
+// 2026-09-09 names it, and a type nothing recognises is drawn as
+// nothing. It builds the sphere now, without the stem and foot.
+const LAMP_TYPES = new Set(["orb-light", "light-sphere", "light-strip",
+  "light-cube"]);
 
 function isLamp(record) {
   return !!record && LAMP_TYPES.has(record.type);
+}
+
+// A prop's size on each axis, uniform unless it carries a size vector.
+// Param wanted every fixture resizable, and a strip is only a strip while
+// its length can move without its thickness following.
+function applyPropSize(record) {
+  if (!record || !record.object) return;
+  const scale = record.scale || 1;
+  const size = record.size;
+  if (Array.isArray(size) && size.length === 3) {
+    record.object.scale.set(scale * (+size[0] || 1), scale * (+size[1] || 1),
+      scale * (+size[2] || 1));
+  } else {
+    record.object.scale.setScalar(scale);
+  }
 }
 
 // A lamp's two numbers, written on to the objects that answer for them.
@@ -1346,8 +1467,8 @@ function saveProps() {
       type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation,
       rotX: p.rotX || 0, rotY: p.rotY || 0,
       scale: p.scale || 1, layer: p.layer || 1,
-      // Only a lamp carries these, and a lamp always does.
-      lumens: p.lumens, kelvin: p.kelvin })),
+      // Only a fixture carries these three, and a fixture always does.
+      size: p.size, lumens: p.lumens, kelvin: p.kelvin })),
   };
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
@@ -1423,6 +1544,10 @@ function restoreProps() {
     const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
       +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
       +entry.rotX || 0, +entry.rotY || 0);
+    if (Array.isArray(entry.size) && entry.size.length === 3) {
+      record.size = entry.size.map(Number);
+      applyPropSize(record);
+    }
     record.layer = +entry.layer || 1;
     adoptLampSettings(record, entry);
   }
@@ -1509,10 +1634,12 @@ function listPropTypes() {
 // Props that are code rather than files. They need no folder, no fetch
 // and no manifest, so they are offered even when the prop library is
 // missing entirely -- which is exactly the state a new machine is in.
-const BUILT_IN_PROPS = [
-  { key: "orb-light", label: "Orb light", group: "lights", builtIn: true,
-    sizeMetres: [0.56, 0.56, 1.18] },
-];
+// Empty since 2026-09-09: the one built-in was the orb light, and the
+// lights moved to their own tab on Param's word ("maybe we need to make a
+// light tile and put all the lights there and not in props"). Kept as the
+// seam it is, because a built-in prop needs no folder and no fetch and is
+// exactly what a machine with no library should still be offered.
+const BUILT_IN_PROPS = [];
 
 async function loadPropLibrary() {
   // Always on the shelf, whatever the fetch below does.
@@ -1727,6 +1854,10 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   // rule Param set: "make sure they always stay attached to ground and
   // not grow from center, but ground up."
   object.scale.setScalar(scale);
+  // record.size, when it carries one, stretches the three axes apart --
+  // which is what lets a strip light be lengthened without becoming a
+  // longer, fatter strip. Applied again by applyPropSize below whenever
+  // either number moves.
   propsGroup.add(object);
   object.userData.fromLibrary = !!template;
   const record = { type, x, y, z, rotation, rotX, rotY, scale,
@@ -2769,7 +2900,7 @@ function collectScene() {
       rotation: record.rotation,
       rotX: record.rotX || 0, rotY: record.rotY || 0,
       scale: record.scale, layer: record.layer || 1,
-      lumens: record.lumens, kelvin: record.kelvin,
+      size: record.size, lumens: record.lumens, kelvin: record.kelvin,
     })),
     propLayers: state.propLayers.map((layer) => ({
       id: layer.id, name: layer.name, visible: layer.visible })),
@@ -2886,6 +3017,10 @@ async function applyScene(record) {
       const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
         +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
         +entry.rotX || 0, +entry.rotY || 0);
+      if (Array.isArray(entry.size) && entry.size.length === 3) {
+        record.size = entry.size.map(Number);
+        applyPropSize(record);
+      }
       record.layer = +entry.layer || 1;
       adoptLampSettings(record, entry);
     }
@@ -4204,15 +4339,19 @@ function renderShelf() {
   propHolder.classList.toggle("hidden", shelfKind !== "props");
   document.getElementById("scatter-panel").classList
     .toggle("hidden", shelfKind !== "scatter");
+  document.getElementById("lights-panel").classList
+    .toggle("hidden", shelfKind !== "lights");
   // Leaving the drawer must put the region drag down, or the canvas keeps
   // a capture-phase listener that eats his next click on a prop.
   if (shelfKind !== "scatter" && state.scatterArmed) disarmScatterArea();
   grid.classList.toggle("hidden",
-    shelfKind === "props" || shelfKind === "scenes" || shelfKind === "scatter");
+    shelfKind === "props" || shelfKind === "scenes"
+    || shelfKind === "scatter" || shelfKind === "lights");
   grid.classList.toggle("wide", shelfKind === "skies");
   document.getElementById("prop-credit").textContent = "";
   if (shelfKind === "props") { renderShelfProps(cats, propHolder); return; }
   if (shelfKind === "scatter") { cats.innerHTML = ""; renderShelfScatter(); return; }
+  if (shelfKind === "lights") { cats.innerHTML = ""; renderShelfLights(); return; }
   if (shelfKind === "materials") { renderShelfMaterials(cats, grid); return; }
   if (shelfKind === "skies") { cats.innerHTML = ""; renderShelfSkies(grid); return; }
   if (shelfKind === "layers") { cats.innerHTML = ""; renderShelfLayers(grid); return; }
@@ -4228,6 +4367,9 @@ function renderShelf() {
 // along the drawer's bottom edge; the open tab is where newly placed
 // props land, and its eye hides the whole set.
 const gatheredProps = new Set();
+// The index a shift-click measures its run from, in the layer's own
+// member order. Reset whenever the drawer is rebuilt for a new layer.
+let layersAnchor = null;
 
 function propLabel(record) {
   const entry = (state.propLibrary || []).find((e) => e.key === record.type);
@@ -4265,7 +4407,19 @@ function renderShelfLayers(grid) {
     tile.title = propLabel(record)
       + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
       + " -- click to select: drag it in the viewport, Delete removes";
-    tile.addEventListener("click", () => {
+    tile.addEventListener("click", (event) => {
+      // Shift takes the whole run from the last plain click to this one,
+      // over the members as they are shown.
+      if (event.shiftKey && layersAnchor !== null
+          && layersAnchor < members.length) {
+        const lo = Math.min(layersAnchor, index);
+        const hi = Math.max(layersAnchor, index);
+        for (let i = lo; i <= hi; i++) gatheredProps.add(members[i]);
+        setPropEdit(true, true);
+        renderShelf();
+        return;
+      }
+      layersAnchor = index;
       // A tile toggles membership of the working selection; the last one
       // picked is also the viewport's selected object.
       if (gatheredProps.has(record)) {
@@ -4310,6 +4464,7 @@ function renderLayerTabs() {
     tab.addEventListener("click", () => {
       state.activeLayer = layer.id;
       gatheredProps.clear();
+      layersAnchor = null;     // a new layer, a new run to measure from
       renderShelf();
     });
     tab.addEventListener("dblclick", () => {
@@ -4391,6 +4546,163 @@ function deleteLayer(id) {
   selectProp(null);
   saveProps();
   renderShelf();
+}
+
+// ---------- the corner readout ----------
+// What a renderer puts in the corner. Four of the numbers the page can
+// see for itself; three it cannot, and those come from /api/stats.
+//
+// renderer.info.autoReset is turned OFF here, once, and the counters are
+// reset at the top of each frame instead. Left on, it clears them on
+// EVERY render call, and the composer ends a frame with a fullscreen
+// copy pass, so anything read afterwards reports that pass alone: one
+// draw call and one triangle, identical however much is on screen. That
+// is exactly what the first budget measurement got wrong.
+let statsFrames = 0;
+let statsSince = 0;
+let statsShown = { fps: 0, calls: 0, triangles: 0 };
+
+function noteFrame() {
+  const info = composer.renderer.info;
+  if (info.autoReset) info.autoReset = false;
+  statsFrames += 1;
+  const now = performance.now();
+  if (!statsSince) statsSince = now;
+  if (now - statsSince >= 500) {
+    statsShown = { fps: Math.round(statsFrames * 1000 / (now - statsSince)),
+      calls: info.render.calls, triangles: info.render.triangles };
+    statsFrames = 0;
+    statsSince = now;
+    paintStats();
+  }
+  info.reset();
+}
+
+function paintStats() {
+  const overlay = document.getElementById("stats-overlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  const write = (id, text) => {
+    const box = document.getElementById(id);
+    if (box) box.textContent = text;
+  };
+  write("stat-objects", String(state.props.length));
+  write("stat-calls", statsShown.calls.toLocaleString());
+  write("stat-tris", statsShown.triangles >= 1e6
+    ? (statsShown.triangles / 1e6).toFixed(1) + " M"
+    : statsShown.triangles.toLocaleString());
+  write("stat-fps", String(statsShown.fps));
+}
+
+// The machine's own two, polled rather than pushed. A second is plenty:
+// neither moves meaningfully faster, and the route caches for that long
+// anyway so a faster poll would read the same numbers.
+async function pollMachineStats() {
+  const overlay = document.getElementById("stats-overlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  try {
+    const body = await fetchJson("/api/stats");
+    const gpu = body.gpu;
+    document.getElementById("stat-vram").textContent = gpu
+      ? (gpu.vramUsedMb / 1024).toFixed(1) + " / "
+        + (gpu.vramTotalMb / 1024).toFixed(0) + " GB"
+      : "--";
+    document.getElementById("stat-gpu").textContent =
+      gpu ? gpu.busy + "%" : "--";
+    document.getElementById("stat-cpu").textContent =
+      typeof body.cpu === "number" ? body.cpu.toFixed(0) + "%" : "--";
+  } catch (error) {
+    // An older server has no such route. Say nothing and show dashes:
+    // the four browser-side numbers are still worth having.
+    for (const id of ["stat-vram", "stat-gpu", "stat-cpu"]) {
+      const box = document.getElementById(id);
+      if (box) box.textContent = "--";
+    }
+  }
+}
+setInterval(pollMachineStats, 1000);
+
+function toggleStats(on) {
+  const overlay = document.getElementById("stats-overlay");
+  if (!overlay) return;
+  overlay.classList.toggle("hidden", !on);
+  const tile = document.getElementById("shelf-stats");
+  if (tile) tile.classList.toggle("active", !!on);
+  if (on) { paintStats(); pollMachineStats(); }
+}
+
+const statsOverlay = document.getElementById("stats-overlay");
+if (statsOverlay) statsOverlay.addEventListener("click", () => toggleStats(false));
+const statsTile = document.getElementById("shelf-stats");
+if (statsTile) statsTile.addEventListener("click", () =>
+  toggleStats(statsOverlay.classList.contains("hidden")));
+
+// ---------- the lights drawer ----------
+// Param: "maybe we need to make a light tile and put all the lights there
+// and not in props", and "removing the controls from scene and not naming
+// it lamp". So: three fixtures, their own tab, their numbers beside them,
+// and nothing here calls itself a lamp where he can read it.
+function renderShelfLights() {
+  const grid = document.getElementById("lights-kinds");
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const kind of LIGHT_KINDS) {
+    const tile = previewTile(kind.key, kind.label,
+      (canvasEl) => {
+        fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+        renderObjectPreview(builtInPreview(kind.key), canvasEl);
+      });
+    tile.title = kind.label + " light  "
+      + kind.sizeMetres.map((n) => n.toFixed(2)).join(" x ") + " m";
+    tile.addEventListener("click", () => carryNewProp(kind.key));
+    grid.appendChild(tile);
+  }
+  syncLightSize();
+  syncLightControls();
+}
+
+// Which fixtures the size dials act on: the selected one, or all of them
+// when nothing is selected. Same rule the output and warmth dials use, so
+// the whole drawer behaves one way rather than two.
+function lightsUnderTheDials() {
+  const one = isLamp(state.selectedProp) ? state.selectedProp : null;
+  return one ? [one] : state.props.filter(isLamp);
+}
+
+function syncLightSize() {
+  const chosen = lightsUnderTheDials()[0];
+  const size = document.getElementById("light-size");
+  const length = document.getElementById("light-length");
+  if (!size || !length) return;
+  size.value = chosen ? (chosen.scale || 1) : 1;
+  length.value = chosen && Array.isArray(chosen.size) ? chosen.size[0] : 1;
+  paintScrub(size);
+  paintScrub(length);
+  document.getElementById("light-size-value").textContent =
+    (+size.value).toFixed(2);
+  document.getElementById("light-length-value").textContent =
+    (+length.value).toFixed(1);
+}
+
+function writeLightSize() {
+  const scale = +document.getElementById("light-size").value;
+  const along = +document.getElementById("light-length").value;
+  for (const record of lightsUnderTheDials()) {
+    record.scale = scale;
+    // Only the long axis stretches. A strip whose thickness followed its
+    // length would just be a bigger strip, which is not resizing it.
+    record.size = [along, 1, 1];
+    applyPropSize(record);
+  }
+  document.getElementById("light-size-value").textContent = scale.toFixed(2);
+  document.getElementById("light-length-value").textContent = along.toFixed(1);
+  refreshPropOutline();
+  refreshPropGumball();
+  saveProps();
+}
+
+for (const id of ["light-size", "light-length"]) {
+  const input = document.getElementById(id);
+  if (input) input.addEventListener("input", writeLightSize);
 }
 
 // ---------- the scatter ----------
@@ -4486,11 +4798,17 @@ function clearOf(discs, x, y, radius) {
 // second kind is the clumping: at 0 the field is even, at 100 it gathers
 // into stands with open ground between, which is what makes planting read
 // as planting rather than as sprinkling.
-function scatterSolve(region) {
+function scatterSolve(region, salt) {
   const rules = state.scatter;
   const chosen = rules.species.filter((s) => propEntry(s.type));
   if (!chosen.length) return { items: [], note: "no species chosen" };
-  const random = scatterRandom(rules.seed);
+  // The salt is what makes a second click deal DIFFERENT points. Without
+  // it a brush clicked twice in one spot re-deals the same arrangement,
+  // every point lands on a prop that is now a keep-out disc, and every
+  // one is refused: the field would simply stop thickening. Mixed rather
+  // than replaced, so the seed still owns the result.
+  const random = scatterRandom(
+    (rules.seed ^ Math.imul(salt || 0, 0x9E3779B1)) >>> 0);
   const total = chosen.reduce((sum, s) => sum + Math.max(1, s.weight), 0);
   const pick = () => {
     let roll = random() * total;
@@ -4556,20 +4874,29 @@ function withinRegion(region, x, y) {
     && y >= Math.min(region.y0, region.y1) && y <= Math.max(region.y0, region.y1);
 }
 
-async function runScatter(region) {
+async function runScatter(region, options) {
   const rules = state.scatter;
+  const settings = options || {};
   if (!rules.species.length) { paintScatter(); return; }
   // Every template has to be in hand BEFORE placing, or placeProp falls
   // back to makeProp and plants a primitive instead of the model.
   for (const s of rules.species) await ensurePropTemplate(s.type);
 
-  const solved = scatterSolve(region);
+  const solved = scatterSolve(region, settings.salt);
   if (!solved.items.length) {
     document.getElementById("scatter-readout").textContent =
-      "nothing fitted: loosen the spacing, or draw a bigger area";
+      settings.intoLayer
+        ? "no more will fit there: loosen the spacing or widen the brush"
+        : "nothing fitted: loosen the spacing, or draw a bigger area";
     return;
   }
-  const home = newLayer("Scatter " + (state.scatterRuns.length + 1));
+  // A brush stroke joins the session's own layer. Minting one per click
+  // would leave him with forty layers after a minute of painting.
+  const home = settings.intoLayer
+    ? (layerById(settings.intoLayer) || newLayer("Scatter "
+      + (state.scatterRuns.length + 1)))
+    : newLayer("Scatter " + (state.scatterRuns.length + 1));
+  state.activeLayer = home.id;
   const records = solved.items.map((item) => placeProp(
     item.type, item.x, item.y, item.rotation, false, item.scale));
   state.scatterRuns.push({ layer: home.id, records });
@@ -4577,7 +4904,7 @@ async function runScatter(region) {
     for (const record of records) removePropRecord(record);
     state.scatterRuns = state.scatterRuns.filter((run) => run.records !== records);
     paintScatter();
-  });
+  }, () => runScatter(region, settings));
   saveProps();
   renderShelf();
   logStudio("scattered " + records.length + " props onto " + home.name);
@@ -4612,17 +4939,35 @@ function paintScatter(solved) {
 // height rules out a 48 m forest scan, and a lamp is refused outright
 // because each one is a real PointLight and the light count is baked into
 // every shader program's cache key.
+// Where a shift-click measures its run from: the last tile clicked
+// WITHOUT shift. Kept outside the render so it survives the redraw that
+// every click causes.
+let scatterAnchor = null;
+
 function renderShelfScatter() {
   const grid = document.getElementById("scatter-species");
   const chosen = document.getElementById("scatter-chosen");
   if (!grid || !chosen) return;
   grid.innerHTML = "";
+  // In the manifest's own groups, headed, like the Props drawer: a
+  // hundred ungrouped tiles is a pile, and he asked for categories.
+  // Within a group, shortest first, because that is the order someone
+  // building a field reaches for them in.
   const ordered = [...(state.propLibrary || [])]
     .filter((entry) => !LAMP_TYPES.has(entry.key))
     .filter((entry) => !entry.sizeMetres || entry.sizeMetres[1] <= 12)
-    .sort((a, b) => (a.sizeMetres ? a.sizeMetres[1] : 0)
-      - (b.sizeMetres ? b.sizeMetres[1] : 0));
+    .sort((a, b) =>
+      String(a.group || "other").localeCompare(String(b.group || "other"))
+      || (a.sizeMetres ? a.sizeMetres[1] : 0) - (b.sizeMetres ? b.sizeMetres[1] : 0));
+  let group = null;
   for (const entry of ordered) {
+    if ((entry.group || "other") !== group) {
+      group = entry.group || "other";
+      const heading = document.createElement("span");
+      heading.className = "tile-family";
+      heading.textContent = group;
+      grid.appendChild(heading);
+    }
     const tile = previewTile("scatter-" + entry.key, entry.label || entry.key,
       (canvasEl) => {
         fillFlat(canvasEl, new THREE.Color(0x2a2e34));
@@ -4643,16 +4988,54 @@ function renderShelfScatter() {
       + "  --  " + (entry.triangles || 0).toLocaleString() + " triangles";
     tile.classList.toggle("active",
       state.scatter.species.some((s) => s.type === entry.key));
-    tile.addEventListener("click", () => {
-      const at = state.scatter.species.findIndex((s) => s.type === entry.key);
-      if (at >= 0) state.scatter.species.splice(at, 1);
-      else state.scatter.species.push({ type: entry.key, weight: 1 });
+    // SHIFT takes the run from the last one clicked to this one, the way
+    // a file list does (Param: "if i select a thumb nail ... and scroll
+    // down then shift and click i expect it to also select all the object
+    // from clicked point 1 to clicked point 2"). The run is over what is
+    // ON SCREEN in this order, not over the library, so a heading between
+    // two tiles is simply skipped rather than ending the run.
+    const here = entry.key;
+    tile.addEventListener("click", (event) => {
+      const keys = ordered.map((item) => item.key);
+      const chosenNow = new Set(state.scatter.species.map((sp) => sp.type));
+      if (event.shiftKey && scatterAnchor && keys.includes(scatterAnchor)) {
+        const from = keys.indexOf(scatterAnchor);
+        const to = keys.indexOf(here);
+        const lo = Math.min(from, to);
+        const hi = Math.max(from, to);
+        // A range ADDS. Shift-clicking to widen a selection that then
+        // dropped half of it would be its own small betrayal.
+        for (let i = lo; i <= hi; i++) {
+          if (!chosenNow.has(keys[i])) {
+            state.scatter.species.push({ type: keys[i], weight: 1 });
+            chosenNow.add(keys[i]);
+          }
+        }
+      } else {
+        const at = state.scatter.species.findIndex((sp) => sp.type === here);
+        if (at >= 0) state.scatter.species.splice(at, 1);
+        else state.scatter.species.push({ type: here, weight: 1 });
+        scatterAnchor = here;
+      }
       renderShelfScatter();
     });
     grid.appendChild(tile);
   }
-  // The chosen species, each with how often it appears.
+  // The chosen species, each with how often it appears, and one way out
+  // of the whole selection (Param: "in scatter mode, deselect all needs
+  // to be there").
   chosen.innerHTML = "";
+  if (state.scatter.species.length) {
+    const clear = document.createElement("button");
+    clear.id = "scatter-deselect";
+    clear.textContent = "Deselect all";
+    clear.title = "Take every species out of the mix";
+    clear.addEventListener("click", () => {
+      state.scatter.species = [];
+      renderShelfScatter();
+    });
+    chosen.appendChild(clear);
+  }
   for (const species of state.scatter.species) {
     const entry = propEntry(species.type);
     const chip = document.createElement("span");
@@ -4729,13 +5112,78 @@ function hideScatterOutline() {
   scatterOutline = null;
 }
 
-function armScatterArea() {
-  if (state.scatterArmed) { disarmScatterArea(); return; }
+// ---------- the brush ----------
+// Param: "its just a circle overlay that stays on the ground and follows
+// the mouse around, it scatter the objects in its radius when i click.
+// clicking multiple times over an already scattered space increases its
+// density still trying to avoid collision".
+//
+// The densifying falls out of the solver rather than being coded twice:
+// scatterKeepOut already reads EVERY placed prop as a keep-out disc, so a
+// second stroke over the same ground can only land in the gaps the first
+// one left. What it needed was a fresh deal per click, which is the salt.
+let scatterBrushAt = null;
+
+function brushRegion() {
+  if (!scatterBrushAt) return null;
+  return { kind: "disc", x: scatterBrushAt.x, y: scatterBrushAt.y,
+    r: state.scatter.radius };
+}
+
+function armScatterBrush() {
+  if (state.scatterArmed === "brush") { disarmScatterArea(); return; }
   if (!state.scatter.species.length) {
     logStudio("scatter: pick a species first");
     return;
   }
-  state.scatterArmed = true;
+  disarmScatterArea();
+  state.scatterArmed = "brush";
+  state.scatterBrushLayer = null;
+  controls.enabled = false;
+  document.getElementById("scatter-brush").classList.add("active");
+  document.getElementById("scatter-readout").textContent =
+    "click to fill the circle; click again to thicken it; Escape to stop";
+  canvas.addEventListener("pointermove", onBrushMove, true);
+  canvas.addEventListener("pointerdown", onBrushDown, true);
+  window.addEventListener("keydown", onScatterKey, true);
+}
+
+function onBrushMove(event) {
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  scatterBrushAt = { x: hit.x, y: hit.y };
+  showScatterOutline(brushRegion());
+}
+
+async function onBrushDown(event) {
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  event.preventDefault();
+  event.stopPropagation();
+  scatterBrushAt = { x: hit.x, y: hit.y };
+  state.scatterStroke += 1;
+  const before = state.props.length;
+  await runScatter(brushRegion(), { salt: state.scatterStroke,
+    intoLayer: state.scatterBrushLayer });
+  if (!state.scatterBrushLayer && state.props.length > before) {
+    state.scatterBrushLayer = state.props[state.props.length - 1].layer;
+  }
+  // Painting must survive its own repaint: renderShelf redraws the drawer
+  // and would otherwise leave the circle behind and the button unlit.
+  if (state.scatterArmed === "brush") {
+    document.getElementById("scatter-brush").classList.add("active");
+    showScatterOutline(brushRegion());
+  }
+}
+
+function armScatterArea() {
+  if (state.scatterArmed === "area") { disarmScatterArea(); return; }
+  disarmScatterArea();
+  if (!state.scatter.species.length) {
+    logStudio("scatter: pick a species first");
+    return;
+  }
+  state.scatterArmed = "area";
   controls.enabled = false;
   document.getElementById("scatter-area").classList.add("active");
   document.getElementById("scatter-readout").textContent =
@@ -4747,10 +5195,16 @@ function armScatterArea() {
 function disarmScatterArea() {
   state.scatterArmed = false;
   scatterDrag = null;
+  scatterBrushAt = null;
+  state.scatterBrushLayer = null;
   controls.enabled = true;
   hideScatterOutline();
-  const button = document.getElementById("scatter-area");
-  if (button) button.classList.remove("active");
+  for (const id of ["scatter-area", "scatter-brush"]) {
+    const button = document.getElementById(id);
+    if (button) button.classList.remove("active");
+  }
+  canvas.removeEventListener("pointermove", onBrushMove, true);
+  canvas.removeEventListener("pointerdown", onBrushDown, true);
   canvas.removeEventListener("pointerdown", onScatterDown, true);
   window.removeEventListener("keydown", onScatterKey, true);
   window.removeEventListener("pointermove", onScatterMove, true);
@@ -4882,6 +5336,7 @@ for (const [id, key, digits, suffix] of [
   ["scatter-clump", "clump", 0, ""],
   ["scatter-clump-size", "clumpSize", 1, ""],
   ["scatter-clearance", "clearance", 2, ""],
+  ["scatter-radius", "radius", 1, ""],
 ]) {
   const input = document.getElementById(id);
   if (!input) continue;
@@ -4889,6 +5344,7 @@ for (const [id, key, digits, suffix] of [
     state.scatter[key] = +input.value;
     const readout = document.getElementById(id + "-value");
     if (readout) readout.textContent = (+input.value).toFixed(digits) + suffix;
+    if (key === "radius" && scatterBrushAt) showScatterOutline(brushRegion());
     paintScatter();
   });
 }
@@ -4931,10 +5387,17 @@ document.getElementById("scatter-dice").addEventListener("click", () => {
 
 document.getElementById("scatter-area").addEventListener("click", armScatterArea);
 
-document.getElementById("scatter-all").addEventListener("click", () => {
-  if (!state.bundle) { logStudio("scatter: open a vault first"); return; }
-  runScatter({ kind: "disc", x: 0, y: 0, r: state.groundRadius });
-});
+document.getElementById("scatter-brush").addEventListener("click", armScatterBrush);
+
+const skyBrightness = document.getElementById("sky-brightness");
+if (skyBrightness) {
+  skyBrightness.addEventListener("input", () => {
+    state.skyBrightness = +skyBrightness.value / 100;
+    document.getElementById("sky-brightness-value").textContent =
+      Math.round(+skyBrightness.value);
+    applySkyBrightness();
+  });
+}
 
 document.getElementById("scatter-undo-last").addEventListener("click", () => {
   const run = state.scatterRuns.pop();
@@ -7937,13 +8400,16 @@ function lampTargets() {
 }
 
 function syncLightControls() {
-  const heading = document.getElementById("lights-heading");
+  // The heading lives in the Lights drawer now, not the Scene panel.
+  const heading = document.getElementById("lights-readout");
   const lamps = state.props.filter(isLamp);
   const one = isLamp(state.selectedProp) ? state.selectedProp : null;
   if (heading) {
-    heading.textContent = one ? "Lights (selected lamp)"
-      : lamps.length ? "Lights (all " + lamps.length + ")"
-        : "Lights";
+    heading.textContent = one
+      ? "tuning the selected fixture"
+      : lamps.length
+        ? "tuning all " + lamps.length + " fixtures"
+        : "click a fixture to place it, then a placed one to tune it";
   }
   // The sliders show the selected lamp's own numbers, or the defaults a
   // newly placed lamp will wear.
@@ -11207,19 +11673,37 @@ let undoReplaying = false;
 
 function paintUndoButton() {
   const button = document.getElementById("shelf-undo");
-  if (!button) return;
-  button.disabled = !undoHistory.length;
-  button.title = undoHistory.length
-    ? "Undo " + undoHistory[undoHistory.length - 1].label
-    : "Nothing to undo yet";
+  if (button) {
+    button.disabled = !undoHistory.length;
+    button.title = undoHistory.length
+      ? "Undo " + undoHistory[undoHistory.length - 1].label
+      : "Nothing to undo yet";
+  }
+  const forward = document.getElementById("shelf-redo");
+  if (forward) {
+    forward.disabled = !redoHistory.length;
+    forward.title = redoHistory.length
+      ? "Redo " + redoHistory[redoHistory.length - 1].label
+      : "Nothing to redo";
+  }
 }
 
-function pushUndo(label, undo) {
+// The third argument is how to DO the thing again. It is optional, and
+// that is deliberate rather than lazy: most of these entries close over
+// records that no longer exist once they are undone, and a redo that
+// half worked would be worse than none. An entry without one ends the
+// redo branch when it is undone, and the button says so.
+const redoHistory = [];
+
+function pushUndo(label, undo, redo) {
   // Replaying an undo runs the same handlers that record history; gating
   // here is what keeps undo from writing its own next entry.
   if (undoReplaying) return;
-  undoHistory.push({ label, undo });
+  undoHistory.push({ label, undo, redo });
   if (undoHistory.length > UNDO_CAP) undoHistory.shift();
+  // A fresh action invalidates whatever was undone before it: the branch
+  // it would have redone into no longer exists.
+  redoHistory.length = 0;
   paintUndoButton();
 }
 
@@ -11230,8 +11714,10 @@ function clearUndoHistory() {
 
 async function undoLast() {
   const entry = undoHistory.pop();
+  if (!entry) { paintUndoButton(); return; }
+  if (entry.redo) redoHistory.push(entry);
+  else redoHistory.length = 0;   // nothing beyond here can be replayed
   paintUndoButton();
-  if (!entry) return;
   undoReplaying = true;
   try {
     await entry.undo();
@@ -11242,7 +11728,49 @@ async function undoLast() {
     undoReplaying = false;
   }
 }
+async function redoLast() {
+  const entry = redoHistory.pop();
+  paintUndoButton();
+  if (!entry) return;
+  // NOT gated by undoReplaying: doing the thing again should record a
+  // fresh undo entry, exactly as doing it the first time did. What it
+  // must not do is clear the redo branch it is walking, so the stack is
+  // put back after the action has pushed its own entry.
+  const branch = redoHistory.slice();
+  try {
+    await entry.redo();
+    logStudio("redid " + entry.label);
+  } catch (error) {
+    logStudio("could not redo " + entry.label + ": " + error.message);
+  }
+  redoHistory.length = 0;
+  for (const item of branch) redoHistory.push(item);
+  paintUndoButton();
+}
+
 document.getElementById("shelf-undo").addEventListener("click", undoLast);
+const redoTile = document.getElementById("shelf-redo");
+if (redoTile) redoTile.addEventListener("click", redoLast);
+
+// Full screen, because a presentation render wants the whole display and
+// the panel and shelf are not part of the picture. The Escape that leaves
+// it is the browser's own and needs nothing here.
+const fullTile = document.getElementById("shelf-fullscreen");
+if (fullTile) {
+  fullTile.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (error) {
+      logStudio("full screen was refused: " + error.message);
+    }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    fullTile.classList.toggle("active", !!document.fullscreenElement);
+    fullTile.title = document.fullscreenElement
+      ? "Leave full screen" : "Fill the display with the view";
+  });
+}
 // Ctrl+Z as well as the tile (his ask), because that is the gesture
 // every other tool in his day answers to. Cmd+Z too, for the iPad's
 // keyboard. Kept off text entry: while a slider reading or a rename
@@ -11250,7 +11778,13 @@ document.getElementById("shelf-undo").addEventListener("click", undoLast);
 window.addEventListener("keydown", (event) => {
   if (event.key !== "z" && event.key !== "Z") return;
   if (!event.ctrlKey && !event.metaKey) return;
-  if (event.shiftKey) return;              // redo is not built; say nothing
+  if (event.shiftKey) {                    // Ctrl+Shift+Z is redo
+    const focus = document.activeElement ? document.activeElement.tagName : "";
+    if (focus === "INPUT" || focus === "TEXTAREA") return;
+    event.preventDefault();
+    redoLast();
+    return;
+  }
   const tag = document.activeElement ? document.activeElement.tagName : "";
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   event.preventDefault();
@@ -11414,6 +11948,7 @@ function frame(now) {
     && !state.userDragging;
   if (!turntableOwns) controls.update();
   if (!state.recording) renderView();
+  noteFrame();
   requestAnimationFrame(frame);
 }
 

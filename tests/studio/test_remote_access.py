@@ -511,7 +511,7 @@ def test_a_small_recorded_history_undoes_the_last_thing():
         "the undo tile stands to the LEFT of the other tiles")
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    push = _js_function(js, "function pushUndo(label, undo)")
+    push = _js_function(js, "function pushUndo(label, undo, redo)")
     assert "if (undoReplaying) return;" in push
     for wired in ('undoableSelect("hdri-select"',
                   'undoableSelect("environment-mode"',
@@ -906,20 +906,28 @@ def test_the_weight_note_names_the_material_and_shows_on_load():
     assert "updateWeightNote();" in scene
 
 
-def test_ctrl_z_undoes_as_well_as_the_tile():
+def test_ctrl_z_undoes_and_ctrl_shift_z_redoes():
     """Param: "Can we also get ctrl + z to also run an undo instead of
-    just the button". Cmd+Z too, and never while text has focus, where
-    the gesture belongs to the text rather than to the scene."""
+    just the button", and later "can we also add in more commands to
+    this, like redo. full screen". Cmd+Z too, and never while text has
+    focus, where the gesture belongs to the text rather than the scene.
+
+    The window is measured from the KEYDOWN handler rather than from the
+    tile's listener: redo and full screen were wired in between the two
+    on 2026-09-09, and a fixed span from the tile stopped reaching the
+    keyboard at all."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    start = js.index('document.getElementById("shelf-undo").addEventListener')
-    block = js[start:start + 1200]
+    start = js.index('if (event.key !== "z" && event.key !== "Z") return;')
+    block = js[start:start + 1400]
     assert "event.ctrlKey || event.metaKey" in block.replace(
         "!event.ctrlKey && !event.metaKey", "event.ctrlKey || event.metaKey")
     assert 'if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;' in block
-    assert "if (event.shiftKey) return;" in block, "redo is not built"
     assert "undoLast();" in block
     assert "event.preventDefault();" in block
+    # Shift no longer falls out of the handler saying nothing: it redoes.
+    assert "if (event.shiftKey) {" in block
+    assert "redoLast();" in block, "Ctrl+Shift+Z is the redo gesture"
 
 
 def test_a_slider_reading_can_be_typed_into():
@@ -1062,7 +1070,10 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # set rather than a name test, so a second lamp is one builder and
     # one entry.
     assert '"orb-light": propOrbLight,' in js
-    assert 'const LAMP_TYPES = new Set(["orb-light"]);' in js
+    assert 'const LAMP_TYPES = new Set(["orb-light", "light-sphere", "light-strip",' in js, (
+        "the set gained the three fixtures on 2026-09-09, and KEPT the old "
+        "name: a scene saved before then still says orb-light, and a type "
+        "nothing recognises is drawn as nothing")
     assert "new THREE.PointLight(0xffffff, 1, 0, 2)" in js, (
         "decay 2 is the inverse square, which is what makes a lamp read "
         "as a lamp rather than as a flood")
@@ -1103,11 +1114,19 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     assert "state.lampLumens;" in adopt and "state.lampKelvin;" in adopt, (
         "a prop saved before lamps existed restores lit, not dark")
 
-    # The controls, in the Scene menu, and what they aim at.
+    # The controls, in the shelf's LIGHTS drawer since 2026-09-09, beside
+    # the fixtures they tune. Param: "the light settings should find
+    # itself somewhere else, maybe we need to make a light tile and put
+    # all the lights there and not in props".
+    drawer = html[html.index('<div id="lights-panel"'):]
+    drawer = drawer[:drawer.index('<div id="shelf-grid"')]
+    for control in ("lamp-lumens", "lamp-kelvin", "glow-strength",
+                    "light-size", "light-length"):
+        assert 'id="%s"' % control in drawer, control
     scene = html[html.index('<details id="scene-section">'):]
     scene = scene[:scene.index("</details>")]
-    for control in ("lamp-lumens", "lamp-kelvin", "glow-strength"):
-        assert 'id="%s"' % control in scene, control
+    assert 'id="lamp-lumens"' not in scene, (
+        "and they are not left behind in Scene as a second set")
     aim = _js_function(js, "function lampTargets()")
     assert "if (isLamp(state.selectedProp)) return [state.selectedProp];" in aim
     assert "return state.props.filter(isLamp);" in aim
@@ -1115,12 +1134,18 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # be told when the count changes -- it read "Lights" over two lamps
     # until a placement started saying so.
     sync = _js_function(js, "function syncLightControls()")
-    assert '"Lights (all " + lamps.length + ")"' in sync
+    assert '"tuning all " + lamps.length + " fixtures"' in sync, (
+        "the heading moved into the Lights drawer's readout line, and it "
+        "stopped calling them lamps: Param asked for both")
     assert "  if (isLamp(record)) syncLightControls();\n  if (save) saveProps();" in js
 
-    # The lamp is offered even with no prop library at all: it is code,
-    # not a file, so no folder needs choosing and no fetch can fail it.
-    assert 'key: "orb-light", label: "Orb light", group: "lights", builtIn: true' in js
+    # The fixtures are offered even with no prop library at all: they are
+    # code, not files, so no folder needs choosing and no fetch can fail
+    # them. They live in LIGHT_KINDS since 2026-09-09, feeding their own
+    # drawer rather than the prop shelf.
+    assert 'key: "light-sphere", label: "Sphere"' in js
+    assert 'key: "light-strip", label: "Strip"' in js
+    assert 'key: "light-cube", label: "Cube"' in js
     assert "state.propLibrary = BUILT_IN_PROPS.slice();" in js
     ensure = _js_function(js, "function ensurePropTemplate(key)")
     assert "if (entry.builtIn) return Promise.resolve(null);" in ensure, (
@@ -2126,7 +2151,9 @@ def test_the_scatter_is_its_own_tab_with_the_controls_he_named():
                     'id="scatter-size-min"', 'id="scatter-size-max"',
                     'id="scatter-spacing"', 'id="scatter-clump"',
                     'id="scatter-seed"', 'id="scatter-dice"',
-                    'id="scatter-area"', 'id="scatter-all"'):
+                    'id="scatter-area"', 'id="scatter-brush"',
+                    'id="scatter-radius"',   # the brush's own size
+                    'id="scatter-deselect-or-chips"'[:0] or 'id="scatter-chosen"'):
         assert control in html, control
 
     assert 'if (shelfKind === "scatter") { cats.innerHTML = ""; ' \
@@ -2156,7 +2183,7 @@ def test_the_scatter_stops_at_a_measured_budget_and_says_why():
 
     js = STUDIO_JS.read_text(encoding="utf-8")
     assert "const SCATTER_BUDGET_TRIANGLES = 35e6;" in js
-    solve = _js_function(js, "function scatterSolve(region)")
+    solve = _js_function(js, "function scatterSolve(region, salt)")
     assert "if (triangles >= SCATTER_BUDGET_TRIANGLES) break;" in solve
     assert "if (placed.length >= SCATTER_MAX_ITEMS) break;" in solve
     paint = _js_function(js, "function paintScatter(solved)")
@@ -2198,7 +2225,7 @@ def test_a_scattered_prop_is_an_ordinary_prop():
     there is no second universe of pickable things to keep in step."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    run = _js_function(js, "async function runScatter(region)")
+    run = _js_function(js, "async function runScatter(region, options)")
     assert "placeProp(" in run
     assert "InstancedMesh" not in run
     assert "pushUndo(" in run, "one undo entry for the whole field"
@@ -2206,3 +2233,160 @@ def test_a_scattered_prop_is_an_ordinary_prop():
     # Templates in hand BEFORE placing, or placeProp falls back to
     # makeProp and plants a primitive instead of the model.
     assert run.index("await ensurePropTemplate") < run.index("scatterSolve(")
+
+
+def test_the_fixtures_are_emitters_with_no_furniture_on_them():
+    """Param: "i didnt want the orb light with a lamp end. i wanted a
+    sphere light only, lamp strip where we can resize it, cube lamp ...
+    resize all of these actually."
+
+    So each one is emitter plus light and nothing else: no stem, no foot,
+    no shade. The old orb-light name survives because a scene saved
+    before this names it, and a type nothing recognises draws as
+    nothing -- but it builds the bare sphere now."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    body = _js_function(js, "function lightEmitter(geometry, lift)")
+    assert "MeshBasicMaterial" in body, "the source must not be shaded"
+    assert "PointLight" in body
+    assert "CylinderGeometry" not in body, "no stem and no foot"
+    for maker in ("function lightSphere()", "function lightStrip()",
+                  "function lightCube()"):
+        assert maker in js, maker
+    legacy = _js_function(js, "function propOrbLight()")
+    assert "return lightSphere();" in legacy
+
+
+def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():
+    """A strip whose thickness followed its length would just be a bigger
+    strip, which is not resizing it. And a size that did not persist
+    would be a control that quietly forgot."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    size = _js_function(js, "function applyPropSize(record)")
+    assert "record.object.scale.set(" in size
+    write = _js_function(js, "function writeLightSize()")
+    assert "record.size = [along, 1, 1];" in write, (
+        "only the long axis moves")
+    assert "applyPropSize(record);" in write
+    # Saved both ways, and read back both ways.
+    assert "size: p.size, lumens: p.lumens, kelvin: p.kelvin }))," in js
+    assert "size: record.size, lumens: record.lumens, kelvin: record.kelvin," in js
+    assert js.count("record.size = entry.size.map(Number);") == 2, (
+        "the layout restore and the scene restore both read it")
+
+
+def test_the_scatter_brush_thickens_rather_than_repeating_itself():
+    """Param: "clicking multiple times over an already scattered space
+    increases its density still trying to avoid collision".
+
+    Avoiding collision is free: scatterKeepOut already reads every placed
+    prop as a keep-out disc. What was NOT free is dealing different
+    points on the second click. Without a fresh deal the same arrangement
+    comes back, every point lands on a prop that is now a keep-out, every
+    one is refused, and the field simply stops thickening."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    solve = _js_function(js, "function scatterSolve(region, salt)")
+    assert "Math.imul(salt || 0, 0x9E3779B1)" in solve
+    down = _js_function(js, "async function onBrushDown(event)")
+    assert "state.scatterStroke += 1;" in down
+    assert "salt: state.scatterStroke" in down
+    # One layer for a painting session, not one per click.
+    assert "intoLayer: state.scatterBrushLayer" in down
+    keep = _js_function(js, "function scatterKeepOut(clearance)")
+    assert "for (const record of state.props) {" in keep
+
+
+def test_the_brush_replaced_the_whole_floor_button():
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="scatter-brush"' in html
+    assert 'id="scatter-radius"' in html
+    assert 'id="scatter-all"' not in html, (
+        "Param asked for the brush and the area only")
+
+
+def test_redo_is_built_and_says_when_it_cannot_run():
+    """It was not, and the keyboard handler said so in a comment. An
+    entry without a forward step ends the branch when it is undone,
+    rather than pretending it can be replayed."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    push = _js_function(js, "function pushUndo(label, undo, redo)")
+    assert "redoHistory.length = 0;" in push, (
+        "a fresh action invalidates the branch it would have redone into")
+    undo = _js_function(js, "async function undoLast()")
+    assert "if (entry.redo) redoHistory.push(entry);" in undo
+    assert "else redoHistory.length = 0;" in undo
+    assert "function redoLast()" in js
+    paint = _js_function(js, "function paintUndoButton()")
+    assert 'document.getElementById("shelf-redo")' in paint
+    assert '"Nothing to redo"' in paint
+
+
+def test_the_readout_counts_a_whole_frame_not_the_last_pass():
+    """renderer.info.autoReset clears the counters on EVERY render call,
+    and the composer ends a frame with a fullscreen copy pass, so
+    anything read afterwards reports that pass alone: one draw call and
+    one triangle, identical however much is on screen. It is the exact
+    fault the first budget measurement hit."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    note = _js_function(js, "function noteFrame()")
+    assert "if (info.autoReset) info.autoReset = false;" in note
+    assert "info.reset();" in note
+    assert "noteFrame();" in js
+
+
+def test_vram_and_cpu_come_from_the_server_because_a_browser_cannot_see_them():
+    """WebGL exposes neither, and performance.memory is the JavaScript
+    heap, which is not VRAM and would be a plausible wrong number in a
+    box labelled VRAM."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert 'fetchJson("/api/stats")' in js
+    assert "performance.memory" not in js
+    app_py = (REPO / "bench" / "studio" / "app.py").read_text(encoding="utf-8")
+    assert '@app.get("/api/stats")' in app_py
+    assert "GetSystemTimes" in app_py, "no new dependency for the CPU share"
+    assert "nvidia-smi" in app_py
+    # The trap in that API: kernel already INCLUDES idle.
+    assert "kernel already INCLUDES idle" in app_py
+
+
+def test_the_sky_brightness_multiplies_the_mode_rather_than_replacing_it():
+    """Param: "if i want to darken the hdri so that its dark enough for
+    the lights to work well, we dont have that option". There was none:
+    each environment mode wrote environmentIntensity outright and nothing
+    could move it afterwards."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    apply = _js_function(js, "function applySkyBrightness()")
+    assert "scene.environmentIntensity = environmentBase * dial;" in apply
+    assert "scene.backgroundIntensity = dial;" in apply, (
+        "a dark scene inside a blazing photograph is not darker")
+    assert "setEnvironmentIntensity(0.6);" in js
+    assert "scene.environmentIntensity = 0.6;" not in js, (
+        "no mode may write it outright any more, or the dial is overruled")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    assert 'id="sky-brightness"' in html
+
+
+def test_shift_takes_the_whole_run_between_two_clicks():
+    """Param: "if i select a thumb nail in props or scatter or layer and
+    scroll down then shift and click i expect it to also select all the
+    object from clicked point 1 to clicked point 2."
+
+    In the two grids where selecting several means something: the scatter
+    species and the layer members. A range ADDS rather than replaces."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "let scatterAnchor = null;" in js
+    assert "let layersAnchor = null;" in js
+    assert "if (event.shiftKey && scatterAnchor && keys.includes(scatterAnchor))" in js
+    assert "for (let i = lo; i <= hi; i++) gatheredProps.add(members[i]);" in js
+    # The anchor is the last click WITHOUT shift, or a run cannot be widened.
+    assert "scatterAnchor = here;" in js
+    assert "layersAnchor = index;" in js

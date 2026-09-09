@@ -1061,9 +1061,36 @@ body.panel-collapsed #legend { right: var(--s4); }
   font-size: 11px; line-height: 1; background: transparent;
   color: var(--ink-3); border: 0; }
 .scatter-chip button:hover { color: var(--danger); }
-#scatter-controls { display: grid; grid-template-columns: 1fr 1fr;
-  gap: 2px 12px; padding: 8px 10px 0; }
-#scatter-controls label { margin: 0; font-size: 11px; }
+/* ONE SHAPE FOR EVERY DIAL, in both drawers: name, slider, reading,
+   unit, on a four column grid so the columns line up down the block
+   rather than each row finding its own edges. Param: "we want to be
+   rigorus with how we place sliders and make sure each tile has the same
+   language in style". */
+.dial-block { display: grid; grid-template-columns: repeat(2, auto 1fr auto auto);
+  align-items: center; gap: 3px 8px; padding: 8px 10px 0; }
+.dial-block label { display: contents; margin: 0; font-size: 11px; }
+.dial-block label > span { color: var(--ink-2); white-space: nowrap; }
+.dial-block label > input[type="range"] { width: 100%; margin: 0; min-width: 60px; }
+.dial-block label > b { font-weight: 400; text-align: right;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dial-block label > em { font-style: normal; color: var(--ink-3);
+  white-space: nowrap; }
+/* The size row carries two sliders; they share the one slider column. */
+.dial-block label > input[type="range"] + input[type="range"] {
+  grid-column: span 1; }
+.dial-block label > select, .dial-block label > input[type="number"] {
+  width: 100%; margin: 0; font-size: 11px; }
+.dial-block label > button { width: auto; margin: 0; padding: 2px 8px;
+  font-size: 11px; }
+#scatter-deselect { width: auto; margin: 0; padding: 3px 10px;
+  font-size: 11px; background: var(--raised); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 12px; }
+#scatter-deselect:hover { border-color: var(--line-lit); color: var(--ink); }
+#lights-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-2); }
+#lights-panel { display: flex; flex-direction: column; min-height: 0; }
+#lights-panel.hidden { display: none; }
+#lights-panel #lights-kinds { flex: 0 0 auto; }
 #scatter-actions { display: flex; gap: 6px; padding: 8px 10px 0; }
 #scatter-actions button { width: auto; margin: 0; }
 /* Lit while it waits for the drag, so a press that armed it stays
@@ -1126,3 +1153,25 @@ body.panel-collapsed #event-log { right: var(--s4); }
 #shelf-play { margin-left: 10px; }
 #shelf-undo { margin-right: 10px; }
 #shelf-record { color: #d05548; }
+
+
+/* ---------- the corner readout ----------
+   Bottom left: #event-log holds bottom right and #legend the lower third
+   beside the panel, so this is the corner nothing had to vacate.
+   Monospace and tabular figures, because a number that shifts its own
+   column every frame is unreadable at a glance. */
+#stats-overlay { position: fixed; left: 12px; bottom: 64px; z-index: 15;
+  display: grid; grid-template-columns: auto auto; gap: 0 10px;
+  padding: 7px 10px; font-size: 11px; line-height: 1.5;
+  font-family: ui-monospace, monospace; color: #fff;
+  background: rgba(12, 14, 17, 0.55); border-radius: 4px;
+  backdrop-filter: blur(3px); cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+#stats-overlay.hidden { display: none; }
+#stats-overlay > div { display: contents; }
+#stats-overlay span { color: rgba(255, 255, 255, 0.55); }
+#stats-overlay b { font-weight: 400; text-align: right;
+  font-variant-numeric: tabular-nums; }
+/* Out of a take: a readout baked into a 56 minute recording is a ruined
+   recording. */
+body.recording #stats-overlay { display: none; }

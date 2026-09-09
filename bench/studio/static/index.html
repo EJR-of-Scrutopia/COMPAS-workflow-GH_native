@@ -17,6 +17,18 @@
 </head>
 <body>
 <canvas id="view"></canvas>
+<!-- The corner readout renderers have. Bottom LEFT, which was the one
+     clear corner: #event-log already owns bottom right and #legend the
+     lower third beside the panel, so nothing had to move out of the way. -->
+<div id="stats-overlay" class="hidden" title="Click to hide">
+  <div><span>objects</span><b id="stat-objects">0</b></div>
+  <div><span>draws</span><b id="stat-calls">0</b></div>
+  <div><span>tris</span><b id="stat-tris">0</b></div>
+  <div><span>fps</span><b id="stat-fps">0</b></div>
+  <div><span>vram</span><b id="stat-vram">--</b></div>
+  <div><span>gpu</span><b id="stat-gpu">--</b></div>
+  <div><span>cpu</span><b id="stat-cpu">--</b></div>
+</div>
 <div id="event-log"></div>
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
@@ -51,6 +63,11 @@
       <label id="hdri-scale-row">Scale <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60"></label>
       <label id="hdri-height-row">Height <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2"></label>
       <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
+      <!-- The dial that was missing. Param: "if i want to darken the hdri
+           so that its dark enough for the lights to work well, we dont
+           have that option". It multiplies whatever the environment mode
+           already set, so the presets keep their relationship. -->
+      <label>Brightness <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100"> <span id="sky-brightness-value">100</span>%</label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
     <!-- The scatter drawer. Param: "we should have a scatter tile next to
@@ -62,37 +79,69 @@
     <div id="scatter-panel" class="hidden">
       <div id="scatter-species" class="tile-grid"></div>
       <div id="scatter-chosen"></div>
-      <div id="scatter-controls">
-        <label title="The clear gap between items, as a multiple of each one's own width. Not metres: the library runs from a 4 cm moss patch to a 30 m tree.">Spacing
+      <!-- One block, one shape: name, dial, reading, unit. Param: "we want
+           to be rigorus with how we place sliders and make sure each tile
+           has the same language in style". -->
+      <div class="dial-block" id="scatter-controls">
+        <label title="The circle that follows the cursor. Click inside it to fill it."><span>Brush</span>
+          <input id="scatter-radius" type="range" min="0.5" max="20" step="0.5" value="4">
+          <b id="scatter-radius-value">4.0</b><em>m</em></label>
+        <label title="The clear gap between items, as a multiple of each one&#39;s own width. Not metres: the library runs from a 4 cm moss patch to a 30 m tree."><span>Spacing</span>
           <input id="scatter-spacing" type="range" min="0.6" max="3" step="0.05" value="1.2">
-          <span id="scatter-spacing-value">1.2</span>x</label>
-        <label title="Every item is scaled somewhere in this range, about its feet, so a stand does not read as one model repeated">Size
+          <b id="scatter-spacing-value">1.20</b><em>x</em></label>
+        <label title="Every item is scaled somewhere in this range, about its feet, so a stand does not read as one model repeated"><span>Size</span>
           <input id="scatter-size-min" type="range" min="0.3" max="1" step="0.05" value="0.8">
           <input id="scatter-size-max" type="range" min="1" max="3" step="0.05" value="1.3">
-          <span id="scatter-size-value">0.80 to 1.30</span>x</label>
-        <label title="0 spreads them evenly, 100 gathers them into tight stands with clear ground between">Clumping
+          <b id="scatter-size-value">0.80 to 1.30</b><em>x</em></label>
+        <label title="0 spreads them evenly, 100 gathers them into tight stands with clear ground between"><span>Clumping</span>
           <input id="scatter-clump" type="range" min="0" max="100" step="5" value="30">
-          <span id="scatter-clump-value">30</span>%</label>
-        <label title="How wide a clump is, across">Clump size
+          <b id="scatter-clump-value">30</b><em>%</em></label>
+        <label title="How wide a clump is, across"><span>Clump size</span>
           <input id="scatter-clump-size" type="range" min="1" max="20" step="0.5" value="6">
-          <span id="scatter-clump-size-value">6</span> m</label>
-        <label title="Nothing is planted inside the vault, or within this much of it">Keep clear
+          <b id="scatter-clump-size-value">6.0</b><em>m</em></label>
+        <label title="Nothing is planted inside the vault, or within this much of it"><span>Keep clear</span>
           <input id="scatter-clearance" type="range" min="0" max="8" step="0.25" value="1.5">
-          <span id="scatter-clearance-value">1.5</span> m</label>
-        <label class="named"><span>Turn</span><select id="scatter-turn">
-          <option value="360" selected>Any way</option>
-          <option value="0">All the same</option>
-        </select></label>
-        <label title="The same seed lays out the same field. The dice deals a new one.">Seed
+          <b id="scatter-clearance-value">1.50</b><em>m</em></label>
+        <label><span>Turn</span>
+          <select id="scatter-turn">
+            <option value="360" selected>Any way</option>
+            <option value="0">All the same</option>
+          </select></label>
+        <label title="The same seed lays out the same field. The dice deals a new one."><span>Seed</span>
           <input id="scatter-seed" type="number" min="1" max="99999" step="1" value="1">
           <button id="scatter-dice" title="Deal a new arrangement, same rules">Dice</button></label>
       </div>
       <div id="scatter-actions">
-        <button id="scatter-area" class="primary" title="Drag a rectangle on the ground to fill it">Drag an area</button>
-        <button id="scatter-all" title="Fill the whole floor disc, keeping clear of the vault">Whole floor</button>
-        <button id="scatter-undo-last" title="Remove the last scatter" disabled>Remove last</button>
+        <button id="scatter-brush" class="primary" title="A circle follows the cursor: click to fill it, click again to thicken it">Brush</button>
+        <button id="scatter-area" title="Drag a rectangle on the ground to fill it">Drag an area</button>
+        <button id="scatter-undo-last" title="Remove the last stroke" disabled>Remove last</button>
       </div>
       <div id="scatter-readout">pick one or more species to scatter</div>
+    </div>
+    <!-- The lights drawer. Same shape as the scatter drawer above,
+         deliberately: a scrolling grid of tiles, then ONE aligned block of
+         dials. Param: "we want to be rigorus with how we place sliders and
+         make sure each tile has the same language in style". -->
+    <div id="lights-panel" class="hidden">
+      <div id="lights-kinds" class="tile-grid"></div>
+      <div class="dial-block" id="lights-controls">
+        <label><span>Output</span>
+          <input id="lamp-lumens" type="range" data-unit="1" min="0" max="6000" step="50" value="1600">
+          <b id="lamp-lumens-value">1600</b><em>lm</em></label>
+        <label><span>Warmth</span>
+          <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
+          <b id="lamp-kelvin-value">3000</b><em>K</em></label>
+        <label><span>Glow</span>
+          <input id="glow-strength" type="range" data-unit="100" min="0" max="1.5" step="0.05" value="0.6">
+          <b id="glow-value">60</b><em>%</em></label>
+        <label><span>Size</span>
+          <input id="light-size" type="range" min="0.1" max="6" step="0.05" value="1">
+          <b id="light-size-value">1.00</b><em>x</em></label>
+        <label title="Stretches the long axis alone, which is what makes a strip a strip"><span>Length</span>
+          <input id="light-length" type="range" min="0.1" max="12" step="0.1" value="1">
+          <b id="light-length-value">1.0</b><em>x</em></label>
+      </div>
+      <div id="lights-readout">click a fixture to place it, then a placed one to tune it</div>
     </div>
     <div id="shelf-grid" class="tile-grid hidden"></div>
     <div id="scene-list" class="hidden"></div>
@@ -103,8 +152,10 @@
   </div>
   <div id="shelf-tabs">
     <button id="shelf-undo" class="shelf-act" title="Nothing to undo yet" disabled>&#8630;</button>
+    <button id="shelf-redo" class="shelf-act" title="Nothing to redo" disabled>&#8631;</button>
     <button data-shelf="props" title="Browse and place props">Props</button>
     <button data-shelf="scatter" title="Scatter props over an area: pick the species, how often each appears and how their size varies">Scatter</button>
+    <button data-shelf="lights" title="Place and tune light fixtures: sphere, strip and cube">Lights</button>
     <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
     <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
@@ -117,6 +168,8 @@
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
+    <button id="shelf-stats" class="shelf-act" title="Show the objects, draw calls, VRAM and CPU readout">&#8801;</button>
+    <button id="shelf-fullscreen" class="shelf-act" title="Fill the display with the view">&#9974;</button>
   </div>
 </div>
 <div id="legend" class="hidden">
@@ -356,16 +409,10 @@
     <!-- Brightness and contrast moved to the Camera section: they are
          the grade on the lens, not the light in the scene. -->
 
-    <!-- Param: "some light props, using our great lumen engine... We
-         should then allow more settings to customise the warm and cool
-         colour of the light too." Lumens and kelvin are the two numbers
-         printed on a real lamp's box, so they are the two here. The
-         heading says what the sliders are about to touch: the one lamp
-         selected, or every lamp in the scene. -->
-    <span class="row-heading" id="lights-heading">Lights</span>
-    <label id="lamp-lumens-row">Lamp <input id="lamp-lumens" type="range" data-unit="1" min="0" max="6000" step="50" value="1600"> <span id="lamp-lumens-value">1600</span> lm</label>
-    <label id="lamp-kelvin-row">Warmth <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000"> <span id="lamp-kelvin-value">3000</span> K</label>
-    <label id="glow-row">Glow <input id="glow-strength" type="range" data-unit="100" min="0" max="1.5" step="0.05" value="0.6"> <span id="glow-value">60</span>%</label>
+    <!-- The light controls moved to the shelf's Lights drawer, beside the
+         fixtures they tune: "the light settings should find itself
+         somewhere else, maybe we need to make a light tile and put all the
+         lights there and not in props". -->
 
     <span class="row-heading">Ground</span>
     <div id="ground-folder-row" class="folder-line">

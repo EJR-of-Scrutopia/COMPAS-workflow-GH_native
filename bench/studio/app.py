@@ -547,6 +547,74 @@ def read_material_sidecar() -> dict:
     return stored if isinstance(stored, dict) else {}
 
 
+# The corner readout's two numbers that a browser cannot see for itself.
+# Both deliberately dependency-free: nvidia-smi comes with the driver and
+# GetSystemTimes comes with Windows.
+_STATS_CACHE: dict = {}
+_CPU_LAST: dict = {}
+
+
+def _cpu_share():
+    """Percent of all cores busy since the last call, or None off Windows.
+
+    GetSystemTimes hands back idle, kernel and user as cumulative
+    counters, so a single reading says nothing: the share is the DIFFERENCE
+    between two of them. The first call therefore has no answer and says
+    so rather than inventing a zero.
+    """
+
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        idle, kernel, user = (wintypes.FILETIME(), wintypes.FILETIME(),
+                              wintypes.FILETIME())
+        if not ctypes.windll.kernel32.GetSystemTimes(
+                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+
+        def whole(stamp):
+            return (stamp.dwHighDateTime << 32) | stamp.dwLowDateTime
+
+        # kernel already INCLUDES idle, which is the trap in this API: a
+        # busy share computed as (kernel + user - idle) / (kernel + user)
+        # reads far too low on an idle machine and far too high on a busy
+        # one.
+        now = (whole(idle), whole(kernel) + whole(user))
+        was = _CPU_LAST.get("at")
+        _CPU_LAST["at"] = now
+        if not was:
+            return None
+        spare = now[0] - was[0]
+        total = now[1] - was[1]
+        if total <= 0:
+            return None
+        return round(max(0.0, min(100.0, 100.0 * (1.0 - spare / total))), 1)
+    except Exception:
+        return None
+
+
+def _gpu_load():
+    """Used and total VRAM in MiB and the GPU's own busy share, or None."""
+
+    try:
+        done = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if done.returncode != 0 or not done.stdout.strip():
+            return None
+        used, total, busy = [
+            part.strip() for part in done.stdout.strip().splitlines()[0].split(",")]
+        return {"vramUsedMb": int(used), "vramTotalMb": int(total),
+                "busy": int(busy)}
+    except Exception:
+        return None
+
+
 def create_app(runner=None, cra_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
@@ -992,6 +1060,35 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             except ValueError:
                 problems.append({"raw": line})
         return {"problems": problems}
+
+    @app.get("/api/stats")
+    def machine_stats():
+        """What the machine is doing, for the viewport's corner readout.
+
+        The browser can count its own draw calls and triangles, and it can
+        time a frame, but it cannot see VRAM or CPU: WebGL exposes neither,
+        and performance.memory is the JavaScript heap, which is not the
+        same thing and would be a plausible wrong number in a box labelled
+        VRAM. So the honest ones come from here.
+
+        No new dependency for either. nvidia-smi ships with the driver, and
+        the CPU share is read straight off GetSystemTimes through ctypes,
+        which is what a performance counter would be reading anyway and
+        costs microseconds instead of the second typeperf wants.
+
+        Cached for a second: the overlay polls, and neither number moves
+        meaningfully faster than that.
+        """
+
+        now = time.time()
+        cached = _STATS_CACHE.get("at")
+        if cached and now - cached < 1.0:
+            return _STATS_CACHE["body"]
+
+        body = {"cpu": _cpu_share(), "gpu": _gpu_load()}
+        _STATS_CACHE["at"] = now
+        _STATS_CACHE["body"] = body
+        return body
 
     @app.get("/api/health")
     def health():
