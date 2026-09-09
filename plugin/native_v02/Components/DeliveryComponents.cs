@@ -1890,6 +1890,28 @@ public sealed class ExportComponent : NativeComponentBase
     /// here was wired by somebody: the courtesy per-face tessellation is
     /// never built, and its absence says exactly what its "faces" stamp
     /// used to say to their reader.
+    ///
+    /// EVERY OUTLINE IS AN OPEN RING, AND ITS LAST POINT CONNECTS BACK TO
+    /// ITS FIRST. Stated here because it is the document's contract and it
+    /// was recorded nowhere a reader could find it: the studio session had
+    /// to ask, and the alternative reading -- that a ring is closed by
+    /// repeating its first point -- fails as a WRONG ANSWER rather than an
+    /// error, dropping the last edge of every piece or doubling a vertex
+    /// while everything downstream completes happily.
+    ///
+    /// <see cref="PlanOutline"/> is the one place an outline is made, and
+    /// it guarantees three things. Consecutive duplicate corners are
+    /// dropped within 1e-9 in plan. A last corner equal to the first is
+    /// REMOVED, so a closed input curve arrives closed and leaves open,
+    /// deliberately. And fewer than three distinct plan corners is refused
+    /// outright, by name, so a degenerate outline can never reach this
+    /// document -- which is why a four-point cell is a genuine
+    /// quadrilateral and never a triangle carrying a closing point.
+    ///
+    /// Verified on both sides, 2026-09-09: the studio's ring_area,
+    /// point_in_ring and _weld_ring all wrap modulo the ring length and
+    /// strip a repeated closing point, so the two conventions agree all the
+    /// way to the drawn piece.
     /// </summary>
     private static string BuildSkinJson(
         IReadOnlyList<TessellationCell> cells,
