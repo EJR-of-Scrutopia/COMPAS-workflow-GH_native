@@ -9462,11 +9462,13 @@ async function buildMachine() {
     wireMaterial.needsUpdate = true;
     renderView();
   });
-  // "we should treat the wire frames not as centerlines but as the top of
-  // the circle": the centreline drops one radius towards the drum axis.
-  // Measured with the radius actually DRAWN, not the document's stated
-  // thickness, because what has to land on the frame is the top of the
-  // tube on screen.
+  // "yes i offset and you use it as centerline": he offsets the routing
+  // planes himself, so nothing is added here. The other two readings stay
+  // reachable because the document declares which it means, and his
+  // exporter now carries that as an authored input rather than a constant
+  // -- so a change of mind is one word on his canvas, not a build on each
+  // side. Either offset is measured with the radius actually DRAWN, since
+  // what has to meet the plane is the tube on screen.
   const routingOffset = model.routingFrameMeaning === "centreline" ? 0
     : model.routingFrameMeaning === "contact" ? state.wireRadius
     : -state.wireRadius;

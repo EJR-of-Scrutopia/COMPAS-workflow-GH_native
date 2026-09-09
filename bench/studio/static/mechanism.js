@@ -413,18 +413,28 @@ export function readMechanism(document) {
     notes.push("this reader does not use the key \"" + key + "\"");
   }
 
-  // Param, 2026-09-09, revising his own ruling of that morning once he
-  // could see the cables wrap: "we should treat the wire frames not as
-  // centerlines but as the top of the circle". So the frame sits on the
-  // cable's OUTER surface -- the point of its section furthest from the
-  // drum axis -- and the centreline is one radius INWARD. That is the
-  // opposite sign to "contact", which put the frame on the drum beneath
-  // the cable, and it is the default now that he has looked at it.
+  // Param settled this on 2026-09-09 after asking for all three readings
+  // in one evening: "yes i offset and you use it as centerline. only if
+  // you need the wire start include it, otherwise i will just use the same
+  // wire framing."
+  //
+  // HE offsets the routing planes in Grasshopper, so what arrives IS the
+  // cable's centreline and this reader adds nothing. His "top of the
+  // circle" of an hour earlier is superseded, and taking a radius off
+  // planes he has already pushed out would land the cable half inside the
+  // drum -- the same failure the contact reading produced, reached from
+  // the other side.
+  //
+  // He rules it this way rather than asking the studio to offset because
+  // the cable cuts through the FRAME as well as the drums, and away from a
+  // drum there is no axis for a reader to offset about. Only his own
+  // offsetting fixes it everywhere, which is why "centreline" is both the
+  // default and the reading his exporter now declares.
   //
   // The cable thickness is his stated default of 0.01, read as a
   // DIAMETER, which is the ordinary reading of a thickness.
   const meaning = typeof document.routingFrameMeaning === "string"
-    ? document.routingFrameMeaning.toLowerCase() : "top";
+    ? document.routingFrameMeaning.toLowerCase() : "centreline";
   return { ok: true, scale, parts, instances, wires, notes,
     routingFrameMeaning: meaning,
     cableRadius: (Number.isFinite(+document.cableThickness)

@@ -1325,11 +1325,12 @@ def test_the_machine_draws_the_way_he_asked():
     # which would look like the load having failed all over again.
     assert "        if (mesh.userData.machineTint) worn.color.set(mesh.userData.machineTint);" in js
 
-    # THE ROUTING FRAMES ARE THE TOP OF THE CABLE'S SECTION (his ruling
-    # of 2026-09-09, after watching the cables wrap), so the centreline
-    # drops one DRAWN radius towards the drum axis. Negative, the opposite
-    # sign to the contact reading. The document can still declare either
-    # of the other two and get them with no code change.
+    # THE ROUTING PLANES ARRIVE AS THE CENTRELINE, because HE offsets
+    # them in Grasshopper: "yes i offset and you use it as centerline".
+    # So the reader adds nothing. The other two readings stay reachable
+    # from the document, which is what let three rulings in one evening
+    # cost no code change on either side after the first.
+    assert '"centreline" ? 0' in build
     assert '  const routingOffset = model.routingFrameMeaning === "centreline" ? 0\n' \
         '    : model.routingFrameMeaning === "contact" ? state.wireRadius\n' \
         "    : -state.wireRadius;" in build
