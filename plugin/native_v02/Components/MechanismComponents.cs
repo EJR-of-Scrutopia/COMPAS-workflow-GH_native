@@ -814,8 +814,17 @@ internal static class MechanismCollector
             var fellBack = new List<int>();
             for (int r = 0; r < reelsPayload.Count; r++)
             {
+                // A MEASURED RADIUS OF ABOUT NOTHING IS NOT A RADIUS. A
+                // frame lying on a reel's own axis measures zero, and a
+                // drum whose wire runs at no radius turns infinitely fast
+                // for any take-up at all. Where the measurement is
+                // degenerate the mesh wins, exactly as it does when there
+                // is nothing to measure. Found by the machine document's
+                // own check on its first run.
                 bool haveFrames =
-                    ownedRadii.TryGetValue(r, out List<double>? radii) && radii.Count > 0;
+                    ownedRadii.TryGetValue(r, out List<double>? radii) &&
+                    radii.Count > 0 &&
+                    MedianOf(radii) > MinimumSpoolRadius;
                 if (haveFrames)
                 {
                     double measured = MedianOf(radii!);

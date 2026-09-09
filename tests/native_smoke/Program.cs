@@ -3410,6 +3410,34 @@ internal static partial class Program
 
         try
         {
+            ValidateMachineDocument(plugin);
+            Console.WriteLine(
+                "PASS  The MACHINE document (bench.machine/1, 2026-09-09), "
+                + "and its invariant is a NEGATIVE one: it carries NO STUDY. "
+                + "No instances, no placed wires, no anchors, no net vertex "
+                + "anywhere in it -- which is the whole reason it exists "
+                + "apart from the mechanism document, and the thing a later "
+                + "change would break quietly. Also pinned, so a five-wire "
+                + "machine and a twelve-wire one lay out with no code change "
+                + "anywhere else: wireCount is what was routed; the BANK is "
+                + "the largest group of reels sharing one axis direction AND "
+                + "one winding radius, so seven spools at 0.05 beat three "
+                + "pulleys that are BIGGER but disagree with each other, "
+                + "which is what stops it choosing by size; seven spools "
+                + "driving seven cables raise no count-disagreement warning; "
+                + "the footprint's cable span and its setback are measured "
+                + "in the machine's OWN frame, so \"how far it reaches "
+                + "behind the cable line\" means something; and the datum is "
+                + "the wire first-frames, never the body origin, which means "
+                + "nothing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MachineDocument: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41106,6 +41134,252 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "Routing (RT)[0] carrying no frames must be named as " +
                 "fatal to every placement; warnings were: " + string.Join(" | ", f1Warnings));
+        }
+    }
+
+    /// <summary>
+    /// THE MACHINE DOCUMENT (bench.machine/1, 2026-09-09): the machine
+    /// ALONE, and the invariant that matters most is a NEGATIVE one -- it
+    /// must carry NO STUDY. No instances, no wires placed in the world, no
+    /// net vertex anywhere in it. That is the whole reason it exists
+    /// separately, and it is the thing a later change would break quietly.
+    ///
+    /// Also pinned, because a five-wire machine and a twelve-wire one have
+    /// to lay out with no code change anywhere else: wireCount is what was
+    /// routed; the BANK is the largest group of reels sharing one axis
+    /// direction AND one winding radius, which is what a bank of spools
+    /// physically is, rather than anything guessed from size alone; the
+    /// footprint is measured in the machine's OWN frame, so "how far it
+    /// reaches behind the cable line" means something; and the datum is the
+    /// wire first-frames, never the body origin.
+    /// </summary>
+    private static void ValidateMachineDocument(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "BuildMachine");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin, double[] x, double[] y) =>
+            Activator.CreateInstance(
+                frameType, origin, x, y,
+                new[]
+                {
+                    (x[1] * y[2]) - (x[2] * y[1]),
+                    (x[2] * y[0]) - (x[0] * y[2]),
+                    (x[0] * y[1]) - (x[1] * y[0]),
+                })!;
+
+        double[] unitX = { 1.0, 0.0, 0.0 };
+        double[] unitY = { 0.0, 1.0, 0.0 };
+
+        // SEVEN CABLES, running from the cable line at y = 0 back into the
+        // body at y = 1, so which side the machine sits on is a fact about
+        // the machine rather than a convention.
+        object[] wires = new object[7];
+        for (int k = 0; k < 7; k++)
+        {
+            wires[k] = Activator.CreateInstance(
+                routingWireType,
+                k,
+                MechanismListOf(
+                    frameType,
+                    FrameOf(new[] { 0.15 * k, 0.0, 0.0 }, unitX, unitY),
+                    FrameOf(new[] { 0.15 * k, 1.0, 0.5 }, unitX, unitY)))!;
+        }
+
+        // TEN REELS: seven spools sharing an axis AND a radius of 0.05, and
+        // three pulleys on a different axis at 0.17, 0.20 and 0.30. The
+        // bank must be the seven, and it must NOT be found by size alone --
+        // the pulleys are bigger, but they also disagree with each other.
+        double[][] ReelAt(double centreX, double radius) => new[]
+        {
+            new[] { centreX + radius, 0.5, 0.0 },
+            new[] { centreX - radius, 0.5, 0.0 },
+            new[] { centreX, 0.5 + radius, 0.0 },
+            new[] { centreX, 0.5 - radius, 0.4 },
+        };
+        var reelMeshes = new List<object>();
+        var reelAxes = new List<object>();
+        for (int k = 0; k < 7; k++)
+        {
+            reelMeshes.Add(Mesh(ReelAt(0.15 * k, 0.05)));
+            // OFF the cable line on purpose: a frame lying on a reel's
+            // own axis measures a winding radius of zero, which is not a
+            // radius, and a fixture that does it is testing a machine
+            // nobody would build.
+            reelAxes.Add(FrameOf(new[] { 0.15 * k, 0.5, 0.2 }, unitX, unitY));
+        }
+        double[] pulleyRadii = { 0.17, 0.20, 0.30 };
+        foreach (double radius in pulleyRadii)
+        {
+            reelMeshes.Add(Mesh(new[]
+            {
+                new[] { 2.0, radius, 0.0 },
+                new[] { 2.0, -radius, 0.0 },
+                new[] { 2.0, 0.0, radius },
+                new[] { 2.0, 0.0, -radius },
+            }));
+            // A different axis direction from the spools: X cross Y = Z for
+            // the spools above, and here the plane is turned so its own
+            // normal runs along X instead.
+            reelAxes.Add(FrameOf(
+                new[] { 2.0, 0.0, 0.5 },
+                new[] { 0.0, 1.0, 0.0 },
+                new[] { 0.0, 0.0, 1.0 }));
+        }
+
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new[] { 0.0, 0.8, 0.0 }, new[] { 0.9, 0.8, 0.0 },
+                new[] { 0.0, 1.2, 0.6 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismListOf(meshType, reelMeshes.ToArray()),
+            MechanismListOf(typeof(bool), Enumerable.Repeat((object)false, 10).ToArray()),
+            MechanismListOf(frameType, reelAxes.ToArray()),
+            null,
+            false)!;
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                "seven wire bank",
+                null,
+                warnings,
+                notes,
+            })!;
+        if (document.Length == 0)
+            throw new InvalidOperationException("A wired machine must produce a document.");
+
+        using JsonDocument doc = JsonDocument.Parse(document);
+        JsonElement root = doc.RootElement;
+
+        if (root.GetProperty("schema").GetString() != "bench.machine/1")
+        {
+            throw new InvalidOperationException(
+                "The machine document's schema must be bench.machine/1, " +
+                "which is what tells a reader it is NOT a study; got " +
+                root.GetProperty("schema").GetString());
+        }
+        if (root.GetProperty("id").GetString() != "seven wire bank")
+        {
+            throw new InvalidOperationException(
+                "A machine's id is its name, since a study cites it and a " +
+                "chooser lists it.");
+        }
+
+        // THE NEGATIVE INVARIANT, and the reason this document exists.
+        foreach (string studyKey in new[] { "instances", "wires", "anchors", "principalRows", "study" })
+        {
+            if (root.TryGetProperty(studyKey, out _))
+            {
+                throw new InvalidOperationException(
+                    $"A machine document must carry NO STUDY, and it carries " +
+                    $"\"{studyKey}\". A machine is not a property of a vault: " +
+                    "that confusion is what made the mechanism document ten " +
+                    "megabytes and rewritten on every solve of every study.");
+            }
+        }
+        if (document.Contains("net_vertex", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A machine document names no net vertex anywhere: a vertex " +
+                "belongs to one solved vault and a machine outlives every " +
+                "one of them.");
+        }
+
+        if (root.GetProperty("wireCount").GetInt32() != 7)
+        {
+            throw new InvalidOperationException(
+                "wireCount is what was ROUTED, and every layout decision " +
+                $"turns on it; got {root.GetProperty("wireCount").GetInt32()}.");
+        }
+
+        JsonElement bank = root.GetProperty("bank");
+        int[] spools = bank.GetProperty("spools").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+        int[] idlers = bank.GetProperty("idlers").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+        if (spools.Length != 7 || idlers.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "The bank is the largest group of reels sharing one axis " +
+                "direction AND one winding radius: seven spools at 0.05 " +
+                "here, and three pulleys that are bigger but disagree with " +
+                $"each other. Got {spools.Length} spool(s) and " +
+                $"{idlers.Length} idler(s), which if it is 3 and 7 means it " +
+                "chose by size.");
+        }
+        if (Math.Abs(bank.GetProperty("radius").GetDouble() - 0.05) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The bank states its own radius, which is the spools' and " +
+                $"not a pulley's; got {bank.GetProperty("radius").GetDouble()}.");
+        }
+        if (warnings.Any(w => w.Contains("bank reads", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Seven spools driving seven cables must NOT raise the " +
+                "count-disagreement warning; warnings were: " +
+                string.Join(" | ", warnings));
+        }
+
+        JsonElement footprint = root.GetProperty("footprint");
+        double span = footprint.GetProperty("cableSpan").GetDouble();
+        if (Math.Abs(span - 0.9) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The cable span is the distance across the wire " +
+                $"first-frames, 0.9 m here; got {span}.");
+        }
+        double setback = footprint.GetProperty("setback").GetDouble();
+        if (setback <= 0.0)
+        {
+            throw new InvalidOperationException(
+                "The setback is how far the machine reaches BEHIND its " +
+                "cable line, measured in the machine's own frame, so it " +
+                $"must be positive for a body that sits behind; got {setback}.");
+        }
+
+        JsonElement datum = root.GetProperty("datum");
+        if (datum.GetProperty("frames").GetArrayLength() != 7)
+        {
+            throw new InvalidOperationException(
+                "The datum is the wire first-frames, one per wire -- the " +
+                "machine's real datum, and never the body origin.");
+        }
+        double[] firstDatum = datum.GetProperty("frames")[0]
+            .GetProperty("origin").EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        if (Math.Abs(firstDatum[0]) > 1.0e-9 || Math.Abs(firstDatum[1]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The datum's first frame is wire 0's own first frame, at " +
+                "the origin in this fixture; got [" +
+                string.Join(", ", firstDatum) + "].");
+        }
+
+        // AND THE BODIES ARE STILL THERE, from the same build the study
+        // document uses, so the two can never disagree about the machine.
+        JsonElement machine = root.GetProperty("machine");
+        if (machine.GetProperty("reels").GetArrayLength() != 10 ||
+            machine.GetProperty("frame1").ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "The machine block carries the bodies and all ten reels, " +
+                "built by the same path the study document uses.");
         }
     }
 
