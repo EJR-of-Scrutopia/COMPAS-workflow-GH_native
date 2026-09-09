@@ -203,22 +203,29 @@ internal static class MechanismCollector
     public const double MinimumReelExtentRadius = 1.0e-6;
 
     /// <summary>
-    /// THE CABLE'S OWN THICKNESS, his ruling 2026-09-09, verbatim: "the
-    /// routing for the spool via framing is its center line. the defualt
-    /// cable thickness is 0.01".
+    /// THE CABLE'S OWN RADIUS, his ruling 2026-09-09: 0.02 m, settled as a
+    /// RADIUS rather than a diameter, so the cable is 40 mm across.
     ///
-    /// Read as a DIAMETER, so the drawn wire's radius is half of it. It is
-    /// carried in the document because a consumer that has to guess will
-    /// guess wrongly and cannot know it has: the studio drew this wire at a
-    /// 0.02 m RADIUS, four times over, and the drum's own 0.0267 m helix
-    /// pitch then read as adjacent turns overlapping by 12 mm -- a modelling
-    /// fault that did not exist. At 0.01 m thick the same pitch clears
-    /// comfortably.
+    /// IT IS THE SAME CABLE THE NET IS PULLED BY, which is the fact that
+    /// actually governs and the one he has stated twice ("the wires are the
+    /// same as the cabes"). The machine's wire and the vault's cable meet at
+    /// a net vertex and must arrive there as one continuous cable, so
+    /// anything drawn from this number has to agree with whatever the net's
+    /// own cables are drawn at.
+    ///
+    /// CARRIED IN THE DOCUMENT BECAUSE A GUESS CANNOT KNOW IT IS WRONG. It
+    /// went round twice already: the studio first drew this wire at a 0.02 m
+    /// radius while the document said nothing, then at 0.005 m when the
+    /// document briefly said 0.01 m thick, and at that size his 0.0267 m
+    /// helix pitch read as adjacent turns overlapping by 12 mm -- a
+    /// modelling fault that never existed. Both the radius and the diameter
+    /// are emitted, the same fact stated twice, so no reader can halve or
+    /// double it by accident.
     ///
     /// A DEFAULT, not authored per study: there is no port for it yet, and
     /// the chin says so every time rather than letting it pass as measured.
     /// </summary>
-    public const double DefaultCableThicknessMetres = 0.01;
+    public const double DefaultCableRadiusMetres = 0.02;
 
     /// <summary>
     /// How close a frame's own distance-to-axis, relative to that reel's
@@ -514,14 +521,20 @@ internal static class MechanismCollector
             // where the frames happen to sit against a drum mesh.
             notes.Add(
                 "mechanism: the routing frames are the cable's CENTRELINE " +
-                "(his ruling), and cableThickness is his stated default " +
-                DefaultCableThicknessMetres.ToString("0.####", CultureInfo.InvariantCulture) +
-                " m read as a DIAMETER -- a default, not authored per " +
-                "study, and not measured from anything. Draw the wire on " +
-                "the frames as they are: do NOT offset them by a wire " +
-                "radius.");
+                "(his ruling), so draw the wire on them as they are and do " +
+                "NOT offset them by a wire radius. cableRadius is his " +
+                "stated default " +
+                DefaultCableRadiusMetres.ToString("0.####", CultureInfo.InvariantCulture) +
+                " m, settled as a RADIUS, and it is THE SAME CABLE THE NET " +
+                "IS PULLED BY -- the machine's wire and the vault's cable " +
+                "meet at a net vertex and must arrive there the same size. " +
+                "cableThickness carries the diameter, the same fact stated " +
+                "twice so nobody halves or doubles it. A default, not " +
+                "authored per study and not measured from anything.");
 
-            mechanismOut["cableThickness"] = DefaultCableThicknessMetres;
+            mechanismOut["cableRadius"] = DefaultCableRadiusMetres;
+            mechanismOut["cableThickness"] = DefaultCableRadiusMetres * 2.0;
+            mechanismOut["cableMatchesNetCable"] = true;
             mechanismOut["routingFrameMeaning"] = "centreline";
             mechanismOut["reeveFactor"] = 1.0;
             mechanismOut["spoolRadius"] = spoolRadius;
@@ -2639,7 +2652,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             // (his ruling, 2026-09-09).
             bool hasResult = TryReadResult(data, out ResultDto? solved);
 
-            MechanismAssetInput asset = ReadAsset(data, warnings);
+            MechanismAssetInput asset = ReadAsset(data, warnings, notes);
             List<MechanismRoutingWire> routing = ReadRouting(data, warnings);
             List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
@@ -2706,7 +2719,12 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// a list of one and behaves exactly as it always did.
     /// </summary>
     private MechanismMesh? ReadOnePiece(
-        IGH_DataAccess data, int port, string label, List<string> warnings, out bool fromBrep)
+        IGH_DataAccess data,
+        int port,
+        string label,
+        List<string> warnings,
+        List<string> notes,
+        out bool fromBrep)
     {
         fromBrep = false;
         var items = new List<object>();
@@ -2731,19 +2749,22 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         if (parts.Count == 1)
             return parts[0];
         int vertexCount = parts.Sum(part => part.Vertices.Count);
-        warnings.Add(
-            $"{label} arrived as {parts.Count} SEPARATE objects and was " +
-            $"joined here into one piece ({vertexCount} vertices). This " +
-            "port means one part of the machine, so the join is only a " +
-            "convenience: if those objects are not all the same part, wire " +
-            "the ones that are not somewhere else.");
+        // A NOTE, NOT A WARNING: joining is what this port is FOR now, and
+        // his machine authors its frame in seventeen parts and its motors
+        // in seven. Work that came out right must not paint the component
+        // orange -- his ruling, and the second time it has had to be made.
+        notes.Add(
+            $"{label} arrived as {parts.Count} separate objects and was " +
+            $"joined here into one piece ({vertexCount} vertices), which is " +
+            "what this port is for. The join keeps every vertex and face " +
+            "as authored and welds nothing; it only renumbers them.");
         return MechanismCollector.JoinMeshes(parts);
     }
 
-    private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings)
+    private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings, List<string> notes)
     {
-        MechanismMesh? tt = ReadOnePiece(data, 1, "Tension Tie (TT)", warnings, out bool ttBrep);
-        MechanismMesh? f1 = ReadOnePiece(data, 2, "Frame 1 (F1)", warnings, out bool f1Brep);
+        MechanismMesh? tt = ReadOnePiece(data, 1, "Tension Tie (TT)", warnings, notes, out bool ttBrep);
+        MechanismMesh? f1 = ReadOnePiece(data, 2, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
 
         var f2Items = new List<object>();
         data.GetDataList(3, f2Items);
@@ -2760,7 +2781,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             f2Brep.Add(b);
         }
 
-        MechanismMesh? mo = ReadOnePiece(data, 4, "Motors (MO)", warnings, out bool moBrep);
+        MechanismMesh? mo = ReadOnePiece(data, 4, "Motors (MO)", warnings, notes, out bool moBrep);
 
         var reItems = new List<object>();
         data.GetDataList(5, reItems);
