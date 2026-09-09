@@ -2669,3 +2669,34 @@ def test_no_slider_keeps_the_old_reading_shape():
     left = [name for name in old if name not in allowed]
     assert not left, (
         "still in the old reading shape: " + ", ".join(left))
+
+
+def test_the_setting_and_the_weather_live_in_the_skies_drawer():
+    """Param: "in skies tile lets also put the tab to studio and sky
+    modes and choose from the options they have too."
+
+    MOVED, not copied. Two controls over one piece of state is how they
+    come to disagree, and the studio already has the precedent: the HDRI
+    projection, scale, height and rotation went the same way, "beside the
+    pictures they tune"."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    drawer = html[html.index('<div id="shelf-sky-modes"'):]
+    drawer = drawer[:drawer.index('<div id="shelf-sky-settings"')]
+    for control in ('id="environment-segments"', 'id="environment-mode"',
+                    'id="weather-picker"', 'id="weather-preset"'):
+        assert control in drawer, control
+
+    scene = html[html.index('<details id="scene-section">'):]
+    scene = scene[:scene.index("</details>")]
+    for control in ('id="environment-segments"', 'id="environment-mode"',
+                    'id="weather-picker"'):
+        assert control not in scene, (
+            control + " is left behind in the panel as a second control")
+
+    # And the drawer shows them with its own dials, not on its own clock.
+    assert 'document.getElementById("shelf-sky-modes").classList\n' \
+        '    .toggle("hidden", shelfKind !== "skies");' in js

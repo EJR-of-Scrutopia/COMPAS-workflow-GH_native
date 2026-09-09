@@ -55,6 +55,23 @@
       </div>
       <button id="shelf-close" title="Collapse">&#10005;</button>
     </div>
+    <div id="shelf-sky-modes" class="hidden">
+      <div id="environment-segments" class="segmented"></div>
+      <label class="hidden">Setting <select id="environment-mode">
+        <option value="studio" selected>Studio</option>
+        <option value="sky">Sky</option>
+        <option value="hdri">HDRI</option>
+      </select></label>
+      <button id="weather-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
+      <div id="weather-tiles" class="tile-grid hidden"></div>
+      <label id="weather-row" class="hidden">Weather <select id="weather-preset">
+        <option value="clear" selected>Clear</option>
+        <option value="hazy">Hazy</option>
+        <option value="overcast">Overcast</option>
+        <option value="golden-hour">Golden hour</option>
+        <option value="night">Night</option>
+      </select></label>
+    </div>
     <!-- Brought to the dial language on 2026-09-09: name, dial, reading,
          unit, in one .dial-block so the columns line up. Every one of
          these had a slider and no number before, so none of them could
@@ -419,22 +436,11 @@
     <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40" class="hidden">
     <input id="sun-colour" type="color" value="#ffffff" class="hidden">
 
-    <span class="row-heading">Environment</span>
-    <div id="environment-segments" class="segmented"></div>
-    <label class="hidden">Setting <select id="environment-mode">
-      <option value="studio" selected>Studio</option>
-      <option value="sky">Sky</option>
-      <option value="hdri">HDRI</option>
-    </select></label>
-    <button id="weather-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
-    <div id="weather-tiles" class="tile-grid hidden"></div>
-    <label id="weather-row" class="hidden">Weather <select id="weather-preset">
-      <option value="clear" selected>Clear</option>
-      <option value="hazy">Hazy</option>
-      <option value="overcast">Overcast</option>
-      <option value="golden-hour">Golden hour</option>
-      <option value="night">Night</option>
-    </select></label>
+    <!-- Studio / Sky / HDRI and the weather moved to the shelf's Skies
+         drawer on Param's word: "in skies tile lets also put the tab to
+         studio and sky modes and choose from the options they have too".
+         MOVED, not copied: two controls over one piece of state is how
+         they come to disagree. -->
     <div id="hdri-row" class="hidden">
       <div id="hdri-folder-row" class="folder-line">
         <button id="hdri-folder-choose" title="Pick the folder your HDRIs are in">Sky folder</button>

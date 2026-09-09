@@ -1175,3 +1175,13 @@ body.panel-collapsed #event-log { right: var(--s4); }
 /* Out of a take: a readout baked into a 56 minute recording is a ruined
    recording. */
 body.recording #stats-overlay { display: none; }
+
+
+/* The Skies drawer's mode row: the setting, then the weather that
+   belongs to it, above the dials that tune whichever is chosen. */
+#shelf-sky-modes { display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--s2); padding: var(--s2) var(--s3) 0; }
+#shelf-sky-modes.hidden { display: none; }
+#shelf-sky-modes .segmented { margin: 0; }
+#shelf-sky-modes .picker { width: auto; margin: 0; }
+#shelf-sky-modes #weather-tiles { flex: 1 0 100%; }

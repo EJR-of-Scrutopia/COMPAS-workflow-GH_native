@@ -4335,6 +4335,8 @@ function renderShelf() {
   const propHolder = document.getElementById("prop-tiles");
   document.getElementById("shelf-sky-settings").classList
     .toggle("hidden", shelfKind !== "skies");
+  document.getElementById("shelf-sky-modes").classList
+    .toggle("hidden", shelfKind !== "skies");
   document.getElementById("shelf-assign-skin").classList
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("shelf-assign-ground").classList
