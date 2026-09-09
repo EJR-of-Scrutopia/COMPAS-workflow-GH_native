@@ -1349,9 +1349,26 @@ def test_the_machine_draws_the_way_he_asked():
 
     # THE ANCHOR ONCE. The tie is authored at row scale in the body frame;
     # stamped per instance it appeared three times a side.
-    assert "    if (part.permanent) {\n" \
-        "      const mesh = machineMesh(geometry, part);\n" \
-        "      permanent.add(mesh);" in build
+    # The anchor is stamped at every frame the document gives -- ONE PER
+    # MACHINE, on his ruling -- now that the writer sends the body once
+    # under mechanism.anchor and the placements separately (plugin
+    # 95a31af). A document with no stamps still draws it once,
+    # untransformed, which is how it travelled while it was fused into
+    # the tension tie, and is what kept it from appearing three times a
+    # side when he first saw it.
+    assert '      const stamps = part.kind === "anchor" && model.anchors.length\n' \
+        "        ? model.anchors : [null];" in build
+    assert "        if (stamp) {\n" \
+        "          mesh.matrixAutoUpdate = false;\n" \
+        "          mesh.matrix.fromArray(stamp.matrix);" in build
+    assert "        note(part.kind, lowestZ(geometry, stamp ? mesh.matrix : null));" in build, (
+        "a stamped anchor is measured for the floor THROUGH its own frame")
+    # A document can carry anchor frames with no body to stand on them.
+    assert '  if (model.anchors.length && !model.parts.some((part) => part.kind === "anchor")) {' in build
+    # And the summary says how many arrived, beside the parts, instances
+    # and wires. Every one of those counts has answered a "why am I only
+    # getting one" at some point tonight.
+    assert '    + model.anchors.length + " anchors");' in build
 
     # THE SKINS ARE FETCHED, NOT MERELY HOPED FOR. This is the fault
     # behind "the material we have now is so ugly": machineMaterial only

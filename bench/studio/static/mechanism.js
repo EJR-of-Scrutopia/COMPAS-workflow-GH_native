@@ -366,6 +366,39 @@ export function readMechanism(document) {
     });
   }
 
+  // THE ANCHORS, stamped from ONE body. Until 2026-09-09 the anchor was
+  // fused into the tension tie and travelled as a single permanent part
+  // drawn once, untransformed. The writer now sends the body once under
+  // mechanism.anchor and a stamp per machine in the top-level anchors
+  // array (plugin 95a31af), so a hundred anchors cost one mesh.
+  //
+  // `frame` only, never `placement`: this writer uses placement for the
+  // LABEL "instance", and reading that as a frame found a string on every
+  // anchor and reported them all unreadable.
+  const anchors = [];
+  for (const entry of Array.isArray(document.anchors) ? document.anchors : []) {
+    const matrix = placementMatrix(entry && entry.frame, scale);
+    if (!matrix) {
+      notes.push("an anchor carried no readable placement frame");
+      continue;
+    }
+    const held = entry && (entry.net_vertices || entry.netVertices);
+    anchors.push({
+      side: Number.isInteger(entry.side) ? entry.side : 0,
+      mechanism: Number.isInteger(entry.mechanism) ? entry.mechanism : 0,
+      // The net vertices this anchor's bank holds. Read and carried even
+      // though nothing draws to them yet: they are what a cable running
+      // down to its anchor would be drawn from, and an unread key is the
+      // earliest signal that the layout moved.
+      netVertices: Array.isArray(held) ? held.filter(Number.isInteger) : [],
+      // null when he has authored no anchor body. The FRAMES still stand
+      // in that case, and are worth having on their own: they are a rail
+      // a reader holding its own anchor asset can stamp onto.
+      ref: typeof entry.ref === "string" ? entry.ref : null,
+      matrix, mirrored: isReflection(matrix),
+    });
+  }
+
   const wires = [];
   for (const entry of Array.isArray(document.wires) ? document.wires : []) {
     const route = [];
@@ -454,7 +487,7 @@ export function readMechanism(document) {
     ? +document.cableRadius * scale
     : (Number.isFinite(+document.cableThickness)
       ? +document.cableThickness * scale / 2 : DEFAULT_CABLE_RADIUS);
-  return { ok: true, scale, parts, instances, wires, notes,
+  return { ok: true, scale, parts, instances, wires, anchors, notes,
     routingFrameMeaning: meaning, cableRadius,
     rotation: document.rotation || null,
     numbering: document.numbering || null };

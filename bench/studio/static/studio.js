@@ -9447,9 +9447,24 @@ async function buildMachine() {
     // stamped once, untransformed (Param: "The anchor should only appear
     // once").
     if (part.permanent) {
-      const mesh = machineMesh(geometry, part);
-      permanent.add(mesh);
-      note(part.kind, lowestZ(geometry, null));
+      // The anchor is stamped at every frame the document gives -- one per
+      // machine, on his ruling -- now that the writer sends the body once
+      // and the placements separately. Everything else permanent, and an
+      // anchor on a document with no stamps, is drawn ONCE untransformed,
+      // which is how the anchor travelled while it was still fused into
+      // the tension tie.
+      const stamps = part.kind === "anchor" && model.anchors.length
+        ? model.anchors : [null];
+      for (const stamp of stamps) {
+        const mesh = machineMesh(geometry, part);
+        if (stamp) {
+          mesh.matrixAutoUpdate = false;
+          mesh.matrix.fromArray(stamp.matrix);
+          if (stamp.mirrored) mesh.material.side = THREE.DoubleSide;
+        }
+        permanent.add(mesh);
+        note(part.kind, lowestZ(geometry, stamp ? mesh.matrix : null));
+      }
       continue;
     }
     const placements = part.kind === "motor" ? shifts : [[0, 0, 0]];
@@ -9565,7 +9580,16 @@ async function buildMachine() {
   const row = document.getElementById("machine-row");
   if (row) row.classList.remove("hidden");
   logStudio("machine: " + model.parts.length + " parts, "
-    + instances.length + " instances, " + model.wires.length + " wires");
+    + instances.length + " instances, " + model.wires.length + " wires, "
+    + model.anchors.length + " anchors");
+  // A document can carry anchor FRAMES with no body to stamp on them --
+  // the writer emits them whenever a result is wired, authored body or
+  // not -- and that is a gap worth naming rather than a silent absence.
+  if (model.anchors.length && !model.parts.some((part) => part.kind === "anchor")) {
+    logStudio("machine: " + model.anchors.length + " anchor frames arrived "
+      + "with no anchor body to stand on them; author one under "
+      + "mechanism.anchor and they will be drawn");
+  }
   if (shifts.length > 1) {
     logStudio("machine: the document carries ONE motor body, and it is "
       + "narrower than the spool bank, so it is stamped at "

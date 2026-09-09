@@ -236,6 +236,22 @@ CHECK = textwrap.dedent("""
               owner: "reel", ownerReel: 1 },
           ] },
       ],
+      // The anchor stamps, as the writer emits them from plugin 95a31af:
+      // the body once under mechanism.anchor, a frame per machine here.
+      // `placement` is the LABEL "instance", not a frame, which is the
+      // trap the instances reader already fell into once.
+      anchors: [
+        { side: 0, mechanism: 0, placement: "instance", ref: "mechanism.anchor",
+          permanence: "permanent", net_vertices: [0, 1, 2],
+          frame: { origin: [1, 2, 3], xAxis: [1,0,0], yAxis: [0,1,0],
+            zAxis: [0,0,1] } },
+        { side: 1, mechanism: 0, placement: "instance", ref: null,
+          permanence: "permanent", net_vertices: [3, 4],
+          frame: { origin: [4, 5, 6], xAxis: [1,0,0], yAxis: [0,1,0],
+            zAxis: [0,0,1] } },
+        { side: 1, mechanism: 1, placement: "instance", ref: null,
+          permanence: "permanent", net_vertices: "not a list" },
+      ],
       somethingNew: [1, 2, 3],
     };
     const read = readMechanism(document);
@@ -505,6 +521,33 @@ CHECK = textwrap.dedent("""
     // An anchor with no edges is a chain of itself, not a crash.
     expect(ribChain([], pose, 0).join() === "0", "no edges, no rib");
     expect(chainLength(pose, [0]) === 0, "and no length");
+
+    // ---------- the anchor stamps ----------
+    // One body, many stamps: a hundred anchors cost one mesh. Until
+    // 2026-09-09 the anchor was fused into the tension tie and travelled
+    // as one permanent part drawn once, untransformed.
+    expect(read.anchors.length === 2,
+      "an anchor with no readable frame is refused, not placed at the "
+      + "origin: " + read.anchors.length);
+    expect(read.notes.some((n) => n.indexOf("anchor carried no readable") >= 0),
+      "and it is reported rather than dropped in silence");
+    near(read.anchors[0].matrix[12], 1, 1e-12, "the frame's own origin x");
+    near(read.anchors[0].matrix[14], 3, 1e-12, "and its z");
+    expect(read.anchors[0].ref === "mechanism.anchor", "the body it stamps");
+    expect(read.anchors[1].ref === null,
+      "and null when he has authored no body, which still leaves the "
+      + "frames standing as a rail");
+    expect(read.anchors[0].netVertices.join() === "0,1,2",
+      "the net vertices its bank holds");
+    expect(read.anchors[1].side === 1 && read.anchors[1].mechanism === 0,
+      "side and mechanism pair with the instances");
+    // The label must never be read as a frame.
+    expect(!read.anchors.some((a) => a.matrix === null), "no null matrices survive");
+    // A document with no anchors at all reads as none, not as a crash.
+    const bare = readMechanism({ schema: "bench.mechanism/1",
+      mechanism: { frame1: { vertices: bodyGeom.vertices, faces: bodyGeom.faces } } });
+    expect(bare.ok === true && bare.anchors.length === 0,
+      "a document carrying no anchors reads as none");
 
     console.log("ok");
 """)
