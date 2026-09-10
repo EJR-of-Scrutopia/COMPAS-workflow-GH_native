@@ -92,15 +92,18 @@ internal static class MechanismReels
     /// deliberate grouping from a mistaken one, so the grouping is his
     /// statement and this method carries it rather than second-guessing it.
     ///
-    /// TWO: the legacy-shape refusal below is an EQUALITY between the mesh
-    /// count and the plane count, so a legacy branch in which some of the
-    /// meshes failed to resolve -- ten planes against nine meshes -- falls
-    /// through it and is read as one entry. That case is never silent (the
-    /// reader that dropped the mesh names it), but the SHAPE is not refused.
-    /// The equality is deliberate all the same: the looser reading, any
-    /// single branch holding more than one mesh, would refuse a genuine
-    /// single-kind entry authored as several disjoint objects, and a warning
-    /// that fires on correct input is a defect.
+    /// TWO: the legacy-shape refusal below is an EQUALITY between the ITEM
+    /// count and the plane count, so a single branch holding a genuinely
+    /// different number of objects from its planes -- ten objects against
+    /// nine planes -- falls through it and is read as one entry. The
+    /// equality is deliberate: the looser reading, any single branch holding
+    /// more than one mesh, would refuse a genuine single-kind entry authored
+    /// as several disjoint objects, and a warning that fires on correct
+    /// input is a defect. It counts ITEMS rather than meshes that resolved,
+    /// so a null or an unmeshable object among his ten cannot shrink the
+    /// count past the test; a bare null arrives with no warning of its own,
+    /// so counting resolved meshes would have made that fall-through silent
+    /// as well as wrong.
     ///
     /// THREE: that the bodies of an entry are rigid images of one another.
     /// The transform is built from the authored planes as given, so
@@ -138,13 +141,25 @@ internal static class MechanismReels
         // four branches, and any machine of more than one reel KIND fails
         // the first clause outright. A machine of exactly ONE kind reaches
         // the rest, and is refused only where its branch holds exactly as
-        // many meshes as it has axes -- which is the flat zip byte for byte.
+        // many ITEMS as it has axes -- which is the flat zip byte for byte.
         // One kind authored as ONE mesh at N axes, the shape this whole
-        // section exists to accept, has one mesh against N planes and passes
-        // untouched.
+        // section exists to accept, has one item against N planes and
+        // passes untouched.
+        //
+        // THE COUNT IS OF ITEMS, NOT OF MESHES THAT RESOLVED, and that is
+        // the guard rather than a detail of it. Both readers keep a hole in
+        // place as a null (MechanismComponents.cs, ReadMeshTree and
+        // ReadPlaneTree), so a branch of ten objects is ten items whether
+        // or not every one of them became a mesh. Counting only the ones
+        // that did would let a SINGLE null among his archived ten drop the
+        // count to nine, fall through this test, and be read as one entry
+        // of every drum joined together repeated at ten axes -- the exact
+        // misreading this section exists to prevent, and a bare null is not
+        // even warned about on the way in, so that fall-through would be
+        // silent as well as wrong.
         if (branches.Count == 1 && axisBranches.Count == 1 &&
             axisBranches[0].Count > 1 &&
-            branches[0].Count(m => m is not null) == axisBranches[0].Count)
+            branches[0].Count == axisBranches[0].Count)
         {
             warnings.Add(
                 $"Reel (RE) and Reel Axis (AX) both hold ONE branch of " +
