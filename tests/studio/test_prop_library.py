@@ -392,7 +392,9 @@ def test_a_row_of_variants_is_split_into_a_family_and_the_row_leaves_the_folder(
             "{}: the row's bytes are kept, out of the scanned folder".format(family))
         assert len(members) >= 2, family
         for member in members:
-            assert re.fullmatch(family + r"__v\d+", member["key"]), member["key"]
+            # __v3 from the sweep, __tiny_a from a named node.
+            assert re.fullmatch(family + r"__[a-z0-9_+]+", member["key"]), member["key"]
+            assert member["familyLabel"] == members[0]["familyLabel"], member["key"]
             assert (root / member["file"]).exists(), member["file"]
             assert member["variant"] >= 1
             # Sized in metres, not in quantisation units: every variant
@@ -415,6 +417,45 @@ def test_a_row_of_variants_is_split_into_a_family_and_the_row_leaves_the_folder(
         "world-space bounds, or the size is the quantisation cube")
     assert "cloneDocument(source)" in tool
     assert 'import { noticeFor } from "./notice.mjs";' in tool
+
+
+def test_a_row_of_named_nodes_is_split_by_name_and_parts_fold_into_one_plant():
+    """Poly Haven never fused the variants: grass_medium_01 arrives as
+    SEVENTEEN named nodes, tiny_a to large_c. It was fetch.mjs's own
+    join(), with its default keepNamed false, that welded them into one
+    primitive, and the connected-component sweep then reverse-engineered
+    boundaries the file already had, finding eight of seventeen.
+
+    So the fetch keeps named nodes, and the split cuts on them first. A
+    node is a PART, not a variant, when its footprint sits inside
+    another's: pachira_aquatica_01 is bark_a..d and leaves_a..d, four
+    trees, and a trunk stands inside its own canopy."""
+
+    fetch = (REPO / "tools" / "props" / "fetch.mjs").read_text(encoding="utf-8")
+    assert "join({ keepNamed: true })," in fetch
+    tool = (REPO / "tools" / "props" / "split.mjs").read_text(encoding="utf-8")
+    assert "if (topMeshNodes(source).length >= MIN_VARIANTS) {" in tool
+    assert "return splitByNodes(io, manifest, slug, entry, source, write);" in tool
+    assert "const PART_OVERLAP = 0.8;" in tool
+    assert "return ix * iz >= PART_OVERLAP * Math.min(areaA, areaB);" in tool
+
+    root = REPO / "bench" / "studio" / "props-hd"
+    manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+    by_family = {}
+    for prop in manifest["props"]:
+        if prop.get("family"):
+            by_family.setdefault(prop["family"], []).append(prop["key"])
+    grass = sorted(by_family["grass_medium_01"])
+    assert len(grass) == 17, grass
+    assert "grass_medium_01__tiny_a" in grass and "grass_medium_01__large_c" in grass
+    pachira = sorted(by_family["pachira_aquatica_01"])
+    assert pachira == ["pachira_aquatica_01__" + n for n in "abcd"], (
+        "bark and leaves are parts of one tree, not two variants")
+
+    # The drawer names the tile after the family, which the split now
+    # writes on every variant; "Grass medium tiny a" has no number to strip.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "if (entry.familyLabel) return entry.familyLabel;" in js
 
 
 def test_a_species_is_a_family_and_every_placement_is_a_variant():

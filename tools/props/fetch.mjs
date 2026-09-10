@@ -391,7 +391,12 @@ async function buildOne(io, item) {
   await document.transform(
     dedup(),
     flatten(),
-    join(),
+    // keepNamed, because Poly Haven ships every variant of a grass or a
+    // flower as its own NAMED node -- grass_medium_01 is seventeen of
+    // them -- and the default join welded them all into one primitive,
+    // which is what put a five metre row of tufts into the scatter as a
+    // single item. A named node survives and split.mjs cuts on it.
+    join({ keepNamed: true }),
     weld(),
     resample(),
     prune({ keepAttributes: false, keepLeaves: false }),

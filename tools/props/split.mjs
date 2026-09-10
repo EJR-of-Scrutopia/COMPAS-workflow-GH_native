@@ -24,7 +24,8 @@
 //     node tools/props/split.mjs --all           # split every row found
 //
 // What it writes, for a slug with K variants:
-//     <slug>__v1.glb ... <slug>__vK.glb   beside the original
+//     <slug>__tiny_a.glb ... named after the source's own nodes, or
+//     <slug>__v1.glb ... <slug>__vK.glb   when the sweep had to guess
 //     props.json entries for each, with family: <slug>
 //     the original moved to props-hd/rows/<slug>.glb, out of the folder
 //     the studio scans (the FOLDER is the authority; a row left in place
@@ -272,6 +273,147 @@ function triangleCount(doc) {
   return Math.round(n);
 }
 
+// ---------- by node, which is the truth ----------
+// The variants were never fused by Poly Haven. grass_medium_01 arrives as
+// SEVENTEEN named nodes -- tiny a to f, small a and b, mid a to c, tall a
+// to c, large a to c -- and dandelion_01 as five. It was fetch.mjs's own
+// join() that welded them into one primitive, with its default
+// keepNamed: false. The component sweep above reverse-engineered
+// boundaries the source file already had, and got them wrong wherever
+// two tufts overlapped in plan: it found eight where there were
+// seventeen and fused the large ones into one 19,000-triangle lump.
+//
+// So fetch.mjs now joins with keepNamed: true, and a file that arrives
+// with several top-level mesh nodes is split HERE, one node per variant,
+// by the name Poly Haven gave it. The sweep stays for a file that truly
+// is one primitive.
+
+// The variant's own name, out of Poly Haven's node name:
+// "grass_medium_01_tiny_a_LOD0" -> "tiny_a", and the sibling numbering
+// some sets carry, "anthurium_botany_04_d" in anthurium_botany_01 -> "d".
+function variantName(nodeName, slug) {
+  let name = String(nodeName || "");
+  const stem = slug.replace(/_\d+$/, "");
+  if (name.startsWith(slug + "_")) name = name.slice(slug.length + 1);
+  else name = name.replace(new RegExp("^" + stem + "_\\d+_"), "");
+  name = name.replace(/_LOD\d+$/i, "").replace(/\.\d+$/, "").toLowerCase();
+  return name || "a";
+}
+
+function topMeshNodes(doc) {
+  const scene = doc.getRoot().getDefaultScene() || doc.getRoot().listScenes()[0];
+  if (!scene) return [];
+  return scene.listChildren().filter((node) =>
+    node.getMesh() || node.listChildren().some((child) => child.getMesh()));
+}
+
+// Two named nodes are PARTS of one plant, not two variants, when the
+// smaller footprint sits almost wholly inside the larger. pachira_aquatica_01
+// arrives as bark_a..d and leaves_a..d, and a trunk stands inside its own
+// canopy; two tufts side by side in a row overlap by a sliver at most.
+const PART_OVERLAP = 0.8;
+
+function footprint(node) {
+  const b = getBounds(node);
+  return { minX: b.min[0], maxX: b.max[0], minZ: b.min[2], maxZ: b.max[2] };
+}
+
+function samePlant(a, b) {
+  const ix = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+  const iz = Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ);
+  if (ix <= 0 || iz <= 0) return false;
+  const areaA = (a.maxX - a.minX) * (a.maxZ - a.minZ);
+  const areaB = (b.maxX - b.minX) * (b.maxZ - b.minZ);
+  return ix * iz >= PART_OVERLAP * Math.min(areaA, areaB);
+}
+
+// bark_a + leaves_a -> "a", the token the parts share; parts that share
+// nothing keep both names.
+function groupName(names) {
+  if (names.length === 1) return names[0];
+  const tails = names.map((n) => n.split("_").pop());
+  return new Set(tails).size === 1 ? tails[0] : names.join("+");
+}
+
+// The variants of a document, each a list of indices into topMeshNodes,
+// in name order so grass_medium_01__large_a is variant 1 every run.
+function variantGroups(doc, slug) {
+  const groups = [];
+  topMeshNodes(doc).forEach((node, index) => {
+    const fp = footprint(node);
+    const home = groups.find((g) => g.parts.some((p) => samePlant(p.fp, fp)));
+    if (home) home.parts.push({ index, fp });
+    else groups.push({ parts: [{ index, fp }] });
+  });
+  for (const g of groups) {
+    g.indices = g.parts.map((p) => p.index);
+    g.name = groupName(g.parts.map((p) =>
+      variantName(topMeshNodes(doc)[p.index].getName(), slug)));
+  }
+  groups.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return groups;
+}
+
+async function splitByNodes(io, manifest, slug, entry, source, write) {
+  const groups = variantGroups(source, slug);
+  const parts = topMeshNodes(source).length;
+  console.log(`${slug.padEnd(32)} ${groups.length} named variants`
+    + (parts > groups.length ? ` (${parts} parts)` : "")
+    + `: ${groups.map((g) => g.name).join(" ")}`);
+  if (!write) return groups.length;
+
+  const written = [];
+  for (let i = 0; i < groups.length; i += 1) {
+    const doc = cloneDocument(source);
+    const scene = doc.getRoot().getDefaultScene() || doc.getRoot().listScenes()[0];
+    const tops = topMeshNodes(doc);
+    const keep = groups[i].indices.map((index) => tops[index]);
+    for (const node of scene.listChildren()) {
+      if (!keep.includes(node)) { scene.removeChild(node); node.dispose(); }
+    }
+    // Recentred on its own footprint, in world space, so every variant
+    // stands at the origin rather than where it sat in the row. Every
+    // part moves by the same offset so a canopy stays on its trunk.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const node of keep) {
+      const b = getBounds(node);
+      minX = Math.min(minX, b.min[0]); maxX = Math.max(maxX, b.max[0]);
+      minZ = Math.min(minZ, b.min[2]); maxZ = Math.max(maxZ, b.max[2]);
+    }
+    for (const node of keep) {
+      const t = node.getTranslation();
+      node.setTranslation([t[0] - (minX + maxX) / 2, t[1], t[2] - (minZ + maxZ) / 2]);
+    }
+    await doc.transform(prune(), dedup());
+    const world = getBounds(scene);
+    await doc.transform(
+      quantize({ quantizePosition: 14, quantizeNormal: 10, quantizeTexcoord: 12 }),
+      prune(), dedup());
+    const name = groups[i].name;
+    const key = `${slug}__${name}`;
+    const packed = await io.writeBinary(doc);
+    await writeFile(path.join(OUT, `${key}.glb`), packed);
+    written.push({
+      key, label: `${entry.label} ${name.replace(/[_+]/g, " ")}`,
+      familyLabel: entry.label,
+      file: `${key}.glb`, group: entry.group, family: slug, variant: i + 1,
+      sizeMetres: [world.max[0] - world.min[0], world.max[1] - world.min[1],
+        world.max[2] - world.min[2]],
+      triangles: triangleCount(doc), bytes: packed.byteLength,
+      credit: entry.credit, licence: entry.licence, source: entry.source,
+    });
+    console.log(`    ${key.padEnd(40)} ${written[i].sizeMetres.map((n) => n.toFixed(2)).join(" x ")} m`
+      + `  ${written[i].triangles} tris  ${(packed.byteLength / 1e6).toFixed(2)} MB`);
+  }
+
+  await mkdir(ROWS, { recursive: true });
+  await rename(path.join(OUT, entry.file), path.join(ROWS, entry.file));
+  const thumb = path.join(OUT, entry.file + ".thumb.png");
+  if (existsSync(thumb)) await rename(thumb, path.join(ROWS, entry.file + ".thumb.png"));
+  manifest.props = manifest.props.filter((p) => p.key !== slug).concat(written);
+  return written.length;
+}
+
 async function splitOne(io, manifest, slug, write) {
   const entry = manifest.props.find((p) => p.key === slug);
   if (!entry) { console.log(`${slug}: not in the manifest`); return null; }
@@ -282,6 +424,10 @@ async function splitOne(io, manifest, slug, write) {
   // Everything below reasons in metres, so the quantised integers come
   // off first and go back on at the end, exactly as the fetch does.
   await source.transform(dequantize());
+  // Named nodes first: they are the truth, and the sweep is the guess.
+  if (topMeshNodes(source).length >= MIN_VARIANTS) {
+    return splitByNodes(io, manifest, slug, entry, source, write);
+  }
   const meshes = source.getRoot().listMeshes();
   if (meshes.length !== 1 || meshes[0].listPrimitives().length !== 1) {
     console.log(`${slug.padEnd(32)} skipped: ${meshes.length} meshes, `
@@ -312,7 +458,7 @@ async function splitOne(io, manifest, slug, write) {
     const packed = await io.writeBinary(doc);
     await writeFile(path.join(OUT, `${key}.glb`), packed);
     written.push({
-      key, label: `${entry.label} ${i + 1}`, file: `${key}.glb`,
+      key, label: `${entry.label} ${i + 1}`, familyLabel: entry.label, file: `${key}.glb`,
       group: entry.group, family: slug, variant: i + 1,
       sizeMetres: [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]],
       triangles: triangleCount(doc), bytes: packed.byteLength,

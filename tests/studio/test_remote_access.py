@@ -2351,8 +2351,28 @@ def test_the_scatter_brush_thickens_rather_than_repeating_itself():
     assert "salt: state.scatterStroke" in down
     # One layer for a painting session, not one per click.
     assert "intoLayer: state.scatterBrushLayer" in down
-    keep = _js_function(js, "function scatterKeepOut(clearance)")
+    keep = _js_function(js, "function scatterKeepOut(clearance, spacing)")
     assert "for (const record of state.props) {" in keep
+
+
+def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
+    """Two reasons a stroke placed almost nothing. The vault kept out by
+    ONE disc of half its diagonal, a 12 m circle round a 23 m by 4 m
+    vault, so nothing could stand along either long side. And a placed
+    prop kept out by a fixed 0.6 of its footprint, blind to the spacing
+    dial and to its own scale, so a second stroke could never touch a
+    first however low the dial went. The works are a capsule now, discs
+    the width of the short side stepped along the long one, and a prop
+    keeps out by its own size at the current spacing."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    keep = _js_function(js, "function scatterKeepOut(clearance, spacing)")
+    assert "const r = short / 2 + clearance;" in keep
+    assert "const steps = Math.max(1, Math.ceil((long - short) / Math.max(0.5, short / 2)));" in keep
+    assert "propFootprint(record.type) * (record.scale || 1) * gap" in keep
+    assert "* 0.6" not in keep
+    solve = _js_function(js, "function scatterSolve(region, salt)")
+    assert "scatterKeepOut(rules.clearance, rules.spacing)" in solve
 
 
 def test_the_brush_replaced_the_whole_floor_button():

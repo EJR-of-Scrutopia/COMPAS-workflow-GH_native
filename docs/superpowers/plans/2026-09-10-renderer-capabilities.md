@@ -325,6 +325,42 @@ The four-day feature the whole report is really about. An A3 plate at
 300dpi is 4961 x 3508 and the recorder stops at 1920, so every figure in
 the thesis currently goes to press as an upscale.
 
+## Verified overnight, 2026-09-11: the scatter
+
+Param asked for the scattering to be understood before it was thickened.
+Three findings, each measured before acting.
+
+1. **The variants were never fused by Poly Haven.** grass_medium_01
+   arrives as SEVENTEEN named nodes (tiny_a..large_c), grass_bermuda_01
+   as 21, dandelion_01 as 5. It was fetch.mjs's own join() (default
+   keepNamed: false) that welded them into one primitive, and the
+   connected-component sweep in split.mjs then reverse-engineered
+   boundaries the file already had, finding 8 of 17. The fetch now
+   keeps named nodes and split.mjs cuts on them first; the sweep is the
+   fallback for a file that truly is one primitive (shrub_01, shrub_04).
+   A node whose plan footprint sits 80% inside another is a PART, not a
+   variant (pachira_aquatica_01 = bark_a..d + leaves_a..d = four trees).
+   32 rows became 201 variants in 32 families.
+2. **The vault kept out by one disc of half its diagonal**, a 12 m
+   circle round a 23 x 4 m vault, so nothing could stand along either
+   long side and the readout said "nothing fitted" as often as the
+   spacing did. It is a capsule now: discs the width of the short side,
+   stepped along the long one.
+3. **A placed prop kept out by a fixed 0.6 of its footprint**, blind to
+   the spacing dial and to its own scale, so a second stroke could never
+   touch a first however low the dial went. It keeps out by
+   footprint x scale x spacing now.
+
+Measured with the same 3 m brush, seed 7, grass_medium_01 + dandelion_01:
+about 1 item per stroke before the split, 15.9 per m2 after it, 28.7
+per m2 after the keep-out fixes. Dart throwing jams at about 0.547 area
+fraction (random sequential adsorption), so Bridson Poisson-disc growth
+is the next step if he wants denser still; it is not built.
+
+Poly Haven is exhausted for grass (three grasses exist there in total).
+More grass, meadow flowers and every tree come from Fab into the UE 5.4
+project, through tools/props/ingest.mjs, and that list is his.
+
 ## Task 3: The Output panel
 
 A seventh panel section. It holds the still-render controls and it TAKES

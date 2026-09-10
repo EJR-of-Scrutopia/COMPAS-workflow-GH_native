@@ -5719,6 +5719,9 @@ function familyMembers(family) {
 // place the number comes from.
 function familyLabel(entry) {
   if (!entry.family) return entry.label || entry.key;
+  // The split writes the row's own label on every variant; a variant
+  // named "tiny a" rather than "3" has no trailing number to strip.
+  if (entry.familyLabel) return entry.familyLabel;
   return String(entry.label || entry.key).replace(/ [0-9]+$/, "");
 }
 
@@ -5768,7 +5771,7 @@ function propTriangles(type) {
 // vault and its works, plus every prop already placed. Boxes rather than
 // meshes, because this runs once per candidate and a Box3 test is a
 // handful of compares.
-function scatterKeepOut(clearance) {
+function scatterKeepOut(clearance, spacing) {
   const discs = [];
   const box = new THREE.Box3();
   const parts = [state.objects.shell, state.objects.columns,
@@ -5776,13 +5779,35 @@ function scatterKeepOut(clearance) {
   for (const part of parts) {
     box.setFromObject(part);
     if (!isFinite(box.min.x)) continue;
-    const cx = (box.min.x + box.max.x) / 2;
-    const cy = (box.min.y + box.max.y) / 2;
-    const r = Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y) / 2;
-    discs.push([cx, cy, r + clearance]);
+    // A CAPSULE, not one disc. One disc of half the diagonal round a
+    // 23 m by 4 m vault claimed a 12 m circle and nothing could be
+    // planted along either long side, which read as "nothing fitted"
+    // as often as the spacing did. A row of discs the width of the
+    // SHORT side, stepped along the long one, hugs the works instead.
+    const w = box.max.x - box.min.x;
+    const h = box.max.y - box.min.y;
+    const along = w >= h ? "x" : "y";
+    const short = Math.min(w, h);
+    const long = Math.max(w, h);
+    const r = short / 2 + clearance;
+    const steps = Math.max(1, Math.ceil((long - short) / Math.max(0.5, short / 2)));
+    for (let i = 0; i <= steps; i++) {
+      const t = steps ? i / steps : 0.5;
+      const cx = along === "x"
+        ? box.min.x + short / 2 + t * (long - short) : (box.min.x + box.max.x) / 2;
+      const cy = along === "y"
+        ? box.min.y + short / 2 + t * (long - short) : (box.min.y + box.max.y) / 2;
+      discs.push([cx, cy, r]);
+    }
   }
+  // A placed prop keeps out by ITS OWN size and the CURRENT spacing. It
+  // used to keep out by a fixed 0.6 of its footprint, which ignored both
+  // the dial and its scale, so a second stroke could never touch a first
+  // one however low the spacing was set.
+  const gap = spacing || 1;
   for (const record of state.props) {
-    discs.push([record.x, record.y, propFootprint(record.type) * 0.6]);
+    discs.push([record.x, record.y,
+      propFootprint(record.type) * (record.scale || 1) * gap]);
   }
   return discs;
 }
@@ -5824,7 +5849,7 @@ function scatterSolve(region, salt) {
     return chosen[chosen.length - 1].type;
   };
 
-  const discs = scatterKeepOut(rules.clearance);
+  const discs = scatterKeepOut(rules.clearance, rules.spacing);
   const placed = [];
   let triangles = 0;
   let refused = 0;

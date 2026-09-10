@@ -162,127 +162,191 @@
       "source": "https://ambientcg.com/view?id=PavingEdge002"
     },
     {
-      "key": "anthurium_botany_01__v1",
-      "label": "Anthurium 1",
-      "file": "anthurium_botany_01__v1.glb",
+      "key": "anthurium_botany_01__a",
+      "label": "Anthurium a",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__a.glb",
       "group": "planting",
       "family": "anthurium_botany_01",
       "variant": 1,
       "sizeMetres": [
-        0.8962406113326438,
-        0.4997034301350922,
-        1.7976011452754648
+        0.8962763782213834,
+        0.49962728994074723,
+        1.1418907344341278
       ],
-      "triangles": 26168,
-      "bytes": 580336,
+      "triangles": 15808,
+      "bytes": 386928,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/anthurium_botany_01"
     },
     {
-      "key": "anthurium_botany_01__v2",
-      "label": "Anthurium 2",
-      "file": "anthurium_botany_01__v2.glb",
+      "key": "anthurium_botany_01__b",
+      "label": "Anthurium b",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__b.glb",
       "group": "planting",
       "family": "anthurium_botany_01",
       "variant": 2,
       "sizeMetres": [
-        0.7568083411239357,
-        0.47171457680785345,
-        1.3348890351713294
+        0.75666743516922,
+        0.47177695128747743,
+        0.5716514371273398
       ],
-      "triangles": 23208,
-      "bytes": 526000,
+      "triangles": 15544,
+      "bytes": 382632,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/anthurium_botany_01"
     },
     {
-      "key": "anthurium_botany_01__v3",
-      "label": "Anthurium 3",
-      "file": "anthurium_botany_01__v3.glb",
+      "key": "anthurium_botany_01__c",
+      "label": "Anthurium c",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__c.glb",
       "group": "planting",
       "family": "anthurium_botany_01",
       "variant": 3,
       "sizeMetres": [
-        0.6009496872614761,
-        0.35873518106009694,
-        1.4215862358221898
+        0.600898452359715,
+        0.35868124993884365,
+        0.65739506483078
       ],
-      "triangles": 17776,
-      "bytes": 429304,
+      "triangles": 9072,
+      "bytes": 265560,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/anthurium_botany_01"
     },
     {
-      "key": "bark_debris_01__v1",
-      "label": "Bark debris 1",
-      "file": "bark_debris_01__v1.glb",
+      "key": "anthurium_botany_01__d",
+      "label": "Anthurium d",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__d.glb",
+      "group": "planting",
+      "family": "anthurium_botany_01",
+      "variant": 4,
+      "sizeMetres": [
+        0.480927437543869,
+        0.30114656623794467,
+        0.35075544023364635
+      ],
+      "triangles": 10360,
+      "bytes": 291320,
+      "credit": "Anthurium by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/anthurium_botany_01"
+    },
+    {
+      "key": "anthurium_botany_01__e",
+      "label": "Anthurium e",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__e.glb",
+      "group": "planting",
+      "family": "anthurium_botany_01",
+      "variant": 5,
+      "sizeMetres": [
+        0.31986743956804276,
+        0.15858170288148354,
+        0.2901132298702933
+      ],
+      "triangles": 7664,
+      "bytes": 241264,
+      "credit": "Anthurium by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/anthurium_botany_01"
+    },
+    {
+      "key": "anthurium_botany_01__f",
+      "label": "Anthurium f",
+      "familyLabel": "Anthurium",
+      "file": "anthurium_botany_01__f.glb",
+      "group": "planting",
+      "family": "anthurium_botany_01",
+      "variant": 6,
+      "sizeMetres": [
+        0.3132340610027313,
+        0.13946262216222038,
+        0.27866712874117816
+      ],
+      "triangles": 8704,
+      "bytes": 261644,
+      "credit": "Anthurium by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/anthurium_botany_01"
+    },
+    {
+      "key": "bark_debris_01__a",
+      "label": "Bark debris a",
+      "familyLabel": "Bark debris",
+      "file": "bark_debris_01__a.glb",
       "group": "planting",
       "family": "bark_debris_01",
       "variant": 1,
       "sizeMetres": [
-        0.18694346957732932,
-        0.06462243645999344,
-        0.3969294716712284
+        0.18691386603347393,
+        0.06512728976170123,
+        0.3969542235136032
       ],
-      "triangles": 5128,
-      "bytes": 174280,
+      "triangles": 5248,
+      "bytes": 176112,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/bark_debris_01"
     },
     {
-      "key": "bark_debris_01__v2",
-      "label": "Bark debris 2",
-      "file": "bark_debris_01__v2.glb",
+      "key": "bark_debris_01__b",
+      "label": "Bark debris b",
+      "familyLabel": "Bark debris",
+      "file": "bark_debris_01__b.glb",
       "group": "planting",
       "family": "bark_debris_01",
       "variant": 2,
       "sizeMetres": [
-        0.20348683134135115,
-        0.08677870264291698,
-        0.4650230696694848
+        0.20348299579862328,
+        0.08680351399280584,
+        0.4650573581457138
       ],
-      "triangles": 4974,
-      "bytes": 172136,
+      "triangles": 6032,
+      "bytes": 192552,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/bark_debris_01"
     },
     {
-      "key": "bark_debris_01__v3",
-      "label": "Bark debris 3",
-      "file": "bark_debris_01__v3.glb",
+      "key": "bark_debris_01__c",
+      "label": "Bark debris c",
+      "familyLabel": "Bark debris",
+      "file": "bark_debris_01__c.glb",
       "group": "planting",
       "family": "bark_debris_01",
       "variant": 3,
       "sizeMetres": [
-        0.14617595296284236,
-        0.09748756579578455,
-        0.5710961916819315
+        0.1469158544041944,
+        0.09753721412670568,
+        0.57112255692482
       ],
-      "triangles": 7408,
-      "bytes": 234508,
+      "triangles": 8068,
+      "bytes": 247908,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/bark_debris_01"
     },
     {
-      "key": "bark_debris_01__v4",
-      "label": "Bark debris 4",
-      "file": "bark_debris_01__v4.glb",
+      "key": "bark_debris_01__d",
+      "label": "Bark debris d",
+      "familyLabel": "Bark debris",
+      "file": "bark_debris_01__d.glb",
       "group": "planting",
       "family": "bark_debris_01",
       "variant": 4,
       "sizeMetres": [
-        0.13692571558965483,
-        0.10893496657205759,
-        0.6049952507019043
+        0.13693173214639387,
+        0.1087181785782434,
+        0.6050218343734741
       ],
-      "triangles": 6484,
-      "bytes": 200656,
+      "triangles": 5114,
+      "bytes": 174528,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/bark_debris_01"
@@ -512,359 +576,609 @@
       "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
     },
     {
-      "key": "calathea_orbifolia_01__v1",
-      "label": "Calathea 1",
-      "file": "calathea_orbifolia_01__v1.glb",
+      "key": "calathea_orbifolia_01__a",
+      "label": "Calathea a",
+      "familyLabel": "Calathea",
+      "file": "calathea_orbifolia_01__a.glb",
       "group": "planting",
       "family": "calathea_orbifolia_01",
       "variant": 1,
       "sizeMetres": [
-        0.6005789803846939,
-        0.4242869801410687,
-        0.5256063941921596
+        0.6005999147891998,
+        0.42432594818965086,
+        0.5256692651722688
       ],
       "triangles": 5904,
-      "bytes": 136596,
+      "bytes": 136484,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/calathea_orbifolia_01"
     },
     {
-      "key": "calathea_orbifolia_01__v2",
-      "label": "Calathea 2",
-      "file": "calathea_orbifolia_01__v2.glb",
+      "key": "calathea_orbifolia_01__b",
+      "label": "Calathea b",
+      "familyLabel": "Calathea",
+      "file": "calathea_orbifolia_01__b.glb",
       "group": "planting",
       "family": "calathea_orbifolia_01",
       "variant": 2,
       "sizeMetres": [
-        0.2263243832807904,
-        0.13047965374381715,
-        0.1631755938295365
+        0.3474070537108318,
+        0.30321360821619514,
+        0.44028183817863464
       ],
-      "triangles": 1802,
-      "bytes": 65180,
+      "triangles": 3446,
+      "bytes": 93780,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/calathea_orbifolia_01"
     },
     {
-      "key": "calathea_orbifolia_01__v3",
-      "label": "Calathea 3",
-      "file": "calathea_orbifolia_01__v3.glb",
+      "key": "calathea_orbifolia_01__c",
+      "label": "Calathea c",
+      "familyLabel": "Calathea",
+      "file": "calathea_orbifolia_01__c.glb",
       "group": "planting",
       "family": "calathea_orbifolia_01",
       "variant": 3,
       "sizeMetres": [
-        0.34748952231446584,
-        0.3032359303904786,
-        0.4402927821117464
+        0.3752180080993561,
+        0.2839760039117101,
+        0.3838396817445755
       ],
-      "triangles": 3446,
-      "bytes": 93884,
+      "triangles": 3542,
+      "bytes": 95400,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/calathea_orbifolia_01"
     },
     {
-      "key": "calathea_orbifolia_01__v4",
-      "label": "Calathea 4",
-      "file": "calathea_orbifolia_01__v4.glb",
+      "key": "calathea_orbifolia_01__d",
+      "label": "Calathea d",
+      "familyLabel": "Calathea",
+      "file": "calathea_orbifolia_01__d.glb",
       "group": "planting",
       "family": "calathea_orbifolia_01",
       "variant": 4,
       "sizeMetres": [
-        0.21278980418852678,
-        0.15161795591365101,
-        0.2515307081352014
+        0.22638535499572754,
+        0.1303717677503613,
+        0.1630925246173689
       ],
-      "triangles": 1994,
-      "bytes": 68412,
+      "triangles": 1802,
+      "bytes": 65076,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/calathea_orbifolia_01"
     },
     {
-      "key": "calathea_orbifolia_01__v5",
-      "label": "Calathea 5",
-      "file": "calathea_orbifolia_01__v5.glb",
+      "key": "calathea_orbifolia_01__e",
+      "label": "Calathea e",
+      "familyLabel": "Calathea",
+      "file": "calathea_orbifolia_01__e.glb",
       "group": "planting",
       "family": "calathea_orbifolia_01",
       "variant": 5,
       "sizeMetres": [
-        0.3752050131801621,
-        0.2839225091363015,
-        0.38372116743397244
+        0.21280085571979912,
+        0.1515608186145645,
+        0.2515547350049019
       ],
-      "triangles": 3542,
-      "bytes": 95504,
+      "triangles": 1994,
+      "bytes": 68308,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/calathea_orbifolia_01"
     },
     {
-      "key": "celandine_01__v1",
-      "label": "Celandine 1",
-      "file": "celandine_01__v1.glb",
+      "key": "celandine_01__a",
+      "label": "Celandine a",
+      "familyLabel": "Celandine",
+      "file": "celandine_01__a.glb",
       "group": "planting",
       "family": "celandine_01",
       "variant": 1,
       "sizeMetres": [
-        0.2757014877572832,
-        0.18589689093845063,
-        0.2282704553037589
+        0.2757267504930496,
+        0.18584859630825168,
+        0.22823379485590323
       ],
       "triangles": 622,
-      "bytes": 54132,
+      "bytes": 54020,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/celandine_01"
     },
     {
-      "key": "celandine_01__v2",
-      "label": "Celandine 2",
-      "file": "celandine_01__v2.glb",
+      "key": "celandine_01__b",
+      "label": "Celandine b",
+      "familyLabel": "Celandine",
+      "file": "celandine_01__b.glb",
       "group": "planting",
       "family": "celandine_01",
       "variant": 2,
       "sizeMetres": [
-        0.25167844759767144,
-        0.144480157148487,
-        0.3067298867335899
+        0.251703456407224,
+        0.1445083938185463,
+        0.3066580146551132
       ],
       "triangles": 599,
-      "bytes": 53640,
+      "bytes": 53524,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/celandine_01"
     },
     {
-      "key": "celandine_01__v3",
-      "label": "Celandine 3",
-      "file": "celandine_01__v3.glb",
+      "key": "celandine_01__c",
+      "label": "Celandine c",
+      "familyLabel": "Celandine",
+      "file": "celandine_01__c.glb",
       "group": "planting",
       "family": "celandine_01",
       "variant": 3,
       "sizeMetres": [
-        0.2571118153485845,
-        0.17564522833004326,
-        0.18630696178092498
+        0.2571471631526947,
+        0.17558552284460305,
+        0.18635262657071117
       ],
       "triangles": 4301,
-      "bytes": 151040,
+      "bytes": 150932,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/celandine_01"
     },
     {
-      "key": "celandine_01__v4",
-      "label": "Celandine 4",
-      "file": "celandine_01__v4.glb",
+      "key": "celandine_01__d",
+      "label": "Celandine d",
+      "familyLabel": "Celandine",
+      "file": "celandine_01__d.glb",
       "group": "planting",
       "family": "celandine_01",
       "variant": 4,
       "sizeMetres": [
-        0.18675117043288392,
-        0.14953764609313602,
-        0.22293958440703143
+        0.18673329284938944,
+        0.1494982041988706,
+        0.22292745113372803
       ],
       "triangles": 3002,
-      "bytes": 117220,
+      "bytes": 117112,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/celandine_01"
     },
     {
-      "key": "celandine_01__v5",
-      "label": "Celandine 5",
-      "file": "celandine_01__v5.glb",
+      "key": "celandine_01__e",
+      "label": "Celandine e",
+      "familyLabel": "Celandine",
+      "file": "celandine_01__e.glb",
       "group": "planting",
       "family": "celandine_01",
       "variant": 5,
       "sizeMetres": [
-        0.18822059790389467,
-        0.12370344997959382,
-        0.21624183294891797
+        0.18828984756749723,
+        0.1236693906147166,
+        0.2163059040904045
       ],
       "triangles": 442,
-      "bytes": 50376,
+      "bytes": 50264,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/celandine_01"
     },
     {
-      "key": "cheiridopsis_succulent",
-      "label": "Cheiridopsis",
-      "file": "cheiridopsis_succulent.glb",
+      "key": "cheiridopsis_succulent__a",
+      "label": "Cheiridopsis a",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__a.glb",
       "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 1,
       "sizeMetres": [
-        2.161,
-        0.271,
-        0.959
+        0.20122233778238297,
+        0.18545223634438557,
+        0.1768793899754728
       ],
-      "triangles": 23998,
-      "bytes": 648616,
+      "triangles": 653,
+      "bytes": 50560,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/cheiridopsis_succulent"
     },
     {
-      "key": "crystalline_iceplant__v1",
-      "label": "Iceplant 1",
-      "file": "crystalline_iceplant__v1.glb",
+      "key": "cheiridopsis_succulent__b",
+      "label": "Cheiridopsis b",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__b.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 2,
+      "sizeMetres": [
+        0.24202648550271988,
+        0.1669744139767837,
+        0.24025377287599348
+      ],
+      "triangles": 1124,
+      "bytes": 62268,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__c",
+      "label": "Cheiridopsis c",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__c.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 3,
+      "sizeMetres": [
+        0.23818859758003752,
+        0.19711801332051548,
+        0.2622291371226311
+      ],
+      "triangles": 1724,
+      "bytes": 76432,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__d",
+      "label": "Cheiridopsis d",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__d.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 4,
+      "sizeMetres": [
+        0.35301473736763,
+        0.2546635980444467,
+        0.349782685712972
+      ],
+      "triangles": 2892,
+      "bytes": 106892,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__e",
+      "label": "Cheiridopsis e",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__e.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 5,
+      "sizeMetres": [
+        0.3910306990146637,
+        0.2277183651942245,
+        0.345730479482258
+      ],
+      "triangles": 3172,
+      "bytes": 117152,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__f",
+      "label": "Cheiridopsis f",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__f.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 6,
+      "sizeMetres": [
+        0.4508606195449829,
+        0.23146389576432824,
+        0.4017113444627398
+      ],
+      "triangles": 2804,
+      "bytes": 106752,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__g",
+      "label": "Cheiridopsis g",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__g.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 7,
+      "sizeMetres": [
+        0.5112626105546951,
+        0.26933852522392066,
+        0.42232566743998756
+      ],
+      "triangles": 3327,
+      "bytes": 121712,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__h",
+      "label": "Cheiridopsis h",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__h.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 8,
+      "sizeMetres": [
+        0.6013981997966766,
+        0.23670865679499276,
+        0.533636045231578
+      ],
+      "triangles": 4013,
+      "bytes": 141244,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "cheiridopsis_succulent__i",
+      "label": "Cheiridopsis i",
+      "familyLabel": "Cheiridopsis",
+      "file": "cheiridopsis_succulent__i.glb",
+      "group": "planting",
+      "family": "cheiridopsis_succulent",
+      "variant": 9,
+      "sizeMetres": [
+        0.5105597910185793,
+        0.2662559936738589,
+        0.5486705303192139
+      ],
+      "triangles": 4277,
+      "bytes": 146396,
+      "credit": "Cheiridopsis by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+    },
+    {
+      "key": "crystalline_iceplant__a",
+      "label": "Iceplant a",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__a.glb",
       "group": "planting",
       "family": "crystalline_iceplant",
       "variant": 1,
       "sizeMetres": [
-        0.1436749654393754,
-        0.03793432374172234,
-        0.6101017646374896
+        0.27615657404533067,
+        0.08097216456068157,
+        0.31552085280418396
       ],
-      "triangles": 2336,
-      "bytes": 90332,
+      "triangles": 3076,
+      "bytes": 103244,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/crystalline_iceplant"
     },
     {
-      "key": "crystalline_iceplant__v2",
-      "label": "Iceplant 2",
-      "file": "crystalline_iceplant__v2.glb",
+      "key": "crystalline_iceplant__b",
+      "label": "Iceplant b",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__b.glb",
       "group": "planting",
       "family": "crystalline_iceplant",
       "variant": 2,
       "sizeMetres": [
-        0.2674266357996702,
-        0.06129442501046689,
-        0.6648842967024926
+        0.2801848364404549,
+        0.06591704910910234,
+        0.3062824606895447
       ],
-      "triangles": 2898,
-      "bytes": 100208,
+      "triangles": 2576,
+      "bytes": 94128,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/crystalline_iceplant"
     },
     {
-      "key": "crystalline_iceplant__v3",
-      "label": "Iceplant 3",
-      "file": "crystalline_iceplant__v3.glb",
+      "key": "crystalline_iceplant__c",
+      "label": "Iceplant c",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__c.glb",
       "group": "planting",
       "family": "crystalline_iceplant",
       "variant": 3,
       "sizeMetres": [
-        0.280140335005048,
-        0.06594577260822576,
-        0.7095372336409778
+        0.26743418723344803,
+        0.06046182003785183,
+        0.22747453146289365
       ],
-      "triangles": 3428,
-      "bytes": 109728,
+      "triangles": 2298,
+      "bytes": 89120,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/crystalline_iceplant"
     },
     {
-      "key": "crystalline_iceplant__v4",
-      "label": "Iceplant 4",
-      "file": "crystalline_iceplant__v4.glb",
+      "key": "crystalline_iceplant__d",
+      "label": "Iceplant d",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__d.glb",
       "group": "planting",
       "family": "crystalline_iceplant",
       "variant": 4,
       "sizeMetres": [
-        0.2761091639326896,
-        0.08093344820100434,
-        0.7343444208290251
+        0.14370688353025995,
+        0.03801857764273131,
+        0.1826619878411293
       ],
-      "triangles": 4432,
-      "bytes": 127876,
+      "triangles": 1888,
+      "bytes": 81904,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/crystalline_iceplant"
     },
     {
-      "key": "dandelion_01__v1",
-      "label": "Dandelion 1",
-      "file": "dandelion_01__v1.glb",
+      "key": "crystalline_iceplant__e",
+      "label": "Iceplant e",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__e.glb",
+      "group": "planting",
+      "family": "crystalline_iceplant",
+      "variant": 5,
+      "sizeMetres": [
+        0.15329698100686073,
+        0.028500785123340144,
+        0.11219728016872543
+      ],
+      "triangles": 1356,
+      "bytes": 72440,
+      "credit": "Iceplant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/crystalline_iceplant"
+    },
+    {
+      "key": "crystalline_iceplant__f",
+      "label": "Iceplant f",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__f.glb",
+      "group": "planting",
+      "family": "crystalline_iceplant",
+      "variant": 6,
+      "sizeMetres": [
+        0.11169720441102982,
+        0.02785697705714074,
+        0.08757630493540391
+      ],
+      "triangles": 852,
+      "bytes": 63416,
+      "credit": "Iceplant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/crystalline_iceplant"
+    },
+    {
+      "key": "crystalline_iceplant__g",
+      "label": "Iceplant g",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__g.glb",
+      "group": "planting",
+      "family": "crystalline_iceplant",
+      "variant": 7,
+      "sizeMetres": [
+        0.10752429068088531,
+        0.028788433022811866,
+        0.09202257285261872
+      ],
+      "triangles": 600,
+      "bytes": 58904,
+      "credit": "Iceplant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/crystalline_iceplant"
+    },
+    {
+      "key": "crystalline_iceplant__h",
+      "label": "Iceplant h",
+      "familyLabel": "Iceplant",
+      "file": "crystalline_iceplant__h.glb",
+      "group": "planting",
+      "family": "crystalline_iceplant",
+      "variant": 8,
+      "sizeMetres": [
+        0.053670761303592496,
+        0.01660243823374541,
+        0.058716898784041405
+      ],
+      "triangles": 448,
+      "bytes": 56256,
+      "credit": "Iceplant by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/crystalline_iceplant"
+    },
+    {
+      "key": "dandelion_01__a",
+      "label": "Dandelion a",
+      "familyLabel": "Dandelion",
+      "file": "dandelion_01__a.glb",
       "group": "planting",
       "family": "dandelion_01",
       "variant": 1,
       "sizeMetres": [
-        0.2137564168105044,
-        0.04758716685648923,
-        0.20526788730528867
+        0.22035465497666085,
+        0.1642339196658833,
+        0.25765838474035263
       ],
-      "triangles": 1018,
-      "bytes": 66136,
+      "triangles": 10126,
+      "bytes": 319776,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/dandelion_01"
     },
     {
-      "key": "dandelion_01__v2",
-      "label": "Dandelion 2",
-      "file": "dandelion_01__v2.glb",
+      "key": "dandelion_01__b",
+      "label": "Dandelion b",
+      "familyLabel": "Dandelion",
+      "file": "dandelion_01__b.glb",
       "group": "planting",
       "family": "dandelion_01",
       "variant": 2,
       "sizeMetres": [
-        0.1219260226247263,
-        0.0553040047251091,
-        0.14353318435632967
+        0.2018108703354482,
+        0.1138665843985942,
+        0.21796159446239471
       ],
-      "triangles": 974,
-      "bytes": 68000,
+      "triangles": 10228,
+      "bytes": 323752,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/dandelion_01"
     },
     {
-      "key": "dandelion_01__v3",
-      "label": "Dandelion 3",
-      "file": "dandelion_01__v3.glb",
+      "key": "dandelion_01__c",
+      "label": "Dandelion c",
+      "familyLabel": "Dandelion",
+      "file": "dandelion_01__c.glb",
       "group": "planting",
       "family": "dandelion_01",
       "variant": 3,
       "sizeMetres": [
-        0.16977043310963702,
-        0.10083334814996636,
-        0.16694091804140943
+        0.1698724627494812,
+        0.10093743016074086,
+        0.16713517897906627
       ],
-      "triangles": 1240,
-      "bytes": 75056,
+      "triangles": 1392,
+      "bytes": 77844,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/dandelion_01"
     },
     {
-      "key": "dandelion_01__v4",
-      "label": "Dandelion 4",
-      "file": "dandelion_01__v4.glb",
+      "key": "dandelion_01__d",
+      "label": "Dandelion d",
+      "familyLabel": "Dandelion",
+      "file": "dandelion_01__d.glb",
       "group": "planting",
       "family": "dandelion_01",
       "variant": 4,
       "sizeMetres": [
-        0.20173093852186685,
-        0.11395197252662015,
-        0.21787206367376832
+        0.12210718092776585,
+        0.05544432630780216,
+        0.14353671297430992
       ],
-      "triangles": 9280,
-      "bytes": 296344,
+      "triangles": 1140,
+      "bytes": 70976,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/dandelion_01"
     },
     {
-      "key": "dandelion_01__v5",
-      "label": "Dandelion 5",
-      "file": "dandelion_01__v5.glb",
+      "key": "dandelion_01__e",
+      "label": "Dandelion e",
+      "familyLabel": "Dandelion",
+      "file": "dandelion_01__e.glb",
       "group": "planting",
       "family": "dandelion_01",
       "variant": 5,
       "sizeMetres": [
-        0.22044439006171146,
-        0.16436864660160333,
-        0.2577423848119038
+        0.21386787295341492,
+        0.04746382710901331,
+        0.20530453612360056
       ],
-      "triangles": 11462,
-      "bytes": 339200,
+      "triangles": 910,
+      "bytes": 64304,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/dandelion_01"
@@ -998,37 +1312,77 @@
       "source": "https://polyhaven.com/a/dry_quiver_leaf"
     },
     {
-      "key": "fern_02__v1",
-      "label": "Fern 1",
-      "file": "fern_02__v1.glb",
+      "key": "fern_02__a",
+      "label": "Fern a",
+      "familyLabel": "Fern",
+      "file": "fern_02__a.glb",
       "group": "planting",
       "family": "fern_02",
       "variant": 1,
       "sizeMetres": [
-        0.989756418260832,
-        0.4276513402364017,
-        1.724029607047477
+        0.551942324641125,
+        0.28681980429136544,
+        0.6134210824966431
       ],
-      "triangles": 3168,
-      "bytes": 89804,
+      "triangles": 784,
+      "bytes": 42196,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/fern_02"
     },
     {
-      "key": "fern_02__v2",
-      "label": "Fern 2",
-      "file": "fern_02__v2.glb",
+      "key": "fern_02__b",
+      "label": "Fern b",
+      "familyLabel": "Fern",
+      "file": "fern_02__b.glb",
       "group": "planting",
       "family": "fern_02",
       "variant": 2,
       "sizeMetres": [
-        0.8742953686163517,
-        0.34903188299431687,
-        1.6584130621774449
+        0.9897474050521851,
+        0.4277417353723969,
+        0.8936935292255868
       ],
-      "triangles": 3064,
-      "bytes": 87764,
+      "triangles": 2384,
+      "bytes": 74120,
+      "credit": "Fern by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/fern_02"
+    },
+    {
+      "key": "fern_02__c",
+      "label": "Fern c",
+      "familyLabel": "Fern",
+      "file": "fern_02__c.glb",
+      "group": "planting",
+      "family": "fern_02",
+      "variant": 3,
+      "sizeMetres": [
+        0.8743258118629456,
+        0.3490419056092424,
+        0.7652452085419554
+      ],
+      "triangles": 2248,
+      "bytes": 71464,
+      "credit": "Fern by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/fern_02"
+    },
+    {
+      "key": "fern_02__d",
+      "label": "Fern d",
+      "familyLabel": "Fern",
+      "file": "fern_02__d.glb",
+      "group": "planting",
+      "family": "fern_02",
+      "variant": 4,
+      "sizeMetres": [
+        0.5727823208112142,
+        0.2130891537706816,
+        0.5932782888412476
+      ],
+      "triangles": 816,
+      "bytes": 42808,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/fern_02"
@@ -1040,11 +1394,11 @@
       "group": "planting",
       "sizeMetres": [
         2.742,
-        1.3,
+        1.301,
         0.826
       ],
       "triangles": 149994,
-      "bytes": 8021944,
+      "bytes": 8032752,
       "credit": "Small fir by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/fir_sapling"
@@ -1066,667 +1420,1578 @@
       "source": "https://polyhaven.com/a/fir_sapling_medium"
     },
     {
-      "key": "flower_empodium__v1",
-      "label": "Empodium 1",
-      "file": "flower_empodium__v1.glb",
+      "key": "flower_empodium__a",
+      "label": "Empodium a",
+      "familyLabel": "Empodium",
+      "file": "flower_empodium__a.glb",
       "group": "planting",
       "family": "flower_empodium",
       "variant": 1,
       "sizeMetres": [
-        0.21737864498579818,
-        0.2670957818883377,
-        0.2507050677175662
+        0.21735301041551147,
+        0.26707188389264047,
+        0.2507706162488035
       ],
       "triangles": 758,
-      "bytes": 51940,
+      "bytes": 51832,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_empodium"
     },
     {
-      "key": "flower_empodium__v2",
-      "label": "Empodium 2",
-      "file": "flower_empodium__v2.glb",
+      "key": "flower_empodium__b",
+      "label": "Empodium b",
+      "familyLabel": "Empodium",
+      "file": "flower_empodium__b.glb",
       "group": "planting",
       "family": "flower_empodium",
       "variant": 2,
       "sizeMetres": [
-        0.1815290409413869,
-        0.19055200674068293,
-        0.20468191966535076
+        0.18152991393869833,
+        0.1905242798081188,
+        0.204665407538414
       ],
       "triangles": 758,
-      "bytes": 51652,
+      "bytes": 51536,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_empodium"
     },
     {
-      "key": "flower_empodium__v3",
-      "label": "Empodium 3",
-      "file": "flower_empodium__v3.glb",
+      "key": "flower_empodium__c",
+      "label": "Empodium c",
+      "familyLabel": "Empodium",
+      "file": "flower_empodium__c.glb",
       "group": "planting",
       "family": "flower_empodium",
       "variant": 3,
       "sizeMetres": [
-        0.21687402055040472,
-        0.17860213051259083,
-        0.15793208285833077
+        0.21688037365674973,
+        0.17862333376297546,
+        0.15793937612726827
       ],
       "triangles": 933,
-      "bytes": 56668,
+      "bytes": 56560,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_empodium"
     },
     {
-      "key": "flower_empodium__v4",
-      "label": "Empodium 4",
-      "file": "flower_empodium__v4.glb",
+      "key": "flower_empodium__d",
+      "label": "Empodium d",
+      "familyLabel": "Empodium",
+      "file": "flower_empodium__d.glb",
       "group": "planting",
       "family": "flower_empodium",
       "variant": 4,
       "sizeMetres": [
-        0.19404410146509266,
-        0.167944142118836,
-        0.19426615592855778
+        0.194085764644079,
+        0.16799817934343508,
+        0.19427549839019775
       ],
       "triangles": 360,
-      "bytes": 40988,
+      "bytes": 40876,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_empodium"
     },
     {
-      "key": "flower_empodium__v5",
-      "label": "Empodium 5",
-      "file": "flower_empodium__v5.glb",
+      "key": "flower_empodium__e",
+      "label": "Empodium e",
+      "familyLabel": "Empodium",
+      "file": "flower_empodium__e.glb",
       "group": "planting",
       "family": "flower_empodium",
       "variant": 5,
       "sizeMetres": [
-        0.11118224605131077,
-        0.14695112496997811,
-        0.16592558031361315
+        0.11117621234525377,
+        0.14691974176040556,
+        0.1659640520811081
       ],
       "triangles": 244,
-      "bytes": 37124,
+      "bytes": 37016,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_empodium"
     },
     {
-      "key": "flower_gazania__v1",
-      "label": "Gazania 1",
-      "file": "flower_gazania__v1.glb",
+      "key": "flower_gazania__a",
+      "label": "Gazania a",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__a.glb",
       "group": "planting",
       "family": "flower_gazania",
       "variant": 1,
       "sizeMetres": [
-        0.13819902811901832,
-        0.044545685323136144,
-        0.1333512543481355
+        0.13822830437507438,
+        0.04454169941476587,
+        0.13333149079767803
       ],
       "triangles": 416,
-      "bytes": 65908,
+      "bytes": 65824,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_gazania"
     },
     {
-      "key": "flower_gazania__v2",
-      "label": "Gazania 2",
-      "file": "flower_gazania__v2.glb",
+      "key": "flower_gazania__b",
+      "label": "Gazania b",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__b.glb",
       "group": "planting",
       "family": "flower_gazania",
       "variant": 2,
       "sizeMetres": [
-        1.4812336776599992,
-        0.16555070666094318,
-        0.7027684655815767
+        0.21494926024604924,
+        0.047994125184692815,
+        0.2683536157842453
       ],
-      "triangles": 13924,
-      "bytes": 512128,
+      "triangles": 448,
+      "bytes": 67356,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_gazania"
     },
     {
-      "key": "flower_heliophila__v1",
-      "label": "Heliophila 1",
-      "file": "flower_heliophila__v1.glb",
+      "key": "flower_gazania__c",
+      "label": "Gazania c",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__c.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 3,
+      "sizeMetres": [
+        0.24085210842569987,
+        0.06851347675803025,
+        0.1860469825149991
+      ],
+      "triangles": 752,
+      "bytes": 74752,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_gazania__d",
+      "label": "Gazania d",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__d.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 4,
+      "sizeMetres": [
+        0.24569946918289925,
+        0.09977874556009904,
+        0.26638282193236784
+      ],
+      "triangles": 1348,
+      "bytes": 99472,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_gazania__e",
+      "label": "Gazania e",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__e.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 5,
+      "sizeMetres": [
+        0.24085688783088152,
+        0.10744729344799914,
+        0.18604175425704825
+      ],
+      "triangles": 2104,
+      "bytes": 128064,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_gazania__f",
+      "label": "Gazania f",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__f.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 6,
+      "sizeMetres": [
+        0.31232169094823753,
+        0.10993403228278416,
+        0.306939248922097
+      ],
+      "triangles": 2728,
+      "bytes": 147148,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_gazania__g",
+      "label": "Gazania g",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__g.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 7,
+      "sizeMetres": [
+        0.2693725028354724,
+        0.12441512548716746,
+        0.28840321608840314
+      ],
+      "triangles": 3004,
+      "bytes": 157008,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_gazania__h",
+      "label": "Gazania h",
+      "familyLabel": "Gazania",
+      "file": "flower_gazania__h.glb",
+      "group": "planting",
+      "family": "flower_gazania",
+      "variant": 8,
+      "sizeMetres": [
+        0.33757678465855095,
+        0.16553313235579178,
+        0.3262221842392773
+      ],
+      "triangles": 3540,
+      "bytes": 170568,
+      "credit": "Gazania by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_gazania"
+    },
+    {
+      "key": "flower_heliophila__large",
+      "label": "Heliophila large",
+      "familyLabel": "Heliophila",
+      "file": "flower_heliophila__large.glb",
       "group": "planting",
       "family": "flower_heliophila",
       "variant": 1,
       "sizeMetres": [
-        2.243644775179199,
-        0.3948071434067355,
-        1.413637271308346
+        1.660615622997284,
+        0.39894913089571915,
+        1.4145158926839798
       ],
-      "triangles": 20742,
-      "bytes": 509804,
+      "triangles": 11841,
+      "bytes": 307308,
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_heliophila"
     },
     {
-      "key": "flower_heliophila__v2",
-      "label": "Heliophila 2",
-      "file": "flower_heliophila__v2.glb",
+      "key": "flower_heliophila__medium",
+      "label": "Heliophila medium",
+      "familyLabel": "Heliophila",
+      "file": "flower_heliophila__medium.glb",
       "group": "planting",
       "family": "flower_heliophila",
       "variant": 2,
       "sizeMetres": [
-        0.3325220281655987,
-        0.26538138511559617,
-        0.2642093639807639
+        0.6529258787631989,
+        0.37306066739626154,
+        0.5639747560212278
       ],
-      "triangles": 2477,
-      "bytes": 99588,
+      "triangles": 7377,
+      "bytes": 210088,
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_heliophila"
     },
     {
-      "key": "flower_stinkkruid__v1",
-      "label": "Stinkkruid 1",
-      "file": "flower_stinkkruid__v1.glb",
+      "key": "flower_heliophila__small",
+      "label": "Heliophila small",
+      "familyLabel": "Heliophila",
+      "file": "flower_heliophila__small.glb",
+      "group": "planting",
+      "family": "flower_heliophila",
+      "variant": 3,
+      "sizeMetres": [
+        0.3422805517911911,
+        0.2697442657817115,
+        0.2709977754023276
+      ],
+      "triangles": 4023,
+      "bytes": 125004,
+      "credit": "Heliophila by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_heliophila"
+    },
+    {
+      "key": "flower_stinkkruid__a",
+      "label": "Stinkkruid a",
+      "familyLabel": "Stinkkruid",
+      "file": "flower_stinkkruid__a.glb",
       "group": "planting",
       "family": "flower_stinkkruid",
       "variant": 1,
       "sizeMetres": [
-        0.34998249504658396,
-        0.17591506541973,
-        0.30040881037752465
+        0.3500075936317444,
+        0.17597048293746198,
+        0.30048719495331966
       ],
-      "triangles": 12591,
-      "bytes": 544616,
+      "triangles": 12321,
+      "bytes": 530484,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_stinkkruid"
     },
     {
-      "key": "flower_stinkkruid__v2",
-      "label": "Stinkkruid 2",
-      "file": "flower_stinkkruid__v2.glb",
+      "key": "flower_stinkkruid__b",
+      "label": "Stinkkruid b",
+      "familyLabel": "Stinkkruid",
+      "file": "flower_stinkkruid__b.glb",
       "group": "planting",
       "family": "flower_stinkkruid",
       "variant": 2,
       "sizeMetres": [
-        0.24859711962913256,
-        0.15270260730123186,
-        0.20859987639120647
+        0.24865417182445526,
+        0.1526968914914857,
+        0.20861696375360772
       ],
-      "triangles": 8549,
-      "bytes": 400364,
+      "triangles": 9887,
+      "bytes": 424260,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_stinkkruid"
     },
     {
-      "key": "flower_stinkkruid__v3",
-      "label": "Stinkkruid 3",
-      "file": "flower_stinkkruid__v3.glb",
+      "key": "flower_stinkkruid__c",
+      "label": "Stinkkruid c",
+      "familyLabel": "Stinkkruid",
+      "file": "flower_stinkkruid__c.glb",
       "group": "planting",
       "family": "flower_stinkkruid",
       "variant": 3,
       "sizeMetres": [
-        0.21372637863271393,
-        0.14739392463570278,
-        0.1893429049507851
+        0.21378885954618454,
+        0.14738884687944376,
+        0.18938717030753782
       ],
-      "triangles": 1246,
-      "bytes": 81892,
+      "triangles": 809,
+      "bytes": 69040,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_stinkkruid"
     },
     {
-      "key": "flower_stinkkruid__v4",
-      "label": "Stinkkruid 4",
-      "file": "flower_stinkkruid__v4.glb",
+      "key": "flower_stinkkruid__d",
+      "label": "Stinkkruid d",
+      "familyLabel": "Stinkkruid",
+      "file": "flower_stinkkruid__d.glb",
       "group": "planting",
       "family": "flower_stinkkruid",
       "variant": 4,
       "sizeMetres": [
-        0.21913918799477372,
-        0.1251182891328494,
-        0.22129907681598926
+        0.21913790876768457,
+        0.12511556545409253,
+        0.22124455124139786
       ],
-      "triangles": 1613,
-      "bytes": 92516,
+      "triangles": 947,
+      "bytes": 73492,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_stinkkruid"
     },
     {
-      "key": "flower_ursinia__v1",
-      "label": "Ursinia 1",
-      "file": "flower_ursinia__v1.glb",
+      "key": "flower_ursinia__a",
+      "label": "Ursinia a",
+      "familyLabel": "Ursinia",
+      "file": "flower_ursinia__a.glb",
       "group": "planting",
       "family": "flower_ursinia",
       "variant": 1,
       "sizeMetres": [
-        0.42543453612972115,
-        0.16416169122526547,
-        0.34332020830854404
+        0.42538031935691833,
+        0.1641570503357892,
+        0.34333424179318506
       ],
-      "triangles": 10261,
-      "bytes": 265724,
+      "triangles": 10237,
+      "bytes": 265232,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
     },
     {
-      "key": "flower_ursinia__v2",
-      "label": "Ursinia 2",
-      "file": "flower_ursinia__v2.glb",
+      "key": "flower_ursinia__b",
+      "label": "Ursinia b",
+      "familyLabel": "Ursinia",
+      "file": "flower_ursinia__b.glb",
       "group": "planting",
       "family": "flower_ursinia",
       "variant": 2,
       "sizeMetres": [
-        0.2772069601200364,
-        0.1313561264884897,
-        0.25976644789772685
+        0.2772451639175415,
+        0.1312571881182727,
+        0.2598152821581152
       ],
-      "triangles": 5540,
-      "bytes": 161312,
+      "triangles": 5590,
+      "bytes": 162008,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
     },
     {
-      "key": "flower_ursinia__v3",
-      "label": "Ursinia 3",
-      "file": "flower_ursinia__v3.glb",
+      "key": "flower_ursinia__c",
+      "label": "Ursinia c",
+      "familyLabel": "Ursinia",
+      "file": "flower_ursinia__c.glb",
       "group": "planting",
       "family": "flower_ursinia",
       "variant": 3,
       "sizeMetres": [
-        0.2610050035808449,
-        0.14956656197369167,
-        0.19857403012924024
+        0.26099538058042526,
+        0.14960219106280936,
+        0.19861201842797715
       ],
-      "triangles": 4055,
-      "bytes": 130692,
+      "triangles": 4099,
+      "bytes": 131284,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
     },
     {
-      "key": "flower_ursinia__v4",
-      "label": "Ursinia 4",
-      "file": "flower_ursinia__v4.glb",
+      "key": "flower_ursinia__d",
+      "label": "Ursinia d",
+      "familyLabel": "Ursinia",
+      "file": "flower_ursinia__d.glb",
       "group": "planting",
       "family": "flower_ursinia",
       "variant": 4,
       "sizeMetres": [
-        0.1862552252334737,
-        0.13296293334517717,
-        0.15077166813775378
+        0.18624328076839447,
+        0.1330820712511116,
+        0.1507304735671955
       ],
-      "triangles": 2233,
-      "bytes": 86352,
+      "triangles": 2181,
+      "bytes": 85408,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
     },
     {
-      "key": "flower_ursinia__v5",
-      "label": "Ursinia 5",
-      "file": "flower_ursinia__v5.glb",
+      "key": "flower_ursinia__e",
+      "label": "Ursinia e",
+      "familyLabel": "Ursinia",
+      "file": "flower_ursinia__e.glb",
       "group": "planting",
       "family": "flower_ursinia",
       "variant": 5,
       "sizeMetres": [
-        0.1379172132842541,
-        0.07431463222187595,
-        0.15733277536444845
+        0.1379291635138351,
+        0.07431977301457238,
+        0.1573048233985901
       ],
-      "triangles": 1910,
-      "bytes": 78656,
+      "triangles": 1890,
+      "bytes": 78224,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_ursinia"
     },
     {
-      "key": "grass_bermuda_01__v1",
-      "label": "Bermuda grass 1",
-      "file": "grass_bermuda_01__v1.glb",
+      "key": "grass_bermuda_01__dead_a",
+      "label": "Bermuda grass dead a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__dead_a.glb",
       "group": "planting",
       "family": "grass_bermuda_01",
       "variant": 1,
       "sizeMetres": [
-        1.12706254950227,
-        0.15800904849663766,
-        0.12712780184738737
+        0.06773989693343974,
+        0.024744734955927883,
+        0.0843101479113102
       ],
-      "triangles": 353,
-      "bytes": 47200,
+      "triangles": 12,
+      "bytes": 38612,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01"
     },
     {
-      "key": "grass_bermuda_01__v2",
-      "label": "Bermuda grass 2",
-      "file": "grass_bermuda_01__v2.glb",
+      "key": "grass_bermuda_01__dead_b",
+      "label": "Bermuda grass dead b",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__dead_b.glb",
       "group": "planting",
       "family": "grass_bermuda_01",
       "variant": 2,
       "sizeMetres": [
-        0.42919782983774724,
-        0.1521416084919731,
-        0.09140849008178087
+        0.07010027393698692,
+        0.043347630384480196,
+        0.05503065143277963
       ],
-      "triangles": 558,
-      "bytes": 51256,
+      "triangles": 12,
+      "bytes": 38616,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01"
     },
     {
-      "key": "grass_bermuda_01__v3",
-      "label": "Bermuda grass 3",
-      "file": "grass_bermuda_01__v3.glb",
+      "key": "grass_bermuda_01__flattened_a",
+      "label": "Bermuda grass flattened a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__flattened_a.glb",
       "group": "planting",
       "family": "grass_bermuda_01",
       "variant": 3,
       "sizeMetres": [
-        0.012970129875299108,
-        0.1494652400649854,
-        0.013793623503331798
+        0.043939800888051495,
+        0.04363545698325699,
+        0.06925326772034168
+      ],
+      "triangles": 19,
+      "bytes": 38792,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_a",
+      "label": "Bermuda grass medium a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_a.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 4,
+      "sizeMetres": [
+        0.038509933969413615,
+        0.09775002295530313,
+        0.028569961916686062
+      ],
+      "triangles": 17,
+      "bytes": 38732,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_b",
+      "label": "Bermuda grass medium b",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_b.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 5,
+      "sizeMetres": [
+        0.05116554495287029,
+        0.0745726116001606,
+        0.02186859351534265
+      ],
+      "triangles": 8,
+      "bytes": 38532,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_c",
+      "label": "Bermuda grass medium c",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_c.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 6,
+      "sizeMetres": [
+        0.05697835793958417,
+        0.06667514091363569,
+        0.09161889925599098
+      ],
+      "triangles": 20,
+      "bytes": 38852,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_d",
+      "label": "Bermuda grass medium d",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_d.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 7,
+      "sizeMetres": [
+        0.054977859913770605,
+        0.10206569370348006,
+        0.016297119326129164
+      ],
+      "triangles": 14,
+      "bytes": 38648,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_e",
+      "label": "Bermuda grass medium e",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_e.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 8,
+      "sizeMetres": [
+        0.06604189043776498,
+        0.08266147039830685,
+        0.03687437755499817
+      ],
+      "triangles": 24,
+      "bytes": 38932,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__medium_f",
+      "label": "Bermuda grass medium f",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__medium_f.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 9,
+      "sizeMetres": [
+        0.04069835873467083,
+        0.11300424521323293,
+        0.026099921475181274
       ],
       "triangles": 30,
-      "bytes": 39272,
+      "bytes": 39048,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01"
     },
     {
-      "key": "grass_medium_01__v1",
-      "label": "Grass clumps 1",
-      "file": "grass_medium_01__v1.glb",
+      "key": "grass_bermuda_01__seedling_a",
+      "label": "Bermuda grass seedling a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__seedling_a.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 10,
+      "sizeMetres": [
+        0.06782453158823606,
+        0.15088644647039473,
+        0.04557399572392332
+      ],
+      "triangles": 147,
+      "bytes": 41720,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__seedling_b",
+      "label": "Bermuda grass seedling b",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__seedling_b.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 11,
+      "sizeMetres": [
+        0.07659398850763582,
+        0.12720503262244165,
+        0.04926007006045643
+      ],
+      "triangles": 140,
+      "bytes": 41516,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__seedling_c",
+      "label": "Bermuda grass seedling c",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__seedling_c.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 12,
+      "sizeMetres": [
+        0.03715726501565132,
+        0.09225825115572661,
+        0.04451157226316494
+      ],
+      "triangles": 128,
+      "bytes": 41268,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__seedling_d",
+      "label": "Bermuda grass seedling d",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__seedling_d.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 13,
+      "sizeMetres": [
+        0.06963621542616798,
+        0.1521890084259212,
+        0.08312872623202883
+      ],
+      "triangles": 268,
+      "bytes": 44444,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__single_a",
+      "label": "Bermuda grass single a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__single_a.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 14,
+      "sizeMetres": [
+        0.0035749758508515474,
+        0.14941483904840425,
+        0.013697994760641773
+      ],
+      "triangles": 15,
+      "bytes": 38732,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__single_b",
+      "label": "Bermuda grass single b",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__single_b.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 15,
+      "sizeMetres": [
+        0.0035749758445843692,
+        0.14941483878646977,
+        0.013697994736628248
+      ],
+      "triangles": 15,
+      "bytes": 38732,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_a",
+      "label": "Bermuda grass small a",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_a.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 16,
+      "sizeMetres": [
+        0.07986543700098991,
+        0.03223427171908877,
+        0.02774950457686165
+      ],
+      "triangles": 12,
+      "bytes": 38620,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_b",
+      "label": "Bermuda grass small b",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_b.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 17,
+      "sizeMetres": [
+        0.08268747106194496,
+        0.04585196578680861,
+        0.03602798579776034
+      ],
+      "triangles": 12,
+      "bytes": 38620,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_c",
+      "label": "Bermuda grass small c",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_c.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 18,
+      "sizeMetres": [
+        0.05400018864994534,
+        0.05516521283425391,
+        0.04146776852339752
+      ],
+      "triangles": 18,
+      "bytes": 38824,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_d",
+      "label": "Bermuda grass small d",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_d.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 19,
+      "sizeMetres": [
+        0.05821169912815094,
+        0.0546444195753617,
+        0.033466351758582036
+      ],
+      "triangles": 10,
+      "bytes": 38588,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_e",
+      "label": "Bermuda grass small e",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_e.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 20,
+      "sizeMetres": [
+        0.02871349826347694,
+        0.09073731326498091,
+        0.017656212988393757
+      ],
+      "triangles": 10,
+      "bytes": 38588,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_bermuda_01__small_f",
+      "label": "Bermuda grass small f",
+      "familyLabel": "Bermuda grass",
+      "file": "grass_bermuda_01__small_f.glb",
+      "group": "planting",
+      "family": "grass_bermuda_01",
+      "variant": 21,
+      "sizeMetres": [
+        0.03553474322805886,
+        0.06905272183939815,
+        0.024616377481842797
+      ],
+      "triangles": 10,
+      "bytes": 38584,
+      "credit": "Bermuda grass by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_bermuda_01"
+    },
+    {
+      "key": "grass_medium_01__large_a",
+      "label": "Grass clumps large a",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__large_a.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 1,
       "sizeMetres": [
-        1.456539644324053,
-        0.2206619097333662,
-        0.32637435951260674
+        0.31699136874851686,
+        0.14667092144548555,
+        0.32655881345272064
       ],
-      "triangles": 19114,
-      "bytes": 584908,
+      "triangles": 6422,
+      "bytes": 233892,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v2",
-      "label": "Grass clumps 2",
-      "file": "grass_medium_01__v2.glb",
+      "key": "grass_medium_01__large_b",
+      "label": "Grass clumps large b",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__large_b.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 2,
       "sizeMetres": [
-        0.18747705364098977,
-        0.17789797373852778,
-        0.20116155491971988
+        0.28409744799137115,
+        0.16926024223099123,
+        0.27573934670258016
       ],
-      "triangles": 1255,
-      "bytes": 89816,
+      "triangles": 4532,
+      "bytes": 177196,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v3",
-      "label": "Grass clumps 3",
-      "file": "grass_medium_01__v3.glb",
+      "key": "grass_medium_01__large_c",
+      "label": "Grass clumps large c",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__large_c.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 3,
       "sizeMetres": [
-        0.1923522023749502,
-        0.14437104791857447,
-        0.20287210191941796
+        0.27879106998443604,
+        0.1423436498701065,
+        0.25506995604021654
       ],
-      "triangles": 1450,
-      "bytes": 94720,
+      "triangles": 5877,
+      "bytes": 217164,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v4",
-      "label": "Grass clumps 4",
-      "file": "grass_medium_01__v4.glb",
+      "key": "grass_medium_01__mid_a",
+      "label": "Grass clumps mid a",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__mid_a.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 4,
       "sizeMetres": [
-        0.18474020349770193,
-        0.14026571006306998,
-        0.16250295678038595
+        0.2156216667909856,
+        0.2177566024531501,
+        0.2213778793811798
       ],
-      "triangles": 823,
-      "bytes": 77180,
+      "triangles": 2283,
+      "bytes": 119996,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v5",
-      "label": "Grass clumps 5",
-      "file": "grass_medium_01__v5.glb",
+      "key": "grass_medium_01__mid_b",
+      "label": "Grass clumps mid b",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__mid_b.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 5,
       "sizeMetres": [
-        0.16592408210006848,
-        0.09989655448394252,
-        0.189871886257178
+        0.18780133556833611,
+        0.17771525052193216,
+        0.20102860033512115
       ],
-      "triangles": 643,
-      "bytes": 72336,
+      "triangles": 1255,
+      "bytes": 89708,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v6",
-      "label": "Grass clumps 6",
-      "file": "grass_medium_01__v6.glb",
+      "key": "grass_medium_01__mid_c",
+      "label": "Grass clumps mid c",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__mid_c.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 6,
       "sizeMetres": [
-        0.16079242022078333,
-        0.32261113314506096,
-        0.15839761892488147
+        0.19233102343871877,
+        0.14463055579891915,
+        0.20285546779632568
       ],
-      "triangles": 286,
-      "bytes": 62848,
+      "triangles": 1450,
+      "bytes": 94608,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v7",
-      "label": "Grass clumps 7",
-      "file": "grass_medium_01__v7.glb",
+      "key": "grass_medium_01__small_a",
+      "label": "Grass clumps small a",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__small_a.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 7,
       "sizeMetres": [
-        0.14984476908534106,
-        0.28566309244552057,
-        0.13479192625573067
+        0.1848401054739952,
+        0.14043380312907017,
+        0.16232105994073986
       ],
-      "triangles": 310,
-      "bytes": 63512,
+      "triangles": 827,
+      "bytes": 77136,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_01__v8",
-      "label": "Grass clumps 8",
-      "file": "grass_medium_01__v8.glb",
+      "key": "grass_medium_01__small_b",
+      "label": "Grass clumps small b",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__small_b.glb",
       "group": "planting",
       "family": "grass_medium_01",
       "variant": 8,
       "sizeMetres": [
-        1.5188040395334923,
-        0.23639903817946673,
-        0.132055034352061
+        0.1659694283534452,
+        0.09989807566729292,
+        0.18989212065935135
       ],
-      "triangles": 633,
-      "bytes": 72628,
+      "triangles": 647,
+      "bytes": 72300,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01"
     },
     {
-      "key": "grass_medium_02__v1",
-      "label": "Grass tufts 1",
-      "file": "grass_medium_02__v1.glb",
+      "key": "grass_medium_01__tall_a",
+      "label": "Grass clumps tall a",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tall_a.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 9,
+      "sizeMetres": [
+        0.16093359098151,
+        0.3225463912822306,
+        0.15853174041490398
+      ],
+      "triangles": 286,
+      "bytes": 62736,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tall_b",
+      "label": "Grass clumps tall b",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tall_b.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 10,
+      "sizeMetres": [
+        0.14996719250157226,
+        0.28566299728117883,
+        0.13478913398430156
+      ],
+      "triangles": 310,
+      "bytes": 63404,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tall_c",
+      "label": "Grass clumps tall c",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tall_c.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 11,
+      "sizeMetres": [
+        0.15304342590085995,
+        0.23625618498772383,
+        0.12815386083060443
+      ],
+      "triangles": 336,
+      "bytes": 64328,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_a",
+      "label": "Grass clumps tiny a",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_a.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 12,
+      "sizeMetres": [
+        0.06735463712070382,
+        0.11245334357954562,
+        0.07376544080827263
+      ],
+      "triangles": 79,
+      "bytes": 56680,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_b",
+      "label": "Grass clumps tiny b",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_b.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 13,
+      "sizeMetres": [
+        0.02357294216990089,
+        0.060208480106666684,
+        0.03440117247926368
+      ],
+      "triangles": 28,
+      "bytes": 55232,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_c",
+      "label": "Grass clumps tiny c",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_c.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 14,
+      "sizeMetres": [
+        0.01603168941386931,
+        0.08238869940396398,
+        0.029008406685131254
+      ],
+      "triangles": 40,
+      "bytes": 55580,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_d",
+      "label": "Grass clumps tiny d",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_d.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 15,
+      "sizeMetres": [
+        0.04304091552033773,
+        0.04782323594709048,
+        0.08858247846364975
+      ],
+      "triangles": 32,
+      "bytes": 55376,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_e",
+      "label": "Grass clumps tiny e",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_e.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 16,
+      "sizeMetres": [
+        0.08526545204222202,
+        0.049446520395808435,
+        0.07414896129185167
+      ],
+      "triangles": 62,
+      "bytes": 56152,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_01__tiny_f",
+      "label": "Grass clumps tiny f",
+      "familyLabel": "Grass clumps",
+      "file": "grass_medium_01__tiny_f.glb",
+      "group": "planting",
+      "family": "grass_medium_01",
+      "variant": 17,
+      "sizeMetres": [
+        0.055199153908678245,
+        0.04707328487556728,
+        0.06889014318585396
+      ],
+      "triangles": 60,
+      "bytes": 56024,
+      "credit": "Grass clumps by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_01"
+    },
+    {
+      "key": "grass_medium_02__a",
+      "label": "Grass tufts a",
+      "familyLabel": "Grass tufts",
+      "file": "grass_medium_02__a.glb",
       "group": "planting",
       "family": "grass_medium_02",
       "variant": 1,
       "sizeMetres": [
-        0.1191159398689563,
-        0.15697466180625996,
-        0.11975592783306513
+        0.1191333725768407,
+        0.15693037677556276,
+        0.1197655571088127
       ],
       "triangles": 714,
-      "bytes": 39404,
+      "bytes": 39300,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_02"
     },
     {
-      "key": "grass_medium_02__v2",
-      "label": "Grass tufts 2",
-      "file": "grass_medium_02__v2.glb",
+      "key": "grass_medium_02__b",
+      "label": "Grass tufts b",
+      "familyLabel": "Grass tufts",
+      "file": "grass_medium_02__b.glb",
       "group": "planting",
       "family": "grass_medium_02",
       "variant": 2,
       "sizeMetres": [
-        1.109262266031258,
-        0.4053062066536318,
-        0.4333052577473927
+        0.17912686503666286,
+        0.17956472247181,
+        0.1992683783173561
       ],
-      "triangles": 7128,
-      "bytes": 192716,
+      "triangles": 1760,
+      "bytes": 64176,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_02"
     },
     {
-      "key": "leipoldtia_schultzei__v1",
-      "label": "Leipoldtia 1",
-      "file": "leipoldtia_schultzei__v1.glb",
+      "key": "grass_medium_02__c",
+      "label": "Grass tufts c",
+      "familyLabel": "Grass tufts",
+      "file": "grass_medium_02__c.glb",
+      "group": "planting",
+      "family": "grass_medium_02",
+      "variant": 3,
+      "sizeMetres": [
+        0.2616771385073662,
+        0.2316497888067679,
+        0.2495064773378992
+      ],
+      "triangles": 1215,
+      "bytes": 50844,
+      "credit": "Grass tufts by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "grass_medium_02__d",
+      "label": "Grass tufts d",
+      "familyLabel": "Grass tufts",
+      "file": "grass_medium_02__d.glb",
+      "group": "planting",
+      "family": "grass_medium_02",
+      "variant": 4,
+      "sizeMetres": [
+        0.31739054619956963,
+        0.2603850535958685,
+        0.36192573606967926
+      ],
+      "triangles": 2489,
+      "bytes": 80992,
+      "credit": "Grass tufts by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "grass_medium_02__e",
+      "label": "Grass tufts e",
+      "familyLabel": "Grass tufts",
+      "file": "grass_medium_02__e.glb",
+      "group": "planting",
+      "family": "grass_medium_02",
+      "variant": 5,
+      "sizeMetres": [
+        0.355553846825714,
+        0.40325897974652136,
+        0.43324655294418335
+      ],
+      "triangles": 1664,
+      "bytes": 62944,
+      "credit": "Grass tufts by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "leipoldtia_schultzei__large",
+      "label": "Leipoldtia large",
+      "familyLabel": "Leipoldtia",
+      "file": "leipoldtia_schultzei__large.glb",
       "group": "planting",
       "family": "leipoldtia_schultzei",
       "variant": 1,
       "sizeMetres": [
-        0.8714920233710329,
-        0.25151680264418314,
-        0.8070492047216935
+        0.8714162976031616,
+        0.3076698965288234,
+        0.807164391767054
       ],
-      "triangles": 16608,
-      "bytes": 508436,
+      "triangles": 14416,
+      "bytes": 446996,
       "credit": "Leipoldtia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/leipoldtia_schultzei"
     },
     {
-      "key": "leipoldtia_schultzei__v2",
-      "label": "Leipoldtia 2",
-      "file": "leipoldtia_schultzei__v2.glb",
+      "key": "leipoldtia_schultzei__medium",
+      "label": "Leipoldtia medium",
+      "familyLabel": "Leipoldtia",
+      "file": "leipoldtia_schultzei__medium.glb",
       "group": "planting",
       "family": "leipoldtia_schultzei",
       "variant": 2,
       "sizeMetres": [
-        1.194737631606082,
-        0.15743089061928137,
-        0.614186441241173
+        0.5712230190801278,
+        0.17584712605833475,
+        0.6435809653030482
       ],
-      "triangles": 7392,
-      "bytes": 246792,
+      "triangles": 7464,
+      "bytes": 236144,
       "credit": "Leipoldtia by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/leipoldtia_schultzei"
     },
     {
-      "key": "moss_01__v1",
-      "label": "Moss 1",
-      "file": "moss_01__v1.glb",
+      "key": "leipoldtia_schultzei__small",
+      "label": "Leipoldtia small",
+      "familyLabel": "Leipoldtia",
+      "file": "leipoldtia_schultzei__small.glb",
+      "group": "planting",
+      "family": "leipoldtia_schultzei",
+      "variant": 3,
+      "sizeMetres": [
+        0.49866453122842813,
+        0.18129803623549773,
+        0.49610781238355317
+      ],
+      "triangles": 2118,
+      "bytes": 81044,
+      "credit": "Leipoldtia by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
+    },
+    {
+      "key": "moss_01__a",
+      "label": "Moss a",
+      "familyLabel": "Moss",
+      "file": "moss_01__a.glb",
       "group": "planting",
       "family": "moss_01",
       "variant": 1,
       "sizeMetres": [
-        0.014203076799962577,
-        0.02594918819337784,
-        0.015950539033040112
+        0.01420816389573254,
+        0.025953780859708786,
+        0.015944384044314086
       ],
       "triangles": 24,
-      "bytes": 24172,
+      "bytes": 24068,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01"
     },
     {
-      "key": "moss_01__v2",
-      "label": "Moss 2",
-      "file": "moss_01__v2.glb",
+      "key": "moss_01__b",
+      "label": "Moss b",
+      "familyLabel": "Moss",
+      "file": "moss_01__b.glb",
       "group": "planting",
       "family": "moss_01",
       "variant": 2,
       "sizeMetres": [
-        0.04706985497790228,
-        0.031204718933855402,
-        0.01788194567200707
+        0.009499878255329719,
+        0.014765322208404541,
+        0.009516100802876792
       ],
-      "triangles": 56,
-      "bytes": 25008,
+      "triangles": 16,
+      "bytes": 23860,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01"
     },
     {
-      "key": "moss_01__v3",
-      "label": "Moss 3",
-      "file": "moss_01__v3.glb",
+      "key": "moss_01__c",
+      "label": "Moss c",
+      "familyLabel": "Moss",
+      "file": "moss_01__c.glb",
       "group": "planting",
       "family": "moss_01",
       "variant": 3,
       "sizeMetres": [
-        0.08787905660260464,
-        0.03722230174797858,
-        0.015556373365455345
+        0.018180917793180477,
+        0.02774728268684612,
+        0.014004472140631944
       ],
-      "triangles": 110,
-      "bytes": 26392,
+      "triangles": 24,
+      "bytes": 24064,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01"
     },
     {
-      "key": "moss_01__v4",
-      "label": "Moss 4",
-      "file": "moss_01__v4.glb",
+      "key": "moss_01__d",
+      "label": "Moss d",
+      "familyLabel": "Moss",
+      "file": "moss_01__d.glb",
       "group": "planting",
       "family": "moss_01",
       "variant": 4,
       "sizeMetres": [
-        0.03253502645814199,
-        0.01694908962513999,
-        0.025200274547635182
+        0.013557699733522999,
+        0.02671990473754704,
+        0.015635470874997226
       ],
-      "triangles": 14,
-      "bytes": 23932,
+      "triangles": 16,
+      "bytes": 23856,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__e",
+      "label": "Moss e",
+      "familyLabel": "Moss",
+      "file": "moss_01__e.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 5,
+      "sizeMetres": [
+        0.01115754244533207,
+        0.02159985899925232,
+        0.01270797058539408
+      ],
+      "triangles": 20,
+      "bytes": 23944,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__f",
+      "label": "Moss f",
+      "familyLabel": "Moss",
+      "file": "moss_01__f.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 6,
+      "sizeMetres": [
+        0.012770757885647577,
+        0.03005094639956951,
+        0.013012874725933987
+      ],
+      "triangles": 20,
+      "bytes": 23948,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__g",
+      "label": "Moss g",
+      "familyLabel": "Moss",
+      "file": "moss_01__g.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 7,
+      "sizeMetres": [
+        0.012887562546310783,
+        0.021551840814797885,
+        0.009474601378203096
+      ],
+      "triangles": 16,
+      "bytes": 23856,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__h",
+      "label": "Moss h",
+      "familyLabel": "Moss",
+      "file": "moss_01__h.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 8,
+      "sizeMetres": [
+        0.01067708912976626,
+        0.017582479476406176,
+        0.005748500204816512
+      ],
+      "triangles": 6,
+      "bytes": 23616,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__i",
+      "label": "Moss i",
+      "familyLabel": "Moss",
+      "file": "moss_01__i.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 9,
+      "sizeMetres": [
+        0.01648315880447626,
+        0.014728549778541267,
+        0.012750591275335621
+      ],
+      "triangles": 6,
+      "bytes": 23612,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__j",
+      "label": "Moss j",
+      "familyLabel": "Moss",
+      "file": "moss_01__j.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 10,
+      "sizeMetres": [
+        0.01660814026445214,
+        0.009004607354733879,
+        0.018792049115290865
+      ],
+      "triangles": 8,
+      "bytes": 23648,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__tall_a",
+      "label": "Moss tall a",
+      "familyLabel": "Moss",
+      "file": "moss_01__tall_a.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 11,
+      "sizeMetres": [
+        0.021421235633369166,
+        0.03359383839415386,
+        0.01131140555539758
+      ],
+      "triangles": 24,
+      "bytes": 24068,
+      "credit": "Moss by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/moss_01"
+    },
+    {
+      "key": "moss_01__tall_b",
+      "label": "Moss tall b",
+      "familyLabel": "Moss",
+      "file": "moss_01__tall_b.glb",
+      "group": "planting",
+      "family": "moss_01",
+      "variant": 12,
+      "sizeMetres": [
+        0.017697936681394723,
+        0.0372284961049445,
+        0.011767190963371456
+      ],
+      "triangles": 24,
+      "bytes": 24068,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01"
@@ -1748,109 +3013,115 @@
       "source": "https://www.fab.com/sellers/Quixel"
     },
     {
-      "key": "nettle_plant__v1",
-      "label": "Nettles 1",
-      "file": "nettle_plant__v1.glb",
+      "key": "nettle_plant__medium_a",
+      "label": "Nettles medium a",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__medium_a.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 1,
       "sizeMetres": [
-        0.10356337701317031,
-        0.21670983393320675,
-        0.09001487582908219
+        0.07728048096524112,
+        0.1314907829510048,
+        0.08906236427728889
       ],
-      "triangles": 4952,
-      "bytes": 153872,
+      "triangles": 4520,
+      "bytes": 144608,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
     },
     {
-      "key": "nettle_plant__v2",
-      "label": "Nettles 2",
-      "file": "nettle_plant__v2.glb",
+      "key": "nettle_plant__medium_b",
+      "label": "Nettles medium b",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__medium_b.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 2,
       "sizeMetres": [
-        0.0823649404083433,
-        0.19271908199697796,
-        0.09464119527423609
+        0.06548268777971585,
+        0.10457506333477795,
+        0.06615927854422649
       ],
-      "triangles": 5898,
-      "bytes": 176968,
+      "triangles": 4342,
+      "bytes": 138988,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
     },
     {
-      "key": "nettle_plant__v3",
-      "label": "Nettles 3",
-      "file": "nettle_plant__v3.glb",
+      "key": "nettle_plant__small_a",
+      "label": "Nettles small a",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__small_a.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 3,
       "sizeMetres": [
-        0.07725946535436456,
-        0.13151953812550965,
-        0.08908961678049598
+        0.06419258937239647,
+        0.06256264966756864,
+        0.043455918059781995
       ],
-      "triangles": 4622,
-      "bytes": 146056,
+      "triangles": 2752,
+      "bytes": 103000,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
     },
     {
-      "key": "nettle_plant__v4",
-      "label": "Nettles 4",
-      "file": "nettle_plant__v4.glb",
+      "key": "nettle_plant__small_b",
+      "label": "Nettles small b",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__small_b.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 4,
       "sizeMetres": [
-        0.06551193224978036,
-        0.10455472628192009,
-        0.06615631240058817
+        0.059725770726799965,
+        0.02172160971081305,
+        0.03850723655700805
       ],
-      "triangles": 4562,
-      "bytes": 142512,
+      "triangles": 834,
+      "bytes": 60308,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
     },
     {
-      "key": "nettle_plant__v5",
-      "label": "Nettles 5",
-      "file": "nettle_plant__v5.glb",
+      "key": "nettle_plant__tall_a",
+      "label": "Nettles tall a",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__tall_a.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 5,
       "sizeMetres": [
-        0.06417361386308862,
-        0.06258744051175524,
-        0.04342127263061535
+        0.10358119421987885,
+        0.2167749283835292,
+        0.09005880951379494
       ],
-      "triangles": 3032,
-      "bytes": 107772,
+      "triangles": 5354,
+      "bytes": 160584,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
     },
     {
-      "key": "nettle_plant__v6",
-      "label": "Nettles 6",
-      "file": "nettle_plant__v6.glb",
+      "key": "nettle_plant__tall_b",
+      "label": "Nettles tall b",
+      "familyLabel": "Nettles",
+      "file": "nettle_plant__tall_b.glb",
       "group": "planting",
       "family": "nettle_plant",
       "variant": 6,
       "sizeMetres": [
-        0.05974557516268497,
-        0.021743680416963507,
-        0.038464508135199305
+        0.08232723543010523,
+        0.1927281990647316,
+        0.09467897004834991
       ],
-      "triangles": 934,
-      "bytes": 62056,
+      "triangles": 6194,
+      "bytes": 182312,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/nettle_plant"
@@ -1866,111 +3137,235 @@
         1.799
       ],
       "triangles": 118149,
-      "bytes": 4322240,
+      "bytes": 3893760,
       "credit": "Othonna tree by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/othonna_cerarioides"
     },
     {
-      "key": "pachira_aquatica_01",
-      "label": "Pachira",
-      "file": "pachira_aquatica_01.glb",
+      "key": "pachira_aquatica_01__a",
+      "label": "Pachira a",
+      "familyLabel": "Pachira",
+      "file": "pachira_aquatica_01__a.glb",
       "group": "planting",
+      "family": "pachira_aquatica_01",
+      "variant": 1,
       "sizeMetres": [
-        6.869,
-        1.904,
-        0.997
+        0.7439081370830536,
+        1.3015280478055997,
+        0.6465578124014737
       ],
-      "triangles": 76914,
-      "bytes": 1673652,
+      "triangles": 23167,
+      "bytes": 644172,
       "credit": "Pachira by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/pachira_aquatica_01"
     },
     {
-      "key": "periwinkle_plant__v1",
-      "label": "Periwinkle 1",
-      "file": "periwinkle_plant__v1.glb",
+      "key": "pachira_aquatica_01__b",
+      "label": "Pachira b",
+      "familyLabel": "Pachira",
+      "file": "pachira_aquatica_01__b.glb",
+      "group": "planting",
+      "family": "pachira_aquatica_01",
+      "variant": 2,
+      "sizeMetres": [
+        0.5031866851028113,
+        0.7350613531540433,
+        0.607356920838356
+      ],
+      "triangles": 5091,
+      "bytes": 324932,
+      "credit": "Pachira by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+    },
+    {
+      "key": "pachira_aquatica_01__c",
+      "label": "Pachira c",
+      "familyLabel": "Pachira",
+      "file": "pachira_aquatica_01__c.glb",
+      "group": "planting",
+      "family": "pachira_aquatica_01",
+      "variant": 3,
+      "sizeMetres": [
+        0.9752868711948395,
+        1.1490686695336914,
+        0.9237351044695874
+      ],
+      "triangles": 20551,
+      "bytes": 621568,
+      "credit": "Pachira by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+    },
+    {
+      "key": "pachira_aquatica_01__d",
+      "label": "Pachira d",
+      "familyLabel": "Pachira",
+      "file": "pachira_aquatica_01__d.glb",
+      "group": "planting",
+      "family": "pachira_aquatica_01",
+      "variant": 4,
+      "sizeMetres": [
+        1.0545142225143866,
+        1.9020075518637896,
+        0.9969532662609204
+      ],
+      "triangles": 28105,
+      "bytes": 765660,
+      "credit": "Pachira by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+    },
+    {
+      "key": "periwinkle_plant__01",
+      "label": "Periwinkle 01",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__01.glb",
       "group": "planting",
       "family": "periwinkle_plant",
       "variant": 1,
       "sizeMetres": [
-        0.10292526072907648,
-        0.15972267000835094,
-        0.08942811659471328
+        0.26073160006276,
+        0.3971823533211136,
+        0.3207689513964341
       ],
-      "triangles": 1186,
-      "bytes": 77740,
+      "triangles": 7860,
+      "bytes": 315240,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/periwinkle_plant"
     },
     {
-      "key": "periwinkle_plant__v2",
-      "label": "Periwinkle 2",
-      "file": "periwinkle_plant__v2.glb",
+      "key": "periwinkle_plant__02",
+      "label": "Periwinkle 02",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__02.glb",
       "group": "planting",
       "family": "periwinkle_plant",
       "variant": 2,
       "sizeMetres": [
-        0.4854264859092936,
-        0.30019870780714886,
-        0.18420985770925924
+        0.23116317044266968,
+        0.4107213826205225,
+        0.22479558987953402
       ],
-      "triangles": 8842,
-      "bytes": 376804,
+      "triangles": 6354,
+      "bytes": 255860,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/periwinkle_plant"
     },
     {
-      "key": "periwinkle_plant__v3",
-      "label": "Periwinkle 3",
-      "file": "periwinkle_plant__v3.glb",
+      "key": "periwinkle_plant__03",
+      "label": "Periwinkle 03",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__03.glb",
       "group": "planting",
       "family": "periwinkle_plant",
       "variant": 3,
       "sizeMetres": [
-        0.23114830948748022,
-        0.41068313172762316,
-        0.22477671855374837
+        0.16748106201997795,
+        0.3002435565213091,
+        0.14654363411695492
       ],
-      "triangles": 6048,
-      "bytes": 249748,
+      "triangles": 3728,
+      "bytes": 178228,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/periwinkle_plant"
     },
     {
-      "key": "periwinkle_plant__v4",
-      "label": "Periwinkle 4",
-      "file": "periwinkle_plant__v4.glb",
+      "key": "periwinkle_plant__04",
+      "label": "Periwinkle 04",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__04.glb",
       "group": "planting",
       "family": "periwinkle_plant",
       "variant": 4,
       "sizeMetres": [
-        0.2607628685987322,
-        0.3971859783890572,
-        0.3208026193643647
+        0.15582534906123907,
+        0.26496778754335537,
+        0.1842248648445892
       ],
-      "triangles": 7922,
-      "bytes": 316624,
+      "triangles": 2870,
+      "bytes": 147532,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/periwinkle_plant"
     },
     {
-      "key": "pine_roots",
-      "label": "Pine roots",
-      "file": "pine_roots.glb",
+      "key": "periwinkle_plant__05",
+      "label": "Periwinkle 05",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__05.glb",
       "group": "planting",
+      "family": "periwinkle_plant",
+      "variant": 5,
       "sizeMetres": [
-        1.772,
-        0.155,
-        1.893
+        0.11110476425071,
+        0.2057981897614809,
+        0.140900197552946
       ],
-      "triangles": 23949,
-      "bytes": 546972,
+      "triangles": 2150,
+      "bytes": 118552,
+      "credit": "Periwinkle by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/periwinkle_plant"
+    },
+    {
+      "key": "periwinkle_plant__06",
+      "label": "Periwinkle 06",
+      "familyLabel": "Periwinkle",
+      "file": "periwinkle_plant__06.glb",
+      "group": "planting",
+      "family": "periwinkle_plant",
+      "variant": 6,
+      "sizeMetres": [
+        0.10294416776080295,
+        0.15972968739515636,
+        0.08943146914455116
+      ],
+      "triangles": 1032,
+      "bytes": 74828,
+      "credit": "Periwinkle by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/periwinkle_plant"
+    },
+    {
+      "key": "pine_roots__a",
+      "label": "Pine roots a",
+      "familyLabel": "Pine roots",
+      "file": "pine_roots__a.glb",
+      "group": "planting",
+      "family": "pine_roots",
+      "variant": 1,
+      "sizeMetres": [
+        1.7393630743026733,
+        0.1443851300911625,
+        0.8260209447401579
+      ],
+      "triangles": 12003,
+      "bytes": 278268,
+      "credit": "Pine roots by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/pine_roots"
+    },
+    {
+      "key": "pine_roots__b",
+      "label": "Pine roots b",
+      "familyLabel": "Pine roots",
+      "file": "pine_roots__b.glb",
+      "group": "planting",
+      "family": "pine_roots",
+      "variant": 2,
+      "sizeMetres": [
+        1.6289149522781372,
+        0.1481419340221608,
+        0.9927497624830153
+      ],
+      "triangles": 11946,
+      "bytes": 269120,
       "credit": "Pine roots by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/pine_roots"
@@ -1985,8 +3380,8 @@
         1.299,
         0.77
       ],
-      "triangles": 149975,
-      "bytes": 6088596,
+      "triangles": 149968,
+      "bytes": 5807568,
       "credit": "Small pine by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/pine_sapling_small"
@@ -2151,7 +3546,8 @@
       "bytes": 815476,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v2",
@@ -2169,7 +3565,8 @@
       "bytes": 1220708,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v3",
@@ -2187,7 +3584,8 @@
       "bytes": 727780,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v4",
@@ -2205,7 +3603,8 @@
       "bytes": 172436,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v5",
@@ -2223,7 +3622,8 @@
       "bytes": 193868,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v6",
@@ -2241,7 +3641,8 @@
       "bytes": 197748,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v7",
@@ -2259,7 +3660,8 @@
       "bytes": 220364,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v8",
@@ -2277,7 +3679,8 @@
       "bytes": 234492,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_01__v9",
@@ -2295,7 +3698,8 @@
       "bytes": 283684,
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_01"
+      "source": "https://polyhaven.com/a/shrub_01",
+      "familyLabel": "Flowering shrub"
     },
     {
       "key": "shrub_02",
@@ -2314,73 +3718,77 @@
       "source": "https://polyhaven.com/a/shrub_02"
     },
     {
-      "key": "shrub_03__v1",
-      "label": "Meadow shrub 1",
-      "file": "shrub_03__v1.glb",
+      "key": "shrub_03__a",
+      "label": "Meadow shrub a",
+      "familyLabel": "Meadow shrub",
+      "file": "shrub_03__a.glb",
       "group": "planting",
       "family": "shrub_03",
       "variant": 1,
       "sizeMetres": [
-        0.20059302680681235,
-        0.4028547379058889,
-        0.1511800287746079
+        0.2006236298356295,
+        0.40278380597010255,
+        0.15120833255509858
       ],
       "triangles": 2385,
-      "bytes": 89096,
+      "bytes": 89008,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_03"
     },
     {
-      "key": "shrub_03__v2",
-      "label": "Meadow shrub 2",
-      "file": "shrub_03__v2.glb",
+      "key": "shrub_03__b",
+      "label": "Meadow shrub b",
+      "familyLabel": "Meadow shrub",
+      "file": "shrub_03__b.glb",
       "group": "planting",
       "family": "shrub_03",
       "variant": 2,
       "sizeMetres": [
-        0.18432366048753757,
-        0.3525239574023331,
-        0.1225626247850009
+        0.18432571886093368,
+        0.35250383109087124,
+        0.12256465752497325
       ],
       "triangles": 2134,
-      "bytes": 84248,
+      "bytes": 84140,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_03"
     },
     {
-      "key": "shrub_03__v3",
-      "label": "Meadow shrub 3",
-      "file": "shrub_03__v3.glb",
+      "key": "shrub_03__c",
+      "label": "Meadow shrub c",
+      "familyLabel": "Meadow shrub",
+      "file": "shrub_03__c.glb",
       "group": "planting",
       "family": "shrub_03",
       "variant": 3,
       "sizeMetres": [
-        0.09578071444769298,
-        0.30438329957151566,
-        0.11313473370441418
+        0.09580441887432112,
+        0.3043947910191491,
+        0.11315753801480936
       ],
       "triangles": 1790,
-      "bytes": 77200,
+      "bytes": 77092,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_03"
     },
     {
-      "key": "shrub_03__v4",
-      "label": "Meadow shrub 4",
-      "file": "shrub_03__v4.glb",
+      "key": "shrub_03__d",
+      "label": "Meadow shrub d",
+      "familyLabel": "Meadow shrub",
+      "file": "shrub_03__d.glb",
       "group": "planting",
       "family": "shrub_03",
       "variant": 4,
       "sizeMetres": [
-        0.11280101314091073,
-        0.2555751700606612,
-        0.08927298014119511
+        0.11278195444355762,
+        0.2555512261460535,
+        0.08929123935701355
       ],
       "triangles": 1978,
-      "bytes": 80644,
+      "bytes": 80540,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_03"
@@ -2401,7 +3809,8 @@
       "bytes": 101980,
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_04"
+      "source": "https://polyhaven.com/a/shrub_04",
+      "familyLabel": "Undergrowth"
     },
     {
       "key": "shrub_04__v2",
@@ -2419,7 +3828,8 @@
       "bytes": 151612,
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_04"
+      "source": "https://polyhaven.com/a/shrub_04",
+      "familyLabel": "Undergrowth"
     },
     {
       "key": "shrub_04__v3",
@@ -2437,58 +3847,214 @@
       "bytes": 333304,
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_04"
+      "source": "https://polyhaven.com/a/shrub_04",
+      "familyLabel": "Undergrowth"
     },
     {
-      "key": "shrub_sorrel_01__v1",
-      "label": "Sorrel 1",
-      "file": "shrub_sorrel_01__v1.glb",
+      "key": "shrub_sorrel_01__a",
+      "label": "Sorrel a",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__a.glb",
       "group": "planting",
       "family": "shrub_sorrel_01",
       "variant": 1,
       "sizeMetres": [
-        0.03838310001654577,
-        0.05634965300583161,
-        0.055301962605225796
+        0.038378345012731144,
+        0.05634659025236033,
+        0.055307944897751184
       ],
       "triangles": 353,
-      "bytes": 36980,
+      "bytes": 36872,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_sorrel_01"
     },
     {
-      "key": "shrub_sorrel_01__v2",
-      "label": "Sorrel 2",
-      "file": "shrub_sorrel_01__v2.glb",
+      "key": "shrub_sorrel_01__b",
+      "label": "Sorrel b",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__b.glb",
       "group": "planting",
       "family": "shrub_sorrel_01",
       "variant": 2,
       "sizeMetres": [
-        0.0820207593722877,
-        0.04949399428316403,
-        0.13183712992145047
+        0.07258361019194126,
+        0.049481877453765866,
+        0.059018069474095824
       ],
-      "triangles": 840,
-      "bytes": 47996,
+      "triangles": 414,
+      "bytes": 38132,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_sorrel_01"
     },
     {
-      "key": "shrub_sorrel_01__v3",
-      "label": "Sorrel 3",
-      "file": "shrub_sorrel_01__v3.glb",
+      "key": "shrub_sorrel_01__c",
+      "label": "Sorrel c",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__c.glb",
       "group": "planting",
       "family": "shrub_sorrel_01",
       "variant": 3,
       "sizeMetres": [
-        0.20547099347904307,
-        0.05798297361999882,
-        0.14045504795963382
+        0.04246498830616474,
+        0.03490171867594827,
+        0.039328744916294456
       ],
-      "triangles": 2126,
-      "bytes": 78040,
+      "triangles": 284,
+      "bytes": 35132,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__d",
+      "label": "Sorrel d",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__d.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 4,
+      "sizeMetres": [
+        0.060922546312212944,
+        0.05440767977497696,
+        0.04866626942033736
+      ],
+      "triangles": 990,
+      "bytes": 51608,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__e",
+      "label": "Sorrel e",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__e.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 5,
+      "sizeMetres": [
+        0.06375841796398163,
+        0.04531017605467369,
+        0.05112620889518471
+      ],
+      "triangles": 503,
+      "bytes": 40288,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__f",
+      "label": "Sorrel f",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__f.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 6,
+      "sizeMetres": [
+        0.03153243746449608,
+        0.023404074578563083,
+        0.04502062499523163
+      ],
+      "triangles": 355,
+      "bytes": 36760,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__g",
+      "label": "Sorrel g",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__g.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 7,
+      "sizeMetres": [
+        0.020820269164735006,
+        0.037000638199970126,
+        0.01763478393205492
+      ],
+      "triangles": 71,
+      "bytes": 30248,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__h",
+      "label": "Sorrel h",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__h.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 8,
+      "sizeMetres": [
+        0.016893903603912953,
+        0.03641619242262095,
+        0.02633719617981954
+      ],
+      "triangles": 71,
+      "bytes": 30248,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__i",
+      "label": "Sorrel i",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__i.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 9,
+      "sizeMetres": [
+        0.02650798519764954,
+        0.04103690490592271,
+        0.024143480773561134
+      ],
+      "triangles": 63,
+      "bytes": 30080,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__j",
+      "label": "Sorrel j",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__j.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 10,
+      "sizeMetres": [
+        0.023707063014316535,
+        0.04512660228647292,
+        0.022499262108957023
+      ],
+      "triangles": 67,
+      "bytes": 30164,
+      "credit": "Sorrel by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+    },
+    {
+      "key": "shrub_sorrel_01__k",
+      "label": "Sorrel k",
+      "familyLabel": "Sorrel",
+      "file": "shrub_sorrel_01__k.glb",
+      "group": "planting",
+      "family": "shrub_sorrel_01",
+      "variant": 11,
+      "sizeMetres": [
+        0.015090833499811288,
+        0.05800367915071547,
+        0.013056890683224732
+      ],
+      "triangles": 148,
+      "bytes": 32152,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_sorrel_01"
@@ -2558,33 +4124,191 @@
       "source": "https://polyhaven.com/a/tree_stump_02"
     },
     {
-      "key": "weed_plant_02",
-      "label": "Weeds",
-      "file": "weed_plant_02.glb",
+      "key": "weed_plant_02__a",
+      "label": "Weeds a",
+      "familyLabel": "Weeds",
+      "file": "weed_plant_02__a.glb",
       "group": "planting",
+      "family": "weed_plant_02",
+      "variant": 1,
       "sizeMetres": [
-        2.125,
-        0.075,
-        0.291
+        0.21939480047741533,
+        0.07244796193483838,
+        0.2909194082021713
       ],
-      "triangles": 11116,
-      "bytes": 270488,
+      "triangles": 2967,
+      "bytes": 97884,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/weed_plant_02"
     },
     {
-      "key": "wild_rooibos_bush",
-      "label": "Rooibos bush",
-      "file": "wild_rooibos_bush.glb",
+      "key": "weed_plant_02__b",
+      "label": "Weeds b",
+      "familyLabel": "Weeds",
+      "file": "weed_plant_02__b.glb",
       "group": "planting",
+      "family": "weed_plant_02",
+      "variant": 2,
       "sizeMetres": [
-        2.279,
-        0.541,
-        0.843
+        0.18755714698333747,
+        0.067697494144495,
+        0.19853609800338745
       ],
-      "triangles": 27519,
-      "bytes": 909544,
+      "triangles": 2273,
+      "bytes": 85660,
+      "credit": "Weeds by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/weed_plant_02"
+    },
+    {
+      "key": "weed_plant_02__c",
+      "label": "Weeds c",
+      "familyLabel": "Weeds",
+      "file": "weed_plant_02__c.glb",
+      "group": "planting",
+      "family": "weed_plant_02",
+      "variant": 3,
+      "sizeMetres": [
+        0.14238325925912854,
+        0.05492107128791268,
+        0.14345147460699081
+      ],
+      "triangles": 1766,
+      "bytes": 78380,
+      "credit": "Weeds by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/weed_plant_02"
+    },
+    {
+      "key": "weed_plant_02__d",
+      "label": "Weeds d",
+      "familyLabel": "Weeds",
+      "file": "weed_plant_02__d.glb",
+      "group": "planting",
+      "family": "weed_plant_02",
+      "variant": 4,
+      "sizeMetres": [
+        0.1540653184056282,
+        0.03895477693736171,
+        0.10811419548605938
+      ],
+      "triangles": 1928,
+      "bytes": 79024,
+      "credit": "Weeds by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/weed_plant_02"
+    },
+    {
+      "key": "weed_plant_02__e",
+      "label": "Weeds e",
+      "familyLabel": "Weeds",
+      "file": "weed_plant_02__e.glb",
+      "group": "planting",
+      "family": "weed_plant_02",
+      "variant": 5,
+      "sizeMetres": [
+        0.1192498654127121,
+        0.04007992029699281,
+        0.060987862151437255
+      ],
+      "triangles": 2182,
+      "bytes": 84272,
+      "credit": "Weeds by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/weed_plant_02"
+    },
+    {
+      "key": "wild_rooibos_bush__a",
+      "label": "Rooibos bush a",
+      "familyLabel": "Rooibos bush",
+      "file": "wild_rooibos_bush__a.glb",
+      "group": "planting",
+      "family": "wild_rooibos_bush",
+      "variant": 1,
+      "sizeMetres": [
+        0.6966076912166628,
+        0.5394635926028641,
+        0.8434299230575562
+      ],
+      "triangles": 13151,
+      "bytes": 477956,
+      "credit": "Rooibos bush by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+    },
+    {
+      "key": "wild_rooibos_bush__b",
+      "label": "Rooibos bush b",
+      "familyLabel": "Rooibos bush",
+      "file": "wild_rooibos_bush__b.glb",
+      "group": "planting",
+      "family": "wild_rooibos_bush",
+      "variant": 2,
+      "sizeMetres": [
+        0.5243512187163477,
+        0.5412663070019335,
+        0.47472921942468105
+      ],
+      "triangles": 6287,
+      "bytes": 260632,
+      "credit": "Rooibos bush by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+    },
+    {
+      "key": "wild_rooibos_bush__c",
+      "label": "Rooibos bush c",
+      "familyLabel": "Rooibos bush",
+      "file": "wild_rooibos_bush__c.glb",
+      "group": "planting",
+      "family": "wild_rooibos_bush",
+      "variant": 3,
+      "sizeMetres": [
+        0.4253691990063331,
+        0.4483644673351108,
+        0.47210896015167236
+      ],
+      "triangles": 4204,
+      "bytes": 202672,
+      "credit": "Rooibos bush by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+    },
+    {
+      "key": "wild_rooibos_bush__d",
+      "label": "Rooibos bush d",
+      "familyLabel": "Rooibos bush",
+      "file": "wild_rooibos_bush__d.glb",
+      "group": "planting",
+      "family": "wild_rooibos_bush",
+      "variant": 4,
+      "sizeMetres": [
+        0.3274112623913661,
+        0.4199430455919355,
+        0.38354551329406633
+      ],
+      "triangles": 2684,
+      "bytes": 156308,
+      "credit": "Rooibos bush by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+    },
+    {
+      "key": "wild_rooibos_bush__e",
+      "label": "Rooibos bush e",
+      "familyLabel": "Rooibos bush",
+      "file": "wild_rooibos_bush__e.glb",
+      "group": "planting",
+      "family": "wild_rooibos_bush",
+      "variant": 5,
+      "sizeMetres": [
+        0.277609916690704,
+        0.3061641913373023,
+        0.1657007265865188
+      ],
+      "triangles": 1193,
+      "bytes": 109956,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/wild_rooibos_bush"
@@ -2814,235 +4538,324 @@
       "source": "https://polyhaven.com/a/namaqualand_boulder_06"
     },
     {
-      "key": "namaqualand_boulders_01__v1",
-      "label": "Boulders 1",
-      "file": "namaqualand_boulders_01__v1.glb",
+      "key": "namaqualand_boulders_01__namaqualand_rocks_01_a",
+      "label": "Boulders namaqualand rocks 01 a",
+      "familyLabel": "Boulders",
+      "file": "namaqualand_boulders_01__namaqualand_rocks_01_a.glb",
       "group": "site",
       "family": "namaqualand_boulders_01",
       "variant": 1,
       "sizeMetres": [
-        0.33936528944469657,
-        0.20886999870735712,
-        0.5866314762909504
+        0.3629770954888727,
+        0.2516217495719957,
+        0.5510921478271484
       ],
-      "triangles": 19056,
-      "bytes": 506408,
+      "triangles": 11792,
+      "bytes": 387792,
       "credit": "Boulders by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_boulders_01"
     },
     {
-      "key": "namaqualand_boulders_01__v2",
-      "label": "Boulders 2",
-      "file": "namaqualand_boulders_01__v2.glb",
+      "key": "namaqualand_boulders_01__namaqualand_rocks_01_b",
+      "label": "Boulders namaqualand rocks 01 b",
+      "familyLabel": "Boulders",
+      "file": "namaqualand_boulders_01__namaqualand_rocks_01_b.glb",
       "group": "site",
       "family": "namaqualand_boulders_01",
       "variant": 2,
       "sizeMetres": [
-        0.3630036731232309,
-        0.2516256956111065,
-        0.551109380163262
+        0.3394069636475763,
+        0.20891128083081334,
+        0.5866308808326721
       ],
-      "triangles": 10944,
-      "bytes": 374272,
+      "triangles": 18206,
+      "bytes": 492500,
       "credit": "Boulders by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_boulders_01"
     },
     {
-      "key": "namaqualand_rocks_01__v1",
-      "label": "Quartz rocks 1",
-      "file": "namaqualand_rocks_01__v1.glb",
+      "key": "namaqualand_rocks_01__a",
+      "label": "Quartz rocks a",
+      "familyLabel": "Quartz rocks",
+      "file": "namaqualand_rocks_01__a.glb",
       "group": "site",
       "family": "namaqualand_rocks_01",
       "variant": 1,
       "sizeMetres": [
-        0.2254336289986889,
-        0.151452537920992,
-        0.21578009054238367
+        0.22538840025663376,
+        0.15222160677899677,
+        0.21551085425363237
       ],
-      "triangles": 1822,
-      "bytes": 86616,
+      "triangles": 1416,
+      "bytes": 79544,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_rocks_01"
     },
     {
-      "key": "namaqualand_rocks_01__v2",
-      "label": "Quartz rocks 2",
-      "file": "namaqualand_rocks_01__v2.glb",
+      "key": "namaqualand_rocks_01__b",
+      "label": "Quartz rocks b",
+      "familyLabel": "Quartz rocks",
+      "file": "namaqualand_rocks_01__b.glb",
       "group": "site",
       "family": "namaqualand_rocks_01",
       "variant": 2,
       "sizeMetres": [
-        0.2186297655823901,
-        0.08199997093696165,
-        0.1617025342881122
+        0.2186187505722046,
+        0.08239152099113056,
+        0.16192745683293452
       ],
-      "triangles": 1412,
-      "bytes": 79348,
+      "triangles": 1444,
+      "bytes": 79788,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_rocks_01"
     },
     {
-      "key": "namaqualand_rocks_01__v3",
-      "label": "Quartz rocks 3",
-      "file": "namaqualand_rocks_01__v3.glb",
+      "key": "namaqualand_rocks_01__c",
+      "label": "Quartz rocks c",
+      "familyLabel": "Quartz rocks",
+      "file": "namaqualand_rocks_01__c.glb",
       "group": "site",
       "family": "namaqualand_rocks_01",
       "variant": 3,
       "sizeMetres": [
-        0.21483020605308312,
-        0.08465083476290239,
-        0.16673916773751163
+        0.214860737323761,
+        0.08383418141661991,
+        0.16738639776503916
       ],
-      "triangles": 1156,
-      "bytes": 75156,
+      "triangles": 1120,
+      "bytes": 74308,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_rocks_01"
     },
     {
-      "key": "namaqualand_rocks_01__v4",
-      "label": "Quartz rocks 4",
-      "file": "namaqualand_rocks_01__v4.glb",
+      "key": "namaqualand_rocks_01__d",
+      "label": "Quartz rocks d",
+      "familyLabel": "Quartz rocks",
+      "file": "namaqualand_rocks_01__d.glb",
       "group": "site",
       "family": "namaqualand_rocks_01",
       "variant": 4,
       "sizeMetres": [
-        0.19883669072143517,
-        0.12361849336548869,
-        0.15684261952098177
+        0.199049711227417,
+        0.12403323428777924,
+        0.1573286719516176
       ],
-      "triangles": 1610,
-      "bytes": 81940,
+      "triangles": 2018,
+      "bytes": 88560,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_rocks_01"
     },
     {
-      "key": "namaqualand_stones_01__v1",
-      "label": "Stones 1",
-      "file": "namaqualand_stones_01__v1.glb",
+      "key": "namaqualand_stones_01__a",
+      "label": "Stones a",
+      "familyLabel": "Stones",
+      "file": "namaqualand_stones_01__a.glb",
       "group": "site",
       "family": "namaqualand_stones_01",
       "variant": 1,
       "sizeMetres": [
-        0.07578131614912564,
-        0.037734730396111305,
-        0.06287042367055484
+        0.07622689008712769,
+        0.037744721463228714,
+        0.06264111780174275
       ],
-      "triangles": 1026,
-      "bytes": 64576,
+      "triangles": 1678,
+      "bytes": 75400,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_stones_01"
     },
     {
-      "key": "namaqualand_stones_01__v2",
-      "label": "Stones 2",
-      "file": "namaqualand_stones_01__v2.glb",
+      "key": "namaqualand_stones_01__b",
+      "label": "Stones b",
+      "familyLabel": "Stones",
+      "file": "namaqualand_stones_01__b.glb",
       "group": "site",
       "family": "namaqualand_stones_01",
       "variant": 2,
       "sizeMetres": [
-        0.15051791190387043,
-        0.08395197827158318,
-        0.08070866276476885
+        0.14905375242233276,
+        0.08245332957580231,
+        0.08005151346728567
       ],
-      "triangles": 1594,
-      "bytes": 74800,
+      "triangles": 930,
+      "bytes": 63572,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_stones_01"
     },
     {
-      "key": "namaqualand_stones_01__v3",
-      "label": "Stones 3",
-      "file": "namaqualand_stones_01__v3.glb",
+      "key": "namaqualand_stones_01__c",
+      "label": "Stones c",
+      "familyLabel": "Stones",
+      "file": "namaqualand_stones_01__c.glb",
       "group": "site",
       "family": "namaqualand_stones_01",
       "variant": 3,
       "sizeMetres": [
-        0.10378609621805879,
-        0.056446166012347865,
-        0.09729946520443011
+        0.10347962379455566,
+        0.05596685415589775,
+        0.09752987182984896
       ],
-      "triangles": 1892,
-      "bytes": 79296,
+      "triangles": 2176,
+      "bytes": 83952,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_stones_01"
     },
     {
-      "key": "namaqualand_stones_01__v4",
-      "label": "Stones 4",
-      "file": "namaqualand_stones_01__v4.glb",
+      "key": "namaqualand_stones_01__d",
+      "label": "Stones d",
+      "familyLabel": "Stones",
+      "file": "namaqualand_stones_01__d.glb",
       "group": "site",
       "family": "namaqualand_stones_01",
       "variant": 4,
       "sizeMetres": [
-        0.1132197645418298,
-        0.03673678525987778,
-        0.08189371464369444
+        0.11323589086532593,
+        0.03674542055572516,
+        0.08192296934441146
       ],
-      "triangles": 392,
-      "bytes": 54508,
+      "triangles": 274,
+      "bytes": 52236,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_stones_01"
     },
     {
-      "key": "namaqualand_stones_01__v5",
-      "label": "Stones 5",
-      "file": "namaqualand_stones_01__v5.glb",
+      "key": "namaqualand_stones_01__e",
+      "label": "Stones e",
+      "familyLabel": "Stones",
+      "file": "namaqualand_stones_01__e.glb",
       "group": "site",
       "family": "namaqualand_stones_01",
       "variant": 5,
       "sizeMetres": [
-        0.11070932929943389,
-        0.07646740402508856,
-        0.11189438879182978
+        0.11094461690236423,
+        0.07641341340447472,
+        0.11192839592695236
       ],
-      "triangles": 1096,
-      "bytes": 66832,
+      "triangles": 938,
+      "bytes": 63996,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/namaqualand_stones_01"
     },
     {
-      "key": "rock_moss_set_01__v1",
-      "label": "Mossy rocks 1",
-      "file": "rock_moss_set_01__v1.glb",
+      "key": "rock_moss_set_01__rock01",
+      "label": "Mossy rocks rock01",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock01.glb",
       "group": "site",
       "family": "rock_moss_set_01",
       "variant": 1,
       "sizeMetres": [
-        2.3913409539892783,
-        1.767672151326316,
-        6.478288741170033
+        2.23770698701054,
+        1.472467386034623,
+        3.364363670349121
       ],
-      "triangles": 12533,
-      "bytes": 317804,
+      "triangles": 5224,
+      "bytes": 192224,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/rock_moss_set_01"
     },
     {
-      "key": "rock_moss_set_01__v2",
-      "label": "Mossy rocks 2",
-      "file": "rock_moss_set_01__v2.glb",
+      "key": "rock_moss_set_01__rock02",
+      "label": "Mossy rocks rock02",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock02.glb",
       "group": "site",
       "family": "rock_moss_set_01",
       "variant": 2,
       "sizeMetres": [
-        5.363600082015374,
-        1.3689931850977466,
-        6.892601938106679
+        2.6553399691492174,
+        1.2618815857873216,
+        3.263720393180847
       ],
-      "triangles": 17460,
-      "bytes": 444440,
+      "triangles": 5222,
+      "bytes": 194472,
+      "credit": "Mossy rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/rock_moss_set_01"
+    },
+    {
+      "key": "rock_moss_set_01__rock03",
+      "label": "Mossy rocks rock03",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock03.glb",
+      "group": "site",
+      "family": "rock_moss_set_01",
+      "variant": 3,
+      "sizeMetres": [
+        2.108133316040039,
+        1.0997781452323352,
+        2.0795676417707227
+      ],
+      "triangles": 2376,
+      "bytes": 146816,
+      "credit": "Mossy rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/rock_moss_set_01"
+    },
+    {
+      "key": "rock_moss_set_01__rock04",
+      "label": "Mossy rocks rock04",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock04.glb",
+      "group": "site",
+      "family": "rock_moss_set_01",
+      "variant": 4,
+      "sizeMetres": [
+        2.127629339694977,
+        1.7684251501675945,
+        1.9645199962248263
+      ],
+      "triangles": 5031,
+      "bytes": 186660,
+      "credit": "Mossy rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/rock_moss_set_01"
+    },
+    {
+      "key": "rock_moss_set_01__rock05",
+      "label": "Mossy rocks rock05",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock05.glb",
+      "group": "site",
+      "family": "rock_moss_set_01",
+      "variant": 5,
+      "sizeMetres": [
+        1.8165677396002167,
+        1.204791634198319,
+        2.9986637830734253
+      ],
+      "triangles": 7864,
+      "bytes": 229604,
+      "credit": "Mossy rocks by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/rock_moss_set_01"
+    },
+    {
+      "key": "rock_moss_set_01__rock06",
+      "label": "Mossy rocks rock06",
+      "familyLabel": "Mossy rocks",
+      "file": "rock_moss_set_01__rock06.glb",
+      "group": "site",
+      "family": "rock_moss_set_01",
+      "variant": 6,
+      "sizeMetres": [
+        2.1259833702929996,
+        1.261658540280422,
+        2.7566022872924805
+      ],
+      "triangles": 4274,
+      "bytes": 171844,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/rock_moss_set_01"

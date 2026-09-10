@@ -1,6 +1,6 @@
 Models in this folder come from more than one library. Each is
 credited below; the licences they arrived under are:
-  Poly Haven -- CC0 1.0  (151)
+  Poly Haven -- CC0 1.0  (240)
   Quixel Megascans, via Fab -- Fab Standard License  (20)
   ambientCG -- CC0 1.0  (10)
 
@@ -38,26 +38,35 @@ decal-paving-edge
 decal-paving-edge-2
   Paving edge 2
   https://ambientcg.com/view?id=PavingEdge002
-anthurium_botany_01__v1
-  Anthurium 1
+anthurium_botany_01__a
+  Anthurium a
   https://polyhaven.com/a/anthurium_botany_01
-anthurium_botany_01__v2
-  Anthurium 2
+anthurium_botany_01__b
+  Anthurium b
   https://polyhaven.com/a/anthurium_botany_01
-anthurium_botany_01__v3
-  Anthurium 3
+anthurium_botany_01__c
+  Anthurium c
   https://polyhaven.com/a/anthurium_botany_01
-bark_debris_01__v1
-  Bark debris 1
+anthurium_botany_01__d
+  Anthurium d
+  https://polyhaven.com/a/anthurium_botany_01
+anthurium_botany_01__e
+  Anthurium e
+  https://polyhaven.com/a/anthurium_botany_01
+anthurium_botany_01__f
+  Anthurium f
+  https://polyhaven.com/a/anthurium_botany_01
+bark_debris_01__a
+  Bark debris a
   https://polyhaven.com/a/bark_debris_01
-bark_debris_01__v2
-  Bark debris 2
+bark_debris_01__b
+  Bark debris b
   https://polyhaven.com/a/bark_debris_01
-bark_debris_01__v3
-  Bark debris 3
+bark_debris_01__c
+  Bark debris c
   https://polyhaven.com/a/bark_debris_01
-bark_debris_01__v4
-  Bark debris 4
+bark_debris_01__d
+  Bark debris d
   https://polyhaven.com/a/bark_debris_01
 beech_european_beech_forest_01
   European Beech Forest 01
@@ -101,65 +110,101 @@ beech_european_beech_seedling_03
 beech_european_beech_seedling_04
   European Beech Seedling 04
   https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf
-calathea_orbifolia_01__v1
-  Calathea 1
+calathea_orbifolia_01__a
+  Calathea a
   https://polyhaven.com/a/calathea_orbifolia_01
-calathea_orbifolia_01__v2
-  Calathea 2
+calathea_orbifolia_01__b
+  Calathea b
   https://polyhaven.com/a/calathea_orbifolia_01
-calathea_orbifolia_01__v3
-  Calathea 3
+calathea_orbifolia_01__c
+  Calathea c
   https://polyhaven.com/a/calathea_orbifolia_01
-calathea_orbifolia_01__v4
-  Calathea 4
+calathea_orbifolia_01__d
+  Calathea d
   https://polyhaven.com/a/calathea_orbifolia_01
-calathea_orbifolia_01__v5
-  Calathea 5
+calathea_orbifolia_01__e
+  Calathea e
   https://polyhaven.com/a/calathea_orbifolia_01
-celandine_01__v1
-  Celandine 1
+celandine_01__a
+  Celandine a
   https://polyhaven.com/a/celandine_01
-celandine_01__v2
-  Celandine 2
+celandine_01__b
+  Celandine b
   https://polyhaven.com/a/celandine_01
-celandine_01__v3
-  Celandine 3
+celandine_01__c
+  Celandine c
   https://polyhaven.com/a/celandine_01
-celandine_01__v4
-  Celandine 4
+celandine_01__d
+  Celandine d
   https://polyhaven.com/a/celandine_01
-celandine_01__v5
-  Celandine 5
+celandine_01__e
+  Celandine e
   https://polyhaven.com/a/celandine_01
-cheiridopsis_succulent
-  Cheiridopsis
+cheiridopsis_succulent__a
+  Cheiridopsis a
   https://polyhaven.com/a/cheiridopsis_succulent
-crystalline_iceplant__v1
-  Iceplant 1
+cheiridopsis_succulent__b
+  Cheiridopsis b
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__c
+  Cheiridopsis c
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__d
+  Cheiridopsis d
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__e
+  Cheiridopsis e
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__f
+  Cheiridopsis f
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__g
+  Cheiridopsis g
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__h
+  Cheiridopsis h
+  https://polyhaven.com/a/cheiridopsis_succulent
+cheiridopsis_succulent__i
+  Cheiridopsis i
+  https://polyhaven.com/a/cheiridopsis_succulent
+crystalline_iceplant__a
+  Iceplant a
   https://polyhaven.com/a/crystalline_iceplant
-crystalline_iceplant__v2
-  Iceplant 2
+crystalline_iceplant__b
+  Iceplant b
   https://polyhaven.com/a/crystalline_iceplant
-crystalline_iceplant__v3
-  Iceplant 3
+crystalline_iceplant__c
+  Iceplant c
   https://polyhaven.com/a/crystalline_iceplant
-crystalline_iceplant__v4
-  Iceplant 4
+crystalline_iceplant__d
+  Iceplant d
   https://polyhaven.com/a/crystalline_iceplant
-dandelion_01__v1
-  Dandelion 1
+crystalline_iceplant__e
+  Iceplant e
+  https://polyhaven.com/a/crystalline_iceplant
+crystalline_iceplant__f
+  Iceplant f
+  https://polyhaven.com/a/crystalline_iceplant
+crystalline_iceplant__g
+  Iceplant g
+  https://polyhaven.com/a/crystalline_iceplant
+crystalline_iceplant__h
+  Iceplant h
+  https://polyhaven.com/a/crystalline_iceplant
+dandelion_01__a
+  Dandelion a
   https://polyhaven.com/a/dandelion_01
-dandelion_01__v2
-  Dandelion 2
+dandelion_01__b
+  Dandelion b
   https://polyhaven.com/a/dandelion_01
-dandelion_01__v3
-  Dandelion 3
+dandelion_01__c
+  Dandelion c
   https://polyhaven.com/a/dandelion_01
-dandelion_01__v4
-  Dandelion 4
+dandelion_01__d
+  Dandelion d
   https://polyhaven.com/a/dandelion_01
-dandelion_01__v5
-  Dandelion 5
+dandelion_01__e
+  Dandelion e
   https://polyhaven.com/a/dandelion_01
 dead_quiver_branch_01
   Dead branch
@@ -185,11 +230,17 @@ dry_branches_medium_01
 dry_quiver_leaf
   Dry leaf
   https://polyhaven.com/a/dry_quiver_leaf
-fern_02__v1
-  Fern 1
+fern_02__a
+  Fern a
   https://polyhaven.com/a/fern_02
-fern_02__v2
-  Fern 2
+fern_02__b
+  Fern b
+  https://polyhaven.com/a/fern_02
+fern_02__c
+  Fern c
+  https://polyhaven.com/a/fern_02
+fern_02__d
+  Fern d
   https://polyhaven.com/a/fern_02
 fir_sapling
   Small fir
@@ -197,158 +248,314 @@ fir_sapling
 fir_sapling_medium
   Fir sapling
   https://polyhaven.com/a/fir_sapling_medium
-flower_empodium__v1
-  Empodium 1
+flower_empodium__a
+  Empodium a
   https://polyhaven.com/a/flower_empodium
-flower_empodium__v2
-  Empodium 2
+flower_empodium__b
+  Empodium b
   https://polyhaven.com/a/flower_empodium
-flower_empodium__v3
-  Empodium 3
+flower_empodium__c
+  Empodium c
   https://polyhaven.com/a/flower_empodium
-flower_empodium__v4
-  Empodium 4
+flower_empodium__d
+  Empodium d
   https://polyhaven.com/a/flower_empodium
-flower_empodium__v5
-  Empodium 5
+flower_empodium__e
+  Empodium e
   https://polyhaven.com/a/flower_empodium
-flower_gazania__v1
-  Gazania 1
+flower_gazania__a
+  Gazania a
   https://polyhaven.com/a/flower_gazania
-flower_gazania__v2
-  Gazania 2
+flower_gazania__b
+  Gazania b
   https://polyhaven.com/a/flower_gazania
-flower_heliophila__v1
-  Heliophila 1
+flower_gazania__c
+  Gazania c
+  https://polyhaven.com/a/flower_gazania
+flower_gazania__d
+  Gazania d
+  https://polyhaven.com/a/flower_gazania
+flower_gazania__e
+  Gazania e
+  https://polyhaven.com/a/flower_gazania
+flower_gazania__f
+  Gazania f
+  https://polyhaven.com/a/flower_gazania
+flower_gazania__g
+  Gazania g
+  https://polyhaven.com/a/flower_gazania
+flower_gazania__h
+  Gazania h
+  https://polyhaven.com/a/flower_gazania
+flower_heliophila__large
+  Heliophila large
   https://polyhaven.com/a/flower_heliophila
-flower_heliophila__v2
-  Heliophila 2
+flower_heliophila__medium
+  Heliophila medium
   https://polyhaven.com/a/flower_heliophila
-flower_stinkkruid__v1
-  Stinkkruid 1
+flower_heliophila__small
+  Heliophila small
+  https://polyhaven.com/a/flower_heliophila
+flower_stinkkruid__a
+  Stinkkruid a
   https://polyhaven.com/a/flower_stinkkruid
-flower_stinkkruid__v2
-  Stinkkruid 2
+flower_stinkkruid__b
+  Stinkkruid b
   https://polyhaven.com/a/flower_stinkkruid
-flower_stinkkruid__v3
-  Stinkkruid 3
+flower_stinkkruid__c
+  Stinkkruid c
   https://polyhaven.com/a/flower_stinkkruid
-flower_stinkkruid__v4
-  Stinkkruid 4
+flower_stinkkruid__d
+  Stinkkruid d
   https://polyhaven.com/a/flower_stinkkruid
-flower_ursinia__v1
-  Ursinia 1
+flower_ursinia__a
+  Ursinia a
   https://polyhaven.com/a/flower_ursinia
-flower_ursinia__v2
-  Ursinia 2
+flower_ursinia__b
+  Ursinia b
   https://polyhaven.com/a/flower_ursinia
-flower_ursinia__v3
-  Ursinia 3
+flower_ursinia__c
+  Ursinia c
   https://polyhaven.com/a/flower_ursinia
-flower_ursinia__v4
-  Ursinia 4
+flower_ursinia__d
+  Ursinia d
   https://polyhaven.com/a/flower_ursinia
-flower_ursinia__v5
-  Ursinia 5
+flower_ursinia__e
+  Ursinia e
   https://polyhaven.com/a/flower_ursinia
-grass_bermuda_01__v1
-  Bermuda grass 1
+grass_bermuda_01__dead_a
+  Bermuda grass dead a
   https://polyhaven.com/a/grass_bermuda_01
-grass_bermuda_01__v2
-  Bermuda grass 2
+grass_bermuda_01__dead_b
+  Bermuda grass dead b
   https://polyhaven.com/a/grass_bermuda_01
-grass_bermuda_01__v3
-  Bermuda grass 3
+grass_bermuda_01__flattened_a
+  Bermuda grass flattened a
   https://polyhaven.com/a/grass_bermuda_01
-grass_medium_01__v1
-  Grass clumps 1
+grass_bermuda_01__medium_a
+  Bermuda grass medium a
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__medium_b
+  Bermuda grass medium b
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__medium_c
+  Bermuda grass medium c
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__medium_d
+  Bermuda grass medium d
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__medium_e
+  Bermuda grass medium e
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__medium_f
+  Bermuda grass medium f
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__seedling_a
+  Bermuda grass seedling a
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__seedling_b
+  Bermuda grass seedling b
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__seedling_c
+  Bermuda grass seedling c
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__seedling_d
+  Bermuda grass seedling d
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__single_a
+  Bermuda grass single a
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__single_b
+  Bermuda grass single b
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_a
+  Bermuda grass small a
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_b
+  Bermuda grass small b
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_c
+  Bermuda grass small c
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_d
+  Bermuda grass small d
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_e
+  Bermuda grass small e
+  https://polyhaven.com/a/grass_bermuda_01
+grass_bermuda_01__small_f
+  Bermuda grass small f
+  https://polyhaven.com/a/grass_bermuda_01
+grass_medium_01__large_a
+  Grass clumps large a
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v2
-  Grass clumps 2
+grass_medium_01__large_b
+  Grass clumps large b
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v3
-  Grass clumps 3
+grass_medium_01__large_c
+  Grass clumps large c
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v4
-  Grass clumps 4
+grass_medium_01__mid_a
+  Grass clumps mid a
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v5
-  Grass clumps 5
+grass_medium_01__mid_b
+  Grass clumps mid b
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v6
-  Grass clumps 6
+grass_medium_01__mid_c
+  Grass clumps mid c
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v7
-  Grass clumps 7
+grass_medium_01__small_a
+  Grass clumps small a
   https://polyhaven.com/a/grass_medium_01
-grass_medium_01__v8
-  Grass clumps 8
+grass_medium_01__small_b
+  Grass clumps small b
   https://polyhaven.com/a/grass_medium_01
-grass_medium_02__v1
-  Grass tufts 1
+grass_medium_01__tall_a
+  Grass clumps tall a
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tall_b
+  Grass clumps tall b
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tall_c
+  Grass clumps tall c
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_a
+  Grass clumps tiny a
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_b
+  Grass clumps tiny b
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_c
+  Grass clumps tiny c
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_d
+  Grass clumps tiny d
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_e
+  Grass clumps tiny e
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_01__tiny_f
+  Grass clumps tiny f
+  https://polyhaven.com/a/grass_medium_01
+grass_medium_02__a
+  Grass tufts a
   https://polyhaven.com/a/grass_medium_02
-grass_medium_02__v2
-  Grass tufts 2
+grass_medium_02__b
+  Grass tufts b
   https://polyhaven.com/a/grass_medium_02
-leipoldtia_schultzei__v1
-  Leipoldtia 1
+grass_medium_02__c
+  Grass tufts c
+  https://polyhaven.com/a/grass_medium_02
+grass_medium_02__d
+  Grass tufts d
+  https://polyhaven.com/a/grass_medium_02
+grass_medium_02__e
+  Grass tufts e
+  https://polyhaven.com/a/grass_medium_02
+leipoldtia_schultzei__large
+  Leipoldtia large
   https://polyhaven.com/a/leipoldtia_schultzei
-leipoldtia_schultzei__v2
-  Leipoldtia 2
+leipoldtia_schultzei__medium
+  Leipoldtia medium
   https://polyhaven.com/a/leipoldtia_schultzei
-moss_01__v1
-  Moss 1
+leipoldtia_schultzei__small
+  Leipoldtia small
+  https://polyhaven.com/a/leipoldtia_schultzei
+moss_01__a
+  Moss a
   https://polyhaven.com/a/moss_01
-moss_01__v2
-  Moss 2
+moss_01__b
+  Moss b
   https://polyhaven.com/a/moss_01
-moss_01__v3
-  Moss 3
+moss_01__c
+  Moss c
   https://polyhaven.com/a/moss_01
-moss_01__v4
-  Moss 4
+moss_01__d
+  Moss d
+  https://polyhaven.com/a/moss_01
+moss_01__e
+  Moss e
+  https://polyhaven.com/a/moss_01
+moss_01__f
+  Moss f
+  https://polyhaven.com/a/moss_01
+moss_01__g
+  Moss g
+  https://polyhaven.com/a/moss_01
+moss_01__h
+  Moss h
+  https://polyhaven.com/a/moss_01
+moss_01__i
+  Moss i
+  https://polyhaven.com/a/moss_01
+moss_01__j
+  Moss j
+  https://polyhaven.com/a/moss_01
+moss_01__tall_a
+  Moss tall a
+  https://polyhaven.com/a/moss_01
+moss_01__tall_b
+  Moss tall b
   https://polyhaven.com/a/moss_01
 ms_tree_high_poly
   Broadleaf study tree
   https://www.fab.com/sellers/Quixel
-nettle_plant__v1
-  Nettles 1
+nettle_plant__medium_a
+  Nettles medium a
   https://polyhaven.com/a/nettle_plant
-nettle_plant__v2
-  Nettles 2
+nettle_plant__medium_b
+  Nettles medium b
   https://polyhaven.com/a/nettle_plant
-nettle_plant__v3
-  Nettles 3
+nettle_plant__small_a
+  Nettles small a
   https://polyhaven.com/a/nettle_plant
-nettle_plant__v4
-  Nettles 4
+nettle_plant__small_b
+  Nettles small b
   https://polyhaven.com/a/nettle_plant
-nettle_plant__v5
-  Nettles 5
+nettle_plant__tall_a
+  Nettles tall a
   https://polyhaven.com/a/nettle_plant
-nettle_plant__v6
-  Nettles 6
+nettle_plant__tall_b
+  Nettles tall b
   https://polyhaven.com/a/nettle_plant
 othonna_cerarioides
   Othonna tree
   https://polyhaven.com/a/othonna_cerarioides
-pachira_aquatica_01
-  Pachira
+pachira_aquatica_01__a
+  Pachira a
   https://polyhaven.com/a/pachira_aquatica_01
-periwinkle_plant__v1
-  Periwinkle 1
+pachira_aquatica_01__b
+  Pachira b
+  https://polyhaven.com/a/pachira_aquatica_01
+pachira_aquatica_01__c
+  Pachira c
+  https://polyhaven.com/a/pachira_aquatica_01
+pachira_aquatica_01__d
+  Pachira d
+  https://polyhaven.com/a/pachira_aquatica_01
+periwinkle_plant__01
+  Periwinkle 01
   https://polyhaven.com/a/periwinkle_plant
-periwinkle_plant__v2
-  Periwinkle 2
+periwinkle_plant__02
+  Periwinkle 02
   https://polyhaven.com/a/periwinkle_plant
-periwinkle_plant__v3
-  Periwinkle 3
+periwinkle_plant__03
+  Periwinkle 03
   https://polyhaven.com/a/periwinkle_plant
-periwinkle_plant__v4
-  Periwinkle 4
+periwinkle_plant__04
+  Periwinkle 04
   https://polyhaven.com/a/periwinkle_plant
-pine_roots
-  Pine roots
+periwinkle_plant__05
+  Periwinkle 05
+  https://polyhaven.com/a/periwinkle_plant
+periwinkle_plant__06
+  Periwinkle 06
+  https://polyhaven.com/a/periwinkle_plant
+pine_roots__a
+  Pine roots a
+  https://polyhaven.com/a/pine_roots
+pine_roots__b
+  Pine roots b
   https://polyhaven.com/a/pine_roots
 pine_sapling_small
   Small pine
@@ -410,17 +617,17 @@ shrub_01__v9
 shrub_02
   Hedge mass
   https://polyhaven.com/a/shrub_02
-shrub_03__v1
-  Meadow shrub 1
+shrub_03__a
+  Meadow shrub a
   https://polyhaven.com/a/shrub_03
-shrub_03__v2
-  Meadow shrub 2
+shrub_03__b
+  Meadow shrub b
   https://polyhaven.com/a/shrub_03
-shrub_03__v3
-  Meadow shrub 3
+shrub_03__c
+  Meadow shrub c
   https://polyhaven.com/a/shrub_03
-shrub_03__v4
-  Meadow shrub 4
+shrub_03__d
+  Meadow shrub d
   https://polyhaven.com/a/shrub_03
 shrub_04__v1
   Undergrowth 1
@@ -431,14 +638,38 @@ shrub_04__v2
 shrub_04__v3
   Undergrowth 3
   https://polyhaven.com/a/shrub_04
-shrub_sorrel_01__v1
-  Sorrel 1
+shrub_sorrel_01__a
+  Sorrel a
   https://polyhaven.com/a/shrub_sorrel_01
-shrub_sorrel_01__v2
-  Sorrel 2
+shrub_sorrel_01__b
+  Sorrel b
   https://polyhaven.com/a/shrub_sorrel_01
-shrub_sorrel_01__v3
-  Sorrel 3
+shrub_sorrel_01__c
+  Sorrel c
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__d
+  Sorrel d
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__e
+  Sorrel e
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__f
+  Sorrel f
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__g
+  Sorrel g
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__h
+  Sorrel h
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__i
+  Sorrel i
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__j
+  Sorrel j
+  https://polyhaven.com/a/shrub_sorrel_01
+shrub_sorrel_01__k
+  Sorrel k
   https://polyhaven.com/a/shrub_sorrel_01
 single_root
   Single root
@@ -452,11 +683,35 @@ tree_stump_01
 tree_stump_02
   Old stump
   https://polyhaven.com/a/tree_stump_02
-weed_plant_02
-  Weeds
+weed_plant_02__a
+  Weeds a
   https://polyhaven.com/a/weed_plant_02
-wild_rooibos_bush
-  Rooibos bush
+weed_plant_02__b
+  Weeds b
+  https://polyhaven.com/a/weed_plant_02
+weed_plant_02__c
+  Weeds c
+  https://polyhaven.com/a/weed_plant_02
+weed_plant_02__d
+  Weeds d
+  https://polyhaven.com/a/weed_plant_02
+weed_plant_02__e
+  Weeds e
+  https://polyhaven.com/a/weed_plant_02
+wild_rooibos_bush__a
+  Rooibos bush a
+  https://polyhaven.com/a/wild_rooibos_bush
+wild_rooibos_bush__b
+  Rooibos bush b
+  https://polyhaven.com/a/wild_rooibos_bush
+wild_rooibos_bush__c
+  Rooibos bush c
+  https://polyhaven.com/a/wild_rooibos_bush
+wild_rooibos_bush__d
+  Rooibos bush d
+  https://polyhaven.com/a/wild_rooibos_bush
+wild_rooibos_bush__e
+  Rooibos bush e
   https://polyhaven.com/a/wild_rooibos_bush
 boulder_01
   Small boulder
@@ -500,44 +755,56 @@ namaqualand_boulder_05
 namaqualand_boulder_06
   Boulder tall
   https://polyhaven.com/a/namaqualand_boulder_06
-namaqualand_boulders_01__v1
-  Boulders 1
+namaqualand_boulders_01__namaqualand_rocks_01_a
+  Boulders namaqualand rocks 01 a
   https://polyhaven.com/a/namaqualand_boulders_01
-namaqualand_boulders_01__v2
-  Boulders 2
+namaqualand_boulders_01__namaqualand_rocks_01_b
+  Boulders namaqualand rocks 01 b
   https://polyhaven.com/a/namaqualand_boulders_01
-namaqualand_rocks_01__v1
-  Quartz rocks 1
+namaqualand_rocks_01__a
+  Quartz rocks a
   https://polyhaven.com/a/namaqualand_rocks_01
-namaqualand_rocks_01__v2
-  Quartz rocks 2
+namaqualand_rocks_01__b
+  Quartz rocks b
   https://polyhaven.com/a/namaqualand_rocks_01
-namaqualand_rocks_01__v3
-  Quartz rocks 3
+namaqualand_rocks_01__c
+  Quartz rocks c
   https://polyhaven.com/a/namaqualand_rocks_01
-namaqualand_rocks_01__v4
-  Quartz rocks 4
+namaqualand_rocks_01__d
+  Quartz rocks d
   https://polyhaven.com/a/namaqualand_rocks_01
-namaqualand_stones_01__v1
-  Stones 1
+namaqualand_stones_01__a
+  Stones a
   https://polyhaven.com/a/namaqualand_stones_01
-namaqualand_stones_01__v2
-  Stones 2
+namaqualand_stones_01__b
+  Stones b
   https://polyhaven.com/a/namaqualand_stones_01
-namaqualand_stones_01__v3
-  Stones 3
+namaqualand_stones_01__c
+  Stones c
   https://polyhaven.com/a/namaqualand_stones_01
-namaqualand_stones_01__v4
-  Stones 4
+namaqualand_stones_01__d
+  Stones d
   https://polyhaven.com/a/namaqualand_stones_01
-namaqualand_stones_01__v5
-  Stones 5
+namaqualand_stones_01__e
+  Stones e
   https://polyhaven.com/a/namaqualand_stones_01
-rock_moss_set_01__v1
-  Mossy rocks 1
+rock_moss_set_01__rock01
+  Mossy rocks rock01
   https://polyhaven.com/a/rock_moss_set_01
-rock_moss_set_01__v2
-  Mossy rocks 2
+rock_moss_set_01__rock02
+  Mossy rocks rock02
+  https://polyhaven.com/a/rock_moss_set_01
+rock_moss_set_01__rock03
+  Mossy rocks rock03
+  https://polyhaven.com/a/rock_moss_set_01
+rock_moss_set_01__rock04
+  Mossy rocks rock04
+  https://polyhaven.com/a/rock_moss_set_01
+rock_moss_set_01__rock05
+  Mossy rocks rock05
+  https://polyhaven.com/a/rock_moss_set_01
+rock_moss_set_01__rock06
+  Mossy rocks rock06
   https://polyhaven.com/a/rock_moss_set_01
 rock_moss_set_02
   Mossy rocks 2
