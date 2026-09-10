@@ -4315,6 +4315,45 @@ internal static partial class Program
                 $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateMechanismReeveFactor(plugin);
+            Console.WriteLine(
+                "PASS  The reeve factor, authored, resolved per wire and " +
+                "sanity-checked (spec section 6, Task 5): " +
+                "MechanismReeve.Resolve takes a per-wire override over " +
+                "the machine default outright, sourced \"wire\", and a " +
+                "wire with none authored takes the machine default, " +
+                "sourced \"machine\" -- never a hardcoded 1.0. " +
+                "MechanismReeve.WrapReversals counts four direction " +
+                "reversals on a route bouncing between two points six " +
+                "times over and zero on a straight run of the same " +
+                "length, and -- THE FAILURE THIS TASK EXISTS TO PREVENT " +
+                "(spec 6.5) -- the bouncing route SCALED BY 0.01, his own " +
+                "drum-scale spacing, reports the SAME four reversals: an " +
+                "unnormalised chord comparison reads scale-dependent " +
+                "numbers here, four by coincidence at unit scale and zero " +
+                "at drum scale, which would have left the sanity check " +
+                "permanently silent on every real machine. End to end, " +
+                "through MechanismDocument.Json against a solved Result: " +
+                "each wire carries its own resolved reeveFactor and " +
+                "reeveFactorSource, never inherited, the same shape " +
+                "net_vertex already uses; a wire whose declared factor " +
+                "(100, via an authored override) is wildly above what " +
+                "its own zero-reversal route implies (a ceiling of 8) is " +
+                "named as a warning; the SAME zero-reversal shape at his " +
+                "own real default (4.0, the machine default, no " +
+                "override) draws NO warning at all -- a warning that " +
+                "fires on correct input is a defect equal in seriousness " +
+                "to one that misses a fault, and the check REFUSES " +
+                "NOTHING either way, since geometry alone cannot tell a " +
+                "guiding wheel from one that moves with the load.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismReeveFactor: {DescribeException(exception)}");
+        }
+
         // Every deferred assertion is reported here, at the suite level, so
         // that a check a brief asked for and a task could not enforce is
         // visible to whoever runs the harness and not only to a reader of
@@ -43707,7 +43746,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),   // NOTHING AUTHORED
-                warnings, notes, result, null,
+                warnings, notes, result, null, null,
             });
         if (payload is not string json)
             throw new InvalidOperationException("A mechanism with no authored placement must still produce a payload.");
@@ -43964,7 +44003,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
-                crownWarnings, crownNotes, crownResult, null,
+                crownWarnings, crownNotes, crownResult, null, null,
             });
         if (crownPayload is not string crownJson)
             throw new InvalidOperationException("The no-anchor-edges fixture must produce a payload.");
@@ -44006,7 +44045,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
-                authoredWarnings, authoredNotes, null, null,
+                authoredWarnings, authoredNotes, null, null, null,
             });
         if (authoredPayload is not string noResultJson)
             throw new InvalidOperationException("A mechanism with no Result must still produce a payload.");
@@ -44040,7 +44079,7 @@ internal static partial class Program
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
                 emptyWarnings, emptyNotes,
-                CreateResultDto(resultType, "fd", emptyEquilibrium, null, null), null,
+                CreateResultDto(resultType, "fd", emptyEquilibrium, null, null), null, null,
             });
         bool emptyNamed = emptyWarnings.Any(w =>
             w.Contains("NO MECHANISM WAS DERIVED", StringComparison.Ordinal));
@@ -45404,6 +45443,252 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "A reeve.default of zero must be refused by name as not a "
                 + "mechanical advantage; got \"" + zeroRefusal + "\".");
+        }
+    }
+
+    /// <summary>
+    /// THE REEVE FACTOR (spec section 6, Task 5): authored, resolved per
+    /// wire, never a hardcoded 1.0, and sanity-checked without ever being
+    /// refused.
+    ///
+    /// Proved here, each independently able to fail:
+    ///
+    /// 1. MechanismReeve.Resolve: a per-wire override beats the machine
+    ///    default outright, sourced "wire"; a wire with nothing authored
+    ///    takes the machine default, sourced "machine".
+    /// 2. MechanismReeve.WrapReversals counts FOUR reversals on a route
+    ///    that bounces between two points six times over (turning through
+    ///    180 degrees at each interior point) and ZERO on a straight run.
+    ///    THE FAILURE THIS TASK EXISTS TO PREVENT (spec 6.5): the SAME
+    ///    bouncing route, scaled by 0.01 -- his own drum-scale routing --
+    ///    must report the SAME four reversals. An unnormalised dot
+    ///    product is bounded by the chords' own lengths, so it would read
+    ///    four at unit scale (chords of length 1, dot exactly -1, by
+    ///    coincidence past the -0.5 threshold) and ZERO at drum scale
+    ///    (chords of length 0.01, dot -0.0001, nowhere near it) -- the
+    ///    exact defect that would leave the sanity check permanently
+    ///    silent on every real machine while a unit-scale fixture passed
+    ///    regardless.
+    /// 3. END TO END, through MechanismDocument.Json against a solved
+    ///    Result: a wire with an authored override carries that value and
+    ///    "wire"; a wire with none carries the machine default and
+    ///    "machine". A wildly high declared factor (100, an authored
+    ///    override, against a straight zero-reversal route whose implied
+    ///    ceiling is 8) is named as a warning; the SAME zero-reversal
+    ///    shape at his own real default (4.0, the machine default, no
+    ///    override) draws NO warning at all. A warning that fires on
+    ///    correct input is a defect equal in seriousness to one that
+    ///    misses a fault, and the check refuses neither case.
+    /// </summary>
+    private static void ValidateMechanismReeveFactor(Assembly plugin)
+    {
+        Type reeveType = RequireComponentType(plugin, "MechanismReeve");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        MethodInfo resolve = RequirePublicStatic(reeveType, "Resolve");
+        MethodInfo wrapReversals = RequirePublicStatic(reeveType, "WrapReversals");
+        MethodInfo sanityCeiling = RequirePublicStatic(reeveType, "SanityCeiling");
+
+        object FrameAt(double x, double y, double z) => Activator.CreateInstance(
+            frameType,
+            new[] { x, y, z },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        Array RouteOf(params (double X, double Y, double Z)[] points)
+        {
+            Array array = Array.CreateInstance(frameType, points.Length);
+            for (int i = 0; i < points.Length; i++)
+                array.SetValue(FrameAt(points[i].X, points[i].Y, points[i].Z), i);
+            return array;
+        }
+
+        (double Value, string Source) ReadResolve(object tuple)
+        {
+            Type t = tuple.GetType();
+            return (
+                (double)t.GetField("Item1")!.GetValue(tuple)!,
+                (string)t.GetField("Item2")!.GetValue(tuple)!);
+        }
+
+        // 1. RESOLUTION ORDER.
+        var overrideOnWire3 = new Dictionary<int, double> { [3] = 2.5 };
+        (double Value, string Source) overridden = ReadResolve(
+            resolve.Invoke(null, new object[] { 4.0, overrideOnWire3, 3 })!);
+        if (overridden.Value != 2.5 || overridden.Source != "wire")
+        {
+            throw new InvalidOperationException(
+                "A per-wire override must beat the machine default "
+                + "outright and be sourced \"wire\"; got "
+                + $"{overridden.Value} from \"{overridden.Source}\".");
+        }
+        (double Value, string Source) defaulted = ReadResolve(
+            resolve.Invoke(null, new object[] { 4.0, overrideOnWire3, 5 })!);
+        if (defaulted.Value != 4.0 || defaulted.Source != "machine")
+        {
+            throw new InvalidOperationException(
+                "A wire with no authored override must take the machine "
+                + "default, sourced \"machine\"; got "
+                + $"{defaulted.Value} from \"{defaulted.Source}\".");
+        }
+
+        // 2. WRAP REVERSALS, AND THE SCALE-INVARIANCE THIS TASK EXISTS
+        // FOR (spec 6.5).
+        int Reversals(Array route) =>
+            (int)wrapReversals.Invoke(null, new object[] { route })!;
+
+        Array RouteBouncing(double scale) => RouteOf(
+            (0, 0, 0), (scale, 0, 0), (0, 0, 0),
+            (scale, 0, 0), (0, 0, 0), (scale, 0, 0));
+
+        int atUnitScale = Reversals(RouteBouncing(1.0));
+        int atDrumScale = Reversals(RouteBouncing(0.01));
+        if (atUnitScale != atDrumScale || atUnitScale != 4)
+        {
+            throw new InvalidOperationException(
+                "A route's wrap reversals are a property of its SHAPE, so "
+                + "scaling it by 0.01 must not change the count: got "
+                + $"{atUnitScale} at unit scale and {atDrumScale} at drum "
+                + "scale, wanted 4 at both. An unnormalised chord "
+                + "comparison reads scale-dependent numbers here, which "
+                + "is the exact failure spec 6.5 exists to rule out.");
+        }
+
+        Array straight = RouteOf((0, 0, 0), (1, 0, 0), (2, 0, 0));
+        int straightReversals = Reversals(straight);
+        if (straightReversals != 0)
+        {
+            throw new InvalidOperationException(
+                "A straight run must count ZERO wrap reversals; got "
+                + $"{straightReversals}.");
+        }
+
+        double ceilingAtZero = (double)sanityCeiling.Invoke(null, new object[] { 0 })!;
+        double ceilingAtFour = (double)sanityCeiling.Invoke(null, new object[] { 4 })!;
+        if (ceilingAtZero <= 0.0 || ceilingAtFour <= ceilingAtZero)
+        {
+            throw new InvalidOperationException(
+                "SanityCeiling must be positive at zero reversals and "
+                + "strictly increasing with the reversal count; got "
+                + $"{ceilingAtZero} at 0 and {ceilingAtFour} at 4.");
+        }
+
+        // 3. END TO END, against a solved Result: each wire resolves on
+        // its own index, and the sanity check warns only on the wildly
+        // wrong one.
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        // TWO ANCHORS, ONE EDGE: the smallest topology that gives
+        // AnchorRowIndices one row of two, so wire 0 matches net_vertex 0
+        // and wire 1 matches net_vertex 1, the same default rule every
+        // other mechanism-document check in this file relies on.
+        object[] nodes = { P(0, 0, 0), P(5, 0, 0) };
+        Array netEdges = Array.CreateInstance(edgeType, 1);
+        netEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(nodes));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces", new[] { 1.0 });
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 1 });
+
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        const string instancePayload =
+            "{\"side\":0,\"mechanism\":0,\"frame\":{\"origin\":[0,0,0]," +
+            "\"xAxis\":[1,0,0],\"yAxis\":[0,1,0]},\"kind\":\"mechanism\"," +
+            "\"placement\":\"instance\"}";
+
+        static string Frame(double x, double y, double z) =>
+            "{\"origin\":[" + x + "," + y + "," + z +
+            "],\"xAxis\":[1,0,0],\"yAxis\":[0,1,0]}";
+
+        // WIRE 0: no override, so it must resolve to the MACHINE default
+        // (4.0, his real number). WIRE 1: an authored override of 100,
+        // wildly above what either route's own wrap (zero reversals, a
+        // straight run, ceiling 8) can plausibly support. Both routes are
+        // authored with planes[0] AT the net end (distance zero), so
+        // neither trips the unrelated R2 "reversed" check.
+        string wiresPayload =
+            "[{\"side\":0,\"mechanism\":0,\"wire\":0,\"route\":[" +
+            Frame(0, 0, 0) + "," + Frame(1, 0, 0) + "," + Frame(2, 0, 0) + "]}," +
+            "{\"side\":0,\"mechanism\":0,\"wire\":1,\"route\":[" +
+            Frame(5, 0, 0) + "," + Frame(6, 0, 0) + "," + Frame(7, 0, 0) + "]}]";
+
+        string payload =
+            "{\"mechanism\":{}," +
+            "\"reeve\":{\"default\":4.0,\"perWire\":{\"1\":100.0}}," +
+            "\"instances\":[" + instancePayload + "]," +
+            "\"wires\":" + wiresPayload + "," +
+            "\"anchors\":[],\"tensionTies\":[]}";
+
+        const string Study = "reeve fixture";
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)json.Invoke(
+            null, new object?[] { result, Study, 1.0, payload, warnings, notes })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The mechanism document did not parse.");
+
+        JsonArray wiresOut = root["wires"]!.AsArray();
+        JsonNode wire0 = wiresOut.First(w => (string?)w!["id"] == "0-0-0")
+            ?? throw new InvalidOperationException("wire 0-0-0 must be present; got " + wiresOut.ToJsonString());
+        JsonNode wire1 = wiresOut.First(w => (string?)w!["id"] == "0-0-1")
+            ?? throw new InvalidOperationException("wire 0-0-1 must be present; got " + wiresOut.ToJsonString());
+
+        if ((double?)wire0["reeveFactor"] != 4.0 || (string?)wire0["reeveFactorSource"] != "machine")
+        {
+            throw new InvalidOperationException(
+                "wire 0-0-0 authored no override and must resolve to the "
+                + "machine default 4.0, sourced \"machine\"; got "
+                + $"{wire0["reeveFactor"]} from {wire0["reeveFactorSource"]}.");
+        }
+        if ((double?)wire1["reeveFactor"] != 100.0 || (string?)wire1["reeveFactorSource"] != "wire")
+        {
+            throw new InvalidOperationException(
+                "wire 0-0-1 authored an override of 100 and must resolve "
+                + "to it, sourced \"wire\"; got "
+                + $"{wire1["reeveFactor"]} from {wire1["reeveFactorSource"]}.");
+        }
+
+        bool wire1Warned = warnings.Any(w =>
+            w.Contains("wire 1:", StringComparison.Ordinal) &&
+            w.Contains("wildly", StringComparison.Ordinal));
+        if (!wire1Warned)
+        {
+            throw new InvalidOperationException(
+                "wire 1's declared factor (100) is wildly above its "
+                + "zero-reversal route's own implied ceiling (8) and must "
+                + "be named a warning; warnings were: "
+                + string.Join(" | ", warnings));
+        }
+        bool wire0Warned = warnings.Any(w =>
+            w.Contains("wire 0:", StringComparison.Ordinal) &&
+            w.Contains("wildly", StringComparison.Ordinal));
+        if (wire0Warned)
+        {
+            throw new InvalidOperationException(
+                "wire 0 is correctly authored at his own real default "
+                + "(4.0, the machine default, no override) and must NOT "
+                + "draw a reeve warning; a warning on correct input is a "
+                + "defect equal in seriousness to one that misses a "
+                + "fault. Warnings were: " + string.Join(" | ", warnings));
         }
     }
 

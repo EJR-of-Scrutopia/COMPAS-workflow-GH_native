@@ -377,6 +377,15 @@ internal static class MechanismCollector
     /// (his ruling, 2026-09-09: "the placement point will be figured out as
     /// part of the export"). A five-argument call is the same thing with
     /// nothing to derive from, kept so every existing caller stands.
+    ///
+    /// <paramref name="reevePerWire"/> is the collector's own Reeve Per
+    /// Wire (RW) tree, resolved to a wire-indexed dictionary (spec 6.1),
+    /// carried straight through to the payload's own reeve.perWire (below)
+    /// and never inspected here: the RESOLUTION against a machine default
+    /// happens once, downstream, in <c>MechanismDocument.Json</c>, which
+    /// is the one place a Result -- and so a net vertex to match each wire
+    /// against -- is available at all. Null or empty means no overrides
+    /// were authored, which is the ordinary case and not itself a fault.
     /// </summary>
     public static string? BuildWithResult(
         MechanismAssetInput asset,
@@ -385,7 +394,8 @@ internal static class MechanismCollector
         List<string> warnings,
         List<string> notes,
         ResultDto? result,
-        string? routingFrameMeaning)
+        string? routingFrameMeaning,
+        IReadOnlyDictionary<int, double>? reevePerWire = null)
     {
         ArgumentNullException.ThrowIfNull(asset);
         string meaning = (routingFrameMeaning ?? string.Empty).Trim().ToLowerInvariant();
@@ -1475,6 +1485,15 @@ internal static class MechanismCollector
                     " because it does not yet cite a machine. A machine " +
                     "document states its OWN authored value in its header, " +
                     "and a study that cites one takes it from there.",
+                // THE PER-WIRE OVERRIDE (spec 6.1-6.2, Task 5): Reeve Per
+                // Wire (RW)'s own tree, resolved to {wire: value} and
+                // carried through UNRESOLVED -- MechanismDocument.Json is
+                // where each wire's final reeveFactor and reeveFactorSource
+                // are decided, since that is the one place a wire's own id
+                // exists to say which "wire" this key means. Always
+                // present, an empty object when nothing was authored,
+                // rather than an absent key a reader has to branch on.
+                ["perWire"] = ReevePerWirePayload(reevePerWire),
             },
             ["instances"] = instancesOut,
             ["wires"] = wiresOut,
@@ -1537,6 +1556,23 @@ internal static class MechanismCollector
         Dictionary<string, object?> payload = FramePayload(frame);
         payload[RouteOwnerField] = owner;
         payload[RouteOwnerReelField] = ownerReel;
+        return payload;
+    }
+
+    /// <summary>
+    /// Reeve Per Wire (RW), keyed by wire index as JSON demands (object
+    /// keys are strings; a wire number is not one), and always present as
+    /// an object -- empty when nothing was authored, never an absent key a
+    /// reader has to branch on separately from "authored but empty".
+    /// </summary>
+    private static Dictionary<string, object?> ReevePerWirePayload(
+        IReadOnlyDictionary<int, double>? reevePerWire)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal);
+        if (reevePerWire is null)
+            return payload;
+        foreach (KeyValuePair<int, double> entry in reevePerWire)
+            payload[entry.Key.ToString(CultureInfo.InvariantCulture)] = entry.Value;
         return payload;
     }
 
@@ -3842,25 +3878,41 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
 
         // TWO NEW PORTS, APPENDED (spec 3.0, 5.1): nothing above this line
         // moves or is renumbered, so an archived wire keeps the slot it
-        // left. Neither is read by SolveInstance yet; a later task resolves
-        // what they mean. Appending them here, unread, means their index
-        // never moves under whichever task does.
+        // left. Appending them here means their index never moves under
+        // whichever task resolves what they mean.
+        //
+        // MACHINE (MA) IS STILL NOT READ (Task 6's own work): the
+        // resolution order this task builds reads straight past it,
+        // taking the payload's own provisional reeve.default in its place
+        // (spec 6.3) until MA is threaded through.
         parameters.AddTextParameter(
             "Machine", "MA",
             "NEW: the bench.machine/1 document this study cites, wired " +
             "from the Machine component's own Machine (MC) output. A " +
             "study cites exactly ONE machine, by id, and this is that " +
-            "citation. Not yet resolved here.",
+            "citation. Not yet resolved here: until it is, the reeve " +
+            "factor's machine-default source stays the payload's own " +
+            "provisional reeve.default rather than a cited machine's own " +
+            "authored one.",
             GH_ParamAccess.item, string.Empty);
         parameters[12].Optional = true;
 
         parameters.AddNumberParameter(
             "Reeve Per Wire", "RW",
-            "NEW, OPTIONAL, tree {wire}: a per-wire override of the " +
-            "machine's own reeve default (RV on the Machine component). " +
-            "Wire it only for the wire(s) whose mechanical advantage " +
-            "genuinely differs from the machine's stated default; every " +
-            "other wire keeps that default. Not yet resolved here.",
+            "OPTIONAL, tree {wire}: a per-wire override of the machine's " +
+            "own reeve default. Wire it only for the wire(s) whose " +
+            "mechanical advantage genuinely differs from the machine's " +
+            "stated default; every other wire keeps that default. " +
+            "RESOLVED PER WIRE (spec 6.1-6.2): an override authored here " +
+            "beats the machine default outright, and the resolved value " +
+            "-- never the override or the default alone -- is what is " +
+            "written onto that wire in the document, alongside which " +
+            "source won (\"wire\" or \"machine\"), the same shape " +
+            "net_vertex already uses so the studio never inherits or " +
+            "infers one. A declared override that is not a finite, " +
+            "positive number is refused BY NAME and that one wire falls " +
+            "back to the machine default; it does not cost any other " +
+            "wire or the document as a whole.",
             GH_ParamAccess.tree);
         parameters[13].Optional = true;
     }
@@ -3972,8 +4024,16 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             string meaning = string.Empty;
             data.GetData(10, ref meaning);
 
+            // REEVE PER WIRE (RW, spec 6.1): read here and carried through
+            // to the payload's own reeve.perWire UNRESOLVED -- the
+            // resolution against a machine default happens downstream, in
+            // MechanismDocument.Json, the one place a Result is available
+            // to match wires against net vertices at all.
+            Dictionary<int, double> reevePerWire = ReadReevePerWire(data, warnings, notes);
+
             string? payload = MechanismCollector.BuildWithResult(
-                asset, routing, placements, warnings, notes, solved, meaning);
+                asset, routing, placements, warnings, notes, solved, meaning,
+                reevePerWire);
 
             int routedWireCount = routing.Count(w => w.Route.Count > 0);
             var status = new List<string>
@@ -4269,6 +4329,68 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             }
         }
         return starts;
+    }
+
+    /// <summary>
+    /// Reeve Per Wire (RW), path {wire} exactly as Wire Start (WS) above:
+    /// the LAST index of the path is the wire it overrides. Carried
+    /// through UNRESOLVED against any machine default -- this method only
+    /// reads what was authored, never what it means against 1.0 or 4.0 or
+    /// anything else, because the resolution (<see
+    /// cref="MechanismReeve.Resolve"/>) happens downstream in
+    /// MechanismDocument.Json, the one place a wire's own id exists to
+    /// name which override this is.
+    ///
+    /// A DECLARED OVERRIDE THAT IS NOT A MECHANICAL ADVANTAGE (not finite,
+    /// or not greater than zero) is refused BY NAME and DROPPED, not
+    /// carried through as a wrong number: that one wire then resolves
+    /// against the machine default instead, exactly as if nothing had
+    /// been wired for it, and every other wire and the document as a
+    /// whole are unaffected. This mirrors the payload-root reeve.default
+    /// refusal in spirit but not in force -- a bad override costs one
+    /// wire, never the whole document, because it is optional by nature
+    /// where the default is not.
+    /// </summary>
+    private Dictionary<int, double> ReadReevePerWire(
+        IGH_DataAccess data, List<string> warnings, List<string> notes)
+    {
+        var perWire = new Dictionary<int, double>();
+        data.GetDataTree(13, out GH_Structure<GH_Number> rwTree);
+        foreach (GH_Path path in rwTree.Paths)
+        {
+            if (path.Indices.Length == 0)
+                continue;
+            int wire = path.Indices[path.Indices.Length - 1];
+            foreach (GH_Number numberGoo in rwTree.get_Branch(path))
+            {
+                if (numberGoo is null)
+                    continue;
+                double value = numberGoo.Value;
+                if (!double.IsFinite(value) || value <= 0.0)
+                {
+                    warnings.Add(
+                        $"Reeve Per Wire (RW)[{wire}] is " +
+                        value.ToString(CultureInfo.InvariantCulture) +
+                        ", which is not a mechanical advantage; ignored, " +
+                        "so wire " + wire + " keeps the machine's own " +
+                        "default instead.");
+                }
+                else
+                {
+                    perWire[wire] = value;
+                }
+                break;
+            }
+        }
+        if (perWire.Count > 0)
+        {
+            notes.Add(
+                $"Reeve Per Wire (RW): {perWire.Count} wire(s) carry an " +
+                "override of the machine's own reeve default -- wire(s) " +
+                string.Join(", ", perWire.Keys.OrderBy(w => w)) +
+                "; every other wire takes the machine's default instead.");
+        }
+        return perWire;
     }
 
     /// <summary>
