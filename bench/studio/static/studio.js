@@ -152,6 +152,9 @@ const state = {
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   cameraAspect: "fill",  // the Camera frame: "fill" or a ratio as a string
   projection: "perspective",  // or "orthographic": a picture, or a drawing
+  // The cut. mode "off" or "plane"; axis is which way the plane
+  // faces; offset is where along that axis it sits, in metres.
+  section: { mode: "off", axis: "y", offset: 0, cutMachine: false },
   cameraView: null,      // the snapped view last taken, for the highlight
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
@@ -296,6 +299,13 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 // below a peak of 0.76, rolling off only the highlights above it.
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// LOCAL clipping, not global. A plane set on the renderer cuts
+// everything the renderer draws -- the gumball, the thrust arrows, the
+// lamp halos, the sun helpers -- and makes it impossible to cut the
+// shell while the machine stands beside it, which is exactly the
+// drawing Param described. Per-material costs one walk of the scene
+// whenever the section moves and buys the whole distinction.
+renderer.localClippingEnabled = true;
 
 // Every exposure number in this file was tuned by eye against ACES, and so
 // carries ACES's hidden 1/0.6 inside it. Neutral applies no such gain, so
@@ -2911,6 +2921,11 @@ function buildScene(bundle, preserve) {
   // moved something -- exactly when you most want to know what the vault
   // is being weighed as.
   updateWeightNote();
+  // LAST, and on every rebuild. A clipping plane lives on a material,
+  // so every mesh this function builds arrives uncut: without this a
+  // re-cut or a change of study quietly heals the section while the
+  // control still reads Plane.
+  applySection();
 }
 
 // ---------- saved scenes ----------
@@ -3001,6 +3016,10 @@ function collectScene() {
     // the camera position alone cannot say which was meant.
     projection: state.projection,
     cameraView: state.cameraView,
+    // The cut travels with the scene. A sectioned plate reopened whole
+    // is a different drawing, and the camera alone cannot say which
+    // was meant.
+    section: { ...state.section },
     orthoHeight: orthoFrameHeight,
     orthoZoom: orthographicCamera.zoom,
     site: {
@@ -3314,6 +3333,10 @@ async function applyScene(record) {
     setProjection(scene_.projection);
   }
   state.cameraView = scene_.cameraView || null;
+  if (scene_.section && typeof scene_.section === "object") {
+    Object.assign(state.section, scene_.section);
+    applySection();
+  }
   if (view && typeof view.frame === "string") {
     state.cameraAspect = view.frame;
     applyCameraAspect();
@@ -4608,6 +4631,135 @@ function paintScaleBar() {
     : metres + " m";
 }
 
+// ---------- the section ----------
+// A section through the crown in parallel projection, cut faces filled,
+// with the inked outline on and the intrados stress lens still painted,
+// is not a render at all. It is a drawing, and it is the one image the
+// studio could not make: the argument is INSIDE the shell -- voussoir
+// joints, thickness varying with thrust, the net under the masonry, the
+// interface between permanent works and plant.
+
+const SECTION_AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+function sectionNormal() {
+  const axis = SECTION_AXES[state.section.axis] || SECTION_AXES.y;
+  return new THREE.Vector3(axis[0], axis[1], axis[2]);
+}
+
+function sectionPlane() {
+  // THREE.Plane holds the SIGNED distance from the origin along its
+  // normal, so a plane standing at offset d has constant -d. Get that
+  // sign backwards and every positive offset puts the cut behind the
+  // model, which reads as "the section does nothing" rather than as an
+  // error anybody would go looking for.
+  return new THREE.Plane(sectionNormal(), -state.section.offset);
+}
+
+// Whether a mesh belongs to the machine rather than to the works being
+// sectioned. Asked by ANCESTRY, not by material: the machine shares
+// material instances with the permanent works, so a material-level test
+// would cut both or neither and the toggle would do nothing at all.
+function isMachinePart(object) {
+  const group = machineObjects && machineObjects.group;
+  if (!group) return false;
+  for (let node = object; node; node = node.parent) {
+    if (node === group) return true;
+  }
+  return false;
+}
+
+// THERE IS NO CAP, AND THAT IS THE FINDING.
+//
+// The plan called for the folklore cheap cap: a coloured plane a
+// millimetre behind the cut so the shell reads solid. Built and
+// photographed, it fails twice over. A section is normally viewed
+// FACE ON, and a plane whose normal points at the camera fills the
+// whole frame: it is a backdrop, not a cut face. To read as a cut it
+// would have to be trimmed to the outline of the cut, which is exactly
+// the work the cheap version existed to avoid.
+//
+// And it is not needed. Every vault material in this studio is already
+// THREE.DoubleSide -- all twelve, from the greys at the top of the
+// material table down -- so a clipped closed solid draws its own
+// interior and the cut caps itself. The photograph shows the arch
+// profile, the courses receding, the shell thickness and the springing,
+// with no cap in the scene at all. The folklore assumes single-sided
+// materials, which this studio does not have.
+//
+// What is still missing is a flat POCHE, the filled cut of a
+// traditional section drawing. That needs the stencil two-pass, which
+// was always scheduled as the three-day version, and it is the thing
+// the cut-fill colour will belong to when it arrives.
+
+function applySection() {
+  const on = state.section.mode === "plane";
+  const planes = on ? [sectionPlane()] : [];
+  const none = [];
+  scene.traverse((object) => {
+    if (!object.material) return;
+    const spared = isMachinePart(object) && !state.section.cutMachine;
+    const mine = on && !spared ? planes : none;
+    const materials = Array.isArray(object.material)
+      ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material) continue;
+      material.clippingPlanes = mine;
+      // The shadow is cut with the surface, or a sectioned vault goes
+      // on casting the shadow of the half that is no longer drawn.
+      material.clipShadows = true;
+    }
+  });
+  // No needsUpdate here: the renderer keeps the plane COUNT in its
+  // program cache key and recompiles by itself when that changes.
+  // Setting it would rebuild every shader in the scene on every tick of
+  // the offset dial.
+  paintSectionControls();
+}
+
+// The dial's travel comes from the MODEL, not from a guess. Shipped at
+// -30 to 30 it ran over a barrel about four metres deep, so nine tenths
+// of the travel did nothing and the useful part was four pixels wide.
+// Re-derived whenever the axis or the study changes.
+function fitSectionRange() {
+  const dial = document.getElementById("section-offset");
+  if (!dial) return;
+  const shell = state.objects.shell;
+  const box = new THREE.Box3();
+  if (shell) box.setFromObject(shell);
+  if (box.isEmpty()) return;                 // no study yet; keep the default
+  const axis = state.section.axis;
+  const low = axis === "x" ? box.min.x : axis === "z" ? box.min.z : box.min.y;
+  const high = axis === "x" ? box.max.x : axis === "z" ? box.max.z : box.max.y;
+  // A hair beyond each face, so both ends of the dial are reachable and
+  // "all of it" and "none of it" are both places the dial can stand.
+  const margin = Math.max(0.1, (high - low) * 0.02);
+  dial.min = (low - margin).toFixed(2);
+  dial.max = (high + margin).toFixed(2);
+  // A hundred steps across whatever that turns out to be.
+  dial.step = Math.max(0.001, ((high - low) + 2 * margin) / 200).toFixed(3);
+  state.section.offset = Math.min(+dial.max,
+    Math.max(+dial.min, state.section.offset));
+}
+
+function paintSectionControls() {
+  fitSectionRange();
+  const select = document.getElementById("section-mode");
+  if (select) select.value = state.section.mode;
+  paintSegmented("section-mode-segments", "section-mode");
+  const axis = document.getElementById("section-axis");
+  if (axis) axis.value = state.section.axis;
+  paintSegmented("section-axis-segments", "section-axis");
+  const offset = document.getElementById("section-offset");
+  if (offset) {
+    offset.value = state.section.offset;
+    paintScrub(offset);
+    const reading = document.getElementById("section-offset-value");
+    if (reading) reading.textContent = (+state.section.offset).toFixed(2);
+  }
+  const machine = document.getElementById("section-machine");
+  if (machine) machine.checked = !!state.section.cutMachine;
+}
+
 function paintProjectionControls() {
   const select = document.getElementById("camera-projection");
   if (select) select.value = state.projection;
@@ -4638,6 +4790,39 @@ document.getElementById("camera-aspect").addEventListener("change", (e) => {
   rememberSession();
 });
 window.addEventListener("resize", applyCameraAspect);
+// The section. Mode and axis rebuild the cap, the offset only moves the
+// plane, and every one of them re-walks the scene because a material
+// added since the last call (a prop just placed, a course just cut)
+// carries no plane until it is told.
+document.getElementById("section-mode").addEventListener("change", (e) => {
+  if (e.target.value === "box") {
+    // Offered and refused, in the studio's own register: the control
+    // says what is coming rather than pretending one plane is all
+    // there is. A box is six planes and a cap per face.
+    logStudio("a box section is not built yet; the plane is");
+    e.target.value = state.section.mode;
+    paintSegmented("section-mode-segments", "section-mode");
+    return;
+  }
+  state.section.mode = e.target.value;
+  applySection();
+  rememberSession();
+});
+document.getElementById("section-axis").addEventListener("change", (e) => {
+  state.section.axis = e.target.value;
+  applySection();
+  rememberSession();
+});
+document.getElementById("section-offset").addEventListener("input", (e) => {
+  state.section.offset = +e.target.value;
+  applySection();
+});
+document.getElementById("section-offset").addEventListener("change", rememberSession);
+document.getElementById("section-machine").addEventListener("change", (e) => {
+  state.section.cutMachine = e.target.checked;
+  applySection();
+  rememberSession();
+});
 document.getElementById("camera-projection").addEventListener("change", (e) => {
   setProjection(e.target.value);
 });
@@ -12525,6 +12710,9 @@ guarded("the setting segments", () => buildSegmented("environment-segments", "en
 guarded("the camera frame segments", () => {
   buildSegmented("camera-aspect-segments", "camera-aspect");
   buildSegmented("camera-projection-segments", "camera-projection");
+  buildSegmented("section-mode-segments", "section-mode");
+  buildSegmented("section-axis-segments", "section-axis");
+  paintSectionControls();
   syncCameraControls();
   paintProjectionControls();
   paintScaleBar();

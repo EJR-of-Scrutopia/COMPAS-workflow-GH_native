@@ -472,6 +472,40 @@
          the site's north are the same direction only by accident, and
          until you can say the angle between them, a correctly computed
          sun still lands on the wrong side of the vault. -->
+    <!-- The cut. Everything the work argues is inside the shell:
+         voussoir joints, thickness varying with thrust, the net under
+         the masonry, where the permanent works meet the plant. A
+         section in parallel projection with the cut faces filled is
+         the one image the studio could not make.
+         Box is offered and refuses, so the control says what is coming
+         rather than pretending a single plane is all there is.
+         There is no cut-fill colour, and that is measured rather than
+         forgotten: every vault material here is already double-sided,
+         so a clipped closed solid draws its own interior and the cut
+         caps itself. A flat poche needs the stencil two-pass, and the
+         colour belongs to that. -->
+    <span class="row-heading">Section</span>
+    <select id="section-mode" class="hidden" title="Cut the works open">
+      <option value="off" selected>Off</option>
+      <option value="plane">Plane</option>
+      <option value="box">Box</option>
+    </select>
+    <div id="section-mode-segments" class="segmented"></div>
+    <select id="section-axis" class="hidden" title="Which way the cut faces">
+      <option value="x">X</option>
+      <option value="y" selected>Y</option>
+      <option value="z">Z</option>
+    </select>
+    <div id="section-axis-segments" class="segmented"></div>
+    <div class="dial-block" id="scene-section-dials">
+      <label title="Where along the axis the cut stands, measured from the model origin"><span>Offset</span>
+        <input id="section-offset" type="range" min="-30" max="30" step="0.05" value="0" data-unit="1">
+        <b id="section-offset-value">0.00</b><em>m</em></label>
+    </div>
+    <div id="section-row">
+      <label title="Cut the machine with the vault, or leave it standing whole beside the section"><input id="section-machine" type="checkbox"> Cut the machine</label>
+    </div>
+
     <span class="row-heading">Site</span>
     <div id="site-row">
       <select id="site-place" title="Jump to a place. Choosing one sets the latitude and longitude; moving either afterwards puts this back to Custom."></select>

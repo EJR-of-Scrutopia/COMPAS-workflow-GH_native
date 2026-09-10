@@ -2999,3 +2999,90 @@ def test_a_snapped_view_stands_on_the_axis_it_names():
         "out of its own view")
     assert "camera.position.distanceTo(controls.target) || 30" in snap, (
         "the distance is kept, so a snap turns rather than travels")
+
+
+def test_a_section_cuts_the_shell_and_fills_the_face():
+    """The argument is inside the shell. Voussoir joint geometry, shell
+    thickness varying with thrust, the net under the masonry, the
+    interface between permanent works and plant -- none of it is visible
+    from outside.
+
+    A clipped shell with no cap reads as a hollow eggshell, which is the
+    opposite of the claim being made, so the cap is not a refinement of
+    this feature: it IS the feature."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    assert "renderer.localClippingEnabled = true;" in js, (
+        "LOCAL, not global. A plane on the renderer cuts the gumball, "
+        "the thrust arrows and the sun helpers along with the vault, and "
+        "makes cutting the shell while the machine stands impossible")
+
+    apply = _js_function(js, "function applySection()")
+    assert "material.clippingPlanes = mine;" in apply, (
+        "the planes go on the materials, in one walk of the scene")
+    assert "const spared = isMachinePart(object) && !state.section.cutMachine;" in apply, (
+        "Param asked to choose whether the machine is cut with the vault")
+    assert "material.clipShadows = true;" in apply, (
+        "or a sectioned vault goes on casting the shadow of the half "
+        "that is no longer drawn")
+    # Ancestry, not material. The machine shares material instances with
+    # the permanent works, so a material-level test would cut both or
+    # neither and the toggle would do nothing at all.
+    machine = _js_function(js, "function isMachinePart(object)")
+    assert "node = node.parent" in machine
+    # CODE lines only. The comment that explains this decision says
+    # "needsUpdate" itself, and banning the explanation along with the
+    # defect is a mistake I have now made twice.
+    forced = [line for line in apply.splitlines()
+              if not line.lstrip().startswith("//") and "needsUpdate" in line]
+    assert not forced, (
+        "the renderer keeps the plane COUNT in its program cache key and "
+        "recompiles by itself; forcing it rebuilds every shader in the "
+        "scene on every tick of the offset dial: " + "; ".join(forced))
+
+    # AND THERE IS NO CAP, which is measured rather than forgotten.
+    # The folklore cheap cap -- a coloured plane a millimetre behind the
+    # cut -- was built, photographed and deleted: a section is viewed
+    # FACE ON, so a plane whose normal points at the camera fills the
+    # frame as a backdrop rather than reading as a cut face. It is also
+    # not needed here, because every vault material in this studio is
+    # already double-sided, so a clipped closed solid draws its own
+    # interior and the cut caps itself.
+    assert "buildSectionCap" not in js, (
+        "the plane cap was measured and removed; a flat poche needs the "
+        "stencil two-pass, not a bigger plane")
+    assert "THERE IS NO CAP, AND THAT IS THE FINDING." in js, (
+        "and the reason stays in the file, or somebody rebuilds it")
+    # The property the self-capping depends on. If the vault materials
+    # ever go single-sided, a section becomes a hollow eggshell and this
+    # is the line that says why.
+    assert js.count("side: THREE.DoubleSide") >= 8, (
+        "the vault materials are double-sided, which is what makes a "
+        "clipped solid show its own interior")
+
+    # THREE.Plane holds signed distance from the origin along its
+    # normal, so a plane standing at offset d has constant -d. Positive
+    # by mistake and every positive offset puts the cut behind the
+    # model, which reads as the feature doing nothing.
+    plane = _js_function(js, "function sectionPlane()")
+    assert "new THREE.Plane(sectionNormal(), -state.section.offset)" in plane
+
+    # The dial's travel comes from the model. Shipped at -30 to 30 it ran
+    # over a barrel 3.2 m deep, so nine tenths of it did nothing and the
+    # useful part was four pixels wide.
+    fit = _js_function(js, "function fitSectionRange()")
+    assert "box.setFromObject(shell)" in fit
+    assert "dial.min =" in fit and "dial.max =" in fit and "dial.step =" in fit
+    assert "if (box.isEmpty()) return;" in fit, (
+        "no study yet means keep the shipped default, not collapse the "
+        "dial onto zero")
+    assert "fitSectionRange();" in _js_function(js, "function paintSectionControls()")
+
+    # Every rebuild re-cuts. A clipping plane lives on a material, so a
+    # re-cut or a change of study would otherwise heal the section while
+    # the control still reads Plane.
+    build = js[js.index("function buildScene(bundle, preserve) {"):]
+    build = build[:build.index(chr(10) + "function ")]
+    assert "applySection();" in build, (
+        "buildScene builds new materials, and they arrive uncut")
