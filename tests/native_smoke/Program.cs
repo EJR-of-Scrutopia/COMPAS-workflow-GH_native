@@ -3277,23 +3277,39 @@ internal static partial class Program
         {
             ValidateMechanismCollector(plugin);
             Console.WriteLine(
-                "PASS  MechanismCollector (his 2026-09-08 model: ONE "
-                + "authored mechanism -- Frame 1, Frame 2, Motors, a FUSED "
-                + "Tension Tie, and reels each with its own axis): nothing "
-                + "wired gives back null untouched; a full asset produces "
-                + "frame1/frame2/motors/tensionTie/reels with the right "
-                + "permanence tags (tensionTie \"permanent\", the rest "
-                + "\"temporary\"), the chin saying the tie arrived FUSED "
-                + "and every reel spins INDEPENDENTLY about its own axis; "
-                + "a reel mesh with no matching axis, and an axis with no "
-                + "matching mesh, each refuse ONLY that one index, by "
-                + "name, every other reel intact; spoolRadius defaults "
-                + "from reel[0]'s own bounding box when one resolves and "
-                + "from Frame 1's when none does, both named; the reeve "
-                + "factor is ALWAYS named fixed at 1.0 and PROVISIONAL; "
-                + "and Routing (RT)[0] carrying no frames at all is named, "
-                + "by wire, as fatal to every placement rather than left "
-                + "silent.");
+                "PASS  MechanismCollector (his 2026-09-08 model, reels "
+                + "reshaped to ENTRIES by Task 3: ONE authored mechanism -- "
+                + "Frame 1, Frame 2, Motors, a FUSED Tension Tie, and reel "
+                + "entries, each ONE authored mesh at its own bodies): "
+                + "nothing wired gives back null untouched; a full asset "
+                + "produces frame1/frame2/motors/tensionTie/reels with the "
+                + "right permanence tags (tensionTie \"permanent\", the "
+                + "rest \"temporary\"), and EVERY ENTRY CARRIES ITS "
+                + "BODIES -- each body its own axis plane, its row-major "
+                + "nine, its translation and its DETERMINANT, with body 0's "
+                + "identity written out rather than left implied -- beside "
+                + "a mesh written ONCE; the chin says the tie arrived FUSED "
+                + "and COUNTS the entries and the bodies they carry, and it "
+                + "no longer says every reel spins INDEPENDENTLY about its "
+                + "own axis, which spec 4.5 reversed and which would now "
+                + "describe a build that does the opposite; a reel mesh "
+                + "with no matching axis, and an axis with no matching "
+                + "mesh, each refuse ONLY that one ENTRY, by name, every "
+                + "other entry intact, raised by the same resolver the "
+                + "Machine component reads with; ONE ENTRY AT TWO AXES ten "
+                + "metres apart survives the whole build as one entry of "
+                + "two bodies, is tallied as TWO PHYSICAL REELS in body "
+                + "order, and each body owns only what lies within ITS OWN "
+                + "drum's radius -- a window measured instead from the "
+                + "entry's authored mesh to a later body's axis claims a "
+                + "routing frame five metres away, silently, and every "
+                + "reading of that frame then rides a spinning drum instead "
+                + "of standing still; spoolRadius defaults from reel[0]'s "
+                + "own bounding box when one resolves and from Frame 1's "
+                + "when none does, both named; the reeve factor is ALWAYS "
+                + "named fixed at 1.0 and PROVISIONAL; and Routing (RT)[0] "
+                + "carrying no frames at all is named, by wire, as fatal to "
+                + "every placement rather than left silent.");
         }
         catch (Exception exception)
         {
@@ -3306,9 +3322,9 @@ internal static partial class Program
             Console.WriteLine(
                 "PASS  MechanismCollector routing frame ownership (his "
                 + "wrapped-wire ruling, 2026-09-08: \"i have modelled the "
-                + "wire to wrap around the drums\"), reshaped to a FLAT "
-                + "reel list and routing authored once for the ONE "
-                + "mechanism: a frame within a reel's own radial "
+                + "wire to wrap around the drums\"), over four "
+                + "single-body reel ENTRIES and routing authored once for "
+                + "the ONE mechanism: a frame within a reel's own radial "
                 + "neighbourhood of its axis is owned by that reel; a "
                 + "frame away from every reel is owned by the body; a "
                 + "frame's own origin, xAxis and yAxis are BYTE-IDENTICAL "
@@ -3455,7 +3471,19 @@ internal static partial class Program
                 + "in the machine's OWN frame, so \"how far it reaches "
                 + "behind the cable line\" means something; and the datum is "
                 + "the wire first-frames, never the body origin, which means "
-                + "nothing.");
+                + "nothing. AND THE MIRRORED ELEVENTH REEL IS NOW REFUSED "
+                + "(Task 3, spec 4.4): the fixture authors eleven, the "
+                + "eleventh deliberately mirrored, and the build names it by "
+                + "ENTRY AND BODY as a reflection, drops that entry whole "
+                + "because nothing sound is left in it, and writes TEN reels "
+                + "rather than eleven -- so the bank's idlers are the three "
+                + "pulleys again rather than four. A rotationally symmetric "
+                + "drum reflected about a plane through its own axis is "
+                + "pixel-identical in every still frame and turns the "
+                + "OPPOSITE way for the same take-up, so nothing but the "
+                + "determinant can see it. Every reel that does reach the "
+                + "document carries its BODIES, each with its own "
+                + "determinant.");
         }
         catch (Exception exception)
         {
@@ -42311,11 +42339,17 @@ internal static partial class Program
     ///    own axis is pixel-identical in every still frame and turns the
     ///    OPPOSITE WAY for the same take-up, so only the determinant can
     ///    see it.
-    /// 5. The legacy flat shape (spec 4.7) -- one branch of N meshes against
-    ///    one branch of N planes, which is every definition he has saved --
-    ///    is REFUSED by name and yields no entries at all, rather than being
-    ///    read as one entry whose mesh is every drum joined together and
-    ///    repeated at every axis.
+    /// 5. The legacy flat shape (spec 4.7) -- one branch of N objects
+    ///    against one branch of N planes, which is every definition he has
+    ///    saved -- is REFUSED by name and yields no entries at all, rather
+    ///    than being read as one entry whose mesh is every drum joined
+    ///    together and repeated at every axis.
+    /// 5b. AND A NULL HOLE IN THAT BRANCH DOES NOT BUY ESCAPE. The count
+    ///    that decides is of ITEMS, not of meshes that resolved, because
+    ///    both readers keep a hole in place as a null and a bare null is
+    ///    not warned about: counting resolved meshes would let one hole
+    ///    among his ten drop the count to nine, fall through the test, and
+    ///    read the whole machine wrongly with nothing said at all.
     /// 6. AND THAT REFUSAL DOES NOT FIRE ON A CORRECT MACHINE. The negative
     ///    case here is the sharpest one available: ONE branch of ONE mesh
     ///    against ONE branch of three planes -- the same branch count and
@@ -42561,9 +42595,42 @@ internal static partial class Program
                 string.Join(" | ", legacyWarnings));
         }
 
+        // CHECK 5b: A NULL HOLE IN THAT BRANCH DOES NOT BUY ESCAPE. Ten
+        // objects against ten planes is the legacy shape whether or not
+        // every one of those objects became a mesh: both readers keep a
+        // hole in place as a null, so the ITEM count is what says the
+        // wiring is the old zip. Counting only the meshes that resolved
+        // would drop this branch to nine against ten, fall through the
+        // test, and read his whole machine as one entry of every drum
+        // joined together at ten axes -- and a bare null carries no warning
+        // of its own, so nothing at all would be said. This is the one
+        // fall-through that is BOTH catastrophic and silent.
+        var holedWarnings = new List<string>();
+        object holedMeshes = MechanismListOf(meshType);
+        object holedAxes = MechanismListOf(frameType);
+        for (int k = 0; k < 10; k++)
+        {
+            ((IList)holedMeshes).Add(k == 4 ? null : drumMesh);
+            ((IList)holedAxes).Add(FrameOf(new[] { 0.15 * k, 0.0, 0.0 }, unitX, unitY));
+        }
+        IList holed = Groups(
+            Branches(meshBranchType, holedMeshes),
+            Branches(frameBranchType, holedAxes),
+            holedWarnings);
+        if (holed.Count != 0 ||
+            !holedWarnings.Any(w => w.Contains("OLD flat reading", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "TEN objects against TEN planes in one branch each is the " +
+                "OLD flat shape even when one of those objects is a null " +
+                "hole; the count that matters is of ITEMS, since a hole " +
+                "keeps its place and says nothing. Got " + holed.Count +
+                " entries, warnings: " + string.Join(" | ", holedWarnings));
+        }
+
         // CHECK 6: and it must NOT fire on a correct machine of ONE reel
         // kind -- one branch, one mesh, three planes. Same branch count and
-        // same plane count as the legacy shape; only the mesh count differs.
+        // same plane count as the legacy shape; only the item count differs.
         var singleKindWarnings = new List<string>();
         IList singleKind = Groups(
             Branches(meshBranchType, MechanismListOf(meshType, drumMesh)),
@@ -43813,8 +43880,10 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// Routing frame ownership (7c8db59, unchanged), reshaped to a FLAT
-    /// reel list and a routing wire authored once for the ONE mechanism
+    /// Routing frame ownership (7c8db59, unchanged), over four SINGLE-BODY
+    /// reel entries (Task 3: a single-body entry's body index is its entry
+    /// index, so every ownerReel below is the index it always was) and a
+    /// routing wire authored once for the ONE mechanism
     /// (rather than a per-{side}{mechanism} tree): a reel within another
     /// reel's own radial neighbourhood is owned by that reel; a frame away
     /// from every reel is owned by the body; a frame close to a reel's own
