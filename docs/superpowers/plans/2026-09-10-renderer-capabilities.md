@@ -81,7 +81,24 @@ Copied verbatim in force for every task below.
 The two items that make an orthographic plate a drawing rather than a
 picture. Both small, both blocking nothing, both high value.
 
-## Task 1: Section plane with a filled cut
+## Task 1: Section plane with a filled cut -- DONE (4bf4d46)
+
+> **What the cut face turned out to need: nothing.** The cheap cap in
+> step 5 below was built, photographed and deleted. A section is viewed
+> FACE ON, so a plane whose normal points at the camera fills the frame
+> as a backdrop rather than reading as a cut face; to read as one it
+> would have to be trimmed to the outline of the cut, which is the work
+> the cheap version existed to avoid. And it is not needed here: every
+> vault material in this studio is already `THREE.DoubleSide`, so a
+> clipped closed solid draws its own interior and the cut caps itself.
+> The folklore assumes single-sided materials. A flat POCHE still wants
+> the stencil two-pass, and the cut-fill colour belongs to that wave.
+>
+> Two faults the browser found that the plan did not predict: the offset
+> dial ran -30 to 30 over a barrel 3.2 m deep, so it now takes its range
+> from the shell; and `buildScene` had to re-apply the section, because
+> a clipping plane lives on a material and every mesh a rebuild makes
+> arrives uncut.
 
 **Files:**
 - Modify: `bench/studio/static/studio.js` (clipping setup, Section block
