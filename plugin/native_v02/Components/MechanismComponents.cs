@@ -3264,51 +3264,53 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         parameters.AddGenericParameter(
             "Frame 1",
             "F1",
-            "The mechanism frame, ONE piece, unit-local space. Wire " +
-            "several objects and they are JOINED here into that one piece: " +
-            "an item port given a list makes Grasshopper solve the whole " +
-            "component once per object and keep only the last, which is " +
-            "how a 55 mm bracket once exported in place of a whole frame.",
+            "REFUSING STUB (spec 5.1): Frame 1 MOVED to the Machine " +
+            "component's own Frame 1 (F1) input. This slot is held rather " +
+            "than removed, since Grasshopper archives a wire by index and " +
+            "removing a port silently re-points every wire after it, " +
+            "landing a mesh on Wire Start, Placement, Routing, Frame " +
+            "Meaning or Anchor instead; anything still wired here is " +
+            "refused by name rather than read.",
             GH_ParamAccess.list);
         parameters[2].Optional = true;
 
         parameters.AddGenericParameter(
             "Frame 2",
             "F2",
-            "A second frame part in a DIFFERENT MATERIAL, unit-local " +
-            "space, joined as far as he can join it -- so a list, not " +
-            "necessarily one mesh.",
+            "REFUSING STUB (spec 5.1): Frame 2 MOVED to the Machine " +
+            "component's own Frame 2 (F2) input. Held, not removed, for " +
+            "the same reason as Frame 1 (F1); anything still wired here " +
+            "is refused by name rather than read.",
             GH_ParamAccess.list);
         parameters[3].Optional = true;
 
         parameters.AddGenericParameter(
             "Motors",
             "MO",
-            "The motors, ONE piece, unit-local space. Wire several " +
-            "objects and they are JOINED here into that one piece rather " +
-            "than solving the component once per object.",
+            "REFUSING STUB (spec 5.1): the motors MOVED to the Machine " +
+            "component's own Motors (MO) input. Held, not removed, for " +
+            "the same reason as Frame 1 (F1); anything still wired here " +
+            "is refused by name rather than read.",
             GH_ParamAccess.list);
         parameters[4].Optional = true;
 
         parameters.AddGenericParameter(
             "Reel",
             "RE",
-            "The ten reels, SEPARATE meshes (never joined into Frame 1, " +
-            "since a reel spins and a frame does not), unit-local space, " +
-            "one list, position i pairs with Reel Axis (AX)[i].",
+            "REFUSING STUB (spec 5.1): the reels MOVED to the Machine " +
+            "component's own Reel (RE) input. Held, not removed, for the " +
+            "same reason as Frame 1 (F1); anything still wired here is " +
+            "refused by name rather than read.",
             GH_ParamAccess.list);
         parameters[5].Optional = true;
 
         parameters.AddPlaneParameter(
             "Reel Axis",
             "AX",
-            "One plane per reel, matching Reel (RE) 1:1 by POSITION, " +
-            "unit-local space: the plane's Z is the rotation axis. Its X " +
-            "and Y are carried through into the document UNCHANGED -- " +
-            "his ruling -- because he authors them deliberately to fix " +
-            "the spin direction; never re-derived or normalised away. A " +
-            "reel with no matching axis here refuses ONLY that reel: the " +
-            "axis is authored, never inferred.",
+            "REFUSING STUB (spec 5.1): the reel axes MOVED to the " +
+            "Machine component's own Reel Axis (AX) input. Held, not " +
+            "removed, for the same reason as Frame 1 (F1); anything " +
+            "still wired here is refused by name rather than read.",
             GH_ParamAccess.list);
         parameters[6].Optional = true;
 
@@ -3392,6 +3394,30 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "comes away.",
             GH_ParamAccess.list);
         parameters[11].Optional = true;
+
+        // TWO NEW PORTS, APPENDED (spec 3.0, 5.1): nothing above this line
+        // moves or is renumbered, so an archived wire keeps the slot it
+        // left. Neither is read by SolveInstance yet; a later task resolves
+        // what they mean. Appending them here, unread, means their index
+        // never moves under whichever task does.
+        parameters.AddTextParameter(
+            "Machine", "MA",
+            "NEW: the bench.machine/1 document this study cites, wired " +
+            "from the Machine component's own Machine (MC) output. A " +
+            "study cites exactly ONE machine, by id, and this is that " +
+            "citation. Not yet resolved here.",
+            GH_ParamAccess.item, string.Empty);
+        parameters[12].Optional = true;
+
+        parameters.AddNumberParameter(
+            "Reeve Per Wire", "RW",
+            "NEW, OPTIONAL, tree {wire}: a per-wire override of the " +
+            "machine's own reeve default (RV on the Machine component). " +
+            "Wire it only for the wire(s) whose mechanical advantage " +
+            "genuinely differs from the machine's stated default; every " +
+            "other wire keeps that default. Not yet resolved here.",
+            GH_ParamAccess.tree);
+        parameters[13].Optional = true;
     }
 
     private static readonly ComponentValueListSpec[] MeaningValueLists =
@@ -3606,60 +3632,101 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         return MechanismCollector.JoinMeshes(parts);
     }
 
+    /// <summary>
+    /// A port that has MOVED to the other component (spec 3.0). Its slot
+    /// is held rather than removed, because Grasshopper archives a wire by
+    /// INDEX and removing a port silently re-points every wire after it
+    /// onto whichever port now sits in that slot -- and the ports it
+    /// re-points onto are the permissive ones, a text port casting from
+    /// almost anything, a list landing on an item port and making the
+    /// whole component solve once per item and keep the last. Anything
+    /// wired here is refused BY NAME: an archived definition gets a
+    /// sentence telling him where the port went, instead of a document
+    /// that quietly carries the wrong thing, or silence with no
+    /// explanation at all.
+    ///
+    /// READS WITH THE ACCESS THE PORT WAS REGISTERED WITH, passed in
+    /// rather than assumed. GetDataList against an item- or tree-access
+    /// parameter throws, or silently reads nothing, which would let a
+    /// wired stub through with no warning; a port whose original access
+    /// was item would need GetData, and one whose access was tree would
+    /// need GetDataTree, counted across every branch, neither of which
+    /// this helper implements yet because neither is needed yet: every
+    /// stub this task creates -- TT and AN on the Machine component, and
+    /// F1, F2, MO, RE and AX here on the Mechanism component -- was
+    /// registered GH_ParamAccess.list, so GetDataList is correct for all
+    /// seven. The access is asserted rather than silently assumed, so a
+    /// future withdrawn port registered item or tree fails loudly here at
+    /// the call site instead of quietly reading nothing and letting a
+    /// wired-but-unread port through with no message.
+    /// </summary>
+    private static bool RefuseMovedPort(
+        IGH_DataAccess data, int at, GH_ParamAccess access, string label,
+        string wentWhere, List<string> warnings)
+    {
+        if (access != GH_ParamAccess.list)
+        {
+            throw new InvalidOperationException(
+                $"{label} is registered {access}, not list. " +
+                "RefuseMovedPort reads with GetDataList, which throws or " +
+                "silently reads nothing against an item or tree " +
+                "parameter; read it with GetData or GetDataTree instead " +
+                "and count what arrived by hand.");
+        }
+        var junk = new List<IGH_Goo>();
+        if (!data.GetDataList(at, junk) || junk.Count == 0)
+            return false;
+        warnings.Add(
+            $"{label} has MOVED to the {wentWhere}, and {junk.Count} " +
+            "object(s) are still wired to it here. Nothing wired to this " +
+            "port is read. Move the wire and the message goes.");
+        return true;
+    }
+
+    /// <summary>The Machine component's own withdrawn ports (TT, AN) share this reader; see <see cref="RefuseMovedPort"/>.</summary>
+    internal static bool RefuseMovedPortPublic(
+        IGH_DataAccess data, int at, GH_ParamAccess access, string label,
+        string wentWhere, List<string> warnings) =>
+        RefuseMovedPort(data, at, access, label, wentWhere, warnings);
+
     private MechanismAssetInput ReadAsset(IGH_DataAccess data, List<string> warnings, List<string> notes)
     {
         MechanismMesh? tt = ReadOnePiece(data, 1, "Tension Tie (TT)", warnings, notes, out bool ttBrep);
-        MechanismMesh? f1 = ReadOnePiece(data, 2, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
 
-        var f2Items = new List<object>();
-        data.GetDataList(3, f2Items);
-        var f2 = new List<MechanismMesh>(f2Items.Count);
-        var f2Brep = new List<bool>(f2Items.Count);
-        for (int i = 0; i < f2Items.Count; i++)
-        {
-            if (!TryMeshOrBrep(f2Items[i], out MechanismMesh? m, out bool b) || m is null)
-            {
-                warnings.Add($"Frame 2 (F2)[{i}] did not resolve to a mesh or a closed Brep; skipped.");
-                continue;
-            }
-            f2.Add(m);
-            f2Brep.Add(b);
-        }
+        // F1, F2, MO, RE and AX MOVED to the Machine component (spec 5.1):
+        // the slots stay, GH_ParamAccess.list exactly as they were
+        // registered, so an archived wire still connects and can be
+        // refused by name rather than left dangling with no explanation.
+        _ = RefuseMovedPort(
+            data, 2, GH_ParamAccess.list, "Frame 1 (F1)",
+            "the Machine component's own Frame 1 (F1) input", warnings);
+        _ = RefuseMovedPort(
+            data, 3, GH_ParamAccess.list, "Frame 2 (F2)",
+            "the Machine component's own Frame 2 (F2) input", warnings);
+        _ = RefuseMovedPort(
+            data, 4, GH_ParamAccess.list, "Motors (MO)",
+            "the Machine component's own Motors (MO) input", warnings);
 
-        MechanismMesh? mo = ReadOnePiece(data, 4, "Motors (MO)", warnings, notes, out bool moBrep);
         MechanismMesh? an = ReadOnePiece(data, 11, "Anchor (AN)", warnings, notes, out bool anBrep);
 
-        var reItems = new List<object>();
-        data.GetDataList(5, reItems);
-        var reMeshes = new List<MechanismMesh?>(reItems.Count);
-        var reBrep = new List<bool>(reItems.Count);
-        for (int i = 0; i < reItems.Count; i++)
-        {
-            if (!TryMeshOrBrep(reItems[i], out MechanismMesh? m, out bool b))
-            {
-                warnings.Add($"Reel (RE)[{i}] did not resolve to a mesh or a closed Brep; treated as missing.");
-                reMeshes.Add(null);
-                reBrep.Add(false);
-                continue;
-            }
-            reMeshes.Add(m);
-            reBrep.Add(b);
-        }
+        _ = RefuseMovedPort(
+            data, 5, GH_ParamAccess.list, "Reel (RE)",
+            "the Machine component's own Reel (RE) input", warnings);
+        _ = RefuseMovedPort(
+            data, 6, GH_ParamAccess.list, "Reel Axis (AX)",
+            "the Machine component's own Reel Axis (AX) input", warnings);
 
-        var axItems = new List<Plane>();
-        data.GetDataList(6, axItems);
-        var axes = new List<MechanismFrame?>(axItems.Count);
-        foreach (Plane plane in axItems)
-        {
-            axes.Add(new MechanismFrame(
-                new[] { plane.Origin.X, plane.Origin.Y, plane.Origin.Z },
-                new[] { plane.XAxis.X, plane.XAxis.Y, plane.XAxis.Z },
-                new[] { plane.YAxis.X, plane.YAxis.Y, plane.YAxis.Z },
-                new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
-        }
-
+        // Frame1, Frame2, Motors, the reels and their axes are always
+        // null/empty here now, whatever used to be wired to the five
+        // stubs above: their function moved to the Machine component, and
+        // a later task reads them back in through the new Machine (MA)
+        // citation port instead of local wires.
         return new MechanismAssetInput(
-            f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep, reMeshes, reBrep, axes,
+            null, false,
+            Array.Empty<MechanismMesh>(), Array.Empty<bool>(),
+            null, false,
+            tt, ttBrep,
+            Array.Empty<MechanismMesh?>(), Array.Empty<bool>(), Array.Empty<MechanismFrame?>(),
             an, anBrep);
     }
 
@@ -3984,18 +4051,26 @@ public sealed class MachineComponent : NativeComponentBase
         parameters.AddGenericParameter(
             "Tension Tie",
             "TT",
-            "The tension tie, one piece; several objects are joined. It " +
-            "travels INSIDE the machine, so when you weld it into the " +
-            "anchor wire it there instead and leave this empty.",
+            "REFUSING STUB (spec 3.3): the tension tie MOVED to the " +
+            "Mechanism component's own Tension Tie (TT) input, because it " +
+            "is study-side permanent work, not machine. This slot is held " +
+            "rather than removed, since Grasshopper archives a wire by " +
+            "index and removing a port silently re-points every wire " +
+            "after it; anything still wired here is refused by name " +
+            "rather than read.",
             GH_ParamAccess.list);
         parameters[3].Optional = true;
 
         parameters.AddGenericParameter(
             "Anchor",
             "AN",
-            "The foundation anchor, one piece; several objects are joined. " +
-            "+Z up, X along the row, its own origin at the centre of the " +
-            "cables it holds. This is the body a study stamps once a side.",
+            "REFUSING STUB (spec 3.3): the anchor MOVED to the Mechanism " +
+            "component's own Anchor (AN) input, because it is study-side " +
+            "permanent work, not machine. This slot is held rather than " +
+            "removed, since Grasshopper archives a wire by index and " +
+            "removing a port silently re-points every wire after it; " +
+            "anything still wired here is refused by name rather than " +
+            "read.",
             GH_ParamAccess.list);
         parameters[4].Optional = true;
 
@@ -4045,6 +4120,42 @@ public sealed class MachineComponent : NativeComponentBase
             GH_ParamAccess.item,
             MechanismCollector.DefaultRoutingFrameMeaning);
         parameters[11].Optional = true;
+
+        // THREE NEW PORTS, APPENDED (spec 3.0, 3.1): nothing above this
+        // line moves or is renumbered, so an archived wire keeps the slot
+        // it left.
+        parameters.AddPlaneParameter(
+            "Wire Start", "WS",
+            "OPTIONAL, tree {wire}: ONE plane per wire, the wire's true " +
+            "start BEFORE any offset. Wire it when you have pushed the " +
+            "routing planes off the machine's own surfaces so the drawn " +
+            "cable stops cutting the drums. That offset moves planes[0], " +
+            "and planes[0] is this machine's DATUM, so without this the " +
+            "offset moves every study placed against it.",
+            GH_ParamAccess.tree);
+        parameters[12].Optional = true;
+
+        parameters.AddTextParameter(
+            "Machine Id", "ID",
+            "The MINTED CODE a study cites, and the one thing about this " +
+            "machine that must never change. Name is the label and may be " +
+            "renamed freely; the id is the identity. They are separate " +
+            "because a study citing a missing machine renders nothing at " +
+            "all, silently, so renaming must not be able to orphan one.",
+            GH_ParamAccess.item, string.Empty);
+        parameters[13].Optional = false;
+
+        parameters.AddNumberParameter(
+            "Reeve", "RV",
+            "The mechanical advantage of one wire's reeving through its " +
+            "block, this machine's DEFAULT. A wheel that MOVES WITH THE " +
+            "LOAD gives advantage; one that merely guides gives none, and " +
+            "no amount of geometry can tell them apart, so this is " +
+            "authored. Param's unit is 4.0. A wrong value makes every reel " +
+            "spin at the wrong RATE while geometry, wire paths and timing " +
+            "all stay correct, so nothing looks broken.",
+            GH_ParamAccess.item, 4.0);
+        parameters[14].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
@@ -4161,8 +4272,18 @@ public sealed class MachineComponent : NativeComponentBase
     private MechanismAssetInput ReadAsset(
         IGH_DataAccess data, List<string> warnings, List<string> notes)
     {
-        MechanismMesh? tt = ReadOnePiece(data, 3, "Tension Tie (TT)", warnings, notes, out bool ttBrep);
-        MechanismMesh? an = ReadOnePiece(data, 4, "Anchor (AN)", warnings, notes, out bool anBrep);
+        // TT and AN MOVED to the Mechanism component (spec 3.3): the slots
+        // stay, GH_ParamAccess.list exactly as they were registered, so an
+        // archived wire still connects and can be refused by name rather
+        // than left dangling with no explanation.
+        _ = MechanismCollectorComponent.RefuseMovedPortPublic(
+            data, 3, GH_ParamAccess.list, "Tension Tie (TT)",
+            "the Mechanism component's own Tension Tie (TT) input",
+            warnings);
+        _ = MechanismCollectorComponent.RefuseMovedPortPublic(
+            data, 4, GH_ParamAccess.list, "Anchor (AN)",
+            "the Mechanism component's own Anchor (AN) input",
+            warnings);
         MechanismMesh? f1 = ReadOnePiece(data, 5, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
 
         var f2Items = new List<object>();
@@ -4212,9 +4333,19 @@ public sealed class MachineComponent : NativeComponentBase
                 new[] { plane.ZAxis.X, plane.ZAxis.Y, plane.ZAxis.Z }));
         }
 
+        // TensionTie and Anchor are always null here now: TT and AN are
+        // refusing stubs above, never read, so this component can no
+        // longer hand BuildMachine a non-null tie or anchor no matter what
+        // is wired to the deprecated ports (spec 3.3). That closes the gap
+        // ValidateMachineDocument's own doc comment names: its fixture
+        // already builds MechanismAssetInput with a null tie and anchor
+        // (calling BuildMachine directly, beneath this component), so the
+        // footprint literals it pins were never inflated by them and stay
+        // unchanged; what changes is that THIS reader can no longer be the
+        // one that inflates them (spec 3.4).
         return new MechanismAssetInput(
-            f1, f1Brep, f2, f2Brep, mo, moBrep, tt, ttBrep,
-            reMeshes, reBrep, axes, an, anBrep);
+            f1, f1Brep, f2, f2Brep, mo, moBrep, null, false,
+            reMeshes, reBrep, axes, null, false);
     }
 
     private MechanismMesh? ReadOnePiece(
