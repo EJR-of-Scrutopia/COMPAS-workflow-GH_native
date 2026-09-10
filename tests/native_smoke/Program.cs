@@ -3358,6 +3358,62 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismWindingRadiusScatter(plugin);
+            Console.WriteLine(
+                "PASS  The winding radius scatter gate (spec 8.3 to 8.5, "
+                + "Task 8), on the MACHINE build path where reels exist: "
+                + "each reel publishes a scatter figure beside its radius, "
+                + "and that figure is the ratio of the frames near it that "
+                + "DISAGREE with the radius it publishes to the frames that "
+                + "agree, never the spread of the frames ownership left "
+                + "behind. Measured on his own exported 2 Sided Vault "
+                + "machine on 2026-09-09: his seven spools' owned frames "
+                + "sweep 0.0200 m to 0.0600 m about drums publishing "
+                + "0.0330 m, a MEDIAN OF A SWEEP rather than a radius, and "
+                + "read 4.00 to 4.24 by this figure, while pulley 7 -- 1314 "
+                + "frames inside 2 per cent of one radius, which is what a "
+                + "cable on a barrel looks like -- reads 0.041. The gate at "
+                + "0.40 is the geometric centre of those two measurements, "
+                + "so the real wrap sits a factor of ten below it and the "
+                + "real defect a factor of ten above. Five drums here: a "
+                + "CORRECT wrap with a real lead-off frame is SILENT (1 "
+                + "frame in 37 disagrees, and a warning that fires on "
+                + "correct input is a defect equal in seriousness to one "
+                + "that misses a fault); his own 0.0200 to 0.0600 sweep is "
+                + "NAMED at 5.0; the axial half of ownership is live, so "
+                + "twenty frames half a metre past a drum's end face at a "
+                + "radius unlike its own are counted against it; and a reel "
+                + "with nothing to measure reads NULL rather than a zero "
+                + "that would pass as \"measured, and every frame agreed\". "
+                + "THE CRUX, proved by the drum a survivor spread cannot "
+                + "see: twenty-four frames at exactly one radius with "
+                + "eighteen more lifted clear of the drum, where the "
+                + "ownership window throws the lifted ones out BEFORE any "
+                + "statistic is taken and the survivors' spread reads zero "
+                + "per cent, tighter than the honest pulley's own two -- the "
+                + "harder the truncation, the tighter the remainder looks -- "
+                + "while rejected-against-agreeing reads 0.75 and names it. "
+                + "A named reel keeps its radius EXACTLY as measured, "
+                + "marked windingRadiusUnfitToAnimate and never replaced by "
+                + "a fallback nobody could catch, and a reel that PASSES "
+                + "gains nothing at all: no confidence, no verdict, no fit "
+                + "flag, since a wrong number carrying a certificate of "
+                + "correctness is trusted where a bare wrong number is "
+                + "questioned. The failing reels are gathered into ONE chin "
+                + "line naming each with its figures, carrying the likely "
+                + "cause for him to confirm on his own canvas: an offset "
+                + "along a direction that ROTATES WITH THE HELIX rather "
+                + "than radially, inward on one side of every turn and "
+                + "outward on the other, which is a fix in his offset step "
+                + "and not in the plugin.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismWindingRadiusScatter: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismPlacementRefit(plugin);
             Console.WriteLine(
                 "PASS  MechanismCollector placement, the refit and its "
@@ -45454,6 +45510,443 @@ internal static partial class Program
                         + "no owner fields at all.");
                 }
             });
+    }
+
+    /// <summary>
+    /// THE WINDING RADIUS SCATTER GATE (spec 8.3 to 8.5, Task 8): what the
+    /// machine document must ADMIT about the radius it publishes.
+    ///
+    /// WHY THIS EXISTS, measured on his exported 2 Sided Vault machine on
+    /// 2026-09-09. Each reel publishes a windingRadius and the studio spins
+    /// that drum at a rate computed from it, so a wrong radius is a wrong
+    /// spin rate on geometry that still looks right. His seven spools'
+    /// owned routing frames sweep 0.0200 m to 0.0600 m about their own
+    /// axes, and the 0.0330 m they publish is the MEDIAN OF THAT SWEEP
+    /// rather than a radius at all. Pulley 7 in the same file holds all its
+    /// frames inside 2 per cent of one radius, which is what a cable on a
+    /// barrel looks like. The measurement code is not the bug; publishing
+    /// the two identically is.
+    ///
+    /// THIS RUNS ON THE MACHINE BUILD PATH, DELIBERATELY. Route ownership
+    /// is dead on a study build since Task 3 stubbed the collector's Reel
+    /// (RE) and Reel Axis (AX) ports, so BuildReelNeighbourhoods is empty
+    /// there and every frame classifies as "body" before any geometry is
+    /// read; that gap is the plan's own running DEFER, registered in
+    /// <see cref="ValidateMechanismRouteOwnership"/>, and is not this
+    /// check's to close. BuildMachine is where reels exist, so this fixture
+    /// drives BuildMachine and reads the reels off the machine document it
+    /// wrote.
+    ///
+    /// FIVE DRUMS, EACH A FLANGED SPOOL of flange radius 0.06 m with real
+    /// end faces (z 0 to 0.10), their axes 1 m apart so no drum can claim
+    /// another's frames:
+    ///
+    ///   ENTRY 0, A CORRECT WRAP, AND IT MUST BE SILENT. Thirty-six frames
+    ///     at one radius of 0.04 m, plus ONE lead-off frame at 0.065 m
+    ///     where the wire leaves the drum. The lead-off is refused by
+    ///     ownership and disagrees with the published radius, so the
+    ///     scatter here is 1/36 and NOT zero: the check is that a real
+    ///     wrap with a real departure stays well under the gate, since a
+    ///     warning that fires on correct input is a defect equal in
+    ///     seriousness to one that misses a fault.
+    ///   ENTRY 1, HIS SHAPE. Thirty-six frames at 0.04 + 0.02 cos(theta),
+    ///     which sweeps 0.0200 m to 0.0600 m -- his own two endpoints
+    ///     exactly, and what a barrel near 0.040 m offset by 0.020 m along
+    ///     a direction that ROTATES WITH THE HELIX produces. Six frames
+    ///     agree with the 0.04 m median, thirty do not: scatter 5.0.
+    ///   ENTRY 2, THE TRUNCATED SWEEP, and it is why the gate counts
+    ///     REJECTED FRAMES rather than the spread of the survivors (spec
+    ///     8.4). Twenty-four frames at exactly 0.04 m and eighteen lifted
+    ///     clear of the drum at 0.065 m. The ownership window cuts the
+    ///     lifted ones off BEFORE any statistic is taken, so the survivors'
+    ///     spread is ZERO PER CENT -- tighter than the honest pulley's own
+    ///     2 per cent -- while three frames in every seven near the drum
+    ///     are not on it. A spread gate cannot see this at any threshold.
+    ///     Rejected-against-agreeing reads 0.75 and names it.
+    ///   ENTRY 3, THE AXIAL HALF. Twenty frames at 0.04 m between the
+    ///     faces and twenty at 0.055 m out at z = 0.5 m, well past the end
+    ///     face: inside the drum's radius, so a radial test alone hands
+    ///     them to it, and refused by the axial half of ownership. They
+    ///     also disagree with the published radius, which is what makes
+    ///     them count: an axial refusal AT the published radius is left as
+    ///     agreement on purpose, because a wire threading past a drum's end
+    ///     at that drum's own radius is a neighbour's wire far more often
+    ///     than it is this drum's defect.
+    ///   ENTRY 4, NOTHING TO MEASURE. No frame near it, so its radius comes
+    ///     off its own mesh and its scatter is NULL rather than zero. Zero
+    ///     would read as "measured, and every frame agreed" -- the
+    ///     strongest claim in the document made by its weakest number.
+    ///
+    /// WHAT THE FAILING ROWS CARRY, AND WHAT THEY DELIBERATELY DO NOT
+    /// (spec 8.5). windingRadius is left EXACTLY as measured, not replaced
+    /// by a fallback: an invented number in a document that reads as a
+    /// measurement is one no reader can catch. The row gains
+    /// windingRadiusUnfitToAnimate, and the passing rows gain NOTHING --
+    /// no confidence, no verdict, no "fit" flag. A wrong number carrying a
+    /// certificate of correctness is trusted where a bare wrong number is
+    /// questioned, so what a passing reel gets is silence, and this check
+    /// asserts that absence rather than leaving it to a reader.
+    ///
+    /// WHAT THIS DOES NOT PROVE. That the gate catches a sweep on a drum
+    /// whose mesh stops AT the wire, a grooved sheave with no cheek: there
+    /// the wandering frames leave the ownership neighbourhood altogether
+    /// rather than entering the numerator. Every drum here is flanged,
+    /// which is the shape his seven spools have and the shape the defect
+    /// was found on. Nor does it prove anything about a study document,
+    /// for the reason given above.
+    /// </summary>
+    private static void ValidateMechanismWindingRadiusScatter(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo buildMachine = RequirePublicStatic(collectorType, "BuildMachine");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        // A FLANGED DRUM: its own mesh reaches Flange from its axis and its
+        // two end faces sit at z 0 and z FaceHeight, so the drum has real
+        // LENGTH. A drum modelled flat owns nothing at all, and every
+        // assertion below would read backwards.
+        const double Flange = 0.06;
+        const double FaceHeight = 0.10;
+        const double Barrel = 0.04;
+        const double SweepAmplitude = 0.02;
+        const double LiftedClear = 0.065;
+        const double PastTheFace = 0.5;
+        const double WrapHeight = 0.05;
+        double[][] Drum(double centre) => new[]
+        {
+            new[] { centre + Flange, 0.0, 0.0 },
+            new[] { centre - Flange, 0.0, 0.0 },
+            new[] { centre, Flange, 0.0 },
+            new[] { centre, -Flange, 0.0 },
+            new[] { centre + Flange, 0.0, FaceHeight },
+            new[] { centre - Flange, 0.0, FaceHeight },
+            new[] { centre, Flange, FaceHeight },
+            new[] { centre, -Flange, FaceHeight },
+        };
+        object DrumAxis(double centre) => FrameOf(new[] { centre, 0.0, 0.0 });
+        object WrapFrame(double centre, double radius, double degrees, double height) =>
+            FrameOf(new[]
+            {
+                centre + (radius * Math.Cos(degrees * Math.PI / 180.0)),
+                radius * Math.Sin(degrees * Math.PI / 180.0),
+                height,
+            });
+
+        // ENTRY 0: a correct wrap, plus the one frame where the wire leaves.
+        var wire0 = new List<object?>();
+        for (int k = 0; k < 36; k++)
+            wire0.Add(WrapFrame(0.0, Barrel, k * 10.0, WrapHeight));
+        wire0.Add(WrapFrame(0.0, LiftedClear, 0.0, WrapHeight));
+
+        // ENTRY 1: his own sweep, 0.0200 m to 0.0600 m about a drum that
+        // will publish 0.0400 m.
+        var wire1 = new List<object?>();
+        for (int k = 0; k < 36; k++)
+        {
+            double radius = Barrel + (SweepAmplitude * Math.Cos(k * 10.0 * Math.PI / 180.0));
+            wire1.Add(WrapFrame(1.0, radius, k * 10.0, WrapHeight));
+        }
+
+        // ENTRY 2: a tight core the ownership window left behind, and the
+        // arc that lifted clear of the drum.
+        var wire2 = new List<object?>();
+        for (int k = 0; k < 24; k++)
+            wire2.Add(WrapFrame(2.0, Barrel, k * 15.0, WrapHeight));
+        for (int k = 0; k < 18; k++)
+            wire2.Add(WrapFrame(2.0, LiftedClear, k * 20.0, WrapHeight));
+
+        // ENTRY 3: half a wrap, half a run past the end face at a radius
+        // unlike the drum's own.
+        var wire3 = new List<object?>();
+        for (int k = 0; k < 20; k++)
+            wire3.Add(WrapFrame(3.0, Barrel, k * 18.0, WrapHeight));
+        for (int k = 0; k < 20; k++)
+            wire3.Add(WrapFrame(3.0, 0.055, k * 18.0, PastTheFace));
+
+        var wires = new List<object?>
+        {
+            Activator.CreateInstance(routingWireType, 0, MechanismListOf(frameType, wire0.ToArray()))!,
+            Activator.CreateInstance(routingWireType, 1, MechanismListOf(frameType, wire1.ToArray()))!,
+            Activator.CreateInstance(routingWireType, 2, MechanismListOf(frameType, wire2.ToArray()))!,
+            Activator.CreateInstance(routingWireType, 3, MechanismListOf(frameType, wire3.ToArray()))!,
+        };
+
+        // WIRES 4, 5 AND 6 CARRY A FRAME EACH, nowhere near any drum. A
+        // wire with no frames at all is named as fatal to every placement,
+        // and that message is not this check's subject.
+        for (int w = 4; w < 7; w++)
+        {
+            wires.Add(Activator.CreateInstance(
+                routingWireType,
+                w,
+                MechanismListOf(frameType, FrameOf(new[] { 50.0 + w, 50.0, 50.0 })))!);
+        }
+        object routing = MechanismListOf(routingWireType, wires.ToArray());
+
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(Drum(0.0)),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismReelEntriesFlat(
+                plugin, meshType, frameType, new List<string>(),
+                (Mesh(Drum(0.0)), DrumAxis(0.0)),
+                (Mesh(Drum(1.0)), DrumAxis(1.0)),
+                (Mesh(Drum(2.0)), DrumAxis(2.0)),
+                (Mesh(Drum(3.0)), DrumAxis(3.0)),
+                (Mesh(Drum(9.0)), DrumAxis(9.0))),
+            null,
+            false)!;
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)buildMachine.Invoke(
+            null,
+            new object?[]
+            {
+                asset, routing, "MCH-SCATTER", "scatter fixture winch",
+                4.0, "centreline", warnings, notes,
+            })!;
+
+        using JsonDocument doc = JsonDocument.Parse(document);
+        JsonElement reels = doc.RootElement.GetProperty("machine").GetProperty("reels");
+        if (reels.GetArrayLength() != 5)
+        {
+            throw new InvalidOperationException(
+                "the fixture must produce five reel entries; got "
+                + reels.GetArrayLength() + ".");
+        }
+
+        double ScatterOf(int entry)
+        {
+            JsonElement scatter = reels[entry].GetProperty("windingRadiusScatter");
+            if (scatter.ValueKind != JsonValueKind.Number)
+            {
+                throw new InvalidOperationException(
+                    $"reel entry {entry} must publish a NUMBER for "
+                    + "windingRadiusScatter; got " + scatter.ValueKind + ".");
+            }
+            return scatter.GetDouble();
+        }
+        int CountOf(int entry, string field) =>
+            reels[entry].GetProperty(field).GetInt32();
+        bool MarkedUnfit(int entry) =>
+            reels[entry].TryGetProperty("windingRadiusUnfitToAnimate", out JsonElement mark) &&
+            mark.ValueKind == JsonValueKind.True;
+
+        // 1. THE CORRECT WRAP IS SILENT, and its scatter is not zero. The
+        // one frame where the wire leaves the drum is refused by ownership
+        // and disagrees with the radius, so the figure has to be small
+        // rather than empty, or this fixture would only be proving that
+        // nothing was measured at all.
+        double correct = ScatterOf(0);
+        if (CountOf(0, "windingRadiusAgreeing") != 36 || CountOf(0, "windingRadiusDisagreeing") != 1)
+        {
+            throw new InvalidOperationException(
+                "the correct wrap must read 36 frames agreeing with its own "
+                + "published radius and exactly ONE disagreeing, the frame "
+                + "where the wire leaves the drum; got "
+                + CountOf(0, "windingRadiusAgreeing") + " and "
+                + CountOf(0, "windingRadiusDisagreeing") + ".");
+        }
+        if (correct >= 0.25)
+        {
+            throw new InvalidOperationException(
+                "a CORRECT wrap with a real lead-off frame must sit far "
+                + "under the gate, not merely under it; got scatter "
+                + correct.ToString("0.####", CultureInfo.InvariantCulture) + ".");
+        }
+        if (MarkedUnfit(0))
+        {
+            throw new InvalidOperationException(
+                "a correct wrap must NOT be marked unfit to animate; a "
+                + "warning that fires on correct input is a defect equal in "
+                + "seriousness to one that misses a fault.");
+        }
+
+        // 2. NO PASSING REEL IS BLESSED (spec 8.5). Absence of the mark is
+        // the only thing a passing reel gets: a "fit": true, a confidence
+        // or a verdict on the row would make a wrong number that squeaked
+        // under the gate MORE trusted than a bare one.
+        foreach (string blessing in new[]
+        {
+            "windingRadiusConfidence", "windingRadiusVerdict", "windingRadiusFit",
+            "windingRadiusFitToAnimate", "windingRadiusQuality",
+        })
+        {
+            if (reels[0].TryGetProperty(blessing, out _))
+            {
+                throw new InvalidOperationException(
+                    $"reel entry 0 carries \"{blessing}\": a reel that passes "
+                    + "the gate must be told about in SILENCE. A wrong number "
+                    + "carrying a certificate of correctness is trusted where "
+                    + "a bare wrong number is questioned.");
+            }
+        }
+
+        // 3. HIS OWN SHAPE IS NAMED, and the number it published is still
+        // there, unreplaced.
+        if (CountOf(1, "windingRadiusAgreeing") != 6 || CountOf(1, "windingRadiusDisagreeing") != 30)
+        {
+            throw new InvalidOperationException(
+                "the swept drum must read 6 frames agreeing with the median "
+                + "it publishes and 30 disagreeing; got "
+                + CountOf(1, "windingRadiusAgreeing") + " and "
+                + CountOf(1, "windingRadiusDisagreeing") + ".");
+        }
+        if (!MarkedUnfit(1))
+        {
+            throw new InvalidOperationException(
+                "a drum whose frames sweep 0.0200 m to 0.0600 m publishes a "
+                + "MEDIAN OF A SWEEP, not a radius, and must be marked unfit "
+                + "to animate; scatter read "
+                + ScatterOf(1).ToString("0.####", CultureInfo.InvariantCulture) + ".");
+        }
+        double published = reels[1].GetProperty("windingRadius").GetDouble();
+        if (Math.Abs(published - Barrel) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "the unfit radius must be left EXACTLY as measured, never "
+                + "replaced by a fallback: an invented number in a document "
+                + "that reads as a measurement is one no reader can catch. "
+                + "Expected the sweep's own median "
+                + Barrel.ToString("0.####", CultureInfo.InvariantCulture)
+                + "; got " + published.ToString("0.######", CultureInfo.InvariantCulture) + ".");
+        }
+        if (reels[1].GetProperty("windingRadiusSource").GetString() != "frames")
+        {
+            throw new InvalidOperationException(
+                "an unfit radius is still a MEASURED one and must say so; "
+                + "relabelling it \"mesh\" would hide that frames were read.");
+        }
+
+        // 4. THE TRUNCATED SWEEP, which is the whole argument for counting
+        // rejected frames instead of measuring the survivors. Every frame
+        // this drum OWNS sits at exactly one radius, so the survivors'
+        // spread is zero and no gate on it can ever fire; three frames in
+        // every seven near the drum are off it.
+        if (CountOf(2, "windingRadiusAgreeing") != 24 || CountOf(2, "windingRadiusDisagreeing") != 18)
+        {
+            throw new InvalidOperationException(
+                "the truncated sweep must read 24 agreeing and 18 "
+                + "disagreeing; got " + CountOf(2, "windingRadiusAgreeing")
+                + " and " + CountOf(2, "windingRadiusDisagreeing") + ".");
+        }
+        if (CountOf(2, "windingRadiusSamples") != 24)
+        {
+            throw new InvalidOperationException(
+                "the truncated sweep's OWNED frames -- the ones a survivor "
+                + "spread would be taken over -- must be the 24 at one "
+                + "radius, with the lifted arc already thrown out; got "
+                + CountOf(2, "windingRadiusSamples") + ".");
+        }
+        if (!MarkedUnfit(2))
+        {
+            throw new InvalidOperationException(
+                "THE CRUX (spec 8.4): this drum's surviving frames all sit "
+                + "at ONE radius, so their spread is zero per cent, tighter "
+                + "than a real pulley's own 2 per cent -- and eighteen of the "
+                + "forty-two frames near it lifted clear of it. A gate on the "
+                + "survivors passes this at any threshold, because the harder "
+                + "the truncation the tighter the remainder looks. Scatter "
+                + "read " + ScatterOf(2).ToString("0.####", CultureInfo.InvariantCulture)
+                + " and did not fire.");
+        }
+
+        // 5. THE AXIAL HALF OF OWNERSHIP IS LIVE. A radius-only test hands
+        // these twenty frames to the drum, since they sit inside its
+        // radius; they are half a metre past its end face.
+        if (CountOf(3, "windingRadiusAgreeing") != 20 || CountOf(3, "windingRadiusDisagreeing") != 20)
+        {
+            throw new InvalidOperationException(
+                "the frames past the end face must be counted against the "
+                + "drum that refused them: expected 20 agreeing and 20 "
+                + "disagreeing; got " + CountOf(3, "windingRadiusAgreeing")
+                + " and " + CountOf(3, "windingRadiusDisagreeing") + ".");
+        }
+        if (!MarkedUnfit(3))
+        {
+            throw new InvalidOperationException(
+                "ownership is radial AND axial, so frames refused for "
+                + "sitting past a drum's own faces at a radius unlike its "
+                + "own must count as rejected; scatter read "
+                + ScatterOf(3).ToString("0.####", CultureInfo.InvariantCulture) + ".");
+        }
+
+        // 6. NOTHING TO MEASURE READS NULL, NOT ZERO.
+        if (reels[4].GetProperty("windingRadiusScatter").ValueKind != JsonValueKind.Null)
+        {
+            throw new InvalidOperationException(
+                "a reel that owns no frame has nothing to admit, and a "
+                + "scatter of zero there would read as \"measured, and every "
+                + "frame agreed\" -- the strongest claim in the document made "
+                + "by its weakest number. Got "
+                + reels[4].GetProperty("windingRadiusScatter").ValueKind + ".");
+        }
+        if (reels[4].GetProperty("windingRadiusSource").GetString() != "mesh" ||
+            MarkedUnfit(4))
+        {
+            throw new InvalidOperationException(
+                "a reel with no frames must still say its radius came off "
+                + "its own mesh, and must not be marked unfit by a gate that "
+                + "measured nothing.");
+        }
+
+        // 7. THE READER IS TOLD, BY NAME, IN ONE LINE. A document field
+        // nobody reads is not a report: the reels that failed are named in
+        // the chin, with their figures, and the reels that passed are not.
+        string[] unfitLines = warnings
+            .Where(w => w.Contains("UNFIT TO ANIMATE", StringComparison.Ordinal))
+            .ToArray();
+        if (unfitLines.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "the failing reels must be gathered into ONE line rather "
+                + "than one line each, which is what pushed his placement "
+                + "report past Grasshopper's own \"further remarks not "
+                + "shown\" cut before; got " + unfitLines.Length
+                + ": " + string.Join(" | ", warnings));
+        }
+        string named = unfitLines[0];
+        foreach (string entry in new[] { "1 (scatter", "2 (scatter", "3 (scatter" })
+        {
+            if (!named.Contains(entry, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"the unfit line must name entry \"{entry}\" with its own "
+                    + "figure; got: " + named);
+            }
+        }
+        if (named.Contains("0 (scatter", StringComparison.Ordinal) ||
+            named.Contains("4 (scatter", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "the unfit line must not name the correct wrap or the reel "
+                + "with nothing to measure; got: " + named);
+        }
+        if (!named.Contains("ROTATES WITH THE HELIX", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "the line must carry the likely cause for him to confirm on "
+                + "his own canvas -- an offset along a direction that "
+                + "rotates with the helix rather than radially -- since the "
+                + "fix is in his offset step and not in this plugin; got: "
+                + named);
+        }
     }
 
     /// <summary>
