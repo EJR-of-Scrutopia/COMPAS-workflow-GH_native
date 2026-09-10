@@ -154,6 +154,42 @@ THICKNESS_MAX = 0.5
 PATTERNS = sorted(generators.GENERATORS)
 
 
+def _heal_frame_names(directory: Path, suffix: str) -> str:
+    """Rename frames whose bytes disagree with their extension.
+
+    THE BYTES DECIDE, NOT THE NAME. On 2026-09-09 commit 0bc611c switched
+    the client to JPEG frames and the server to naming a frame from its
+    bytes, in one commit. The server process handling every take that day
+    had started at 02:28, before the commit, so it went on writing
+    frame-000001.png while a freshly loaded page sent JPEG bytes: 84
+    files named .png whose first bytes are ff d8 ff. ffmpeg picks its
+    decoder from the extension, refused every one with "Decode error rate
+    1 exceeds maximum", exited 69 and wrote a zero-byte mp4. Two
+    eleven-minute takes of 3,617 frames each were lost exactly this way,
+    and the next take's frame 1 deleted their frames.
+
+    The same files renamed .jpg stitch to a valid mp4 in one pass, so a
+    take is healed rather than refused. Returns the suffix ffmpeg should
+    now be given.
+    """
+
+    frames = sorted(directory.glob("frame-*" + suffix))
+    if not frames:
+        return suffix
+    head = frames[0].read_bytes()[:8]
+    if head[:3] == b"\xff\xd8\xff":
+        actual = ".jpg"
+    elif head == b"\x89PNG\r\n\x1a\n":
+        actual = ".png"
+    else:
+        return suffix
+    if actual == suffix:
+        return suffix
+    for frame in frames:
+        frame.rename(frame.with_suffix(actual))
+    return actual
+
+
 def _ffmpeg_present() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -2102,6 +2138,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     break
         if suffix is None:
             raise HTTPException(404, "no frames recorded for run {}".format(run_id))
+        # A frame whose magic disagrees with its name is renamed to what it
+        # is before ffmpeg sees it. See _heal_frame_names for the day this
+        # cost two takes.
+        suffix = _heal_frame_names(directory, suffix)
         if not _ffmpeg_present():
             raise HTTPException(
                 503, "ffmpeg is not on PATH; frames are in {}".format(directory))

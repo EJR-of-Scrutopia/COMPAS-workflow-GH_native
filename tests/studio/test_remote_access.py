@@ -1230,6 +1230,12 @@ def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
     # recorder's own loop rather than the whole file.
     take = _js_function(js, "async function recordAnimation()")
     assert 'canvas.toBlob(resolve, "image/png")' not in take
+    # A stitch failure reaches the LOG, not only a status line the next
+    # click clears. Two eleven-minute takes failed on 2026-09-09 and the
+    # diagnostics log never heard about either, which is why it read as
+    # never having worked rather than as having failed once.
+    assert 'logStudio("recording: stitch failed after " + total + " frames: "' in take
+    assert "the frames are kept under the study folder" in take
 
     # A TRUE 1080p BUFFER. The composer keeps its own copy of the ratio,
     # taken when it was built, so setting it on the renderer alone would
@@ -2235,9 +2241,29 @@ def test_leaving_the_scatter_tab_puts_the_region_drag_down():
     left behind would eat his next click on a prop."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert 'canvas.addEventListener("pointerdown", onScatterDown, true);' in js
-    assert 'canvas.removeEventListener("pointerdown", onScatterDown, true);' in js
-    assert 'if (shelfKind !== "scatter" && state.scatterArmed) ' \
+    # The area tool is two CLICKS now, not a drag: a drag is how the camera
+    # moves, and the area someone wants is usually not all on screen at
+    # once. Both tools watch pointerdown and pointerup and act only on a
+    # press that did not travel; a press that moved was the orbit's.
+    assert 'canvas.addEventListener("pointerdown", pressBegan);' in js
+    assert 'canvas.addEventListener("pointerup", onAreaUp);' in js
+    assert "controls.enabled = false;" not in _js_function(js, "function armScatterArea()"), (
+        "the orbit stays live while the tool is armed")
+    assert "controls.enabled = false;" not in _js_function(js, "function armScatterBrush()")
+    assert "closeShelf();" in _js_function(js, "function armScatterBrush()"), (
+        "the drawer gets out of the way: the floor was under the tiles")
+    assert 'if (wasArmed) openShelf("scatter");' in _js_function(js, "function disarmScatterArea()")
+    disarm = _js_function(js, "function disarmScatterArea()")
+    for gone in ('canvas.removeEventListener("pointerdown", pressBegan);',
+                 'canvas.removeEventListener("pointerup", onAreaUp);',
+                 'canvas.removeEventListener("pointerup", onBrushUp);',
+                 'canvas.removeEventListener("pointermove", onAreaMove);'):
+        assert gone in disarm, gone
+    # Opening ANOTHER drawer puts the tool down; a CLOSED shelf does not,
+    # because arming the brush folds the drawer away to clear the floor
+    # and the first click then re-rendered the shelf and disarmed the
+    # brush it had just been asked to paint with.
+    assert 'if (shelfKind && shelfKind !== "scatter" && state.scatterArmed) ' \
         'disarmScatterArea();' in js
 
 
@@ -2317,7 +2343,10 @@ def test_the_scatter_brush_thickens_rather_than_repeating_itself():
     js = STUDIO_JS.read_text(encoding="utf-8")
     solve = _js_function(js, "function scatterSolve(region, salt)")
     assert "Math.imul(salt || 0, 0x9E3779B1)" in solve
-    down = _js_function(js, "async function onBrushDown(event)")
+    # The fill happens on pointerUP, and only when the press did not
+    # travel: that is what tells a click from an orbit drag.
+    down = _js_function(js, "async function onBrushUp(event)")
+    assert "if (!pressEnded(event)) return;" in down
     assert "state.scatterStroke += 1;" in down
     assert "salt: state.scatterStroke" in down
     # One layer for a painting session, not one per click.

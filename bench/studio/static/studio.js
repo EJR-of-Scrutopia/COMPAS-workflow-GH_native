@@ -5265,7 +5265,11 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "lights");
   // Leaving the drawer must put the region drag down, or the canvas keeps
   // a capture-phase listener that eats his next click on a prop.
-  if (shelfKind !== "scatter" && state.scatterArmed) disarmScatterArea();
+  // Opening ANOTHER drawer puts the tool down. A CLOSED shelf does not:
+  // arming the brush now folds the drawer away to clear the floor, and
+  // the first click then re-rendered the shelf, saw no scatter tab, and
+  // disarmed the brush it had just been asked to paint with.
+  if (shelfKind && shelfKind !== "scatter" && state.scatterArmed) disarmScatterArea();
   grid.classList.toggle("hidden",
     shelfKind === "props" || shelfKind === "scenes"
     || shelfKind === "scatter" || shelfKind === "lights");
@@ -6170,6 +6174,32 @@ function hideScatterOutline() {
 // one left. What it needed was a fresh deal per click, which is the salt.
 let scatterBrushAt = null;
 
+// A CLICK IS NOT A DRAG, and the orbit stays live while painting. The
+// first cut disabled OrbitControls the moment a tool was armed, which
+// meant a field could only be painted from wherever the camera already
+// stood (Param: "please allow me to move around the viewport freely dont
+// lock me otherwise how can i brush and draw an area i need thats out of
+// viewport. make sure the clicking to move and clicking to place are
+// different"). So the tools now watch pointerdown and pointerup and act
+// only on a press that did not travel: a press that moved is the orbit's,
+// and the orbit already had it.
+const CLICK_SLOP_PX = 5;
+let scatterPress = null;
+
+function pressBegan(event) {
+  if (event.button !== 0) return;
+  scatterPress = { x: event.clientX, y: event.clientY };
+}
+
+// The press, if it was a click; null if it was a drag or never began.
+function pressEnded(event) {
+  const began = scatterPress;
+  scatterPress = null;
+  if (!began) return null;
+  const travelled = Math.hypot(event.clientX - began.x, event.clientY - began.y);
+  return travelled <= CLICK_SLOP_PX ? began : null;
+}
+
 function brushRegion() {
   if (!scatterBrushAt) return null;
   return { kind: "disc", x: scatterBrushAt.x, y: scatterBrushAt.y,
@@ -6185,12 +6215,18 @@ function armScatterBrush() {
   disarmScatterArea();
   state.scatterArmed = "brush";
   state.scatterBrushLayer = null;
-  controls.enabled = false;
   document.getElementById("scatter-brush").classList.add("active");
   document.getElementById("scatter-readout").textContent =
     "click to fill the circle; click again to thicken it; Escape to stop";
-  canvas.addEventListener("pointermove", onBrushMove, true);
-  canvas.addEventListener("pointerdown", onBrushDown, true);
+  // The drawer gets out of the way: a brush needs the floor, and the
+  // floor was under the tiles (Param: "the tiles are a bit in the way").
+  // Escape or the button brings it back.
+  closeShelf();
+  logStudio("scatter: click the floor to fill the circle, click again to "
+    + "thicken it, drag to look around, Escape to stop");
+  canvas.addEventListener("pointermove", onBrushMove);
+  canvas.addEventListener("pointerdown", pressBegan);
+  canvas.addEventListener("pointerup", onBrushUp);
   window.addEventListener("keydown", onScatterKey, true);
 }
 
@@ -6201,11 +6237,10 @@ function onBrushMove(event) {
   showScatterOutline(brushRegion());
 }
 
-async function onBrushDown(event) {
+async function onBrushUp(event) {
+  if (!pressEnded(event)) return;           // an orbit, not a click
   const hit = groundPointAt(event);
   if (!hit) return;
-  event.preventDefault();
-  event.stopPropagation();
   scatterBrushAt = { x: hit.x, y: hit.y };
   state.scatterStroke += 1;
   const before = state.props.length;
@@ -6230,31 +6265,42 @@ function armScatterArea() {
     return;
   }
   state.scatterArmed = "area";
-  controls.enabled = false;
+  scatterDrag = null;
   document.getElementById("scatter-area").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "drag a rectangle on the floor; Escape to stop";
-  canvas.addEventListener("pointerdown", onScatterDown, true);
+    "click one corner of the area, then the opposite one; Escape to stop";
+  // Two clicks, not a drag, because a drag is how the camera moves and
+  // the area someone wants is usually not all on screen at once. Click
+  // a corner, look around, click the other.
+  closeShelf();
+  logStudio("scatter: click one corner of the area on the floor, then the "
+    + "opposite corner; drag to look around; Escape to stop");
+  canvas.addEventListener("pointermove", onAreaMove);
+  canvas.addEventListener("pointerdown", pressBegan);
+  canvas.addEventListener("pointerup", onAreaUp);
   window.addEventListener("keydown", onScatterKey, true);
 }
 
 function disarmScatterArea() {
+  const wasArmed = state.scatterArmed;
   state.scatterArmed = false;
   scatterDrag = null;
   scatterBrushAt = null;
+  scatterPress = null;
   state.scatterBrushLayer = null;
-  controls.enabled = true;
   hideScatterOutline();
   for (const id of ["scatter-area", "scatter-brush"]) {
     const button = document.getElementById(id);
     if (button) button.classList.remove("active");
   }
-  canvas.removeEventListener("pointermove", onBrushMove, true);
-  canvas.removeEventListener("pointerdown", onBrushDown, true);
-  canvas.removeEventListener("pointerdown", onScatterDown, true);
+  canvas.removeEventListener("pointermove", onBrushMove);
+  canvas.removeEventListener("pointermove", onAreaMove);
+  canvas.removeEventListener("pointerdown", pressBegan);
+  canvas.removeEventListener("pointerup", onBrushUp);
+  canvas.removeEventListener("pointerup", onAreaUp);
   window.removeEventListener("keydown", onScatterKey, true);
-  window.removeEventListener("pointermove", onScatterMove, true);
-  window.removeEventListener("pointerup", onScatterUp, true);
+  // The drawer that was folded away for the tool comes back with it.
+  if (wasArmed) openShelf("scatter");
   paintScatter();
 }
 
@@ -6262,17 +6308,9 @@ function onScatterKey(event) {
   if (event.key === "Escape") { event.stopPropagation(); disarmScatterArea(); }
 }
 
-function onScatterDown(event) {
-  const hit = groundPointAt(event);
-  if (!hit) return;
-  event.preventDefault();
-  event.stopPropagation();
-  scatterDrag = { x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y, kind: "rect" };
-  window.addEventListener("pointermove", onScatterMove, true);
-  window.addEventListener("pointerup", onScatterUp, true);
-}
-
-function onScatterMove(event) {
+// The rectangle follows the cursor from the first corner until the
+// second is clicked, so what will be filled is always on screen.
+function onAreaMove(event) {
   if (!scatterDrag) return;
   const hit = groundPointAt(event);
   if (!hit) return;
@@ -6281,14 +6319,23 @@ function onScatterMove(event) {
   showScatterOutline(scatterDrag);
   const w = Math.abs(scatterDrag.x1 - scatterDrag.x0);
   const h = Math.abs(scatterDrag.y1 - scatterDrag.y0);
-  document.getElementById("scatter-readout").textContent =
-    w.toFixed(1) + " by " + h.toFixed(1) + " m";
+  logStudio("scatter: " + w.toFixed(1) + " by " + h.toFixed(1) + " m so far");
 }
 
-function onScatterUp() {
+function onAreaUp(event) {
+  if (!pressEnded(event)) return;           // an orbit, not a click
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  if (!scatterDrag) {
+    scatterDrag = { x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y, kind: "rect" };
+    showScatterOutline(scatterDrag);
+    logStudio("scatter: now click the opposite corner");
+    return;
+  }
+  scatterDrag.x1 = hit.x;
+  scatterDrag.y1 = hit.y;
   const region = scatterDrag;
   disarmScatterArea();
-  if (!region) return;
   if (Math.abs(region.x1 - region.x0) < 0.5
       || Math.abs(region.y1 - region.y0) < 0.5) {
     logStudio("scatter: that area was too small to fill");
@@ -12612,8 +12659,20 @@ async function recordAnimation() {
     status.textContent = stitched.ok
       ? "saved " + body.video
       : "stitch failed: " + (body.detail || stitched.status);
+    // A stitch failure was shown ONLY here, in a status line that the
+    // next click clears, so two eleven-minute takes failed on 2026-09-09
+    // and the diagnostics log never heard about either. The frames are
+    // still on disk after a failure, and the log now says so and where.
+    if (!stitched.ok) {
+      logStudio("recording: stitch failed after " + total + " frames: "
+        + (body.detail || stitched.status)
+        + " -- the frames are kept under the study folder in studio/frames");
+    } else {
+      logStudio("recording: saved " + body.video);
+    }
   } catch (error) {
     status.textContent = "recording failed: " + error.message;
+    logStudio("recording failed: " + error.message);
   } finally {
     // No explicit canvas-size restore here: this flag flip is what lets
     // resize() act again, and it picks the canvas back up to its CSS size

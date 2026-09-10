@@ -1426,3 +1426,43 @@ def test_a_stitch_takes_its_size_from_the_tiles_and_refuses_to_be_told_otherwise
     assert holed.status_code == 500
     assert "never arrived" in holed.json()["detail"]
     assert client.post("/api/still/study-nope/stitch?width=1&height=1").status_code == 404
+
+
+def test_a_stitch_heals_frames_whose_bytes_disagree_with_their_names(tmp_path, monkeypatch):
+    """On 2026-09-09 a server started before the JPEG commit went on
+    naming every frame .png while a freshly loaded client sent JPEG
+    bytes. ffmpeg picks its decoder from the extension, refused all
+    3,617 of them, exited 69 and wrote a zero-byte mp4. Two eleven-minute
+    takes were lost that way and the next take's frame 1 deleted their
+    frames. The same files renamed .jpg stitch in one pass."""
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    frames = studies / "tiny" / "studio" / "frames"
+    frames.mkdir(parents=True)
+    # JPEG bytes under PNG names: the 09-09 residue, exactly.
+    for n in (1, 2, 3):
+        (frames / "frame-{:06d}.png".format(n)).write_bytes(b"\xff\xd8\xff\xe0 jpeg bytes")
+
+    import app as studio_app
+    healed = studio_app._heal_frame_names(frames, ".png")
+    assert healed == ".jpg"
+    assert sorted(p.name for p in frames.iterdir()) == [
+        "frame-000001.jpg", "frame-000002.jpg", "frame-000003.jpg"]
+    # Idempotent: a folder that is already right is left alone.
+    assert studio_app._heal_frame_names(frames, ".jpg") == ".jpg"
+    # And bytes it cannot name are left as they are rather than guessed.
+    (frames / "frame-000004.jpg").write_bytes(b"who knows")
+    assert studio_app._heal_frame_names(frames, ".jpg") == ".jpg"
+
+    # The stitch endpoint calls it before ffmpeg: with ffmpeg absent it
+    # must still have renamed, and say so with the 503's own path.
+    monkeypatch.setattr(studio_app, "_ffmpeg_present", lambda: False)
+    (frames / "frame-000005.png").write_bytes(b"\xff\xd8\xff\xe0 more")
+    for stale in frames.glob("frame-*.jpg"):
+        stale.unlink()
+    r = client.post("/api/frames/study-tiny/stitch?fps=60")
+    assert r.status_code == 503
+    assert (frames / "frame-000005.jpg").is_file(), (
+        "the stitch heals BEFORE it checks for ffmpeg, so the frames are "
+        "right for whoever runs it by hand")
