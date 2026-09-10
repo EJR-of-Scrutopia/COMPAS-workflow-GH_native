@@ -157,6 +157,19 @@ internal static class MechanismReeve
     /// reversals with no advantage at all, so this is a loose hint, never
     /// a measurement, and REFUSES NOTHING (spec 6.4): only Param knows
     /// which of his wheels move with the load.
+    ///
+    /// WHAT IS NOT PROVED HERE, said rather than left to be found (the
+    /// same honesty <see cref="WrapReversals"/> owes its own non-proof):
+    /// the "+ 1" and the "x8" slack have never been checked against
+    /// Param's own real machine's actual wrap-reversal count, because no
+    /// fixture of his real routing exists for this harness to measure. He
+    /// authored 4.0 as his real default; this band is tuned so that
+    /// number draws no warning even against a route with ZERO measured
+    /// reversals, which is the loosest case available, and it is
+    /// red-proved to actually tell a wildly wrong factor from a correct
+    /// one on the fixtures this harness can build. It is not proved to be
+    /// the RIGHT band for his real machine's real wrap, only a band that
+    /// does not cry wolf on the one real number he has given it.
     /// </summary>
     public static double SanityCeiling(int reversals) =>
         (reversals + 1) * ReeveSanitySlack;

@@ -4347,7 +4347,21 @@ internal static partial class Program
                 "fires on correct input is a defect equal in seriousness " +
                 "to one that misses a fault, and the check REFUSES " +
                 "NOTHING either way, since geometry alone cannot tell a " +
-                "guiding wheel from one that moves with the load.");
+                "guiding wheel from one that moves with the load. FIX " +
+                "ROUND 1: a reeve.perWire entry that is not finite and " +
+                "greater than zero is now REFUSED, the whole document, " +
+                "by name, the same guard as reeve.default and for the " +
+                "same reason -- this reader re-validates a payload this " +
+                "collector did not necessarily write, and the sanity " +
+                "check is one-sided so a negative override tripped " +
+                "nothing at all before this. AND THE WRITER-TO-READER " +
+                "ROUND TRIP IS NOW PROVED: BuildWithResult handed a real " +
+                "{ [1] = 2.5 } dictionary writes reeve.perWire[\"1\"] = " +
+                "2.5, read back off the JSON it actually wrote rather " +
+                "than asserted past a hand-authored string on either " +
+                "side, closing the gap where the writer's own key shape " +
+                "and the reader's own parse were each proved only " +
+                "against themselves.");
         }
         catch (Exception exception)
         {
@@ -45479,6 +45493,21 @@ internal static partial class Program
     ///    override) draws NO warning at all. A warning that fires on
     ///    correct input is a defect equal in seriousness to one that
     ///    misses a fault, and the check refuses neither case.
+    /// 4. FIX ROUND 1, FINDING 1: a reeve.perWire entry that is a number
+    ///    but not a mechanical advantage (-2) is REFUSED, the whole
+    ///    document, BY NAME, naming reeve.perWire -- the same guard
+    ///    reeve.default already had, closed because the reader
+    ///    re-validates any payload handed to it and the sanity check
+    ///    above is one-sided (it never fires on a small or negative
+    ///    number).
+    /// 5. FIX ROUND 1, FINDING 2: the WRITER-TO-READER ROUND TRIP.
+    ///    MechanismCollector.BuildWithResult, driven with a REAL
+    ///    Dictionary&lt;int, double&gt; { [1] = 2.5 }, must write
+    ///    reeve.perWire["1"] = 2.5 into its own payload -- proved by
+    ///    parsing what BuildWithResult itself returns, not by asserting a
+    ///    hand-authored JSON string the way 1-4 above do. Parts 1-4 each
+    ///    proved one half of this strand against a fixture authored by
+    ///    hand; neither ever proved the two halves agree with each other.
     /// </summary>
     private static void ValidateMechanismReeveFactor(Assembly plugin)
     {
@@ -45689,6 +45718,119 @@ internal static partial class Program
                 + "draw a reeve warning; a warning on correct input is a "
                 + "defect equal in seriousness to one that misses a "
                 + "fault. Warnings were: " + string.Join(" | ", warnings));
+        }
+
+        // 4. A PER-WIRE OVERRIDE THAT IS NOT A MECHANICAL ADVANTAGE IS
+        // REFUSED, THE WHOLE DOCUMENT, BY NAME (fix round 1, finding 1):
+        // the same guard as reeve.default, at the point this payload is
+        // READ, because the collector that drops a bad override by name
+        // is not the only possible author of a payload handed to this
+        // reader. Before this fix, reeve.perWire.1 = -2 resolved wire
+        // 0-0-1's reeveFactor to -2, sourced "wire", with no refusal and
+        // no warning at all: the sanity check is one-sided and a negative
+        // number never trips a ceiling.
+        string badOverridePayload = payload.Replace(
+            "\"perWire\":{\"1\":100.0}",
+            "\"perWire\":{\"1\":-2.0}",
+            StringComparison.Ordinal);
+        if (string.Equals(badOverridePayload, payload, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The fixture meant to inject a bad reeve.perWire entry did "
+                + "not change the payload, so the refusal below would "
+                + "prove nothing.");
+        }
+        string badOverrideRefusal = string.Empty;
+        try
+        {
+            json.Invoke(
+                null,
+                new object?[]
+                {
+                    result, Study, 1.0, badOverridePayload,
+                    new List<string>(), new List<string>(),
+                });
+        }
+        catch (TargetInvocationException invocation)
+        {
+            badOverrideRefusal = invocation.GetBaseException().Message;
+        }
+        if (!badOverrideRefusal.Contains("reeve.perWire", StringComparison.Ordinal) ||
+            !badOverrideRefusal.Contains("not a mechanical advantage", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A reeve.perWire entry that is not a mechanical advantage "
+                + "must be REFUSED by name, naming reeve.perWire; got \""
+                + badOverrideRefusal + "\".");
+        }
+
+        // 5. THE WRITER-TO-READER ROUND TRIP (fix round 1, finding 2).
+        // Parts 1-3 above exercise the READER alone, against a
+        // hand-written payload string; no test anywhere calls
+        // MechanismCollector.BuildWithResult with a non-null
+        // reevePerWire dictionary, so a divergence between the WRITER's
+        // own key shape (MechanismCollector.ReevePerWirePayload) and the
+        // READER's own parse above would drop every override Param
+        // authored SILENTLY, with both halves still green -- this
+        // strand's own named failure class, reproduced inside the test
+        // suite itself. Proved here by driving BuildWithResult with a
+        // real dictionary and reading the resulting reeve.perWire back
+        // off the JSON it wrote, rather than a string either side
+        // authored by hand.
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type reelGroupType = RequireComponentType(plugin, "MechanismReelGroup");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo buildWithResult = RequirePublicStatic(collectorType, "BuildWithResult");
+
+        // AN OTHERWISE EMPTY ASSET, ONE ROUTED WIRE: the smallest input
+        // BuildWithResult will not refuse outright as "nothing wired" at
+        // all (its own null-early-return), so the reeve block -- written
+        // unconditionally -- is the only thing this call is proving.
+        object emptyAsset = Activator.CreateInstance(
+            assetType,
+            null, false,
+            MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+            null, false,
+            null, false,
+            MechanismListOf(reelGroupType),
+            null, false)!;
+        object oneRoutedWire = Activator.CreateInstance(
+            routingWireType, 1, RouteOf((0, 0, 0), (1, 0, 0)))!;
+        object routingForRoundTrip = MechanismListOf(routingWireType, oneRoutedWire);
+        object placementsForRoundTrip = MechanismListOf(placementBranchType);
+
+        var perWireForRoundTrip = new Dictionary<int, double> { [1] = 2.5 };
+        object? roundTripPayload = buildWithResult.Invoke(
+            null,
+            new object?[]
+            {
+                emptyAsset, routingForRoundTrip, placementsForRoundTrip,
+                new List<string>(), new List<string>(), null, null,
+                perWireForRoundTrip,
+            });
+        if (roundTripPayload is not string roundTripJson)
+        {
+            throw new InvalidOperationException(
+                "BuildWithResult must produce a payload when a wire is "
+                + "routed, even with an otherwise empty asset.");
+        }
+        using JsonDocument roundTripDoc = JsonDocument.Parse(roundTripJson);
+        JsonElement roundTripReeve = roundTripDoc.RootElement.GetProperty("reeve");
+        if (!roundTripReeve.TryGetProperty("perWire", out JsonElement roundTripPerWire) ||
+            roundTripPerWire.ValueKind != JsonValueKind.Object ||
+            !roundTripPerWire.TryGetProperty("1", out JsonElement roundTripEntry) ||
+            roundTripEntry.ValueKind != JsonValueKind.Number ||
+            roundTripEntry.GetDouble() != 2.5)
+        {
+            throw new InvalidOperationException(
+                "A reevePerWire dictionary { [1] = 2.5 } handed to "
+                + "BuildWithResult must reach the payload's own "
+                + "reeve.perWire, keyed by wire index as a JSON string "
+                + "(\"1\"), which is the exact key shape the reader above "
+                + "parses; got reeve: " + roundTripReeve.ToString());
         }
     }
 
