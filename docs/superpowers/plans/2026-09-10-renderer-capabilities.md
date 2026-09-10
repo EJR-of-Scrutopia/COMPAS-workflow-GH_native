@@ -42,8 +42,37 @@ settled; neither is open for re-litigation by a task.
    white balance and LUT half stands on its own; THE REORDER IS GATED ON
    A MEASUREMENT (Task 9a) and may be rejected.
 
+3. **BOTH of the spec's Wave 2 traps are false for this codebase.**
+   Measured 2026-09-10, before building anything:
+   - "The inked outline ribbon takes its width as a screen-space uniform, so
+     at 8K it thins to a hairline." It does not. `studio.js:10204` is
+     `transformed += outlineSide * outlineWidth` in the VERTEX shader, in
+     object space, and the dial is `min="0" max="0.025"` metres shown as
+     millimetres. The ribbon is a WORLD-space width, so a 4961 px plate gives
+     it 2.6 times MORE pixels than 1920 does, which is correct for a physical
+     line on stone. No supersample scaling is needed and adding one would make
+     it wrong.
+   - "Any pass reading resolution must be handed the full frame size, not the
+     tile size, or you get seams." There are no such passes. The whole
+     composer is three: `RenderPass`, `OutputPass`, and
+     `ShaderPass(BrightnessContrastShader)` (`studio.js:369-373`), and a
+     search for `resolution`, `texelSize` and `pixelSize` uniforms across all
+     12,700 lines returns nothing. Every one of the three is per-pixel or
+     whole-scene, so tiling cannot seam from this cause and the grade does not
+     have to move server-side.
+
+4. **A real blocker the spec did not have.** `studio.js:274` builds the
+   renderer as `{ canvas, antialias: true, preserveDrawingBuffer: true }`,
+   with NO `alpha: true`. Alpha is a context-creation flag and cannot be
+   turned on afterwards, so Task 6 needs either that flag added at
+   construction or the still rendered into an offscreen target rather than
+   read off the canvas. The recorder reads the canvas today
+   (`canvas.toBlob`, `studio.js:12188`), which is why `preserveDrawingBuffer`
+   is set.
+
 Also already shipped, ahead of this plan: the orthographic camera, six
-snapped views and the scale bar (`b1b3feb`).
+snapped views and the scale bar (`b1b3feb`), and the section plane
+(`4bf4d46`).
 
 ---
 
