@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Collections;
@@ -430,12 +430,18 @@ internal static class MechanismCollector
     /// <see cref="ReadMachineCitation"/>. It reaches the payload as the
     /// citation block a study document is built on, and its own authored
     /// reeve default is the SECOND SOURCE of every wire's resolved factor.
-    /// NULL IS NOT A SILENT CASE: a study that cites no machine is named
-    /// here and writes no default at all, so that
-    /// <c>MechanismDocument.Json</c> refuses the document by name rather
-    /// than inventing a number. It stays optional in the signature because
-    /// <see cref="BuildMachine"/> uses this same build for a MACHINE
-    /// document, which cites nothing and needs nothing cited.
+    ///
+    /// NULL IS NOT NAMED HERE, and that is deliberate. This build is
+    /// SHARED: <see cref="BuildMachine"/> drives it with no citation by
+    /// design, a machine citing nothing being the whole point of a machine,
+    /// and pools these same warnings into the Machine component's own chin.
+    /// A message here would paint a CORRECT machine build orange over a
+    /// port that component does not have. What null does instead is
+    /// structural and cannot be missed downstream: no machine block and no
+    /// reeve default are written, so <c>MechanismDocument.Json</c> refuses
+    /// the document by name. The message for an uncited STUDY is raised
+    /// where the port exists, in
+    /// <c>MechanismCollectorComponent.SolveInstance</c>.
     /// </summary>
     public static string? BuildWithResult(
         MechanismAssetInput asset,
@@ -1073,7 +1079,43 @@ internal static class MechanismCollector
                 ", ",
                 ownerCounts.OrderBy(p => p.Key, StringComparer.Ordinal)
                     .Select(p => $"{p.Key} {p.Value}"));
-            notes.Add($"mechanism: routing frame ownership, the ONE authored mechanism -- {tally}.");
+
+            // A TALLY OF "body N" AND NOTHING ELSE IS NOT A MEASUREMENT,
+            // AND MUST NOT READ LIKE ONE. With no reel wired to this build
+            // there is no neighbourhood to classify against, so
+            // ClassifyRouteFrameOwner returns the body for every frame
+            // before it looks at any geometry: the answer is universal by
+            // construction, and a note tallying it says "measured" where
+            // nothing was measured.
+            //
+            // THIS IS NOW THE ORDINARY SHAPE OF EVERY STUDY BUILD, and that
+            // is the point of naming it. The reels moved to the Machine
+            // component in Task 3, so the collector's own Reel (RE) and
+            // Reel Axis (AX) are refusing stubs and a study build cannot
+            // classify ownership at all any more. The studio therefore
+            // holds every wire fixed and no wrap spins on any drum. It is
+            // named as a WARNING because the consequence is a wrong
+            // animation with correct geometry, which is this strand's own
+            // named failure class, and it goes when ownership is taken from
+            // the cited machine instead (its own round, not this one's).
+            if (reelBodies.Count == 0)
+            {
+                warnings.Add(
+                    "mechanism: NO REEL was wired to this build, so all " +
+                    $"{ownerCounts.GetValueOrDefault(RouteOwnerBody)} " +
+                    "routing frame(s) are held by the BODY by construction " +
+                    "rather than by measurement: nothing here rides a drum, " +
+                    "so nothing spins the wire in the animation while the " +
+                    "geometry, the wire paths and the timing all stay " +
+                    "correct. A STUDY build cannot classify ownership at " +
+                    "all since the reels moved to the Machine component; " +
+                    "the studio must take a wire's drum from the machine " +
+                    "this study cites.");
+            }
+            else
+            {
+                notes.Add($"mechanism: routing frame ownership, the ONE authored mechanism -- {tally}.");
+            }
         }
 
         // WHERE THE PLACEMENT REPORT STARTS. Everything it adds is moved to
@@ -1507,26 +1549,24 @@ internal static class MechanismCollector
             }
         }
 
-        // THE CITATION, SAID ONCE IN THE CHIN (ruling 1.2), whether or not
-        // any part was wired: a study with routing and nothing else still
-        // cites a machine, and the message about an uncited one has to
-        // reach him at the moment he can act on it -- on the canvas, not
-        // buried in an export failure.
-        if (machine is null)
-        {
-            warnings.Add(
-                "Machine (MA) is not wired, so this study CITES NO MACHINE " +
-                "and no mechanism document can be written from it. Since " +
-                "the split, the study document carries no machine bodies " +
-                "at all: it points at a " + MachineSchema + " document by " +
-                "id, and it takes that machine's own authored reeve " +
-                "default. Wire the Machine component's own Machine (MC) " +
-                "output here. Nothing is defaulted in its place, because a " +
-                "wrong reeve factor makes every reel spin at the wrong " +
-                "RATE while the geometry, the wire paths and the timing " +
-                "all stay correct, so nothing looks broken.");
-        }
-        else
+        // THE CITATION, SAID ONCE IN THE CHIN (ruling 1.2), WHEN THERE IS
+        // ONE.
+        //
+        // AND NOTHING AT ALL IS SAID WHEN THERE IS NOT, because this build
+        // is SHARED: BuildMachine drives it with no citation BY DESIGN, a
+        // machine citing nothing being the whole point of a machine, and it
+        // pools its warnings into the Machine component's own chin. A
+        // message here about wiring Machine (MA) would therefore paint that
+        // component orange on every CORRECT machine build, telling him to
+        // wire a port it does not have, about a study he is not building --
+        // a warning firing on correct input, which this project holds
+        // exactly as serious as one that misses a fault. The message about
+        // an uncited STUDY belongs where the port exists, in
+        // MechanismCollectorComponent.SolveInstance, and it is raised there
+        // instead. The payload's own shape carries the fact regardless (no
+        // machine key, no reeve default), so MechanismDocument.Json still
+        // refuses by name whatever this build says or does not say.
+        if (machine is not null)
         {
             notes.Add(
                 $"mechanism: this study cites machine \"{machine.Name}\" " +
@@ -4291,6 +4331,37 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             data.GetData(12, ref machineDocument);
             MechanismMachineCitation? citation =
                 MechanismCollector.ReadMachineCitation(machineDocument, warnings);
+
+            // AN UNCITED STUDY IS NAMED HERE, AT THE PORT, AND NOWHERE
+            // ELSE. It cannot be named inside the shared build: that same
+            // build makes MACHINE documents, which cite nothing by design
+            // and pool their warnings into the Machine component's chin,
+            // so a message there would paint a correct machine build
+            // orange over a port that component does not have. The
+            // consequence is stated in full because it costs him the whole
+            // document: since the split the study carries no machine
+            // bodies at all, it points at a machine by id, and it takes
+            // that machine's own authored reeve default.
+            if (citation is null)
+            {
+                warnings.Add(
+                    (machineDocument.Trim().Length == 0
+                        ? "Machine (MA) is not wired, so this study CITES " +
+                          "NO MACHINE"
+                        : "Machine (MA) could not be read as a machine " +
+                          "document (the reason is named above), so this " +
+                          "study CITES NO MACHINE") +
+                    " and no mechanism document can be written from it. " +
+                    "Since the split, the study document carries no " +
+                    "machine bodies at all: it points at a " +
+                    MechanismCollector.MachineSchema + " document by id, " +
+                    "and it takes that machine's own authored reeve " +
+                    "default. Wire the Machine component's own Machine " +
+                    "(MC) output here. Nothing is defaulted in its place, " +
+                    "because a wrong reeve factor makes every reel spin at " +
+                    "the wrong RATE while the geometry, the wire paths and " +
+                    "the timing all stay correct, so nothing looks broken.");
+            }
 
             string? payload = MechanismCollector.BuildWithResult(
                 asset, routing, placements, warnings, notes, solved, meaning,

@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -1638,7 +1638,12 @@ internal static class MechanismDocument
                     "order, so a machine authored with one wire's frames " +
                     "missing shifts every entry after it and an offset " +
                     "would land every cable on a real drum in a " +
-                    "self-consistent arrangement, every one of them wrong.",
+                    "self-consistent arrangement, every one of them wrong. " +
+                    "AND COMPARE wireCount WITH THE WIRES THIS DOCUMENT " +
+                    "CARRIES, per instance: they are written to be EQUAL, " +
+                    "and where they are not, the cables this document is " +
+                    "short of are simply absent from the animation, with " +
+                    "nothing else in it to say so.",
             },
             // THE SHARED-NUMBERING GUARANTEE, DECLARED (studio's C2/A2):
             // measured true on two real exports, and now written into the
