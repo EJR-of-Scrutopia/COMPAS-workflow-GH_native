@@ -1219,7 +1219,13 @@ def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
     assert 'const RECORD_MIME = "image/jpeg";' in js
     assert "const RECORD_QUALITY = 0.95;" in js
     assert '(resolve) => canvas.toBlob(resolve, RECORD_MIME, RECORD_QUALITY));' in js
-    assert 'canvas.toBlob(resolve, "image/png")' not in js
+    # The TAKE never writes PNG frames: 3,617 of them at 1920 wide is
+    # what throttled a recording to a crawl. The still is a different
+    # job with the opposite trade, one plate printed and looked at
+    # closely, so it does write PNG, and the check is scoped to the
+    # recorder's own loop rather than the whole file.
+    take = _js_function(js, "async function recordAnimation()")
+    assert 'canvas.toBlob(resolve, "image/png")' not in take
 
     # A TRUE 1080p BUFFER. The composer keeps its own copy of the ratio,
     # taken when it was built, so setting it on the renderer alone would
@@ -3305,3 +3311,53 @@ def test_the_lens_gives_way_to_a_frame_width_in_orthographic():
     # moves nothing else.
     assert js.count("paintFrameWidth()") >= 4, (
         "the swap, the controls change, the resize and the boot")
+
+
+def test_a_still_is_tiled_through_its_own_endpoint_and_covers_the_viewport():
+    """An A3 plate at 300 dpi is 4961 by 3508 and the recorder stops at
+    1920. Tiled through camera.setViewOffset, read off the canvas the
+    way the recorder already proves, POSTed to the still's OWN endpoint,
+    stitched server-side.
+
+    Three things this pins were each found the hard way on the same
+    evening. The offscreen read is refused because the composer target
+    is HalfFloatType and reading it into bytes gives a black plate. The
+    viewport is covered because each tile reassigns the canvas backing
+    store and the picture leaps from tile to tile. And the result line
+    survives, because the first cut wiped it the instant it was written
+    and a render that reports nothing reads exactly like one that never
+    saved."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    still = _js_function(js, "async function renderStill()")
+
+    assert '"/api/still/" + target + "?tile="' in still, (
+        "its OWN endpoint: post_frame deletes every frame in a take when "
+        "handed frame 1, so a still through /api/frames destroys a take")
+    assert "/api/frames/" not in still
+    assert "camera.setViewOffset(frame.width, frame.height, x, y, width, height);" in still
+    assert "applyCameraFrustum(frame.width / frame.height);" in still, (
+        "the frustum is the WHOLE plate's, narrowed to this tile; hand "
+        "it the tile's aspect and every tile is framed as the picture")
+    assert "camera.clearViewOffset();" in still, "or the viewport stays cropped"
+    assert 'canvas.toBlob(resolve, "image/png")' in still, (
+        "PNG, and off the canvas: a plate is printed, and the composer "
+        "target is half float so reading it into bytes returns black")
+    assert "readRenderTargetPixels" not in js, (
+        "measured: 2048 by 1316 of pure black, every channel (0, 0)")
+    assert 'document.body.classList.add("stilling");' in still
+    assert 'document.body.classList.remove("stilling");' in still
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "body.stilling #view { visibility: hidden; }" in css
+
+    # The result line is not wiped on the way out.
+    paint = _js_function(js, "function paintStillControls()")
+    assert "paintStillReadout" not in paint, (
+        "the size line belongs to paintStillSize, written when the size "
+        "changes and never in the finally clause of a render")
+    assert "written in " in still
+
+    # Named for the page.
+    assert '{ key: "a3-300", label: "A3", long: 4961 }' in js
+    assert '{ key: "a2-300", label: "A2", long: 7016 }' in js

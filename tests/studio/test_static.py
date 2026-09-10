@@ -2012,14 +2012,30 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
 def test_the_panel_reorganises_into_six_sections():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     # Re-pinned 2026-09-04: five sections, View removed.
+    # Re-pinned 2026-09-10: Output joins them as the seventh, and Record
+    # MOVES into it. The still and the take are one job document: the
+    # same frame, the same folder, the same resolution ladder, and a
+    # lens control is not an output control. Moved, not copied, because
+    # two controls over one piece of state is how they disagree.
     order = [html.index('id="{}-section"'.format(name))
-             for name in ("import", "study", "analysis", "animation", "scene")]
-    assert order == sorted(order), "section order is Import, Study, Analysis, Animation, Scene"
+             for name in ("import", "study", "analysis", "animation", "scene",
+                          "output")]
+    assert order == sorted(order), (
+        "section order is Import, Study, Analysis, Animation, Camera, "
+        "Scene, Output")
     assert 'id="record-section"' not in html
     assert 'id="styling-section"' not in html
-    # Record's controls live inside Animation now.
-    animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
-    assert 'id="record-button"' in animation and 'id="record-status"' in animation
+    # Record's controls have LEFT Animation.
+    animation = html[html.index('id="animation-section"'):html.index('id="camera-section"')]
+    assert 'id="record-button"' not in animation, (
+        "Record moved to Output; leaving a copy behind is how two "
+        "buttons over one take come to disagree")
+    output = html[html.index('id="output-section"'):]
+    for control in ("record-button", "record-status", "recordings-folder-row",
+                    "still-render", "still-size", "still-readout"):
+        assert 'id="{}"'.format(control) in output, control
+    # And the tab that reaches it.
+    assert 'data-section="output-section"' in html
     # The analysis section owns the toggles and the analysis controls.
     analysis = html[html.index('id="analysis-section"'):html.index('id="animation-section"')]
     for control in ("run-button", "layer-toggles", "stress-surface",

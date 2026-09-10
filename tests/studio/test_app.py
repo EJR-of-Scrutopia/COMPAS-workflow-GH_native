@@ -1337,3 +1337,92 @@ def test_export_reupload_serves_new_geometry(tmp_path, monkeypatch):
     )
     assert second.status_code == 200
     assert first.content != second.content, "a re-upload must serve the new geometry"
+
+
+def _png(width, height, colour=(200, 120, 60, 255)):
+    """A real PNG of one colour, because the endpoint checks the magic."""
+
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGBA", (width, height), colour).save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_a_still_keeps_its_own_folder_and_never_touches_a_take(tmp_path, monkeypatch):
+    """post_frame deletes every frame in a study's frames folder when it
+    is handed frame 1, on purpose. A still export that reused it would
+    destroy a recording the first tile it sent. So stills live in
+    studio/still and clear only their own."""
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    # A take already on disk.
+    client.post("/api/frames/study-tiny?frame=1", content=b"png bytes")
+    client.post("/api/frames/study-tiny?frame=2", content=b"png bytes")
+    frames = studies / "tiny" / "studio" / "frames"
+    assert len(list(frames.glob("frame-*"))) == 2
+
+    # A stale still from a previous, bigger plate.
+    still = studies / "tiny" / "studio" / "still"
+    still.mkdir(parents=True)
+    (still / "tile-009-004096-000000.png").write_bytes(_png(4, 4))
+
+    posted = client.post("/api/still/study-tiny?tile=0&x=0&y=0", content=_png(8, 8))
+    assert posted.status_code == 200
+    assert not (still / "tile-009-004096-000000.png").exists(), (
+        "tile 0 clears the previous plate's tiles, or a smaller plate "
+        "stitches the old one's right-hand tiles into its margin")
+    assert len(list(frames.glob("frame-*"))) == 2, (
+        "and the TAKE is untouched: that is the whole reason for a "
+        "separate folder")
+
+    # Not a PNG, not a tile.
+    jpeg = client.post("/api/still/study-tiny?tile=1&x=8&y=0",
+                       content=b"\xff\xd8\xff\xe0 jpeg bytes")
+    assert jpeg.status_code == 400
+    assert client.post("/api/still/study-nope?tile=0&x=0&y=0",
+                       content=_png(8, 8)).status_code == 404
+
+
+def test_a_stitch_takes_its_size_from_the_tiles_and_refuses_to_be_told_otherwise(tmp_path, monkeypatch):
+    """A stitch that trusts the query can be told any size at all. A
+    stray request for an 8 by 8 plate was served happily out of four
+    2048 tiles, because those tiles genuinely cover an 8 by 8 rectangle,
+    and it overwrote a finished 3840 by 2284 plate with a 181 byte
+    thumbnail. Coverage was never the right question; agreement is."""
+
+    from PIL import Image
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    # A 24 by 16 plate in four uneven tiles, the way the browser cuts one.
+    for index, (x, y, w, h) in enumerate(
+            [(0, 0, 16, 12), (16, 0, 8, 12), (0, 12, 16, 4), (16, 12, 8, 4)]):
+        r = client.post("/api/still/study-tiny?tile={}&x={}&y={}".format(index, x, y),
+                        content=_png(w, h, (index * 60, 80, 90, 255)))
+        assert r.status_code == 200
+
+    wrong = client.post("/api/still/study-tiny/stitch?width=8&height=8")
+    assert wrong.status_code == 409, wrong.text
+    assert "24 by 16" in wrong.json()["detail"]
+
+    right = client.post("/api/still/study-tiny/stitch?width=24&height=16")
+    assert right.status_code == 200, right.text
+    out = studies / "tiny" / "studio" / "still.png"
+    assert out.is_file()
+    with Image.open(out) as plate:
+        assert plate.size == (24, 16)
+        # Each tile's own colour where it was pasted, so the offsets in
+        # the filenames were honoured and not merely trusted.
+        assert plate.getpixel((0, 0))[0] == 0
+        assert plate.getpixel((20, 0))[0] == 60
+        assert plate.getpixel((0, 14))[0] == 120
+        assert plate.getpixel((20, 14))[0] == 180
+
+    # A missing tile is a hole, and a plate with a hole is refused.
+    (studies / "tiny" / "studio" / "still" / "tile-002-000000-000012.png").unlink()
+    holed = client.post("/api/still/study-tiny/stitch?width=24&height=16")
+    assert holed.status_code == 500
+    assert "never arrived" in holed.json()["detail"]
+    assert client.post("/api/still/study-nope/stitch?width=1&height=1").status_code == 404

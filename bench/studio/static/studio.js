@@ -152,6 +152,8 @@ const state = {
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   cameraAspect: "fill",  // the Camera frame: "fill" or a ratio as a string
   projection: "perspective",  // or "orthographic": a picture, or a drawing
+  stillSize: "a3-300",   // the plate the Render button writes
+  stillRendering: false, // a plate in flight; the button and resize both check it
   // The cut. mode "off" or "plane"; axis is which way the plane
   // faces; offset is where along that axis it sits, in metres.
   section: { mode: "off", axis: "y", offset: 0, cutMachine: false },
@@ -4757,6 +4759,182 @@ function paintScaleBar() {
   bar.style.width = Math.round(metres / metresPerPixel) + "px";
   bar.textContent = metres < 1 ? Math.round(metres * 1000) + " mm"
     : metres + " m";
+}
+
+// ---------- the print-resolution still ----------
+// An A3 plate at 300 dpi is 4961 x 3508 and the recorder stops at 1920,
+// so every figure in the thesis has gone to press as an upscale. A
+// 1500-voussoir vault at 1920 wide gives each piece about forty pixels,
+// which is not enough to see a joint.
+//
+// TILED, because a 4961 px canvas is not a thing to ask a tab to hold in
+// one piece: the drawing buffer alone is 70 MB before the composer's
+// half-float target and its 4x MSAA are counted, and the ceiling is the
+// driver's, not ours. camera.setViewOffset gives the sub-frustum for one
+// tile of a larger frame, on both projections
+// (three.core.js:46515 documents exactly this use), so each tile is an
+// ordinary render of the same scene through a narrowed camera.
+//
+// Two traps the plan warned of are NOT traps here, both measured before
+// this was written. The inked ribbon's width is a world-space offset in
+// metres applied in the vertex shader, so it gains pixels on a bigger
+// plate rather than thinning. And no pass in the composer reads a
+// resolution: RenderPass, OutputPass and the grade are per-pixel, so
+// grading a tile gives the same answer as grading the whole. Both
+// become real the moment GTAO or bloom lands.
+const STILL_TILE = 2048;
+
+// Named for the page, because 4961 x 3508 means something and "8K" does
+// not. Ratios are the paper's, so a plate composed at 4:3 and rendered
+// at A3 would be letterboxed rather than stretched: the frame ratio is
+// what decides shape, and these decide how many pixels it gets.
+const STILL_SIZES = [
+  { key: "2k", label: "2K", long: 2048 },
+  { key: "4k", label: "4K", long: 3840 },
+  { key: "a3-300", label: "A3", long: 4961 },
+  { key: "a2-300", label: "A2", long: 7016 },
+  { key: "8k", label: "8K", long: 7680 },
+];
+
+function stillFrame() {
+  const size = STILL_SIZES.find((s) => s.key === state.stillSize)
+    || STILL_SIZES[2];
+  // The composed frame's own shape, so what is rendered is what was
+  // framed. "fill" has no ratio of its own, so it takes the viewport's.
+  const ratio = state.cameraAspect === "fill"
+    ? (canvas.clientWidth || 16) / (canvas.clientHeight || 9)
+    : +state.cameraAspect;
+  const even = (n) => Math.max(2, 2 * Math.round(n / 2));
+  return ratio >= 1
+    ? { width: size.long, height: even(size.long / ratio) }
+    : { width: even(size.long * ratio), height: size.long };
+}
+
+function paintStillReadout(text) {
+  const line = document.getElementById("still-readout");
+  if (line) line.textContent = text;
+}
+
+function paintStillControls() {
+  const select = document.getElementById("still-size");
+  if (select) select.value = state.stillSize;
+  paintSegmented("still-size-segments", "still-size");
+  const frame = stillFrame();
+}
+
+// The size line, written when the SIZE changes and never on the way out
+// of a render. paintStillControls used to write it whenever nothing was
+// rendering, which meant the finally clause wiped the line saying the
+// plate had been written the instant it was written: the render worked
+// and reported nothing, which reads exactly like "it never saves".
+function paintStillSize() {
+  const frame = stillFrame();
+  const tiles = Math.ceil(frame.width / STILL_TILE)
+    * Math.ceil(frame.height / STILL_TILE);
+  paintStillReadout(frame.width + " by " + frame.height + " pixels, "
+    + tiles + (tiles === 1 ? " tile" : " tiles"));
+}
+
+// READING THE COMPOSER'S TARGET DOES NOT WORK HERE, and the reason is
+// two lines up in this file: composerTarget is HalfFloatType. Half float
+// pixels read into a Uint8Array come back as zeros, and the first plate
+// rendered that way was 2048 by 1316 of pure black with every channel's
+// extrema (0, 0). It is written down because the idea is a good one and
+// somebody will have it again: it needs a byte-typed target and a copy
+// pass into it, not a different buffer name.
+//
+// So the tile is read off the CANVAS, which is the path the recorder
+// already proves, and the viewport is covered instead of being kept
+// still. resize() is held off by state.recording throughout, and the
+// canvas keeps its CSS box because setSize is called with updateStyle
+// false, so nothing moves on the page; only the backing store changes,
+// and the cover is what stops that being seen.
+
+async function renderStill() {
+  if (state.stillRendering || state.recording) return;
+  if (!state.bundle) { paintStillReadout("load a study first"); return; }
+  const frame = stillFrame();
+  const target = "study-" + state.bundle.slug;
+  const across = Math.ceil(frame.width / STILL_TILE);
+  const down = Math.ceil(frame.height / STILL_TILE);
+  const button = document.getElementById("still-render");
+  state.stillRendering = true;
+  if (button) button.disabled = true;
+
+  // OFF SCREEN, and that is the whole difference between this and the
+  // recorder. A take is watched, so it renders to the canvas; a plate is
+  // not, and resizing the visible canvas twelve times made the viewport
+  // leap about (Param: "it jumps all over the place"). With
+  // renderToScreen off, the composer's last pass stops at its own render
+  // target, the canvas is never touched, and the pixels are read back
+  // from that target instead.
+  const wasPixelRatio = renderer.getPixelRatio();
+  const wasWidth = canvas.width, wasHeight = canvas.height;
+  document.body.classList.add("stilling");
+  state.recording = true;          // resize() must keep its hands off
+  const began = performance.now();
+  let sent = 0;
+  try {
+    renderer.setPixelRatio(1);
+    composer.setPixelRatio(1);
+    for (let row = 0; row < down; row += 1) {
+      for (let column = 0; column < across; column += 1) {
+        const x = column * STILL_TILE;
+        const y = row * STILL_TILE;
+        // The last tile in a row or column is short, and asking for a
+        // full one would render past the frame and paste over its own
+        // neighbour.
+        const width = Math.min(STILL_TILE, frame.width - x);
+        const height = Math.min(STILL_TILE, frame.height - y);
+        renderer.setSize(width, height, false);
+        composer.setSize(width, height);
+        // The frustum is the WHOLE frame's, narrowed to this tile. The
+        // aspect handed to applyCameraFrustum is therefore the plate's,
+        // not the tile's, or every tile would be framed as though it
+        // were the entire picture.
+        camera.setViewOffset(frame.width, frame.height, x, y, width, height);
+        applyCameraFrustum(frame.width / frame.height);
+        renderView();
+        // Render and read in one synchronous block, the rule
+        // captureThumbnail states in full: assigning canvas.width
+        // resets the drawing buffer.
+        const blob = await new Promise(
+          (resolve) => canvas.toBlob(resolve, "image/png"));
+        const index = row * across + column;
+        const response = await fetch("/api/still/" + target + "?tile=" + index
+          + "&x=" + x + "&y=" + y, { method: "POST", body: blob });
+        if (!response.ok) throw new Error("tile " + index + " was refused");
+        sent += 1;
+        paintStillReadout("tile " + sent + " of " + (across * down));
+      }
+    }
+    const stitched = await fetch("/api/still/" + target + "/stitch?width="
+      + frame.width + "&height=" + frame.height, { method: "POST" });
+    if (!stitched.ok) throw new Error(await stitched.text());
+    const done = await stitched.json();
+    const seconds = ((performance.now() - began) / 1000).toFixed(1);
+    paintStillReadout(frame.width + " by " + frame.height + " written in "
+      + seconds + " s: " + done.still);
+    logStudio("still: " + done.still);
+  } catch (error) {
+    paintStillReadout("the plate failed: " + (error.message || error));
+    logStudio("still failed: " + (error.message || error));
+  } finally {
+    // Every one of these restores something the loop above took, and the
+    // order matters: the view offset first, because applyCameraFrustum
+    // below is what puts the ordinary frustum back.
+    camera.clearViewOffset();
+    renderer.setPixelRatio(wasPixelRatio);
+    composer.setPixelRatio(wasPixelRatio);
+    renderer.setSize(wasWidth, wasHeight, false);
+    composer.setSize(wasWidth, wasHeight);
+    state.recording = false;       // resize() picks the canvas back up
+    document.body.classList.remove("stilling");
+    state.stillRendering = false;
+    applyCameraFrustum(viewportAspect());
+    if (button) button.disabled = false;
+    paintStillControls();
+  }
 }
 
 // ---------- the section ----------
@@ -12871,6 +13049,18 @@ guarded("the slider rows", () => upgradeSliders());
 // a .scrub, never typable, and paintScrub silently returning early on it.
 // Both rows are therefore visible in the markup and one is hidden here.
 guarded("the projection's own row", paintFrameWidth);
+guarded("the output section", () => {
+  buildSegmented("still-size-segments", "still-size");
+  document.getElementById("still-size").addEventListener("change", (e) => {
+    state.stillSize = e.target.value;
+    paintStillControls();
+    paintStillSize();
+    rememberSession();
+  });
+  document.getElementById("still-render").addEventListener("click", renderStill);
+  paintStillControls();
+  paintStillSize();
+});
 guarded("the panel groups", buildGroups);
 // The libraries load in the background: the studio is usable before either
 // arrives, a folder with nothing in it simply leaves the old props, and no

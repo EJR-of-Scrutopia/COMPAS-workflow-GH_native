@@ -2127,6 +2127,137 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                      "are still in {}".format(directory))
         return {"video": str(deliver_recording(run_id, video))}
 
+    # ---------- the print-resolution still ----------
+    # A SEPARATE DIRECTORY FROM THE FRAMES, and that is not tidiness.
+    # post_frame deletes every frame-*.png and frame-*.jpg in a study's
+    # frames folder whenever it is handed frame 1, deliberately, so a
+    # shorter re-recording cannot inherit the previous take's tail. A
+    # still export that reused that endpoint would therefore destroy a
+    # recording the first tile it sent. Stills live in studio/still and
+    # clear only their own.
+    def still_dir(run_id: str) -> Path:
+        # The frames directory's own resolution with the last component
+        # swapped, so a still inherits the slug validation, the traversal
+        # guard and the 404 rather than growing a second copy of them
+        # that could drift.
+        return frames_dir(run_id).parent / "still"
+
+    @app.post("/api/still/{run_id}")
+    async def post_still_tile(
+        run_id: str,
+        request: Request,
+        tile: int = Query(...),
+        x: int = Query(...),
+        y: int = Query(...),
+    ):
+        """One tile of a plate, at its place in the full frame.
+
+        The position rides in the FILENAME rather than in a manifest, so
+        a stitch needs nothing but the directory and cannot be told a
+        geometry that disagrees with the pixels it is pasting.
+        """
+
+        directory = still_dir(run_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        if tile == 0:
+            # The same argument as the frames, scoped to stills: a plate
+            # rendered smaller than the last one would otherwise stitch
+            # the old one's right-hand tiles into its own margin.
+            for stale in directory.glob("tile-*.png"):
+                stale.unlink()
+        body = await request.body()
+        if body[:8] != b"\x89PNG\r\n\x1a\n":
+            # A plate is not a take: it is written once, looked at
+            # closely, and printed. A silently JPEG tile would carry
+            # block artefacts into a 300 dpi figure.
+            raise HTTPException(400, "a still tile must be a PNG")
+        (directory / "tile-{:03d}-{:06d}-{:06d}.png".format(tile, x, y)
+         ).write_bytes(body)
+        return {"tile": tile, "x": x, "y": y, "bytes": len(body)}
+
+    @app.post("/api/still/{run_id}/stitch")
+    def stitch_still(
+        run_id: str,
+        width: int = Query(...),
+        height: int = Query(...),
+    ):
+        """Paste the tiles into one image and write it beside them."""
+
+        directory = still_dir(run_id)
+        tiles = sorted(directory.glob("tile-*.png")) if directory.is_dir() else []
+        if not tiles:
+            raise HTTPException(404, "no tiles uploaded for run {}".format(run_id))
+        try:
+            from PIL import Image
+        except ImportError:  # pragma: no cover - Pillow is a declared dependency
+            raise HTTPException(
+                503, "Pillow is not installed; the tiles are in {}".format(directory))
+
+        # THE TILES DECIDE THE SIZE, and the caller only has to agree.
+        # A stitch that trusts the query can be told any size at all: a
+        # stray request for an 8 by 8 plate was served happily out of
+        # four 2048 tiles, because those tiles really do cover an 8 by 8
+        # rectangle, and it overwrote a finished 3840 by 2284 plate with
+        # a 181 byte thumbnail. Coverage was never the right question;
+        # AGREEMENT is.
+        placed = []
+        for path in tiles:
+            parts = path.stem.split("-")
+            with Image.open(path) as piece:
+                placed.append((int(parts[2]), int(parts[3]),
+                               piece.width, piece.height))
+        implied_w = max(x + w for x, y, w, h in placed)
+        implied_h = max(y + h for x, y, w, h in placed)
+        if (implied_w, implied_h) != (width, height):
+            raise HTTPException(
+                409, "the tiles on disk make a {} by {} plate, not {} by {}; "
+                     "render the plate again rather than stitching the last "
+                     "one to a new size".format(
+                         implied_w, implied_h, width, height))
+
+        plate = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        # A PLATE WITH A HOLE IN IT IS WORSE THAN A FAILED RENDER, because
+        # the hole is transparent and a transparent plate is exactly what
+        # the alpha option is for, so nobody would look twice.
+        #
+        # COVERAGE IS A RECTANGLE TEST, not a pixel count. The first cut
+        # summed tile areas and compared the total against width times
+        # height, which a single 2048 tile satisfies for any plate up to
+        # four megapixels: a stray request for an 8 by 8 plate stitched
+        # happily out of four full-size tiles and overwrote a good one.
+        # Rows are counted instead, so a tile that overlaps another or
+        # falls outside the plate cannot pay for ground it does not
+        # cover.
+        spans = {}
+        for path in tiles:
+            parts = path.stem.split("-")
+            x, y = int(parts[2]), int(parts[3])
+            piece = Image.open(path)
+            plate.paste(piece, (x, y))
+            for row in range(y, min(y + piece.height, height)):
+                spans.setdefault(row, []).append(
+                    (max(0, x), min(x + piece.width, width)))
+            piece.close()
+        missing = 0
+        for row in range(height):
+            reach = 0
+            for low, high in sorted(spans.get(row, [])):
+                if low > reach:
+                    break
+                reach = max(reach, high)
+            missing += max(0, width - reach)
+        if missing:
+            plate.close()
+            raise HTTPException(
+                500, "{} pixels of {} by {} never arrived across {} tiles; "
+                     "the plate would have holes in it".format(
+                         missing, width, height, len(tiles)))
+        out = directory.parent / "still.png"
+        plate.save(out)
+        plate.close()
+        return {"still": str(out), "width": width, "height": height,
+                "tiles": len(tiles)}
+
     @app.get("/")
     def index():
         """The page, with every asset it loads stamped with a version.

@@ -222,6 +222,7 @@
   <button data-section="animation-section" type="button">Animation</button>
   <button data-section="camera-section" type="button">Camera</button>
   <button data-section="scene-section" type="button">Scene</button>
+  <button data-section="output-section" type="button">Output</button>
 </nav>
 <aside id="panel">
   <div id="panel-top">
@@ -388,12 +389,9 @@
          a study actually carries a mechanism document, so it is not a
          dead control on the studies that have none. -->
     <label id="machine-row" class="hidden"><input id="show-machine" type="checkbox" checked> Machine</label>
-    <div id="recordings-folder-row" class="folder-line">
-      <button id="recordings-folder-choose" title="Pick where finished recordings are saved">Output folder</button>
-      <span id="recordings-folder-path" title="">no folder chosen</span>
-    </div>
-    <button id="record-button" class="primary">Record 1080p</button>
-    <div id="record-status"></div>
+    <!-- Record moved to the Output section, which is where the still and
+         the take now sit together: they are one job document, and a
+         lens control is not an output control. MOVED, not copied. -->
   </details>
   <details id="camera-section">
     <summary>Camera</summary>
@@ -623,6 +621,35 @@
          function for study switching, not a button. -->
     <!-- Scenes live in the shelf's Scenes drawer now: saving, restoring
          and deleting all happen beside the pictures of the scenes. -->
+  </details>
+  <details id="output-section">
+    <summary>Output</summary>
+    <!-- THE PLATE. An A3 sheet at 300 dpi is 4961 x 3508 and the
+         recorder stops at 1920, so every figure has gone to press as an
+         upscale, and a 1500-voussoir vault at 1920 wide gives each piece
+         about forty pixels. Named for the page, because 4961 x 3508
+         means something and "8K" does not.
+         The shape comes from the Camera frame ratio; these decide only
+         how many pixels that shape gets. -->
+    <span class="row-heading">Still</span>
+    <select id="still-size" class="hidden" title="How many pixels the composed frame gets. A3 and A2 are those sheets at 300 dpi.">
+      <option value="2k">2K</option>
+      <option value="4k">4K</option>
+      <option value="a3-300" selected>A3</option>
+      <option value="a2-300">A2</option>
+      <option value="8k">8K</option>
+    </select>
+    <div id="still-size-segments" class="segmented"></div>
+    <button id="still-render" class="primary" title="Render the composed frame at print resolution, in tiles, and stitch it">Render still</button>
+    <div id="still-readout"></div>
+    <!-- And the take, which shares the folder and the frame with it. -->
+    <span class="row-heading">Take</span>
+    <div id="recordings-folder-row" class="folder-line">
+      <button id="recordings-folder-choose" title="Pick where finished recordings are saved">Output folder</button>
+      <span id="recordings-folder-path" title="">no folder chosen</span>
+    </div>
+    <button id="record-button" class="primary">Record 1080p</button>
+    <div id="record-status"></div>
   </details>
   <div id="mode-row">
     <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>

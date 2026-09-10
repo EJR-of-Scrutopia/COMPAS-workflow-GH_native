@@ -167,7 +167,7 @@ body { overflow: hidden;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: var(--danger); color: #fff;
           border-radius: var(--radius); font-size: var(--t-2); z-index: 10; }
-#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
+#run-status, #cut-status, #record-status, #still-readout, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
 /* The panel token, so the data sheet follows the theme: it kept a fixed
    near-black ground under themed text, which light mode made unreadable. */
 /* A contained, translucent sheet at the top left (Param: "slightly
@@ -291,6 +291,16 @@ body.panel-collapsed #legend { right: var(--s4); }
                border: 1px solid var(--line); border-radius: var(--radius); z-index: 30;
                pointer-events: none; }
 #cut-overlay.hidden { display: none; }
+/* A plate is rendered in tiles, and each tile reassigns the canvas
+   backing store while its CSS box stays put, so the picture inside the
+   frame leaps from tile to tile (Param: "it jumps all over the place").
+   The viewport is covered for the duration rather than the render being
+   contorted to avoid it: reading the canvas is the path the recorder
+   already proves, and the composer target is HalfFloatType so reading
+   it into bytes returns black. */
+body.stilling #view { visibility: hidden; }
+body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
+  background: var(--ground); pointer-events: none; }
 #cut-spinner { width: var(--h-small); height: var(--h-small); border-radius: 50%;
                border: 3px solid var(--line); border-top-color: var(--ink-2);
                animation: cut-spin 0.9s linear infinite; }
