@@ -163,6 +163,19 @@ internal sealed record MechanismRoutingWire(int Wire, IReadOnlyList<MechanismFra
 /// default from is refused by name rather than given a number nobody
 /// authored.
 ///
+/// WHY <c>CableSpan</c> TRAVELS (spec 7.4, Task 7): it is the machine's own
+/// <c>footprint.cableSpan</c>, the distance between its first and its last
+/// routed wire's own <c>route[0]</c>, MEASURED IN THE MACHINE'S OWN DOCUMENT.
+/// That makes it the one fact about the layout that the study's own placement
+/// derivation did not produce. Every other number the study document could
+/// check a placement with is fed from the anchor rows the placement was
+/// derived FROM, so on the default path it agrees with itself by
+/// construction; this one is sourced elsewhere and can therefore disagree.
+///
+/// IT IS OPTIONAL, unlike the four above, and its absence refuses nothing: a
+/// machine routing fewer than two wires has no cable line and writes no
+/// <c>footprint</c> at all, so the witness that reads it simply does not run.
+///
 /// NOT PROVED BY ANYTHING THAT BUILDS ONE, and said rather than left to be
 /// found: that the machine document this was read from is the same document
 /// the studio will later resolve the id against. Nothing in this repo has an
@@ -174,7 +187,8 @@ internal sealed record MechanismMachineCitation(
     string Id,
     string Name,
     int WireCount,
-    double ReeveDefault);
+    double ReeveDefault,
+    double? CableSpan = null);
 
 /// <summary>One instance address: side then group of seven, his own tree order ("mechanisms per side, sides").</summary>
 internal readonly record struct MechanismInstanceId(int Side, int Group)
@@ -1599,16 +1613,7 @@ internal static class MechanismCollector
             //
             // The key is REMOVED rather than left null just below, since a
             // C# collection initialiser cannot omit one.
-            ["machine"] = machine is null
-                ? null
-                : new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["schema"] = MachineSchema,
-                    ["id"] = machine.Id,
-                    ["name"] = machine.Name,
-                    ["wireCount"] = machine.WireCount,
-                    ["reeveDefault"] = machine.ReeveDefault,
-                },
+            ["machine"] = MachineCitationPayload(machine),
             ["reeve"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["how"] = "THE DEFAULT IS THE CITED MACHINE'S OWN and is " +
@@ -1696,6 +1701,37 @@ internal static class MechanismCollector
         payload[RouteOwnerField] = owner;
         payload[RouteOwnerReelField] = ownerReel;
         return payload;
+    }
+
+    /// <summary>
+    /// THE CITED MACHINE, AS THE PAYLOAD CARRIES IT: the four facts a study
+    /// cannot render without, and the cable span when the machine states
+    /// one. Null for a study citing nothing at all, which the caller then
+    /// REMOVES rather than writing as a null key.
+    ///
+    /// cableSpan IS OMITTED, NOT WRITTEN NULL, when the machine states
+    /// none, for the same reason the whole block is: a key standing for
+    /// "there is no such thing" says nothing its absence does not, and it
+    /// forces every reader downstream to tolerate a null by name. It sits
+    /// LAST so the four facts that were here before keep their written
+    /// order, which the change-key requirement depends on.
+    /// </summary>
+    private static Dictionary<string, object?>? MachineCitationPayload(
+        MechanismMachineCitation? machine)
+    {
+        if (machine is null)
+            return null;
+        var block = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["schema"] = MachineSchema,
+            ["id"] = machine.Id,
+            ["name"] = machine.Name,
+            ["wireCount"] = machine.WireCount,
+            ["reeveDefault"] = machine.ReeveDefault,
+        };
+        if (machine.CableSpan is double cableSpan)
+            block["cableSpan"] = cableSpan;
+        return block;
     }
 
     /// <summary>
@@ -2677,8 +2713,30 @@ internal static class MechanismCollector
                 return null;
             }
 
+            // THE CABLE SPAN, READ WHERE IT IS FOUND AND NEVER DEMANDED
+            // (spec 7.4). It is the witness the study document checks its
+            // anchor rows against, and it is the only number in this
+            // citation that the study's own placement derivation cannot
+            // also have produced. A machine routing fewer than two wires
+            // writes no footprint at all, and one whose span reads zero,
+            // negative or not finite describes no cable line, so both are
+            // read as "no witness" rather than refused: the citation's four
+            // required facts are what a study cannot render without, and a
+            // machine that cannot be layout-checked still animates
+            // correctly.
+            double? cableSpan = null;
+            if (root.TryGetProperty("footprint", out JsonElement footprintElement) &&
+                footprintElement.ValueKind == JsonValueKind.Object &&
+                footprintElement.TryGetProperty("cableSpan", out JsonElement spanElement) &&
+                spanElement.ValueKind == JsonValueKind.Number &&
+                double.IsFinite(spanElement.GetDouble()) &&
+                spanElement.GetDouble() > 0.0)
+            {
+                cableSpan = spanElement.GetDouble();
+            }
+
             return new MechanismMachineCitation(
-                id, label, wireCount, reeveDefaultElement.GetDouble());
+                id, label, wireCount, reeveDefaultElement.GetDouble(), cableSpan);
         }
     }
 
