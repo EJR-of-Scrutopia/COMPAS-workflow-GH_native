@@ -1042,17 +1042,48 @@ internal static class MechanismDocument
         // THE REEVE FACTOR'S OWN SHAPE (spec's "reeve factor, settled
         // 2026-09-08 late", parallel to net_vertex): the document carries
         // the RESOLVED value on every wire, so the studio never inherits or
-        // infers one. Read once off the collector's mechanism payload
-        // (fixed at 1.0 today, provisional, per his own ruling) and
-        // stamped onto every wire below -- the VALUE is unchanged and
-        // still not built accurately; only the shape moves to match the
-        // ruling.
-        double reeveFactor =
-            mechanismIn.ValueKind == JsonValueKind.Object &&
-            mechanismIn.TryGetProperty("reeveFactor", out JsonElement rf) &&
-            rf.ValueKind == JsonValueKind.Number
-                ? rf.GetDouble()
-                : 1.0;
+        // infers one. Read once off the payload's own header and stamped
+        // onto every wire below.
+        //
+        // IT IS READ FROM reeve.default AND IT IS REFUSED BY NAME WHEN THAT
+        // IS ABSENT (spec 6.3, and the ruling that made this reader move).
+        // It used to read mechanism.reeveFactor with a silent fallback to
+        // 1.0. That key is gone: it was written deep inside the shared
+        // collector path, which the Machine component's own authored input
+        // does not reach, and a machine document lifting that block whole
+        // would have stated its default twice, in two keys, with two
+        // different numbers, both plausible and neither null. A fallback
+        // here would put the same fault back a level up -- every export
+        // silently applying 1.0 where he authored 4.0, with the geometry,
+        // the wire paths and the timing all still correct so that nothing
+        // looks broken. Export writes what it is handed (spec 1.3); where
+        // it is handed no default at all it writes NOTHING and says so,
+        // which costs the mechanism document and nothing else.
+        if (!root.TryGetProperty("reeve", out JsonElement reeveBlock) ||
+            reeveBlock.ValueKind != JsonValueKind.Object ||
+            !reeveBlock.TryGetProperty("default", out JsonElement reeveDefault) ||
+            reeveDefault.ValueKind != JsonValueKind.Number)
+        {
+            throw new InvalidOperationException(
+                "the payload states no reeve.default, so no reeve factor " +
+                "could be resolved and no mechanism document was written. " +
+                "The default is stated ONCE, in the payload's own reeve " +
+                "block, and it is REFUSED here rather than defaulted to " +
+                "1.0: a reader that invents a factor makes every reel spin " +
+                "at the wrong RATE while the geometry, the wire paths and " +
+                "the timing all stay correct, so nothing looks broken.");
+        }
+        double reeveFactor = reeveDefault.GetDouble();
+        if (!double.IsFinite(reeveFactor) || reeveFactor <= 0.0)
+        {
+            throw new InvalidOperationException(
+                "the payload's reeve.default is " +
+                reeveFactor.ToString(CultureInfo.InvariantCulture) +
+                ", which is not a mechanical advantage, so no mechanism " +
+                "document was written. It is the advantage of one wire's " +
+                "reeving through its block, so it is finite and greater " +
+                "than zero.");
+        }
 
         // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
         // instance participates but not what the wire IS". Every wire this

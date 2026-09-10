@@ -3459,19 +3459,46 @@ internal static partial class Program
                 + "No instances, no placed wires, no anchors, no net vertex "
                 + "anywhere in it -- which is the whole reason it exists "
                 + "apart from the mechanism document, and the thing a later "
-                + "change would break quietly. Also pinned, so a five-wire "
+                + "change would break quietly. THE HEADER IS REAL SINCE "
+                + "TASK 4: the id is a MINTED CODE (MCH-0007) and the name "
+                + "a separate label (\"Seven spool winch\"), so a rename "
+                + "cannot orphan a study that cites the machine; an EMPTY "
+                + "Machine Id is refused by name and builds no document at "
+                + "all; the reeve default is the authored 4.0 and is stated "
+                + "EXACTLY ONCE in the whole document, counted over the raw "
+                + "text, because two keys carrying two plausible numbers "
+                + "and neither null is how a reader applies 1.0 where he "
+                + "authored 4.0; and \"tensionTie\" and \"anchor\" appear "
+                + "at NO value anywhere, not even as the explicit nulls a "
+                + "Dictionary used to write, which is what made the leak "
+                + "walk tolerate a null in the first place. A build handed "
+                + "a tie AND an anchor refuses both BY NAME, leaves them "
+                + "out of the document, and gives the IDENTICAL footprint. "
+                + "Also pinned, so a five-wire "
                 + "machine and a twelve-wire one lay out with no code change "
                 + "anywhere else: wireCount is what was routed; the BANK is "
-                + "the largest group of reels sharing one axis direction AND "
-                + "one winding radius, so seven spools at 0.05 beat three "
-                + "pulleys that are BIGGER but disagree with each other, "
-                + "which is what stops it choosing by size; seven spools "
+                + "the entry whose BODIES TERMINATE WIRE ROUTES (spec 4.6), "
+                + "since a wire ends on the drum that pays it out, so seven "
+                + "route-terminating spool entries beat three pulleys that "
+                + "end nothing; seven spools "
                 + "driving seven cables raise no count-disagreement warning; "
-                + "the footprint's cable span and its setback are measured "
-                + "in the machine's OWN frame, so \"how far it reaches "
-                + "behind the cable line\" means something; and the datum is "
+                + "ALL FOUR footprint numbers are pinned outright -- min, "
+                + "max, setback 1.2 and cable span 0.9 -- measured "
+                + "in the machine's OWN frame with the tie and the anchor "
+                + "NO LONGER SWEPT (spec 3.4), so \"how far it reaches "
+                + "behind the cable line\" describes the winch and not its "
+                + "foundation; and the datum is "
                 + "the wire first-frames, never the body origin, which means "
-                + "nothing. AND THE MIRRORED ELEVENTH REEL IS NOW REFUSED "
+                + "nothing. HIS OWN MACHINE'S SHAPE IS NOW A FIXTURE: four "
+                + "entries at eleven bodies, one spool entry at eight axes "
+                + "beside three pulleys, where the OLD bank rule read two "
+                + "driven spools against seven wires and fired its "
+                + "count-disagreement warning on a CORRECTLY authored "
+                + "machine, and the new one reads one driven entry carrying "
+                + "seven driven bodies and says nothing -- and where the "
+                + "footprint measures a spare eighth drum standing beyond "
+                + "the pulleys, a number only the per-body sweep can "
+                + "produce. AND THE MIRRORED ELEVENTH REEL IS STILL REFUSED "
                 + "(Task 3, spec 4.4): the fixture authors eleven, the "
                 + "eleventh deliberately mirrored, and the build names it by "
                 + "ENTRY AND BODY as a reflection, drops that entry whole "
@@ -3563,7 +3590,19 @@ internal static partial class Program
                 + "rather than fabricating a vertex; vertexCount and "
                 + "columnNodeCount are declared at document level from the "
                 + "SAME Result Export already owns; and the document is "
-                + "byte-identical on a second run of the same inputs.");
+                + "byte-identical on a second run of the same inputs. AND "
+                + "THE REEVE FACTOR IS NOW READ FROM THE PAYLOAD'S OWN "
+                + "reeve.default AND REFUSED BY NAME WHEN ABSENT (Task 4, "
+                + "spec 6.3): the old mechanism.reeveFactor scalar has gone, "
+                + "because the machine document lifts that block whole and "
+                + "would have stated one machine's default twice in two "
+                + "keys with two different numbers; a payload stating no "
+                + "default costs the mechanism document and says so, rather "
+                + "than silently applying 1.0 where he authored 4.0 and "
+                + "leaving every reel to spin four times too slowly with "
+                + "the geometry, the wire paths and the timing all still "
+                + "correct; and a well-formed, non-null ZERO is refused as "
+                + "not a mechanical advantage.");
         }
         catch (Exception exception)
         {
@@ -41290,6 +41329,54 @@ internal static partial class Program
     }
 
     /// <summary>
+    /// REEL ENTRIES OF MIXED SHAPE: one branch per entry, each with its own
+    /// mesh and its own list of body axes, so a fixture can express HIS OWN
+    /// machine -- one spool entry at seven axes beside three single-body
+    /// pulleys -- rather than only the all-flat or all-one-entry extremes
+    /// the two helpers above cover. Built through the product's own
+    /// resolver for the same reason they are.
+    /// </summary>
+    private static object MechanismReelEntriesByBranch(
+        Assembly plugin, Type meshType, Type frameType, List<string> warnings,
+        params (object Mesh, object[] Axes)[] entries)
+    {
+        Type reelsType = RequireComponentType(plugin, "MechanismReels");
+        MethodInfo resolve = RequirePublicStatic(reelsType, "Resolve");
+        Type meshBranchType = typeof(List<>).MakeGenericType(meshType);
+        Type frameBranchType = typeof(List<>).MakeGenericType(frameType);
+
+        var meshBranches = new List<object>();
+        var axisBranches = new List<object>();
+        foreach ((object mesh, object[] axes) in entries)
+        {
+            meshBranches.Add(MechanismListOf(meshType, mesh));
+            axisBranches.Add(MechanismListOf(frameType, axes));
+        }
+        return resolve.Invoke(
+            null,
+            new object?[]
+            {
+                MechanismListOf(meshBranchType, meshBranches.ToArray()),
+                MechanismListOf(frameBranchType, axisBranches.ToArray()),
+                warnings,
+                null,
+            })!;
+    }
+
+    /// <summary>A count of non-overlapping occurrences of one string in another, for the document-wide single-statement rules.</summary>
+    private static int CountOccurrences(string text, string needle)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(needle, StringComparison.Ordinal);
+             at >= 0;
+             at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
     /// ONE REEL ENTRY AT MANY AXES, for the fixtures that mean to exercise
     /// the grouping itself rather than to stand in for the flat shape:
     /// one branch, one mesh, one plane per BODY. Built through the
@@ -41601,14 +41688,45 @@ internal static partial class Program
                 "now performs, and spec 4.5 says it must GO rather than " +
                 "sit beside it; notes were: " + string.Join(" | ", fullNotes));
         }
-        bool reeveFactorNamed = fullNotes.Any(n =>
-            n.Contains("reeveFactor is fixed at 1.0", StringComparison.Ordinal) &&
+        // THE REEVE DEFAULT IS STATED ONCE, AT THE PAYLOAD'S ROOT (spec
+        // 6.3, Task 4). It used to be the scalar mechanism.reeveFactor,
+        // written inside the block a machine document lifts whole, which is
+        // how one document could have stated the default twice in two keys
+        // with two different numbers. The chin still names it and still
+        // calls it provisional, and the payload now states it in the same
+        // reeve.default shape the machine document's header uses.
+        bool reeveDefaultNamed = fullNotes.Any(n =>
+            n.Contains("reeve default is stated ONCE", StringComparison.Ordinal) &&
+            n.Contains("reeve.default", StringComparison.Ordinal) &&
             n.Contains("PROVISIONAL", StringComparison.Ordinal));
-        if (!reeveFactorNamed)
+        if (!reeveDefaultNamed)
         {
             throw new InvalidOperationException(
-                "The chin must name the reeve factor as fixed at 1.0 and " +
-                "PROVISIONAL; notes were: " + string.Join(" | ", fullNotes));
+                "The chin must name the reeve default as stated ONCE at " +
+                "reeve.default and PROVISIONAL; notes were: " +
+                string.Join(" | ", fullNotes));
+        }
+        using (JsonDocument reeveShape = JsonDocument.Parse(fullJson))
+        {
+            JsonElement reeveRoot = reeveShape.RootElement;
+            if (!reeveRoot.TryGetProperty("reeve", out JsonElement reeveBlock) ||
+                Math.Abs(reeveBlock.GetProperty("default").GetDouble() - 1.0) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "The payload states its reeve default at the ROOT, as " +
+                    "reeve.default, and it is the provisional 1.0 until a " +
+                    "study cites a machine; got " + fullJson);
+            }
+            if (reeveRoot.GetProperty("mechanism").TryGetProperty(
+                    "reeveFactor", out JsonElement _))
+            {
+                throw new InvalidOperationException(
+                    "mechanism.reeveFactor is GONE (spec 6.3): the machine " +
+                    "document lifts the mechanism block whole, so a scalar " +
+                    "left there would state the machine's default a second " +
+                    "time, with a different number, and both would be " +
+                    "plausible and neither null.");
+            }
         }
 
         // CHECK 4b: spoolRadius falls back to Frame 1's own bounding box
@@ -41752,12 +41870,29 @@ internal static partial class Program
     ///
     /// Also pinned, because a five-wire machine and a twelve-wire one have
     /// to lay out with no code change anywhere else: wireCount is what was
-    /// routed; the BANK is the largest group of reels sharing one axis
-    /// direction AND one winding radius, which is what a bank of spools
-    /// physically is, rather than anything guessed from size alone; the
+    /// routed; the BANK is the entry whose BODIES terminate wire routes
+    /// (spec 4.6), since a wire ends on the drum that pays it out; the
     /// footprint is measured in the machine's OWN frame, so "how far it
     /// reaches behind the cable line" means something; and the datum is the
     /// wire first-frames, never the body origin.
+    ///
+    /// UPDATED BY TASK 4, AND THIS IS THE WHOLE OF WHAT MOVED. The header
+    /// is now real: the id is a MINTED CODE and the name a separate label,
+    /// the reeve default is stated exactly ONCE in the whole document, and
+    /// the tie and the anchor are not in it at any value. The bank is
+    /// re-derived from route-terminating bodies. The footprint no longer
+    /// sweeps the tie or the anchor, and all four of its numbers are pinned
+    /// outright. Three scenarios were added: a build handed a tie AND an
+    /// anchor, which refuses both by name and gives the identical
+    /// footprint; an empty Machine Id, refused by name with no document at
+    /// all; and HIS OWN machine's shape, four entries at eleven bodies,
+    /// where the old bank rule fired a count-disagreement warning on
+    /// correct input and the new one does not.
+    ///
+    /// WHAT THE FOOTPRINT LITERALS DO AND DO NOT PROVE. They did not
+    /// themselves move: this fixture has always built its asset with a null
+    /// tie and a null anchor, so the box it pins was already the machine's
+    /// own. The removal is proved by the twin build, not by these numbers.
     ///
     /// UPDATED BY TASK 3, and this is the whole of what moved. The fixture
     /// authors ELEVEN reels, the eleventh deliberately MIRRORED (Task 1,
@@ -41785,12 +41920,22 @@ internal static partial class Program
     /// BuildMachine does not go through the component at all: it WOULD
     /// catch a non-null "tensionTie" or "anchor" anywhere in the document
     /// (which is why it walks the whole document rather than the root), it
-    /// deliberately does NOT fire on the null placeholder those two keys
-    /// carry today, since Dictionary&lt;string, object?&gt; writes an
-    /// explicit JSON null for an unwired part rather than omitting the
-    /// key, and refusing on the bare key NAME would fail on every machine
-    /// document this codebase has ever built, wired or not -- a check that
-    /// fires on correct input is a defect, not a safeguard.
+    /// deliberately does NOT fire on a null value.
+    ///
+    /// THAT NULL TOLERANCE IS NOW BELT AND BRACES RATHER THAN LOAD-BEARING
+    /// (Task 4). It existed because Dictionary&lt;string, object?&gt; wrote
+    /// an explicit JSON null for an unwired part rather than omitting the
+    /// key, so every machine document this codebase had ever built carried
+    /// "tensionTie": null and "anchor": null, wired or not, and refusing on
+    /// the bare key NAME would have failed on all of them -- a check that
+    /// fires on correct input is a defect, not a safeguard. The build no
+    /// longer writes either key at all when there is no such part, and
+    /// drops both outright from a machine build that is handed one, so the
+    /// strict name-only assertion above is the one that now carries the
+    /// weight for THIS document. The tolerant walk is kept because it
+    /// guards the whole forbidden list, most of which (instances, wires,
+    /// anchors, principalRows, study) a study document does legitimately
+    /// carry as arrays.
     /// </summary>
     private static void ValidateMachineDocument(Assembly plugin)
     {
@@ -41986,13 +42131,23 @@ internal static partial class Program
                 "no place to stand; warnings were: " +
                 string.Join(" | ", warnings));
         }
+        // THE MINTED ID AND THE LABEL ARE TWO ARGUMENTS NOW (spec 3.6), and
+        // the authored reeve default is a third. The id is deliberately
+        // NOTHING LIKE the name here: a build that derived one from the
+        // other, as this one used to, would be caught by the assertion
+        // below rather than passing on a fixture that named them alike.
+        const string MintedId = "MCH-0007";
+        const string Label = "Seven spool winch";
+        const double AuthoredReeve = 4.0;
         string document = (string)build.Invoke(
             null,
             new object?[]
             {
                 asset,
                 MechanismListOf(routingWireType, wires),
-                "seven wire bank",
+                MintedId,
+                Label,
+                AuthoredReeve,
                 null,
                 warnings,
                 notes,
@@ -42010,11 +42165,62 @@ internal static partial class Program
                 "which is what tells a reader it is NOT a study; got " +
                 root.GetProperty("schema").GetString());
         }
-        if (root.GetProperty("id").GetString() != "seven wire bank")
+        // THE ID IS THE MINTED CODE AND THE NAME IS THE LABEL, and they are
+        // separate keys (spec 3.6). The id used to BE the name, run through
+        // the file-name sanitiser: a name that was not one path segment
+        // came out as the literal "machine", so two such machines minted
+        // one identity and the second silently became the first.
+        if (root.GetProperty("id").GetString() != MintedId ||
+            root.GetProperty("name").GetString() != Label)
         {
             throw new InvalidOperationException(
-                "A machine's id is its name, since a study cites it and a " +
-                "chooser lists it.");
+                "id is the MINTED CODE and name is the label, and they are " +
+                "separate so that renaming cannot orphan a study. A study " +
+                "citing a missing machine renders nothing, silently. Got " +
+                $"id \"{root.GetProperty("id").GetString()}\" and name " +
+                $"\"{(root.TryGetProperty("name", out JsonElement labelOut) ? labelOut.GetString() : "<absent>")}\".");
+        }
+
+        // THE REEVE DEFAULT IS THE AUTHORED VALUE AND IS STATED EXACTLY
+        // ONCE IN THE WHOLE DOCUMENT (spec 6.3). The count is over the raw
+        // text on purpose: the fault this guards against is a SECOND key
+        // somewhere else in the document carrying a different number, and a
+        // reader that walked only the header would never see it. The old
+        // mechanism.reeveFactor scalar sat inside the "machine" block this
+        // document lifts whole, which is exactly where such a second
+        // statement comes from.
+        int reeveStatements =
+            CountOccurrences(document, "\"reeveFactorDefault\"") +
+            CountOccurrences(document, "\"reeveFactor\"") +
+            CountOccurrences(document, "\"default\"");
+        if (Math.Abs(root.GetProperty("reeve").GetProperty("default").GetDouble() - AuthoredReeve) > 1.0e-12 ||
+            reeveStatements != 1)
+        {
+            throw new InvalidOperationException(
+                "The machine states its default reeve factor ONCE. Two keys " +
+                "carrying two plausible numbers, neither null, is how a " +
+                "reader applies 1.0 where he authored 4.0 and every reel " +
+                $"spins four times too slowly; found {reeveStatements}.");
+        }
+
+        // AND THE TIE AND THE ANCHOR ARE NOT THERE AT ALL, not even as a
+        // null (spec 3.3, and Task 1's mid-task finding). This is stricter
+        // than the walk below, which tolerates a null: a machine document
+        // is built by a path that now drops both parts outright, so the
+        // KEY's presence is itself the fault here, whatever it carries.
+        foreach (string forbidden in new[] { "tensionTie", "anchor" })
+        {
+            if (document.Contains("\"" + forbidden + "\"", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"A machine document must not carry \"{forbidden}\" at " +
+                    "all, not even as an explicit null: " +
+                    "Dictionary<string, object?> writes the key whatever " +
+                    "the value, and a key standing for \"there is no such " +
+                    "part\" says nothing its absence does not, while " +
+                    "forcing every leak check downstream to tolerate a " +
+                    "null by name.");
+            }
         }
 
         // THE NEGATIVE INVARIANT, and the reason this document exists.
@@ -42081,29 +42287,52 @@ internal static partial class Program
         JsonElement bank = root.GetProperty("bank");
         int[] spools = bank.GetProperty("spools").EnumerateArray().Select(e => e.GetInt32()).ToArray();
         int[] idlers = bank.GetProperty("idlers").EnumerateArray().Select(e => e.GetInt32()).ToArray();
-        // IDLERS ARE THREE AGAIN, NOT FOUR: Task 1 raised this to four for
-        // the mirrored eleventh reel, which then still reached the
-        // document and fell into the idlers because its radius did not
-        // match the bank's. Task 3 REFUSES that reel, so it reaches
-        // nothing at all and the idlers are the three pulleys once more.
-        // The count is a fact about THIS FIXTURE'S geometry, exactly like
-        // the reel count below, and not a claim about the real machine.
-        if (spools.Length != 7 || idlers.Length != 3)
+        int[] drivenBodies = bank.GetProperty("drivenBodies")
+            .EnumerateArray().Select(e => e.GetInt32()).ToArray();
+        // THE BANK IS NOW THE ENTRY(IES) WHOSE BODIES TERMINATE WIRE ROUTES
+        // (spec 4.6, Task 4), and on THIS fixture that is still seven
+        // spools against three idlers -- but for a different reason, and
+        // the difference is the point. The old rule was the largest group
+        // sharing an axis direction and a winding radius; this fixture's
+        // eleven single-body entries satisfy both readings alike, which is
+        // exactly why the four-entry fixture below exists: there the two
+        // readings disagree, and the old one fires a warning on a correctly
+        // authored machine.
+        //
+        // IDLERS ARE THREE, NOT FOUR: Task 1 raised this to four for the
+        // mirrored eleventh reel, which then still reached the document.
+        // Task 3 REFUSES that reel, so it reaches nothing at all. The count
+        // is a fact about THIS FIXTURE'S geometry and not a claim about the
+        // real machine.
+        if (spools.Length != 7 || idlers.Length != 3 || drivenBodies.Length != 7)
         {
             throw new InvalidOperationException(
-                "The bank is the largest group of reels sharing one axis " +
-                "direction AND one winding radius: seven spools at 0.05 " +
-                "here, and three idlers, the pulleys, that disagree with " +
-                "the bank and with each other. Got " +
-                $"{spools.Length} spool(s) and " +
-                $"{idlers.Length} idler(s), which if it is 3 and 7 means it " +
-                "chose by size.");
+                "The bank is the entry(ies) whose BODIES terminate wire " +
+                "routes: seven single-body spool entries here, each ending " +
+                "one wire, and three idlers, the pulleys, that end none. " +
+                $"Got {spools.Length} spool entry(ies), {idlers.Length} " +
+                $"idler(s) and {drivenBodies.Length} driven bod(y/ies).");
+        }
+        // AND THE PERMUTATION IS CARRIED, NOT ASSUMED: reels 3 and 5 swap
+        // identity wholesale in this fixture, so a bank derived from where
+        // the wires actually END still names every one of the seven, in
+        // ascending order, while a bank derived from wire order would agree
+        // only by coincidence.
+        if (!spools.SequenceEqual(new[] { 0, 1, 2, 3, 4, 5, 6 }) ||
+            !idlers.SequenceEqual(new[] { 7, 8, 9 }))
+        {
+            throw new InvalidOperationException(
+                "The bank names its driven entries by INDEX, ascending, and " +
+                "the idlers are the rest; got spools [" +
+                string.Join(", ", spools) + "] and idlers [" +
+                string.Join(", ", idlers) + "].");
         }
         if (Math.Abs(bank.GetProperty("radius").GetDouble() - 0.05) > 1.0e-9)
         {
             throw new InvalidOperationException(
-                "The bank states its own radius, which is the spools' and " +
-                $"not a pulley's; got {bank.GetProperty("radius").GetDouble()}.");
+                "The bank states its own radius, the median of the driven " +
+                "entries', which is the spools' and not a pulley's; got " +
+                $"{bank.GetProperty("radius").GetDouble()}.");
         }
         if (warnings.Any(w => w.Contains("bank reads", StringComparison.Ordinal)))
         {
@@ -42113,6 +42342,24 @@ internal static partial class Program
                 string.Join(" | ", warnings));
         }
 
+        // THE FOOTPRINT IS PINNED OUTRIGHT NOW, ALL FOUR NUMBERS (spec 3.4,
+        // Task 4). It used to sweep the tension tie's and the anchor's
+        // vertices as well as the machine's, so min, max, setback and
+        // cableSpan are MEASURABLY DIFFERENT numbers for any machine that
+        // had either wired -- and those are the numbers a layout spaces
+        // machines by, so they cannot be left to drift.
+        //
+        // THE LITERALS BELOW DID NOT THEMSELVES MOVE, and saying so is the
+        // honest half: this fixture has always built its asset with a null
+        // tie and a null anchor, so the sweep it measured was already the
+        // machine's own. What proves the removal is the twin build further
+        // down, which wires a tie and an anchor OUTSIDE the machine's own
+        // extents and must give byte-identical footprint numbers to these.
+        // Derived by hand from the fixture's own geometry, in the machine's
+        // own frame (X along the cable line from the wire first-frames' own
+        // centre at x = 0.45, Y toward the body, Z up): the spools reach
+        // x = -0.05 and 0.95 and the pulleys stand at x = 2.0; the pulleys
+        // reach y = -0.3 and z = -0.3; frame 1 reaches y = 1.2 and z = 0.6.
         JsonElement footprint = root.GetProperty("footprint");
         double span = footprint.GetProperty("cableSpan").GetDouble();
         if (Math.Abs(span - 0.9) > 1.0e-9)
@@ -42121,13 +42368,33 @@ internal static partial class Program
                 "The cable span is the distance across the wire " +
                 $"first-frames, 0.9 m here; got {span}.");
         }
+        double[] footprintMin = footprint.GetProperty("min")
+            .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        double[] footprintMax = footprint.GetProperty("max")
+            .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+        double[] wantMin = { -0.5, -0.3, -0.3 };
+        double[] wantMax = { 1.55, 1.2, 0.6 };
+        for (int i = 0; i < 3; i++)
+        {
+            if (Math.Abs(footprintMin[i] - wantMin[i]) > 1.0e-9 ||
+                Math.Abs(footprintMax[i] - wantMax[i]) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "The footprint is the MACHINE'S OWN box, in the " +
+                    "machine's own frame, and every layout spaces units by " +
+                    "it. Wanted min [" + string.Join(", ", wantMin) +
+                    "] and max [" + string.Join(", ", wantMax) + "]; got " +
+                    "min [" + string.Join(", ", footprintMin) + "] and max [" +
+                    string.Join(", ", footprintMax) + "].");
+            }
+        }
         double setback = footprint.GetProperty("setback").GetDouble();
-        if (setback <= 0.0)
+        if (Math.Abs(setback - 1.2) > 1.0e-9)
         {
             throw new InvalidOperationException(
                 "The setback is how far the machine reaches BEHIND its " +
-                "cable line, measured in the machine's own frame, so it " +
-                $"must be positive for a body that sits behind; got {setback}.");
+                "cable line, measured in the machine's own frame: frame 1's " +
+                $"own far vertex at y = 1.2 here; got {setback}.");
         }
 
         JsonElement datum = root.GetProperty("datum");
@@ -42186,6 +42453,328 @@ internal static partial class Program
                     "exactly 1: it is the identity, DECLARED because the " +
                     "mesh is authored there rather than computed and left " +
                     "reading 0.9999999999999998.");
+            }
+        }
+
+        // ================================================================
+        // SCENARIO 2: A TIE AND AN ANCHOR HANDED TO THE MACHINE BUILD ARE
+        // REFUSED BY NAME, AND THE FOOTPRINT DOES NOT MOVE (spec 3.3, 3.4).
+        //
+        // THIS IS THE CHECK THAT PROVES THE FOOTPRINT CHANGE, and the one
+        // the fixture above cannot: that fixture has always wired a null
+        // tie and a null anchor, so its numbers were already the machine's
+        // own and did not move when the two were taken out of the sweep.
+        // Here both are wired, deliberately WELL OUTSIDE the machine's own
+        // extents -- a foundation body 5 m away and 3 m down, which is the
+        // shape a real tie has -- so a sweep that still took them would
+        // give a footprint nothing like the pinned one, and the setback a
+        // layout spaces rows by would describe the works rather than the
+        // winch.
+        // ================================================================
+        var tiedWarnings = new List<string>();
+        var tiedNotes = new List<string>();
+        object tiedAsset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new[] { 0.0, 0.8, 0.0 }, new[] { 0.9, 0.8, 0.0 },
+                new[] { 0.0, 1.2, 0.6 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false,
+            Mesh(new[]
+            {
+                new[] { 5.0, 5.0, -3.0 }, new[] { 6.0, 6.0, -3.0 },
+                new[] { 5.0, 6.0, 4.0 },
+            }),
+            false,
+            reelEntries,
+            Mesh(new[]
+            {
+                new[] { -4.0, -4.0, -2.0 }, new[] { -3.0, -4.0, -2.0 },
+                new[] { -4.0, -3.0, -2.0 },
+            }),
+            false)!;
+        string tiedDocument = (string)build.Invoke(
+            null,
+            new object?[]
+            {
+                tiedAsset,
+                MechanismListOf(routingWireType, wires),
+                MintedId,
+                Label,
+                AuthoredReeve,
+                null,
+                tiedWarnings,
+                tiedNotes,
+            })!;
+        bool tieRefused = tiedWarnings.Any(w =>
+            w.Contains("Tension Tie", StringComparison.Ordinal) &&
+            w.Contains("Anchor", StringComparison.Ordinal) &&
+            w.Contains("PERMANENT WORKS", StringComparison.Ordinal));
+        if (!tieRefused)
+        {
+            throw new InvalidOperationException(
+                "A tension tie or an anchor handed to the machine build " +
+                "must be refused BY NAME and left out, since they are the " +
+                "study's permanent works: the things that remain when the " +
+                "machine is taken away. Warnings were: " +
+                string.Join(" | ", tiedWarnings));
+        }
+        foreach (string forbidden in new[] { "tensionTie", "anchor" })
+        {
+            if (tiedDocument.Contains("\"" + forbidden + "\"", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"A machine document must not carry \"{forbidden}\" even " +
+                    "when one is wired to the build: it is dropped from the " +
+                    "asset before anything is built, which is what keeps it " +
+                    "out of the document AND out of the footprint at once.");
+            }
+        }
+        using (JsonDocument tied = JsonDocument.Parse(tiedDocument))
+        {
+            JsonElement tiedFootprint = tied.RootElement.GetProperty("footprint");
+            double[] tiedMin = tiedFootprint.GetProperty("min")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] tiedMax = tiedFootprint.GetProperty("max")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            for (int i = 0; i < 3; i++)
+            {
+                if (Math.Abs(tiedMin[i] - wantMin[i]) > 1.0e-9 ||
+                    Math.Abs(tiedMax[i] - wantMax[i]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "A FOOTPRINT DESCRIBES THE MACHINE (spec 3.4). The " +
+                        "same machine built with a tie and an anchor wired " +
+                        "must give the IDENTICAL box: min [" +
+                        string.Join(", ", wantMin) + "] and max [" +
+                        string.Join(", ", wantMax) + "]; got min [" +
+                        string.Join(", ", tiedMin) + "] and max [" +
+                        string.Join(", ", tiedMax) + "]. min, max, setback " +
+                        "and cableSpan are what a layout spaces machines " +
+                        "by, and a tie reaching 5 m away and 3 m down would " +
+                        "space a whole row by the foundation instead.");
+                }
+            }
+            if (Math.Abs(tiedFootprint.GetProperty("setback").GetDouble() - 1.2) > 1.0e-9 ||
+                Math.Abs(tiedFootprint.GetProperty("cableSpan").GetDouble() - 0.9) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "The setback and the cable span must not move either " +
+                    "when a tie and an anchor are wired; got setback " +
+                    tiedFootprint.GetProperty("setback").GetDouble() +
+                    " and span " +
+                    tiedFootprint.GetProperty("cableSpan").GetDouble() + ".");
+            }
+        }
+
+        // ================================================================
+        // SCENARIO 3: AN EMPTY MACHINE ID IS REFUSED BY NAME (spec 3.6).
+        // The id is the one thing about a machine that must never change,
+        // because a study cites it and a study citing a machine that is not
+        // there renders NOTHING, silently. A document with no id is worse
+        // than no document, so no document is what it gets.
+        // ================================================================
+        var namelessWarnings = new List<string>();
+        var namelessNotes = new List<string>();
+        string nameless = (string)build.Invoke(
+            null,
+            new object?[]
+            {
+                asset,
+                MechanismListOf(routingWireType, wires),
+                "   ",
+                Label,
+                AuthoredReeve,
+                null,
+                namelessWarnings,
+                namelessNotes,
+            })!;
+        if (nameless.Length != 0 ||
+            !namelessWarnings.Any(w =>
+                w.Contains("Machine Id (ID) is empty", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "An empty Machine Id must be refused BY NAME and produce no " +
+                "document at all; got a " + nameless.Length +
+                " character document and warnings: " +
+                string.Join(" | ", namelessWarnings));
+        }
+
+        // ================================================================
+        // SCENARIO 4: HIS OWN MACHINE'S SHAPE -- FOUR ENTRIES, TEN BODIES
+        // -- AND THE BANK RE-DERIVED FOR IT (spec 4.6).
+        //
+        // WHY THIS FIXTURE HAD TO BE BUILT. The old bank rule was "the
+        // largest group of reels sharing one axis direction AND one winding
+        // radius", which identifies seven driven spools only while seven
+        // separate spool MESHES are authored. This is the same machine as
+        // the fixture above -- the same seven drums at the same places, the
+        // same three pulleys, the same seven wires -- authored the way
+        // ruling 1.5 says it must be: ONE spool entry at seven axes. Under
+        // the old rule it reads TWO driven spools (the two pulleys whose
+        // mesh-derived radii happen to fall within 5% of each other) against
+        // seven wires, and fires its count-disagreement warning on a
+        // CORRECTLY authored machine. A warning that fires on correct input
+        // is a defect, as serious as one that misses a fault: it teaches
+        // him to ignore the line that will one day be real.
+        //
+        // Under the new rule the bank is the entry whose BODIES terminate
+        // wire routes: ONE driven entry carrying SEVEN driven bodies, three
+        // idler entries, and seven bodies against seven wires, so the cross
+        // check agrees and says nothing.
+        // ================================================================
+        var bankWarnings = new List<string>();
+        var bankNotes = new List<string>();
+        var spoolAxes = new List<object>();
+        for (int k = 0; k < 7; k++)
+            spoolAxes.Add(FrameOf(new[] { 0.15 * k, 0.8, 0.2 }, unitX, unitY));
+
+        // AN EIGHTH SPOOL BODY, A SPARE DRUM, CARRYING NO WIRE, and it is
+        // here to make the footprint MEASURE the body transforms rather
+        // than agree with them by coincidence. It stands beyond the
+        // pulleys, so the machine's own far edge in X is its placed mesh
+        // and nothing else: a sweep that took the entry's authored mesh
+        // once, at body 0, would read the pulleys as the far edge instead
+        // and hand back a machine that stops 0.45 m short of itself. It
+        // also says something true about the bank: a body of the driven
+        // entry is not itself driven unless a route ENDS on it.
+        spoolAxes.Add(FrameOf(new[] { 2.4, 0.8, 0.2 }, unitX, unitY));
+        var entryBranches = new List<(object Mesh, object[] Axes)>
+        {
+            // ONE spool entry: its mesh authored at body 0 (the drum at
+            // x = 0) and carried to seven axes by seven body transforms.
+            (Mesh(ReelAt(0.0, 0.05)), spoolAxes.ToArray()),
+        };
+        foreach (double radius in pulleyRadii)
+        {
+            entryBranches.Add((
+                Mesh(new[]
+                {
+                    new[] { 2.0, radius, 0.0 },
+                    new[] { 2.0, -radius, 0.0 },
+                    new[] { 2.0, 0.0, radius },
+                    new[] { 2.0, 0.0, -radius },
+                }),
+                new[]
+                {
+                    FrameOf(
+                        new[] { 2.0, 0.0, 0.5 },
+                        new[] { 0.0, 1.0, 0.0 },
+                        new[] { 0.0, 0.0, 1.0 }),
+                }));
+        }
+        object fourEntryReels = MechanismReelEntriesByBranch(
+            plugin, meshType, frameType, bankWarnings, entryBranches.ToArray());
+        object fourEntryAsset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new[] { 0.0, 0.8, 0.0 }, new[] { 0.9, 0.8, 0.0 },
+                new[] { 0.0, 1.2, 0.6 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            fourEntryReels,
+            null,
+            false)!;
+        string fourEntryDocument = (string)build.Invoke(
+            null,
+            new object?[]
+            {
+                fourEntryAsset,
+                MechanismListOf(routingWireType, wires),
+                "MCH-0007",
+                "Seven spool winch, four entries",
+                AuthoredReeve,
+                null,
+                bankWarnings,
+                bankNotes,
+            })!;
+        using (JsonDocument fourEntry = JsonDocument.Parse(fourEntryDocument))
+        {
+            JsonElement fourRoot = fourEntry.RootElement;
+            JsonElement fourBank = fourRoot.GetProperty("bank");
+            int[] fourSpools = fourBank.GetProperty("spools")
+                .EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            int[] fourIdlers = fourBank.GetProperty("idlers")
+                .EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            int[] fourDriven = fourBank.GetProperty("drivenBodies")
+                .EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            if (!fourSpools.SequenceEqual(new[] { 0 }) ||
+                !fourIdlers.SequenceEqual(new[] { 1, 2, 3 }) ||
+                !fourDriven.SequenceEqual(new[] { 0, 1, 2, 3, 4, 5, 6 }))
+            {
+                throw new InvalidOperationException(
+                    "On a four-entry machine the bank is the ENTRY whose " +
+                    "bodies terminate the wire routes: spools [0], idlers " +
+                    "[1, 2, 3] and driven bodies [0..6]. Got spools [" +
+                    string.Join(", ", fourSpools) + "], idlers [" +
+                    string.Join(", ", fourIdlers) + "] and driven bodies [" +
+                    string.Join(", ", fourDriven) + "]. Two driven spools " +
+                    "against seven wires is the OLD rule, reading the two " +
+                    "pulleys whose mesh radii happen to agree.");
+            }
+            if (bankWarnings.Any(w => w.Contains("bank reads", StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    "A CORRECTLY authored four-entry machine must raise NO " +
+                    "count-disagreement warning: seven driven bodies " +
+                    "against seven wires agree. Warnings were: " +
+                    string.Join(" | ", bankWarnings));
+            }
+            if (fourRoot.GetProperty("machine").GetProperty("reels").GetArrayLength() != 4)
+            {
+                throw new InvalidOperationException(
+                    "Four entries are four reels in the document, each " +
+                    "carrying its own bodies; got " +
+                    fourRoot.GetProperty("machine").GetProperty("reels").GetArrayLength() + ".");
+            }
+            if (fourRoot.GetProperty("machine").GetProperty("reels")[0]
+                    .GetProperty("bodies").GetArrayLength() != 8)
+            {
+                throw new InvalidOperationException(
+                    "The spool entry carries its bodies: seven drums that " +
+                    "carry wire and one spare, ONE authored mesh at eight " +
+                    "axes, which is the whole point of entries and what " +
+                    "takes the machine document from 36 MiB to a document " +
+                    "that uploads once.");
+            }
+
+            // AND THE FOOTPRINT SWEEPS EVERY BODY, NOT EVERY ENTRY, WHICH
+            // THIS FIXTURE IS THE FIRST TO MEASURE. Its min is the same box
+            // corner as scenario 1's, since this is the same machine
+            // authored the other way; its max in X is the EIGHTH body's own
+            // placed mesh at 2.45, which is 2.0 in the machine's own frame
+            // and a number no sweep of the entry's authored mesh alone
+            // could produce -- that sweep would stop at the pulleys, 1.55,
+            // and hand back a machine 0.45 m shorter than it is.
+            JsonElement fourFootprint = fourRoot.GetProperty("footprint");
+            double[] fourMin = fourFootprint.GetProperty("min")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] fourMax = fourFootprint.GetProperty("max")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] wantFourMax = { 2.0, 1.2, 0.6 };
+            for (int i = 0; i < 3; i++)
+            {
+                if (Math.Abs(fourMin[i] - wantMin[i]) > 1.0e-9 ||
+                    Math.Abs(fourMax[i] - wantFourMax[i]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "The four-entry machine's footprint places EVERY " +
+                        "BODY: wanted min [" + string.Join(", ", wantMin) +
+                        "] and max [" + string.Join(", ", wantFourMax) +
+                        "]; got min [" + string.Join(", ", fourMin) +
+                        "] and max [" + string.Join(", ", fourMax) +
+                        "]. A max X of 1.55 means the sweep measured the " +
+                        "entry's authored mesh once, at body 0, and never " +
+                        "carried it to the other bodies at all.");
+                }
             }
         }
     }
@@ -44380,9 +44969,15 @@ internal static partial class Program
             "{\"side\":0,\"mechanism\":0,\"wire\":2,\"route\":[" +
             Frame(5, 5, 5) + "]}]";
 
+        // THE REEVE DEFAULT SITS AT THE PAYLOAD'S ROOT (spec 6.3, Task 4),
+        // where the writer now states it once, and NOT as the old scalar
+        // mechanism.reeveFactor. A payload carrying no reeve.default at all
+        // is REFUSED by name rather than defaulted to 1.0, which check 5b
+        // below proves on this same fixture.
         string payload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
-            "\"spinners\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}," +
+            "\"spinners\":[],\"spoolRadius\":0.1}," +
+            "\"reeve\":{\"default\":1.0}," +
             "\"instances\":[" + instancePayload + "]," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
@@ -44544,6 +45139,82 @@ internal static partial class Program
                 "The mechanism document must be byte-identical for the "
                 + "same Result and payload; two runs differ.");
         }
+
+        // A PAYLOAD STATING NO REEVE DEFAULT IS REFUSED BY NAME, NOT
+        // DEFAULTED TO 1.0 (Task 4, spec 6.3). This reader used to take
+        // mechanism.reeveFactor with a silent fallback to 1.0, and that key
+        // has gone: the machine document lifts the mechanism block whole,
+        // so a default written there would be stated twice in one document,
+        // in two keys, with two different numbers, both plausible and
+        // neither null. Had the fallback been left behind, every export
+        // would have applied 1.0 where he authored 4.0 and every reel would
+        // spin four times too slowly, with the geometry, the wire paths and
+        // the timing all still correct so that nothing looked broken.
+        //
+        // A REFUSAL HERE COSTS THE MECHANISM DOCUMENT AND NOTHING ELSE:
+        // Export catches this call on its own, the way it catches formwork,
+        // and reports the message as a named warning.
+        string noReeve = payload.Replace(
+            "\"reeve\":{\"default\":1.0},", string.Empty, StringComparison.Ordinal);
+        if (string.Equals(noReeve, payload, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The fixture meant to strip reeve.default did not change "
+                + "the payload, so the refusal below would prove nothing.");
+        }
+        string refusal = string.Empty;
+        try
+        {
+            json.Invoke(
+                null,
+                new object?[]
+                {
+                    result, Study, 1.0, noReeve,
+                    new List<string>(), new List<string>(),
+                });
+        }
+        catch (TargetInvocationException invocation)
+        {
+            refusal = invocation.GetBaseException().Message;
+        }
+        if (!refusal.Contains("reeve.default", StringComparison.Ordinal) ||
+            !refusal.Contains("1.0", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A payload that states no reeve.default must be REFUSED by "
+                + "name, saying both the key it wants and the 1.0 it is "
+                + "refusing to invent; got \"" + refusal + "\".");
+        }
+
+        // AND A DEFAULT THAT CANNOT BE A MECHANICAL ADVANTAGE IS REFUSED
+        // TOO. Zero is the dangerous one: it is well formed, it is not
+        // null, and it freezes every reel at every frame while the wire
+        // paths and the timing stay correct.
+        string zeroReeve = payload.Replace(
+            "\"reeve\":{\"default\":1.0}",
+            "\"reeve\":{\"default\":0.0}",
+            StringComparison.Ordinal);
+        string zeroRefusal = string.Empty;
+        try
+        {
+            json.Invoke(
+                null,
+                new object?[]
+                {
+                    result, Study, 1.0, zeroReeve,
+                    new List<string>(), new List<string>(),
+                });
+        }
+        catch (TargetInvocationException invocation)
+        {
+            zeroRefusal = invocation.GetBaseException().Message;
+        }
+        if (!zeroRefusal.Contains("not a mechanical advantage", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A reeve.default of zero must be refused by name as not a "
+                + "mechanical advantage; got \"" + zeroRefusal + "\".");
+        }
     }
 
     /// <summary>
@@ -44625,7 +45296,10 @@ internal static partial class Program
             WireAt(1, 0, 100, 0, 0) + "," + WireAt(1, 1, 100, 0, 0) + "]";
         string payload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
-            "\"reels\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}," +
+            "\"reels\":[],\"spoolRadius\":0.1}," +
+            // The reeve default at the ROOT (spec 6.3, Task 4), the one
+            // place this reader will take it from.
+            "\"reeve\":{\"default\":1.0}," +
             "\"instances\":" + instancesPayload + "," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
@@ -45123,7 +45797,10 @@ internal static partial class Program
             Frame(1, 1, 1) + "]}]";
         string mechanismPayload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
-            "\"reels\":[],\"reeveFactor\":1.0,\"spoolRadius\":0.1}," +
+            "\"reels\":[],\"spoolRadius\":0.1}," +
+            // The reeve default at the ROOT (spec 6.3, Task 4), the one
+            // place this reader will take it from.
+            "\"reeve\":{\"default\":1.0}," +
             "\"instances\":[" + instancePayload + "]," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
