@@ -340,6 +340,46 @@ internal static class MechanismCollector
     public const double RouteOwnerAxialMarginFraction = 0.25;
 
     /// <summary>
+    /// HOW CLOSE A ROUTING FRAME MUST SIT TO THE RADIUS ITS OWN REEL
+    /// PUBLISHES, as a fraction of that radius, to count as AGREEING with
+    /// it.
+    ///
+    /// The fraction is stated in the units the number is used in. A
+    /// windingRadius drives exactly one thing, and the document says so
+    /// itself: turns = take-up * reeveFactor / (2 * pi * windingRadius). A
+    /// radius wrong by a fraction f spins that drum wrong by the same
+    /// fraction f, so fifteen per cent here reads "within fifteen per cent
+    /// of the spin rate this number implies".
+    ///
+    /// MEASURED RATHER THAN PICKED (2026-09-09, on his exported
+    /// 2 Sided Vault machine). The one drum in that file that demonstrably
+    /// IS a barrel, pulley 7, holds all 219 of its authored frames inside
+    /// 2 per cent of a single radius. This band is seven and a half times
+    /// that, so no wrap of that quality can be called disagreeing by it.
+    /// </summary>
+    public const double WindingRadiusAgreementFraction = 0.15;
+
+    /// <summary>
+    /// HOW MANY ROUTING FRAMES NEAR A REEL MAY DISAGREE WITH THE RADIUS IT
+    /// PUBLISHES, per frame that agrees, before that radius is NAMED and
+    /// marked unfit to animate.
+    ///
+    /// BOTH ENDS OF THIS NUMBER WERE MEASURED on his 2 Sided Vault machine
+    /// (2026-09-09), with the agreement band above:
+    ///   pulley 7, a real wrap on a real barrel, reads 0.041;
+    ///   his seven spools, whose owned frames sweep 0.0200 m to 0.0600 m
+    ///   about drums that publish 0.0330 m, read 4.00 to 4.24.
+    /// The gap is a hundredfold, and 0.40 is its geometric centre: the
+    /// exact centre of 0.041 and 4.00 is 0.4035, taken down to the nearer
+    /// hundredth so that of two defensible values the gate is the more
+    /// sensitive. The real wrap then sits a factor of ten below the limit
+    /// and the real defect a factor of ten above it, so neither is near
+    /// enough to the line for a differently proportioned machine to cross
+    /// it by accident.
+    /// </summary>
+    public const double WindingRadiusScatterLimit = 0.40;
+
+    /// <summary>
     /// How far, in metres, two seven-point sets' own matching edge lengths
     /// may disagree before they are called DIFFERENT SHAPES rather than the
     /// same shape differently placed. Shared with
@@ -858,6 +898,28 @@ internal static class MechanismCollector
         // move different geometry: two reels reaching the same frame.
         var contested = new Dictionary<(int First, int Second), (int Count, int Wire, int Frame, double FirstRatio, double SecondRatio)>();
         var ownedRadii = new Dictionary<int, List<double>>();
+
+        // THE FRAMES A REEL'S OWNERSHIP REFUSED, kept per reel and by
+        // distance rather than merely counted (Task 8, spec 8.4). These are
+        // the frames that came to a drum and were turned away: just outside
+        // its own radius, or inside that radius but past its end faces.
+        // They are what the winding radius scatter is a ratio OF, and they
+        // have to be gathered here because this is the only pass that
+        // classifies. A frame another reel OWNS is never counted against
+        // this one: two drums on a common shaft each sit in the other's
+        // radial shadow, and counting a neighbour's honest wrap as this
+        // drum's refusal would paint a correct machine orange.
+        var refusedRadii = new Dictionary<int, List<double>>();
+        void Refuse(int reel, double distance)
+        {
+            if (!refusedRadii.TryGetValue(reel, out List<double>? refused))
+            {
+                refused = new List<double>();
+                refusedRadii[reel] = refused;
+            }
+            refused.Add(distance);
+        }
+
         int rideCount = 0;
         int justOutsideCount = 0;
         int beyondTheFacesCount = 0;
@@ -879,7 +941,7 @@ internal static class MechanismCollector
                 string countKey = ownedByReel ? $"reel {verdict.OwnerReel}" : RouteOwnerBody;
                 ownerCounts[countKey] = ownerCounts.GetValueOrDefault(countKey) + 1;
 
-                if (verdict.AxiallyExcluded)
+                if (verdict.AxiallyExcludedReel >= 0)
                     beyondTheFacesCount++;
 
                 if (!ownedByReel &&
@@ -887,6 +949,7 @@ internal static class MechanismCollector
                     verdict.NearestRatio <= 1.0 + RouteOwnerAmbiguityMargin)
                 {
                     justOutsideCount++;
+                    Refuse(verdict.NearestReel, verdict.NearestDistance);
                     if (verdict.NearestRatio < closestJustOutsideRatio)
                     {
                         closestJustOutsideRatio = verdict.NearestRatio;
@@ -894,6 +957,16 @@ internal static class MechanismCollector
                         closestJustOutsideWire = w;
                         closestJustOutsideFrame = frameIndex;
                     }
+                }
+                else if (!ownedByReel && verdict.AxiallyExcludedReel >= 0)
+                {
+                    // INSIDE THE DRUM'S RADIUS, PAST ITS FACES: refused by
+                    // the axial half of ownership, and counted against the
+                    // drum that refused it. An offset that rotates with the
+                    // helix throws frames off the ends as well as off the
+                    // surface, so leaving this half out would measure only
+                    // half the defect.
+                    Refuse(verdict.AxiallyExcludedReel, verdict.AxiallyExcludedDistance);
                 }
 
                 if (ownedByReel &&
@@ -955,6 +1028,28 @@ internal static class MechanismCollector
         // the radius the wire actually runs at on it, so they are the
         // measurement, and the guess is only kept where there is nothing
         // to measure.
+        //
+        // WHAT THE SCATTER GATE BELOW IS NOT PROVED ON, said here rather
+        // than left to be found (Task 8):
+        //
+        //   IT IS LIVE ONLY ON THE MACHINE BUILD PATH. A study build has no
+        //   reels at all since Task 3 moved them off that component and its
+        //   Reel (RE) and Reel Axis (AX) ports became refusing stubs, so
+        //   BuildReelNeighbourhoods returns nothing there and every frame
+        //   classifies as "body" before any geometry is read. The gate is
+        //   built and proved through BuildMachine, where reels exist. That
+        //   gap is the plan's own running DEFER and is not this code's to
+        //   close.
+        //
+        //   IT SEES A SWEEP ON A FLANGED DRUM, which is the shape his seven
+        //   spools have and the shape the defect was found on: the flange
+        //   holds the wandering frames inside the ownership window, where
+        //   their disagreement with the published radius is countable. A
+        //   drum whose mesh stops AT the wire -- a grooved sheave with no
+        //   cheek -- hides the same defect, because frames that leave that
+        //   barrel by more than the ambiguity margin leave the tally
+        //   altogether rather than entering the numerator. Nothing here
+        //   claims to measure that case.
         var measuredRadii = new List<double>();
         if (mechanismOut is not null &&
             mechanismOut.TryGetValue("reels", out object? reelsObject) &&
@@ -979,16 +1074,19 @@ internal static class MechanismCollector
             // carrying seven wires now measure one radius off up to seven
             // times the samples rather than one seventh of them each.
             var fellBack = new List<int>();
+            var unfit = new List<(int Reel, double Scatter, int Agreeing, int Disagreeing)>();
             for (int r = 0; r < reelsPayload.Count; r++)
             {
                 var entryRadii = new List<double>();
+                var entryRefused = new List<double>();
                 for (int b = 0; b < reelBodies.Count; b++)
                 {
-                    if (reelBodyEntry[b] == r &&
-                        ownedRadii.TryGetValue(b, out List<double>? bodyRadii))
-                    {
+                    if (reelBodyEntry[b] != r)
+                        continue;
+                    if (ownedRadii.TryGetValue(b, out List<double>? bodyRadii))
                         entryRadii.AddRange(bodyRadii);
-                    }
+                    if (refusedRadii.TryGetValue(b, out List<double>? bodyRefused))
+                        entryRefused.AddRange(bodyRefused);
                 }
 
                 // A MEASURED RADIUS OF ABOUT NOTHING IS NOT A RADIUS. A
@@ -1007,6 +1105,75 @@ internal static class MechanismCollector
                     reelsPayload[r]["windingRadiusSource"] = "frames";
                     reelsPayload[r]["windingRadiusSamples"] = entryRadii.Count;
                     measuredRadii.Add(measured);
+
+                    // WHAT THE DOCUMENT MUST ADMIT (spec 8.3 to 8.5). The
+                    // median above is a number whatever the frames beneath
+                    // it look like: a wire wound on a barrel and a wire
+                    // sweeping across one both produce a median, and the
+                    // document has so far published the two identically.
+                    //
+                    // THE FIGURE IS REJECTED-AGAINST-AGREEING, NOT THE
+                    // SPREAD OF WHAT SURVIVED (spec 8.4, and this is the
+                    // whole point). Ownership is radial AND axial, so the
+                    // frames furthest off the barrel are thrown out BEFORE
+                    // any statistic is taken of the rest; a spread read off
+                    // the survivors is therefore weakest exactly where the
+                    // defect is worst, because the harder the truncation,
+                    // the tighter the remainder looks. A COUNT of what was
+                    // thrown away moves the other way: every frame the
+                    // ownership window rejects lands in the numerator, so
+                    // harsher truncation makes this figure larger.
+                    //
+                    // ONE BAND, APPLIED TO EVERY FRAME NEAR THE DRUM,
+                    // whichever side of the ownership window it fell: does
+                    // this frame sit at the radius this reel PUBLISHES, to
+                    // within WindingRadiusAgreementFraction of it? The
+                    // frames that do are what the number can honestly claim
+                    // to rest on; the frames that do not are what it cannot.
+                    double low = measured * (1.0 - WindingRadiusAgreementFraction);
+                    double high = measured * (1.0 + WindingRadiusAgreementFraction);
+                    int agreeing = 0;
+                    int disagreeing = 0;
+                    foreach (double radius in entryRadii)
+                    {
+                        if (radius >= low && radius <= high)
+                            agreeing++;
+                        else
+                            disagreeing++;
+                    }
+                    foreach (double radius in entryRefused)
+                    {
+                        if (radius >= low && radius <= high)
+                            agreeing++;
+                        else
+                            disagreeing++;
+                    }
+
+                    // The floor of one in the denominator is arithmetic
+                    // hygiene and nothing else: a reel not one of whose
+                    // nearby frames agrees with its own published radius
+                    // reads its whole neighbourhood as the numerator and
+                    // fails this gate by a wide margin, which is the
+                    // answer that case deserves.
+                    double scatter = disagreeing / (double)Math.Max(agreeing, 1);
+                    reelsPayload[r]["windingRadiusScatter"] = scatter;
+                    reelsPayload[r]["windingRadiusAgreeing"] = agreeing;
+                    reelsPayload[r]["windingRadiusDisagreeing"] = disagreeing;
+                    if (scatter > WindingRadiusScatterLimit)
+                    {
+                        // NAMED AND MARKED, NEVER REPLACED AND NEVER
+                        // BLESSED (spec 8.5). The number stays exactly as
+                        // measured: substituting a fallback here would put
+                        // an invented radius in a document that reads as a
+                        // measurement, and no reader could tell. There is
+                        // deliberately no matching "fit" or "confidence"
+                        // key on the reels that pass, either -- a wrong
+                        // number carrying a certificate of correctness is
+                        // trusted where a bare wrong number is questioned,
+                        // so what the passing reels get is silence.
+                        reelsPayload[r]["windingRadiusUnfitToAnimate"] = true;
+                        unfit.Add((r, scatter, agreeing, disagreeing));
+                    }
                 }
                 else
                 {
@@ -1015,8 +1182,56 @@ internal static class MechanismCollector
                         : MinimumSpoolRadius;
                     reelsPayload[r]["windingRadiusSource"] = "mesh";
                     reelsPayload[r]["windingRadiusSamples"] = 0;
+
+                    // A REEL WITH NOTHING TO MEASURE HAS NOTHING TO ADMIT.
+                    // Its radius came off its own mesh, which
+                    // windingRadiusSource already says, and a scatter of
+                    // zero here would read as "measured, and every frame
+                    // agreed" -- the strongest claim in the document, made
+                    // by the weakest number in it. Null is the honest
+                    // answer and it is stated rather than left out, so a
+                    // reader walking the key finds it on every reel. The two
+                    // counts are zero for the same reason: they count frames
+                    // FOR AND AGAINST a measured radius, and there is no
+                    // measured radius here to be for or against. Filling
+                    // them with the frames that merely came near would give
+                    // one key two meanings depending on another key's value,
+                    // which is how a reader gets it wrong.
+                    reelsPayload[r]["windingRadiusScatter"] = null;
+                    reelsPayload[r]["windingRadiusAgreeing"] = 0;
+                    reelsPayload[r]["windingRadiusDisagreeing"] = 0;
                     fellBack.Add(r);
                 }
+            }
+            if (unfit.Count > 0)
+            {
+                warnings.Add(
+                    "mechanism: reel entry(ies) " +
+                    string.Join(
+                        ", ",
+                        unfit.Select(u =>
+                            $"{u.Reel} (scatter " +
+                            u.Scatter.ToString("0.00", CultureInfo.InvariantCulture) +
+                            $": {u.Disagreeing} frame(s) near it disagree with " +
+                            $"the radius it publishes, {u.Agreeing} agree)")) +
+                    " -- their windingRadius is UNFIT TO ANIMATE. It is the " +
+                    "median of frames that are not on one cylinder, which is " +
+                    "a number rather than a radius, and the studio spins a " +
+                    "drum at a rate computed from it: a wrong radius is a " +
+                    "wrong spin rate on geometry that still looks right. " +
+                    "The value is left exactly as measured and marked " +
+                    "windingRadiusUnfitToAnimate rather than replaced by a " +
+                    "guess, and mechanism.spoolRadius still counts it, so " +
+                    "read that one with the same suspicion. A frame agrees " +
+                    "when it sits within " +
+                    (WindingRadiusAgreementFraction * 100.0).ToString("0.#", CultureInfo.InvariantCulture) +
+                    " per cent of the published radius, which is the same " +
+                    "per cent as the error it would put in that drum's spin " +
+                    "rate. LIKELY CAUSE, to confirm on your own canvas: an " +
+                    "offset applied along a direction that ROTATES WITH THE " +
+                    "HELIX rather than radially, which moves the wire inward " +
+                    "on one side of every turn and outward on the other. " +
+                    "That is a fix in the offset step, not here.");
             }
             if (fellBack.Count > 0)
             {
@@ -1855,6 +2070,14 @@ internal static class MechanismCollector
     /// One routing frame's ownership, decided: who owns it, who was nearest
     /// whether they own it or not, and the runners-up the caller needs to
     /// report an ambiguity honestly without re-deriving any of it.
+    ///
+    /// THE AXIAL REFUSAL NAMES ITS REEL, not merely that one happened
+    /// (Task 8). A frame inside a drum's radius but past its end faces is
+    /// a frame that drum's barrel cannot have carried, and the winding
+    /// radius scatter counts it against that drum. A bare flag says a
+    /// refusal occurred somewhere and cannot be counted anywhere:
+    /// <c>AxiallyExcludedReel &gt;= 0</c> is exactly the old flag, so
+    /// nothing that read it lost anything.
     /// </summary>
     internal readonly record struct RouteOwnerVerdict(
         string Owner,
@@ -1865,7 +2088,8 @@ internal static class MechanismCollector
         double NearestRadius,
         int SecondReel,
         double SecondRatio,
-        bool AxiallyExcluded);
+        int AxiallyExcludedReel,
+        double AxiallyExcludedDistance);
 
     /// <summary>
     /// A REEL'S OWN RADIAL NEIGHBOURHOOD: the furthest any of its OWN mesh
@@ -1974,7 +2198,7 @@ internal static class MechanismCollector
             return new RouteOwnerVerdict(
                 RouteOwnerBody, NoOwnerReel, NoOwnerReel,
                 double.PositiveInfinity, 0.0, 0.0,
-                NoOwnerReel, double.PositiveInfinity, false);
+                NoOwnerReel, double.PositiveInfinity, NoOwnerReel, 0.0);
         }
 
         double bestRatio = double.PositiveInfinity;
@@ -1983,7 +2207,9 @@ internal static class MechanismCollector
         double bestRadius = 0.0;
         double secondRatio = double.PositiveInfinity;
         int secondIndex = NoOwnerReel;
-        bool axiallyExcluded = false;
+        int axiallyExcludedIndex = NoOwnerReel;
+        double axiallyExcludedRatio = double.PositiveInfinity;
+        double axiallyExcludedDistance = 0.0;
 
         for (int i = 0; i < reels.Count; i++)
         {
@@ -1997,8 +2223,17 @@ internal static class MechanismCollector
             double axialMargin = RouteOwnerAxialMarginFraction * reel.Radius;
             if (along < reel.AxialMin - axialMargin || along > reel.AxialMax + axialMargin)
             {
-                if (ratio <= 1.0)
-                    axiallyExcluded = true;
+                // THE NEAREST OF THE REELS THAT REFUSED IT AXIALLY, kept by
+                // name and by distance so a caller can count the refusal
+                // against the drum that made it. Nearest in the same
+                // relative terms ownership uses, so a small drum and a
+                // large one are compared on their own sizes.
+                if (ratio <= 1.0 && ratio < axiallyExcludedRatio)
+                {
+                    axiallyExcludedRatio = ratio;
+                    axiallyExcludedIndex = i;
+                    axiallyExcludedDistance = distance;
+                }
                 continue;
             }
 
@@ -2028,7 +2263,8 @@ internal static class MechanismCollector
             bestRadius,
             secondIndex,
             secondRatio,
-            axiallyExcluded);
+            axiallyExcludedIndex,
+            axiallyExcludedDistance);
     }
 
     /// <summary>
