@@ -261,6 +261,43 @@ a flat backdrop while orthographic.
 
 # WAVE 2 -- THE PLATE
 
+## Verified before building, 2026-09-10
+
+A 25-agent recon read the export subsystem and three refuting lenses tried
+to break each finding. It confirmed both of the corrections above
+independently, and found three traps the spec did not have. All five are
+checked against the code by hand.
+
+1. **Reusing `/api/frames` would DELETE the user's take.** `post_frame`
+   unlinks every `frame-*.png` and `frame-*.jpg` in the study's frames
+   directory whenever `frame == 1` (`app.py:2073-2082`), deliberately, so
+   a shorter re-recording cannot inherit the previous take's tail. A still
+   export POSTing tile 1 to that endpoint destroys a recording. The still
+   needs its OWN endpoint and its own directory.
+2. **Alpha is not one flag.** Beyond the missing `alpha: true`, in sky
+   mode the backdrop is a scene MESH, not `scene.background`
+   (`studio.js:601-603`), so a transparent plate needs the sky mesh, the
+   grounded dome and the ground disc all hidden, not just a clear alpha.
+3. **Everything lands in OneDrive.** Frames go to
+   `STUDIES_DIR/<slug>/studio/frames`, inside this repo, and the finished
+   take is delivered to a OneDrive Animation folder (`app.py:61-64`).
+   OneDrive churn is what once throttled a 935-frame take to a crawl.
+   Twelve tiles is not 935 frames, but the still's directory should be
+   chosen deliberately rather than inherited.
+4. **A3 cannot be composed in the viewport at all.** `camera-aspect`
+   offers fill, 16:9, 4:3, 1:1, 4:5 and 9:16 (`index.html:404-412`), and
+   A3 landscape is 1.4142, which is not among them. `applyCameraAspect`
+   only letterboxes those six, so the frame Param would be rendering
+   cannot currently be seen. A page-shaped ratio has to arrive with the
+   resolution ladder.
+5. **Trap 2 is not wrong, it is EARLY.** There are no resolution uniforms
+   today, so tiling is seam-free and the grade can stay client-side. It
+   becomes real the moment GTAO, bloom or FXAA lands, all of which are in
+   the queue. Record it as a constraint on those items rather than as
+   work here.
+
+
+
 The four-day feature the whole report is really about. An A3 plate at
 300dpi is 4961 x 3508 and the recorder stops at 1920, so every figure in
 the thesis currently goes to press as an upscale.
