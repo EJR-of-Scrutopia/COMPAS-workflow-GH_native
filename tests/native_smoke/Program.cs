@@ -3622,11 +3622,20 @@ internal static partial class Program
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
-                + "sibling, finished against a Result): each instance takes "
-                + "its own run of the anchors its row holds, and each of "
-                + "its wires is bound to the one it was PLACED against "
-                + "(Task 7a; the turned-instance case has its own check), "
-                + "with every wire carrying its OWN explicit net_vertex in "
+                + "sibling, finished against a Result): THIS FIXTURE TAKES "
+                + "TASK 7A'S CARVE-OUT AND SO PINS THE OLD FLAT PAIRING, "
+                + "deliberately and not by oversight. It authors THREE "
+                + "wires against TWO anchors, and an instance with fewer "
+                + "anchors left than wires keeps wire order against anchor "
+                + "order along the row, because a spatial pairing over an "
+                + "incomplete pair of sets would silently change WHICH wire "
+                + "is dropped, and the dropped wire is named by id in a "
+                + "warning he reads. That is exactly what is pinned here: "
+                + "wire 0 to net vertex 0, wire 1 to net vertex 1, wire 2 "
+                + "dropped by name. THE NEW SPATIAL RULE IS NOT REACHED BY "
+                + "THIS CHECK AT ALL and is proved by its own, the "
+                + "turned-instance check further down this run. Every wire "
+                + "carries its OWN explicit net_vertex in "
                 + "the document (R1) rather than a position a reader would "
                 + "have to infer; a wire authored with planes[0] nearer "
                 + "its net vertex than the last plane is silent, one "
@@ -3776,11 +3785,17 @@ internal static partial class Program
                 + "order (\"arbitrary but stable\"), bound the turned side's "
                 + "seven wires 0.9, 0.6, 0.3, 0, 0.3, 0.6 and 0.9 m from "
                 + "where they had been placed, and drew FOUR match-distance "
-                + "warnings ON CORRECT INPUT. NOW: the turned side's wire k "
-                + "binds net vertex 13 - k, end for end; the UNTURNED "
-                + "side's wire k still binds net vertex k, exactly what the "
-                + "old rule wrote, because a fix that moved a binding "
-                + "already right would be worse than the defect; every one "
+                + "warnings ON CORRECT INPUT. ITS ANCHORS TAKE "
+                + "NON-CONTIGUOUS IDS (spec 9.4): five ordinary net "
+                + "vertices hold ids 0 to 4, so the near row is ids 5 to 11 "
+                + "and the far row 12 to 18, and neither table below can be "
+                + "satisfied by a matcher writing the wire index straight "
+                + "out. NOW: the turned side's wire k binds net vertex "
+                + "18 - k, end for end (the old rule bound it to 12 + k); "
+                + "the UNTURNED side's wire k still binds net vertex 5 + k, "
+                + "exactly what the old rule wrote there, because a fix "
+                + "that moved a binding already right would be worse than "
+                + "the defect; every one "
                 + "of the fourteen wires' PLACED first routing planes lands "
                 + "within 1e-9 m of the net vertex the document bound it "
                 + "to, measured off the COLLECTOR's payload rather than off "
@@ -45577,10 +45592,20 @@ internal static partial class Program
         if ((int?)root["columnNodeCount"] != 1)
             throw new InvalidOperationException($"columnNodeCount must be 1; got {root["columnNodeCount"]}.");
 
-        // R1: EVERY WIRE CARRIES ITS OWN EXPLICIT net_vertex. The default
-        // rule is wire order against anchor order along the row: wire 0
-        // gets net vertex 0, wire 1 gets net vertex 1 (row [0, 1]); wire 2
-        // has nothing left to match and must be dropped.
+        // R1: EVERY WIRE CARRIES ITS OWN EXPLICIT net_vertex.
+        //
+        // AND THIS FIXTURE PINS THE OLD FLAT PAIRING, NOT TASK 7A'S NEW
+        // SPATIAL ONE, because it deliberately takes that fix's own
+        // carve-out: THREE wires against TWO anchors. An instance with
+        // fewer anchors left than it has wires keeps wire order against
+        // anchor order along the row, since a spatial pairing over an
+        // incomplete pair of sets would silently change WHICH wire is
+        // dropped, and a dropped wire is named by id in a warning he
+        // reads. So the rule under test here is the old one and the drop
+        // that follows from it: wire 0 gets net vertex 0, wire 1 gets net
+        // vertex 1 (row [0, 1]); wire 2 has nothing left to match and must
+        // be dropped. The new rule has its own fixture,
+        // ValidateMechanismTurnedInstanceMatching.
         JsonArray wiresOut = root["wires"]!.AsArray();
         if (wiresOut.Count != 2)
         {
@@ -46028,8 +46053,16 @@ internal static partial class Program
 
         // TWO ANCHORS, ONE EDGE: the smallest topology that gives
         // AnchorRowIndices one row of two, so wire 0 matches net_vertex 0
-        // and wire 1 matches net_vertex 1, the same default rule every
-        // other mechanism-document check in this file relies on.
+        // and wire 1 matches net_vertex 1.
+        //
+        // WHICH RULE THAT IS, SINCE TASK 7A MADE IT A QUESTION. TWO wires
+        // against TWO anchors is a COMPLETE instance, so this fixture does
+        // reach the new spatial pairing rather than its carve-out; and each
+        // wire's own first routing plane sits exactly ON the anchor it is
+        // matched to (0,0,0 and 5,0,0), so the spatial pairing here is the
+        // IDENTITY and agrees with the old flat one. Nothing about the
+        // subject of this check, the reeve factor, can tell the two apart,
+        // which is why it is stated here rather than left to be assumed.
         object[] nodes = { P(0, 0, 0), P(5, 0, 0) };
         Array netEdges = Array.CreateInstance(edgeType, 1);
         netEdges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
