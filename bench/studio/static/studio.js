@@ -180,7 +180,7 @@ const state = {
   // settings". species is [{ type, weight }]; everything else is the
   // recipe a Dice re-rolls without changing.
   scatter: {
-    species: [], spacing: 1.2, sizeMin: 0.8, sizeMax: 1.3,
+    species: [], spacing: 0.9, sizeMin: 0.8, sizeMax: 1.3,
     clump: 30, clumpSize: 6, clearance: 1.5, turn: 360, seed: 1,
     radius: 4,
   },
@@ -5833,7 +5833,11 @@ function scatterSolve(region, salt) {
     : Math.abs(region.x1 - region.x0) * Math.abs(region.y1 - region.y0);
   // Enough darts to fill the area at the tightest spacing, capped so a
   // huge region cannot spin the tab. Every dart is one cheap test.
-  const darts = Math.min(160000, Math.max(4000, Math.round(area * 40)));
+  // A hundred per square metre, up from forty: once the rows were split
+  // a tuft is twenty centimetres across and forty darts a metre left
+  // most of the gaps between them untried (Param: "higher percentage
+  // of landing somewhere fresh").
+  const darts = Math.min(250000, Math.max(4000, Math.round(area * 100)));
   const clumpShare = rules.clump / 100;
 
   for (let i = 0; i < darts; i++) {

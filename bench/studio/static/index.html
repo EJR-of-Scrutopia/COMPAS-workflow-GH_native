@@ -118,9 +118,9 @@
         <label title="The circle that follows the cursor. Click inside it to fill it."><span>Brush</span>
           <input id="scatter-radius" type="range" min="0.5" max="20" step="0.5" value="4">
           <b id="scatter-radius-value">4.0</b><em>m</em></label>
-        <label title="The clear gap between items, as a multiple of each one&#39;s own width. Not metres: the library runs from a 4 cm moss patch to a 30 m tree."><span>Spacing</span>
-          <input id="scatter-spacing" type="range" min="0.6" max="3" step="0.05" value="1.2">
-          <b id="scatter-spacing-value">1.20</b><em>x</em></label>
+        <label title="The clear gap between items, as a multiple of each one&#39;s own width. Below 1 they touch and overlap, which is what a meadow does. Not metres: the library runs from a 4 cm moss patch to a 30 m tree."><span>Spacing</span>
+          <input id="scatter-spacing" type="range" min="0.3" max="3" step="0.05" value="0.9">
+          <b id="scatter-spacing-value">0.90</b><em>x</em></label>
         <label title="Every item is scaled somewhere in this range, about its feet, so a stand does not read as one model repeated"><span>Size</span>
           <input id="scatter-size-min" type="range" min="0.3" max="1" step="0.05" value="0.8">
           <input id="scatter-size-max" type="range" min="1" max="3" step="0.05" value="1.3">
