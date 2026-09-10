@@ -59,15 +59,24 @@ so each input takes one mesh, except the seven grouped reels, the wires, and the
 part. He proposes a component taking all five and feeding the exporter, plus an input for the
 reels' rotation planes matching the reels' own data structure.
 
-THE PLACEMENT CHANGE, which is the substantive part: ONE mechanism authored exactly right, placed
+SUPERSEDED 2026-09-09 by section 11 below, "the night of 2026-09-08 to 09: placement stops being
+authored". Struck, not deleted, so the reversal stays legible to a future reader: he found that
+authored placement planes "just flip randomly, and its so hard to create rules so they each
+follow them, theres so many in the script to fix that way", and the derived placement built to
+replace it measures 0.000000 m residual on all six of his instances (section 11a below, and
+`docs/superpowers/specs/2026-09-09-mechanism-rework-design.md` section 0.2). Rebuilding the
+authored version struck below would undo that measured win. The PARTS half of this section
+(above, the five-part enumeration) stands and was built; only the placement half is superseded.
+
+~~THE PLACEMENT CHANGE, which is the substantive part: ONE mechanism authored exactly right, placed
 from THE FIRST FRAME OF EACH WIRE-FRAME GROUP. His words: "just give you one mechanism, exactly
 how it should be, you take the starting planes and place the mechanism off each starting plane
 set (remember 7 wires per mechanism and the strucutre will follow that goruped in 7, then number
 of 7 per side, then sides)". And the constraint that will bite if ignored: "if the mechanism goes
 on the opposite side it needs to be flipped and not be upside down" -- a MIRROR, not a rotation,
-so handedness must come from his own frame axes rather than be inferred.
+so handedness must come from his own frame axes rather than be inferred.~~
 
-THE COST OF THAT CHANGE, flagged by the studio session and worth more than the change is worth
+~~THE COST OF THAT CHANGE, flagged by the studio session and worth more than the change is worth
 losing: deriving placement from the wire frame guarantees the mechanism and its wire can never
 disagree, which is better than two independently authored values. BUT IT INVERTS THE DIAGNOSTIC
 WE DELIBERATELY KEPT. Today the studio refuses to snap a wire, so a mis-placed mechanism shows as
@@ -77,11 +86,14 @@ and nothing on screen looks wrong at all. The error stops being visible precisel
 can no longer contradict each other. THEREFORE, binding on that build: the first wire frame
 becomes a single point of failure, and the component must carry a proximity or sanity print
 against it the way the tension tie's door guard already does, so his eye on the canvas has
-something to catch it with.
+something to catch it with.~~
 
-ALSO SETTLED: the anchor and tension tie now arrive as ONE object by his choice, so the document
+~~ALSO SETTLED: the anchor and tension tie now arrive as ONE object by his choice, so the document
 must keep them distinguishable even though they enter together, since the permanence view rests
-on that distinction. And the wrap: "yes the wires are already fully wound in the image and my
+on that distinction.~~ SUPERSEDED 2026-09-09, and permanently reversed: his ruling of that date is
+the exact opposite, "i will alsway give you the anchor, the tension tie seperately, and make new
+mechanisms". Two ports, always; the welded-body case this paragraph accommodated is off the table.
+See `docs/superpowers/specs/2026-09-09-mechanism-rework-design.md`, section 0.1. And the wrap: "yes the wires are already fully wound in the image and my
 model, you can use the frames to tighten and losen along the frames as long as it stays spooled
 enough for now" -- a multi-turn wrap, so reel-owned routing frames stay STATIC (rotating a
 multi-turn helix about its own axis is a visual no-op away from its ends), and the visible motion
