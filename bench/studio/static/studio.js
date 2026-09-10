@@ -4650,6 +4650,7 @@ function setProjection(kind) {
   clampCameraAboveFloor();
   paintProjectionControls();
   paintScaleBar();
+  paintFrameWidth();
   rememberSession();
 }
 
@@ -4688,6 +4689,58 @@ function snapCameraTo(name) {
 // perspective it would be a lie that looked like a measurement, so it is
 // hidden rather than approximated.
 const SCALE_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+// A frame's width in metres is the one reading a parallel projection can
+// honestly offer where a focal length cannot mean anything. Height is
+// what the frustum is built from, so the width is that times the aspect,
+// and it moves when the viewport or the chosen frame ratio does.
+function frameWidthMetres() {
+  return (orthoFrameHeight / (orthographicCamera.zoom || 1)) * viewportAspect();
+}
+
+// Typing a width writes ZOOM, never orthoFrameHeight. Zoom is precisely
+// the quantity OrbitControls owns for an orthographic camera, so the
+// next wheel notch multiplies from where the typing left off instead of
+// fighting it; and applyCameraFrustum builds the four planes from
+// orthoFrameHeight alone, so writing zoom needs no frustum rewrite while
+// writing the height would need one every time.
+function setFrameWidthMetres(metres) {
+  const wanted = Math.max(0.01, +metres || 0);
+  orthographicCamera.zoom = (orthoFrameHeight * viewportAspect()) / wanted;
+  orthographicCamera.updateProjectionMatrix();
+  paintFrameWidth();
+  paintScaleBar();
+}
+
+// One painter, which also owns the row swap. Keyed on the camera itself
+// rather than on state.projection, so it follows the binding and not a
+// remembered word.
+function paintFrameWidth() {
+  const lens = document.getElementById("camera-fov-row");
+  const width = document.getElementById("camera-width-row");
+  if (!lens || !width) return;
+  const ortho = !!camera.isOrthographicCamera;
+  lens.classList.toggle("hidden", ortho);
+  width.classList.toggle("hidden", !ortho);
+  if (!ortho) return;
+  const metres = frameWidthMetres();
+  const dial = document.getElementById("camera-width");
+  if (dial) {
+    // The travel comes from the model, as the section offset's does: a
+    // fixed half-metre to two hundred runs a 23 m vault off the bottom
+    // of its own scale.
+    const box = new THREE.Box3();
+    if (state.objects.shell) box.setFromObject(state.objects.shell);
+    const span = box.isEmpty() ? 40
+      : Math.max(1, box.getSize(new THREE.Vector3()).length());
+    dial.min = (span / 20).toFixed(2);
+    dial.max = (span * 3).toFixed(2);
+    dial.value = Math.min(+dial.max, Math.max(+dial.min, metres));
+    paintScrub(dial);
+  }
+  const reading = document.getElementById("camera-width-value");
+  if (reading) reading.textContent = metres.toFixed(2);
+}
 
 function paintScaleBar() {
   const bar = document.getElementById("scale-bar");
@@ -4898,6 +4951,14 @@ document.getElementById("section-machine").addEventListener("change", (e) => {
   applySection();
   rememberSession();
 });
+// Typing a width is the point of this dial: a plate reproduced at an
+// exact frame width is a plate somebody else can redraw.
+document.getElementById("camera-width").addEventListener("input", (e) => {
+  setFrameWidthMetres(+e.target.value);
+});
+document.getElementById("camera-width").addEventListener("change", () => {
+  rememberSession();
+});
 document.getElementById("camera-projection").addEventListener("change", (e) => {
   setProjection(e.target.value);
 });
@@ -4906,7 +4967,12 @@ for (const button of document.querySelectorAll("#camera-views button")) {
 }
 // An orthographic zoom changes metres per pixel without moving anything,
 // so the bar has to follow the controls and not only the resize.
-controls.addEventListener("change", paintScaleBar);
+controls.addEventListener("change", () => {
+  paintScaleBar();
+  // A wheel notch in orthographic changes zoom and nothing
+  // else, so the width reading has to follow it.
+  paintFrameWidth();
+});
 // A snapped view survives only until the mouse disagrees with it: after
 // an orbit the highlight would be claiming a view the camera is not at.
 controls.addEventListener("start", () => {
@@ -12430,6 +12496,8 @@ function resize() {
     composer.setSize(w, h);
     applyCameraFrustum(w / h);
     paintScaleBar();
+    // Width follows the aspect; height does not.
+    paintFrameWidth();
   }
 }
 
@@ -12797,6 +12865,12 @@ guarded("the camera frame segments", () => {
   paintScaleBar();
 });
 guarded("the slider rows", () => upgradeSliders());
+// AFTER upgradeSliders, and that is load-bearing. upgradeSliders skips
+// any label already carrying .hidden (panel.js), so hiding the width row
+// before it runs would leave that dial as a bare slider for ever: never
+// a .scrub, never typable, and paintScrub silently returning early on it.
+// Both rows are therefore visible in the markup and one is hidden here.
+guarded("the projection's own row", paintFrameWidth);
 guarded("the panel groups", buildGroups);
 // The libraries load in the background: the studio is usable before either
 // arrives, a folder with nothing in it simply leaves the old props, and no

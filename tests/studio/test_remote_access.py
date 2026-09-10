@@ -3246,3 +3246,62 @@ def test_the_sun_shadow_map_is_fitted_to_what_casts():
     assert "const SUN_DISTANCE = 60;" in js
     assert "const r = SUN_DISTANCE;" in _js_function(
         js, "function applySunAt(azimuthDeg, elevationDeg)")
+
+
+def test_the_lens_gives_way_to_a_frame_width_in_orthographic():
+    """A parallel projection has no focal length, so "45 deg approx 29
+    mm" is meaningless there. The frame's real width is not: it is the
+    number an architect reads off a drawing, and typing it is how a
+    plate gets reproduced at a stated width.
+
+    Measured in the browser: the reading agreed with the geometry to
+    two decimals (46.39 against 46.39, taken by projecting two points a
+    metre apart), and typing 12 gave a frame exactly 12.00 m across with
+    the scale bar following to 2 m.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    # Two rows, one row's worth of space, swapped by the projection.
+    assert 'id="camera-fov-row"' in html and 'id="camera-width-row"' in html
+    # NEITHER carries .hidden in the markup, and that is load-bearing:
+    # upgradeSliders skips a label already hidden, so a row hidden before
+    # it runs stays a bare slider for ever, never typable.
+    for row in ("camera-fov-row", "camera-width-row"):
+        line = [ln for ln in html.splitlines() if 'id="' + row + '"' in ln][0]
+        assert "hidden" not in line, row
+
+    paint = _js_function(js, "function paintFrameWidth()")
+    assert "camera.isOrthographicCamera" in paint, (
+        "keyed on the camera itself, so it follows the binding rather "
+        "than a remembered word")
+    assert 'lens.classList.toggle("hidden", ortho);' in paint
+    assert 'width.classList.toggle("hidden", !ortho);' in paint
+
+    width = _js_function(js, "function frameWidthMetres()")
+    assert "(orthoFrameHeight / (orthographicCamera.zoom || 1)) * viewportAspect()" in width, (
+        "height is what the frustum is built from; width is that times "
+        "the aspect, so it moves with the viewport and the frame ratio")
+
+    setter = _js_function(js, "function setFrameWidthMetres(metres)")
+    assert "orthographicCamera.zoom = (orthoFrameHeight * viewportAspect()) / wanted;" in setter, (
+        "typing writes ZOOM, never orthoFrameHeight: zoom is what "
+        "OrbitControls owns, so the next wheel notch carries on from the "
+        "typed value instead of fighting it, and applyCameraFrustum "
+        "builds its planes from the height alone")
+    assert "orthographicCamera.updateProjectionMatrix();" in setter
+    assert "paintScaleBar();" in setter, "metres per pixel just changed"
+
+    # Painted after upgradeSliders at boot, for the reason above.
+    boot = js[js.index('guarded("the slider rows"'):]
+    boot = boot[:boot.index("guarded(\"the panel groups\"")]
+    assert "paintFrameWidth" in boot, (
+        "hiding a row before upgradeSliders runs leaves that dial "
+        "unupgraded and untypable for the whole session")
+
+    # And it follows a wheel, which in orthographic changes zoom and
+    # moves nothing else.
+    assert js.count("paintFrameWidth()") >= 4, (
+        "the swap, the controls change, the resize and the boot")

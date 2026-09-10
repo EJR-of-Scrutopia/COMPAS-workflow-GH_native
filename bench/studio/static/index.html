@@ -438,9 +438,19 @@
       <button data-view="iso" title="The three-quarter view a model is usually read from">Iso</button>
     </div>
     <div class="dial-block" id="camera-dials">
-    <label title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
+    <!-- Two rows for one row's worth of space, swapped by the
+         projection. A parallel projection has no focal length, so the
+         lens equivalent is meaningless there; the frame's real width is
+         not, and it is the number an architect reads off a drawing.
+         The lens row is HIDDEN rather than disabled, because the lens is
+         not dead while orthographic: it still decides the frame height
+         on the way back out to perspective. -->
+    <label id="camera-fov-row" title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
       <input id="camera-fov" type="range" min="15" max="100" step="1" value="45">
       <b id="camera-fov-value">45</b><em>&deg; &#8776; <span id="camera-mm">29</span> mm</em></label>
+    <label id="camera-width-row" title="How wide the frame is across the model, which is the number a drawing is measured by. Type into it to set a plate to an exact width."><span>View width</span>
+      <input id="camera-width" type="range" min="0.5" max="200" step="0.01" value="20">
+      <b id="camera-width-value">20.00</b><em>m</em></label>
     <label title="The grade on the lens, not the light in the scene"><span>Brightness</span>
       <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1">
       <b id="brightness-value">100</b><em>%</em></label>
