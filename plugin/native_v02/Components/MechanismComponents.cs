@@ -1113,16 +1113,15 @@ internal static class MechanismCollector
                     // document has so far published the two identically.
                     //
                     // THE FIGURE IS REJECTED-AGAINST-AGREEING, NOT THE
-                    // SPREAD OF WHAT SURVIVED (spec 8.4, and this is the
-                    // whole point). Ownership is radial AND axial, so the
-                    // frames furthest off the barrel are thrown out BEFORE
-                    // any statistic is taken of the rest; a spread read off
-                    // the survivors is therefore weakest exactly where the
-                    // defect is worst, because the harder the truncation,
-                    // the tighter the remainder looks. A COUNT of what was
-                    // thrown away moves the other way: every frame the
-                    // ownership window rejects lands in the numerator, so
-                    // harsher truncation makes this figure larger.
+                    // SPREAD OF WHAT SURVIVED (spec 8.4). Ownership is
+                    // radial AND axial, so the frames furthest off the
+                    // barrel are thrown out BEFORE any statistic is taken of
+                    // the rest, and a spread read off the survivors is
+                    // therefore weakest exactly where the defect is worst:
+                    // the harder the truncation, the tighter the remainder
+                    // looks. That is the fault this figure exists to avoid,
+                    // and the harness proves it on a drum whose survivors
+                    // have no spread at all.
                     //
                     // ONE BAND, APPLIED TO EVERY FRAME NEAR THE DRUM,
                     // whichever side of the ownership window it fell: does
@@ -1130,6 +1129,40 @@ internal static class MechanismCollector
                     // within WindingRadiusAgreementFraction of it? The
                     // frames that do are what the number can honestly claim
                     // to rest on; the frames that do not are what it cannot.
+                    //
+                    // WHAT THIS FIGURE DOES NOT DO, STATED EXACTLY, BECAUSE
+                    // AN EARLIER DRAFT OF THIS COMMENT CLAIMED THE OPPOSITE
+                    // (fix round 1, measured rather than argued). It is NOT
+                    // true that every frame the ownership window rejects
+                    // lands in the numerator, and it is NOT true that the
+                    // figure rises as truncation gets harsher. Two things
+                    // bound it. A refused frame that still sits within the
+                    // band is counted as AGREEING, since the question asked
+                    // is whether it sits at the published radius and not
+                    // which side of a mesh boundary it fell; and the
+                    // population reaches only to RouteOwnerAmbiguityMargin
+                    // past the mesh radius, so frames beyond that are
+                    // outside the figure altogether. Measured on a uniform
+                    // sweep from 0.020 m to 0.060 m on one drum, varying
+                    // only that drum's own flange:
+                    //     flange 0.0600 -> 2.33   (named)
+                    //     flange 0.0300 -> 0.93   (named)
+                    //     flange 0.0205 -> 0.09   (SILENT)
+                    // The figure FALLS as the mesh closes on the wire. A
+                    // drum whose mesh stops at the inner end of its own
+                    // sweep therefore passes while publishing a radius
+                    // wrong by a factor of two for spin rate: that is not a
+                    // blind spot off to one side, it is the direction this
+                    // measure weakens in, and it is the direction to check
+                    // by hand on any machine whose drums are modelled
+                    // without cheeks. The narrow reading of 8.4 -- refusals
+                    // counted against owned, with no band -- does rise on
+                    // those same three drums (0, 0.45, 6.02) and is what a
+                    // future round would reach for if that shape ever
+                    // appears; it cannot be used here, because on his own
+                    // machine it reads 0.16 to 0.28 on the seven swept
+                    // spools and 0.40 on the one honest pulley, which is
+                    // backwards.
                     double low = measured * (1.0 - WindingRadiusAgreementFraction);
                     double high = measured * (1.0 + WindingRadiusAgreementFraction);
                     int agreeing = 0;
@@ -1157,6 +1190,19 @@ internal static class MechanismCollector
                     // answer that case deserves.
                     double scatter = disagreeing / (double)Math.Max(agreeing, 1);
                     reelsPayload[r]["windingRadiusScatter"] = scatter;
+
+                    // TWO POPULATIONS, AND THE ROW SAYS WHICH IS WHICH (fix
+                    // round 1). windingRadiusSamples counts the frames the
+                    // MEDIAN rests on, which is the frames this reel owns.
+                    // windingRadiusNearby counts the frames the SCATTER
+                    // rests on, which is those plus the ones ownership
+                    // refused within reach of this drum. They differ by
+                    // construction and a reader who assumes agreeing plus
+                    // disagreeing equals samples gets a different number
+                    // with nothing to say so, which in a task about the
+                    // document admitting what it measured is the exact
+                    // fault being fixed.
+                    reelsPayload[r]["windingRadiusNearby"] = agreeing + disagreeing;
                     reelsPayload[r]["windingRadiusAgreeing"] = agreeing;
                     reelsPayload[r]["windingRadiusDisagreeing"] = disagreeing;
                     if (scatter > WindingRadiusScatterLimit)
@@ -1198,6 +1244,7 @@ internal static class MechanismCollector
                     // one key two meanings depending on another key's value,
                     // which is how a reader gets it wrong.
                     reelsPayload[r]["windingRadiusScatter"] = null;
+                    reelsPayload[r]["windingRadiusNearby"] = 0;
                     reelsPayload[r]["windingRadiusAgreeing"] = 0;
                     reelsPayload[r]["windingRadiusDisagreeing"] = 0;
                     fellBack.Add(r);

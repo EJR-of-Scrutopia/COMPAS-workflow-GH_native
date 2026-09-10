@@ -3393,6 +3393,20 @@ internal static partial class Program
                 + "per cent, tighter than the honest pulley's own two -- the "
                 + "harder the truncation, the tighter the remainder looks -- "
                 + "while rejected-against-agreeing reads 0.75 and names it. "
+                + "A MILD TAIL IS NOT A SWEEP and passes at 0.174, which is "
+                + "pulley 9 of his own machine to three places, so this "
+                + "fixture holds a case NEAR the gate and not only cases an "
+                + "order of magnitude either side of it. The row states BOTH "
+                + "populations: windingRadiusSamples for the frames the "
+                + "median rests on, windingRadiusNearby for the frames the "
+                + "scatter rests on, 36 against 37 on the correct wrap, since "
+                + "agreeing plus disagreeing is not the sample count and "
+                + "nothing said so. WHICH WAY THIS MEASURE WEAKENS is stated "
+                + "rather than left as a blind spot: a refused frame still at "
+                + "the published radius counts as agreeing and the population "
+                + "stops one ambiguity margin past the mesh, so a drum whose "
+                + "mesh closes on its own wire scores LOWER, measured at 2.33, "
+                + "0.93 and 0.09 on one sweep at three flange radii. "
                 + "A named reel keeps its radius EXACTLY as measured, "
                 + "marked windingRadiusUnfitToAnimate and never replaced by "
                 + "a fallback nobody could catch, and a reel that PASSES "
@@ -45576,6 +45590,22 @@ internal static partial class Program
     ///     off its own mesh and its scatter is NULL rather than zero. Zero
     ///     would read as "measured, and every frame agreed" -- the
     ///     strongest claim in the document made by its weakest number.
+    ///   ENTRY 5, A MILD TAIL, AND IT MUST PASS (fix round 1). Forty-six
+    ///     frames on the barrel and eight running off it: 0.174, which is
+    ///     pulley 9 of his own machine to three places (624 frames agreeing
+    ///     with the 0.2700 m it publishes, a lead-off out to 0.3232 m,
+    ///     reading 0.1747). It is the only entry here NEAR the 0.40 gate,
+    ///     and it holds the ruling that a tail is not a sweep. Without it
+    ///     every scatter in this fixture sits an order of magnitude either
+    ///     side of the limit and a change that began naming mild-tail drums
+    ///     would pass the harness untouched.
+    ///
+    /// TWO POPULATIONS, BOTH STATED (fix round 1). windingRadiusSamples
+    /// counts the frames the MEDIAN rests on; windingRadiusNearby counts the
+    /// frames the SCATTER rests on, which is those plus the ones ownership
+    /// refused within reach. On the correct wrap they read 36 and 37. Before
+    /// this the row published 242 samples beside 55 agreeing and 226
+    /// disagreeing, and nothing in it said why those do not add up.
     ///
     /// WHAT THE FAILING ROWS CARRY, AND WHAT THEY DELIBERATELY DO NOT
     /// (spec 8.5). windingRadius is left EXACTLY as measured, not replaced
@@ -45587,13 +45617,20 @@ internal static partial class Program
     /// questioned, so what a passing reel gets is silence, and this check
     /// asserts that absence rather than leaving it to a reader.
     ///
-    /// WHAT THIS DOES NOT PROVE. That the gate catches a sweep on a drum
-    /// whose mesh stops AT the wire, a grooved sheave with no cheek: there
-    /// the wandering frames leave the ownership neighbourhood altogether
-    /// rather than entering the numerator. Every drum here is flanged,
-    /// which is the shape his seven spools have and the shape the defect
-    /// was found on. Nor does it prove anything about a study document,
-    /// for the reason given above.
+    /// WHAT THIS DOES NOT PROVE, AND WHICH WAY THE MEASURE WEAKENS (fix
+    /// round 1, measured rather than argued). The gate does NOT catch a
+    /// sweep on a drum whose mesh stops AT the wire, and that is not a blind
+    /// spot off to one side: it is the direction the figure moves in. A
+    /// refused frame still sitting within the band counts as AGREEING, and
+    /// the population reaches only to RouteOwnerAmbiguityMargin past the
+    /// mesh radius, so the tighter a drum's mesh closes on its own wire the
+    /// SMALLER this figure gets. On a uniform sweep from 0.020 m to 0.060 m,
+    /// varying only the flange: 0.0600 reads 2.33 and is named, 0.0300 reads
+    /// 0.93 and is named, 0.0205 reads 0.09 and goes silent while publishing
+    /// a radius wrong by a factor of two for spin rate. Every drum here and
+    /// every drum of his is flanged, which is the shape the defect was found
+    /// on. Nor does this prove anything about a study document, for the
+    /// reason given above.
     /// </summary>
     private static void ValidateMechanismWindingRadiusScatter(Assembly plugin)
     {
@@ -45683,10 +45720,28 @@ internal static partial class Program
             Activator.CreateInstance(routingWireType, 3, MechanismListOf(frameType, wire3.ToArray()))!,
         };
 
-        // WIRES 4, 5 AND 6 CARRY A FRAME EACH, nowhere near any drum. A
-        // wire with no frames at all is named as fatal to every placement,
-        // and that message is not this check's subject.
-        for (int w = 4; w < 7; w++)
+        // ENTRY 5: A MILD TAIL, AND IT MUST PASS (fix round 1). Forty-six
+        // frames on the barrel and eight running off it, which is the shape
+        // pulley 9 of his own machine has: 624 frames agreeing with the
+        // 0.2700 m it publishes and a lead-off reaching 0.3232 m, reading
+        // 0.1747. Eight over forty-six is 0.1739, the same figure to three
+        // places. It is here so the ruling "a tail is not a sweep" is held
+        // by a check rather than by a measurement in a report: without it
+        // this fixture's scatters run 0.03, 5.0, 0.75, 1.0 and null, with
+        // nothing anywhere near the gate, and a change that started naming
+        // mild-tail drums would pass the harness untouched.
+        var wire4 = new List<object?>();
+        for (int k = 0; k < 46; k++)
+            wire4.Add(WrapFrame(4.0, Barrel, k * 360.0 / 46.0, WrapHeight));
+        for (int k = 0; k < 8; k++)
+            wire4.Add(WrapFrame(4.0, LiftedClear, k * 45.0, WrapHeight));
+        wires.Add(Activator.CreateInstance(
+            routingWireType, 4, MechanismListOf(frameType, wire4.ToArray()))!);
+
+        // WIRES 5 AND 6 CARRY A FRAME EACH, nowhere near any drum. A wire
+        // with no frames at all is named as fatal to every placement, and
+        // that message is not this check's subject.
+        for (int w = 5; w < 7; w++)
         {
             wires.Add(Activator.CreateInstance(
                 routingWireType,
@@ -45708,7 +45763,8 @@ internal static partial class Program
                 (Mesh(Drum(1.0)), DrumAxis(1.0)),
                 (Mesh(Drum(2.0)), DrumAxis(2.0)),
                 (Mesh(Drum(3.0)), DrumAxis(3.0)),
-                (Mesh(Drum(9.0)), DrumAxis(9.0))),
+                (Mesh(Drum(9.0)), DrumAxis(9.0)),
+                (Mesh(Drum(4.0)), DrumAxis(4.0))),
             null,
             false)!;
 
@@ -45724,10 +45780,10 @@ internal static partial class Program
 
         using JsonDocument doc = JsonDocument.Parse(document);
         JsonElement reels = doc.RootElement.GetProperty("machine").GetProperty("reels");
-        if (reels.GetArrayLength() != 5)
+        if (reels.GetArrayLength() != 6)
         {
             throw new InvalidOperationException(
-                "the fixture must produce five reel entries; got "
+                "the fixture must produce six reel entries; got "
                 + reels.GetArrayLength() + ".");
         }
 
@@ -45906,6 +45962,74 @@ internal static partial class Program
                 + "measured nothing.");
         }
 
+        // 6b. A MILD TAIL IS NOT A SWEEP, AND IT PASSES (fix round 1).
+        // Pulley 9 of his own machine reads 0.1747 -- 624 frames agreeing
+        // with the 0.2700 m it publishes and a lead-off reaching 0.3232 m --
+        // and it must stay silent, or the gate would name the ordinary way a
+        // cable leaves a sheave. This entry reproduces that figure to three
+        // places on a drum small enough to sit in the same fixture, so the
+        // ruling is held here rather than in a report nobody re-runs.
+        double tail = ScatterOf(5);
+        if (CountOf(5, "windingRadiusAgreeing") != 46 || CountOf(5, "windingRadiusDisagreeing") != 8)
+        {
+            throw new InvalidOperationException(
+                "the mild tail must read 46 frames agreeing and 8 "
+                + "disagreeing; got " + CountOf(5, "windingRadiusAgreeing")
+                + " and " + CountOf(5, "windingRadiusDisagreeing") + ".");
+        }
+        if (tail < 0.16 || tail > 0.19)
+        {
+            throw new InvalidOperationException(
+                "the mild tail must read about 0.174, pulley 9's own figure "
+                + "on his machine, so that this fixture holds a case NEAR the "
+                + "0.40 gate rather than only cases an order of magnitude "
+                + "either side of it; got "
+                + tail.ToString("0.####", CultureInfo.InvariantCulture) + ".");
+        }
+        if (MarkedUnfit(5))
+        {
+            throw new InvalidOperationException(
+                "A TAIL IS NOT A SWEEP. This drum's frames agree with the "
+                + "radius it publishes 46 times over, with eight running off "
+                + "it where the cable leaves -- pulley 9 of his own machine, "
+                + "which reads 0.1747 and is CORRECT. Naming it would make "
+                + "the gate fire on the ordinary way a cable leaves a sheave, "
+                + "and a warning that fires on correct input is a defect equal "
+                + "in seriousness to one that misses a fault. Scatter read "
+                + tail.ToString("0.####", CultureInfo.InvariantCulture) + ".");
+        }
+
+        // 6c. THE ROW SAYS WHICH POPULATION EACH NUMBER RESTS ON (fix round
+        // 1). windingRadiusSamples counts the frames the MEDIAN rests on;
+        // windingRadiusNearby counts the frames the SCATTER rests on, which
+        // is those plus the ones ownership refused within reach. On the
+        // correct wrap they are 36 and 37, and a reader who adds agreeing to
+        // disagreeing and expects samples gets a number nothing in the row
+        // accounts for.
+        foreach (int entry in new[] { 0, 1, 2, 3, 4, 5 })
+        {
+            if (CountOf(entry, "windingRadiusNearby") !=
+                CountOf(entry, "windingRadiusAgreeing") + CountOf(entry, "windingRadiusDisagreeing"))
+            {
+                throw new InvalidOperationException(
+                    $"reel entry {entry}: windingRadiusNearby must be exactly "
+                    + "the population the scatter was taken over, agreeing "
+                    + "plus disagreeing; got "
+                    + CountOf(entry, "windingRadiusNearby") + " against "
+                    + CountOf(entry, "windingRadiusAgreeing") + " plus "
+                    + CountOf(entry, "windingRadiusDisagreeing") + ".");
+            }
+        }
+        if (CountOf(0, "windingRadiusSamples") != 36 || CountOf(0, "windingRadiusNearby") != 37)
+        {
+            throw new InvalidOperationException(
+                "the two populations must be DIFFERENT and both stated: the "
+                + "correct wrap's median rests on 36 owned frames and its "
+                + "scatter on 37 nearby ones, the lead-off included. Got "
+                + CountOf(0, "windingRadiusSamples") + " and "
+                + CountOf(0, "windingRadiusNearby") + ".");
+        }
+
         // 7. THE READER IS TOLD, BY NAME, IN ONE LINE. A document field
         // nobody reads is not a report: the reels that failed are named in
         // the chin, with their figures, and the reels that passed are not.
@@ -45932,11 +46056,13 @@ internal static partial class Program
             }
         }
         if (named.Contains("0 (scatter", StringComparison.Ordinal) ||
-            named.Contains("4 (scatter", StringComparison.Ordinal))
+            named.Contains("4 (scatter", StringComparison.Ordinal) ||
+            named.Contains("5 (scatter", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "the unfit line must not name the correct wrap or the reel "
-                + "with nothing to measure; got: " + named);
+                "the unfit line must not name the correct wrap, the reel with "
+                + "nothing to measure, or the drum with a mild tail; got: "
+                + named);
         }
         if (!named.Contains("ROTATES WITH THE HELIX", StringComparison.Ordinal))
         {
