@@ -3310,9 +3310,12 @@ internal static partial class Program
                 + "CITED MACHINE'S OWN AND A STUDY CITING NONE STATES NO "
                 + "DEFAULT AT ALL (Task 6, retiring Task 4's provisional "
                 + "1.0), proved three ways on a build with nothing wired "
-                + "to Machine (MA) -- the chin NAMES the missing citation "
-                + "at the port, the payload carries neither a machine "
-                + "block nor a reeve default anywhere, and the old scalar "
+                + "to Machine (MA) -- this SHARED builder says nothing "
+                + "about that port at all, since the machine build drives "
+                + "it with no citation by design and a message here would "
+                + "fire on every correct machine build, the payload "
+                + "carries neither a machine block nor a reeve default "
+                + "anywhere, and the old scalar "
                 + "mechanism.reeveFactor is ABSENT from the mechanism "
                 + "block, which is what stops a machine document, which "
                 + "lifts that block whole, stating one machine's default "
@@ -4359,8 +4362,9 @@ internal static partial class Program
                 "guiding wheel from one that moves with the load. FIX " +
                 "ROUND 1: a reeve.perWire entry that is not finite and " +
                 "greater than zero is now REFUSED, the whole document, " +
-                "by name, the same guard as reeve.default and for the " +
-                "same reason -- this reader re-validates a payload this " +
+                "by name, the same guard the CITED MACHINE's own " +
+                "default gets and for the same reason -- this reader " +
+                "re-validates a payload this " +
                 "collector did not necessarily write, and the sanity " +
                 "check is one-sided so a negative override tripped " +
                 "nothing at all before this. AND THE WRITER-TO-READER " +
@@ -4418,8 +4422,23 @@ internal static partial class Program
                 "sourced \"machine\", retiring Task 5's provisional 1.0, " +
                 "and a study that cites NO machine is REFUSED BY NAME " +
                 "naming Machine (MA) rather than given a factor nobody " +
-                "authored. The envelope, everything but those two bodies, " +
-                "measures under spec 2.3's 10 KB.");
+                "authored, and a STUDY document wired to that port is " +
+                "refused as a citation by name, since there is a 36 MiB " +
+                "one sitting in his machine library folder. FIX ROUND 1: a " +
+                "CORRECT MACHINE BUILD DRAWS NO WARNING -- the same shared " +
+                "builder makes both documents and a machine cites nothing " +
+                "by design, so a message about wiring Machine (MA) inside " +
+                "it painted every correct machine build orange over a port " +
+                "the Machine component does not have; a seven-wire machine " +
+                "here is held to silence and the six-wire one to its own " +
+                "absent wire 3. A build with routing and NO REEL names that " +
+                "condition rather than tallying \"body N\" like a " +
+                "measurement, which is now every study build. The " +
+                "envelope, everything but those two bodies, measures under " +
+                "spec 2.3's 10 KB AT THIS FIXTURE'S SCALE, and the check " +
+                "says in its own comment that the bound does NOT hold at " +
+                "his: about 316 KB there, dominated by the route frames " +
+                "that paragraph counts inside it.");
         }
         catch (Exception exception)
         {
@@ -41628,9 +41647,13 @@ internal static partial class Program
     ///    than moved: the default now travels from the machine a study
     ///    CITES, and a study citing none states none at all. This fixture
     ///    wires no machine, so the three assertions are:
-    ///      (i)   the chin NAMES the missing citation, at the port, as a
-    ///            warning rather than a note -- an export cannot be written
-    ///            from this payload and he needs to know at the canvas;
+    ///      (i)   this SHARED builder says NOTHING about Machine (MA) --
+    ///            BuildMachine drives it with no citation by design and
+    ///            pools its warnings into the Machine component's chin, so
+    ///            a message here would fire on every correct MACHINE build,
+    ///            over a port that component does not have. The message
+    ///            belongs to the collector COMPONENT, where the port is
+    ///            (fix round 1, the CRITICAL);
     ///      (ii)  the payload carries NO "machine" key (absent, not null)
     ///            and no reeve default anywhere in it;
     ///      (iii) the old scalar mechanism.reeveFactor is ABSENT from the
@@ -41909,14 +41932,24 @@ internal static partial class Program
         // fallback would put every export back to applying 1.0 where he
         // authored 4.0, with the geometry, the wire paths and the timing
         // all still correct so that nothing looks broken.
-        bool uncitedNamed = fullWarnings.Any(w =>
-            w.Contains("Machine (MA)", StringComparison.Ordinal) &&
-            w.Contains("CITES NO MACHINE", StringComparison.Ordinal));
-        if (!uncitedNamed)
+        // AND THE SHARED BUILDER ITSELF SAYS NOTHING ABOUT THE PORT (fix
+        // round 1, the CRITICAL). BuildMachine drives this same method with
+        // no citation BY DESIGN and pools its warnings into the Machine
+        // component's chin, so a message here about wiring Machine (MA)
+        // paints every correct MACHINE build orange over a port that
+        // component does not have. The message belongs to
+        // MechanismCollectorComponent.SolveInstance, where the port exists;
+        // this asserts the builder is silent, and the machine build's own
+        // silence is asserted in ValidateStudyCitesItsMachine.
+        bool builderNamedThePort = fullWarnings.Any(w =>
+            w.Contains("Machine (MA)", StringComparison.Ordinal));
+        if (builderNamedThePort)
         {
             throw new InvalidOperationException(
-                "A study built with nothing wired to Machine (MA) must be " +
-                "NAMED as citing no machine, at the port; warnings were: " +
+                "The SHARED build must not name Machine (MA) at all: the " +
+                "machine build drives it with no citation by design, so a " +
+                "message here fires on correct input, on the Machine " +
+                "component, about a port it does not have. Warnings were: " +
                 string.Join(" | ", fullWarnings));
         }
         using (JsonDocument reeveShape = JsonDocument.Parse(fullJson))
@@ -44859,6 +44892,28 @@ internal static partial class Program
     /// then spin those frames with the drum. The reels here are modelled
     /// with real ends (z 0 to 10) for the same reason: a flat reel has no
     /// length to sit inside.
+    ///
+    /// WHAT THIS NO LONGER PROVES, SAID PLAINLY (fix round 1 of Task 6,
+    /// and it is spec 9.1's own shape: a check that holds VACUOUSLY over
+    /// the path it is named after). This fixture wires FOUR REEL ENTRIES
+    /// into a study build, and since Task 3 no component can produce one.
+    /// The collector's Reel (RE) and Reel Axis (AX) are refusing stubs, so
+    /// a study build has no reels at all: BuildReelNeighbourhoods returns
+    /// an empty array and ClassifyRouteFrameOwner answers "body" for every
+    /// frame before it looks at any geometry. And the machine document,
+    /// which is the only thing built with reels now, writes its routing
+    /// frames through plain FramePayload with NO owner fields on them.
+    /// So NOTHING either component can build today carries the ownership
+    /// this check measures: what it still proves is the CLASSIFIER's own
+    /// arithmetic (radial window, axial bound, ambiguity naming, and that
+    /// the fields survive the document writer's re-parse), which is real
+    /// and worth keeping, and what it does NOT prove is that any document
+    /// Param can export has a frame owned by a reel. The gap itself is
+    /// registered as a DEFERRED assertion at the end of this method, so it
+    /// is reported on every harness run rather than only to a reader of
+    /// this comment. Closing it is its own round: either the machine
+    /// document stamps ownership onto its own routing, or the study
+    /// classifies against the reels of the machine it cites.
     /// </summary>
     private static void ValidateMechanismRouteOwnership(Assembly plugin)
     {
@@ -45244,6 +45299,66 @@ internal static partial class Program
                 "re-parse and rebuild of the route, unchanged from the " +
                 "collector's own classification; got " + document);
         }
+
+        // AND THE GAP EVERYTHING ABOVE NOW HOLDS VACUOUSLY OVER, REGISTERED
+        // WHERE A RUNNER SEES IT (fix round 1 of Task 6; see this method's
+        // own doc comment for the whole of it). The assertion is written
+        // out and run on every harness run: build a study EXACTLY as the
+        // collector component can produce one -- its Reel (RE) and Reel
+        // Axis (AX) have been refusing stubs since Task 3, so no reels, a
+        // tie and a routed wire -- and require at least one routing frame
+        // to be owned by a reel. It fails, and the measurement it fails
+        // with is the whole finding: every frame reads "body", so the
+        // studio holds every wire fixed and no wrap spins on any drum,
+        // while the geometry, the wire paths and the timing all stay
+        // correct.
+        Deferred(
+            "a study build the collector component can actually produce "
+            + "classifies at least one routing frame as riding a REEL",
+            "the ownership round (either the machine document stamps owner "
+            + "and ownerReel onto its own routing frames, or the study "
+            + "classifies against the reels of the machine it cites); dead "
+            + "since Task 3 moved the reels off this component, NOT caused "
+            + "by Task 6",
+            () =>
+            {
+                object studyAsset = Asset(
+                    null, false,
+                    MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+                    null, false, Mesh(new[] { new double[] { 0, 0, 0 } }), false,
+                    MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()));
+                var deferredWarnings = new List<string>();
+                var deferredNotes = new List<string>();
+                object? studyPayload = build.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        studyAsset, routing, placements,
+                        deferredWarnings, deferredNotes,
+                    });
+                if (studyPayload is not string studyJson)
+                    throw new InvalidOperationException("the study build produced no payload at all");
+                using JsonDocument studyDoc = JsonDocument.Parse(studyJson);
+                var owners = new List<string>();
+                foreach (JsonElement w in studyDoc.RootElement.GetProperty("wires").EnumerateArray())
+                {
+                    foreach (JsonElement frame in w.GetProperty("route").EnumerateArray())
+                        owners.Add(frame.GetProperty("owner").GetString() ?? "<none>");
+                }
+                if (!owners.Contains("reel"))
+                {
+                    throw new InvalidOperationException(
+                        "a study build the component can produce has NO reels "
+                        + "at all, so ClassifyRouteFrameOwner answers before it "
+                        + "looks at any geometry and every one of its "
+                        + owners.Count + " routing frame(s) reads \"body\": "
+                        + "nothing rides a drum, so the studio spins nothing "
+                        + "while the geometry, the wire paths and the timing "
+                        + "all stay correct. The machine document does not "
+                        + "make up for it either -- its routing frames carry "
+                        + "no owner fields at all.");
+                }
+            });
     }
 
     /// <summary>
@@ -45406,8 +45521,10 @@ internal static partial class Program
             throw new InvalidOperationException("Every wire's permanence must be \"temporary\".");
 
         // AUDIT FINDING 5: reeveFactor is per wire, the resolved value
-        // (still 1.0, still provisional) stamped onto EVERY wire, never
-        // left for the reader to inherit from mechanism.reeveFactor alone.
+        // stamped onto EVERY wire, never left for the reader to inherit
+        // from mechanism.reeveFactor alone. The 1.0 here is this fixture's
+        // own CITED MACHINE's authored default (Task 6), not the
+        // provisional number the study side once stated for itself.
         if ((double?)wire0["reeveFactor"] != 1.0 || (double?)wire1["reeveFactor"] != 1.0)
         {
             throw new InvalidOperationException(
@@ -45416,8 +45533,28 @@ internal static partial class Program
                 + "0-0-0's was " + wire0["reeveFactor"] + " and wire "
                 + "0-0-1's was " + wire1["reeveFactor"] + ".");
         }
-        if (wiresOut.Any(w => (int?)w!["wire"] == 2))
-            throw new InvalidOperationException("Wire 2 must not appear in the output at all.");
+        // MADE REAL BY machine_wire (fix round 1). This read
+        // w["wire"] == 2, and a document wire carries NO "wire" key at all
+        // -- id, net_vertex, machine_wire, reeveFactor, reeveFactorSource,
+        // path, route, permanence -- so the test was always false and
+        // proved nothing whatever about wire 2. machine_wire is the key
+        // that names an authored wire in this document, and it is now the
+        // key this asserts on, both ways round: the two matched wires carry
+        // their own authored numbers, and the dropped one appears nowhere.
+        if ((int?)wire0["machine_wire"] != 0 || (int?)wire1["machine_wire"] != 1)
+        {
+            throw new InvalidOperationException(
+                "Every wire names the machine wire it is an instance of, by "
+                + "the AUTHORED number; got " + wire0["machine_wire"]
+                + " and " + wire1["machine_wire"] + ".");
+        }
+        if (wiresOut.Any(w => (int?)w!["machine_wire"] == 2))
+        {
+            throw new InvalidOperationException(
+                "Wire 2 was dropped for want of an anchor and must not "
+                + "appear in the output at all, under any key; got "
+                + wiresOut.ToJsonString());
+        }
         bool wire2Named = warnings.Any(w =>
             w.Contains("wire 2", StringComparison.Ordinal) &&
             w.Contains("no anchor node left", StringComparison.Ordinal));
@@ -46111,13 +46248,34 @@ internal static partial class Program
     ///    bench.mechanism/1 study sitting in the machine library folder
     ///    the studio scans for machines, and it parses perfectly well.
     /// 8. THE SIZE BUDGET OF SPEC 2.3, measured rather than asserted: the
-    ///    document minus its two permanent bodies stays under 10 KB.
+    ///    document minus its two permanent bodies stays under 10 KB AT
+    ///    THIS FIXTURE'S SCALE. The bound does not hold at his own, and
+    ///    the assertion's own comment says so with the measurement.
+    /// 8b. A BUILD WITH ROUTING AND NO REEL NAMES THAT CONDITION as a
+    ///    warning rather than tallying "body N" like a measurement (fix
+    ///    round 1). Every study build has that shape since Task 3 moved
+    ///    the reels off this component, and its consequence is a wrong
+    ///    animation with correct geometry. The gap itself is registered
+    ///    as a deferred assertion in ValidateMechanismRouteOwnership.
+    /// 9. A CORRECT MACHINE BUILD DRAWS NO WARNING (fix round 1, the
+    ///    CRITICAL). BuildMachine drives the SAME shared builder a study
+    ///    does, with no citation by design, and pools its warnings into
+    ///    the Machine component's own chin: a message inside that builder
+    ///    about wiring Machine (MA) paints every correct machine build
+    ///    orange, over a port that component does not have, about a study
+    ///    he is not building. The six-wire machine here is held to its own
+    ///    one expected line (its absent wire 3) and a seven-wire machine
+    ///    beside it to silence.
     ///
     /// WHAT THIS DOES NOT PROVE. Nothing about the Machine (MA) port's own
     /// Grasshopper read: no test in this harness calls SolveInstance,
     /// which needs a live IGH_DataAccess and a Grasshopper document this
-    /// process never launches. ReadMachineCitation, the pure method that
-    /// port hands its text to, is driven directly and in full.
+    /// process never launches -- so the WARNING an uncited study now draws,
+    /// which moved into SolveInstance in fix round 1, is not measured here
+    /// either. What is measured is that the shared builder does NOT raise
+    /// it (ValidateMechanismCollector) and that a machine build stays
+    /// silent (item 9). ReadMachineCitation, the pure method that port
+    /// hands its text to, is driven directly and in full.
     /// </summary>
     private static void ValidateStudyCitesItsMachine(Assembly plugin)
     {
@@ -46231,6 +46389,64 @@ internal static partial class Program
                     + "coincidence and nothing below can tell them apart; "
                     + "got " + machineRouting.ToString());
             }
+        }
+
+        // A CORRECT MACHINE BUILD MUST NOT WARN AT ALL, AND THE WARNINGS
+        // IT PRODUCES MUST BE READ (fix round 1, the CRITICAL). BuildMachine
+        // drives the SAME shared builder a study does, with no citation by
+        // design, and pools its warnings into the Machine component's own
+        // chin: a message about wiring Machine (MA) written inside that
+        // builder therefore paints EVERY correct machine build orange, over
+        // a port that component does not have, about a study he is not
+        // building. A warning that fires on correct input is a defect equal
+        // in seriousness to one that misses a fault, and this fixture built
+        // a machine and never once looked at what it said.
+        //
+        // TWO ASSERTIONS, because this fixture's own machine cannot be
+        // silent: its premise is that WIRE 3 CARRIES NO FRAMES, which the
+        // shared builder names by wire. So the six-wire machine is held to
+        // exactly that one line and nothing else, and a SECOND machine,
+        // authored on all seven wires and otherwise identical, is held to
+        // SILENCE.
+        foreach (string sixWireWarning in machineWarnings)
+        {
+            if (!sixWireWarning.Contains("Routing (RT)[3]", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The only thing a correct six-wire machine build may "
+                    + "warn about here is its own absent wire 3; got: "
+                    + string.Join(" | ", machineWarnings));
+            }
+        }
+
+        var cleanRoutingWires = new List<object?>();
+        for (int w = 0; w < 7; w++)
+        {
+            object cleanRoute = MechanismListOf(
+                frameType,
+                FrameOf(new[] { w * 1.0, 0.0, 0.0 }),
+                FrameOf(new[] { w * 1.0, 3.0, 0.0 }));
+            cleanRoutingWires.Add(Activator.CreateInstance(routingWireType, w, cleanRoute)!);
+        }
+        var cleanMachineWarnings = new List<string>();
+        buildMachine.Invoke(
+            null,
+            new object?[]
+            {
+                Asset(frame1, MechanismListOf(meshType, frame2), motors, null, reels, null),
+                MechanismListOf(routingWireType, cleanRoutingWires.ToArray()),
+                "MCH-0043", "Seven wire test winch", AuthoredReeve, "centreline",
+                cleanMachineWarnings, new List<string>(),
+            });
+        if (cleanMachineWarnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A machine authored on all seven wires, with an id, a name "
+                + "and a mechanical advantage, is CORRECT INPUT and must "
+                + "draw no warning whatever -- least of all one telling him "
+                + "to wire a Machine (MA) port the Machine component does "
+                + "not have, about a study he is not building. Got: "
+                + string.Join(" | ", cleanMachineWarnings));
         }
 
         // THE CITATION, READ BACK OFF THAT DOCUMENT by the product.
@@ -46530,10 +46746,60 @@ internal static partial class Program
                 + " with warnings: " + string.Join(" | ", wrongSchemaWarnings));
         }
 
+        // 7c. A BUILD WITH ROUTING AND NO REEL SAYS SO AS A WARNING, NOT
+        // AS A TALLY (fix round 1). With no reel wired there is no
+        // neighbourhood to classify against, so every routing frame is
+        // held by the BODY before any geometry is looked at, and a note
+        // tallying "body N" reads like a measurement of something. That is
+        // the ordinary shape of EVERY study build since the reels moved to
+        // the Machine component, and its consequence is a wrong animation
+        // with correct geometry: nothing rides a drum, so the studio spins
+        // nothing. The false-positive side of this is covered by the clean
+        // machine build above, which HAS reels and must stay silent.
+        object reellessAsset = Asset(
+            null, MechanismListOf(meshType), null, tie,
+            MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+            anchor);
+        var reellessWarnings = new List<string>();
+        object?[] reellessArgs = BuildWithResultArguments(
+            buildWithResult, reellessAsset, routing, placements,
+            reellessWarnings, new List<string>(), result, "centreline", null, citation);
+        buildWithResult.Invoke(null, reellessArgs);
+        bool ownershipNamed = reellessWarnings.Any(w =>
+            w.Contains("NO REEL", StringComparison.Ordinal) &&
+            w.Contains("by construction", StringComparison.Ordinal));
+        if (!ownershipNamed)
+        {
+            throw new InvalidOperationException(
+                "A build with routing and no reel classifies every frame "
+                + "as held by the body BEFORE it looks at any geometry, so "
+                + "it must say so by name rather than tally it like a "
+                + "measurement; warnings were: "
+                + string.Join(" | ", reellessWarnings));
+        }
+
         // 8. THE SIZE BUDGET (spec 2.3): everything but the two permanent
         // bodies stays under 10 KB. Stated that way, and not as a
         // percentage, because ruling 1.1 keeps real meshes in the study
         // and a percentage bound would fail on correct output.
+        //
+        // WHAT THIS DOES NOT PROVE, AND IT IS THE LARGER HALF (fix round 1,
+        // named rather than left for a reader to discover): THE 10 KB BOUND
+        // IS MEASURED AT THIS FIXTURE'S SCALE ONLY -- six wires of two
+        // routing frames each, one instance -- and spec 2.3's own budget
+        // DOES NOT HOLD AT HIS REAL SCALE. Measured directly against the
+        // product on his own shape (six instances, forty-two wires of
+        // thirteen frames, a 7,000-vertex tie and a 1,200-vertex anchor):
+        // the document is 661,616 bytes, of which about 330 KB is those two
+        // bodies, leaving an ENVELOPE of about 316 KB against spec 2.3's 10
+        // KB -- thirty times over, and dominated by the wires' own route
+        // frames, which that paragraph counts inside the bound. The SPLIT's
+        // own claim survives it (ruling 1.7: a few hundred KB, and 646 KiB
+        // is that), but the 10 KB sub-bound describes a study with a
+        // handful of frames per wire and not his. Raising it to a number
+        // that means something at his scale is a spec amendment, not a test
+        // change, so the bound is left where the spec put it and its reach
+        // is stated here instead.
         int bodyBytes = 0;
         foreach (string key in new[] { "tensionTie", "anchor" })
         {
@@ -46546,9 +46812,12 @@ internal static partial class Program
             throw new InvalidOperationException(
                 "The study document's envelope -- everything but the part "
                 + "bodies wired to its own ports -- stays under 10 KB "
-                + "(spec 2.3), so that a later change cannot quietly "
+                + "(spec 2.3) AT THIS FIXTURE'S SCALE, six wires of two "
+                + "routing frames, so that a later change cannot quietly "
                 + "reverse the split; measured " + envelope + " bytes over "
-                + wiresOut.Count + " wire(s).");
+                + wiresOut.Count + " wire(s). See this check's own doc "
+                + "comment for what that bound does NOT reach: at his real "
+                + "scale the envelope measures about 316 KB.");
         }
     }
 
