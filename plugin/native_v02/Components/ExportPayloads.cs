@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -1024,13 +1024,15 @@ internal static class MechanismDocument
             }
         }
 
-        // NET VERTEX MATCHING, THE DEFAULT RULE (spec's own "STILL OPEN",
-        // a default left in place so nothing blocks): wire order (side,
-        // mechanism, wire -- his own tree order) matched against anchor
-        // order along the row, flattened row by row. R1's non-negotiable
-        // survives the named-port rebuild: every wire gets its OWN
-        // explicit net_vertex written into the document, never left to be
-        // inferred from tree position downstream.
+        // NET VERTEX MATCHING. WHICH ANCHORS an instance draws from is
+        // settled here, row by row: the rows are paired to sides by
+        // proximity (below) and flattened, and each instance takes its own
+        // run of that flat list in his tree order (side, mechanism, wire).
+        // WHICH OF THOSE ANCHORS EACH WIRE GETS is settled further down, by
+        // where the wire was actually PLACED and not by its position in the
+        // tree (Task 7a). R1's non-negotiable survives both: every wire
+        // gets its OWN explicit net_vertex written into the document, never
+        // left to be inferred from tree position downstream.
         //
         // WHICH ROW IS WHICH SIDE'S is decided by PHYSICAL PROXIMITY (audit
         // finding 3), never by row-discovery order:
@@ -1038,12 +1040,10 @@ internal static class MechanismDocument
         // lowest node index... arbitrary but STABLE", an artefact of how
         // the net happened to get numbered, with zero relationship to his
         // own authored `side` field. Each row is paired to whichever
-        // side's own instances sit nearest it in world space; the flatten
-        // WITHIN a matched row (wire order against anchor order along that
-        // row) is unchanged. Falls back to document order when the row
-        // count and the authored side count disagree, which this pairing
-        // cannot resolve unambiguously -- the same behaviour this file
-        // always had.
+        // side's own instances sit nearest it in world space. Falls back to
+        // document order when the row count and the authored side count
+        // disagree, which this pairing cannot resolve unambiguously -- the
+        // same behaviour this file always had.
         List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
         List<List<int>> orderedRows = rows;
         List<int> sideOrder = instanceFrames.Keys
@@ -1129,6 +1129,131 @@ internal static class MechanismDocument
                     vertexRowIndex[id] = r;
                 }
             }
+        }
+
+        // WHICH ANCHOR IN THE INSTANCE'S OWN RUN EACH WIRE IS BOUND TO,
+        // DECIDED BY WHERE THE WIRE WAS PLACED (Task 7a, 2026-09-10).
+        //
+        // THIS CHANGES THE ARTEFACT ON EVERY TWO-SIDED VAULT, which is his
+        // default workflow, and it is said here as loudly as in the commit
+        // that made it: a wire's net_vertex is the anchor THE STUDIO DRAWS
+        // ITS CABLE TO, so a study exported before this and a study
+        // exported after it bind the turned side's seven cables to
+        // different anchors. The new binding is the one the machine was
+        // actually placed against; the old one was the row's own discovery
+        // order, and on a turned instance the two ran end for end.
+        //
+        // WHAT WAS WRONG. MechanismCollector.DerivePlacements pairs wire to
+        // anchor SPATIALLY -- its alongMachine order against its alongRow
+        // order -- and settles each row's sense by which side of the row
+        // the net stands on, so the far side's machine is turned round to
+        // face away from its own springing. That is the whole content of
+        // "one machine, built once, turned round". This document paired
+        // wire ORDER against the row's DISCOVERY order, which
+        // MouldGeometry.ConnectedGroups documents as "arbitrary but
+        // stable". The two agree on an untouched instance and run end for
+        // end on a turned one: measured on a seven-wire, two-row fixture,
+        // the turned side's wires were bound 0.9, 0.6, 0.3, 0, 0.3, 0.6 and
+        // 0.9 m from where they had been placed, and a CORRECT study drew
+        // FOUR match-distance warnings for it.
+        //
+        // THE RULE NOW, AND WHY IT IS THE SAME RULE AND NOT A SECOND COPY
+        // OF IT. Both ends are ordered along ONE axis, the row's own
+        // direction (MechanismCollector.WidestPairDirection, the method
+        // DerivePlacements itself orders anchor rows by), using
+        // MechanismCollector.OrderAlongAxis, the method it orders both
+        // alongMachine and alongRow by. The k-th wire along that axis takes
+        // the k-th anchor along it.
+        //
+        // That reproduces the derivation EXACTLY, and the algebra is worth
+        // stating because it is why one axis suffices where the derivation
+        // needs two. A placed wire end is R*first + t, and the derivation's
+        // own worldX is R*machineX, so ordering placed wire ends along
+        // worldX is ordering first along machineX to within a constant --
+        // alongMachine, recovered in world space. Ordering the anchors
+        // along the same axis is alongRow. And pairing k-th to k-th is
+        // INVARIANT UNDER FLIPPING THAT AXIS, since flipping reverses both
+        // lists, so the sign conventions that make DerivePlacements' two
+        // frames comparable drop out here entirely and cannot be got wrong
+        // a second time.
+        //
+        // IT ALSO WORKS ON AN AUTHORED PLACEMENT, where there is no
+        // derivation to agree with: the wire is bound to the anchor it was
+        // laid out against, which is what the match-distance guard below
+        // has always been measuring.
+        //
+        // WHAT IS NOT PROVED, AND IS DELIBERATELY LEFT ALONE. An instance
+        // whose run of anchors is SHORT (fewer anchors left than it has
+        // wires) keeps the old flat pairing and the old drop rule: a
+        // spatial pairing over an incomplete pair of sets would silently
+        // change WHICH wire is dropped, and a dropped wire is named by id
+        // in a warning he reads. So is an instance with a single wire (no
+        // order to fix), one carrying no placement frame, and one whose
+        // wires carry no route to place. And the axis is the ANCHORS' own:
+        // a machine authored with its wire ends running across the row
+        // rather than along it projects them all onto nearly one point, and
+        // this pairing is then no better than the tree order it replaced.
+        // None of those shapes appear in a study this plugin writes.
+        var matchedVertices = new int[wireEntries.Count];
+        for (int i = 0; i < wireEntries.Count; i++)
+            matchedVertices[i] = i < anchorFlat.Count ? anchorFlat[i] : -1;
+        for (int blockStart = 0; blockStart < wireEntries.Count;)
+        {
+            int blockSide = wireEntries[blockStart].Side;
+            int blockMechanism = wireEntries[blockStart].Mechanism;
+            int blockEnd = blockStart;
+            while (blockEnd < wireEntries.Count &&
+                   wireEntries[blockEnd].Side == blockSide &&
+                   wireEntries[blockEnd].Mechanism == blockMechanism)
+            {
+                blockEnd++;
+            }
+
+            int blockCount = blockEnd - blockStart;
+            if (eq is null ||
+                blockCount < 2 ||
+                blockEnd > anchorFlat.Count ||
+                !instanceFrames.TryGetValue(
+                    (blockSide, blockMechanism), out MechanismFrame? blockFrame) ||
+                blockFrame is null)
+            {
+                blockStart = blockEnd;
+                continue;
+            }
+
+            var blockAnchorIds = new List<int>(blockCount);
+            var blockAnchorPoints = new List<double[]>(blockCount);
+            var blockWirePoints = new List<double[]>(blockCount);
+            bool blockReadable = true;
+            for (int k = 0; k < blockCount; k++)
+            {
+                int anchorId = anchorFlat[blockStart + k];
+                if (anchorId < 0 ||
+                    anchorId >= eq.Vertices.Count ||
+                    wireEntries[blockStart + k].Route.Count == 0)
+                {
+                    blockReadable = false;
+                    break;
+                }
+                blockAnchorIds.Add(anchorId);
+                Point3Dto anchorPoint = eq.Vertices[anchorId];
+                blockAnchorPoints.Add(new[] { anchorPoint.X, anchorPoint.Y, anchorPoint.Z });
+                blockWirePoints.Add(TransformLocal(
+                    wireEntries[blockStart + k].Route[0].Frame.Origin, blockFrame));
+            }
+            if (!blockReadable)
+            {
+                blockStart = blockEnd;
+                continue;
+            }
+
+            double[] rowAxis = MechanismCollector.WidestPairDirection(blockAnchorPoints);
+            int[] anchorsAlongRow = MechanismCollector.OrderAlongAxis(blockAnchorPoints, rowAxis);
+            int[] wiresAlongRow = MechanismCollector.OrderAlongAxis(blockWirePoints, rowAxis);
+            for (int k = 0; k < blockCount; k++)
+                matchedVertices[blockStart + wiresAlongRow[k]] = blockAnchorIds[anchorsAlongRow[k]];
+
+            blockStart = blockEnd;
         }
 
         // THE REEVE FACTOR'S OWN SHAPE (spec section 6, parallel to
@@ -1389,12 +1514,12 @@ internal static class MechanismDocument
                     $"wire (side {side}, mechanism {mechanism}, wire " +
                     $"{wireIndex}): no anchor node left to match against " +
                     $"({anchorFlat.Count} anchor node(s) found for " +
-                    $"{wireEntries.Count} wire(s) authored, default rule " +
-                    "is wire order against anchor order along the row); " +
-                    "dropped.");
+                    $"{wireEntries.Count} wire(s) authored, and each " +
+                    "instance takes its own run of the anchors its row " +
+                    "holds); dropped.");
                 continue;
             }
-            int netVertex = anchorFlat[i];
+            int netVertex = matchedVertices[i];
             AssertInRange(netVertex, vertexCount, "wires[].net_vertex");
             string id = $"{side}-{mechanism}-{wireIndex}";
 
@@ -1429,22 +1554,29 @@ internal static class MechanismDocument
             // its right value -- and it does, on an authored placement laid
             // out against the wrong anchors.
             //
-            // WHAT THE MATCH DISTANCE DOES NOT PROVE, MEASURED 2026-09-10
-            // AND SAID HERE RATHER THAN LEFT TO BE FOUND. On the DERIVED
-            // path it cannot separate a backwards routing tree from a
-            // correct one. The derivation pairs wire to anchor by each
-            // one's own order along the machine and along the row
-            // (DerivePlacements' alongMachine against alongRow), while this
-            // matcher pairs by anchor-row DISCOVERY order, and the two
-            // rules are independent: on an instance the derivation turned
-            // round to face its own side, they run end for end, and the
-            // distances printed below are the disagreement between two
-            // pairings rather than any statement about the machine. A
-            // seven-wire fixture on two rows measures the identical
-            // distances (0.9, 0.6, 0.3, 0, 0.3, 0.6, 0.9 m) whether the
-            // routing tree is authored correctly or reversed, only on the
-            // other side. THAT IS WHY THE WITNESS BELOW IS SOURCED FROM THE
-            // MACHINE'S OWN DOCUMENT and not from anything on this path.
+            // WHAT THE MATCH DISTANCE DOES NOT PROVE, SAID HERE RATHER THAN
+            // LEFT TO BE FOUND. On the DERIVED path it cannot separate a
+            // backwards routing tree from a correct one, and since Task 7a
+            // it cannot in the plainest possible way: this document now
+            // binds each wire to the anchor the derivation PLACED it on
+            // (the block above), so on a derived placement the distance
+            // below reads zero on every instance, turned or not, correct or
+            // backwards. It is the derivation's own fit measured a second
+            // time, exactly as residualM is.
+            //
+            // WHAT IT DID READ BEFORE THAT, AND WHY IT MEANT NOTHING
+            // EITHER: the two pairings disagreed on a turned instance, so a
+            // seven-wire fixture on two rows printed 0.9, 0.6, 0.3, 0, 0.3,
+            // 0.6, 0.9 m on its turned side whether the routing tree was
+            // authored correctly or reversed, and drew four warnings on
+            // CORRECT input. Those numbers measured the disagreement
+            // between two rules, never the machine.
+            //
+            // THAT IS WHY THE WITNESS BELOW IS SOURCED FROM THE MACHINE'S
+            // OWN DOCUMENT and not from anything on this path. The distance
+            // still earns its keep on an AUTHORED placement, where the
+            // anchors are his and the layout is his and the two can
+            // genuinely disagree.
             if (eq is not null &&
                 route.Count > 0 &&
                 instanceFrames.TryGetValue(

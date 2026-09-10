@@ -2409,20 +2409,7 @@ internal static class MechanismCollector
                 continue;
             var rowPoints = row.Select(id => netPoints[id]).ToList();
 
-            double[] rowX = NormalizeOrZ(Difference3(rowPoints[1], rowPoints[0]));
-            double widest = 0.0;
-            for (int a = 0; a < rowPoints.Count; a++)
-            {
-                for (int b = a + 1; b < rowPoints.Count; b++)
-                {
-                    double span = Distance(rowPoints[a], rowPoints[b]);
-                    if (span > widest)
-                    {
-                        widest = span;
-                        rowX = NormalizeOrZ(Difference3(rowPoints[b], rowPoints[a]));
-                    }
-                }
-            }
+            double[] rowX = WidestPairDirection(rowPoints);
 
             double[] rowZ = AcrossAxis(WorldUp, rowX);
             double[] rowY = CrossProduct(rowZ, rowX);
@@ -2433,8 +2420,7 @@ internal static class MechanismCollector
                 rowY = CrossProduct(rowZ, rowX);
             }
 
-            var ordered = Enumerable.Range(0, row.Count)
-                .OrderBy(i => Dot3(rowPoints[i], rowX))
+            var ordered = OrderAlongAxis(rowPoints, rowX)
                 .Select(i => row[i])
                 .ToList();
             placed.Add((side, ordered, new MechanismFrame(rowCentre, rowX, rowY, rowZ)));
@@ -3422,6 +3408,55 @@ internal static class MechanismCollector
     }
 
     /// <summary>
+    /// THE DIRECTION OF A LINE OF POINTS, taken between its two
+    /// FURTHEST-APART members, so the order along it can never depend on
+    /// how the set happened to be walked or discovered. A set of fewer than
+    /// two points, or one whose members all coincide, has no direction at
+    /// all and gets <see cref="NormalizeOrZ"/>'s own world-Z fallback,
+    /// which keeps a degenerate row ordering rather than dividing by zero.
+    ///
+    /// ONE COPY, THREE CALLERS (2026-09-10). The same nested loop stood
+    /// written out twice already, in <see cref="DerivePlacements"/> and in
+    /// <see cref="DeriveAnchorFrames"/>; the study document's own
+    /// wire-to-anchor matching is the third, and is the reason it is now a
+    /// method. Two orderings that MUST agree are not written twice.
+    /// </summary>
+    internal static double[] WidestPairDirection(IReadOnlyList<double[]> points)
+    {
+        if (points.Count < 2)
+            return NormalizeOrZ(new[] { 0.0, 0.0, 0.0 });
+        double[] direction = NormalizeOrZ(Difference3(points[1], points[0]));
+        double widest = 0.0;
+        for (int a = 0; a < points.Count; a++)
+        {
+            for (int b = a + 1; b < points.Count; b++)
+            {
+                double span = Distance(points[a], points[b]);
+                if (span > widest)
+                {
+                    widest = span;
+                    direction = NormalizeOrZ(Difference3(points[b], points[a]));
+                }
+            }
+        }
+        return direction;
+    }
+
+    /// <summary>
+    /// THE ORDER OF A SET OF POINTS ALONG ONE AXIS, as indices into the
+    /// set: the single ordering rule every anchor row, every machine and
+    /// every document matching in this file runs on.
+    ///
+    /// STABLE BY CONSTRUCTION: LINQ's OrderBy is a stable sort, so points
+    /// sharing a position along the axis keep the order they were handed in
+    /// rather than swapping on a floating-point tie.
+    /// </summary>
+    internal static int[] OrderAlongAxis(IReadOnlyList<double[]> points, double[] axis) =>
+        Enumerable.Range(0, points.Count)
+            .OrderBy(i => Dot3(points[i], axis))
+            .ToArray();
+
+    /// <summary>
     /// The component of a vector ACROSS a unit axis, normalised: the axis's
     /// own contribution removed. Falls back to any perpendicular when the
     /// vector is parallel to the axis and so has no across-component at all.
@@ -3531,9 +3566,7 @@ internal static class MechanismCollector
             machineX = Negate3(machineX);
             machineY = CrossProduct(machineZ, machineX);
         }
-        int[] alongMachine = Enumerable.Range(0, PlacementGroupSize)
-            .OrderBy(i => Dot3(first[i], machineX))
-            .ToArray();
+        int[] alongMachine = OrderAlongAxis(first, machineX);
         double[][] machineBasisTransposed =
             Transpose3(BasisFromColumns(machineX, machineY, machineZ));
 
@@ -3605,23 +3638,8 @@ internal static class MechanismCollector
             // THE ROW'S OWN DIRECTION, from its two furthest-apart anchors,
             // so the order along it can never depend on how the row was
             // walked.
-            double[] rowDirection = NormalizeOrZ(Difference3(rowPoints[1], rowPoints[0]));
-            double widest = 0.0;
-            for (int a = 0; a < rowPoints.Count; a++)
-            {
-                for (int b = a + 1; b < rowPoints.Count; b++)
-                {
-                    double span = Distance(rowPoints[a], rowPoints[b]);
-                    if (span > widest)
-                    {
-                        widest = span;
-                        rowDirection = NormalizeOrZ(Difference3(rowPoints[b], rowPoints[a]));
-                    }
-                }
-            }
-            List<int> sorted = Enumerable.Range(0, row.Count)
-                .OrderBy(i => Dot3(rowPoints[i], rowDirection))
-                .ToList();
+            double[] rowDirection = WidestPairDirection(rowPoints);
+            int[] sorted = OrderAlongAxis(rowPoints, rowDirection);
 
             int groups = row.Count / PlacementGroupSize;
             int leftover = row.Count % PlacementGroupSize;
@@ -3641,9 +3659,7 @@ internal static class MechanismCollector
                     worldX = Negate3(worldX);
                     worldY = CrossProduct(worldZ, worldX);
                 }
-                int[] alongRow = Enumerable.Range(0, PlacementGroupSize)
-                    .OrderBy(k => Dot3(anchors[k], worldX))
-                    .ToArray();
+                int[] alongRow = OrderAlongAxis(anchors, worldX);
 
                 double[][] rotation = Multiply3(
                     BasisFromColumns(worldX, worldY, worldZ), machineBasisTransposed);
