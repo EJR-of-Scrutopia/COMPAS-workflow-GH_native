@@ -309,6 +309,26 @@ internal static class MechanismCollector
     public const int ExpectedReelCount = 10;
 
     /// <summary>
+    /// THE MACHINE COMPONENT'S OWN REEVE DEFAULT, his unit's value (spec
+    /// 6.1). The mechanical advantage of one wire's reeving through its
+    /// block: a wheel that MOVES WITH THE LOAD gives advantage, one that
+    /// merely guides gives none, and no amount of geometry can tell them
+    /// apart, so it is authored rather than measured.
+    /// </summary>
+    public const double DefaultReeveFactor = 4.0;
+
+    /// <summary>
+    /// THE STUDY SIDE'S PROVISIONAL REEVE DEFAULT, and it is deliberately
+    /// NOT <see cref="DefaultReeveFactor"/>. The collector does not yet
+    /// cite a machine (the Machine (MA) port is spec 5.1's work), so it has
+    /// no authored default to take and states the provisional 1.0 it has
+    /// always stated, in the header shape spec 6.3 settles. Changing this
+    /// number here would silently change every existing study's spin rate
+    /// without any machine having been authored.
+    /// </summary>
+    public const double ProvisionalStudyReeveDefault = 1.0;
+
+    /// <summary>
     /// The placement door-guard's own tolerance: how far, in metres, the
     /// derived transform may disagree with the six OTHER placement planes
     /// before it is named. Small and deliberate -- this is the redundancy
@@ -510,10 +530,18 @@ internal static class MechanismCollector
                 if (asset.TensionTieFromBrep)
                     notes.Add($"Tension Tie (TT) {BrepMeshingNote}");
             }
-            else
-            {
-                mechanismOut["tensionTie"] = null;
-            }
+
+            // NO TIE MEANS NO KEY, not a key carrying null (spec 3.3, and
+            // Task 1's mid-task finding). Dictionary<string, object?>
+            // writes the key whatever the value, so an unwired tie used to
+            // put an explicit "tensionTie": null into EVERY document this
+            // build makes, the machine document included -- and the machine
+            // document's whole negative invariant is that it carries no
+            // permanent study work at all. A key standing for "there is no
+            // such part" says nothing a reader cannot see from its absence,
+            // and it forced the harness's own leak check to tolerate nulls
+            // by name, which is a tolerance one careless write turns into a
+            // hole. The same now goes for the anchor below.
 
             if (asset.Anchor is not null)
             {
@@ -530,10 +558,8 @@ internal static class MechanismCollector
                 if (asset.AnchorFromBrep)
                     notes.Add($"Anchor (AN) {BrepMeshingNote}");
             }
-            else
-            {
-                mechanismOut["anchor"] = null;
-            }
+
+            // NO ANCHOR MEANS NO KEY, for the reason given at the tie above.
 
             var reelsOut = new List<Dictionary<string, object?>>(reels.Count);
             for (int i = 0; i < reels.Count; i++)
@@ -623,14 +649,29 @@ internal static class MechanismCollector
                         : " from the floor value, since no geometry was " +
                           "wired to derive it from.");
 
-            // THE REEVE FACTOR IS PROVISIONAL (his ruling, verbatim: "i
-            // dont [want] it to be accurate righ tnow"). Fixed at 1.0, no
-            // authored port, said here every time a mechanism is built.
+            // THE REEVE DEFAULT IS STATED ONCE, AT THE PAYLOAD'S ROOT, and
+            // never inside this mechanism block (spec 6.3). The machine
+            // document lifts THIS BLOCK whole into its own "machine" key,
+            // so a scalar written here would travel into a machine document
+            // that already states its own authored default in its header:
+            // one document, two keys, two plausible numbers and neither
+            // null, which is how a reader applies 1.0 where he authored
+            // 4.0 and every reel spins four times too slowly.
+            //
+            // THE STUDY SIDE'S VALUE IS STILL PROVISIONAL (his ruling,
+            // verbatim: "i dont [want] it to be accurate righ tnow"), and
+            // it stays 1.0 here rather than becoming the Machine
+            // component's 4.0, because this collector does not yet cite a
+            // machine: the Machine (MA) port that will hand it the cited
+            // machine's own default is spec 5.1's work, not this task's.
             notes.Add(
-                "mechanism: reeveFactor is fixed at 1.0 -- PROVISIONAL, " +
-                "not accurate, per his own ruling that accuracy is not " +
-                "wanted right now; every reel's spin RATE is likely wrong " +
-                "until a real reeve factor is authored.");
+                "mechanism: the reeve default is stated ONCE, at the " +
+                "payload's root as reeve.default, and it is " +
+                ProvisionalStudyReeveDefault.ToString("0.####", CultureInfo.InvariantCulture) +
+                " -- PROVISIONAL, not accurate, per his own ruling that " +
+                "accuracy is not wanted right now; every reel's spin RATE " +
+                "is likely wrong until this study cites a machine and " +
+                "takes that machine's own authored default.");
 
             // THE ROUTING FRAMES ARE THE CABLE'S CENTRELINE, his ruling,
             // said in the document so no consumer has to infer it from
@@ -670,7 +711,6 @@ internal static class MechanismCollector
             mechanismOut["cableThickness"] = DefaultCableRadiusMetres * 2.0;
             mechanismOut["cableMatchesNetCable"] = true;
             mechanismOut["routingFrameMeaning"] = meaning;
-            mechanismOut["reeveFactor"] = 1.0;
             mechanismOut["spoolRadius"] = spoolRadius;
         }
 
@@ -1415,6 +1455,27 @@ internal static class MechanismCollector
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["mechanism"] = mechanismOut,
+            // THE REEVE DEFAULT, STATED ONCE AND AT THE ROOT (spec 6.3),
+            // in the same shape the machine document's own header uses, so
+            // that the ONE reader of it (MechanismDocument.Json, which
+            // stamps the resolved value on every wire) reads one key name
+            // wherever the payload came from. It is written whether or not
+            // any mechanism part was wired, because that reader now REFUSES
+            // a payload that states no default rather than inventing 1.0:
+            // a key present, well formed and wrong is the worst shape
+            // available, and a wrong reeve factor makes every reel spin at
+            // the wrong RATE while the geometry, the wire paths and the
+            // timing all stay correct, so nothing looks broken.
+            ["reeve"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["default"] = ProvisionalStudyReeveDefault,
+                ["how"] = "PROVISIONAL, his own ruling that accuracy is " +
+                    "not wanted yet: this collector states " +
+                    ProvisionalStudyReeveDefault.ToString("0.####", CultureInfo.InvariantCulture) +
+                    " because it does not yet cite a machine. A machine " +
+                    "document states its OWN authored value in its header, " +
+                    "and a study that cites one takes it from there.",
+            },
             ["instances"] = instancesOut,
             ["wires"] = wiresOut,
             // THE ANCHORS, STAMPED (2026-09-09). This array was empty by
@@ -2308,23 +2369,49 @@ internal static class MechanismCollector
     /// WHAT MAKES IT SELF-DESCRIBING, so a five-wire machine and a
     /// twelve-wire machine both lay out with no code change anywhere:
     ///
+    ///   id          the MINTED CODE a study cites, authored on the Machine
+    ///               Id (ID) port and NEVER derived from the name.
+    ///   name        the human label, renameable without orphaning a study.
     ///   wireCount   cables one machine takes. Every layout decision turns
     ///               on this one number.
-    ///   bank        which reels are DRIVEN SPOOLS and which are idler
-    ///               pulleys, grouped by shared axis direction and radius
-    ///               rather than guessed from size alone, and cross-checked
-    ///               against wireCount.
+    ///   reeve       the machine's default reeve factor, stated ONCE in the
+    ///               whole document (spec 6.3).
+    ///   indexing    which index space each "reel" number counts in, since
+    ///               an entry index and a body index both read as a reel.
+    ///   bank        which reel ENTRIES are driven and which are idlers,
+    ///               derived from the bodies that TERMINATE wire routes
+    ///               (spec 4.6), and cross-checked against wireCount.
     ///   footprint   its span along the cable line and how far it reaches
     ///               BEHIND that line, so a layout can tell whether a
     ///               bigger machine still fits a row and space several
     ///               without collision.
     ///   datum       the wire first-frames. The machine's real datum, and
     ///               NOT the body origin, which means nothing.
+    ///
+    /// THE FOOTPRINT IS THE MACHINE'S OWN, AND ITS PUBLISHED NUMBERS MOVED
+    /// (spec 3.4). It used to sweep the tension tie's and the anchor's
+    /// vertices as well, so footprint.min, footprint.max, footprint.setback
+    /// and footprint.cableSpan are MEASURABLY DIFFERENT numbers for any
+    /// machine that had either wired: the tie is a foundation body reaching
+    /// well behind and below the machine, and it inflated exactly the
+    /// numbers a layout spaces units by. The change is correct, since a
+    /// footprint describes the machine and the tie and the anchor are the
+    /// works that REMAIN when the machine is taken away, and the harness
+    /// pins the new values outright rather than inheriting the old ones.
+    ///
+    /// WHAT IS NOT PROVED HERE, said rather than left to be found: no
+    /// fixture and no machine of his has yet authored a multi-body entry
+    /// AND wired a tie to this build at once, so the interaction of the two
+    /// is right by inspection. What the harness does prove is that the same
+    /// machine built with and without a tie and an anchor gives the
+    /// IDENTICAL footprint, which is the property the removal exists for.
     /// </summary>
     public static string BuildMachine(
         MechanismAssetInput asset,
         IReadOnlyList<MechanismRoutingWire> routing,
+        string machineId,
         string name,
+        double reeveDefault,
         string? routingFrameMeaning,
         List<string> warnings,
         List<string> notes)
@@ -2332,12 +2419,98 @@ internal static class MechanismCollector
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(routing);
 
+        // THE ID IS THE IDENTITY AND IT IS REFUSED BY NAME WHEN EMPTY. A
+        // study cites a machine by this code and nothing else; a study
+        // citing a machine that is not there renders NOTHING, silently, so
+        // a machine with no id is worse than no machine at all. It is not
+        // derived from the name and it is not sanitised into one: the old
+        // id path rewrote any name that was not a single path segment to
+        // "machine", so two differently named machines minted the same
+        // identity and the second silently became the first.
+        string id = (machineId ?? string.Empty).Trim();
+        if (id.Length == 0)
+        {
+            warnings.Add(
+                "Machine Id (ID) is empty, so no machine document was " +
+                "built. The id is the MINTED CODE a study cites, and it is " +
+                "the one thing about this machine that must never change: " +
+                "the Name is a label you may rename freely, and deriving " +
+                "an id from it would let a rename orphan every study that " +
+                "cites this machine. Author an id such as MCH-0007.");
+            return string.Empty;
+        }
+
+        // THE LABEL. Empty is said rather than left blank in a chooser, and
+        // the id stands in for it, because a machine that lists as nothing
+        // is one he cannot pick out of a library.
+        string label = (name ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            label = id;
+            warnings.Add(
+                $"Machine \"{id}\": Name (N) is empty, so the id stands in " +
+                "as this machine's label. The two are separate on purpose: " +
+                "the id is cited and never changes, the name is what you " +
+                "read in a list, so give it one you will recognise.");
+        }
+
+        // THE REEVE DEFAULT IS AUTHORED AND IS REFUSED WHEN IT CANNOT BE
+        // ONE (spec 6.6). A wrong factor makes every reel spin at the wrong
+        // RATE while the geometry, the wire paths and the timing all stay
+        // correct, so nothing looks broken; a zero or a negative one is not
+        // a wrong number but an impossible one, and it is refused rather
+        // than quietly replaced by a plausible number he did not author.
+        if (!double.IsFinite(reeveDefault) || reeveDefault <= 0.0)
+        {
+            warnings.Add(
+                $"Machine \"{id}\": Reeve (RV) is {reeveDefault.ToString(CultureInfo.InvariantCulture)}, " +
+                "which is not a mechanical advantage; no machine document " +
+                "was built. It is the advantage of one wire's reeving " +
+                "through its block, so it is finite and greater than zero " +
+                $"({DefaultReeveFactor.ToString("0.####", CultureInfo.InvariantCulture)} " +
+                "is this unit's own value).");
+            return string.Empty;
+        }
+
+        // THE TIE AND THE ANCHOR NEVER REACH A MACHINE DOCUMENT (spec 3.3),
+        // and they are refused BY NAME here rather than only at the Machine
+        // component's own withdrawn ports, so that a future caller reaching
+        // this build directly cannot put a permanent study work inside a
+        // machine. They are dropped from the asset before anything is
+        // built, which is what keeps them out of the document AND out of
+        // the footprint at once.
+        MechanismAssetInput machineOnly = asset;
+        if (asset.TensionTie is not null || asset.Anchor is not null)
+        {
+            warnings.Add(
+                $"Machine \"{id}\": a " +
+                (asset.TensionTie is not null && asset.Anchor is not null
+                    ? "Tension Tie and an Anchor were"
+                    : asset.TensionTie is not null
+                        ? "Tension Tie was"
+                        : "Anchor was") +
+                " handed to the machine build and left out of it, body and " +
+                "footprint both. They are the PERMANENT WORKS of a study, " +
+                "the things that remain when the machine is taken away, and " +
+                "they belong to the Mechanism component's own Tension Tie " +
+                "(TT) and Anchor (AN) inputs. Two authoring points for one " +
+                "body would give two copies that drift the first time one " +
+                "is edited.");
+            machineOnly = asset with
+            {
+                TensionTie = null,
+                TensionTieFromBrep = false,
+                Anchor = null,
+                AnchorFromBrep = false,
+            };
+        }
+
         // The bodies, the reels, the cable and the measured radii all come
         // from the SAME build the study document uses, so the two can never
         // disagree about the machine. It is handed no Result and no
         // placement, so it produces no instances and no wires.
         string? shape = BuildWithResult(
-            asset,
+            machineOnly,
             routing,
             Array.Empty<MechanismPlacementBranch>(),
             warnings,
@@ -2355,67 +2528,125 @@ internal static class MechanismCollector
             .OrderBy(w => w.Wire)
             .ToList();
 
-        // THE BANK: the largest group of reels sharing one axis direction
-        // AND one winding radius. That is what a bank of spools IS, and it
-        // needs no threshold on size -- the pulleys differ from the spools
-        // and from each other, so they cannot outnumber them by accident.
-        var spools = new List<int>();
-        var idlers = new List<int>();
-        double bankRadius = 0.0;
-        double[] bankAxis = { 0.0, 0.0, 1.0 };
+        // THE BANK IS RE-DERIVED FOR ENTRIES (spec 4.6): the bank is the
+        // entry (or entries) whose BODIES TERMINATE WIRE ROUTES. A wire
+        // ends on the drum that pays it out, so the drums a machine's own
+        // routes end on ARE the driven ones, measured rather than inferred.
+        //
+        // WHAT THIS REPLACES, AND WHY IT HAD TO GO. The old rule was "the
+        // largest group of reels sharing one axis direction AND one winding
+        // radius", which identifies seven driven spools only while seven
+        // separate spool MESHES are authored. Since reels became entries,
+        // his own machine is FOUR entries and ten bodies, and that rule
+        // reads one or two driven spools against seven wires and fires its
+        // own count-disagreement warning on a CORRECTLY authored machine.
+        // A warning that fires on correct input is a defect, exactly as
+        // serious as one that misses a fault: it teaches him to ignore the
+        // line that will one day be real.
+        //
+        // TWO INDEX SPACES, AND THE DOCUMENT SAYS WHICH IS WHICH. "spools"
+        // and "idlers" are ENTRY indices, matching reels[].reel; while
+        // "drivenBodies" counts PHYSICAL BODIES in the flattened order
+        // routing frames' own ownerReel counts in. The header's "indexing"
+        // block states that difference rather than leaving two numbers that
+        // both read as a reel.
+        var entryRadii = new List<double>();
+        int entryCount = 0;
         if (machineBlock.TryGetProperty("reels", out JsonElement reelsBlock) &&
             reelsBlock.ValueKind == JsonValueKind.Array)
         {
-            var described = new List<(int Index, double[] Axis, double Radius)>();
-            int at = 0;
             foreach (JsonElement reel in reelsBlock.EnumerateArray())
             {
-                double radius = reel.TryGetProperty("windingRadius", out JsonElement r) &&
+                entryCount++;
+                entryRadii.Add(
+                    reel.TryGetProperty("windingRadius", out JsonElement r) &&
                     r.ValueKind == JsonValueKind.Number
                         ? r.GetDouble()
-                        : 0.0;
-                double[] axis = { 0.0, 0.0, 1.0 };
-                if (reel.TryGetProperty("axis", out JsonElement axisFrame))
-                {
-                    double[] x = ReadVector(axisFrame, "xAxis");
-                    double[] y = ReadVector(axisFrame, "yAxis");
-                    axis = NormalizeOrZ(CrossProduct(x, y));
-                }
-                described.Add((at++, axis, radius));
-            }
-
-            List<(int Index, double[] Axis, double Radius)>? biggest = null;
-            foreach ((int _, double[] axis, double radius) in described)
-            {
-                var alike = described
-                    .Where(d =>
-                        Math.Abs(Math.Abs(Dot3(d.Axis, axis)) - 1.0) < 1.0e-6 &&
-                        Math.Abs(d.Radius - radius) <= Math.Max(radius, 1.0e-9) * 0.05)
-                    .ToList();
-                if (biggest is null || alike.Count > biggest.Count)
-                {
-                    biggest = alike;
-                    bankRadius = radius;
-                    bankAxis = axis;
-                }
-            }
-            if (biggest is not null)
-            {
-                spools.AddRange(biggest.Select(b => b.Index));
-                idlers.AddRange(described
-                    .Select(d => d.Index)
-                    .Where(i => !spools.Contains(i)));
+                        : 0.0);
             }
         }
 
-        if (spools.Count > 0 && wires.Count > 0 && spools.Count != wires.Count)
+        // BODY ORDER, MIRRORING BuildReelNeighbourhoods EXACTLY, including
+        // its skip of a bodyless entry: an ownerReel index counts the
+        // neighbourhoods it built, so a body-to-entry map that counted
+        // differently would name the wrong entry as driven.
+        var bodyEntry = new List<int>();
+        var bodyAxis = new List<MechanismFrame>();
+        for (int e = 0; e < machineOnly.Reels.Count; e++)
+        {
+            if (machineOnly.Reels[e].Bodies.Count == 0)
+                continue;
+            foreach (MechanismReelBody body in machineOnly.Reels[e].Bodies)
+            {
+                bodyEntry.Add(e);
+                bodyAxis.Add(body.Axis);
+            }
+        }
+
+        ReelNeighbourhood[] bankNeighbourhoods = BuildReelNeighbourhoods(machineOnly.Reels);
+        var drivenBodies = new SortedSet<int>();
+        var drivenEntries = new SortedSet<int>();
+        foreach (MechanismRoutingWire wire in wires)
+        {
+            MechanismFrame last = wire.Route[wire.Route.Count - 1];
+            RouteOwnerVerdict verdict = ClassifyRouteFrameOwner(last, bankNeighbourhoods);
+            if (verdict.Owner != RouteOwnerReel ||
+                verdict.OwnerReel < 0 ||
+                verdict.OwnerReel >= bodyEntry.Count)
+            {
+                continue;
+            }
+            drivenBodies.Add(verdict.OwnerReel);
+            drivenEntries.Add(bodyEntry[verdict.OwnerReel]);
+        }
+
+        var spools = drivenEntries.ToList();
+        var idlers = Enumerable.Range(0, entryCount)
+            .Where(i => !drivenEntries.Contains(i))
+            .ToList();
+        double bankRadius = spools.Count > 0
+            ? MedianOf(spools
+                .Where(i => i < entryRadii.Count)
+                .Select(i => entryRadii[i])
+                .ToList())
+            : 0.0;
+        double[] bankAxis = drivenBodies.Count > 0
+            ? NormalizeOrZ(CrossProduct(
+                bodyAxis[drivenBodies.Min].XAxis,
+                bodyAxis[drivenBodies.Min].YAxis))
+            : new[] { 0.0, 0.0, 1.0 };
+
+        // THE COUNT CROSS-CHECK, NOW BODIES AGAINST WIRES. One spool drives
+        // one cable, so the driven BODIES and the wires are the two numbers
+        // that must agree; entries never were, and comparing entries is
+        // what made this warning fire on his own four-entry machine.
+        if (drivenBodies.Count > 0 && wires.Count > 0 && drivenBodies.Count != wires.Count)
         {
             warnings.Add(
-                $"Machine \"{name}\": its bank reads {spools.Count} driven " +
-                $"spool(s) but it routes {wires.Count} wire(s). One spool " +
-                "drives one cable, so a machine whose two counts disagree " +
-                "will lay out on a row by one number and be built to the " +
-                "other. Check which reels the wires actually ride.");
+                $"Machine \"{id}\": its bank reads {drivenBodies.Count} driven " +
+                $"reel bod(y/ies) but it routes {wires.Count} wire(s). One " +
+                "spool drives one cable, so a machine whose two counts " +
+                "disagree will lay out on a row by one number and be built " +
+                "to the other. Check which reels the wires actually END on: " +
+                "a route stopping short of its drum, or two routes ending " +
+                "on the same one, reads this way.");
+        }
+        else if (drivenBodies.Count == 0 && wires.Count > 0 && bankNeighbourhoods.Length > 0)
+        {
+            // SAID, NOT WARNED. He offsets his routing planes clear of the
+            // drums so the drawn cable stops cutting them (which is what
+            // Wire Start (WS) exists for), and an offset route legitimately
+            // ends just OUTSIDE every reel. Warning here would fire on a
+            // correctly authored machine; the note names the consequence
+            // instead, which is that the bank is empty and a layout has
+            // nothing to read.
+            notes.Add(
+                $"machine \"{id}\": no wire route ENDS on a reel, so the " +
+                "bank names no driven reel at all. Every reel here is an " +
+                "idler by that reading. If you have offset your routing " +
+                "planes clear of the drums, that is why, and the bank is " +
+                "the one number a layout cannot then take from this " +
+                "machine.");
         }
 
         // THE FOOTPRINT, in the machine's OWN canonical frame: X along the
@@ -2443,12 +2674,19 @@ internal static class MechanismCollector
                 if (mesh is not null)
                     everyVertex.AddRange(mesh.Vertices);
             }
-            Take(asset.Frame1);
-            foreach (MechanismMesh part in asset.Frame2)
+            // THE MACHINE'S OWN PARTS, AND NOTHING A STUDY OWNS (spec 3.4).
+            // The tension tie and the anchor used to be swept here too, and
+            // their vertices moved footprint.min, footprint.max,
+            // footprint.setback and footprint.cableSpan -- the very numbers
+            // a layout spaces machines by. A tie is a foundation body that
+            // reaches behind and below the machine, so the setback it
+            // produced described the works, not the winch, and a row spaced
+            // by it stood further apart than it needed to. The numbers
+            // MOVED, deliberately, and the harness pins the new ones.
+            Take(machineOnly.Frame1);
+            foreach (MechanismMesh part in machineOnly.Frame2)
                 Take(part);
-            Take(asset.Motors);
-            Take(asset.TensionTie);
-            Take(asset.Anchor);
+            Take(machineOnly.Motors);
 
             // EVERY BODY, NOT EVERY ENTRY. A reel entry stores its mesh
             // ONCE, at body 0, so sweeping the entries alone would measure
@@ -2456,14 +2694,7 @@ internal static class MechanismCollector
             // back a machine that reads narrower than it is. Each body's
             // own transform puts that mesh where that body stands, which
             // for body 0 hands the vertex straight back.
-            //
-            // NOT PROVED, and said rather than left to be found: no fixture
-            // carries a MULTI-BODY entry through BuildMachine, so this
-            // loop is right by inspection and by the body transforms' own
-            // check, not by a measured footprint. Every fixture and every
-            // machine authored to date is single-body entries, where it is
-            // exactly the sweep it replaced.
-            foreach (MechanismReelGroup entry in asset.Reels)
+            foreach (MechanismReelGroup entry in machineOnly.Reels)
             {
                 foreach (MechanismReelBody body in entry.Bodies)
                 {
@@ -2509,19 +2740,68 @@ internal static class MechanismCollector
         var document = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["schema"] = MachineSchema,
-            ["id"] = name,
+            // THE ID IS MINTED AND THE NAME IS A LABEL, and they are two
+            // keys because they answer two questions: which machine is
+            // this, and what do I call it. A study cites the id, so a
+            // rename must not be able to orphan one.
+            ["id"] = id,
+            ["name"] = label,
             ["units"] = "m",
             ["lengthUnitToMetres"] = 1.0,
             ["wireCount"] = wires.Count,
+            // THE ONE STATEMENT OF THE REEVE DEFAULT IN THIS DOCUMENT (spec
+            // 6.3). Nothing under "machine" states it and nothing else
+            // does: two keys carrying two plausible numbers, neither null,
+            // is how a reader applies 1.0 where he authored 4.0 and every
+            // reel spins four times too slowly, with the geometry, the wire
+            // paths and the timing all still correct so nothing looks
+            // broken.
+            ["reeve"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["default"] = reeveDefault,
+                ["how"] = "AUTHORED on the Machine component's Reeve (RV) " +
+                    "input, per mechanism, and stated once in this whole " +
+                    "document. It is the mechanical advantage of one wire's " +
+                    "reeving through its block: a wheel that MOVES WITH " +
+                    "THE LOAD gives advantage, one that merely guides gives " +
+                    "none, and no geometry can tell the two apart. A study " +
+                    "may override it per wire; where it does not, this is " +
+                    "the value every wire resolves to.",
+            },
+            // WHICH INDEX SPACE A "reel" NUMBER COUNTS IN, stated because
+            // two different numbers in this document both read as a reel
+            // and nothing else distinguishes them. Neither key is renamed:
+            // both names are already read by the studio, and this codebase
+            // has paid for a silent rename once (bench.frames/1 to
+            // bench.formwork/1 broke the reader and cost days), so the
+            // document explains itself instead.
+            ["indexing"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["entries"] = "machine.reels[].reel, bank.spools and " +
+                    "bank.idlers are ENTRY indices: an entry is one reel " +
+                    "KIND, one authored mesh carried to as many places as " +
+                    "it has bodies.",
+                ["bodies"] = "bank.drivenBodies, and a routing frame's own " +
+                    "ownerReel, are PHYSICAL BODY indices: entry 0's " +
+                    "bodies in order, then entry 1's, and so on. A wire " +
+                    "rides one drum, not one kind, so the frames count " +
+                    "bodies.",
+            },
             ["bank"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["spools"] = spools,
                 ["idlers"] = idlers,
+                ["drivenBodies"] = drivenBodies.ToList(),
                 ["radius"] = bankRadius,
                 ["axis"] = bankAxis,
-                ["how"] = "the largest group of reels sharing one axis " +
-                    "direction and one winding radius; cross-checked " +
-                    "against wireCount, since one spool drives one cable.",
+                ["how"] = "the entry(ies) whose BODIES terminate wire " +
+                    "routes: a wire ends on the drum that pays it out, so " +
+                    "the drums the routes end on are the driven ones, " +
+                    "measured rather than inferred from size or from a " +
+                    "shared radius. Cross-checked against wireCount by " +
+                    "BODY, since one spool drives one cable. radius is the " +
+                    "median winding radius of the driven entries and axis " +
+                    "is the first driven body's own axis direction.",
             },
             ["footprint"] = footprint,
             ["datum"] = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -2543,8 +2823,12 @@ internal static class MechanismCollector
         };
 
         notes.Add(
-            $"machine \"{name}\": {wires.Count} wire(s), {spools.Count} " +
-            $"driven spool(s) and {idlers.Count} idler(s), " +
+            $"machine \"{label}\" (id {id}): {wires.Count} wire(s), reeve " +
+            "default " +
+            reeveDefault.ToString("0.####", CultureInfo.InvariantCulture) +
+            $", {spools.Count} driven entry(ies) carrying " +
+            $"{drivenBodies.Count} driven bod(y/ies), {idlers.Count} " +
+            "idler entry(ies), " +
             (footprint is not null
                 ? "cable span " +
                   ((double)footprint["cableSpan"]!).ToString("0.###", CultureInfo.InvariantCulture) +
@@ -4292,7 +4576,7 @@ public sealed class MachineComponent : NativeComponentBase
             "authored. Param's unit is 4.0. A wrong value makes every reel " +
             "spin at the wrong RATE while geometry, wire paths and timing " +
             "all stay correct, so nothing looks broken.",
-            GH_ParamAccess.item, 4.0);
+            GH_ParamAccess.item, MechanismCollector.DefaultReeveFactor);
         parameters[14].Optional = true;
     }
 
@@ -4324,23 +4608,39 @@ public sealed class MachineComponent : NativeComponentBase
             string folder = string.Empty;
             bool write = false;
             string meaning = string.Empty;
+            string machineId = string.Empty;
+            double reeve = MechanismCollector.DefaultReeveFactor;
             data.GetData(0, ref name);
             data.GetData(1, ref folder);
             data.GetData(2, ref write);
             data.GetData(11, ref meaning);
+            data.GetData(13, ref machineId);
+            data.GetData(14, ref reeve);
 
             MechanismAssetInput asset = ReadAsset(data, warnings, notes);
             List<MechanismRoutingWire> routing = ReadRouting(data, warnings, notes);
 
+            // THE NAME REACHES THE DOCUMENT AS AUTHORED, and the id comes
+            // from its own port (spec 3.6). StudyName still sanitises the
+            // FILE name, which is what it was written for, but it no longer
+            // touches the identity: it rewrites any name that is not one
+            // path segment to "machine", so two machines named "winch, 4 m"
+            // and "winch (spare)" both minted the id "machine" and the
+            // second silently became the first.
             string document = MechanismCollector.BuildMachine(
-                asset, routing, StudyName(name), meaning, warnings, notes);
+                asset, routing, machineId, name, reeve, meaning, warnings, notes);
 
             var status = new List<string>
             {
                 document.Length == 0
-                    ? "received: nothing wired; no machine document."
-                    : $"received: machine \"{StudyName(name)}\", " +
-                      $"{routing.Count(w => w.Route.Count > 0)} wire(s) routed.",
+                    ? "received: no machine document; the warning(s) below " +
+                      "say why (nothing wired, no Machine Id, or a Reeve " +
+                      "that is not a mechanical advantage)."
+                    : $"received: machine \"{name.Trim()}\", id " +
+                      $"\"{machineId.Trim()}\", " +
+                      $"{routing.Count(w => w.Route.Count > 0)} wire(s) " +
+                      "routed, reeve default " +
+                      reeve.ToString("0.####", CultureInfo.InvariantCulture) + ".",
             };
 
             if (write && document.Length > 0)
@@ -4387,7 +4687,7 @@ public sealed class MachineComponent : NativeComponentBase
             data.SetData(0, document);
             data.SetData(1, string.Join(Environment.NewLine, status));
             Message = document.Length == 0
-                ? "nothing wired"
+                ? "no document"
                 : $"{routing.Count(w => w.Route.Count > 0)} wire(s)";
         }
         catch (Exception error)
@@ -4398,8 +4698,20 @@ public sealed class MachineComponent : NativeComponentBase
     }
 
     /// <summary>
-    /// A name that is ONE path segment, since it becomes a file name. The
+    /// A name that is ONE path segment, since it becomes a FILE name. The
     /// same rule Export's own Name follows, for the same reason.
+    ///
+    /// IT NO LONGER TOUCHES THE MACHINE'S IDENTITY (spec 3.6). The id used
+    /// to be this sanitised name, so a name that was not one path segment
+    /// became the literal id "machine", and two such machines minted one
+    /// identity. The id is authored on its own port now, and this is left
+    /// where it belongs: on the file the library holds.
+    ///
+    /// NOT CHANGED HERE, and said rather than left to be found: the written
+    /// file is still named from the NAME, not the id, so two machines with
+    /// different ids and the same name still write to one file. Naming the
+    /// file by the id would be the better rule and is a deliberate change
+    /// to his library's own layout, not a side effect of this one.
     /// </summary>
     private static string StudyName(string name)
     {
