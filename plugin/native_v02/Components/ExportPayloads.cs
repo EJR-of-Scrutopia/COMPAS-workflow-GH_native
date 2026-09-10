@@ -1097,24 +1097,53 @@ internal static class MechanismDocument
 
         // THE PER-WIRE OVERRIDES (RW, spec 6.1), read off reeve.perWire --
         // an object keyed by wire index as a JSON string, since a wire
-        // number is not a valid object key. Absent, not an object, or an
-        // entry that is not itself a number is read as "no override for
+        // number is not a valid object key. ABSENT, NOT AN OBJECT, OR AN
+        // ENTRY THAT IS NOT ITSELF A NUMBER is read as "no override for
         // that wire" rather than refused: reeve.perWire is optional by
         // nature (RW is an OPTIONAL port), unlike reeve.default, which a
-        // study cannot do without.
+        // study cannot do without, and a key that never parses as a wire
+        // index can never wrongly override one.
+        //
+        // AN ENTRY THAT IS A NUMBER BUT NOT A MECHANICAL ADVANTAGE IS
+        // REFUSED, THE WHOLE DOCUMENT, BY NAME -- the same guard as
+        // reeve.default above, in the same words and the same shape
+        // (fix round 1, finding 1). This reader re-validates reeve.default
+        // precisely because the collector is not the only possible author
+        // of a payload; the override is exactly the same kind of number
+        // and deserves exactly the same guard. Before this, a payload
+        // carrying reeve.perWire.3 = -2 (or 0, or NaN) resolved wire 3's
+        // reeveFactor to -2, sourced "wire", on every instance of that
+        // wire, with no refusal and no warning -- the sanity check is
+        // ONE-SIDED (spec 6.4) and never fires on a small or negative
+        // number. The collector's own ReadReevePerWire already drops a
+        // bad override by name at the point it is authored; this is the
+        // same check at the point it is READ, which is the one that
+        // matters for a payload this collector did not write.
         var reevePerWire = new Dictionary<int, double>();
         if (reeveBlock.TryGetProperty("perWire", out JsonElement perWireBlock) &&
             perWireBlock.ValueKind == JsonValueKind.Object)
         {
             foreach (JsonProperty entry in perWireBlock.EnumerateObject())
             {
-                if (entry.Value.ValueKind == JsonValueKind.Number &&
-                    int.TryParse(
+                if (entry.Value.ValueKind != JsonValueKind.Number ||
+                    !int.TryParse(
                         entry.Name, NumberStyles.Integer, CultureInfo.InvariantCulture,
                         out int wireIndex))
                 {
-                    reevePerWire[wireIndex] = entry.Value.GetDouble();
+                    continue;
                 }
+                double overrideValue = entry.Value.GetDouble();
+                if (!double.IsFinite(overrideValue) || overrideValue <= 0.0)
+                {
+                    throw new InvalidOperationException(
+                        $"the payload's reeve.perWire[{wireIndex}] is " +
+                        overrideValue.ToString(CultureInfo.InvariantCulture) +
+                        ", which is not a mechanical advantage, so no " +
+                        "mechanism document was written. It is the " +
+                        "advantage of one wire's reeving through its " +
+                        "block, so it is finite and greater than zero.");
+                }
+                reevePerWire[wireIndex] = overrideValue;
             }
         }
 
