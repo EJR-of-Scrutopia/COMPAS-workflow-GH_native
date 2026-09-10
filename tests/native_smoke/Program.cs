@@ -3306,8 +3306,16 @@ internal static partial class Program
                 + "reading of that frame then rides a spinning drum instead "
                 + "of standing still; spoolRadius defaults from reel[0]'s "
                 + "own bounding box when one resolves and from Frame 1's "
-                + "when none does, both named; the reeve factor is ALWAYS "
-                + "named fixed at 1.0 and PROVISIONAL; and Routing (RT)[0] "
+                + "when none does, both named; THE REEVE DEFAULT IS STATED "
+                + "ONCE, AT THE PAYLOAD'S ROOT (Task 4, spec 6.3), proved "
+                + "three ways -- the chin names it as stated once at "
+                + "reeve.default and calls it PROVISIONAL, the payload's "
+                + "own root carries reeve.default = 1.0, and the old scalar "
+                + "mechanism.reeveFactor is ABSENT from the mechanism "
+                + "block, which is what stops a machine document, which "
+                + "lifts that block whole, stating one machine's default "
+                + "twice in two keys with two different numbers, both "
+                + "plausible and neither null; and Routing (RT)[0] "
                 + "carrying no frames at all is named, by wire, as fatal to "
                 + "every placement rather than left silent.");
         }
@@ -3515,6 +3523,39 @@ internal static partial class Program
         catch (Exception exception)
         {
             failures.Add($"MachineDocument: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMachineWriteGuard(plugin);
+            Console.WriteLine(
+                "PASS  The machine library's write guard (Task 4 fix round, "
+                + "his ruling): a machine is NEVER written over another "
+                + "machine's file. The file is named from the machine's "
+                + "NAME and not from its minted id, so two machines named "
+                + "alike land on one path, and a name that is not one path "
+                + "segment collapses to machine-machine.json, which is the "
+                + "collapse the minted id was introduced to stop, relocated "
+                + "to disk. The cost is not a lost file: a study citing id "
+                + "A then opens a document holding id B and renders THE "
+                + "WRONG MACHINE with no complaint, since the schema is "
+                + "right and the geometry draws and only the id inside says "
+                + "it is somebody else's. Proved on real files in a real "
+                + "folder, each case independently able to fail: no file "
+                + "there writes; a file whose own id MATCHES overwrites, "
+                + "because rewriting your own machine is the ordinary case "
+                + "and a guard that fires on it would be a defect; a file "
+                + "holding a DIFFERENT id is refused by name, saying which "
+                + "id is on disk and which was about to be written; a file "
+                + "that states no id at all is refused rather than assumed "
+                + "to be a spare copy of this machine; and a file that "
+                + "cannot be parsed is refused, saying so, since "
+                + "overwriting cannot be undone and the one thing this must "
+                + "never do is guess in the direction of writing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MachineWriteGuard: {DescribeException(exception)}");
         }
 
         try
@@ -41432,8 +41473,25 @@ internal static partial class Program
     ///    ruling 1.5 settled.
     /// 4. spoolRadius defaults from reel[0]'s own bounding box when a
     ///    reel resolves, and falls back to Frame 1's when none does,
-    ///    both said as a note naming the value and the source; the reeve
-    ///    factor is ALWAYS named fixed at 1.0 and PROVISIONAL.
+    ///    both said as a note naming the value and the source.
+    /// 4a. THE REEVE DEFAULT IS STATED ONCE, AT THE PAYLOAD'S ROOT (Task 4,
+    ///    spec 6.3), and this item's scope GREW when that task folded it in
+    ///    rather than adding a check of its own. It was "the reeve factor is
+    ///    always named fixed at 1.0 and PROVISIONAL", one assertion over the
+    ///    chin. It is now three, and the PASS line says all three:
+    ///      (i)   the chin names the default as stated ONCE at reeve.default
+    ///            and calls it PROVISIONAL (the note prints the number
+    ///            through a "0.####" format, so it reads 1, not 1.0, and an
+    ///            assertion matching on "1.0" would pass or fail for the
+    ///            wrong reason);
+    ///      (ii)  the payload's own ROOT carries reeve.default = 1.0;
+    ///      (iii) the old scalar mechanism.reeveFactor is ABSENT from the
+    ///            mechanism block.
+    ///    (iii) is the one that matters most and the one no chin assertion
+    ///    could ever have caught: a machine document lifts the mechanism
+    ///    block whole into its own "machine" key, so a scalar left there
+    ///    would state one machine's default a second time, with a different
+    ///    number, both plausible and neither null.
     /// 5. Routing (RT)[0] carrying no frames at all is named, by wire, as
     ///    fatal to every placement -- an asset wired with no routing
     ///    authored says so rather than staying silent.
@@ -42775,6 +42833,138 @@ internal static partial class Program
                         "entry's authored mesh once, at body 0, and never " +
                         "carried it to the other bodies at all.");
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE MACHINE LIBRARY'S WRITE GUARD (Task 4 fix round, his ruling):
+    /// MechanismCollector.RefuseOverwritingAnotherMachine, exercised on real
+    /// files in a real temporary folder rather than on strings, because the
+    /// three cases that matter are all about what is ON DISK.
+    ///
+    /// WHAT IT GUARDS. The written file is still named from the machine's
+    /// NAME and not from its minted id, so two machines named alike land on
+    /// one path, and any name that is not a single path segment collapses to
+    /// "machine-machine.json" -- the very collapse the minted id was
+    /// introduced to stop, relocated to disk. What that costs is not a lost
+    /// file but a WRONG MACHINE rendered in silence: a study cites id A,
+    /// opens the file that name resolves to, and gets a document holding id
+    /// B whose schema is right, whose geometry draws, and whose only sign of
+    /// trouble is the id inside it.
+    ///
+    /// FIVE CASES, each independently able to fail: nothing there (write);
+    /// the same id (overwrite, since rewriting your own machine is the
+    /// ordinary case and a guard that fired on it would be a defect, equal
+    /// in seriousness to one that missed a fault); a DIFFERENT id (refuse,
+    /// naming both ids); no id at all (refuse); unparseable (refuse, saying
+    /// so).
+    ///
+    /// WHAT THIS DOES NOT PROVE: that the Machine component itself calls the
+    /// guard before AtomicFile.Write. That call sits inside SolveInstance,
+    /// which needs an IGH_DataAccess and a live Grasshopper document, and
+    /// nothing in this harness can drive one. The guard is pure and proved
+    /// here; its one caller is three lines and is read, not tested. It also
+    /// cannot see a collision that has not happened yet: two machines
+    /// sharing a name are refused on the second one's first write, never
+    /// before.
+    /// </summary>
+    private static void ValidateMachineWriteGuard(Assembly plugin)
+    {
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo guard = RequirePublicStatic(
+            collectorType, "RefuseOverwritingAnotherMachine");
+
+        string folder = Path.Combine(
+            Path.GetTempPath(), "ananke-machine-write-guard-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string target = Path.Combine(folder, "seven-spool-winch-machine.json");
+            string? Refusal(string id) =>
+                (string?)guard.Invoke(null, new object?[] { target, id });
+
+            // 1. NOTHING THERE: the ordinary first write, allowed.
+            if (Refusal("MCH-0007") is not null)
+            {
+                throw new InvalidOperationException(
+                    "A machine whose file does not exist yet must be " +
+                    "written without complaint; the guard refused it.");
+            }
+
+            // 2. THE SAME MACHINE: overwrite. A guard that fired here would
+            // stop him saving his own machine twice, which is a defect as
+            // serious as missing the clash: it fires on correct input.
+            File.WriteAllText(
+                target,
+                "{\"schema\":\"bench.machine/1\",\"id\":\"MCH-0007\"," +
+                "\"name\":\"Seven spool winch\"}");
+            if (Refusal("MCH-0007") is not null ||
+                Refusal("  MCH-0007  ") is not null)
+            {
+                throw new InvalidOperationException(
+                    "Rewriting a machine over its OWN file is the ordinary " +
+                    "case and must be allowed, trimmed id included; the " +
+                    "guard refused it: " + Refusal("MCH-0007"));
+            }
+
+            // 3. ANOTHER MACHINE: refused BY NAME, with BOTH ids in the
+            // message, since the whole use of the message is telling him
+            // which two machines he has named alike.
+            string? clash = Refusal("MCH-0009");
+            if (clash is null ||
+                !clash.Contains("MCH-0007", StringComparison.Ordinal) ||
+                !clash.Contains("MCH-0009", StringComparison.Ordinal) ||
+                !clash.Contains("WRONG MACHINE", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "A file already holding ANOTHER machine's id must be " +
+                    "refused by name, saying which id is on disk and which " +
+                    "was about to be written, and what it would cost. A " +
+                    "study citing the id on disk would otherwise open a " +
+                    "document holding the other one and render the wrong " +
+                    "machine with no complaint. Got: " + (clash ?? "<allowed>"));
+            }
+
+            // 4. A FILE THAT STATES NO ID: refused rather than assumed to
+            // be a spare copy of this machine. It cannot be shown to be
+            // this machine's, and overwriting cannot be undone.
+            File.WriteAllText(target, "{\"schema\":\"bench.machine/1\"}");
+            string? anonymous = Refusal("MCH-0007");
+            if (anonymous is null ||
+                !anonymous.Contains("states no id", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "A file that states no id of its own must be refused, " +
+                    "not overwritten on the assumption that it is this " +
+                    "machine's; got: " + (anonymous ?? "<allowed>"));
+            }
+
+            // 5. A FILE THAT WILL NOT PARSE: refused, and SAID. Guessing in
+            // the direction of writing is the one thing this must never do.
+            File.WriteAllText(target, "this is not a machine document at all");
+            string? unreadable = Refusal("MCH-0007");
+            if (unreadable is null ||
+                !unreadable.Contains("could not be read", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "A file that cannot be parsed as a machine document " +
+                    "must be refused and said, since its id is unknown and " +
+                    "overwriting cannot be undone; got: " +
+                    (unreadable ?? "<allowed>"));
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(folder, true);
+            }
+            catch (IOException)
+            {
+                // A temporary folder that will not delete is not a failure
+                // of the thing under test, and saying so here would bury a
+                // real result under housekeeping.
             }
         }
     }

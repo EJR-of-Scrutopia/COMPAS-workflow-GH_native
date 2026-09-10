@@ -2842,6 +2842,96 @@ internal static class MechanismCollector
         return JsonSerializer.Serialize(document, ContractJson.Options);
     }
 
+    /// <summary>
+    /// REFUSE WRITING ONE MACHINE OVER ANOTHER ONE'S FILE. Returns null
+    /// when the write may go ahead, and the refusal message when it may
+    /// not; it never writes and never deletes anything itself.
+    ///
+    /// WHY THIS EXISTS, AND WHAT IT IS NOT. The machine file is still named
+    /// from the NAME, not from the minted id: two machines with different
+    /// ids and the same name land on one path, and a name that is not one
+    /// path segment collapses to "machine-machine.json", which is the very
+    /// collapse the minted id was introduced to stop, relocated to disk.
+    /// The cost is not a lost file. It is that a study citing id A can then
+    /// open a file holding id B and render THE WRONG MACHINE with no
+    /// complaint at all: the document is well formed, the schema is right,
+    /// the geometry draws, and only the id inside it says it is somebody
+    /// else's.
+    ///
+    /// THE REAL FIX is to name the file from the id, which needs a
+    /// path-segment rule for ids and re-keys a library that already has
+    /// files in it. That is Param's ruling to make, not this task's. This
+    /// is the interim guard: an existing file whose own id DIFFERS is
+    /// refused by name, saying which id is on disk and which was about to
+    /// be written, and nothing is written. A matching id overwrites exactly
+    /// as before, because rewriting your own machine is the ordinary case.
+    ///
+    /// A FILE THAT CANNOT BE READ OR PARSED IS REFUSED TOO, rather than
+    /// assumed to be a spare copy of this machine. The whole point of the
+    /// guard is that overwriting is irreversible, so the one thing it must
+    /// never do is guess in the direction of writing.
+    ///
+    /// NOT PROVED, and said rather than left to be found: this cannot see a
+    /// COLLISION THAT HAS NOT HAPPENED YET. Two machines sharing a name
+    /// are refused on the second one's first write, so the guard names the
+    /// clash at the moment it would occur and never before.
+    /// </summary>
+    public static string? RefuseOverwritingAnotherMachine(string targetPath, string machineId)
+    {
+        ArgumentNullException.ThrowIfNull(targetPath);
+        string want = (machineId ?? string.Empty).Trim();
+        if (!File.Exists(targetPath))
+            return null;
+
+        string onDisk;
+        try
+        {
+            using FileStream stream = File.OpenRead(targetPath);
+            using JsonDocument existing = JsonDocument.Parse(stream);
+            if (existing.RootElement.ValueKind != JsonValueKind.Object ||
+                !existing.RootElement.TryGetProperty("id", out JsonElement idOnDisk) ||
+                idOnDisk.ValueKind != JsonValueKind.String)
+            {
+                return
+                    $"\"{targetPath}\" already exists and states no id of " +
+                    "its own, so it cannot be shown to be this machine's " +
+                    $"file; nothing was written. The id about to be written " +
+                    $"is \"{want}\". The file is named from the machine's " +
+                    "NAME, not its minted id, so a file with another " +
+                    "machine's contents can legitimately sit on this path, " +
+                    "and a study citing one id that opened a file holding " +
+                    "another would render the WRONG MACHINE without one " +
+                    "word of complaint. Rename this machine, or move the " +
+                    "existing file out of the library yourself.";
+            }
+            onDisk = idOnDisk.GetString() ?? string.Empty;
+        }
+        catch (Exception readError)
+        {
+            return
+                $"\"{targetPath}\" already exists but could not be read as " +
+                "a machine document (" + readError.Message + "), so its id " +
+                "is unknown and nothing was written. The id about to be " +
+                $"written is \"{want}\". Overwriting cannot be undone, so a " +
+                "file this cannot identify is left alone rather than " +
+                "assumed to be a spare copy of this machine.";
+        }
+
+        if (string.Equals(onDisk.Trim(), want, StringComparison.Ordinal))
+            return null;
+
+        return
+            $"\"{targetPath}\" already holds the machine \"{onDisk}\", and " +
+            $"the machine about to be written is \"{want}\"; nothing was " +
+            "written. The file is named from the machine's NAME and not " +
+            "from its minted id, so two machines you have named alike land " +
+            "on one path. Overwriting would leave every study citing " +
+            $"\"{onDisk}\" opening a document that says \"{want}\", which " +
+            "renders the WRONG MACHINE with no complaint: the schema is " +
+            "right, the geometry draws, and only the id inside says it is " +
+            "somebody else's. Give one of the two a different Name.";
+    }
+
     private static double[] ReadVector(JsonElement frame, string key) =>
         frame.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.Array
             ? v.EnumerateArray().Select(e => e.GetDouble()).ToArray()
@@ -4658,8 +4748,25 @@ public sealed class MachineComponent : NativeComponentBase
                         Directory.CreateDirectory(folder);
                         string target = Path.Combine(
                             folder, $"{StudyName(name)}-machine.json");
-                        AtomicFile.Write(target, document);
-                        status.Add($"written: {target}");
+
+                        // NEVER WRITE ONE MACHINE OVER ANOTHER ONE'S FILE.
+                        // The path is built from the NAME, so two machines
+                        // named alike share it; a study citing one id that
+                        // opened the other's document would render the
+                        // WRONG MACHINE with nothing to see. Refused by
+                        // name, with both ids in the message.
+                        string? refusal =
+                            MechanismCollector.RefuseOverwritingAnotherMachine(
+                                target, machineId);
+                        if (refusal is not null)
+                        {
+                            warnings.Add(refusal);
+                        }
+                        else
+                        {
+                            AtomicFile.Write(target, document);
+                            status.Add($"written: {target}");
+                        }
                     }
                     catch (Exception writeError)
                     {
