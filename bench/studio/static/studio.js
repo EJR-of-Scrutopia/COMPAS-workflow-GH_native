@@ -1854,7 +1854,9 @@ function buildPropTiles() {
   // and ignored since the library arrived. Planting, site, street and
   // furniture are what a person is looking for when they open this, and
   // twenty-nine ungrouped tiles are a pile.
-  const ordered = [...state.propLibrary].sort((a, b) =>
+  // One tile per FAMILY: eight tufts of the same grass are one thing to
+  // choose and eight shapes to place.
+  const ordered = familyEntries(state.propLibrary).sort((a, b) =>
     String(a.group || "other").localeCompare(String(b.group || "other"))
     || String(a.label || a.key).localeCompare(String(b.label || b.key)));
   let group = null;
@@ -1901,11 +1903,14 @@ function buildPropTiles() {
     tile.title = (entry.label || entry.key)
       + (entry.sizeMetres ? "  " + entry.sizeMetres.map(
         (n) => n.toFixed(n < 1 ? 2 : 1)).join(" x ") + " m" : "")
+      + (entry.variants > 1 ? "  --  " + entry.variants + " variants, one at random each time" : "")
       + (entry.credit ? " -- " + entry.credit : "");
     tile.addEventListener("click", async () => {
       select.value = entry.key;
       paintTileSelection(holder, entry.key);
       showPropCredit(entry);
+      // A family carries one of its variants, drawn fresh each time.
+      const variant = pickVariant(entry.key);
       // Choosing IS picking up. Param: "it should just be a drop down and
       // i click that it gets attached to my cursor and then i move the
       // cursor to the place i like click again and the prop stays." So the
@@ -1915,9 +1920,9 @@ function buildPropTiles() {
       // worst habit. The model itself may not be here yet -- this click is
       // often the very first thing to want it -- so the carry waits for
       // the load, behind the same toast every other load shows.
-      const template = await ensurePropTemplate(entry.key);
-      if (!template && !PROP_BUILDERS[entry.key]) return;
-      carryNewProp(entry.key);
+      const template = await ensurePropTemplate(variant);
+      if (!template && !PROP_BUILDERS[variant]) return;
+      carryNewProp(variant);
     });
     holder.appendChild(tile);
   }
@@ -5691,6 +5696,55 @@ function propEntry(type) {
   return (state.propLibrary || []).find((entry) => entry.key === type) || null;
 }
 
+// ---------- families ----------
+// A species is a FAMILY and a placement is one of its variants. Poly
+// Haven ships a grass as a row of tufts fused into one mesh; split.mjs
+// cuts the row into grass_medium_01__v1 to __v8, one file each, and
+// writes family: "grass_medium_01" on every one. The drawers show the
+// family once, and every placement draws a variant at random, so a field
+// of one species is a field of eight shapes (Param: "each type is one
+// object we can make many variants of").
+function familyOf(entry) { return entry.family || entry.key; }
+
+function familyMembers(family) {
+  return (state.propLibrary || []).filter((entry) => familyOf(entry) === family);
+}
+
+// The family's label is the variant's with its number taken off, because
+// split.mjs names them "<label> 1", "<label> 2", and that is the only
+// place the number comes from.
+function familyLabel(entry) {
+  if (!entry.family) return entry.label || entry.key;
+  return String(entry.label || entry.key).replace(/ [0-9]+$/, "");
+}
+
+// One variant of a family, or the type itself when it is one already.
+// Takes the caller's random when it has one, so a scatter replays the
+// same field from the same seed.
+function pickVariant(type, random) {
+  const members = familyMembers(type);
+  if (!members.length) return type;
+  const roll = random ? random() : Math.random();
+  return members[Math.floor(roll * members.length) % members.length].key;
+}
+
+// A library folded to one entry per family, which is what a drawer shows.
+// The folded entry borrows its first variant's file, so the thumbnail
+// beside that file is the family's picture.
+function familyEntries(entries) {
+  const seen = new Map();
+  for (const entry of entries || []) {
+    const family = familyOf(entry);
+    if (!seen.has(family)) {
+      seen.set(family, Object.assign({}, entry,
+        { key: family, label: familyLabel(entry), variants: 1 }));
+    } else {
+      seen.get(family).variants += 1;
+    }
+  }
+  return [...seen.values()];
+}
+
 // The plan radius of one item, from the manifest's own bounds. sizeMetres
 // is the model's [x, y, z] in ITS space, where y is up, so the footprint is
 // x and z and the height is y. Getting that pair the wrong way round makes
@@ -5747,7 +5801,7 @@ function clearOf(discs, x, y, radius) {
 // as planting rather than as sprinkling.
 function scatterSolve(region, salt) {
   const rules = state.scatter;
-  const chosen = rules.species.filter((s) => propEntry(s.type));
+  const chosen = rules.species.filter((s) => familyMembers(s.type).length);
   if (!chosen.length) return { items: [], note: "no species chosen" };
   // The salt is what makes a second click deal DIFFERENT points. Without
   // it a brush clicked twice in one spot re-deals the same arrangement,
@@ -5798,7 +5852,10 @@ function scatterSolve(region, salt) {
       y = region.y0 + random() * (region.y1 - region.y0);
     }
     if (!withinRegion(region, x, y)) { refused += 1; continue; }
-    const type = pick();
+    // The family is chosen by weight; the VARIANT is drawn from the same
+    // seeded stream, so its footprint is its own and a replay deals the
+    // same shapes.
+    const type = pickVariant(pick(), random);
     const scale = rules.sizeMin + random() * (rules.sizeMax - rules.sizeMin);
     const radius = propFootprint(type) * scale * rules.spacing;
     if (!clearOf(discs, x, y, radius)) { refused += 1; continue; }
@@ -5827,7 +5884,9 @@ async function runScatter(region, options) {
   if (!rules.species.length) { paintScatter(); return; }
   // Every template has to be in hand BEFORE placing, or placeProp falls
   // back to makeProp and plants a primitive instead of the model.
-  for (const s of rules.species) await ensurePropTemplate(s.type);
+  for (const s of rules.species) {
+    for (const member of familyMembers(s.type)) await ensurePropTemplate(member.key);
+  }
 
   const solved = scatterSolve(region, settings.salt);
   if (!solved.items.length) {
@@ -5900,9 +5959,12 @@ function renderShelfScatter() {
   // hundred ungrouped tiles is a pile, and he asked for categories.
   // Within a group, shortest first, because that is the order someone
   // building a field reaches for them in.
-  const ordered = [...(state.propLibrary || [])]
+  // No height ceiling any more. A 12 m cut hid the five beech forest
+  // trees and the study tree, which was the first thing Param noticed
+  // missing; spacing is a multiple of each item's own width, so a 30 m
+  // tree keeps a 36 m clearance of its own accord and needs no fence.
+  const ordered = familyEntries(state.propLibrary)
     .filter((entry) => !LAMP_TYPES.has(entry.key))
-    .filter((entry) => !entry.sizeMetres || entry.sizeMetres[1] <= 12)
     .sort((a, b) =>
       String(a.group || "other").localeCompare(String(b.group || "other"))
       || (a.sizeMetres ? a.sizeMetres[1] : 0) - (b.sizeMetres ? b.sizeMetres[1] : 0));
@@ -5932,6 +5994,7 @@ function renderShelfScatter() {
     tile.title = (entry.label || entry.key)
       + (size ? "  " + size[1].toFixed(2) + " m tall, "
         + Math.max(size[0], size[2]).toFixed(2) + " m across" : "")
+      + (entry.variants > 1 ? "  --  " + entry.variants + " variants" : "")
       + "  --  " + (entry.triangles || 0).toLocaleString() + " triangles";
     tile.classList.toggle("active",
       state.scatter.species.some((s) => s.type === entry.key));
@@ -5984,11 +6047,11 @@ function renderShelfScatter() {
     chosen.appendChild(clear);
   }
   for (const species of state.scatter.species) {
-    const entry = propEntry(species.type);
+    const entry = familyMembers(species.type)[0] || propEntry(species.type);
     const chip = document.createElement("span");
     chip.className = "scatter-chip";
     const name = document.createElement("span");
-    name.textContent = entry ? entry.label || entry.key : species.type;
+    name.textContent = entry ? familyLabel(entry) : species.type;
     const weight = document.createElement("input");
     weight.type = "number";
     weight.min = "1";

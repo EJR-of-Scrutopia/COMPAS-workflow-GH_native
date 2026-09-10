@@ -206,7 +206,11 @@ def test_tiles_draw_snapshots_not_geometry():
     assert 'picture.src = "/api/props/"' in body
     assert 'encodeURIComponent(entry.file + ".thumb.png")' in body
     assert "picture.onerror" in body
-    assert "await ensurePropTemplate(entry.key)" in body
+    # Of the VARIANT it is about to carry, since a tile is a family now
+    # and eight tufts of one grass are one tile: the click still loads
+    # exactly one model, and only the one being picked up.
+    assert "const variant = pickVariant(entry.key);" in body
+    assert "await ensurePropTemplate(variant)" in body
 
 
 def test_restores_summon_their_own_models():

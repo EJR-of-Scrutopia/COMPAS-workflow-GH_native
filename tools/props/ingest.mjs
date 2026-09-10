@@ -23,6 +23,7 @@
 //     stays PNG; everything else becomes JPEG exactly as fetch.mjs does.
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { noticeFor } from "./notice.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -403,31 +404,9 @@ async function main() {
   // and for the same reason: a header written by hand is a licence claim
   // that nobody re-checks when the folder grows. This one said "two
   // libraries" over a folder that had held three since the decals
-  // arrived, so an ingest run would have quietly deleted ambientCG's
-  // line from a file whose whole job is to name who made what.
-  const libraries = new Map();
-  for (const prop of props) {
-    const source = prop.source || "";
-    const where = /polyhaven/.test(source) ? "Poly Haven"
-      : /ambientcg/i.test(source) ? "ambientCG"
-        : /fab\.com/.test(source) ? "Quixel Megascans, via Fab"
-          : "other";
-    const line = `${where} -- ${prop.licence || "licence unstated"}`;
-    libraries.set(line, (libraries.get(line) || 0) + 1);
-  }
-  const notice = [
-    "Models in this folder come from more than one library. Each is",
-    "credited below; the licences they arrived under are:",
-    ...[...libraries.entries()].sort()
-      .map(([line, count]) => `  ${line}  (${count})`),
-    "",
-    "Poly Haven and ambientCG ask for no credit and this file is offered",
-    "anyway. The Fab Standard License needs a free Epic account and",
-    "permits use with any compatible tool, which the glTF export is.",
-    "",
-    ...props.map((p) => `${p.key}\n  ${p.label}\n  ${p.source}`),
-  ].join("\n");
-  await writeFile(path.join(OUT, "NOTICE.txt"), notice + "\n");
+  // arrived. The derivation is notice.mjs, shared with fetch.mjs and
+  // split.mjs.
+  await writeFile(path.join(OUT, "NOTICE.txt"), noticeFor({ props }));
 
   console.log(`\n${built.length} ingested, ${failed.length} failed, into ${OUT}`);
   for (const f of failed) console.log(`  ${f.file}: ${f.why}`);

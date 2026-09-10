@@ -306,9 +306,20 @@ def test_every_notice_writer_derives_its_libraries_from_the_manifest():
     hand-written sentences above correctly derived entries, which is the
     worse half to get wrong."""
 
+    # THE JAVASCRIPT WRITERS SHARE ONE DERIVATION, notice.mjs, because a
+    # third copy for split.mjs is where a rule stops being a habit and
+    # becomes a module. Each of them must import it; the derivation is
+    # checked once, there. The Python writer keeps its own, and is
+    # checked in full.
+    shared = (REPO / "tools" / "props" / "notice.mjs").read_text(encoding="utf-8")
+    for name in ("fetch.mjs", "ingest.mjs", "split.mjs"):
+        source = (REPO / "tools" / "props" / name).read_text(encoding="utf-8")
+        assert 'import { noticeFor } from "./notice.mjs";' in source, (
+            name + " must credit through the shared writer")
+        assert "noticeFor(" in source, name + " imports it and never calls it"
+        assert "NOTICE.txt" in source
     writers = {
-        "fetch.mjs": (REPO / "tools" / "props" / "fetch.mjs"),
-        "ingest.mjs": (REPO / "tools" / "props" / "ingest.mjs"),
+        "notice.mjs": (REPO / "tools" / "props" / "notice.mjs"),
         "fetch_decals.py": (REPO / "tools" / "props" / "fetch_decals.py"),
     }
     false_claims = (
@@ -317,7 +328,8 @@ def test_every_notice_writer_derives_its_libraries_from_the_manifest():
     )
     for name, path in writers.items():
         source = path.read_text(encoding="utf-8")
-        assert "NOTICE.txt" in source, "{} no longer writes it".format(name)
+        if name == "fetch_decals.py":
+            assert "NOTICE.txt" in source, "{} no longer writes it".format(name)
 
         # A hard-coded notice line is a bare string literal in the list
         # being joined. Prose ABOUT the old bug is not, and all three of
@@ -349,3 +361,96 @@ def test_every_notice_writer_derives_its_libraries_from_the_manifest():
             "missing; falling back to a named licence is how a wrong one "
             "gets asserted".format(name)
         )
+
+
+def test_a_row_of_variants_is_split_into_a_family_and_the_row_leaves_the_folder():
+    """Poly Haven ships a grass as a row of tufts fused into one mesh, and
+    the fetch brought each one in as a single model 5.6 m wide. Scattered
+    as-is every placement dropped the whole line and claimed a keep-out
+    disc the width of the line: a 3 m brush fitted about one. After the
+    split the same brush fits 357, in 13 shapes.
+
+    The row itself has to LEAVE the folder, because the folder is the
+    authority and a row left in place goes on being offered."""
+
+    import re
+
+    root = REPO / "bench" / "studio" / "props-hd"
+    manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+    families = {}
+    for prop in manifest["props"]:
+        if prop.get("family"):
+            families.setdefault(prop["family"], []).append(prop)
+    assert len(families) >= 20, "the split has been run"
+    keys = {p["key"] for p in manifest["props"]}
+    for family, members in families.items():
+        assert family not in keys, (
+            "{}: the row is still in the manifest beside its variants".format(family))
+        assert not (root / (family + ".glb")).exists(), (
+            "{}: the row is still in the folder, so it is still offered".format(family))
+        assert (root / "rows" / (family + ".glb")).exists(), (
+            "{}: the row's bytes are kept, out of the scanned folder".format(family))
+        assert len(members) >= 2, family
+        for member in members:
+            assert re.fullmatch(family + r"__v\d+", member["key"]), member["key"]
+            assert (root / member["file"]).exists(), member["file"]
+            assert member["variant"] >= 1
+            # Sized in metres, not in quantisation units: every variant
+            # first came back "65534 across", and then "2.0 across", for
+            # the reasons fetch.mjs's boundsOf spells out.
+            assert max(member["sizeMetres"]) < 40, member["key"]
+            assert min(member["sizeMetres"]) > 0.001, member["key"]
+            # Credited under the family's own source: the split is ours,
+            # the model is theirs.
+            assert member["source"] == members[0]["source"]
+
+    tool = (REPO / "tools" / "props" / "split.mjs").read_text(encoding="utf-8")
+    assert "const GAP_FRACTION = 0.03;" in tool
+    # A fragment is not a variant: grass_medium_01 produced an eleventh
+    # tuft of forty triangles two centimetres across, a stray blade. A
+    # threshold of zero would make it a species again.
+    assert "const FRAGMENT_FRACTION = 0.01;" in tool
+    assert "byCluster[i].length < total * FRAGMENT_FRACTION" in tool
+    assert "getBounds(doc.getRoot().listScenes()[0])" in tool, (
+        "world-space bounds, or the size is the quantisation cube")
+    assert "cloneDocument(source)" in tool
+    assert 'import { noticeFor } from "./notice.mjs";' in tool
+
+
+def test_a_species_is_a_family_and_every_placement_is_a_variant():
+    """The drawers show a family once and every placement draws one of
+    its variants, so a field of one species is a field of eight shapes.
+    Param: "each type is one object we can make many variants of"."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "function familyOf(entry) { return entry.family || entry.key; }" in js
+    assert "function familyEntries(entries)" in js
+    assert "function pickVariant(type, random)" in js
+
+    props = js[js.index("function buildPropTiles"):]
+    props = props[:props.index("\n}\n")]
+    assert "familyEntries(state.propLibrary)" in props
+    assert "const variant = pickVariant(entry.key);" in props
+    assert "carryNewProp(variant);" in props
+
+    scatter = js[js.index("function renderShelfScatter"):]
+    scatter = scatter[:scatter.index("\n}\n")]
+    assert "familyEntries(state.propLibrary)" in scatter
+    # The height ceiling is gone: it hid the five beech forest trees and
+    # the study tree, which was the first thing Param noticed missing.
+    assert "sizeMetres[1] <= 12" not in js, (
+        "spacing is a multiple of each item's own width, so a 30 m tree "
+        "keeps its own clearance and needs no fence")
+
+    solve = js[js.index("function scatterSolve(region, salt)"):]
+    solve = solve[:solve.index("\n}\n")]
+    assert "const type = pickVariant(pick(), random);" in solve, (
+        "the VARIANT is drawn from the same seeded stream, before its "
+        "footprint is measured, so a replay deals the same shapes")
+    assert "familyMembers(s.type).length" in solve
+
+    run = js[js.index("async function runScatter(region, options)"):]
+    run = run[:run.index("\n}\n")]
+    assert "for (const member of familyMembers(s.type)) await ensurePropTemplate(member.key);" in run, (
+        "every variant's template in hand before placing, or placeProp "
+        "plants a primitive")

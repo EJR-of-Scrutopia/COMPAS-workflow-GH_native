@@ -26,6 +26,7 @@
 // folder of .glb files the studio reads like any other library.
 
 import { createHash } from "node:crypto";
+import { noticeFor } from "./notice.mjs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -550,33 +551,10 @@ async function main() {
   // in this folder is from Poly Haven and is CC0 1.0", so a run that
   // fetched five grasses restated it over a library holding twenty
   // Quixel Megascans assets under the Fab Standard License and ten
-  // ambientCG decals. The entries below were right the whole time --
-  // they always came from the merged manifest -- but the sentence above
-  // them was false, which is the worse half to get wrong. A licence
-  // claim nobody checks is exactly the kind that gets believed.
-  const libraries = new Map();
-  for (const prop of manifest.props) {
-    const source = prop.source || "";
-    const where = /polyhaven/.test(source) ? "Poly Haven"
-      : /ambientcg/i.test(source) ? "ambientCG"
-        : /fab\.com/.test(source) ? "Quixel Megascans, via Fab"
-          : "other";
-    const line = `${where} -- ${prop.licence || "licence unstated"}`;
-    libraries.set(line, (libraries.get(line) || 0) + 1);
-  }
-  const notice = [
-    "Models in this folder come from more than one library. Each is",
-    "credited below; the licences they arrived under are:",
-    ...[...libraries.entries()].sort()
-      .map(([line, count]) => `  ${line}  (${count})`),
-    "",
-    "Poly Haven and ambientCG ask for no credit and this file is offered",
-    "anyway. The Fab Standard License needs a free Epic account and",
-    "permits use with any compatible tool, which the glTF export is.",
-    "",
-    ...manifest.props.map((p) => `${p.key}\n  ${p.label}\n  ${p.source}`),
-  ].join("\n");
-  await writeFile(path.join(OUT, "NOTICE.txt"), notice + "\n");
+  // ambientCG decals. The derivation lives in notice.mjs now, shared with
+  // ingest.mjs and split.mjs, because a third copy is where a rule stops
+  // being a habit.
+  await writeFile(path.join(OUT, "NOTICE.txt"), noticeFor(manifest));
 
   console.log(`\n${built.length} built, ${failed.length} failed, into ${OUT}`);
   for (const f of failed) console.log(`  ${f.slug}: ${f.why}`);
