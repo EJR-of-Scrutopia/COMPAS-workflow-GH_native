@@ -1039,26 +1039,36 @@ internal static class MechanismDocument
             }
         }
 
-        // THE REEVE FACTOR'S OWN SHAPE (spec's "reeve factor, settled
-        // 2026-09-08 late", parallel to net_vertex): the document carries
-        // the RESOLVED value on every wire, so the studio never inherits or
-        // infers one. Read once off the payload's own header and stamped
-        // onto every wire below.
+        // THE REEVE FACTOR'S OWN SHAPE (spec section 6, parallel to
+        // net_vertex): the document carries the RESOLVED value on every
+        // wire, alongside WHICH SOURCE won it, so the studio never
+        // inherits or infers one.
         //
-        // IT IS READ FROM reeve.default AND IT IS REFUSED BY NAME WHEN THAT
-        // IS ABSENT (spec 6.3, and the ruling that made this reader move).
-        // It used to read mechanism.reeveFactor with a silent fallback to
-        // 1.0. That key is gone: it was written deep inside the shared
-        // collector path, which the Machine component's own authored input
-        // does not reach, and a machine document lifting that block whole
-        // would have stated its default twice, in two keys, with two
-        // different numbers, both plausible and neither null. A fallback
-        // here would put the same fault back a level up -- every export
-        // silently applying 1.0 where he authored 4.0, with the geometry,
-        // the wire paths and the timing all still correct so that nothing
-        // looks broken. Export writes what it is handed (spec 1.3); where
-        // it is handed no default at all it writes NOTHING and says so,
-        // which costs the mechanism document and nothing else.
+        // THE MACHINE DEFAULT IS READ FROM reeve.default AND IS REFUSED BY
+        // NAME WHEN THAT IS ABSENT (spec 6.3, and the ruling that made
+        // this reader move, Task 4). It used to read mechanism.reeveFactor
+        // with a silent fallback to 1.0. That key is gone: it was written
+        // deep inside the shared collector path, which the Machine
+        // component's own authored input does not reach, and a machine
+        // document lifting that block whole would have stated its default
+        // twice, in two keys, with two different numbers, both plausible
+        // and neither null. A fallback here would put the same fault back
+        // a level up -- every export silently applying 1.0 where he
+        // authored 4.0, with the geometry, the wire paths and the timing
+        // all still correct so that nothing looks broken. Export writes
+        // what it is handed (spec 1.3); where it is handed no default at
+        // all it writes NOTHING and says so, which costs the mechanism
+        // document and nothing else.
+        //
+        // THIS reeveFactor VARIABLE IS machineDefault FOR EVERY CALL TO
+        // MechanismReeve.Resolve BELOW (Task 5), AND IT IS DELIBERATELY
+        // STILL THE PAYLOAD'S OWN PROVISIONAL VALUE, NOT A CITED MACHINE'S
+        // (spec 6.3's ruling ahead of this task): the Machine (MA) port
+        // that would hand the collector a cited machine's own authored
+        // default is Task 6's own work. TASK 6'S SWAP IS THIS ONE LINE:
+        // read the cited machine's own default here instead of
+        // reeveDefault.GetDouble(), and every wire's resolution downstream
+        // follows without any other change.
         if (!root.TryGetProperty("reeve", out JsonElement reeveBlock) ||
             reeveBlock.ValueKind != JsonValueKind.Object ||
             !reeveBlock.TryGetProperty("default", out JsonElement reeveDefault) ||
@@ -1083,6 +1093,83 @@ internal static class MechanismDocument
                 "document was written. It is the advantage of one wire's " +
                 "reeving through its block, so it is finite and greater " +
                 "than zero.");
+        }
+
+        // THE PER-WIRE OVERRIDES (RW, spec 6.1), read off reeve.perWire --
+        // an object keyed by wire index as a JSON string, since a wire
+        // number is not a valid object key. Absent, not an object, or an
+        // entry that is not itself a number is read as "no override for
+        // that wire" rather than refused: reeve.perWire is optional by
+        // nature (RW is an OPTIONAL port), unlike reeve.default, which a
+        // study cannot do without.
+        var reevePerWire = new Dictionary<int, double>();
+        if (reeveBlock.TryGetProperty("perWire", out JsonElement perWireBlock) &&
+            perWireBlock.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty entry in perWireBlock.EnumerateObject())
+            {
+                if (entry.Value.ValueKind == JsonValueKind.Number &&
+                    int.TryParse(
+                        entry.Name, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out int wireIndex))
+                {
+                    reevePerWire[wireIndex] = entry.Value.GetDouble();
+                }
+            }
+        }
+
+        // RESOLVED ONCE PER WIRE INDEX, NOT ONCE PER (side, mechanism,
+        // wire) INSTANCE: routing is authored ONCE per mechanism and the
+        // SAME local route is written for every placement branch (see
+        // MechanismCollector.BuildWithResult's own wiresOut loop), so wire
+        // 3's own resolution, its wrap-reversal count and its sanity
+        // verdict are IDENTICAL on every instance that carries a wire 3.
+        // Computing this once per wire index rather than once per instance
+        // is the same reasoning that turned forty-two per-wire match lines
+        // into one headline above (2026-09-08, his ruling on the balloon):
+        // a six-instance machine would otherwise print the identical
+        // sanity warning six times over for the one wire that earns it.
+        var resolvedReeve = new Dictionary<int, (double Value, string Source)>();
+
+        (double Value, string Source) ResolveWireReeve(
+            int wireIndex, IReadOnlyList<MechanismFrame> route)
+        {
+            if (resolvedReeve.TryGetValue(wireIndex, out (double Value, string Source) cached))
+                return cached;
+
+            (double value, string source) =
+                MechanismReeve.Resolve(reeveFactor, reevePerWire, wireIndex);
+            resolvedReeve[wireIndex] = (value, source);
+
+            // THE SANITY CHECK (spec 6.4): compares the resolved factor
+            // against the band its own wrap reversals imply, and WARNS BY
+            // NAME ONLY WHEN WILDLY OUTSIDE IT. It REFUSES NOTHING: a
+            // wheel that merely GUIDES the wire gives no advantage at all
+            // while one that MOVES WITH THE LOAD does, and geometry cannot
+            // tell the two apart, so a check that refused would be
+            // refusing a machine it cannot actually assess. See
+            // MechanismReeve.SanityCeiling for the band itself and why it
+            // has no floor.
+            int reversals = MechanismReeve.WrapReversals(route);
+            double ceiling = MechanismReeve.SanityCeiling(reversals);
+            if (value > ceiling)
+            {
+                warnings.Add(
+                    $"wire {wireIndex}: reeveFactor " +
+                    value.ToString("0.####", CultureInfo.InvariantCulture) +
+                    $" (source \"{source}\") is wildly above what this " +
+                    $"wire's own route can plausibly support -- " +
+                    $"{reversals} wrap reversal(s) imply a ceiling of " +
+                    "about " +
+                    ceiling.ToString("0.####", CultureInfo.InvariantCulture) +
+                    ". This warns rather than refuses, since a wheel that " +
+                    "only GUIDES the wire gives no advantage at all while " +
+                    "one that MOVES WITH THE LOAD does, and geometry " +
+                    "cannot tell the two apart; check the declared factor " +
+                    "against the machine's own reeving before trusting " +
+                    "this wire's spin rate.");
+            }
+            return (value, source);
         }
 
         // TOP-LEVEL WIRES (studio's C7/A7): "ids on instances say an
@@ -1204,15 +1291,21 @@ internal static class MechanismDocument
             if (instanceWireIds.TryGetValue((side, mechanism), out List<string>? wireIds))
                 wireIds.Add(id);
 
+            (double resolvedReeveValue, string resolvedReeveSource) =
+                ResolveWireReeve(wireIndex, route.Select(r => r.Frame).ToList());
+
             wiresOut.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["id"] = id,
                 ["net_vertex"] = netVertex,
-                // THE RESOLVED VALUE, PER WIRE, NEVER INHERITED (finding
-                // 5 above): the same principle already applied to
-                // net_vertex, applied here to the one other field the
-                // spec's own reeve-factor ruling names by name.
-                ["reeveFactor"] = reeveFactor,
+                // THE RESOLVED VALUE, PER WIRE, NEVER INHERITED (finding 5,
+                // spec 6.2): the same principle already applied to
+                // net_vertex. A per-wire override (RW) beats the machine
+                // default outright (spec 6.1); reeveFactorSource says
+                // which one won ("wire" or "machine") so the studio, and
+                // Param reading the document, never has to guess.
+                ["reeveFactor"] = resolvedReeveValue,
+                ["reeveFactorSource"] = resolvedReeveSource,
                 // THE ORDERED PATH (A7): every wire this document derives
                 // visits exactly one instance, so the list is length one
                 // today; declared as a list rather than a single reference
