@@ -3622,9 +3622,10 @@ internal static partial class Program
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
-                + "sibling, finished against a Result): net-vertex "
-                + "matching is the default rule, wire order (side, "
-                + "mechanism, wire) against anchor order along the row, "
+                + "sibling, finished against a Result): each instance takes "
+                + "its own run of the anchors its row holds, and each of "
+                + "its wires is bound to the one it was PLACED against "
+                + "(Task 7a; the turned-instance case has its own check), "
                 + "with every wire carrying its OWN explicit net_vertex in "
                 + "the document (R1) rather than a position a reader would "
                 + "have to infer; a wire authored with planes[0] nearer "
@@ -3754,6 +3755,45 @@ internal static partial class Program
         catch (Exception exception)
         {
             failures.Add($"MechanismGuardsOnBothPlacementPaths: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismTurnedInstanceMatching(plugin);
+            Console.WriteLine(
+                "PASS  A wire is bound to the anchor it was actually PLACED "
+                + "against, on a TURNED instance as much as an unturned one "
+                + "(R1, spec 0.3 and section 5; Task 7a, promoted from the "
+                + "deferral Task 7 wrote and measured). TWO anchor rows "
+                + "facing each other, which is his own default workflow and "
+                + "the smallest fixture where the derivation's own "
+                + "wire-to-anchor pairing and the document's own matching "
+                + "CAN disagree: DerivePlacements turns the far side's "
+                + "machine round to face away from its own springing, so "
+                + "its wire k stands on the anchor at the OTHER end of the "
+                + "row. MEASURED BEFORE THE FIX, on this same fixture: the "
+                + "document matched wire order against the row's DISCOVERY "
+                + "order (\"arbitrary but stable\"), bound the turned side's "
+                + "seven wires 0.9, 0.6, 0.3, 0, 0.3, 0.6 and 0.9 m from "
+                + "where they had been placed, and drew FOUR match-distance "
+                + "warnings ON CORRECT INPUT. NOW: the turned side's wire k "
+                + "binds net vertex 13 - k, end for end; the UNTURNED "
+                + "side's wire k still binds net vertex k, exactly what the "
+                + "old rule wrote, because a fix that moved a binding "
+                + "already right would be worse than the defect; every one "
+                + "of the fourteen wires' PLACED first routing planes lands "
+                + "within 1e-9 m of the net vertex the document bound it "
+                + "to, measured off the COLLECTOR's payload rather than off "
+                + "the document that did the binding; and the whole "
+                + "document is SILENT. THIS CHANGED THE ARTEFACT for every "
+                + "two-sided vault: net_vertex is the anchor the studio "
+                + "draws the cable to, so the turned side's seven cables "
+                + "are drawn to different anchors than before, and they are "
+                + "now the anchors the machine was placed against.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismTurnedInstanceMatching: {DescribeException(exception)}");
         }
 
         try
@@ -47549,15 +47589,15 @@ internal static partial class Program
 
         // THE SPRINGING: ONE row of seven anchors, 0.15 m apart, so the
         // row's own characteristic spacing is 0.15 m and seven of them
-        // reach 0.9 m. ONE row and not two, deliberately: two rows put a
-        // half-turned instance in the fixture, and that instance's own
-        // match distances are governed by a defect this task measured and
-        // did not fix (the derivation pairs wire to anchor along the
-        // machine and along the row, while the document pairs by the row's
-        // DISCOVERY order, and on a turned instance the two run end for
-        // end). Isolating the witness needs a fixture where the two
-        // pairings agree, so that a warning in it is the witness's and
-        // nothing else's.
+        // reach 0.9 m. ONE row and not two, deliberately: this fixture's
+        // subject is the WITNESS, and a witness is only isolated where
+        // nothing else in the document can fire. Two rows put a turned
+        // instance in it, which is a subject of its own and has its own
+        // check (ValidateMechanismTurnedInstanceMatching, Task 7a). When
+        // Task 7 wrote this, the turned instance ALSO drew four
+        // match-distance warnings on correct input, which is the defect
+        // that task measured, deferred and did not own; Task 7a fixed it,
+        // and one row is still the right fixture here for the reason above.
         const double AnchorPitch = 0.15;
         var anchors = new List<double[]>();
         for (int k = 0; k < 7; k++)
@@ -47862,118 +47902,361 @@ internal static partial class Program
                 "ruling read backwards (planes[0] is the net end). " +
                 "Warnings were: " + string.Join(" | ", authoredBackwards.Warnings));
         }
-        // AND THE DEFECT THIS TASK MEASURED AND DOES NOT OWN, WRITTEN OUT
-        // AND RUN RATHER THAN LEFT IN A COMMENT. Every fixture above stands
-        // on ONE anchor row, where the derivation's own wire-to-anchor
-        // pairing and this document's own matching agree. On TWO rows they
-        // do not: the far side's machine is turned round to face away from
-        // its own springing (that is the whole content of "one machine,
-        // built once, turned round"), so the derivation pairs its wire 0
-        // with the anchor at the far end of the row, while the document
-        // matches wire order against the row's DISCOVERY order and pairs it
-        // with the anchor at the near end. The two rules are independent
-        // and on a turned instance they run end for end.
+    }
+
+    /// <summary>
+    /// TASK 7A: A WIRE IS BOUND TO THE ANCHOR IT WAS ACTUALLY PLACED
+    /// AGAINST, ON A TURNED INSTANCE AS MUCH AS AN UNTURNED ONE (R1, spec
+    /// 0.3 and section 5). PROMOTED FROM A DEFERRAL Task 7 wrote, ran and
+    /// measured over a defect it did not own.
+    ///
+    /// WHY IT IS A SEPARATE CHECK AND NOT A LINE INSIDE ANOTHER. Every
+    /// other mechanism-document fixture in this file stands on ONE anchor
+    /// row, where the derivation's own wire-to-anchor pairing and the
+    /// document's own matching agree and nothing can be told apart. TWO
+    /// rows is the smallest fixture where they can disagree, and two rows
+    /// is his default workflow: MechanismCollector.DerivePlacements settles
+    /// each row's sense by which side of it the net stands on, so the far
+    /// side's machine is TURNED ROUND to face away from its own springing.
+    /// That is the whole content of "one machine, built once, turned
+    /// round", and it is the only shape this check is about.
+    ///
+    /// WHAT WAS WRONG, MEASURED BY TASK 7 ON THIS EXACT FIXTURE. The
+    /// derivation pairs wire to anchor SPATIALLY (its alongMachine order
+    /// against its alongRow order); the document paired wire ORDER against
+    /// the anchor row's DISCOVERY order, which
+    /// MouldGeometry.ConnectedGroups documents as "arbitrary but stable".
+    /// On the turned side the two ran END FOR END: its seven wires were
+    /// bound to anchors 0.9, 0.6, 0.3, 0, 0.3, 0.6 and 0.9 m from where
+    /// they had been placed, and a CORRECT study drew FOUR match-distance
+    /// warnings for it. A warning on correct input is a defect equal in
+    /// seriousness to one that misses a fault, and a wrong net_vertex is
+    /// worse than either, because net_vertex is the anchor THE STUDIO DRAWS
+    /// THE CABLE TO.
+    ///
+    /// WHAT IS ASSERTED, AND BOTH HALVES MATTER:
+    ///
+    ///   1. THE TURNED SIDE IS NOW RIGHT. Side 1's wire k is bound to net
+    ///      vertex 18 - k, the anchor its own placement plane stands on,
+    ///      end for end against the row's discovery order.
+    ///   2. THE UNTURNED SIDE IS UNCHANGED. Side 0's wire k is bound to net
+    ///      vertex 5 + k, which is exactly what the old flat rule wrote. A
+    ///      fix that moved a binding already right would be worse than the
+    ///      defect it repaired. The anchors take NON-CONTIGUOUS ids (spec
+    ///      9.4) so that table cannot be satisfied by a loop counter.
+    ///   3. THE PHYSICAL STATEMENT BEHIND BOTH, measured independently of
+    ///      the document: each wire's first routing plane, carried through
+    ///      its own instance frame off the COLLECTOR's payload, lands on
+    ///      the net vertex the DOCUMENT bound it to, to within 1e-9 m. The
+    ///      two tables above are then a reading of that, not a second
+    ///      opinion about it.
+    ///   4. TOTAL SILENCE. The four match-distance warnings are gone, and
+    ///      no other warning replaces them.
+    ///
+    /// NOT PROVED HERE, and named rather than implied: an instance whose
+    /// run of anchors is SHORT keeps the old flat pairing and the old drop
+    /// rule (ValidateMechanismDocument covers that shape, three wires
+    /// against two anchors, and it must stay covered by it); and this
+    /// fixture places ONE machine per row, so which contiguous run of a
+    /// long row belongs to which mechanism is not exercised by it.
+    /// </summary>
+    private static void ValidateMechanismTurnedInstanceMatching(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo buildMachine = RequirePublicStatic(collectorType, "BuildMachine");
+        MethodInfo readCitation = RequirePublicStatic(collectorType, "ReadMachineCitation");
+        MethodInfo buildWithResult = RequirePublicStatic(collectorType, "BuildWithResult");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        // TWO SPRINGINGS, seven anchors each at 0.15 m, facing each other
+        // across a net whose centre sits BETWEEN them, each row's own
+        // anchors joined along itself so AnchorRowIndices reads two rows of
+        // seven rather than fourteen groups of one. The centre lands on the
+        // two rows' own midline, so each row's outward direction is
+        // unambiguous, which is what makes one of the two machines a TURNED
+        // one.
         //
-        // WHAT THAT COSTS, MEASURED: a CORRECT two-row study draws four
-        // match-distance warnings on its turned side, the worst at the full
-        // 0.9 m cable span, and the wires of that side are bound in the
-        // document to anchors 0.9, 0.6 and 0.3 m from where they were
-        // actually placed. A warning on correct input is a defect equal in
-        // seriousness to one that misses a fault; a WRONG net_vertex in the
-        // artefact is worse, because the studio draws the cable to it.
-        //
-        // AND IT IS WHY THE WITNESS ABOVE HAD TO BE SOURCED ELSEWHERE. The
-        // same fixture reversed produces the IDENTICAL distances on the
-        // OTHER side, so the match distance carries no information about
-        // backwardness on the derived path at all.
-        //
-        // NOT FIXED HERE. The repair changes which net vertex each wire is
-        // BOUND to in the exported document, which is R1's own
-        // non-negotiable and the number the studio draws every cable to. It
-        // needs its own round and its own ruling, not a side effect of the
-        // task that found it.
-        var twoRowAnchors = new List<double[]>();
+        // NON-CONTIGUOUS ANCHOR IDS (spec 9.4): five ordinary net vertices
+        // take ids 0 to 4, so the anchors are ids 5 to 11 and 12 to 18 and
+        // NO net_vertex here can be satisfied by a loop counter. Without
+        // that, side 0's own "must not move" table would be satisfied by a
+        // matcher that wrote the wire index straight out.
+        const double AnchorPitch = 0.15;
+        var interior = new List<double[]>();
+        for (int k = 0; k < 5; k++)
+            interior.Add(new[] { -2.0 + k, 0.0, 1.0 });
+        var anchors = new List<double[]>();
         for (int k = 0; k < 7; k++)
-            twoRowAnchors.Add(new[] { -8.0, -0.45 + (AnchorPitch * k), 0.0 });
+            anchors.Add(new[] { -8.0, -0.45 + (AnchorPitch * k), 0.0 });
         for (int k = 0; k < 7; k++)
-            twoRowAnchors.Add(new[] { 8.0, -0.45 + (AnchorPitch * k), 0.0 });
-        Array twoRowVertices = Array.CreateInstance(point, twoRowAnchors.Count);
-        for (int i = 0; i < twoRowAnchors.Count; i++)
-            twoRowVertices.SetValue(P(twoRowAnchors[i]), i);
-        var twoRowEdges = new List<(int, int)>();
+            anchors.Add(new[] { 8.0, -0.45 + (AnchorPitch * k), 0.0 });
+        const int FirstAnchorId = 5;
+        var allPoints = new List<double[]>();
+        allPoints.AddRange(interior);
+        allPoints.AddRange(anchors);
+
+        Array vertexArray = Array.CreateInstance(point, allPoints.Count);
+        for (int i = 0; i < allPoints.Count; i++)
+        {
+            vertexArray.SetValue(
+                Activator.CreateInstance(point, allPoints[i][0], allPoints[i][1], allPoints[i][2]),
+                i);
+        }
+        var edgePairs = new List<(int, int)>();
+        for (int k = 0; k + 1 < interior.Count; k++)
+            edgePairs.Add((k, k + 1));
         for (int k = 0; k + 1 < 7; k++)
         {
-            twoRowEdges.Add((k, k + 1));
-            twoRowEdges.Add((7 + k, 8 + k));
+            edgePairs.Add((FirstAnchorId + k, FirstAnchorId + k + 1));
+            edgePairs.Add((FirstAnchorId + 7 + k, FirstAnchorId + 8 + k));
         }
-        Array twoRowEdgeArray = Array.CreateInstance(edgeType, twoRowEdges.Count);
-        for (int i = 0; i < twoRowEdges.Count; i++)
+        Array edgeArray = Array.CreateInstance(edgeType, edgePairs.Count);
+        for (int i = 0; i < edgePairs.Count; i++)
         {
-            twoRowEdgeArray.SetValue(
-                Activator.CreateInstance(edgeType, twoRowEdges[i].Item1, twoRowEdges[i].Item2), i);
+            edgeArray.SetValue(
+                Activator.CreateInstance(edgeType, edgePairs[i].Item1, edgePairs[i].Item2), i);
         }
-        object twoRowEquilibrium = CreateInstance(equilibriumType);
-        SetContractProperty(twoRowEquilibrium, equilibriumType, "Vertices", twoRowVertices);
-        SetContractProperty(twoRowEquilibrium, equilibriumType, "Edges", twoRowEdgeArray);
-        SetContractProperty(twoRowEquilibrium, equilibriumType, "MemberForces",
-            Enumerable.Repeat(1.0, twoRowEdges.Count).ToArray());
-        SetContractProperty(twoRowEquilibrium, equilibriumType, "ResolvedSupportNodeIds",
-            Enumerable.Range(0, twoRowAnchors.Count).ToArray());
-        object twoRowResult = CreateResultDto(resultType, "fd", twoRowEquilibrium, null, null);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertexArray);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edgeArray);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, edgePairs.Count).ToArray());
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(FirstAnchorId, anchors.Count).ToArray());
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
 
-        Deferred(
-            "a CORRECT study on TWO anchor rows draws no document warning: "
-            + "the far side's machine is turned round by the derivation, so "
-            + "the anchor each of its wires is matched to must be the anchor "
-            + "the derivation actually placed it on",
-            "the study document's own within-row net-vertex matching "
-            + "(MechanismDocument.Json's anchorFlat: wire order against the "
-            + "row's DISCOVERY order), which does not follow the placement "
-            + "the way MechanismCollector.DerivePlacements' own alongMachine "
-            + "and alongRow pairing does. Measured by Task 7, which does not "
-            + "own the net_vertex binding rule (R1) and cannot change which "
-            + "anchor the studio draws each cable to as a side effect; needs "
-            + "its own round",
-            () =>
+        // ONE MACHINE, AUTHORED ONCE, CORRECTLY: seven wires, each running
+        // from the anchor it ends at (planes[0] is the net end, his ruling)
+        // to its own drum in a bank 3 m wide. Nothing here is authored
+        // backwards and nothing is mis-shaped; the whole subject is what a
+        // CORRECT study does on two rows.
+        var drums = new List<double[]>();
+        for (int k = 0; k < 7; k++)
+            drums.Add(new[] { -10.0, -1.5 + (0.5 * k), 1.0 });
+        var wires = new List<object?>();
+        for (int k = 0; k < 7; k++)
+        {
+            object route = MechanismListOf(frameType, FrameOf(anchors[k]), FrameOf(drums[k]));
+            wires.Add(Activator.CreateInstance(routingWireType, k, route)!);
+        }
+        object routing = MechanismListOf(routingWireType, wires.ToArray());
+
+        object Asset() => Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
             {
-                object routing = RoutingTree(fanned, false);
-                object? citation = readCitation.Invoke(
+                new double[] { -12, 0, 0 }, new double[] { -11, 0, 0 },
+                new double[] { -12, 1, 1 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+            null,
+            false)!;
+
+        const string MachineId = "MCH-TURNED";
+        object? citation = readCitation.Invoke(
+            null,
+            new object?[]
+            {
+                (string)buildMachine.Invoke(
                     null,
                     new object?[]
                     {
-                        (string)buildMachine.Invoke(
-                            null,
-                            new object?[]
-                            {
-                                Asset(), routing, MachineId, "guard fixture winch",
-                                4.0, "centreline", new List<string>(), new List<string>(),
-                            })!,
-                        new List<string>(),
-                    });
-                object?[] arguments = BuildWithResultArguments(
-                    buildWithResult, Asset(), routing,
-                    MechanismListOf(placementBranchType),
-                    new List<string>(), new List<string>(), twoRowResult,
-                    "centreline", null, citation);
-                if (buildWithResult.Invoke(null, arguments) is not string payload)
-                    throw new InvalidOperationException("the two-row study built no payload.");
-                var twoRowWarnings = new List<string>();
-                json.Invoke(
-                    null,
-                    new object?[]
-                    {
-                        twoRowResult, "guard fixture", 1.0, payload,
-                        twoRowWarnings, new List<string>(),
-                    });
-                if (twoRowWarnings.Count != 0)
-                {
-                    throw new InvalidOperationException(
-                        "a correctly authored two-row study drew "
-                        + twoRowWarnings.Count + " document warning(s), all "
-                        + "of them on the side the derivation turned round: "
-                        + string.Join(" | ", twoRowWarnings));
-                }
+                        Asset(), routing, MachineId, "turned fixture winch",
+                        4.0, "centreline", new List<string>(), new List<string>(),
+                    })!,
+                new List<string>(),
             });
+
+        // PLACEMENT LEFT UNAUTHORED, so it is DERIVED from the net's own
+        // anchor rows: the default since 2026-09-09, and the only path that
+        // produces a turned instance at all.
+        var buildWarnings = new List<string>();
+        object?[] arguments = BuildWithResultArguments(
+            buildWithResult, Asset(), routing,
+            MechanismListOf(placementBranchType),
+            buildWarnings, new List<string>(), result,
+            "centreline", null, citation);
+        if (buildWithResult.Invoke(null, arguments) is not string payload)
+        {
+            throw new InvalidOperationException(
+                "the two-row study built no payload at all; warnings were: "
+                + string.Join(" | ", buildWarnings));
+        }
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)json.Invoke(
+            null,
+            new object?[] { result, "turned fixture", 1.0, payload, warnings, notes })!;
+
+        // 4. TOTAL SILENCE ON CORRECT INPUT. This is the symptom the fix
+        // exists to remove, so it is said first and it names every line.
+        if (warnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A CORRECTLY authored study on TWO anchor rows, placed by "
+                + "the default derived rule, must draw NO document warning "
+                + "whatever. Before Task 7a it drew FOUR, all of them on "
+                + "the side the derivation turned round, because the "
+                + "document bound that side's wires to anchors up to 0.9 m "
+                + "from where they were placed. Got "
+                + warnings.Count + ": " + string.Join(" | ", warnings));
+        }
+
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The mechanism document did not parse.");
+        JsonArray wiresOut = root["wires"]!.AsArray();
+        if (wiresOut.Count != 14)
+        {
+            throw new InvalidOperationException(
+                "Two rows of seven anchors carry two machines of seven "
+                + "wires, and every one of the fourteen must reach the "
+                + "document; got " + wiresOut.Count + ".");
+        }
+        var boundVertex = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (JsonNode? wire in wiresOut)
+            boundVertex[(string)wire!["id"]!] = (int)wire["net_vertex"]!;
+
+        // 1 AND 2: THE TWO TABLES, side by side, because the fix is only
+        // right if it moved exactly ONE of them.
+        for (int k = 0; k < 7; k++)
+        {
+            string unturned = $"0-0-{k}";
+            int unturnedExpected = FirstAnchorId + k;
+            if (!boundVertex.TryGetValue(unturned, out int unturnedVertex) ||
+                unturnedVertex != unturnedExpected)
+            {
+                throw new InvalidOperationException(
+                    "THE UNTURNED SIDE MUST NOT MOVE. Side 0's machine "
+                    + "faces its own springing the way the row was "
+                    + "discovered, so its wire " + k + " binds net vertex "
+                    + unturnedExpected + ", exactly what the old flat rule "
+                    + "wrote; a fix that moved a binding already right "
+                    + "would be worse than the defect it repaired. Got "
+                    + (boundVertex.TryGetValue(unturned, out int got)
+                        ? got.ToString(CultureInfo.InvariantCulture)
+                        : "no wire " + unturned + " at all")
+                    + ".");
+            }
+
+            string turned = $"1-0-{k}";
+            int expected = FirstAnchorId + 13 - k;
+            if (!boundVertex.TryGetValue(turned, out int turnedVertex) || turnedVertex != expected)
+            {
+                throw new InvalidOperationException(
+                    "THE TURNED SIDE MUST BE BOUND END FOR END AGAINST THE "
+                    + "ROW'S DISCOVERY ORDER. Side 1's machine is turned "
+                    + "round by the derivation to face away from the net, "
+                    + "so its wire " + k + " is PLACED on net vertex "
+                    + expected + " and must be BOUND to it; the old rule "
+                    + "bound it to " + (FirstAnchorId + 7 + k) + " instead, "
+                    + "the anchor at the other end of the row and the "
+                    + "anchor the studio would have drawn that cable to. Got "
+                    + (boundVertex.TryGetValue(turned, out int gotTurned)
+                        ? gotTurned.ToString(CultureInfo.InvariantCulture)
+                        : "no wire " + turned + " at all")
+                    + ".");
+            }
+        }
+
+        // 3: THE PHYSICAL STATEMENT, measured off the COLLECTOR's payload
+        // rather than off the document. The instance frames and the local
+        // routes are the collector's, the binding is the document's, and
+        // the two meet only here.
+        using JsonDocument parsedPayload = JsonDocument.Parse(payload);
+        JsonElement payloadRoot = parsedPayload.RootElement;
+        var placements = new Dictionary<string, double[][]>(StringComparer.Ordinal);
+        foreach (JsonElement instance in payloadRoot.GetProperty("instances").EnumerateArray())
+        {
+            JsonElement frame = instance.GetProperty("frame");
+            double[] Triple(string name) => frame
+                .GetProperty(name).EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] xAxis = Triple("xAxis");
+            double[] yAxis = Triple("yAxis");
+            double[] zAxis = frame.TryGetProperty("zAxis", out JsonElement z)
+                ? z.EnumerateArray().Select(e => e.GetDouble()).ToArray()
+                : new[]
+                {
+                    (xAxis[1] * yAxis[2]) - (xAxis[2] * yAxis[1]),
+                    (xAxis[2] * yAxis[0]) - (xAxis[0] * yAxis[2]),
+                    (xAxis[0] * yAxis[1]) - (xAxis[1] * yAxis[0]),
+                };
+            placements[
+                instance.GetProperty("side").GetInt32() + "-" +
+                instance.GetProperty("mechanism").GetInt32()] =
+                new[] { Triple("origin"), xAxis, yAxis, zAxis };
+        }
+        double worst = 0.0;
+        string worstWire = "none";
+        foreach (JsonElement wire in payloadRoot.GetProperty("wires").EnumerateArray())
+        {
+            string instanceKey = wire.GetProperty("side").GetInt32() + "-" +
+                wire.GetProperty("mechanism").GetInt32();
+            string id = instanceKey + "-" + wire.GetProperty("wire").GetInt32();
+            double[][] placement = placements[instanceKey];
+            double[] local = wire.GetProperty("route")[0].GetProperty("origin")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            var placed = new double[3];
+            for (int c = 0; c < 3; c++)
+            {
+                placed[c] = placement[0][c] +
+                    (local[0] * placement[1][c]) +
+                    (local[1] * placement[2][c]) +
+                    (local[2] * placement[3][c]);
+            }
+            double[] bound = allPoints[boundVertex[id]];
+            double distance = Math.Sqrt(
+                Math.Pow(placed[0] - bound[0], 2) +
+                Math.Pow(placed[1] - bound[1], 2) +
+                Math.Pow(placed[2] - bound[2], 2));
+            if (distance > worst)
+            {
+                worst = distance;
+                worstWire = id;
+            }
+        }
+        Console.WriteLine(
+            "      Mechanism turned-instance matching: over fourteen wires "
+            + "on two anchor rows, one of them turned, the worst distance "
+            + "between a wire's PLACED first routing plane and the net "
+            + $"vertex the document BOUND it to is {worst:0.#########} m "
+            + $"(wire {worstWire}).");
+        if (worst > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "EVERY WIRE MUST BE BOUND TO THE ANCHOR IT WAS PLACED ON, "
+                + "and it is measured here off the collector's own payload "
+                + "rather than off the document that did the binding: wire "
+                + worstWire + "'s first routing plane, carried through its "
+                + "own instance frame, lands "
+                + worst.ToString("0.#########", CultureInfo.InvariantCulture)
+                + " m from the net vertex the document bound it to. The "
+                + "studio draws that cable to that vertex.");
+        }
     }
 
     /// <summary>
