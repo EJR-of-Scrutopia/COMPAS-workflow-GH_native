@@ -2217,27 +2217,30 @@ def test_the_ground_presets_swap_one_discs_material():
 
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert ("window.__studio = { state, scene, camera, controls, "
-            "applyDayCycle, placeProp,\n  ensurePropTemplate, "
-            "renderObjectPreview, composer, buildMachine,\n"
-            "  machine: () => machineObjects }" in js), (
-        "the probe rig reads app state through this hook, and frames "
-        "detail captures through the camera and controls; applyDayCycle is "
-        "exposed too (Task 3) so a probe can drive the day cycle directly "
-        "instead of re-deriving its formula in probe script JS, which would "
-        "drift from the pure function it is meant to be checking; and "
-        "placeProp, so a probe can populate a scene without synthesising a "
-        "pointer gesture per prop, which is how a check nobody runs gets "
-        "written; and the composer, so a probe can count REAL renders "
-        "rather than requestAnimationFrame ticks -- under software GL the "
-        "studio draws about once a second while rAF runs at sixty, and "
-        "readings settled on rAF come off a canvas that has not been "
-        "redrawn since the change they are meant to be measuring; and "
-        "buildMachine, so a probe can hand the reader a document and see "
-        "what it draws without a real export having to exist yet; and a "
-        "getter for the built machine, because machineObjects is a "
-        "module-level let that is replaced on every rebuild and a probe "
-        "needs the current one to read a reel's turns")
+    # Named, not quoted whole. The literal was asserted verbatim and
+    # broke the day `camera` became a getter -- a change the hook NEEDED,
+    # because the binding now moves between two projections and a probe
+    # handed the captured value would have measured the wrong frustum
+    # while failing nothing. What matters is which handles are reachable.
+    hook = js[js.index("window.__studio = {"):]
+    hook = hook[:hook.index("};") + 2]
+    for handle in ("state", "scene", "controls", "applyDayCycle",
+                   "placeProp", "ensurePropTemplate", "renderObjectPreview",
+                   "composer", "buildMachine",
+                   "machine: () => machineObjects",
+                   "get camera() { return camera; }",
+                   "setProjection", "snapCameraTo"):
+        assert handle in hook, (
+            handle + " is not on the probe hook. The rig reads app state "
+            "through it and frames its captures through the camera and "
+            "controls; applyDayCycle so a probe drives the real function "
+            "rather than re-deriving its formula; placeProp so a scene can "
+            "be populated without synthesising a pointer gesture per prop; "
+            "the composer so a probe counts REAL renders rather than rAF "
+            "ticks, which under software GL differ by sixty to one; "
+            "buildMachine so a probe can see what the reader draws before "
+            "any export exists; and the machine getter because that let is "
+            "replaced on every rebuild.")
 
 
 def test_the_postprocessing_addons_are_vendored():

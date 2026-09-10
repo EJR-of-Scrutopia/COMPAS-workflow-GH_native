@@ -1191,6 +1191,30 @@ body.panel-collapsed #event-log { right: var(--s4); }
    recording. */
 body.recording #stats-overlay { display: none; }
 
+/* The orthographic scale bar, in the same corner and below the readout.
+   Its WIDTH is the measurement, set in script from metres per pixel, so
+   the rule is the statement and the label only names it. End ticks
+   rather than a filled block: a bar you can read the ends of measures
+   better than one you have to guess the middle of. */
+#scale-bar { position: fixed; left: 12px; bottom: 40px; z-index: 15;
+  height: 16px; box-sizing: border-box; padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.75); border-top: 0;
+  font-family: ui-monospace, monospace; font-size: 10px; line-height: 15px;
+  color: #fff; text-align: center; white-space: nowrap;
+  background: rgba(12, 14, 17, 0.45); backdrop-filter: blur(3px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); pointer-events: none; }
+/* Same rule as the readout, and for the same reason. */
+body.recording #scale-bar { display: none; }
+
+/* Projection and the snapped views. Six buttons at three to a row read
+   as two rows of elevations rather than a strip of six unrelated ones. */
+#camera-views { display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: var(--s1); margin: var(--s1) 0 0; }
+#camera-views button { width: auto; margin: 0; height: var(--h-small);
+  padding: 0 var(--s1); }
+#camera-views button.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
+
 
 /* The Skies drawer's mode row: the setting, then the weather that
    belongs to it, above the dials that tune whichever is chosen. */

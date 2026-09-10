@@ -1928,8 +1928,21 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
         "the prop's own bounding box must not size the gumball again: "
         "that is what gave a fifteen-metre beech a car-sized widget")
     size = _js_function(js, "function sizePropGumball()")
-    assert "camera.position.distanceTo(propGumball.position)" in size
-    assert "Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)" in size, (
+    # The gumball keeps a constant SCREEN size, so it needs the world
+    # height the camera sees where it stands. The two projections answer
+    # that differently and there is no shared formula: distance is the
+    # whole story in perspective and means nothing in orthographic, where
+    # the frame is as wide at the near plane as at the far one. Left on
+    # the perspective formula, an orthographic gumball grew with every
+    # step the eye took backwards.
+    assert "visibleHeightAt(propGumball.position)" in size, (
+        "the gumball asks the active projection how big a metre is")
+    span = _js_function(js, "function visibleHeightAt(point)")
+    assert "orthoFrameHeight / (camera.zoom || 1)" in span, (
+        "an orthographic frame is its own height over its zoom, and no "
+        "function of distance at all")
+    assert "camera.position.distanceTo(point)" in span
+    assert "Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2)" in span, (
         "the visible world height at that distance, from the real lens")
     assert "propGumball.scale.setScalar" in size
     # Sized on the one path every render takes, the recorder's included.
@@ -2875,3 +2888,114 @@ def test_a_scene_remembers_where_and_when_its_sun_was():
     assert "const siteState = scene_.site;" in js
     assert 'if (siteState && typeof siteState.latitude === "number")' in js, (
         "an older scene carries no site, and must keep its own angles")
+
+
+def test_the_studio_keeps_two_real_cameras_not_one_faked_projection():
+    """You can write an orthographic projectionMatrix into a
+    PerspectiveCamera and it renders perfectly. It also picks wrongly
+    for ever after, because Raycaster.setFromCamera branches on
+    isPerspectiveCamera and goes on building cone rays through a
+    parallel frame. The gumball drifts from the pointer and nothing in
+    the code says why.
+
+    So there are two real cameras and `camera` is a binding that moves
+    between them, which is also why the hundred-odd places that read it
+    needed no edit at all."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    assert "const perspectiveCamera = new THREE.PerspectiveCamera" in js
+    assert "const orthographicCamera = new THREE.OrthographicCamera" in js
+    assert "let camera = perspectiveCamera;" in js, (
+        "a const camera cannot be swapped, and every reader would need "
+        "rewriting to an accessor")
+
+    swap = _js_function(js, "function setProjection(kind)")
+    assert "renderPass.camera = camera;" in swap, (
+        "the render pass holds its own reference and would keep drawing "
+        "through the old projection")
+    assert "controls.object = camera;" in swap, (
+        "OrbitControls reads .object on every update, so rebinding it is "
+        "the whole of handing the mouse over")
+    assert "wanted.quaternion.copy(camera.quaternion);" in swap, (
+        "the new camera inherits the old aim, or the toggle spins the view")
+
+    # No stray reader of a lens the orthographic camera does not have.
+    # CODE lines only: the comment explaining the trap says "camera.fov"
+    # itself, and banning the explanation along with the defect is the
+    # same mistake the NOTICE writers caught me making.
+    import re as _re
+    stray = [line for line in js.splitlines()
+             if not line.lstrip().startswith(("//", "*", "/*"))
+             and _re.search(r"(?<!perspective)(?<!Perspective)\bcamera\.fov\b",
+                            line)]
+    assert not stray, (
+        "every lens reader must name the perspective camera; an "
+        "orthographic one has no fov and hands back undefined: "
+        + "; ".join(s.strip() for s in stray[:3]))
+
+
+def test_a_resize_writes_planes_when_the_camera_has_no_aspect():
+    """An orthographic camera has no .aspect: its shape is four planes.
+    A resize that wrote .aspect and called updateProjectionMatrix would
+    do nothing whatsoever and leave the drawing stretched, silently."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    frustum = _js_function(js, "function applyCameraFrustum(aspect)")
+    assert "camera.isOrthographicCamera" in frustum
+    for plane in ("camera.top =", "camera.bottom =", "camera.right =",
+                  "camera.left ="):
+        assert plane in frustum, plane
+    assert "camera.aspect = aspect;" in frustum, "and the other one still"
+
+    # BOTH resize paths, the live viewport and the recorder's forced
+    # frame. The recorder was the one that would have gone unnoticed:
+    # nobody watches a take being written.
+    assert js.count("applyCameraFrustum(") >= 4, (
+        "the definition, the switch, the viewport resize and the recorder")
+    assert "applyCameraFrustum(w / h);" in js, "the live viewport"
+    assert "applyCameraFrustum(frame.width / frame.height);" in js, (
+        "the recorder's forced frame")
+
+
+def test_the_scale_bar_states_a_measurement_only_where_one_is_true():
+    """In perspective a scale bar is a lie that looks like a
+    measurement: a metre at the back of the frame is a fraction of a
+    metre at the front. So it is hidden rather than approximated."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    bar = _js_function(js, "function paintScaleBar()")
+    assert "if (!camera.isOrthographicCamera) { bar.hidden = true; return; }" in bar
+
+    # Round lengths only. A bar reading 37 m is a number, not a scale.
+    assert "const SCALE_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];" in js
+    assert "for (const step of SCALE_STEPS) if (step <= target) metres = step;" in bar, (
+        "the nearest round length AT OR UNDER the target, so the bar never "
+        "claims more of the frame than it has")
+
+    # The width is the statement, and it comes from metres per pixel.
+    assert "bar.style.width = Math.round(metres / metresPerPixel)" in bar
+    assert "(orthoFrameHeight / (camera.zoom || 1)) / pixels" in bar, (
+        "zoom is how OrbitControls dollies an orthographic camera, so a "
+        "bar that ignored it would be wrong after the first scroll")
+
+
+def test_a_snapped_view_stands_on_the_axis_it_names():
+    """Six standing places, at the distance the camera already had, so a
+    snap turns the model rather than walking away from it."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    for view, axis in (("front", "[0, -1, 0]"), ("back", "[0, 1, 0]"),
+                       ("left", "[-1, 0, 0]"), ("right", "[1, 0, 0]"),
+                       ("top", "[0, 0, 1]")):
+        assert "{}: {}".format(view, axis) in js, view
+
+    snap = _js_function(js, "function snapCameraTo(name)")
+    assert 'if (name === "top") camera.up.set(0, 1, 0);' in js, (
+        "looking straight down, the camera's own up is parallel to the "
+        "view and the matrix degenerate; +Y there is plan north up")
+    assert 'if (name !== "top") clampCameraAboveFloor();' in snap, (
+        "the floor guard exists for the orbit, and would shove a plan up "
+        "out of its own view")
+    assert "camera.position.distanceTo(controls.target) || 30" in snap, (
+        "the distance is kept, so a snap turns rather than travels")

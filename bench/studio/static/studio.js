@@ -150,7 +150,9 @@ const state = {
   // are untouched, so restoring the control is a control and a handler.
   formworkMode: "hidden",
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
-  cameraAspect: "fill",  // the Camera menu's frame: "fill" or a ratio as a string
+  cameraAspect: "fill",  // the Camera frame: "fill" or a ratio as a string
+  projection: "perspective",  // or "orthographic": a picture, or a drawing
+  cameraView: null,      // the snapped view last taken, for the highlight
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
@@ -302,9 +304,19 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const EXPOSURE_GAIN = 1 / 0.6;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+// TWO CAMERAS, ONE BINDING. `camera` is a let, not a const, and every one
+// of the hundred-odd places that reads it picks up whichever projection
+// is current. The alternative -- keeping a PerspectiveCamera and writing
+// an orthographic projectionMatrix into it -- renders correctly and picks
+// wrongly, because Raycaster.setFromCamera branches on isPerspectiveCamera
+// and would go on building cone rays through an orthographic frame. The
+// gumball would drift from the pointer and nothing would say why.
+const perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+const orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 500);
+let camera = perspectiveCamera;
 camera.position.set(24, -24, 14);
 camera.up.set(0, 0, 1);
+orthographicCamera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 const propRaycaster = new THREE.Raycaster();
@@ -342,7 +354,10 @@ let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + project
 // keeps the antialiasing the direct canvas render had.
 const composerTarget = new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType });
 const composer = new EffectComposer(renderer, composerTarget);
-composer.addPass(new RenderPass(scene, camera));
+// Held, not anonymous: switching projection means handing this pass the
+// other camera, and a pass nobody has a name for cannot be told.
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
 composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(BrightnessContrastShader);
 composer.addPass(gradePass);
@@ -2036,12 +2051,25 @@ const GUMBALL_AXES = [
 // however far away you stand. The fraction is of the viewport height.
 const GUMBALL_SCREEN = 0.1;
 
+// The world height the camera sees where the gumball stands, which is
+// what keeps the handles a constant size on screen however far away the
+// prop is. The two projections answer it differently and there is no
+// common formula: distance is the whole story in perspective and means
+// NOTHING in orthographic, where the frame is the same width at the
+// near plane as at the far one. Left on the perspective formula, an
+// orthographic gumball grew with every step the eye took backwards.
+function visibleHeightAt(point) {
+  if (camera.isOrthographicCamera) {
+    return orthoFrameHeight / (camera.zoom || 1);
+  }
+  const distance = camera.position.distanceTo(point);
+  return 2 * distance
+    * Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2);
+}
+
 function sizePropGumball() {
   if (!propGumball) return;
-  const distance = camera.position.distanceTo(propGumball.position);
-  // The world height the camera sees at the gumball's own distance.
-  const span = 2 * distance
-    * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const span = visibleHeightAt(propGumball.position);
   propGumball.scale.setScalar(Math.max(1e-4, GUMBALL_SCREEN * span));
 }
 
@@ -2941,7 +2969,7 @@ function collectScene() {
   const control = (id) => document.getElementById(id);
   return {
     camera: { position: camera.position.toArray(), target: controls.target.toArray(),
-      fov: camera.fov, frame: state.cameraAspect },
+      fov: perspectiveCamera.fov, frame: state.cameraAspect },
     showMode: state.showMode,
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
@@ -2968,6 +2996,13 @@ function collectScene() {
     // The angles alone were never enough to reproduce a picture: reopen
     // a June noon in December and the numbers restore while the reason
     // for them is gone.
+    // Which drawing convention the scene was composed in. A plan saved
+    // and reopened as a perspective is a different image entirely, and
+    // the camera position alone cannot say which was meant.
+    projection: state.projection,
+    cameraView: state.cameraView,
+    orthoHeight: orthoFrameHeight,
+    orthoZoom: orthographicCamera.zoom,
     site: {
       latitude: SUN_SITE.latitude,
       longitude: SUN_SITE.longitude,
@@ -3267,9 +3302,18 @@ async function applyScene(record) {
   // the orbit, exactly as it always has.
   const view = scene_.camera;
   if (view && typeof view.fov === "number") {
-    camera.fov = view.fov;
-    camera.updateProjectionMatrix();
+    perspectiveCamera.fov = view.fov;
+    perspectiveCamera.updateProjectionMatrix();
   }
+  // The projection BEFORE the position, so the eye lands in the camera
+  // that is going to use it. Restoring the place first and swapping
+  // afterwards would frame the ortho view off the old distance.
+  if (typeof scene_.orthoHeight === "number") orthoFrameHeight = scene_.orthoHeight;
+  if (typeof scene_.orthoZoom === "number") orthographicCamera.zoom = scene_.orthoZoom;
+  if (scene_.projection === "orthographic" || scene_.projection === "perspective") {
+    setProjection(scene_.projection);
+  }
+  state.cameraView = scene_.cameraView || null;
   if (view && typeof view.frame === "string") {
     state.cameraAspect = view.frame;
     applyCameraAspect();
@@ -4394,10 +4438,11 @@ function lensMillimetres(fov) {
 }
 
 function syncCameraControls() {
-  const fov = Math.round(camera.fov);
+  const fov = Math.round(perspectiveCamera.fov);
   document.getElementById("camera-fov").value = fov;
   document.getElementById("camera-fov-value").textContent = fov;
-  document.getElementById("camera-mm").textContent = lensMillimetres(camera.fov);
+  document.getElementById("camera-mm").textContent =
+    lensMillimetres(perspectiveCamera.fov);
   document.getElementById("camera-aspect").value = state.cameraAspect;
   paintSegmented("camera-aspect-segments", "camera-aspect");
 }
@@ -4432,11 +4477,156 @@ function recordingFrame() {
     : { width: even(1920 * ratio), height: 1920 };
 }
 
-document.getElementById("camera-fov").addEventListener("input", (e) => {
-  camera.fov = +e.target.value;
+// ---------- projection ----------
+// An orthographic camera is what turns a picture into a drawing: every
+// bay of an arcade the same width on the page, a springing line straight
+// rather than raked, and a measurable image. A perspective view argues
+// how a vault feels; an orthographic one states what it is.
+//
+// How tall the frame is, in metres, at the orbit target. Zoom is left to
+// OrbitControls, which dollies an orthographic camera by changing .zoom
+// rather than the distance, so this is only the base the zoom divides.
+let orthoFrameHeight = 20;
+
+// The perspective camera's own frame height where the orbit target sits:
+// h = 2 d tan(fov / 2). Switching on this number is what makes the two
+// projections frame the same thing, so the toggle reads as a change of
+// convention rather than a jump to somewhere else entirely.
+function perspectiveFrameHeight() {
+  const distance = perspectiveCamera.position.distanceTo(controls.target);
+  return 2 * distance * Math.tan(perspectiveCamera.fov * Math.PI / 360);
+}
+
+// Both resize paths funnel here. An orthographic camera has no .aspect:
+// its shape is four planes, so a resize that wrote .aspect and called
+// updateProjectionMatrix would silently do nothing at all and leave the
+// drawing stretched.
+function applyCameraFrustum(aspect) {
+  if (camera.isOrthographicCamera) {
+    const half = orthoFrameHeight / 2;
+    camera.top = half;
+    camera.bottom = -half;
+    camera.right = half * aspect;
+    camera.left = -half * aspect;
+  } else {
+    camera.aspect = aspect;
+  }
   camera.updateProjectionMatrix();
+}
+
+function viewportAspect() {
+  const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+  return w / h;
+}
+
+function setProjection(kind) {
+  const wanted = kind === "orthographic" ? orthographicCamera : perspectiveCamera;
+  if (wanted === camera) return;
+  if (wanted.isOrthographicCamera) {
+    orthoFrameHeight = perspectiveFrameHeight();
+    wanted.zoom = 1;
+  } else {
+    // Coming back the other way, the ortho zoom is what decided how big
+    // things looked, so the perspective camera is placed at the distance
+    // that frames the same height. Without this, zooming in orthographic
+    // and switching back throws the eye across the room.
+    const visible = orthoFrameHeight / (orthographicCamera.zoom || 1);
+    const distance = visible
+      / (2 * Math.tan(perspectiveCamera.fov * Math.PI / 360));
+    const back = new THREE.Vector3()
+      .subVectors(orthographicCamera.position, controls.target);
+    if (back.lengthSq() < 1e-9) back.set(0, -1, 0);
+    wanted.position.copy(controls.target).add(back.setLength(distance));
+  }
+  if (wanted.isOrthographicCamera) wanted.position.copy(camera.position);
+  wanted.up.copy(camera.up);
+  wanted.quaternion.copy(camera.quaternion);
+  camera = wanted;
+  renderPass.camera = camera;
+  // OrbitControls reads .object on every update, so rebinding it is the
+  // whole of handing the mouse over.
+  controls.object = camera;
+  controls.update();
+  state.projection = kind;
+  applyCameraFrustum(viewportAspect());
+  clampCameraAboveFloor();
+  paintProjectionControls();
+  paintScaleBar();
+  rememberSession();
+}
+
+// The six standing places a drawing is made from. Distance is kept, so a
+// snap turns the model rather than walking away from it. Top looks down
+// the -Z axis, where the camera's own up would be parallel to the view
+// and the matrix degenerate, so up becomes +Y there: plan north up.
+const CAMERA_VIEWS = {
+  front: [0, -1, 0], back: [0, 1, 0], left: [-1, 0, 0],
+  right: [1, 0, 0], top: [0, 0, 1],
+  iso: [1, -1, 0.8],
+};
+
+function snapCameraTo(name) {
+  const axis = CAMERA_VIEWS[name];
+  if (!axis) return;
+  const distance = camera.position.distanceTo(controls.target) || 30;
+  const direction = new THREE.Vector3(...axis).normalize();
+  camera.up.set(0, 0, 1);
+  if (name === "top") camera.up.set(0, 1, 0);
+  camera.position.copy(controls.target)
+    .add(direction.multiplyScalar(distance));
+  // A plan looking straight down would otherwise be clamped up out of
+  // its own view by the floor guard, which exists for the orbit and not
+  // for a snapped elevation.
+  if (name !== "top") clampCameraAboveFloor();
+  controls.update();
+  state.cameraView = name;
+  paintProjectionControls();
+  paintScaleBar();
+  rememberSession();
+}
+
+// A scale bar means something only in an orthographic view, where one
+// metre is the same number of pixels everywhere in the frame. In
+// perspective it would be a lie that looked like a measurement, so it is
+// hidden rather than approximated.
+const SCALE_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+function paintScaleBar() {
+  const bar = document.getElementById("scale-bar");
+  if (!bar) return;
+  if (!camera.isOrthographicCamera) { bar.hidden = true; return; }
+  const pixels = canvas.clientHeight || 1;
+  const metresPerPixel = (orthoFrameHeight / (camera.zoom || 1)) / pixels;
+  // Aim at a fifth of the frame, then take the nearest round length at or
+  // under it: a bar reading "37 m" is a number, not a scale.
+  const target = metresPerPixel * (canvas.clientWidth || 1) * 0.2;
+  let metres = SCALE_STEPS[0];
+  for (const step of SCALE_STEPS) if (step <= target) metres = step;
+  bar.hidden = false;
+  bar.style.width = Math.round(metres / metresPerPixel) + "px";
+  bar.textContent = metres < 1 ? Math.round(metres * 1000) + " mm"
+    : metres + " m";
+}
+
+function paintProjectionControls() {
+  const select = document.getElementById("camera-projection");
+  if (select) select.value = state.projection;
+  paintSegmented("camera-projection-segments", "camera-projection");
+  for (const button of document.querySelectorAll("#camera-views button")) {
+    button.classList.toggle("active", button.dataset.view === state.cameraView);
+  }
+}
+
+document.getElementById("camera-fov").addEventListener("input", (e) => {
+  // The PERSPECTIVE camera's lens, named outright. An orthographic
+  // camera has no fov, so writing camera.fov while one was active would
+  // hang a dead property off it and the dial would stop doing anything
+  // the moment the projection changed.
+  perspectiveCamera.fov = +e.target.value;
+  perspectiveCamera.updateProjectionMatrix();
   document.getElementById("camera-fov-value").textContent = e.target.value;
-  document.getElementById("camera-mm").textContent = lensMillimetres(camera.fov);
+  document.getElementById("camera-mm").textContent =
+    lensMillimetres(perspectiveCamera.fov);
 });
 document.getElementById("camera-fov").addEventListener("change", () => {
   rememberSession();
@@ -4448,6 +4638,22 @@ document.getElementById("camera-aspect").addEventListener("change", (e) => {
   rememberSession();
 });
 window.addEventListener("resize", applyCameraAspect);
+document.getElementById("camera-projection").addEventListener("change", (e) => {
+  setProjection(e.target.value);
+});
+for (const button of document.querySelectorAll("#camera-views button")) {
+  button.addEventListener("click", () => snapCameraTo(button.dataset.view));
+}
+// An orthographic zoom changes metres per pixel without moving anything,
+// so the bar has to follow the controls and not only the resize.
+controls.addEventListener("change", paintScaleBar);
+// A snapped view survives only until the mouse disagrees with it: after
+// an orbit the highlight would be claiming a view the camera is not at.
+controls.addEventListener("start", () => {
+  if (!state.cameraView) return;
+  state.cameraView = null;
+  paintProjectionControls();
+});
 
 // The scene restore and the library boot write their controls SILENTLY
 // on purpose (dispatching change would fire six overlapping server
@@ -11750,8 +11956,7 @@ async function recordAnimation() {
   composer.setPixelRatio(1);
   renderer.setSize(frame.width, frame.height, false);
   composer.setSize(frame.width, frame.height);
-  camera.aspect = frame.width / frame.height;
-  camera.updateProjectionMatrix();
+  applyCameraFrustum(frame.width / frame.height);
   // Measured, not guessed at: the next time a take is slow, the log says
   // which of the three is eating it rather than leaving us to reason.
   const spent = { render: 0, encode: 0, upload: 0 };
@@ -11963,8 +12168,8 @@ function resize() {
   if (canvas.width !== w || canvas.height !== h) {
     renderer.setSize(w, h, false);
     composer.setSize(w, h);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    applyCameraFrustum(w / h);
+    paintScaleBar();
   }
 }
 
@@ -12319,7 +12524,10 @@ guarded("the pickers", wireAllPickers);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the camera frame segments", () => {
   buildSegmented("camera-aspect-segments", "camera-aspect");
+  buildSegmented("camera-projection-segments", "camera-projection");
   syncCameraControls();
+  paintProjectionControls();
+  paintScaleBar();
 });
 guarded("the slider rows", () => upgradeSliders());
 guarded("the panel groups", buildGroups);
@@ -12383,9 +12591,15 @@ requestAnimationFrame(frame);
 // placeProp joins them so a probe can populate a scene without synthesising
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
-window.__studio = { state, scene, camera, controls, applyDayCycle, placeProp,
+window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
-  machine: () => machineObjects };
+  machine: () => machineObjects,
+  // A GETTER, because `camera` is now a binding that moves between two
+  // objects. Captured by value, a probe in an orthographic view would
+  // have been handed the perspective camera and quietly measured the
+  // wrong frustum.
+  get camera() { return camera; },
+  perspectiveCamera, orthographicCamera, setProjection, snapCameraTo };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.

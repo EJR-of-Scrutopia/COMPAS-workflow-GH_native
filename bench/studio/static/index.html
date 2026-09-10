@@ -29,6 +29,12 @@
   <div><span>gpu</span><b id="stat-gpu">--</b></div>
   <div><span>cpu</span><b id="stat-cpu">--</b></div>
 </div>
+<!-- The scale bar sits under the stats readout in the same corner, and
+     appears only in an orthographic view, where one metre is the same
+     number of pixels everywhere in the frame. In perspective it would be
+     a lie that looked like a measurement. Its WIDTH is the measurement,
+     so the label rides inside the rule it describes. -->
+<div id="scale-bar" hidden></div>
 <div id="event-log"></div>
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
@@ -406,6 +412,25 @@
       <option value="0.5625">9:16</option>
     </select>
     <div id="camera-aspect-segments" class="segmented"></div>
+    <!-- Projection, and the standing places a drawing is made from.
+         Orthographic is what turns a picture into a drawing: every bay of
+         an arcade the same width on the page, the springing line straight
+         rather than raked, and an image somebody can measure. The scale
+         bar in the corner appears with it and only with it, because in
+         perspective it would be a lie that looked like a measurement. -->
+    <select id="camera-projection" class="hidden" title="Projection">
+      <option value="perspective" selected>Perspective</option>
+      <option value="orthographic">Orthographic</option>
+    </select>
+    <div id="camera-projection-segments" class="segmented"></div>
+    <div id="camera-views">
+      <button data-view="front" title="Look north along -Y, elevation">Front</button>
+      <button data-view="back" title="Look south along +Y, rear elevation">Back</button>
+      <button data-view="left" title="Look east along -X, side elevation">Left</button>
+      <button data-view="right" title="Look west along +X, side elevation">Right</button>
+      <button data-view="top" title="Look straight down, plan with north up">Plan</button>
+      <button data-view="iso" title="The three-quarter view a model is usually read from">Iso</button>
+    </div>
     <label title="The grade on the lens, not the light in the scene"><span>Brightness</span>
       <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1">
       <b id="brightness-value">100</b><em>%</em></label>
