@@ -169,4 +169,4 @@ The reason for the exclusion is the one given in section 4, and it is worth repe
 
 **What to actually place.** The robot's rail footprint and its anchor bolt pattern on the plinth. Chalk setting-out lines at the springing, which is the single most convincing detail available to you because it is the one mark a formwork-free process genuinely leaves. Lime staining running down from a weep. Tyre tracks and mud on the delivery route. A painted scale rule along the plinth edge, which does the scale bar's job inside the picture rather than over it. Resist the temptation to place dark contact patches under props as a stand-in for occlusion -- GTAO lands two weeks from now and then you will have to go and delete them all.
 
-A decal is the cheapest way to make a construction site look used, and a site that looks used is the quiet argument that the process is real.",
+A decal is the cheapest way to make a construction site look used, and a site that looks used is the quiet argument that the process is real.

@@ -436,6 +436,34 @@
     <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40" class="hidden">
     <input id="sun-colour" type="color" value="#ffffff" class="hidden">
 
+    <!-- WHERE and WHEN the sun is solved for. The solving itself has
+         always been real: fields.js runs the NOAA/Meeus position with
+         the equation of time and Bennett's refraction, good to about a
+         tenth of a degree. What was written into the source rather than
+         offered was the place (London) and the day (whenever the page
+         loaded), which the two comments in studio.js both said would
+         come later. This is later.
+         North is the one that changes a picture most. A model's +Y and
+         the site's north are the same direction only by accident, and
+         until you can say the angle between them, a correctly computed
+         sun still lands on the wrong side of the vault. -->
+    <span class="row-heading">Site</span>
+    <div id="site-row">
+      <select id="site-place" title="Jump to a place. Choosing one sets the latitude and longitude; moving either afterwards puts this back to Custom."></select>
+      <input id="site-date" type="date" title="The day the sun is solved for. Noon shadow length changes far more between June and December than it does across a whole afternoon.">
+    </div>
+    <div class="dial-block" id="scene-site-dials">
+      <label title="How far north of the equator the site is. Both the direction of a shadow and the length of the day follow from it."><span>Latitude</span>
+        <input id="site-latitude" type="range" min="-60" max="72" step="0.01" value="51.51">
+        <b id="site-latitude-value">51.51</b><em>&deg;N</em></label>
+      <label title="How far east of Greenwich the site is. This shifts solar noon against the clock, so it moves what time of day a given shadow happens at."><span>Longitude</span>
+        <input id="site-longitude" type="range" min="-180" max="180" step="0.01" value="-0.13">
+        <b id="site-longitude-value">-0.13</b><em>&deg;E</em></label>
+      <label title="Which compass bearing the model's +Y axis points along. Leave it at 0 and the model's north is true north."><span>North</span>
+        <input id="site-north" type="range" min="0" max="359" step="1" value="0" data-unit="1">
+        <b id="site-north-value">0</b><em>&deg;</em></label>
+    </div>
+
     <!-- Studio / Sky / HDRI and the weather moved to the shelf's Skies
          drawer on Param's word: "in skies tile lets also put the tab to
          studio and sky modes and choose from the options they have too".

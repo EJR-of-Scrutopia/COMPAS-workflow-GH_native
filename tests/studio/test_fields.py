@@ -745,3 +745,86 @@ def test_sheet_uvs_one_uniform_sheet_across_the_vault(tmp_path):
     finished = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert finished.returncode == 0, finished.stderr or finished.stdout
     assert "ok" in finished.stdout
+
+
+SITE_CLOCK_CHECK = textwrap.dedent("""
+    import { utcOffsetMinutes, localClockMinutes, sunPosition }
+      from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+
+    // The studio's clock reads local mean time at the site. Every place
+    // the picker offers, against the civil offset it actually keeps in
+    // winter. Half an hour is the honest tolerance for a rule derived
+    // from longitude; Spain is the one that spends it, because Barcelona
+    // sits on Greenwich's hour and keeps Berlin's.
+    const PLACES = [
+      ["London", -0.128, 0], ["Cardiff", -3.179, 0], ["Edinburgh", -3.188, 0],
+      ["Zurich", 8.542, 60], ["Barcelona", 2.173, 60], ["Cairo", 31.236, 120],
+      ["New York", -74.006, -300], ["Sydney", 151.209, 600],
+    ];
+    for (const [name, longitude, civil] of PLACES) {
+      const derived = utcOffsetMinutes(longitude);
+      expect(Math.abs(derived - civil) <= 60,
+        name + ": derived " + derived + " against civil " + civil);
+    }
+
+    // THE FAULT THIS EXISTS FOR. Noon on the December solstice at Sydney
+    // is high summer, near 79 degrees. Read as UTC it was 23:00 and the
+    // sun sat 27 degrees UNDER the horizon, so choosing a place put the
+    // lights out. The conversion is what the studio does: the clock
+    // reading, less the site's offset, is the UTC instant.
+    const sydney = [-33.869, 151.209];
+    const dayStart = Date.UTC(2026, 11, 21);
+    const local = (minutes, lon) =>
+      new Date(dayStart + (minutes - utcOffsetMinutes(lon)) * 60000);
+
+    const noon = sunPosition(local(12 * 60, sydney[1]), ...sydney);
+    expect(noon.elevation > 75 && noon.elevation < 82,
+      "Sydney midsummer noon should be near 79, got " + noon.elevation);
+    // And due north, because that is where the southern sun is.
+    expect(noon.azimuth > 340 || noon.azimuth < 20,
+      "and near due north, got " + noon.azimuth);
+
+    // Read as UTC -- the old behaviour -- the same instant is night.
+    const asUtc = sunPosition(new Date(dayStart + 12 * 3600e3), ...sydney);
+    expect(asUtc.elevation < 0,
+      "the UTC reading really was below the horizon, got " + asUtc.elevation);
+
+    // London is where the two conventions agree, which is exactly why
+    // the fault stayed invisible for as long as it did.
+    expect(utcOffsetMinutes(-0.128) === 0, "London derives no offset");
+
+    // A UTC instant read back onto the site's clock. Sydney sunrise near
+    // 05:40 local on the December solstice is 19:40 UTC the day before;
+    // only the reading is wanted, so it wraps rather than carrying a day.
+    expect(localClockMinutes(new Date(Date.UTC(2026, 11, 20, 19, 40)),
+      151.209) === 5 * 60 + 40, "19:40 UTC is 05:40 in Sydney");
+    // Wrapping the other way, across midnight downward.
+    expect(localClockMinutes(new Date(Date.UTC(2026, 11, 21, 2, 0)),
+      -74.006) === 21 * 60, "02:00 UTC is 21:00 in New York");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_clock_is_local_to_the_site_not_utc(tmp_path):
+    """Adding a site picker exposed an assumption that had only ever been
+    true by coincidence: state.sunMinutes was UTC, and London is where UTC
+    and local mean time agree to within two minutes. Choosing Sydney put
+    the sun 27 degrees under the horizon at noon.
+
+    The rule is derived from longitude rather than looked up, because a
+    zone database answers a political question and a shadow asks an
+    astronomical one."""
+
+    script = tmp_path / "check_site_clock.mjs"
+    script.write_text(
+        SITE_CLOCK_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    finished = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert finished.returncode == 0, finished.stderr or finished.stdout
+    assert "ok" in finished.stdout

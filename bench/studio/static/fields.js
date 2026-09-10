@@ -654,6 +654,34 @@ export function sunPosition(when, latitude, longitude, northOffset = 0) {
   };
 }
 
+// THE SITE'S OWN CLOCK, from its longitude and nothing else.
+//
+// The studio's hour used to mean UTC. Nobody could see that while the
+// site was fixed at London, where 12:00 UTC is solar noon to within two
+// minutes, so the two agreed by coincidence. The moment the place became
+// a control the coincidence broke: Sydney at "noon" was 23:00 and the
+// sun sat 27 degrees below the horizon, so choosing a place put the
+// lights out.
+//
+// Derived, not looked up. A zone database is a large dependency and it
+// answers a POLITICAL question -- which is why Spain, on Madrid's
+// meridian, keeps Berlin's clock -- where the one a shadow cares about
+// is astronomical. So this is local MEAN time: within half an hour of
+// the civil clock nearly everywhere, exactly the quantity a sun study
+// wants, and carrying no daylight saving for the same reason.
+export function utcOffsetMinutes(longitude) {
+  return Math.round(longitude / 15) * 60;
+}
+
+// A UTC instant read off that clock. Only the reading is wanted, never
+// the calendar day it belongs to, which is why this wraps instead of
+// carrying a date: a Sydney sunrise is 07:00 there whichever UTC day the
+// solver happened to find it on.
+export function localClockMinutes(when, longitude) {
+  const utc = when.getUTCHours() * 60 + when.getUTCMinutes();
+  return ((utc + utcOffsetMinutes(longitude)) % 1440 + 1440) % 1440;
+}
+
 // Solar noon for a UTC day, iterated because the equation of time depends
 // on the instant it is being solved for.
 export function solarNoonUTC(dayStartMs, longitude) {

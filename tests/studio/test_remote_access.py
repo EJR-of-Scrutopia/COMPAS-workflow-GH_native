@@ -2811,3 +2811,67 @@ def test_the_scatter_remembers_its_rules_but_not_its_output():
                  "scatter-clump-size", "scatter-clearance"):
         assert dial in sync, dial
     assert "syncScatterControls();" in _js_function(js, "function renderShelfScatter()")
+
+
+def test_every_hour_the_studio_shows_is_the_site_s_own():
+    """One clock, one meaning. state.sunMinutes reads as local mean time
+    at the site, so every route from a minute to an instant has to spend
+    the offset -- and every route from an instant back to a reading has
+    to earn it.
+
+    The route that was missed the first time was the day cycle:
+    timeAtElevation answers in UTC, and its dawn went straight into
+    state.sunMinutes. In Sydney that swept from 19:00 to 08:00, through
+    the night, with every frame correctly computed for the wrong hours.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    # Minute to instant: the offset comes off.
+    assert "minutes - siteUtcOffsetMinutes()" in js, (
+        "minutesToDate must take the site's clock back to UTC")
+
+    # Instant to reading: the offset goes on, for BOTH ends of the cycle.
+    for name in ("function dayCycleStart()", "function dayCycleEnd()"):
+        body = _js_function(js, name)
+        assert "localMinutes(" in body, (
+            "{} reads a UTC answer onto the site's clock".format(name))
+        assert "getUTCHours()" not in body, (
+            "{} must not read raw UTC parts again".format(name))
+
+    # And the rule itself lives where it can be executed by a test, not
+    # buried in the module that needs a DOM and a WebGL context to load.
+    fields = (REPO / "bench" / "studio" / "static" / "fields.js").read_text(
+        encoding="utf-8")
+    assert "export function utcOffsetMinutes(longitude)" in fields
+    assert "export function localClockMinutes(when, longitude)" in fields
+
+    # A clock that silently means something other than UTC is how the
+    # Sydney fault got in, so the reading says which one it is.
+    assert '" UTC" + (offset > 0 ? "+" : "") + offset' in js, (
+        "the sun readout states its zone whenever there is one")
+
+
+def test_a_scene_remembers_where_and_when_its_sun_was():
+    """Azimuth and elevation were saved; the place and the day that
+    produced them were not. Reopen a June noon in December and the two
+    angles restore while the reason for them is gone, which is the same
+    picture by accident rather than on purpose.
+
+    The restore is guarded, because a scene saved before the site existed
+    holds angles and NO place: re-solving those against today's date at
+    London would move its sun out from under a camera framed around it.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    for field in ("latitude: SUN_SITE.latitude",
+                  "longitude: SUN_SITE.longitude",
+                  "northOffset: SUN_SITE.northOffset",
+                  "day: isoDay(sunDay())",
+                  "minutes: state.sunMinutes"):
+        assert field in js, "a saved scene carries {}".format(field)
+
+    assert "const siteState = scene_.site;" in js
+    assert 'if (siteState && typeof siteState.latitude === "number")' in js, (
+        "an older scene carries no site, and must keep its own angles")

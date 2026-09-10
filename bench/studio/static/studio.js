@@ -24,7 +24,7 @@ import {
   smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
-  sunPosition, sunLight, timeAtElevation,
+  sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
 } from "/static/fields.js";
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
@@ -519,14 +519,21 @@ function applyDayCycle(u) {
   applySunFromTime();
 }
 
+// timeAtElevation answers in UTC and state.sunMinutes is the site's own
+// clock, so the two have to be put in one frame. Without this the day
+// cycle in Sydney ran from 19:00 to 08:00 and swept the night.
+function localMinutes(when) {
+  return localClockMinutes(when, SUN_SITE.longitude);
+}
+
 function dayCycleStart() {
   const dawn = timeAtElevation(sunDay(), SUN_SITE.latitude, SUN_SITE.longitude, -6, false);
-  return dawn ? dawn.getUTCHours() * 60 + dawn.getUTCMinutes() : 5 * 60;
+  return dawn ? localMinutes(dawn) : 5 * 60;
 }
 
 function dayCycleEnd() {
   const dusk = timeAtElevation(sunDay(), SUN_SITE.latitude, SUN_SITE.longitude, -6, true);
-  return dusk ? dusk.getUTCHours() * 60 + dusk.getUTCMinutes() : 21 * 60;
+  return dusk ? localMinutes(dusk) : 21 * 60;
 }
 
 function setEnvironmentTexture(texture, target) {
@@ -2957,6 +2964,17 @@ function collectScene() {
       intensity: sun.intensity,
       intensityOverride: state.sunIntensityOverride,
     },
+    // WHERE and WHEN, saved beside the angles the two of them produce.
+    // The angles alone were never enough to reproduce a picture: reopen
+    // a June noon in December and the numbers restore while the reason
+    // for them is gone.
+    site: {
+      latitude: SUN_SITE.latitude,
+      longitude: SUN_SITE.longitude,
+      northOffset: SUN_SITE.northOffset,
+      day: isoDay(sunDay()),
+      minutes: state.sunMinutes,
+    },
     dayCycle: {
       seconds: state.dayCycle.seconds,
       peakElevation: state.dayCycle.peakElevation,
@@ -3188,6 +3206,28 @@ async function applyScene(record) {
   }
   if (typeof sunState.intensity === "number") sun.intensity = sunState.intensity;
   applySunFromSliders();
+
+  // The site AFTER the angles, and only when the scene carries one. A
+  // scene saved before this existed holds angles and no place, and
+  // re-solving those against today's date at London would move its sun
+  // out from under a camera that was framed around it. Where the scene
+  // does carry a site, the instant IS the sun and the saved angles are
+  // simply what applySunFromTime recomputes.
+  const siteState = scene_.site;
+  if (siteState && typeof siteState.latitude === "number") {
+    SUN_SITE.latitude = siteState.latitude;
+    SUN_SITE.longitude = typeof siteState.longitude === "number"
+      ? siteState.longitude : SUN_SITE.longitude;
+    SUN_SITE.northOffset = typeof siteState.northOffset === "number"
+      ? siteState.northOffset : 0;
+    const day = dayFromIso(siteState.day);
+    if (day) state.sunDay = day;
+    if (typeof siteState.minutes === "number") {
+      state.sunMinutes = siteState.minutes;
+    }
+    syncSiteControls();
+    applySunFromTime();
+  }
   applyGrade();
 
   // The scene's own instant, through the scene-only applier: applyTimeline
@@ -3554,6 +3594,77 @@ document.getElementById("scene-save").addEventListener("click", async () => {
 // later without touching any of this.
 const SUN_SITE = { latitude: 51.507, longitude: -0.1278, northOffset: 0 };
 
+// A handful of somewheres a vault might stand, not a gazetteer. Anything
+// not on the list is typed straight into the two readings, and the select
+// then says Custom rather than snapping to whichever of these is nearest.
+// Zurich earns its place because the BRG corpus this work argues with was
+// written there, and a figure reproducing one of theirs should be able to
+// stand under their sun.
+const SUN_PLACES = [
+  { name: "London", latitude: 51.507, longitude: -0.128 },
+  { name: "Cardiff", latitude: 51.481, longitude: -3.179 },
+  { name: "Edinburgh", latitude: 55.953, longitude: -3.188 },
+  { name: "Zurich", latitude: 47.377, longitude: 8.542 },
+  { name: "Barcelona", latitude: 41.385, longitude: 2.173 },
+  { name: "Cairo", latitude: 30.044, longitude: 31.236 },
+  { name: "New York", latitude: 40.713, longitude: -74.006 },
+  { name: "Sydney", latitude: -33.869, longitude: 151.209 },
+];
+
+// UTC parts, because minutesToDate builds the instant out of UTC parts.
+// Reading the local ones here would disagree by a day either side of
+// midnight, and the sun would jump a date the first time the box was
+// touched without anyone changing it.
+function isoDay(day) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return day.getUTCFullYear() + "-" + pad(day.getUTCMonth() + 1)
+    + "-" + pad(day.getUTCDate());
+}
+
+function dayFromIso(text) {
+  const parts = String(text || "").split("-").map(Number);
+  if (parts.length !== 3 || !parts.every(Number.isFinite)) return null;
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+}
+
+// One writer for the whole block, so the dials, their readings, the date
+// box and the place name cannot come to disagree about where the studio
+// thinks it is standing.
+function syncSiteControls() {
+  const write = (id, value, reading) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.value = value;
+    paintScrub(input);
+    const span = document.getElementById(id + "-value");
+    if (span) span.textContent = reading;
+  };
+  write("site-latitude", SUN_SITE.latitude, SUN_SITE.latitude.toFixed(2));
+  write("site-longitude", SUN_SITE.longitude, SUN_SITE.longitude.toFixed(2));
+  write("site-north", SUN_SITE.northOffset, Math.round(SUN_SITE.northOffset));
+  const date = document.getElementById("site-date");
+  if (date) date.value = isoDay(sunDay());
+  const select = document.getElementById("site-place");
+  if (select) {
+    // Half of the dials' own step, so a place stays selected while the
+    // reading it wrote is still on screen.
+    const here = SUN_PLACES.find((place) =>
+      Math.abs(place.latitude - SUN_SITE.latitude) < 0.005
+      && Math.abs(place.longitude - SUN_SITE.longitude) < 0.005);
+    select.value = here ? here.name : "";
+  }
+}
+
+// Everything that moves the site comes through here. The sun has to be
+// re-solved, and a change that moved a dial without re-solving would
+// leave a correct number over a stale shadow, which is the one failure
+// mode nobody spots in a still.
+function setSite(patch) {
+  Object.assign(SUN_SITE, patch);
+  syncSiteControls();
+  applySunFromTime();
+}
+
 function sunDay() {
   // The day the sun is being placed on. A date control can be added later;
   // for now it is today, taken once at load so a take is not interrupted by
@@ -3561,10 +3672,18 @@ function sunDay() {
   return state.sunDay;
 }
 
+// THE CLOCK IS LOCAL TO THE SITE. The rule itself lives in fields.js,
+// beside the solar maths and reachable by the node harness that tests
+// it; these two are only the studio's way of saying "at this site".
+function siteUtcOffsetMinutes() {
+  return utcOffsetMinutes(SUN_SITE.longitude);
+}
+
 function minutesToDate(minutes) {
   const day = sunDay();
   return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(),
-    day.getUTCDate(), 0, 0, 0) + Math.round(minutes * 60000));
+    day.getUTCDate(), 0, 0, 0)
+    + Math.round((minutes - siteUtcOffsetMinutes()) * 60000));
 }
 
 function currentSun() {
@@ -3685,8 +3804,13 @@ function paintSunWidget() {
 
   const hours = Math.floor(state.sunMinutes / 60) % 24;
   const minutes = Math.round(state.sunMinutes % 60);
+  // The zone is stated whenever it is not zero, because a clock that
+  // silently means something other than UTC is how the Sydney fault got
+  // in: the number looked ordinary and was eleven hours out.
+  const offset = siteUtcOffsetMinutes() / 60;
   document.getElementById("sun-time").textContent =
-    String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0");
+    String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0")
+    + (offset ? " UTC" + (offset > 0 ? "+" : "") + offset : "");
   // Degrees, said as degrees. "286 / -4" beside a clock reading 19:01 ran
   // together into "19:01286 / -4" the moment the block was narrow.
   document.getElementById("sun-angles").textContent =
@@ -8508,6 +8632,52 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
   document.getElementById(id).addEventListener("change", () => {
     if (state.environmentMode === "sky") regenerateEnvironment();
   });
+}
+// The site block. Same split as the sun's own sliders: input re-solves
+// and moves the light, which is cheap, and only the release pays for the
+// PMREM bake, and only in sky mode where the sky IS the environment.
+const SITE_FIELDS = {
+  "site-latitude": "latitude",
+  "site-longitude": "longitude",
+  "site-north": "northOffset",
+};
+for (const [id, field] of Object.entries(SITE_FIELDS)) {
+  const input = document.getElementById(id);
+  if (!input) continue;
+  input.addEventListener("input", () => setSite({ [field]: +input.value }));
+  input.addEventListener("change", () => {
+    if (state.environmentMode === "sky") regenerateEnvironment();
+  });
+}
+{
+  const select = document.getElementById("site-place");
+  if (select) {
+    for (const place of [{ name: "Custom" }].concat(SUN_PLACES)) {
+      // Custom carries an empty value on purpose: it is what the sync
+      // writes when no place matches, and choosing it is a no-op rather
+      // than a jump to nowhere.
+      select.appendChild(new Option(place.name,
+        place.name === "Custom" ? "" : place.name));
+    }
+    select.addEventListener("change", (event) => {
+      const place = SUN_PLACES.find((p) => p.name === event.target.value);
+      if (!place) return;
+      setSite({ latitude: place.latitude, longitude: place.longitude });
+      if (state.environmentMode === "sky") regenerateEnvironment();
+    });
+  }
+  const date = document.getElementById("site-date");
+  if (date) {
+    date.addEventListener("change", (event) => {
+      const day = dayFromIso(event.target.value);
+      if (!day) return;             // a half-typed date is not a new day
+      state.sunDay = day;
+      syncSiteControls();
+      applySunFromTime();
+      if (state.environmentMode === "sky") regenerateEnvironment();
+    });
+  }
+  syncSiteControls();
 }
 // F1: state.sunElevationSetting tracks only what the slider itself was set
 // to by hand. applyDayCycle also writes this same slider's value (clamped

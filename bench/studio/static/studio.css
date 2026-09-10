@@ -497,6 +497,21 @@ body.panel-collapsed #legend { right: var(--s4); }
 #day-cycle-row button { width: auto; margin: 0; }
 #day-cycle-row label { margin: 0; }
 
+/* Place and day sit above the site's dials as one row of two: they are
+   the coarse setting and the dials under them are the fine one. Equal
+   columns, because neither is the more important half -- a June noon in
+   Cardiff and a December noon in Cardiff are different pictures. */
+#site-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2);
+  align-items: center; margin: var(--s1) 0 var(--s2); }
+#site-row select, #site-row input { width: 100%; height: var(--h); margin: 0;
+  box-sizing: border-box; background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0 var(--s2); font: inherit; }
+#site-row select:hover, #site-row input:hover { border-color: var(--line-lit); }
+/* Chromium paints the date picker's indicator near-black on the panel. */
+#site-row input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7); cursor: pointer; }
+
 /* The prop library: the same tiles the materials use, at the same two to a
    row, because a model is a look too and a name in a dropdown is no way to
    choose one. Three to a row was tried and the 65px captions truncated
