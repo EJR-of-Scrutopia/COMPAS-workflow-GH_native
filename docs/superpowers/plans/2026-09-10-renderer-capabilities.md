@@ -220,7 +220,30 @@ images differ and that no frame is empty.
 At least: the cap disappears; the plane's constant loses its sign; the
 machine is cut when it should not be; clipping is global not local.
 
-## Task 2: The orthographic remainder
+## Task 2: The orthographic remainder -- DONE (60665d7, cfd35d1)
+
+> **One of the four was built, one became something better, two were
+> refused.** All four were measured before anything was written.
+>
+> - **View width in metres: BUILT.** Reading verified against geometry
+>   (46.39 against 46.39), and a typed 12 m gives a frame exactly 12.00 m
+>   across. Typing writes `zoom`, not `orthoFrameHeight`, so a wheel notch
+>   carries on from it.
+> - **Shadow camera: the reframe was a phantom, the fit was not.** It was
+>   framed for neither the view nor the model but a hard-coded 60 m
+>   square, so the projection never touched it. Fitting it to the casters
+>   took texels from 29.3 mm to 11 to 16 mm across all four studies.
+> - **Backdrop: REFUSED.** Photographed in three environment modes and
+>   both projections. The dome does not read as a painted wall under a
+>   parallel projection; it reads as a nearly uniform sky, which is
+>   correct and is closer to a usable plate than the perspective version.
+> - **Scale-ratio presets: DEFERRED to Wave 2.** A 1:50 button is a claim
+>   about the printed page and cannot be kept without the output size,
+>   which the resolution ladder brings. One of its two blocking faults,
+>   that the scale could not survive a reload, is already fixed by the
+>   restore repair in `cd56ad0`.
+
+
 
 **Files:**
 - Modify: `bench/studio/static/studio.js`, `index.html`, `studio.css`
