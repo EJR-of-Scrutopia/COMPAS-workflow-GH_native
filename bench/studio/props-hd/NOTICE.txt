@@ -1,6 +1,6 @@
 Models in this folder come from more than one library. Each is
 credited below; the licences they arrived under are:
-  Poly Haven -- CC0 1.0  (141)
+  Poly Haven -- CC0 1.0  (151)
   Quixel Megascans, via Fab -- Fab Standard License  (20)
   ambientCG -- CC0 1.0  (10)
 
@@ -161,6 +161,12 @@ dandelion_01__v4
 dandelion_01__v5
   Dandelion 5
   https://polyhaven.com/a/dandelion_01
+dead_quiver_branch_01
+  Dead branch
+  https://polyhaven.com/a/dead_quiver_branch_01
+dead_quiver_branch_02
+  Dead branch 2
+  https://polyhaven.com/a/dead_quiver_branch_02
 dead_quiver_trunk
   Quiver trunk
   https://polyhaven.com/a/dead_quiver_trunk
@@ -173,6 +179,12 @@ dead_tree_trunk_02
 didelta_spinosa
   Didelta shrub
   https://polyhaven.com/a/didelta_spinosa
+dry_branches_medium_01
+  Dry branches
+  https://polyhaven.com/a/dry_branches_medium_01
+dry_quiver_leaf
+  Dry leaf
+  https://polyhaven.com/a/dry_quiver_leaf
 fern_02__v1
   Fern 1
   https://polyhaven.com/a/fern_02
@@ -212,6 +224,18 @@ flower_heliophila__v1
 flower_heliophila__v2
   Heliophila 2
   https://polyhaven.com/a/flower_heliophila
+flower_stinkkruid__v1
+  Stinkkruid 1
+  https://polyhaven.com/a/flower_stinkkruid
+flower_stinkkruid__v2
+  Stinkkruid 2
+  https://polyhaven.com/a/flower_stinkkruid
+flower_stinkkruid__v3
+  Stinkkruid 3
+  https://polyhaven.com/a/flower_stinkkruid
+flower_stinkkruid__v4
+  Stinkkruid 4
+  https://polyhaven.com/a/flower_stinkkruid
 flower_ursinia__v1
   Ursinia 1
   https://polyhaven.com/a/flower_ursinia
@@ -266,6 +290,12 @@ grass_medium_02__v1
 grass_medium_02__v2
   Grass tufts 2
   https://polyhaven.com/a/grass_medium_02
+leipoldtia_schultzei__v1
+  Leipoldtia 1
+  https://polyhaven.com/a/leipoldtia_schultzei
+leipoldtia_schultzei__v2
+  Leipoldtia 2
+  https://polyhaven.com/a/leipoldtia_schultzei
 moss_01__v1
   Moss 1
   https://polyhaven.com/a/moss_01

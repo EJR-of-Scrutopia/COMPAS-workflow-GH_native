@@ -201,6 +201,19 @@ const LIST = [
   { slug: "single_root",         label: "Single root",      group: "planting", size: "clutter" },
   { slug: "pine_roots",          label: "Pine roots",       group: "planting", size: "clutter" },
   { slug: "bark_debris_01",      label: "Bark debris",      group: "planting", size: "clutter" },
+  // Every ground-cover plant Poly Haven still had that was not here,
+  // fetched 2026-09-11 on Param' + chr(39) + 's "more the merrier". This is the whole
+  // of what the library offers: three grasses exist there in total and
+  // all three were already in, and the six trees left are the canopies
+  // the note above already ruled out. The rest of a meadow, and every
+  // tree, has to come from Fab.
+  { slug: "flower_stinkkruid",   label: "Stinkkruid",       group: "planting", size: "clutter" },
+  { slug: "leipoldtia_schultzei", label: "Leipoldtia",      group: "planting", size: "clutter" },
+  { slug: "pine_sapling_medium", label: "Pine sapling",     group: "planting", size: "mid" },
+  { slug: "dry_branches_medium_01", label: "Dry branches",  group: "planting", size: "clutter" },
+  { slug: "dead_quiver_branch_01", label: "Dead branch",    group: "planting", size: "clutter" },
+  { slug: "dead_quiver_branch_02", label: "Dead branch 2",  group: "planting", size: "clutter" },
+  { slug: "dry_quiver_leaf",     label: "Dry leaf",         group: "planting", size: "clutter" },
   // Rock, the rest of it. Namaqualand first, then the verdant-trail and
   // smugglers-cove formations; the coast pieces are landscape-scale and
   // priced as heroes because their silhouettes are the whole point.

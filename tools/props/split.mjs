@@ -343,8 +343,12 @@ async function main() {
   const write = all || named.length > 0;
   // Candidates: every planting entry that is wide and flat, or whatever
   // was named.
+  // A VARIANT IS NEVER A CANDIDATE. A flat tuft cut from a row is itself
+  // wide and flat, and a second --all would have cut every tuft into its
+  // blades: the dry run after the first split listed eighteen "rows",
+  // all of them variants. Anything carrying a family has been split.
   const candidates = named.length ? named
-    : manifest.props.filter((p) => p.sizeMetres
+    : manifest.props.filter((p) => !p.family && p.sizeMetres
         && Math.max(p.sizeMetres[0], p.sizeMetres[2]) >= ROW_ASPECT * p.sizeMetres[1]
         && (p.group === "planting" || all))
       .map((p) => p.key);

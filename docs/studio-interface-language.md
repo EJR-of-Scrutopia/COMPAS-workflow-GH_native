@@ -263,3 +263,57 @@ than carve an exception into it: `outline-value`, `size-value` and
 `thickness-input-value`, with their writers and tests moved with them.
 
 Scatter and Lights remain the reference implementation.
+
+
+## 11. The second sweep, 2026-09-11
+
+A puppeteer probe now photographs every panel tab and every shelf
+drawer and measures four things the language forbids: a row narrower
+than its block, a control past its container's edge, a visible dial with
+no reading, and a truncated segment label. Every tab and every drawer
+came back clean, with only the three exemptions of section 10 flagged.
+
+It did not start clean. Two rules were found by looking that no test
+could see, because every test read source text and these were layout.
+
+**A `.dial-block` takes labels only.** It is an eight-column grid and
+`.dial-block label { display: contents }` dissolves each dial into
+exactly four cells, so two dials fill a row. That holds only while EVERY
+child is a label: a bare `<div>` takes one cell, shifts every dial after
+it by a column, and overflows the panel. Three had accumulated in
+`#camera-dials` and the Camera section measured 302 px of content in a
+235 px box. Segmented controls and button rows sit ABOVE the block, as
+Section does with `#section-axis-segments`. Now enforced by
+`test_a_dial_block_holds_nothing_but_dials`, which reads structure.
+
+**Inside `#panel`, an upgraded row spans the block.** `upgradeSliders`
+scopes to `#panel` and REPLACES each label holding a range input with a
+`div.scrub`, so inside the panel no label survives for
+`display: contents` to dissolve, and every scrub lands as one item in
+the eight-column grid. Gathering the panel's sliders into `.dial-block`
+during the first sweep therefore forced them side by side: Skin read
+"Shine  Re  Occlu  Varia" across one line for a day. The rule
+`.dial-block > .scrub { grid-column: 1 / -1 }` makes each upgraded row
+take the whole width. The four-column alignment section 3 describes is
+true of the SHELF drawers, which sit outside `#panel` and keep their
+labels; inside the panel a dial is one full-width scrub row. Both are
+the language.
+
+The inventory of section 10 is now 41 sliders. Since then: `site-
+latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
+(Scene, Section), `camera-width` (Camera, shown in orthographic in place
+of Field of view), and the Output section's `still-size` segments.
+
+**Two gestures, written down.** A scatter tool never disables
+OrbitControls. It watches `pointerdown` and `pointerup` and acts on a
+press that travelled no more than `CLICK_SLOP_PX`; a press that moved
+was the orbit's. The area tool is two clicks, not a drag, because a drag
+is how the camera moves and the area someone wants is usually not all on
+screen. Arming a tool folds the shelf away and Escape brings it back; a
+CLOSED shelf is not "another drawer" and must not disarm the tool.
+
+**A drawer shows a family once.** A species with variants
+(`entry.family`) is one tile, labelled without its variant number, and
+every placement draws a variant at random. The props drawer carries one;
+the scatter solver draws one from its own seeded stream before measuring
+a footprint, so a replay deals the same shapes.

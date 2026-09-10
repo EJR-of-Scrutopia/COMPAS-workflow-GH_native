@@ -870,6 +870,38 @@
       "source": "https://polyhaven.com/a/dandelion_01"
     },
     {
+      "key": "dead_quiver_branch_01",
+      "label": "Dead branch",
+      "file": "dead_quiver_branch_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.255,
+        0.439,
+        0.227
+      ],
+      "triangles": 14834,
+      "bytes": 309400,
+      "credit": "Dead branch by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dead_quiver_branch_01"
+    },
+    {
+      "key": "dead_quiver_branch_02",
+      "label": "Dead branch 2",
+      "file": "dead_quiver_branch_02.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.287,
+        0.526,
+        0.201
+      ],
+      "triangles": 14386,
+      "bytes": 293432,
+      "credit": "Dead branch 2 by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dead_quiver_branch_02"
+    },
+    {
       "key": "dead_quiver_trunk",
       "label": "Quiver trunk",
       "file": "dead_quiver_trunk.glb",
@@ -932,6 +964,38 @@
       "credit": "Didelta shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/didelta_spinosa"
+    },
+    {
+      "key": "dry_branches_medium_01",
+      "label": "Dry branches",
+      "file": "dry_branches_medium_01.glb",
+      "group": "planting",
+      "sizeMetres": [
+        1.059,
+        0.341,
+        1.299
+      ],
+      "triangles": 16803,
+      "bytes": 383744,
+      "credit": "Dry branches by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dry_branches_medium_01"
+    },
+    {
+      "key": "dry_quiver_leaf",
+      "label": "Dry leaf",
+      "file": "dry_quiver_leaf.glb",
+      "group": "planting",
+      "sizeMetres": [
+        0.397,
+        0.425,
+        0.192
+      ],
+      "triangles": 23998,
+      "bytes": 476428,
+      "credit": "Dry leaf by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/dry_quiver_leaf"
     },
     {
       "key": "fern_02__v1",
@@ -1162,6 +1226,78 @@
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/flower_heliophila"
+    },
+    {
+      "key": "flower_stinkkruid__v1",
+      "label": "Stinkkruid 1",
+      "file": "flower_stinkkruid__v1.glb",
+      "group": "planting",
+      "family": "flower_stinkkruid",
+      "variant": 1,
+      "sizeMetres": [
+        0.34998249504658396,
+        0.17591506541973,
+        0.30040881037752465
+      ],
+      "triangles": 12591,
+      "bytes": 544616,
+      "credit": "Stinkkruid by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_stinkkruid"
+    },
+    {
+      "key": "flower_stinkkruid__v2",
+      "label": "Stinkkruid 2",
+      "file": "flower_stinkkruid__v2.glb",
+      "group": "planting",
+      "family": "flower_stinkkruid",
+      "variant": 2,
+      "sizeMetres": [
+        0.24859711962913256,
+        0.15270260730123186,
+        0.20859987639120647
+      ],
+      "triangles": 8549,
+      "bytes": 400364,
+      "credit": "Stinkkruid by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_stinkkruid"
+    },
+    {
+      "key": "flower_stinkkruid__v3",
+      "label": "Stinkkruid 3",
+      "file": "flower_stinkkruid__v3.glb",
+      "group": "planting",
+      "family": "flower_stinkkruid",
+      "variant": 3,
+      "sizeMetres": [
+        0.21372637863271393,
+        0.14739392463570278,
+        0.1893429049507851
+      ],
+      "triangles": 1246,
+      "bytes": 81892,
+      "credit": "Stinkkruid by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_stinkkruid"
+    },
+    {
+      "key": "flower_stinkkruid__v4",
+      "label": "Stinkkruid 4",
+      "file": "flower_stinkkruid__v4.glb",
+      "group": "planting",
+      "family": "flower_stinkkruid",
+      "variant": 4,
+      "sizeMetres": [
+        0.21913918799477372,
+        0.1251182891328494,
+        0.22129907681598926
+      ],
+      "triangles": 1613,
+      "bytes": 92516,
+      "credit": "Stinkkruid by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/flower_stinkkruid"
     },
     {
       "key": "flower_ursinia__v1",
@@ -1486,6 +1622,42 @@
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_02"
+    },
+    {
+      "key": "leipoldtia_schultzei__v1",
+      "label": "Leipoldtia 1",
+      "file": "leipoldtia_schultzei__v1.glb",
+      "group": "planting",
+      "family": "leipoldtia_schultzei",
+      "variant": 1,
+      "sizeMetres": [
+        0.8714920233710329,
+        0.25151680264418314,
+        0.8070492047216935
+      ],
+      "triangles": 16608,
+      "bytes": 508436,
+      "credit": "Leipoldtia by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
+    },
+    {
+      "key": "leipoldtia_schultzei__v2",
+      "label": "Leipoldtia 2",
+      "file": "leipoldtia_schultzei__v2.glb",
+      "group": "planting",
+      "family": "leipoldtia_schultzei",
+      "variant": 2,
+      "sizeMetres": [
+        1.194737631606082,
+        0.15743089061928137,
+        0.614186441241173
+      ],
+      "triangles": 7392,
+      "bytes": 246792,
+      "credit": "Leipoldtia by Poly Haven",
+      "licence": "CC0 1.0",
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
     },
     {
       "key": "moss_01__v1",
