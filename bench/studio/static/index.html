@@ -397,10 +397,16 @@
   </details>
   <details id="camera-section">
     <summary>Camera</summary>
-    <div class="dial-block" id="camera-dials">
-    <label title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
-      <input id="camera-fov" type="range" min="15" max="100" step="1" value="45">
-      <b id="camera-fov-value">45</b><em>&deg; &#8776; <span id="camera-mm">29</span> mm</em></label>
+    <!-- EVERYTHING THAT IS NOT A DIAL SITS ABOVE THE BLOCK.
+         .dial-block is an eight-column grid and .dial-block label is
+         display:contents, so a dial dissolves into exactly four cells
+         and two dials fill a row. That only holds while every child is
+         a label: a bare div takes one cell, shifts every dial after it
+         by one column, and overflows the panel. Three of them had
+         accumulated in here and the Camera section was 302 px of
+         content in a 235 px box, with Front/Back/Right/Plan hanging off
+         the right edge. Section does it correctly at
+         #section-axis-segments and is the pattern to copy. -->
     <!-- The frame: preset screen ratios, letterboxed live and honoured by
          the recording. Fill is the whole viewport, as it always was. -->
     <select id="camera-aspect" class="hidden" title="Frame ratio">
@@ -431,6 +437,10 @@
       <button data-view="top" title="Look straight down, plan with north up">Plan</button>
       <button data-view="iso" title="The three-quarter view a model is usually read from">Iso</button>
     </div>
+    <div class="dial-block" id="camera-dials">
+    <label title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
+      <input id="camera-fov" type="range" min="15" max="100" step="1" value="45">
+      <b id="camera-fov-value">45</b><em>&deg; &#8776; <span id="camera-mm">29</span> mm</em></label>
     <label title="The grade on the lens, not the light in the scene"><span>Brightness</span>
       <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1">
       <b id="brightness-value">100</b><em>%</em></label>
@@ -438,7 +448,7 @@
       <input id="contrast" type="range" data-unit="100" min="-0.5" max="0.5" step="0.02" value="0">
       <b id="contrast-value">0</b><em>%</em></label>
     </div>
-  </details>
+</details>
   <details id="scene-section">
     <summary>Scene</summary>
     <!-- Group order is the order a renderer user works in: the light (sun,

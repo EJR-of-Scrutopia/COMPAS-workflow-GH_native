@@ -1098,6 +1098,19 @@ body.panel-collapsed #legend { right: var(--s4); }
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dial-block label > em { font-style: normal; color: var(--ink-3);
   white-space: nowrap; }
+/* AN UPGRADED ROW TAKES THE WHOLE WIDTH.
+   upgradeSliders scopes to #panel and REPLACES each label containing a
+   range input with a div.scrub (panel.js), so inside the panel there are
+   no labels left for `display: contents` to dissolve and every scrub
+   lands as one item in this eight-column grid. Three dials therefore sat
+   side by side in a 235 px panel reading "Field of v", "Br", "Contrast",
+   and the Skin appearance row read "Shine  Re  Occlu  Varia". Spanning
+   the row restores what these were before they were gathered into
+   blocks, while the shelf drawers, which are outside #panel and keep
+   their labels, go on using the four-column alignment the interface
+   language describes. */
+.dial-block > .scrub { grid-column: 1 / -1; }
+
 /* The size row carries two sliders; they share the one slider column. */
 .dial-block label > input[type="range"] + input[type="range"] {
   grid-column: span 1; }

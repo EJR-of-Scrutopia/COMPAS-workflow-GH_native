@@ -3086,3 +3086,108 @@ def test_a_section_cuts_the_shell_and_fills_the_face():
     build = build[:build.index(chr(10) + "function ")]
     assert "applySection();" in build, (
         "buildScene builds new materials, and they arrive uncut")
+
+
+def test_a_dial_block_holds_nothing_but_dials():
+    """The containment rule, which nothing enforced until it broke.
+
+    `.dial-block` is `grid-template-columns: repeat(2, auto 1fr auto auto)`
+    -- eight columns -- and `.dial-block label { display: contents }`, so
+    each dial dissolves into exactly four cells and two dials fill a row.
+    That only holds while EVERY child is a label. A bare div takes one
+    cell, shifts every dial after it by a column, and overflows the
+    panel.
+
+    Three had accumulated in `#camera-dials` and the Camera section
+    measured 302 px of content in a 235 px box, with Front, Back, Right
+    and Plan hanging off the right-hand edge of the panel. No existing
+    test could see it: they all read source text, and this is a layout
+    fault. So this one reads STRUCTURE.
+
+    Section is the pattern to copy: `#section-axis-segments` sits above
+    `<div class="dial-block" id="scene-section-dials">`, not inside it.
+    """
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    # The grid is what makes the rule load-bearing, so pin it too: a
+    # future widening of the grid would change what "four cells" means.
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "grid-template-columns: repeat(2, auto 1fr auto auto)" in css
+    assert ".dial-block label { display: contents;" in css
+    # AND the half that only matters inside #panel. upgradeSliders scopes
+    # to #panel and REPLACES each label containing a range input with a
+    # div.scrub, so there is no label left for display:contents to
+    # dissolve and every scrub lands as one grid item. Without this rule
+    # three dials sat side by side in a 235 px panel reading "Field of
+    # v", "Br", "Contrast", and Skin read "Shine  Re  Occlu  Varia".
+    assert ".dial-block > .scrub { grid-column: 1 / -1; }" in css, (
+        "an upgraded row takes the whole width; the four-column "
+        "alignment the language describes belongs to the shelf, which "
+        "is outside #panel and keeps its labels")
+
+    offenders = []
+    for name, body in _dial_blocks(html):
+        # Strip comments before looking, or a commented-out example reads
+        # as a real child.
+        clean = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+        # Top-level tags only: a <div> nested inside a label is that
+        # label's business, and there are none today.
+        depth = 0
+        for match in re.finditer(r"<(/?)([a-zA-Z]+)", clean):
+            closing, tag = match.group(1), match.group(2).lower()
+            if closing:
+                if tag in ("label", "div"):
+                    depth = max(0, depth - 1)
+                continue
+            if depth == 0 and tag not in ("label", "select", "input", "option"):
+                offenders.append("{}: <{}>".format(name, tag))
+            if tag in ("label", "div"):
+                depth += 1
+    assert not offenders, (
+        "a .dial-block takes labels only; these take a grid cell each and "
+        "shift every dial after them: " + ", ".join(offenders))
+
+
+def test_a_restored_orthographic_scene_keeps_the_framing_it_was_saved_with():
+    """Shipped broken, and the static test that "the fields are saved"
+    said nothing about it.
+
+    applyScene wrote orthoFrameHeight and orthographicCamera.zoom from
+    the scene, then called setProjection, whose orthographic branch
+    re-seeds BOTH -- orthoFrameHeight from perspectiveFrameHeight() and
+    zoom to 1 -- because that is exactly what makes a live toggle
+    seamless. On a restore it threw the saved numbers away and derived
+    them from a perspective eye that applyScene had not yet
+    repositioned. A saved plan reopened at a different width every time.
+
+    The pair is therefore written TWICE on purpose: before, because
+    setProjection's perspective branch reads both to place the eye; and
+    after, to survive the orthographic branch.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    # The re-seed that makes the second write necessary is still there,
+    # and is still right for a live toggle.
+    swap = _js_function(js, "function setProjection(kind)")
+    assert "orthoFrameHeight = perspectiveFrameHeight();" in swap
+    assert "wanted.zoom = 1;" in swap
+
+    restore = js[js.index("// The projection BEFORE the position"):]
+    restore = restore[:restore.index("state.cameraView = scene_.cameraView")]
+    assert restore.count("orthoFrameHeight = scene_.orthoHeight;") == 2, (
+        "written before the switch for the perspective branch, and again "
+        "after it to survive the orthographic one")
+    assert restore.count("orthographicCamera.zoom = scene_.orthoZoom;") == 2
+    # And the frustum is rebuilt from the restored numbers, or the planes
+    # still hold whatever the re-seed put there.
+    after = restore[restore.index("setProjection(scene_.projection);"):]
+    assert "orthographicCamera.updateProjectionMatrix();" in after
+    assert "applyCameraFrustum(viewportAspect());" in after
+    assert "paintScaleBar();" in after, (
+        "the bar reads metres per pixel, so a restored zoom moves it")

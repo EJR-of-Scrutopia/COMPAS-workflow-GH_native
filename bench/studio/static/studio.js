@@ -3327,10 +3327,27 @@ async function applyScene(record) {
   // The projection BEFORE the position, so the eye lands in the camera
   // that is going to use it. Restoring the place first and swapping
   // afterwards would frame the ortho view off the old distance.
+  //
+  // AND THE SAVED FRAMING AFTER THE SWITCH, which is the whole of a bug
+  // this shipped with. setProjection's orthographic branch re-seeds
+  // orthoFrameHeight from perspectiveFrameHeight() and sets zoom to 1,
+  // because that is what makes a live toggle seamless. On a restore that
+  // is exactly wrong: it threw away the numbers written two lines above
+  // and re-derived them from a perspective eye that applyScene has not
+  // even repositioned yet. So the pair is written first, for
+  // setProjection's PERSPECTIVE branch which reads both to place the
+  // eye, and written again afterwards to survive the orthographic one.
   if (typeof scene_.orthoHeight === "number") orthoFrameHeight = scene_.orthoHeight;
   if (typeof scene_.orthoZoom === "number") orthographicCamera.zoom = scene_.orthoZoom;
   if (scene_.projection === "orthographic" || scene_.projection === "perspective") {
     setProjection(scene_.projection);
+    if (typeof scene_.orthoHeight === "number") orthoFrameHeight = scene_.orthoHeight;
+    if (typeof scene_.orthoZoom === "number") {
+      orthographicCamera.zoom = scene_.orthoZoom;
+      orthographicCamera.updateProjectionMatrix();
+    }
+    applyCameraFrustum(viewportAspect());
+    paintScaleBar();
   }
   state.cameraView = scene_.cameraView || null;
   if (scene_.section && typeof scene_.section === "object") {
