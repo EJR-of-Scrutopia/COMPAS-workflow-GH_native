@@ -885,12 +885,34 @@ internal static class MechanismDocument
     ///    (spec 5.4), never by a position in the machine's own routing.
     /// 5. Cross-checks the wires each instance places against the cited
     ///    machine's declared count BY EQUALITY (spec 5.5).
+    /// 6. Since Task 7, checks each matched ANCHOR ROW's own characteristic
+    ///    spacing against that machine's own <c>footprint.cableSpan</c>
+    ///    (spec 7.4). It is the only check here whose two numbers come from
+    ///    two documents, and therefore the only one that can fail on a
+    ///    DERIVED placement.
+    ///
+    /// A DERIVED RESIDUAL PROVES NOTHING, AND SAYING SO IS PART OF THIS
+    /// TASK (spec 7.5). Placement is derived from the solved net's own
+    /// anchor rows by default and has been since 2026-09-09; a derived
+    /// transform is therefore FITTED TO the anchors the wires are then
+    /// matched against, so <c>instances[].residualM</c> reads 0.000000 m on
+    /// every correct instance and on a routing tree authored backwards
+    /// alike. It is a measure of the derivation's own fit and it cannot
+    /// report a fault in what was fitted. The MATCH DISTANCE below is the
+    /// number that can, because it is taken between the placed route and a
+    /// net vertex this document chose by its own separate rule -- but only
+    /// on an AUTHORED placement, and the guard block itself carries the
+    /// measurement of what it does and does not separate on the derived
+    /// one.
     ///
     /// NOT PROVED HERE, and it cannot be from inside this process: that the
     /// machine document the id names still holds the machine this study was
     /// laid out against. There is no upload route and no library index in
     /// this repo (spec 11.1); the id is written faithfully and resolving it
-    /// is the studio's own step.
+    /// is the studio's own step. Item 6 above is the nearest thing to a
+    /// check on it that exists: a cited machine whose cable line does not
+    /// fit the row it is placed on is named, though one that fits and is
+    /// still the wrong machine is not.
     /// </summary>
     public static string Json(
         ResultDto result,
@@ -1078,19 +1100,34 @@ internal static class MechanismDocument
         // backed by a check rather than left for him to eyeball on a
         // vault where a full side swap can print a distance the same
         // order as a correctly matched wire's own free span.
+        //
+        // THE SAME SPACING IS ALSO THE INDEPENDENT WITNESS'S OWN END of the
+        // comparison below (spec 7.4), so the row each matched vertex
+        // belongs to is remembered here as well as its spacing: the witness
+        // is stated ONCE PER ROW, not once per wire and not once per
+        // instance, because a row is the thing whose spacing it reads and
+        // six instances on two rows would otherwise print the identical
+        // line six times over.
         var vertexRowSpacing = new Dictionary<int, double>();
+        var vertexRowIndex = new Dictionary<int, int>();
+        var rowSpacing = new Dictionary<int, double>();
         if (eq is not null)
         {
-            foreach (List<int> row in orderedRows)
+            for (int r = 0; r < orderedRows.Count; r++)
             {
+                List<int> row = orderedRows[r];
                 IReadOnlyList<double[]> points = row.Select(id =>
                 {
                     Point3Dto p = eq.Vertices[id];
                     return new[] { p.X, p.Y, p.Z };
                 }).ToList();
                 double spacing = MechanismCollector.CharacteristicSpacing(points);
+                rowSpacing[r] = spacing;
                 foreach (int id in row)
+                {
                     vertexRowSpacing[id] = spacing;
+                    vertexRowIndex[id] = r;
+                }
             }
         }
 
@@ -1186,6 +1223,24 @@ internal static class MechanismDocument
                 "so nothing looks broken.");
         }
         double reeveFactor = citedReeve.GetDouble();
+
+        // THE CITED MACHINE'S OWN CABLE SPAN (spec 7.4), the independent
+        // witness's machine end. READ, NOT DEMANDED: a machine routing
+        // fewer than two wires has no cable line and writes no footprint at
+        // all, and a payload this collector did not write may carry
+        // anything, so an absent, non-numeric, non-finite or non-positive
+        // span means "this study cannot be layout-checked" rather than "no
+        // document". Refusing here would cost him the whole export over a
+        // number that changes nothing the studio draws or spins.
+        double? machineCableSpan = null;
+        if (citedMachine.TryGetProperty("cableSpan", out JsonElement citedSpan) &&
+            citedSpan.ValueKind == JsonValueKind.Number &&
+            double.IsFinite(citedSpan.GetDouble()) &&
+            citedSpan.GetDouble() > 0.0)
+        {
+            machineCableSpan = citedSpan.GetDouble();
+        }
+
         JsonElement reeveBlock = root.TryGetProperty("reeve", out JsonElement reeveIn)
             ? reeveIn
             : default;
@@ -1318,6 +1373,12 @@ internal static class MechanismDocument
         string worstMatchId = string.Empty;
         int worstMatchVertex = -1;
 
+        // WHICH ANCHOR ROWS THIS DOCUMENT ACTUALLY LANDED WIRES ON, so the
+        // independent witness below runs on the rows in use and says
+        // nothing about a row no machine stands on. Ordered, so the
+        // document and its chin are the same for the same payload.
+        var rowsMatched = new SortedSet<int>();
+
         for (int i = 0; i < wireEntries.Count; i++)
         {
             (int side, int mechanism, int wireIndex,
@@ -1340,17 +1401,58 @@ internal static class MechanismDocument
             // R2, VALIDATED AFTER PLACEMENT (his ruling: planes[0] is the
             // net end; the door-guard pattern, not trust): transform the
             // route's own first and last local points through the
-            // instance's authored placement and compare their distance to
-            // the matched net vertex's world position. Also the "PRINTS
-            // ITS DISTANCES" requirement: every match is named, not only a
+            // instance's placement and compare their distance to the
+            // matched net vertex's world position. Also the "PRINTS ITS
+            // DISTANCES" requirement: every match is named, not only a
             // wrong one, so a wire on the wrong anchor is visible rather
             // than merely possible.
+            //
+            // THESE THREE GUARDS RUN ON BOTH PLACEMENT PATHS, THE DERIVED
+            // AND THE AUTHORED ALIKE (spec 7.2), and the test that follows
+            // them through the document writer drives BOTH. The only thing
+            // they ask for is an instance frame, and every instance carries
+            // one whether Placement (PL) authored it or
+            // MechanismCollector.DerivePlacements built it from the net's
+            // own anchor rows. There is no override-only branch here to
+            // move them out of, and no path they are skipped on.
+            //
+            // WHAT A DERIVED PLACEMENT'S OWN RESIDUAL PROVES, WHICH IS
+            // NOTHING (spec 7.3, 7.5, and the reason this comment is here
+            // rather than only in the spec). Since placement became DERIVED
+            // by default, the transform is fitted to the very anchors these
+            // wires are then matched against, so residualM reads 0.000000
+            // on every correct instance AND on a routing tree authored
+            // backwards: it measures the derivation's own fit and can never
+            // report a fault in what was fitted. The match distance below
+            // is a different number, taken between the placed route and the
+            // net vertex the document itself chose, so it CAN differ from
+            // its right value -- and it does, on an authored placement laid
+            // out against the wrong anchors.
+            //
+            // WHAT THE MATCH DISTANCE DOES NOT PROVE, MEASURED 2026-09-10
+            // AND SAID HERE RATHER THAN LEFT TO BE FOUND. On the DERIVED
+            // path it cannot separate a backwards routing tree from a
+            // correct one. The derivation pairs wire to anchor by each
+            // one's own order along the machine and along the row
+            // (DerivePlacements' alongMachine against alongRow), while this
+            // matcher pairs by anchor-row DISCOVERY order, and the two
+            // rules are independent: on an instance the derivation turned
+            // round to face its own side, they run end for end, and the
+            // distances printed below are the disagreement between two
+            // pairings rather than any statement about the machine. A
+            // seven-wire fixture on two rows measures the identical
+            // distances (0.9, 0.6, 0.3, 0, 0.3, 0.6, 0.9 m) whether the
+            // routing tree is authored correctly or reversed, only on the
+            // other side. THAT IS WHY THE WITNESS BELOW IS SOURCED FROM THE
+            // MACHINE'S OWN DOCUMENT and not from anything on this path.
             if (eq is not null &&
                 route.Count > 0 &&
                 instanceFrames.TryGetValue(
                     (side, mechanism), out MechanismFrame? instanceFrame) &&
                 instanceFrame is not null)
             {
+                if (vertexRowIndex.TryGetValue(netVertex, out int matchedRow))
+                    rowsMatched.Add(matchedRow);
                 Point3Dto netPoint = eq.Vertices[netVertex];
                 double[] netWorld = { netPoint.X, netPoint.Y, netPoint.Z };
                 double[] firstWorld = TransformLocal(route[0].Frame.Origin, instanceFrame);
@@ -1486,6 +1588,97 @@ internal static class MechanismDocument
                 "Every one is listed below, in Status." +
                 Environment.NewLine +
                 string.Join(Environment.NewLine, matchLines));
+        }
+
+        // THE INDEPENDENT WITNESS (spec 7.4): the anchor row's own
+        // characteristic spacing against the cited machine's own
+        // footprint.cableSpan.
+        //
+        // WHY THIS PAIR AND NO OTHER. Everything else the study document
+        // could check a placement with is fed from the anchor rows the
+        // placement was DERIVED FROM -- the residual, the instance frame,
+        // the net vertex, the match distance -- so on the default path each
+        // agrees with itself by construction and measures the derivation's
+        // own fit rather than the layout. These two numbers have two
+        // sources that never meet: the SPACING is the solved net's, read
+        // off this Result's own anchor row, and the SPAN is the MACHINE's,
+        // measured in the bench.machine/1 document by the Machine component
+        // and carried here through the citation. They must agree for the
+        // layout to make sense, and when they do not, one of them is about
+        // a different machine or a different net.
+        //
+        // WHAT IT CATCHES that nothing else on the derived path can:
+        //   1. A STALE OR WRONG CITED MACHINE. The id is written faithfully
+        //      and never proved resolvable (there is no library index in
+        //      this repo, spec 11.1), so a study laid out against one
+        //      machine and citing another has, until now, produced a
+        //      document in which every number agrees with every other.
+        //   2. A ROUTING TREE AUTHORED BACKWARDS, where planes[0] is the
+        //      drum end rather than the net end (R2). The machine's
+        //      cableSpan is then the span of its DRUM BANK, and a bank that
+        //      is not laid out at the springing's own pitch reads wrong
+        //      here while the residual still reads 0.000000 m.
+        //
+        // IT HAS A CEILING AND NO FLOOR, deliberately, and the reason is
+        // the same shape as MechanismReeve.SanityCeiling's. cableSpan is
+        // measured between the machine's FIRST and LAST ROUTED WIRE by
+        // number, not between the two furthest apart: a machine whose wires
+        // are not numbered along its own cable line therefore reads SHORT,
+        // legitimately, and a floor would warn on it. Nothing correct can
+        // read LONG, because every one of those wire ends is meant to sit
+        // on an anchor of this row and no two anchors of the row are
+        // further apart than the row itself. A warning that fires on
+        // correct input is a defect equal in seriousness to one that misses
+        // a fault, so the half that cannot be told apart from correct
+        // authoring is not checked at all.
+        //
+        // WHAT IT DOES NOT PROVE, said rather than left to be found: a
+        // backwards routing tree whose drum bank happens to stand at the
+        // springing's own pitch passes it, because then the two ends of
+        // every wire are congruent point sets and NO measurement in this
+        // document can tell one from the other. It also says nothing about
+        // a machine that is merely in the wrong place along a row whose
+        // spacing it does match.
+        //
+        // IT WARNS AND REFUSES NOTHING. Both numbers are honest
+        // measurements of real geometry, and the study still animates: the
+        // cables are drawn on the routes and anchors this document carries
+        // whatever the machine document says. Refusing would cost him the
+        // export over a disagreement he may be able to explain.
+        if (machineCableSpan is double cableSpan && rowsMatched.Count > 0)
+        {
+            foreach (int row in rowsMatched)
+            {
+                double spacing = rowSpacing.GetValueOrDefault(row, 0.0);
+                if (spacing <= 0.0 || machineWireCount < 2)
+                    continue;
+                double expected = spacing * (machineWireCount - 1);
+                double tolerance = Math.Max(
+                    MechanismCollector.AnchorTieToleranceFactor * spacing,
+                    MechanismCollector.MinimumAnchorTieTolerance);
+                if (cableSpan <= expected + tolerance)
+                    continue;
+                warnings.Add(
+                    $"anchor row {row}: the cited machine \"{machineId}\" " +
+                    "spans " +
+                    cableSpan.ToString("0.###", CultureInfo.InvariantCulture) +
+                    " m between its first and last cable, but this row's " +
+                    "own anchors sit " +
+                    spacing.ToString("0.###", CultureInfo.InvariantCulture) +
+                    " m apart, so " + machineWireCount + " of them reach " +
+                    "only " +
+                    expected.ToString("0.###", CultureInfo.InvariantCulture) +
+                    " m. THIS IS THE ONE CHECK ON A DERIVED PLACEMENT THAT " +
+                    "IS NOT FED BY THE PLACEMENT: the spacing is the " +
+                    "solved net's and the span is the machine document's, " +
+                    "so a residual of 0.000000 m says nothing about it. " +
+                    "Either the machine cited is not the machine this " +
+                    "study was laid out against, or Routing (RT) is " +
+                    "authored the other way round and planes[0] is the " +
+                    "DRUM end rather than the net end (his ruling: " +
+                    "planes[0] is the net end), which puts the drum bank's " +
+                    "own span here in place of the cable line's.");
+            }
         }
 
         // THE WIRE COUNT CROSS-CHECK, AND IT IS AN EQUALITY (spec 5.5).

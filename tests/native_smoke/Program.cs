@@ -3718,6 +3718,46 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismGuardsOnBothPlacementPaths(plugin);
+            Console.WriteLine(
+                "PASS  The wire-to-net-vertex guards run on BOTH placement "
+                + "paths, and the one witness that neither path feeds (spec "
+                + "7.2 to 7.5, Task 7). Placement has been DERIVED from the "
+                + "solved net's own anchor rows by default since "
+                + "2026-09-09, and a derived transform is fitted TO the "
+                + "anchors its wires are then matched against: MEASURED "
+                + "HERE, a routing tree authored BACKWARDS -- planes[0] at "
+                + "the drum end rather than the net end, against his own "
+                + "ruling -- still derives a placement whose residual is "
+                + "EXACTLY 0.000000 m, so the residual cannot report a "
+                + "fault in what was fitted. The per-wire match PRINT is "
+                + "proved to run on the derived path (all seven matches "
+                + "named on a derived placement) and on the authored one; "
+                + "the match-distance WARNING and R2's REVERSED-LIST check "
+                + "are proved live on the authored path against planes "
+                + "authored at the drum positions. THE INDEPENDENT WITNESS "
+                + "is the anchor row's own characteristic spacing against "
+                + "the cited machine's own footprint.cableSpan, two numbers "
+                + "whose sources never meet -- the spacing is this "
+                + "Result's, the span is measured in the bench.machine/1 "
+                + "document by the Machine component and carried through "
+                + "the citation. A backwards tree turns that span into the "
+                + "DRUM BANK's own, 3 m against a springing whose seven "
+                + "anchors reach 0.9 m, and the witness names the row, the "
+                + "machine and both numbers where nothing else in the "
+                + "document can tell. It has a CEILING AND NO FLOOR, "
+                + "because a machine whose wires are not numbered along its "
+                + "own cable line reads legitimately SHORT and a floor "
+                + "would warn on correct input. Correct input is held to "
+                + "TOTAL SILENCE on both paths.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismGuardsOnBothPlacementPaths: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateExportMechanismDiagnosticsSeparated(plugin);
             Console.WriteLine(
                 "PASS  Export mechanism diagnostics kept separate (audit "
@@ -47423,6 +47463,517 @@ internal static partial class Program
                 $"transformed direction -- that reversal is the correct " +
                 $"rotation sense a mirror gives a spinning reel, not a bug; got dot={mirrorAgreement}.");
         }
+    }
+
+    /// <summary>
+    /// THE THREE WIRE-TO-NET-VERTEX GUARDS ON BOTH PLACEMENT PATHS, AND THE
+    /// ONE WITNESS THAT IS NOT FED BY EITHER (spec 7.2 to 7.5, Task 7).
+    ///
+    /// WHY THIS CHECK EXISTS. Placement is DERIVED from the solved net's own
+    /// anchor rows by default and has been since 2026-09-09; the authored
+    /// planes survive only as an override. A derived transform is fitted TO
+    /// the anchors the wires are then matched against, so every number the
+    /// study document could check it with is fed from the datum it was
+    /// derived from and agrees with itself by construction. This fixture
+    /// measures that directly: leg 2 authors a routing tree BACKWARDS,
+    /// planes[0] at the drum end rather than the net end, and the derived
+    /// placement still reports a residual of exactly 0.000000 m.
+    ///
+    /// FOUR LEGS, one net, one anchor row of seven, a machine document
+    /// built by BuildMachine and cited through ReadMachineCitation each
+    /// time, so that the cable span the witness reads is the product's own
+    /// measurement of the routing tree under test and never a fixture
+    /// literal:
+    ///
+    ///   1. DERIVED, correct routing. The document writer must be SILENT --
+    ///      a warning on correct input is a defect equal in seriousness to
+    ///      one that misses a fault -- and must still PRINT all seven
+    ///      matches, which is how the print is known to run on the derived
+    ///      path at all.
+    ///   2. DERIVED, backwards routing, drum bank at the anchors' own
+    ///      pitch. residualM reads 0.000000 m: the evidence for "a derived
+    ///      residual proves nothing".
+    ///   3. DERIVED, backwards routing, drum bank three times the
+    ///      springing's span. The INDEPENDENT WITNESS fires and names the
+    ///      row, the machine and both numbers. Its two sources never meet:
+    ///      the spacing is this Result's, the span is the machine
+    ///      document's.
+    ///   4. AUTHORED, backwards routing, planes at the drum positions. The
+    ///      per-wire print, the match-distance warning and R2's
+    ///      reversed-list warning all fire, which is how all three are
+    ///      known to run on the authored path. An authored, correct leg
+    ///      beside it is held to silence.
+    ///
+    /// WHAT THIS FIXTURE DOES NOT PROVE, and it is measured rather than
+    /// assumed: leg 2's backwards tree draws NO witness warning either,
+    /// because a drum bank standing at the springing's own pitch makes the
+    /// two ends of every wire congruent point sets, and no measurement in
+    /// this document can then tell one end from the other. The witness has
+    /// a ceiling and no floor for the reason its own comment gives.
+    /// </summary>
+    private static void ValidateMechanismGuardsOnBothPlacementPaths(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo buildMachine = RequirePublicStatic(collectorType, "BuildMachine");
+        MethodInfo readCitation = RequirePublicStatic(collectorType, "ReadMachineCitation");
+        MethodInfo buildWithResult = RequirePublicStatic(collectorType, "BuildWithResult");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+        object PlaneAt(double[] origin) => Activator.CreateInstance(
+            placementPlaneType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        // THE SPRINGING: ONE row of seven anchors, 0.15 m apart, so the
+        // row's own characteristic spacing is 0.15 m and seven of them
+        // reach 0.9 m. ONE row and not two, deliberately: two rows put a
+        // half-turned instance in the fixture, and that instance's own
+        // match distances are governed by a defect this task measured and
+        // did not fix (the derivation pairs wire to anchor along the
+        // machine and along the row, while the document pairs by the row's
+        // DISCOVERY order, and on a turned instance the two run end for
+        // end). Isolating the witness needs a fixture where the two
+        // pairings agree, so that a warning in it is the witness's and
+        // nothing else's.
+        const double AnchorPitch = 0.15;
+        var anchors = new List<double[]>();
+        for (int k = 0; k < 7; k++)
+            anchors.Add(new[] { -8.0, -0.45 + (AnchorPitch * k), 0.0 });
+
+        // THE NET ITSELF, five vertices away from the springing and not
+        // joined to it, so the anchor row is ONE connected group of seven
+        // and the net's own centre sits unambiguously on one side of it --
+        // which is what makes "the machine faces away from the net" mean
+        // something.
+        var interior = new List<double[]>();
+        for (int k = 0; k < 5; k++)
+            interior.Add(new[] { 0.0 + k, 0.0, 1.0 });
+
+        object P(double[] v) => Activator.CreateInstance(point, v[0], v[1], v[2])!;
+        var all = new List<double[]>();
+        all.AddRange(anchors);
+        all.AddRange(interior);
+        Array vertexArray = Array.CreateInstance(point, all.Count);
+        for (int i = 0; i < all.Count; i++)
+            vertexArray.SetValue(P(all[i]), i);
+        var edgePairs = new List<(int, int)>();
+        for (int k = 0; k + 1 < 7; k++)
+            edgePairs.Add((k, k + 1));
+        for (int k = 0; k + 1 < interior.Count; k++)
+            edgePairs.Add((7 + k, 8 + k));
+        Array edgeArray = Array.CreateInstance(edgeType, edgePairs.Count);
+        for (int i = 0; i < edgePairs.Count; i++)
+        {
+            edgeArray.SetValue(
+                Activator.CreateInstance(edgeType, edgePairs[i].Item1, edgePairs[i].Item2), i);
+        }
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertexArray);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edgeArray);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, edgePairs.Count).ToArray());
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(0, 7).ToArray());
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        // THE DRUM BANK, at two pitches. The FANNED bank spans 3.0 m,
+        // more than three times the springing's own 0.9 m, which is the
+        // ordinary shape of a winch: the cables converge from a wide bank
+        // onto a narrow row of anchors. The MATCHED bank stands at the
+        // anchors' own 0.15 m pitch, which makes the two ends of every
+        // wire congruent and is the case no measurement can separate.
+        List<double[]> Drums(double pitch)
+        {
+            var bank = new List<double[]>();
+            for (int k = 0; k < 7; k++)
+                bank.Add(new[] { -10.0, -(pitch * 3.0) + (pitch * k), 1.0 });
+            return bank;
+        }
+        List<double[]> fanned = Drums(0.5);
+        List<double[]> matched = Drums(AnchorPitch);
+
+        object RoutingTree(List<double[]> drums, bool backwards)
+        {
+            var wires = new List<object?>();
+            for (int k = 0; k < 7; k++)
+            {
+                object route = backwards
+                    ? MechanismListOf(frameType, FrameOf(drums[k]), FrameOf(anchors[k]))
+                    : MechanismListOf(frameType, FrameOf(anchors[k]), FrameOf(drums[k]));
+                wires.Add(Activator.CreateInstance(routingWireType, k, route)!);
+            }
+            return MechanismListOf(routingWireType, wires.ToArray());
+        }
+
+        object Asset() => Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new double[] { -12, 0, 0 }, new double[] { -11, 0, 0 },
+                new double[] { -12, 1, 1 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+            null,
+            false)!;
+
+        object AuthoredAt(List<double[]> origins) => MechanismListOf(
+            placementBranchType,
+            Activator.CreateInstance(
+                placementBranchType,
+                Activator.CreateInstance(instanceIdType, 0, 0)!,
+                MechanismListOf(
+                    placementPlaneType,
+                    origins.Select(PlaneAt).ToArray()))!);
+
+        const string MachineId = "MCH-7007";
+
+        (string Payload, List<string> Warnings, List<string> Notes) Leg(
+            string label, List<double[]> drums, bool backwards, object placements)
+        {
+            object routing = RoutingTree(drums, backwards);
+            var machineNotes = new List<string>();
+            string machineDocument = (string)buildMachine.Invoke(
+                null,
+                new object?[]
+                {
+                    Asset(), routing, MachineId, "guard fixture winch", 4.0,
+                    "centreline", new List<string>(), machineNotes,
+                })!;
+            object? citation = readCitation.Invoke(
+                null, new object?[] { machineDocument, new List<string>() });
+            if (citation is null)
+            {
+                throw new InvalidOperationException(
+                    label + ": a machine document this codebase wrote must " +
+                    "be readable as a citation.");
+            }
+
+            var studyWarnings = new List<string>();
+            object?[] arguments = BuildWithResultArguments(
+                buildWithResult, Asset(), routing, placements,
+                studyWarnings, new List<string>(), result, "centreline", null, citation);
+            if (buildWithResult.Invoke(null, arguments) is not string payload)
+            {
+                throw new InvalidOperationException(
+                    label + ": the study build produced no payload at all; " +
+                    "warnings were: " + string.Join(" | ", studyWarnings));
+            }
+
+            var documentWarnings = new List<string>();
+            var documentNotes = new List<string>();
+            json.Invoke(
+                null,
+                new object?[]
+                {
+                    result, "guard fixture", 1.0, payload,
+                    documentWarnings, documentNotes,
+                });
+
+            // THE RESIDUAL IS READ OFF THE PAYLOAD, NOT THE DOCUMENT: the
+            // study document carries each instance's frame and its wire
+            // ids, and the placement's own fit residual stays on the
+            // collector's payload where the placement was made.
+            return (payload, documentWarnings, documentNotes);
+        }
+
+        double ResidualOf(string payload)
+        {
+            using JsonDocument parsed = JsonDocument.Parse(payload);
+            JsonElement instances = parsed.RootElement.GetProperty("instances");
+            if (instances.GetArrayLength() != 1)
+            {
+                throw new InvalidOperationException(
+                    "One anchor row of seven carries exactly one machine, " +
+                    "so exactly one instance must be placed; got " +
+                    instances.GetArrayLength() + ".");
+            }
+            JsonElement residual = instances[0].GetProperty("residualM");
+            if (residual.ValueKind != JsonValueKind.Number)
+            {
+                throw new InvalidOperationException(
+                    "The instance must carry a measured residual, or the " +
+                    "claim that a derived residual reads zero is about " +
+                    "nothing; got " + residual.ValueKind + ".");
+            }
+            return residual.GetDouble();
+        }
+
+        bool NamesTheWitness(string line) =>
+            line.Contains("anchor row", StringComparison.Ordinal) &&
+            line.Contains("between its first and last cable", StringComparison.Ordinal);
+
+        // LEG 1: DERIVED, correct routing. Silence, and seven prints.
+        (string Payload, List<string> Warnings, List<string> Notes) derivedCorrect =
+            Leg("derived/correct", fanned, false, MechanismListOf(placementBranchType));
+        if (derivedCorrect.Warnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A CORRECTLY authored study placed by the DEFAULT derived " +
+                "rule must draw no document warning whatever. A warning on " +
+                "correct input is a defect equal in seriousness to one that " +
+                "misses a fault, and his own six instances derive at " +
+                "0.000000 m. Got: " + string.Join(" | ", derivedCorrect.Warnings));
+        }
+        double derivedResidual = ResidualOf(derivedCorrect.Payload);
+        if (Math.Abs(derivedResidual) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The derived placement of a correct machine must fit its " +
+                "own anchors exactly; got " +
+                derivedResidual.ToString("0.000000", CultureInfo.InvariantCulture) + " m.");
+        }
+        string matchNote = derivedCorrect.Notes.FirstOrDefault(
+            n => n.Contains("matched their net vertices", StringComparison.Ordinal))
+            ?? throw new InvalidOperationException(
+                "THE PER-WIRE MATCH PRINT MUST RUN ON THE DERIVED PATH " +
+                "(spec 7.2): it is the guard that says which anchor each " +
+                "wire was bound to, and a placement the plugin derived for " +
+                "him is the path he will always use. No match note was " +
+                "written at all. Notes were: " +
+                string.Join(" | ", derivedCorrect.Notes));
+        for (int wire = 0; wire < 7; wire++)
+        {
+            if (!matchNote.Contains($"wire 0-0-{wire}: matched net_vertex", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Every wire's own match is printed with its distance, " +
+                    "not only a wrong one, and on the DERIVED path as much " +
+                    $"as the authored one; wire {wire} is missing from: " +
+                    matchNote);
+            }
+        }
+
+        // LEG 2: DERIVED, backwards routing, drum bank at the anchors' own
+        // pitch. THE RESIDUAL STILL READS ZERO.
+        (string Payload, List<string> Warnings, List<string> Notes) derivedBackwardsMatched =
+            Leg("derived/backwards/matched bank", matched, true, MechanismListOf(placementBranchType));
+        double backwardsResidual = ResidualOf(derivedBackwardsMatched.Payload);
+        if (Math.Abs(backwardsResidual) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "THE POINT OF THIS WHOLE TASK (spec 7.3): a routing tree " +
+                "authored BACKWARDS, planes[0] at the drum end rather than " +
+                "the net end, still derives a placement whose residual is " +
+                "EXACTLY ZERO, because the transform is fitted to the very " +
+                "anchors it is then measured against. If this ever reads " +
+                "non-zero the derivation has changed and the reasoning " +
+                "behind the independent witness needs re-examining; got " +
+                backwardsResidual.ToString("0.000000", CultureInfo.InvariantCulture) + " m.");
+        }
+
+        // LEG 3: DERIVED, backwards routing, a drum bank wider than the
+        // springing. THE INDEPENDENT WITNESS FIRES.
+        (string Payload, List<string> Warnings, List<string> Notes) derivedBackwardsFanned =
+            Leg("derived/backwards/fanned bank", fanned, true, MechanismListOf(placementBranchType));
+        string witness = derivedBackwardsFanned.Warnings.FirstOrDefault(NamesTheWitness)
+            ?? throw new InvalidOperationException(
+                "A BACKWARDS ROUTING TREE ON THE DERIVED PATH MUST BE " +
+                "NAMED BY THE INDEPENDENT WITNESS (spec 7.4): its " +
+                "footprint.cableSpan is then the DRUM BANK's own span, 3 m " +
+                "here against a springing whose seven anchors reach 0.9 m, " +
+                "and nothing else in this document can tell -- the residual " +
+                "reads 0.000000 m on a backwards tree (leg 2 measures " +
+                "that), the net vertex comes out of the same derivation and " +
+                "the match distance is a disagreement between two pairings " +
+                "rather than a fault. Warnings were: " +
+                string.Join(" | ", derivedBackwardsFanned.Warnings));
+        if (!witness.Contains(MachineId, StringComparison.Ordinal) ||
+            !witness.Contains("3 m", StringComparison.Ordinal) ||
+            !witness.Contains("0.15 m", StringComparison.Ordinal) ||
+            !witness.Contains("0.9 m", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The witness must name the machine it read the span off " +
+                "and BOTH numbers -- the machine's 3 m span, the row's " +
+                "0.15 m spacing and the 0.9 m seven of them reach -- or he " +
+                "cannot tell which of the two documents is wrong. Got: " +
+                witness);
+        }
+
+        // AND IT MUST NOT FIRE ON CORRECT INPUT, which leg 1's total
+        // silence already proves for the derived path. Said again against
+        // the AUTHORED path, since the witness runs on both.
+        (string Payload, List<string> Warnings, List<string> Notes) authoredCorrect =
+            Leg("authored/correct", fanned, false, AuthoredAt(anchors));
+        if (authoredCorrect.Warnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A correct machine on an AUTHORED placement, its planes at " +
+                "the anchors where its cables end, must draw no document " +
+                "warning either. Got: " +
+                string.Join(" | ", authoredCorrect.Warnings));
+        }
+
+        // LEG 4: AUTHORED, backwards routing, planes at the DRUM
+        // positions -- the canonical R2 failure. All three guards fire.
+        (string Payload, List<string> Warnings, List<string> Notes) authoredBackwards =
+            Leg("authored/backwards", fanned, true, AuthoredAt(fanned));
+        if (!authoredBackwards.Notes.Any(
+                n => n.Contains("matched their net vertices", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "The per-wire match print must run on the AUTHORED path " +
+                "too; notes were: " + string.Join(" | ", authoredBackwards.Notes));
+        }
+        if (!authoredBackwards.Warnings.Any(
+                w => w.Contains("farther than the door-guard tolerance", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "The MATCH-DISTANCE WARNING must fire on the authored " +
+                "path: every wire's first routing plane sits at its drum, " +
+                "over 2 m from the anchor it was matched to, against a " +
+                "tolerance of three times the row's own 0.15 m spacing. " +
+                "Warnings were: " + string.Join(" | ", authoredBackwards.Warnings));
+        }
+        if (!authoredBackwards.Warnings.Any(
+                w => w.Contains("routing list appears REVERSED", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "R2's REVERSED-LIST CHECK must fire on the authored path: " +
+                "the LAST routing plane sits exactly on the matched net " +
+                "vertex and the first sits at the drum, which is his own " +
+                "ruling read backwards (planes[0] is the net end). " +
+                "Warnings were: " + string.Join(" | ", authoredBackwards.Warnings));
+        }
+        // AND THE DEFECT THIS TASK MEASURED AND DOES NOT OWN, WRITTEN OUT
+        // AND RUN RATHER THAN LEFT IN A COMMENT. Every fixture above stands
+        // on ONE anchor row, where the derivation's own wire-to-anchor
+        // pairing and this document's own matching agree. On TWO rows they
+        // do not: the far side's machine is turned round to face away from
+        // its own springing (that is the whole content of "one machine,
+        // built once, turned round"), so the derivation pairs its wire 0
+        // with the anchor at the far end of the row, while the document
+        // matches wire order against the row's DISCOVERY order and pairs it
+        // with the anchor at the near end. The two rules are independent
+        // and on a turned instance they run end for end.
+        //
+        // WHAT THAT COSTS, MEASURED: a CORRECT two-row study draws four
+        // match-distance warnings on its turned side, the worst at the full
+        // 0.9 m cable span, and the wires of that side are bound in the
+        // document to anchors 0.9, 0.6 and 0.3 m from where they were
+        // actually placed. A warning on correct input is a defect equal in
+        // seriousness to one that misses a fault; a WRONG net_vertex in the
+        // artefact is worse, because the studio draws the cable to it.
+        //
+        // AND IT IS WHY THE WITNESS ABOVE HAD TO BE SOURCED ELSEWHERE. The
+        // same fixture reversed produces the IDENTICAL distances on the
+        // OTHER side, so the match distance carries no information about
+        // backwardness on the derived path at all.
+        //
+        // NOT FIXED HERE. The repair changes which net vertex each wire is
+        // BOUND to in the exported document, which is R1's own
+        // non-negotiable and the number the studio draws every cable to. It
+        // needs its own round and its own ruling, not a side effect of the
+        // task that found it.
+        var twoRowAnchors = new List<double[]>();
+        for (int k = 0; k < 7; k++)
+            twoRowAnchors.Add(new[] { -8.0, -0.45 + (AnchorPitch * k), 0.0 });
+        for (int k = 0; k < 7; k++)
+            twoRowAnchors.Add(new[] { 8.0, -0.45 + (AnchorPitch * k), 0.0 });
+        Array twoRowVertices = Array.CreateInstance(point, twoRowAnchors.Count);
+        for (int i = 0; i < twoRowAnchors.Count; i++)
+            twoRowVertices.SetValue(P(twoRowAnchors[i]), i);
+        var twoRowEdges = new List<(int, int)>();
+        for (int k = 0; k + 1 < 7; k++)
+        {
+            twoRowEdges.Add((k, k + 1));
+            twoRowEdges.Add((7 + k, 8 + k));
+        }
+        Array twoRowEdgeArray = Array.CreateInstance(edgeType, twoRowEdges.Count);
+        for (int i = 0; i < twoRowEdges.Count; i++)
+        {
+            twoRowEdgeArray.SetValue(
+                Activator.CreateInstance(edgeType, twoRowEdges[i].Item1, twoRowEdges[i].Item2), i);
+        }
+        object twoRowEquilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(twoRowEquilibrium, equilibriumType, "Vertices", twoRowVertices);
+        SetContractProperty(twoRowEquilibrium, equilibriumType, "Edges", twoRowEdgeArray);
+        SetContractProperty(twoRowEquilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, twoRowEdges.Count).ToArray());
+        SetContractProperty(twoRowEquilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(0, twoRowAnchors.Count).ToArray());
+        object twoRowResult = CreateResultDto(resultType, "fd", twoRowEquilibrium, null, null);
+
+        Deferred(
+            "a CORRECT study on TWO anchor rows draws no document warning: "
+            + "the far side's machine is turned round by the derivation, so "
+            + "the anchor each of its wires is matched to must be the anchor "
+            + "the derivation actually placed it on",
+            "the study document's own within-row net-vertex matching "
+            + "(MechanismDocument.Json's anchorFlat: wire order against the "
+            + "row's DISCOVERY order), which does not follow the placement "
+            + "the way MechanismCollector.DerivePlacements' own alongMachine "
+            + "and alongRow pairing does. Measured by Task 7, which does not "
+            + "own the net_vertex binding rule (R1) and cannot change which "
+            + "anchor the studio draws each cable to as a side effect; needs "
+            + "its own round",
+            () =>
+            {
+                object routing = RoutingTree(fanned, false);
+                object? citation = readCitation.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        (string)buildMachine.Invoke(
+                            null,
+                            new object?[]
+                            {
+                                Asset(), routing, MachineId, "guard fixture winch",
+                                4.0, "centreline", new List<string>(), new List<string>(),
+                            })!,
+                        new List<string>(),
+                    });
+                object?[] arguments = BuildWithResultArguments(
+                    buildWithResult, Asset(), routing,
+                    MechanismListOf(placementBranchType),
+                    new List<string>(), new List<string>(), twoRowResult,
+                    "centreline", null, citation);
+                if (buildWithResult.Invoke(null, arguments) is not string payload)
+                    throw new InvalidOperationException("the two-row study built no payload.");
+                var twoRowWarnings = new List<string>();
+                json.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        twoRowResult, "guard fixture", 1.0, payload,
+                        twoRowWarnings, new List<string>(),
+                    });
+                if (twoRowWarnings.Count != 0)
+                {
+                    throw new InvalidOperationException(
+                        "a correctly authored two-row study drew "
+                        + twoRowWarnings.Count + " document warning(s), all "
+                        + "of them on the side the derivation turned round: "
+                        + string.Join(" | ", twoRowWarnings));
+                }
+            });
     }
 
     /// <summary>
