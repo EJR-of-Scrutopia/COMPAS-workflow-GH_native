@@ -454,15 +454,68 @@ function renderView() {
   // Every render path goes through here, the recorder's included, so the
   // gumball's screen-constant size is settled in one place.
   sizePropGumball();
+  // And so is the shadow fit, for the same reason and one more: a scatter
+  // places hundreds of casters in a burst, and re-measuring the scene per
+  // prop would be quadratic. Marking it dirty and settling it once a
+  // frame costs one traverse whatever happens.
+  if (shadowFitPending) fitSunShadow();
   composer.render();
 }
+
+// How far out the sun stands. applySunAt places it on a sphere of this
+// radius, so it is also what the shadow slab's near and far are measured
+// from.
+const SUN_DISTANCE = 60;
 
 const sun = new THREE.DirectionalLight(0xffffff, 3.0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
+// A starting box, immediately replaced by fitSunShadow once anything is
+// in the scene. It used to be the WHOLE policy: a fixed 60 m square,
+// written here and never touched again, which is 29 mm texels on a 2048
+// map. Every vault measured is 22.8 m wide, so two thirds of the map was
+// spent on empty ground, and on a 200 mm voussoir that is the difference
+// between a bed joint casting a readable line and a stepped one. It also
+// silently lost the shadow of anything scattered beyond 30 m.
 sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
 sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
 scene.add(sun);
+
+// Set whenever the set of shadow casters changes; settled in renderView.
+let shadowFitPending = true;
+const shadowBox = new THREE.Box3();
+const shadowSphere = new THREE.Sphere();
+
+function noteCastersChanged() { shadowFitPending = true; }
+
+// A bounding SPHERE, not a box, because the shadow camera looks down the
+// sun's own axis: a box measured in world axes would need re-measuring
+// every time the sun moved, and a sphere is the same size seen from
+// anywhere. That is what makes this a caster fit rather than a sun fit,
+// and why the day cycle does not have to trigger it.
+function fitSunShadow() {
+  shadowFitPending = false;
+  shadowBox.makeEmpty();
+  scene.traverse((object) => {
+    if (object.isMesh && object.castShadow) shadowBox.expandByObject(object);
+  });
+  if (shadowBox.isEmpty()) return;
+  shadowBox.getBoundingSphere(shadowSphere);
+  // The light aims at the origin (sun.target is never moved), so the map
+  // has to reach whatever is furthest from THERE, not from the casters'
+  // own centre. A vault sitting off-origin would otherwise fall out of
+  // its own shadow map.
+  const reach = Math.max(1,
+    shadowSphere.center.length() + shadowSphere.radius) * 1.02;
+  const box = sun.shadow.camera;
+  box.left = -reach; box.right = reach;
+  box.top = reach; box.bottom = -reach;
+  // A tight slab is what gives the depth test its precision, and the sun
+  // is always SUN_DISTANCE from the origin whatever the hour.
+  box.near = Math.max(0.1, SUN_DISTANCE - reach);
+  box.far = SUN_DISTANCE + reach;
+  box.updateProjectionMatrix();
+}
 const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x30271f, 0.5);
 scene.add(hemi);
 
@@ -513,7 +566,7 @@ const WEATHER = {
 function applySunAt(azimuthDeg, elevationDeg) {
   const az = THREE.MathUtils.degToRad(azimuthDeg);
   const el = THREE.MathUtils.degToRad(elevationDeg);
-  const r = 60;
+  const r = SUN_DISTANCE;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
 }
@@ -1980,6 +2033,9 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   if (isLamp(record)) syncLightControls();
   if (save) saveProps();
   return record;
+  // One more caster. A scatter is hundreds of these in a
+  // row, which is why this marks rather than measures.
+  noteCastersChanged();
 }
 
 // A library prop is a clone that SHARES its template's materials, so
@@ -2926,6 +2982,8 @@ function buildScene(bundle, preserve) {
   // re-cut or a change of study quietly heals the section while the
   // control still reads Plane.
   applySection();
+  // A rebuild replaces every caster in the scene.
+  noteCastersChanged();
 }
 
 // ---------- saved scenes ----------
@@ -12589,6 +12647,10 @@ function removePropRecord(record) {
   }
   disposeProp(record.object);
   propsGroup.remove(record.object);
+  // A caster leaving matters as much as one arriving: clearing a
+  // scattered field would otherwise leave the shadow map sized for the
+  // props that are gone.
+  noteCastersChanged();
   state.props = state.props.filter((p) => p !== record);
   if (state.selectedProp === record) selectProp(null);
   // A lamp leaving changes what the Lights row is talking about, and it

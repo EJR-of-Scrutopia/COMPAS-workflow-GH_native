@@ -3191,3 +3191,58 @@ def test_a_restored_orthographic_scene_keeps_the_framing_it_was_saved_with():
     assert "applyCameraFrustum(viewportAspect());" in after
     assert "paintScaleBar();" in after, (
         "the bar reads metres per pixel, so a restored zoom moves it")
+
+
+def test_the_sun_shadow_map_is_fitted_to_what_casts():
+    """The research report said the shadow camera was framed for the
+    perspective view and would break under a parallel one. It was framed
+    for NEITHER: a hard-coded 60 m square, written once at boot and
+    never touched, which is exactly why the orthographic camera changed
+    nothing about it.
+
+    But a 2048 map over 60 m is 29.3 mm texels, and every vault on disk
+    is 22.8 m wide, so two thirds of the map was spent on empty ground.
+    Measured live after fitting: 11.1 mm on the 2 Sided Vault, 15.7 on
+    the 3 Sided, 16.0 on the 5 Sided, 14.9 on Complex geometry, so
+    between 1.8 and 2.6 times finer. On a 200 mm voussoir that is a bed
+    joint casting a readable line rather than a stepped one. It also
+    covers the case the constant could not: anything scattered beyond
+    30 m used to lose its shadow silently.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    fit = _js_function(js, "function fitSunShadow()")
+
+    assert "object.isMesh && object.castShadow" in fit, (
+        "fitted to what CASTS, not to what is in the scene: the ground "
+        "disc is 200 m across and would put the box back where it was")
+    assert "getBoundingSphere(shadowSphere)" in fit, (
+        "a sphere, not a box. The shadow camera looks down the sun's own "
+        "axis, so a world-axis box would need re-measuring every time "
+        "the sun moved; a sphere is the same size seen from anywhere, "
+        "which is what lets the day cycle skip this entirely")
+    assert "shadowSphere.center.length() + shadowSphere.radius" in fit, (
+        "the light aims at the origin, so the reach is measured from "
+        "THERE; a vault sitting off-origin would fall out of its own "
+        "shadow map")
+    assert "box.near = Math.max(0.1, SUN_DISTANCE - reach);" in fit
+    assert "box.far = SUN_DISTANCE + reach;" in fit, (
+        "a tight slab is what gives the depth test its precision")
+    assert "box.updateProjectionMatrix();" in fit, (
+        "an orthographic camera's planes do nothing until it is rebuilt")
+
+    # Settled once a frame, not once per caster: a scatter places
+    # hundreds in a burst and re-measuring per prop would be quadratic.
+    assert "let shadowFitPending = true;" in js
+    render = _js_function(js, "function renderView()")
+    assert "if (shadowFitPending) fitSunShadow();" in render, (
+        "renderView is the one choke point every render path passes "
+        "through, the recorder's included")
+    assert js.count("noteCastersChanged();") >= 3, (
+        "declared, plus a rebuild and a placement at least")
+
+    # One constant for where the sun stands, or the slab is measured off
+    # a distance the light does not actually keep.
+    assert "const SUN_DISTANCE = 60;" in js
+    assert "const r = SUN_DISTANCE;" in _js_function(
+        js, "function applySunAt(azimuthDeg, elevationDeg)")
