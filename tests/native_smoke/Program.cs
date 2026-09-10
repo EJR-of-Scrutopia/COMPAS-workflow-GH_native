@@ -3394,7 +3394,7 @@ internal static partial class Program
                 + "harder the truncation, the tighter the remainder looks -- "
                 + "while rejected-against-agreeing reads 0.75 and names it. "
                 + "A MILD TAIL IS NOT A SWEEP and passes at 0.174, which is "
-                + "pulley 9 of his own machine to three places, so this "
+                + "pulley 9 of his own machine to two places, so this "
                 + "fixture holds a case NEAR the gate and not only cases an "
                 + "order of magnitude either side of it. The row states BOTH "
                 + "populations: windingRadiusSamples for the frames the "
@@ -45592,7 +45592,7 @@ internal static partial class Program
     ///     strongest claim in the document made by its weakest number.
     ///   ENTRY 5, A MILD TAIL, AND IT MUST PASS (fix round 1). Forty-six
     ///     frames on the barrel and eight running off it: 0.174, which is
-    ///     pulley 9 of his own machine to three places (624 frames agreeing
+    ///     pulley 9 of his own machine to two places (624 frames agreeing
     ///     with the 0.2700 m it publishes, a lead-off out to 0.3232 m,
     ///     reading 0.1747). It is the only entry here NEAR the 0.40 gate,
     ///     and it holds the ruling that a tail is not a sweep. Without it
@@ -45724,7 +45724,7 @@ internal static partial class Program
         // frames on the barrel and eight running off it, which is the shape
         // pulley 9 of his own machine has: 624 frames agreeing with the
         // 0.2700 m it publishes and a lead-off reaching 0.3232 m, reading
-        // 0.1747. Eight over forty-six is 0.1739, the same figure to three
+        // 0.1747. Eight over forty-six is 0.1739, the same figure to two
         // places. It is here so the ruling "a tail is not a sweep" is held
         // by a check rather than by a measurement in a report: without it
         // this fixture's scatters run 0.03, 5.0, 0.75, 1.0 and null, with
@@ -45966,7 +45966,7 @@ internal static partial class Program
         // Pulley 9 of his own machine reads 0.1747 -- 624 frames agreeing
         // with the 0.2700 m it publishes and a lead-off reaching 0.3232 m --
         // and it must stay silent, or the gate would name the ordinary way a
-        // cable leaves a sheave. This entry reproduces that figure to three
+        // cable leaves a sheave. This entry reproduces that figure to two
         // places on a drum small enough to sit in the same fixture, so the
         // ruling is held here rather than in a report nobody re-runs.
         double tail = ScatterOf(5);

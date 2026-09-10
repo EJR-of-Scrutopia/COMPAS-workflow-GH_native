@@ -414,3 +414,106 @@ makes the number right.
 12.3 CARRIED, NOT CLOSED: five of his eight registered studies are unexported, and
 `Complex geometry` is an irregular net (823 vertices, 1543 faces) that no fixture measures.
 Neither blocks this rework.
+
+## 13. Amendments found during implementation, 2026-09-09 to 2026-09-11
+
+These six were found while building Tasks 3, 4, 6, 7 and 8, most of them by measurement
+against his real files rather than by review of the prose. Four are corrections to what
+this document got wrong. Each is recorded here as an amendment, with its evidence, rather
+than edited silently into the paragraph it corrects, on the same principle sections 10 and
+11 of the earlier spec were written on: the evidence is the valuable part, and a future
+reader should be able to see what was first specified and what the build then found. Where
+an amendment below disagrees with a numbered paragraph above, the amendment wins.
+
+13.1 PARAGRAPH 4.7 IS DEFECTIVE, and it would have refused correct machines. As written it
+refuses a branch "whose plane count exceeds one and whose branch held more than one disjoint
+mesh". That contradicts 3.1 and 4.1, both of which bless several meshes in one branch: RE is
+"tree {entry} one branch per reel KIND, branch joined" (3.1), and an entry's several authored
+objects are joined into the one mesh it carries (4.1, 4.2). Taken literally, 4.7's rule would
+refuse a drum authored as a hub plus two flanges at seven axes, a legitimate machine, which
+is a warning firing on correct input. The rule as built is an EQUALITY instead: only when a
+branch's item count equals its plane count does the old flat-zip reading exist at all to be
+confused with the tree reading, so below equality there is nothing to guess between and
+nothing to refuse. It is implemented over total ITEM counts, not resolved-mesh counts,
+because `ReadMeshTree` adds a bare null to a branch, with no warning, for any wired item that
+fails to resolve; counting only resolved meshes let a ten-object legacy branch with one
+unresolved item read as nine against ten planes, fall through the equality untested, and be
+built as one entry with every drum joined at ten axes, with nothing said at all. Confirmed by
+measurement, not asserted: that case produced one entry and zero warnings before the item-count
+form was adopted.
+
+13.2 PARAGRAPH 2.3'S 10 KB ENVELOPE BOUND HOLDS ONLY AT FIXTURE SCALE. Measured on his own
+`2 Sided Vault` study: 661,616 bytes total, of which about 330 KB is the tension tie and the
+anchor bodies the paragraph already excludes from the bound, leaving an envelope of about
+316 KB against the stated 10 KB, thirty times over. The excess is dominated by the wires' own
+route frames, which paragraph 2.3 counts inside the bound. The split this section exists to
+pin still holds: the 646 KiB total is the figure ruling 1.7 predicted ("a few hundred KB"),
+and every machine body is genuinely gone. It is the 10 KB SUB-bound that describes a study
+with a handful of frames per wire and not his forty-two wires' worth. Recorded here rather
+than legislated in a fixture, because raising it to a number that means something at his
+scale is a spec amendment and not a test change.
+
+13.3 PARAGRAPH 7.2 IS FACTUALLY WRONG about the pre-change state. It says "Today all three sit
+in the authored branch only." They did not: the per-wire match-distance print, the
+match-distance warning and the R2 reversed-list check all already ran from one condition that
+asks only for a solved net, a route and an instance frame, which every instance carries
+whether Placement (PL) authored its frame or `DerivePlacements` built it. What was true, and
+what the task actually fixed, is that on the DERIVED path none of the three could REPORT a
+fault, because a derived transform is fitted TO the anchors its wires are then matched
+against. Measured before the fix, on a routing tree authored backwards down the derived path:
+residual exactly 0.000000 m on both instances, zero reversed-list warnings on either one, and
+match distances and warning counts IDENTICAL to the correct tree's own (0.9, 0.6, 0.3, 0, 0.3,
+0.6, 0.9 m; four warnings), only on the other side. A number that reads the same whether the
+input is right or wrong is not a guard. The paragraph's substance, that the three guards must
+be provably load-bearing on both paths and not only on the authored one, stands and is what
+was built; only its claim about where they already ran was wrong.
+
+13.4 PARAGRAPH 8.4 IS FALSIFIED ON HIS REAL FILE. Taken at its narrowest, "the ratio of
+rejected frames to owned ones, counting ownership refusals only" runs BACKWARDS there: his
+seven swept spools score 0.16 to 0.28 while the honest pulley (pulley 7) scores 0.40, so a
+gate on that quantity either fires on a correct drum or passes the defect. Two structural
+causes, confirmed independently by two agents' measurements: first, his spools' flange radius
+and their sweep both end at exactly 0.0600 m, so nothing is refused radially at all and the
+narrow reading has nothing to count; second, the just-outside window is a fraction of the
+MESH radius, so a 0.200 m pulley trawls a 30 mm annulus against a 0.060 m spool's 9 mm, and
+dividing by the drum's own owned count does not remove that size bias.
+
+AMENDED TO: the figure is disagreement with the published radius, counted over the whole
+neighbourhood a reel's ownership window reaches, with every ownership refusal counted as a
+reject by default. Under this reading, measured on his file: spools 4.00 to 4.24, pulley 7
+reads 0.0407, pulley 9 reads 0.1747, a hundredfold gap between the defect and the two honest
+wraps.
+
+AND ADD: the ownership margin bounds the population the figure is taken over, so a drum with
+no flange at all sits outside the gate's reach in one direction. State that direction
+plainly, with the measured numbers, rather than leaving it as a blind spot to be found later:
+on a uniform sweep from 0.020 to 0.060 m varying only the flange, flange 0.060 scores 2.33 and
+is named, flange 0.030 scores 0.93 and is named, and flange 0.0205 scores 0.09 and goes
+SILENT while publishing a radius wrong by a factor of two for spin rate. That is a direction
+this measure weakens in as the flange closes on the sweep, not an isolated blind spot off to
+one side.
+
+13.5 THE WITHIN-ROW MATCHING RULE CHANGED (Task 7a). It is no longer the open default this
+document describes elsewhere as pending. It is now "the anchor the wire was actually placed
+against": `MechanismDocument.Json` orders an instance's placed wire ends and its row's anchors
+along the same axis `DerivePlacements` uses (`WidestPairDirection`, `OrderAlongAxis`) and pairs
+k-th to k-th, rather than pairing wire order against the row's discovery order. The two
+orderings were EXTRACTED, not reimplemented, so the placement rule and the document's matching
+rule are one piece of code that cannot drift apart again the way the old pair of independent
+rules did. On every two-sided vault the far side is a machine the derivation turns round, and
+the two rules used to run end for end there; see section 5 of the channel note at
+`docs/superpowers/notes/2026-09-09-machine-schema-channel-note.md` for the artefact
+consequence.
+
+13.6 THE MACHINE FILE IS STILL NAMED FROM THE MACHINE'S NAME, NOT ITS MINTED ID. The write
+target is `<Name>-machine.json` in the machine library folder; the id (ID port, section 3.6)
+plays no part in it. Two machines sharing a name therefore write ONE file, and a study citing
+minted id A can open that file, find id B inside it, and render the wrong machine with no
+complaint, because the schema is right and only the id inside says whose file it actually is.
+A name that is not one path segment still collapses, through the same `StudyName` sanitisation
+the id path itself was freed of. An INTERIM GUARD is built: `RefuseOverwritingAnotherMachine`
+refuses to overwrite a machine file whose stored id differs from the one about to be written,
+naming both ids. That is a guard against the write, not a fix to the naming. THE FULL FIX IS
+OUTSTANDING and needs Param's ruling on two things: what characters a minted id may carry (so
+it can become a filename), and a migration for a library that already holds files named the
+old way. Tracked, not scheduled.
