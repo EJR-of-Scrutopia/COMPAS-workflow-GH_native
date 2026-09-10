@@ -3306,11 +3306,13 @@ internal static partial class Program
                 + "reading of that frame then rides a spinning drum instead "
                 + "of standing still; spoolRadius defaults from reel[0]'s "
                 + "own bounding box when one resolves and from Frame 1's "
-                + "when none does, both named; THE REEVE DEFAULT IS STATED "
-                + "ONCE, AT THE PAYLOAD'S ROOT (Task 4, spec 6.3), proved "
-                + "three ways -- the chin names it as stated once at "
-                + "reeve.default and calls it PROVISIONAL, the payload's "
-                + "own root carries reeve.default = 1.0, and the old scalar "
+                + "when none does, both named; THE REEVE DEFAULT IS THE "
+                + "CITED MACHINE'S OWN AND A STUDY CITING NONE STATES NO "
+                + "DEFAULT AT ALL (Task 6, retiring Task 4's provisional "
+                + "1.0), proved three ways on a build with nothing wired "
+                + "to Machine (MA) -- the chin NAMES the missing citation "
+                + "at the port, the payload carries neither a machine "
+                + "block nor a reeve default anywhere, and the old scalar "
                 + "mechanism.reeveFactor is ABSENT from the mechanism "
                 + "block, which is what stops a machine document, which "
                 + "lifts that block whole, stating one machine's default "
@@ -3631,19 +3633,26 @@ internal static partial class Program
                 + "rather than fabricating a vertex; vertexCount and "
                 + "columnNodeCount are declared at document level from the "
                 + "SAME Result Export already owns; and the document is "
-                + "byte-identical on a second run of the same inputs. AND "
-                + "THE REEVE FACTOR IS NOW READ FROM THE PAYLOAD'S OWN "
-                + "reeve.default AND REFUSED BY NAME WHEN ABSENT (Task 4, "
-                + "spec 6.3): the old mechanism.reeveFactor scalar has gone, "
-                + "because the machine document lifts that block whole and "
-                + "would have stated one machine's default twice in two "
-                + "keys with two different numbers; a payload stating no "
-                + "default costs the mechanism document and says so, rather "
-                + "than silently applying 1.0 where he authored 4.0 and "
-                + "leaving every reel to spin four times too slowly with "
-                + "the geometry, the wire paths and the timing all still "
-                + "correct; and a well-formed, non-null ZERO is refused as "
-                + "not a mechanical advantage.");
+                + "byte-identical on a second run of the same inputs. THE "
+                + "REEVE FACTOR IS READ FROM THE CITED MACHINE AND THE "
+                + "DOCUMENT IS REFUSED BY NAME WHERE THERE IS NO CITATION "
+                + "(Task 6, spec 5.3 and 6.3, retiring Task 4's own "
+                + "provisional reeve.default at the payload root): the "
+                + "refusal names Machine (MA), the port he can act at, and "
+                + "costs the mechanism document and nothing else, rather "
+                + "than silently applying a number nobody authored and "
+                + "leaving every reel to spin at the wrong rate with the "
+                + "geometry, the wire paths and the timing all still "
+                + "correct; a well-formed, non-null ZERO default is "
+                + "refused as not a mechanical advantage. AND THE "
+                + "mechanism BLOCK IS AN ALLOWLIST, WHICH IS THE REVERSE "
+                + "OF WHAT THIS CHECK USED TO ASSERT: a machine-shaped key "
+                + "in the payload (\"body\", \"spinners\", the machine's "
+                + "own \"spoolRadius\") is DROPPED rather than passed "
+                + "through, since a study document carries no machine at "
+                + "all now, while the cable's own facts beside them "
+                + "survive because the wires this document does carry are "
+                + "drawn on them.");
         }
         catch (Exception exception)
         {
@@ -4366,6 +4375,55 @@ internal static partial class Program
         catch (Exception exception)
         {
             failures.Add($"MechanismReeveFactor: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateStudyCitesItsMachine(plugin);
+            Console.WriteLine(
+                "PASS  The study cites its machine and carries no machine " +
+                "bodies (spec 2.2, 2.3, 5.3 to 5.6, 9.5; Task 6, the " +
+                "split this rework exists for), driven end to end: a " +
+                "machine document built by BuildMachine, its citation read " +
+                "back off that document by ReadMachineCitation, a study " +
+                "payload built against a solved Result and finished by " +
+                "MechanismDocument.Json. The study document KEEPS THE NAME " +
+                "bench.mechanism/1 though it is no longer mostly a " +
+                "mechanism, because renaming bench.frames/1 to " +
+                "bench.formwork/1 broke the studio's reader silently and " +
+                "cost days; it cites exactly ONE machine by its minted id, " +
+                "with that machine's own schema and declared wireCount " +
+                "beside it. NO MACHINE BODY REACHES IT, proved as a WRONG " +
+                "ANSWER rather than a missing key (spec 9.5): the study " +
+                "build here is handed the whole machine -- Frame 1, Frame " +
+                "2, the Motors and four reel entries -- and the " +
+                "document's TOTAL body vertex count, walked over every " +
+                "object carrying both vertices and faces, still equals the " +
+                "sum of exactly the two bodies wired to the STUDY's own " +
+                "ports, since a count of PARTS is satisfied by the wrong " +
+                "parts. A WIRE NAMES ITS MACHINE WIRE BY THE AUTHORED " +
+                "NUMBER: this machine is authored on wires [0, 1, 2, 4, 5, " +
+                "6] with wire 3 absent, so the machine document's own " +
+                "routing array is FILTERED AND COMPACTED and an offset " +
+                "into it would read [0, 1, 2, 3, 4, 5], landing three " +
+                "cables on real drums in a self-consistent arrangement, " +
+                "every one of them wrong. THE WIRE COUNT CROSS-CHECK IS AN " +
+                "EQUALITY, not a range: six placed against a six-wire " +
+                "machine draws NO warning, and the same payload citing a " +
+                "TWELVE-wire machine is NAMED with both numbers -- a range " +
+                "test of \"every wire lies in [0, wireCount)\" passes " +
+                "there by coincidence, the document validates, six cables " +
+                "animate and six are simply absent. Every wire with no " +
+                "override resolves to the CITED MACHINE's own authored 4.0 " +
+                "sourced \"machine\", retiring Task 5's provisional 1.0, " +
+                "and a study that cites NO machine is REFUSED BY NAME " +
+                "naming Machine (MA) rather than given a factor nobody " +
+                "authored. The envelope, everything but those two bodies, " +
+                "measures under spec 2.3's 10 KB.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"StudyCitesItsMachine: {DescribeException(exception)}");
         }
 
         // Every deferred assertion is reported here, at the suite level, so
@@ -41356,6 +41414,39 @@ internal static partial class Program
     /// them (MechanismInstanceInput, MechanismWireInput,
     /// MechanismRowPartInput, MechanismAnchorRow, MechanismFrame alike).
     /// </summary>
+    /// <summary>
+    /// A MACHINE CITATION, INJECTED INTO A COLLECTOR PAYLOAD (Task 6). Since
+    /// the machine left the study, MechanismDocument.Json refuses a payload
+    /// that cites none: every fixture that drives it needs a machine, and
+    /// the ones whose subject is NOT the citation (ownership, the mirror,
+    /// the row pairing, the export diagnostics) say so in one call here
+    /// rather than growing a machine fixture apiece.
+    ///
+    /// It is a string edit rather than a rebuild because those fixtures
+    /// drive MechanismCollector.Build, the five-argument overload that
+    /// cites nothing by design. The citation's own SHAPE is proved where it
+    /// is written, in ValidateStudyCitesItsMachine, against a payload the
+    /// product itself built from a machine document the product itself
+    /// wrote; here it is only a stand-in so the subject under test can be
+    /// reached at all.
+    /// </summary>
+    private static string WithMachineCitation(
+        string payload, string id, int wireCount, double reeveDefault)
+    {
+        if (!payload.StartsWith("{", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A collector payload is a JSON object; got: " + payload);
+        }
+        string citation =
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"" + id +
+            "\",\"name\":\"" + id + "\",\"wireCount\":" +
+            wireCount.ToString(CultureInfo.InvariantCulture) +
+            ",\"reeveDefault\":" +
+            reeveDefault.ToString("0.####", CultureInfo.InvariantCulture) + "},";
+        return "{" + citation + payload.Substring(1);
+    }
+
     private static object MechanismListOf(Type elementType, params object?[] items)
     {
         Type listType = typeof(List<>).MakeGenericType(elementType);
@@ -41527,24 +41618,28 @@ internal static partial class Program
     /// 4. spoolRadius defaults from reel[0]'s own bounding box when a
     ///    reel resolves, and falls back to Frame 1's when none does,
     ///    both said as a note naming the value and the source.
-    /// 4a. THE REEVE DEFAULT IS STATED ONCE, AT THE PAYLOAD'S ROOT (Task 4,
-    ///    spec 6.3), and this item's scope GREW when that task folded it in
-    ///    rather than adding a check of its own. It was "the reeve factor is
-    ///    always named fixed at 1.0 and PROVISIONAL", one assertion over the
-    ///    chin. It is now three, and the PASS line says all three:
-    ///      (i)   the chin names the default as stated ONCE at reeve.default
-    ///            and calls it PROVISIONAL (the note prints the number
-    ///            through a "0.####" format, so it reads 1, not 1.0, and an
-    ///            assertion matching on "1.0" would pass or fail for the
-    ///            wrong reason);
-    ///      (ii)  the payload's own ROOT carries reeve.default = 1.0;
+    /// 4a. THE REEVE DEFAULT IS THE CITED MACHINE'S OWN, AND THIS BUILD
+    ///    CITES NONE (Task 6, spec 6.3). This item's scope has now grown
+    ///    twice, and the PASS line says everything it currently proves.
+    ///    Task 4 folded in "the default is stated once, at the payload's
+    ///    root, as a PROVISIONAL 1.0" -- a placeholder the collector stated
+    ///    for itself while the Machine (MA) port was registered and unread.
+    ///    Task 6 reads that port, and the placeholder is retired rather
+    ///    than moved: the default now travels from the machine a study
+    ///    CITES, and a study citing none states none at all. This fixture
+    ///    wires no machine, so the three assertions are:
+    ///      (i)   the chin NAMES the missing citation, at the port, as a
+    ///            warning rather than a note -- an export cannot be written
+    ///            from this payload and he needs to know at the canvas;
+    ///      (ii)  the payload carries NO "machine" key (absent, not null)
+    ///            and no reeve default anywhere in it;
     ///      (iii) the old scalar mechanism.reeveFactor is ABSENT from the
     ///            mechanism block.
-    ///    (iii) is the one that matters most and the one no chin assertion
-    ///    could ever have caught: a machine document lifts the mechanism
-    ///    block whole into its own "machine" key, so a scalar left there
-    ///    would state one machine's default a second time, with a different
-    ///    number, both plausible and neither null.
+    ///    (iii) is the one no chin assertion could ever have caught: a
+    ///    machine document lifts the mechanism block whole into its own
+    ///    "machine" key, so a scalar left there would state one machine's
+    ///    default a second time, with a different number, both plausible
+    ///    and neither null.
     /// 5. Routing (RT)[0] carrying no frames at all is named, by wire, as
     ///    fatal to every placement -- an asset wired with no routing
     ///    authored says so rather than staying silent.
@@ -41799,34 +41894,50 @@ internal static partial class Program
                 "now performs, and spec 4.5 says it must GO rather than " +
                 "sit beside it; notes were: " + string.Join(" | ", fullNotes));
         }
-        // THE REEVE DEFAULT IS STATED ONCE, AT THE PAYLOAD'S ROOT (spec
-        // 6.3, Task 4). It used to be the scalar mechanism.reeveFactor,
-        // written inside the block a machine document lifts whole, which is
-        // how one document could have stated the default twice in two keys
-        // with two different numbers. The chin still names it and still
-        // calls it provisional, and the payload now states it in the same
-        // reeve.default shape the machine document's header uses.
-        bool reeveDefaultNamed = fullNotes.Any(n =>
-            n.Contains("reeve default is stated ONCE", StringComparison.Ordinal) &&
-            n.Contains("reeve.default", StringComparison.Ordinal) &&
-            n.Contains("PROVISIONAL", StringComparison.Ordinal));
-        if (!reeveDefaultNamed)
+        // THE REEVE DEFAULT IS THE CITED MACHINE'S OWN, AND A STUDY THAT
+        // CITES NONE STATES NO DEFAULT AT ALL (spec 6.3; Task 6 retiring
+        // Task 4's placeholder). It used to be the scalar
+        // mechanism.reeveFactor, written inside the block a machine
+        // document lifts whole, which is how one document could have stated
+        // the default twice in two keys with two different numbers; Task 4
+        // moved it to the payload's own reeve.default as a PROVISIONAL 1.0
+        // the collector stated for itself while the Machine (MA) port was
+        // registered and unread. This build cites no machine, so the
+        // assertion is now the other way round: the chin NAMES the missing
+        // citation as a warning, the payload carries NO reeve default
+        // anywhere, and no mechanism document can be written from it. A
+        // fallback would put every export back to applying 1.0 where he
+        // authored 4.0, with the geometry, the wire paths and the timing
+        // all still correct so that nothing looks broken.
+        bool uncitedNamed = fullWarnings.Any(w =>
+            w.Contains("Machine (MA)", StringComparison.Ordinal) &&
+            w.Contains("CITES NO MACHINE", StringComparison.Ordinal));
+        if (!uncitedNamed)
         {
             throw new InvalidOperationException(
-                "The chin must name the reeve default as stated ONCE at " +
-                "reeve.default and PROVISIONAL; notes were: " +
-                string.Join(" | ", fullNotes));
+                "A study built with nothing wired to Machine (MA) must be " +
+                "NAMED as citing no machine, at the port; warnings were: " +
+                string.Join(" | ", fullWarnings));
         }
         using (JsonDocument reeveShape = JsonDocument.Parse(fullJson))
         {
             JsonElement reeveRoot = reeveShape.RootElement;
-            if (!reeveRoot.TryGetProperty("reeve", out JsonElement reeveBlock) ||
-                Math.Abs(reeveBlock.GetProperty("default").GetDouble() - 1.0) > 1.0e-12)
+            if (reeveRoot.TryGetProperty("machine", out JsonElement _))
             {
                 throw new InvalidOperationException(
-                    "The payload states its reeve default at the ROOT, as " +
-                    "reeve.default, and it is the provisional 1.0 until a " +
-                    "study cites a machine; got " + fullJson);
+                    "No citation means NO KEY, not a key carrying null: a " +
+                    "key standing for \"this study cites nothing\" says " +
+                    "nothing its absence does not, and forces every reader " +
+                    "downstream to tolerate a null by name. Got " + fullJson);
+            }
+            if (reeveRoot.GetProperty("reeve").TryGetProperty(
+                    "default", out JsonElement _))
+            {
+                throw new InvalidOperationException(
+                    "The reeve default is the CITED MACHINE's own, stated " +
+                    "once at machine.reeveDefault, and a study citing no " +
+                    "machine states none at all rather than inventing one; " +
+                    "got " + fullJson);
             }
             if (reeveRoot.GetProperty("mechanism").TryGetProperty(
                     "reeveFactor", out JsonElement _))
@@ -43760,7 +43871,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),   // NOTHING AUTHORED
-                warnings, notes, result, null, null,
+                warnings, notes, result, null, null, null,
             });
         if (payload is not string json)
             throw new InvalidOperationException("A mechanism with no authored placement must still produce a payload.");
@@ -44017,7 +44128,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
-                crownWarnings, crownNotes, crownResult, null, null,
+                crownWarnings, crownNotes, crownResult, null, null, null,
             });
         if (crownPayload is not string crownJson)
             throw new InvalidOperationException("The no-anchor-edges fixture must produce a payload.");
@@ -44059,7 +44170,7 @@ internal static partial class Program
                 asset,
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
-                authoredWarnings, authoredNotes, null, null, null,
+                authoredWarnings, authoredNotes, null, null, null, null,
             });
         if (authoredPayload is not string noResultJson)
             throw new InvalidOperationException("A mechanism with no Result must still produce a payload.");
@@ -44093,7 +44204,7 @@ internal static partial class Program
                 MechanismListOf(routingWireType, wires),
                 MechanismListOf(placementBranchType),
                 emptyWarnings, emptyNotes,
-                CreateResultDto(resultType, "fd", emptyEquilibrium, null, null), null, null,
+                CreateResultDto(resultType, "fd", emptyEquilibrium, null, null), null, null, null,
             });
         bool emptyNamed = emptyWarnings.Any(w =>
             w.Contains("NO MECHANISM WAS DERIVED", StringComparison.Ordinal));
@@ -44262,7 +44373,17 @@ internal static partial class Program
         var documentNotes = new List<string>();
         string document = (string)documentJson.Invoke(
             null,
-            new object?[] { result, "mirror fixture", 1.0, collectorJson, documentWarnings, documentNotes })!;
+            new object?[]
+            {
+                result, "mirror fixture", 1.0,
+                // A CITATION, since the machine left the study (Task 6):
+                // MechanismDocument.Json refuses a payload citing none, and
+                // the subject here is the MIRROR, not the citation. One
+                // wire is placed on this fixture, so the cited machine
+                // routes one, and the equality cross-check stays quiet.
+                WithMachineCitation(collectorJson, "MCH-MIRROR", 1, 4.0),
+                documentWarnings, documentNotes,
+            })!;
 
         using JsonDocument finalDoc = JsonDocument.Parse(document);
         JsonElement finalInstance = finalDoc.RootElement.GetProperty("instances")[0];
@@ -45071,7 +45192,16 @@ internal static partial class Program
         var documentNotes = new List<string>();
         string document = (string)documentJson.Invoke(
             null,
-            new object?[] { twoNodeResult, "ownership fixture", 1.0, json, documentWarnings, documentNotes })!;
+            new object?[]
+            {
+                twoNodeResult, "ownership fixture", 1.0,
+                // A CITATION, since the machine left the study (Task 6):
+                // the subject here is route-frame OWNERSHIP surviving the
+                // document, not the citation. This fixture authors one
+                // wire, so the cited machine routes one.
+                WithMachineCitation(json, "MCH-OWNERSHIP", 1, 4.0),
+                documentWarnings, documentNotes,
+            })!;
         using JsonDocument finalDoc = JsonDocument.Parse(document);
         JsonElement finalWires = finalDoc.RootElement.GetProperty("wires");
         JsonElement? finalWire0 = null;
@@ -45212,15 +45342,27 @@ internal static partial class Program
             "{\"side\":0,\"mechanism\":0,\"wire\":2,\"route\":[" +
             Frame(5, 5, 5) + "]}]";
 
-        // THE REEVE DEFAULT SITS AT THE PAYLOAD'S ROOT (spec 6.3, Task 4),
-        // where the writer now states it once, and NOT as the old scalar
-        // mechanism.reeveFactor. A payload carrying no reeve.default at all
-        // is REFUSED by name rather than defaulted to 1.0, which check 5b
-        // below proves on this same fixture.
+        // THE CITED MACHINE STATES THE REEVE DEFAULT, ONCE (spec 5.3, 6.3;
+        // Task 6, retiring Task 4's provisional reeve.default at the
+        // payload root). A payload citing NO MACHINE is refused by name,
+        // which check 5b below proves on this same fixture.
+        //
+        // THE mechanism BLOCK CARRIES A MACHINE-SHAPED KEY ON PURPOSE.
+        // "body" and "spoolRadius" stand in for exactly what a study
+        // document must no longer pass through: check 6 below asserts they
+        // do NOT reach the document, while the cable facts beside them do.
+        //
+        // wireCount is TWO because two wires reach this document: wire 2 is
+        // dropped for want of an anchor (R1 below), and the cross-check is
+        // an EQUALITY against what is actually placed.
         string payload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
-            "\"spinners\":[],\"spoolRadius\":0.1}," +
-            "\"reeve\":{\"default\":1.0}," +
+            "\"spinners\":[],\"spoolRadius\":0.1," +
+            "\"cableRadius\":0.02,\"routingFrameMeaning\":\"centreline\"}," +
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-0001\"," +
+            "\"name\":\"fixture machine\",\"wireCount\":2," +
+            "\"reeveDefault\":1.0}," +
+            "\"reeve\":{}," +
             "\"instances\":[" + instancePayload + "]," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
@@ -45365,8 +45507,43 @@ internal static partial class Program
                 + root["numbering"]);
         }
 
-        if (root["mechanism"] is null || root["mechanism"]!["body"] is null)
-            throw new InvalidOperationException("mechanism.body must pass through from the collector's payload.");
+        // 6. THE mechanism BLOCK IS AN ALLOWLIST NOW, AND THIS ASSERTION
+        // IS THE REVERSE OF THE ONE IT REPLACES (Task 6, spec 2.2). It used
+        // to read "mechanism.body must pass through from the collector's
+        // payload", which is exactly what a study document must no longer
+        // do: the machine's own bodies live in the bench.machine/1 document
+        // the citation names, and passing an unknown key straight through
+        // is how tens of megabytes travel in silence. The fixture's payload
+        // carries "body" and "spoolRadius" (a machine fact that on the
+        // study side would now be measured off the tension tie's own
+        // bounding box, a plausible number from the wrong object), and
+        // NEITHER may reach the document, while the cable facts beside them
+        // must. The vertex-total form of this check, which cannot be fooled
+        // by a key rename, lives in ValidateStudyCitesItsMachine.
+        JsonNode studyMechanism = root["mechanism"]
+            ?? throw new InvalidOperationException(
+                "The study document keeps its mechanism block for the "
+                + "permanent works and the cable facts; got " + document);
+        foreach (string dropped in new[] { "body", "spinners", "spoolRadius" })
+        {
+            if (studyMechanism[dropped] is not null)
+            {
+                throw new InvalidOperationException(
+                    "A study document carries no machine at all since the "
+                    + "split (spec 2.2), so mechanism." + dropped
+                    + " must NOT pass through from the payload; got "
+                    + studyMechanism.ToJsonString());
+            }
+        }
+        if ((double?)studyMechanism["cableRadius"] != 0.02 ||
+            (string?)studyMechanism["routingFrameMeaning"] != "centreline")
+        {
+            throw new InvalidOperationException(
+                "The cable's own facts DO survive into the study document: "
+                + "the wires this document carries are drawn on them, and "
+                + "dropping them would leave a reader guessing at a radius. "
+                + "Got " + studyMechanism.ToJsonString());
+        }
         if (root["anchors"]!.AsArray().Count != 0 || root["tensionTies"]!.AsArray().Count != 0)
             throw new InvalidOperationException("Empty anchors/tensionTies in must stay empty out.");
 
@@ -45383,26 +45560,33 @@ internal static partial class Program
                 + "same Result and payload; two runs differ.");
         }
 
-        // A PAYLOAD STATING NO REEVE DEFAULT IS REFUSED BY NAME, NOT
-        // DEFAULTED TO 1.0 (Task 4, spec 6.3). This reader used to take
-        // mechanism.reeveFactor with a silent fallback to 1.0, and that key
-        // has gone: the machine document lifts the mechanism block whole,
-        // so a default written there would be stated twice in one document,
-        // in two keys, with two different numbers, both plausible and
-        // neither null. Had the fallback been left behind, every export
-        // would have applied 1.0 where he authored 4.0 and every reel would
-        // spin four times too slowly, with the geometry, the wire paths and
-        // the timing all still correct so that nothing looked broken.
+        // A PAYLOAD THAT CITES NO MACHINE IS REFUSED BY NAME, NOT GIVEN A
+        // DEFAULT (Task 6, spec 5.3 and 6.3; the shape Task 4 gave this
+        // assertion, over the payload's own provisional reeve.default,
+        // moved here whole when that placeholder was retired). This reader
+        // once took mechanism.reeveFactor with a silent fallback to 1.0.
+        // Had any fallback been left behind, every export would have
+        // applied a number nobody authored, and every reel would spin at
+        // the wrong RATE with the geometry, the wire paths and the timing
+        // all still correct so that nothing looked broken.
+        //
+        // THE MESSAGE NAMES THE PORT, not the key: a payload with no
+        // machine block is a Mechanism component with nothing wired to
+        // Machine (MA), and that is where he can act.
         //
         // A REFUSAL HERE COSTS THE MECHANISM DOCUMENT AND NOTHING ELSE:
         // Export catches this call on its own, the way it catches formwork,
         // and reports the message as a named warning.
-        string noReeve = payload.Replace(
-            "\"reeve\":{\"default\":1.0},", string.Empty, StringComparison.Ordinal);
-        if (string.Equals(noReeve, payload, StringComparison.Ordinal))
+        string noMachine = payload.Replace(
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-0001\"," +
+            "\"name\":\"fixture machine\",\"wireCount\":2," +
+            "\"reeveDefault\":1.0},",
+            string.Empty,
+            StringComparison.Ordinal);
+        if (string.Equals(noMachine, payload, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The fixture meant to strip reeve.default did not change "
+                "The fixture meant to strip the citation did not change "
                 + "the payload, so the refusal below would prove nothing.");
         }
         string refusal = string.Empty;
@@ -45412,7 +45596,7 @@ internal static partial class Program
                 null,
                 new object?[]
                 {
-                    result, Study, 1.0, noReeve,
+                    result, Study, 1.0, noMachine,
                     new List<string>(), new List<string>(),
                 });
         }
@@ -45420,13 +45604,13 @@ internal static partial class Program
         {
             refusal = invocation.GetBaseException().Message;
         }
-        if (!refusal.Contains("reeve.default", StringComparison.Ordinal) ||
-            !refusal.Contains("1.0", StringComparison.Ordinal))
+        if (!refusal.Contains("cites no machine", StringComparison.Ordinal) ||
+            !refusal.Contains("Machine (MA)", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "A payload that states no reeve.default must be REFUSED by "
-                + "name, saying both the key it wants and the 1.0 it is "
-                + "refusing to invent; got \"" + refusal + "\".");
+                "A payload that cites no machine must be REFUSED by name, "
+                + "naming the port the citation comes from; got \""
+                + refusal + "\".");
         }
 
         // AND A DEFAULT THAT CANNOT BE A MECHANICAL ADVANTAGE IS REFUSED
@@ -45434,8 +45618,8 @@ internal static partial class Program
         // null, and it freezes every reel at every frame while the wire
         // paths and the timing stay correct.
         string zeroReeve = payload.Replace(
-            "\"reeve\":{\"default\":1.0}",
-            "\"reeve\":{\"default\":0.0}",
+            "\"reeveDefault\":1.0",
+            "\"reeveDefault\":0.0",
             StringComparison.Ordinal);
         string zeroRefusal = string.Empty;
         try
@@ -45452,10 +45636,12 @@ internal static partial class Program
         {
             zeroRefusal = invocation.GetBaseException().Message;
         }
-        if (!zeroRefusal.Contains("not a mechanical advantage", StringComparison.Ordinal))
+        if (!zeroRefusal.Contains("not a mechanical advantage", StringComparison.Ordinal) ||
+            !zeroRefusal.Contains("MCH-0001", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "A reeve.default of zero must be refused by name as not a "
+                "A cited machine's reeve default of zero must be refused by "
+                + "name, naming the machine and saying it is not a "
                 + "mechanical advantage; got \"" + zeroRefusal + "\".");
         }
     }
@@ -45662,7 +45848,17 @@ internal static partial class Program
 
         string payload =
             "{\"mechanism\":{}," +
-            "\"reeve\":{\"default\":4.0,\"perWire\":{\"1\":100.0}}," +
+            // THE MACHINE DEFAULT IS THE CITED MACHINE'S OWN (Task 6): the
+            // 4.0 this fixture resolves against is his real authored
+            // number, and it now arrives where a study actually gets it,
+            // from the machine block, rather than from a reeve.default the
+            // study stated for itself. The per-wire override stays under
+            // reeve, which is the study's own half. wireCount is TWO, the
+            // wires this fixture places.
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-REEVE\"," +
+            "\"name\":\"reeve fixture machine\",\"wireCount\":2," +
+            "\"reeveDefault\":4.0}," +
+            "\"reeve\":{\"perWire\":{\"1\":100.0}}," +
             "\"instances\":[" + instancePayload + "]," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
@@ -45722,7 +45918,8 @@ internal static partial class Program
 
         // 4. A PER-WIRE OVERRIDE THAT IS NOT A MECHANICAL ADVANTAGE IS
         // REFUSED, THE WHOLE DOCUMENT, BY NAME (fix round 1, finding 1):
-        // the same guard as reeve.default, at the point this payload is
+        // the same guard the cited machine's own default gets, at the
+        // point this payload is
         // READ, because the collector that drops a bad override by name
         // is not the only possible author of a payload handed to this
         // reader. Before this fix, reeve.perWire.1 = -2 resolved wire
@@ -45810,6 +46007,12 @@ internal static partial class Program
                 emptyAsset, routingForRoundTrip, placementsForRoundTrip,
                 new List<string>(), new List<string>(), null, null,
                 perWireForRoundTrip,
+                // NO CITATION: this call proves the reeve.perWire round
+                // trip alone, and an uncited build still writes that block.
+                // The citation's own round trip is proved in
+                // ValidateStudyCitesItsMachine, off a machine document the
+                // product itself wrote.
+                null,
             });
         if (roundTripPayload is not string roundTripJson)
         {
@@ -45832,6 +46035,592 @@ internal static partial class Program
                 + "(\"1\"), which is the exact key shape the reader above "
                 + "parses; got reeve: " + roundTripReeve.ToString());
         }
+    }
+
+    /// <summary>
+    /// THE STUDY CITES ITS MACHINE AND CARRIES NO MACHINE BODIES (spec 2.2,
+    /// 2.3, 5.3 to 5.6, 9.5; Task 6). This is the task the whole rework
+    /// exists for: the machine uploads ONCE as bench.machine/1 and the
+    /// study points at it by id.
+    ///
+    /// ONE FIXTURE, DRIVEN END TO END: a machine document built by
+    /// MechanismCollector.BuildMachine, its citation read back off that
+    /// document by MechanismCollector.ReadMachineCitation, a study payload
+    /// built by MechanismCollector.BuildWithResult against a solved
+    /// Result, and the study document finished by MechanismDocument.Json.
+    /// Nothing here is hand-authored JSON on both sides of a seam: every
+    /// number the study asserts was written by the product from the
+    /// machine the product itself built.
+    ///
+    /// THE FIXTURE BREAKS THE IDENTITY BETWEEN WIRE NUMBER AND ARRAY
+    /// POSITION (spec 5.4, and 9.2's own reasoning applied to the wire
+    /// index): routing is authored for wires 0, 1, 2, 4, 5 and 6, with
+    /// WIRE 3 CARRYING NO FRAMES AT ALL. The machine document's own
+    /// routing array is built from routing.Where(Route.Count > 0)
+    /// .OrderBy(Wire), so it is FILTERED AND COMPACTED: entry [3] of that
+    /// array is wire 4, entry [4] is wire 5, entry [5] is wire 6. A study
+    /// naming its machine wire by an OFFSET into that array would write 3,
+    /// 4 and 5 where the authored numbers are 4, 5 and 6 -- three of the
+    /// six cables landing on real drums in a self-consistent arrangement,
+    /// every one of them wrong, and nothing in the document to say so.
+    ///
+    /// WHAT IS PROVED, each part able to fail on its own:
+    ///
+    /// 1. THE SCHEMA NAME DOES NOT CHANGE. The study document is no longer
+    ///    mostly a mechanism, and it stays bench.mechanism/1 regardless
+    ///    (spec 5.6): renaming bench.frames/1 to bench.formwork/1 broke
+    ///    the studio's reader silently and cost days.
+    /// 2. THE CITATION. The document names exactly ONE machine, by the
+    ///    minted id the machine document itself carries, with the
+    ///    machine's own schema and its declared wireCount beside it.
+    /// 3. NO MACHINE BODIES, PROVED AS A WRONG ANSWER RATHER THAN A
+    ///    MISSING KEY (spec 9.5). The study build here is handed the WHOLE
+    ///    machine -- Frame 1, Frame 2, the Motors and four reel entries at
+    ///    ten bodies -- alongside its own tie and anchor, exactly as a
+    ///    caller that has not moved its wiring would hand it. The
+    ///    document's TOTAL body vertex count, walked over every object in
+    ///    it that carries both "vertices" and "faces", must equal the sum
+    ///    of exactly the two bodies wired to the STUDY's own ports (the
+    ///    tie's 7 and the anchor's 3). A count of parts is satisfied by
+    ///    the wrong parts; a vertex total is not.
+    /// 4. A WIRE NAMES ITS MACHINE WIRE BY THE AUTHORED NUMBER (spec 5.4),
+    ///    proved on the compacted fixture above: the six wires of each
+    ///    instance carry machine_wire 0, 1, 2, 4, 5 and 6, never 0 to 5.
+    /// 5. THE WIRE COUNT CROSS-CHECK IS AN EQUALITY (spec 5.5). A RANGE
+    ///    TEST AGREES WITH THE CODE BY COINCIDENCE. PlacementGroupSize is
+    ///    a compile-time seven, so a study citing a TWELVE-wire machine
+    ///    writes wireCount 12 and exactly seven wires, and "every wire
+    ///    lies in [0, wireCount)" PASSES: the document validates, seven
+    ///    cables animate and five are simply absent. It must be an
+    ///    EQUALITY. Proved both ways -- the correct fixture (six placed
+    ///    against a six-wire machine) draws NO warning, and the same
+    ///    payload with the citation's wireCount raised to twelve is NAMED,
+    ///    with both numbers and the instance in the message.
+    /// 6. THE REEVE FACTOR'S MACHINE SOURCE IS THE CITED MACHINE (spec
+    ///    6.1 to 6.3, Task 5's placeholder retired): every wire with no
+    ///    per-wire override resolves to the machine's own authored 4.0,
+    ///    sourced "machine", not to the provisional 1.0 the study side
+    ///    used to state for itself. Task 5's two fields survive the
+    ///    restructuring of the wires array they live on.
+    /// 7. A STUDY THAT CITES NO MACHINE IS REFUSED BY NAME, never given a
+    ///    silent default. A wrong reeve factor makes every reel spin at
+    ///    the wrong RATE while the geometry, the wire paths and the timing
+    ///    all stay correct, so nothing looks broken. AND A STUDY DOCUMENT
+    ///    WIRED TO MACHINE (MA) IS REFUSED AS A CITATION, by name, saying
+    ///    what schema it actually carries: spec 10.3 records a 36 MiB
+    ///    bench.mechanism/1 study sitting in the machine library folder
+    ///    the studio scans for machines, and it parses perfectly well.
+    /// 8. THE SIZE BUDGET OF SPEC 2.3, measured rather than asserted: the
+    ///    document minus its two permanent bodies stays under 10 KB.
+    ///
+    /// WHAT THIS DOES NOT PROVE. Nothing about the Machine (MA) port's own
+    /// Grasshopper read: no test in this harness calls SolveInstance,
+    /// which needs a live IGH_DataAccess and a Grasshopper document this
+    /// process never launches. ReadMachineCitation, the pure method that
+    /// port hands its text to, is driven directly and in full.
+    /// </summary>
+    private static void ValidateStudyCitesItsMachine(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo buildMachine = RequirePublicStatic(collectorType, "BuildMachine");
+        MethodInfo readCitation = RequirePublicStatic(collectorType, "ReadMachineCitation");
+        MethodInfo buildWithResult = RequirePublicStatic(collectorType, "BuildWithResult");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+        double[][] Cube(double at, int count)
+        {
+            var vertices = new double[count][];
+            for (int i = 0; i < count; i++)
+                vertices[i] = new[] { at + i, at, at };
+            return vertices;
+        }
+
+        // THE MACHINE'S OWN BODIES, each a different vertex count so that
+        // a leak shows as a number nothing else in this fixture equals.
+        object frame1 = Mesh(Cube(100.0, 11));
+        object frame2 = Mesh(Cube(200.0, 13));
+        object motors = Mesh(Cube(300.0, 17));
+        // THE STUDY'S OWN TWO PERMANENT BODIES (ruling 1.1): these, and
+        // exactly these, are what the study document may carry.
+        const int TieVertices = 7;
+        const int AnchorVertices = 3;
+        object tie = Mesh(Cube(-50.0, TieVertices));
+        object anchor = Mesh(Cube(-90.0, AnchorVertices));
+
+        // FOUR REEL ENTRIES, far from every routing frame, so ownership is
+        // not what is under test here.
+        object reels = MechanismReelEntriesFlat(
+            plugin, meshType, frameType, new List<string>(),
+            (Mesh(Cube(1000.0, 5)), FrameOf(new[] { 1000.0, 0.0, 0.0 })),
+            (Mesh(Cube(2000.0, 5)), FrameOf(new[] { 2000.0, 0.0, 0.0 })),
+            (Mesh(Cube(3000.0, 5)), FrameOf(new[] { 3000.0, 0.0, 0.0 })),
+            (Mesh(Cube(4000.0, 5)), FrameOf(new[] { 4000.0, 0.0, 0.0 })));
+
+        object Asset(object? f1, object f2List, object? mo, object? tt, object reelList, object? an) =>
+            Activator.CreateInstance(
+                assetType,
+                f1, false,
+                f2List, MechanismListOf(typeof(bool), false),
+                mo, false,
+                tt, false,
+                reelList,
+                an, false)!;
+
+        // ROUTING: wires 0, 1, 2, 4, 5, 6 -- WIRE 3 IS ABSENT, which is
+        // what compacts the machine document's own routing array and
+        // breaks the identity between a wire's number and its position.
+        int[] authoredWires = { 0, 1, 2, 4, 5, 6 };
+        var routingWires = new List<object?>();
+        foreach (int w in authoredWires)
+        {
+            object route = MechanismListOf(
+                frameType,
+                FrameOf(new[] { w * 1.0, 0.0, 0.0 }),
+                FrameOf(new[] { w * 1.0, 3.0, 0.0 }));
+            routingWires.Add(Activator.CreateInstance(routingWireType, w, route)!);
+        }
+        object routing = MechanismListOf(routingWireType, routingWires.ToArray());
+
+        // THE MACHINE DOCUMENT, built by the product from the machine's own
+        // parts: id MCH-0042, six routed wires, his own authored 4.0.
+        const string MintedId = "MCH-0042";
+        const double AuthoredReeve = 4.0;
+        var machineWarnings = new List<string>();
+        var machineNotes = new List<string>();
+        string machineDocument = (string)buildMachine.Invoke(
+            null,
+            new object?[]
+            {
+                Asset(frame1, MechanismListOf(meshType, frame2), motors, null, reels, null),
+                routing, MintedId, "Six wire test winch", AuthoredReeve, "centreline",
+                machineWarnings, machineNotes,
+            })!;
+        using (JsonDocument machineParsed = JsonDocument.Parse(machineDocument))
+        {
+            JsonElement machineRoot = machineParsed.RootElement;
+            if (machineRoot.GetProperty("wireCount").GetInt32() != authoredWires.Length)
+            {
+                throw new InvalidOperationException(
+                    "The fixture's own machine must declare six routed "
+                    + "wires, or the equality below proves nothing; got "
+                    + machineRoot.GetProperty("wireCount").GetInt32() + ".");
+            }
+            JsonElement machineRouting = machineRoot.GetProperty("routing");
+            // THE ARRAY IS COMPACTED, and this is the fixture's whole
+            // premise: position 3 of it is wire 4, not wire 3.
+            if (machineRouting.GetArrayLength() != authoredWires.Length ||
+                machineRouting[3].GetProperty("wire").GetInt32() != 4)
+            {
+                throw new InvalidOperationException(
+                    "The machine document's routing array must be filtered "
+                    + "and compacted, with position 3 carrying WIRE 4, or "
+                    + "an offset and the authored number agree by "
+                    + "coincidence and nothing below can tell them apart; "
+                    + "got " + machineRouting.ToString());
+            }
+        }
+
+        // THE CITATION, READ BACK OFF THAT DOCUMENT by the product.
+        var citationWarnings = new List<string>();
+        object? citation = readCitation.Invoke(
+            null, new object?[] { machineDocument, citationWarnings });
+        if (citation is null)
+        {
+            throw new InvalidOperationException(
+                "A machine document this codebase itself wrote must be "
+                + "readable as a citation; warnings were: "
+                + string.Join(" | ", citationWarnings));
+        }
+        if (citationWarnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "Reading a well-formed machine document must draw NO "
+                + "warning -- a warning on correct input is a defect equal "
+                + "in seriousness to one that misses a fault; got: "
+                + string.Join(" | ", citationWarnings));
+        }
+
+        // A SOLVED NET: sixteen nodes, of which the last SIX are the
+        // anchors, at NON-CONTIGUOUS ids (spec 9.4 -- ids 10 to 15, so a
+        // net_vertex written as a loop counter cannot pass here). The ten
+        // before them are ordinary net vertices in a chain, present so the
+        // anchor ids are genuinely offset from zero.
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
+
+        var netPoints = new List<object>();
+        for (int i = 0; i < 10; i++)
+            netPoints.Add(P(i * 1.0, 5.0 + i, 2.0));    // the net above, ids 0 to 9
+        for (int i = 0; i < 6; i++)
+            netPoints.Add(P(i * 1.0, 0.0, 0.0));        // the anchors, ids 10 to 15
+        Array netVertices = Array.CreateInstance(point, netPoints.Count);
+        for (int i = 0; i < netPoints.Count; i++)
+            netVertices.SetValue(netPoints[i], i);
+        Array netEdges = Array.CreateInstance(edgeType, 15);
+        for (int i = 0; i < 15; i++)
+            netEdges.SetValue(Activator.CreateInstance(edgeType, i, i + 1), i);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", netVertices);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, 15).ToArray());
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            new[] { 10, 11, 12, 13, 14, 15 });
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        // ONE AUTHORED PLACEMENT BRANCH, and it has to be authored rather
+        // than derived: DerivePlacements pairs ALL SEVEN wires with an
+        // anchor apiece and refuses outright where any of them carries no
+        // frames, which is this fixture's own premise (wire 3 does not).
+        // Plane i is the world target for routing wire i, and plane 3 is
+        // never read at all since wire 3 has no route to place. The
+        // correspondence is the identity, so the instance transform is
+        // exactly the identity and a route frame's local origin IS its
+        // world position, which is what lets the anchor distances below be
+        // read off the fixture's own coordinates.
+        Type placementPlaneType = RequireComponentType(plugin, "MechanismPlacementPlane");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type instanceIdType = RequireComponentType(plugin, "MechanismInstanceId");
+        object PlaneAt(double x) => Activator.CreateInstance(
+            placementPlaneType,
+            new[] { x, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+        object branch = Activator.CreateInstance(
+            placementBranchType,
+            Activator.CreateInstance(instanceIdType, 0, 0)!,
+            MechanismListOf(
+                placementPlaneType,
+                PlaneAt(0.0), PlaneAt(1.0), PlaneAt(2.0), PlaneAt(3.0),
+                PlaneAt(4.0), PlaneAt(5.0), PlaneAt(6.0)))!;
+        object placements = MechanismListOf(placementBranchType, branch);
+
+        // THE STUDY BUILD, HANDED THE WHOLE MACHINE as well as its own two
+        // permanent bodies: this is the leak the document must not carry.
+        object studyAsset = Asset(
+            frame1, MechanismListOf(meshType, frame2), motors, tie, reels, anchor);
+        var studyWarnings = new List<string>();
+        var studyNotes = new List<string>();
+        object?[] buildArgs = BuildWithResultArguments(
+            buildWithResult, studyAsset, routing, placements,
+            studyWarnings, studyNotes, result, "centreline", null, citation);
+        object? payloadObject = buildWithResult.Invoke(null, buildArgs);
+        if (payloadObject is not string payload)
+        {
+            throw new InvalidOperationException(
+                "A study with routing, a Result and a cited machine must "
+                + "produce a payload; warnings were: "
+                + string.Join(" | ", studyWarnings));
+        }
+
+        var documentWarnings = new List<string>();
+        var documentNotes = new List<string>();
+        string document = (string)json.Invoke(
+            null,
+            new object?[]
+            {
+                result, "citation fixture", 1.0, payload,
+                documentWarnings, documentNotes,
+            })!;
+        using JsonDocument parsed = JsonDocument.Parse(document);
+        JsonElement root = parsed.RootElement;
+
+        // 1. THE SCHEMA NAME DOES NOT CHANGE (spec 5.6).
+        if (root.GetProperty("schema").GetString() != "bench.mechanism/1")
+        {
+            throw new InvalidOperationException(
+                "The study document keeps the name bench.mechanism/1 even "
+                + "though it is no longer mostly a mechanism: renaming "
+                + "bench.frames/1 to bench.formwork/1 broke the studio's "
+                + "reader silently and cost days. Got "
+                + root.GetProperty("schema").GetString() + ".");
+        }
+
+        // 2. THE CITATION: one machine, by its minted id.
+        JsonElement cited = root.GetProperty("machine");
+        if (cited.GetProperty("id").GetString() != MintedId ||
+            cited.GetProperty("schema").GetString() != "bench.machine/1" ||
+            cited.GetProperty("wireCount").GetInt32() != authoredWires.Length)
+        {
+            throw new InvalidOperationException(
+                "The study cites exactly ONE machine, by the minted id, "
+                + "with the machine's own schema and declared wireCount "
+                + "beside it; got " + cited.ToString());
+        }
+
+        // 3. NO MACHINE BODIES, AS A WRONG ANSWER (spec 9.5).
+        long bodyVertices = TotalBodyVertices(root);
+        if (bodyVertices != TieVertices + AnchorVertices)
+        {
+            throw new InvalidOperationException(
+                "The study document carries the bodies wired to its OWN "
+                + "ports and no others (spec 2.2): the tie's "
+                + TieVertices + " vertices and the anchor's "
+                + AnchorVertices + ", "
+                + (TieVertices + AnchorVertices) + " in all. A count of "
+                + "PARTS is satisfied by the wrong parts, so this is a "
+                + "vertex TOTAL: got " + bodyVertices + ", which is "
+                + (bodyVertices > TieVertices + AnchorVertices
+                    ? "more, so a machine body reached the study document"
+                    : "fewer, so a permanent work was dropped from it")
+                + ".");
+        }
+
+        // 4. A WIRE NAMES ITS MACHINE WIRE BY THE AUTHORED NUMBER (5.4).
+        JsonArray wiresOut = JsonNode.Parse(document)!["wires"]!.AsArray();
+        var placedWireNumbers = new List<int>();
+        foreach (JsonNode? w in wiresOut)
+        {
+            int? named = (int?)w!["machine_wire"];
+            if (named is null)
+            {
+                throw new InvalidOperationException(
+                    "Every wire names the machine wire it is an instance "
+                    + "of; got " + w.ToJsonString());
+            }
+            placedWireNumbers.Add(named.Value);
+        }
+        placedWireNumbers.Sort();
+        if (!placedWireNumbers.SequenceEqual(authoredWires))
+        {
+            throw new InvalidOperationException(
+                "A wire names its machine wire by the AUTHORED WIRE "
+                + "NUMBER, never by an offset into the machine document's "
+                + "routing array, which is FILTERED AND COMPACTED. This "
+                + "machine is authored on wires [0, 1, 2, 4, 5, 6] with "
+                + "wire 3 absent, so an offset would read [0, 1, 2, 3, 4, "
+                + "5] and land three cables on the wrong drums in a "
+                + "self-consistent arrangement, every one of them wrong. "
+                + "Got [" + string.Join(", ", placedWireNumbers) + "].");
+        }
+
+        // 5a. THE EQUALITY DRAWS NO WARNING WHEN THE COUNTS AGREE.
+        if (documentWarnings.Any(w => w.Contains("wireCount", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Six wires placed against a six-wire machine is CORRECT "
+                + "INPUT and must draw no wire-count warning at all; got: "
+                + string.Join(" | ", documentWarnings));
+        }
+
+        // 5b. AND IT FIRES WHEN THEY DO NOT. The payload's own citation is
+        // raised to TWELVE wires, which is exactly the case a range test
+        // ("every wire lies in [0, wireCount)") passes: 0 to 6 all lie
+        // inside 0 to 11.
+        string twelveWirePayload = payload.Replace(
+            "\"wireCount\":6", "\"wireCount\":12", StringComparison.Ordinal);
+        if (string.Equals(twelveWirePayload, payload, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The fixture meant to raise the cited machine's wireCount "
+                + "to twelve did not change the payload, so the check "
+                + "below would prove nothing; payload was: " + payload);
+        }
+        var twelveWarnings = new List<string>();
+        json.Invoke(
+            null,
+            new object?[]
+            {
+                result, "citation fixture", 1.0, twelveWirePayload,
+                twelveWarnings, new List<string>(),
+            });
+        bool countNamed = twelveWarnings.Any(w =>
+            w.Contains("wireCount", StringComparison.Ordinal) &&
+            w.Contains("12", StringComparison.Ordinal) &&
+            w.Contains("6", StringComparison.Ordinal));
+        if (!countNamed)
+        {
+            throw new InvalidOperationException(
+                "A study citing a twelve-wire machine and placing six "
+                + "wires must be NAMED, with both numbers: the document "
+                + "otherwise validates, six cables animate and six are "
+                + "simply absent. Warnings were: "
+                + string.Join(" | ", twelveWarnings));
+        }
+
+        // 6. THE MACHINE-SOURCED REEVE FACTOR IS THE CITED MACHINE'S OWN.
+        foreach (JsonNode? w in wiresOut)
+        {
+            if ((double?)w!["reeveFactor"] != AuthoredReeve ||
+                (string?)w["reeveFactorSource"] != "machine")
+            {
+                throw new InvalidOperationException(
+                    "A wire with no per-wire override takes the CITED "
+                    + "MACHINE's own authored default (4.0), sourced "
+                    + "\"machine\" -- not the provisional 1.0 the study "
+                    + "side stated for itself before it could cite one, "
+                    + "and not a silent default: a wrong factor makes "
+                    + "every reel spin at the wrong RATE while the "
+                    + "geometry, the wire paths and the timing all stay "
+                    + "correct, so nothing looks broken. Got "
+                    + w.ToJsonString());
+            }
+        }
+
+        // 7. A STUDY THAT CITES NO MACHINE IS REFUSED BY NAME.
+        object?[] uncitedArgs = BuildWithResultArguments(
+            buildWithResult, studyAsset, routing, placements,
+            new List<string>(), new List<string>(), result, "centreline", null, null);
+        object? uncitedPayload = buildWithResult.Invoke(null, uncitedArgs);
+        if (uncitedPayload is not string uncited)
+            throw new InvalidOperationException("The uncited study build produced no payload at all.");
+        string refusal = string.Empty;
+        try
+        {
+            json.Invoke(
+                null,
+                new object?[]
+                {
+                    result, "citation fixture", 1.0, uncited,
+                    new List<string>(), new List<string>(),
+                });
+        }
+        catch (TargetInvocationException invocation)
+        {
+            refusal = invocation.GetBaseException().Message;
+        }
+        if (!refusal.Contains("Machine (MA)", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A study payload that cites no machine must be REFUSED by "
+                + "name, naming the port the citation comes from, rather "
+                + "than given a reeve factor nobody authored; got \""
+                + refusal + "\".");
+        }
+
+        // 7b. AND A STUDY DOCUMENT WIRED TO MACHINE (MA) IS REFUSED AS A
+        // CITATION, BY NAME. This is not hypothetical: spec 10.3 records a
+        // 36 MiB bench.mechanism/1 STUDY sitting in the machine library
+        // folder the studio scans for machines. It parses, it is an object,
+        // and it carries no id at all -- so without the schema test it
+        // would cite a machine that does not exist and the study would
+        // render nothing, silently.
+        var wrongSchemaWarnings = new List<string>();
+        object? fromStudyDocument = readCitation.Invoke(
+            null, new object?[] { document, wrongSchemaWarnings });
+        if (fromStudyDocument is not null ||
+            !wrongSchemaWarnings.Any(w =>
+                w.Contains("bench.mechanism/1", StringComparison.Ordinal) &&
+                w.Contains("cites no machine", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "A STUDY document wired to Machine (MA) must be refused as "
+                + "a citation, by name, saying what schema it actually "
+                + "carries; got "
+                + (fromStudyDocument is null ? "null" : "a citation")
+                + " with warnings: " + string.Join(" | ", wrongSchemaWarnings));
+        }
+
+        // 8. THE SIZE BUDGET (spec 2.3): everything but the two permanent
+        // bodies stays under 10 KB. Stated that way, and not as a
+        // percentage, because ruling 1.1 keeps real meshes in the study
+        // and a percentage bound would fail on correct output.
+        int bodyBytes = 0;
+        foreach (string key in new[] { "tensionTie", "anchor" })
+        {
+            if (root.GetProperty("mechanism").TryGetProperty(key, out JsonElement body))
+                bodyBytes += body.ToString().Length;
+        }
+        int envelope = document.Length - bodyBytes;
+        if (envelope > 10 * 1024)
+        {
+            throw new InvalidOperationException(
+                "The study document's envelope -- everything but the part "
+                + "bodies wired to its own ports -- stays under 10 KB "
+                + "(spec 2.3), so that a later change cannot quietly "
+                + "reverse the split; measured " + envelope + " bytes over "
+                + wiresOut.Count + " wire(s).");
+        }
+    }
+
+    /// <summary>
+    /// BuildWithResult's own argument array, built from the METHOD'S OWN
+    /// signature rather than from a count written here.
+    /// <see cref="MethodInfo.Invoke(object, object[])"/> does not fill
+    /// optional parameters in from a short array -- it throws
+    /// TargetParameterCountException -- so every one has to be passed
+    /// positionally, and a fixture that hardcodes the count breaks the
+    /// next time a trailing optional parameter is appended (which cost
+    /// Task 5 four call sites).
+    /// </summary>
+    private static object?[] BuildWithResultArguments(
+        MethodInfo buildWithResult,
+        object asset,
+        object routing,
+        object placements,
+        List<string> warnings,
+        List<string> notes,
+        object? result,
+        string routingFrameMeaning,
+        object? reevePerWire,
+        object? citation)
+    {
+        ParameterInfo[] parameters = buildWithResult.GetParameters();
+        var arguments = new object?[parameters.Length];
+        arguments[0] = asset;
+        arguments[1] = routing;
+        arguments[2] = placements;
+        arguments[3] = warnings;
+        arguments[4] = notes;
+        arguments[5] = result;
+        arguments[6] = routingFrameMeaning;
+        for (int i = 7; i < parameters.Length; i++)
+        {
+            arguments[i] =
+                parameters[i].Name == "reevePerWire" ? reevePerWire
+                : parameters[i].Name == "machine" ? citation
+                : parameters[i].DefaultValue is DBNull ? null
+                : parameters[i].DefaultValue;
+        }
+        return arguments;
+    }
+
+    /// <summary>
+    /// EVERY BODY IN A DOCUMENT, BY VERTEX COUNT, wherever it sits. A body
+    /// is an object carrying both "vertices" and "faces" -- the shape
+    /// MeshPayload writes -- so this cannot be fooled by a key rename, and
+    /// it never counts "net_vertices" (a list of integers) as one.
+    /// </summary>
+    private static long TotalBodyVertices(JsonElement at)
+    {
+        long total = 0;
+        if (at.ValueKind == JsonValueKind.Object)
+        {
+            if (at.TryGetProperty("vertices", out JsonElement vertices) &&
+                vertices.ValueKind == JsonValueKind.Array &&
+                at.TryGetProperty("faces", out JsonElement faces) &&
+                faces.ValueKind == JsonValueKind.Array)
+            {
+                total += vertices.GetArrayLength();
+            }
+            foreach (JsonProperty property in at.EnumerateObject())
+                total += TotalBodyVertices(property.Value);
+        }
+        else if (at.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in at.EnumerateArray())
+                total += TotalBodyVertices(item);
+        }
+        return total;
     }
 
     /// <summary>
@@ -45914,9 +46703,14 @@ internal static partial class Program
         string payload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
             "\"reels\":[],\"spoolRadius\":0.1}," +
-            // The reeve default at the ROOT (spec 6.3, Task 4), the one
-            // place this reader will take it from.
-            "\"reeve\":{\"default\":1.0}," +
+            // A CITED MACHINE, since the machine left the study (Task 6):
+            // this reader refuses a payload citing none, and it takes the
+            // reeve default from the citation. The subject here is the
+            // ROW-TO-SIDE pairing, so the citation is a stand-in and its
+            // wireCount is two, the wires each instance places.
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-PAIRING\"," +
+            "\"name\":\"pairing fixture machine\",\"wireCount\":2," +
+            "\"reeveDefault\":1.0}," +
             "\"instances\":" + instancesPayload + "," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
@@ -46415,9 +47209,17 @@ internal static partial class Program
         string mechanismPayload =
             "{\"mechanism\":{\"body\":{\"vertices\":[],\"faces\":[]}," +
             "\"reels\":[],\"spoolRadius\":0.1}," +
-            // The reeve default at the ROOT (spec 6.3, Task 4), the one
-            // place this reader will take it from.
-            "\"reeve\":{\"default\":1.0}," +
+            // A CITED MACHINE, since the machine left the study (Task 6):
+            // this reader refuses a payload citing none, and the subject
+            // here is how Export SEPARATES a per-wire diagnostic from the
+            // set's own warnings. wireCount is ONE, since this fixture
+            // authors two wires against a single anchor and the second is
+            // dropped -- which is the diagnostic under test, and the
+            // wire-count equality agrees with it rather than adding a
+            // second warning about the same fact.
+            "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-EXPORT\"," +
+            "\"name\":\"export fixture machine\",\"wireCount\":1," +
+            "\"reeveDefault\":1.0}," +
             "\"instances\":[" + instancePayload + "]," +
             "\"wires\":" + wiresPayload + "," +
             "\"anchors\":[],\"tensionTies\":[]}";
