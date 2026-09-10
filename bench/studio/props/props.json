@@ -134,17 +134,6 @@
       "triangles": 134
     },
     {
-      "key": "barrier",
-      "label": "Barrier",
-      "file": "barrier.glb",
-      "group": "site",
-      "heightMetres": 1.0,
-      "credit": "Traffic Barrier by Quaternius",
-      "licence": "CC0 1.0",
-      "source": "https://poly.pizza/m/nugx3heueH",
-      "triangles": 732
-    },
-    {
       "key": "fence",
       "label": "Fence",
       "file": "fence.glb",
@@ -222,17 +211,6 @@
       "triangles": 496
     },
     {
-      "key": "rock",
-      "label": "Rock",
-      "file": "rock.glb",
-      "group": "planting",
-      "heightMetres": 0.9,
-      "credit": "Rock by Quaternius",
-      "licence": "CC0 1.0",
-      "source": "https://poly.pizza/m/Z6M4GNkgWt",
-      "triangles": 160
-    },
-    {
       "key": "scaffold",
       "label": "Scaffold",
       "file": "scaffold.glb",
@@ -253,17 +231,6 @@
       "licence": "CC0 1.0",
       "source": "https://poly.pizza/m/p1RR8Ls9EH",
       "triangles": 220
-    },
-    {
-      "key": "barrel",
-      "label": "Barrel",
-      "file": "barrel.glb",
-      "group": "site",
-      "heightMetres": 0.9,
-      "credit": "Barrel by Quaternius",
-      "licence": "CC0 1.0",
-      "source": "https://poly.pizza/m/zjCQP1TAci",
-      "triangles": 1312
     },
     {
       "key": "bin",

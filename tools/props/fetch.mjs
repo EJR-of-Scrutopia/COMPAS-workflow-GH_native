@@ -114,15 +114,15 @@ const LIST = [
   { slug: "rock_moss_set_01",    label: "Mossy rocks",      group: "site", size: "mid" },
   { slug: "sand_rocks_small_01", label: "Sand rocks",       group: "site", size: "clutter" },
   // Street and site.
-  { slug: "fire_hydrant",        label: "Fire hydrant",     group: "street", size: "mid" },
-  { slug: "concrete_road_barrier", label: "Road barrier",   group: "street", size: "mid" },
-  { slug: "utility_box_01",      label: "Utility box",      group: "street", size: "mid" },
+  { slug: "fire_hydrant",        label: "Fire hydrant",     group: "street", size: "mid", retired: true },
+  { slug: "concrete_road_barrier", label: "Road barrier",   group: "street", size: "mid", retired: true },
+  { slug: "utility_box_01",      label: "Utility box",      group: "street", size: "mid", retired: true },
   { slug: "water_manhole_cover", label: "Manhole cover",    group: "street", size: "clutter" },
-  { slug: "modular_electricity_poles", label: "Power pole", group: "street", size: "mid" },
-  { slug: "modular_chainlink_fence", label: "Chainlink fence", group: "street", size: "mid" },
-  { slug: "WetFloorSign_01",     label: "Wet floor sign",   group: "site", size: "clutter" },
-  { slug: "cement_bag",          label: "Cement bag",       group: "site", size: "clutter" },
-  { slug: "Barrel_02",           label: "Barrel",           group: "site", size: "clutter" },
+  { slug: "modular_electricity_poles", label: "Power pole", group: "street", size: "mid", retired: true },
+  { slug: "modular_chainlink_fence", label: "Chainlink fence", group: "street", size: "mid", retired: true },
+  { slug: "WetFloorSign_01",     label: "Wet floor sign",   group: "site", size: "clutter", retired: true },
+  { slug: "cement_bag",          label: "Cement bag",       group: "site", size: "clutter", retired: true },
+  { slug: "Barrel_02",           label: "Barrel",           group: "site", size: "clutter", retired: true },
   // The 2026-09-04 vegetation expansion: every entry below was verified
   // against the API's own gltf .bin sizes (the honest number; polycount
   // lies for geonodes assets) and sits far under the canopy-failure class.
@@ -171,7 +171,7 @@ const LIST = [
   { slug: "potted_plant_02",     label: "Planter plant",    group: "planting", size: "mid" },
   { slug: "potted_plant_04",     label: "Potted aloe",      group: "planting", size: "clutter" },
   { slug: "planter_box_01",      label: "Planter box",      group: "planting", size: "clutter" },
-  { slug: "planter_box_03",      label: "Long planter",     group: "planting", size: "clutter" },
+  { slug: "planter_box_03",      label: "Long planter",     group: "planting", size: "clutter", retired: true },
   // Buildings: DROPPED 2026-09-05 on Param's review. Poly Haven's
   // building assets are modular KITS -- disassembled facade panels,
   // fort wall segments, pier sections floating in a bounding box --
@@ -181,8 +181,8 @@ const LIST = [
   // modular_fire_escape. Photoreal people likewise exist under no CC0
   // licence anywhere -- that hole is documented in the wave register
   // with the account-gated sources Param can pull himself.
-  { slug: "utility_box_02",      label: "Utility cabinet",  group: "street", size: "mid" },
-  { slug: "concrete_road_barrier_02", label: "Road barrier low", group: "street", size: "clutter" },
+  { slug: "utility_box_02",      label: "Utility cabinet",  group: "street", size: "mid", retired: true },
+  { slug: "concrete_road_barrier_02", label: "Road barrier low", group: "street", size: "clutter", retired: true },
   // The 2026-09-04 tree-and-rock sweep: everything left in the catalogue
   // that is a tree, a trunk, a root or a rock, minus the three canopy
   // failures already dropped above (fir_tree_01, pine_tree_01,
@@ -208,29 +208,29 @@ const LIST = [
   { slug: "namaqualand_boulder_05", label: "Boulder low",   group: "site", size: "mid" },
   { slug: "namaqualand_boulder_06", label: "Boulder tall",  group: "site", size: "mid" },
   { slug: "namaqualand_rocks_01", label: "Quartz rocks",    group: "site", size: "clutter" },
-  { slug: "namaqualand_cliff_01", label: "Cliff outcrop",   group: "site", size: "hero" },
-  { slug: "namaqualand_cliff_02", label: "Cliff wall",      group: "site", size: "hero" },
-  { slug: "mountainside",        label: "Mountainside",     group: "site", size: "hero" },
-  { slug: "rock_face_01",        label: "Rock face",        group: "site", size: "mid" },
-  { slug: "rock_face_02",        label: "Rock face small",  group: "site", size: "mid" },
+  { slug: "namaqualand_cliff_01", label: "Cliff outcrop",   group: "site", size: "hero", retired: true },
+  { slug: "namaqualand_cliff_02", label: "Cliff wall",      group: "site", size: "hero", retired: true },
+  { slug: "mountainside",        label: "Mountainside",     group: "site", size: "hero", retired: true },
+  { slug: "rock_face_01",        label: "Rock face",        group: "site", size: "mid", retired: true },
+  { slug: "rock_face_02",        label: "Rock face small",  group: "site", size: "mid", retired: true },
   { slug: "rock_moss_set_02",    label: "Mossy rocks 2",    group: "site", size: "mid" },
-  { slug: "rock_07",             label: "Rock",             group: "site", size: "clutter" },
-  { slug: "rock_09",             label: "Rock small",       group: "site", size: "clutter" },
+  { slug: "rock_07",             label: "Rock",             group: "site", size: "clutter", retired: true },
+  { slug: "rock_09",             label: "Rock small",       group: "site", size: "clutter", retired: true },
   { slug: "stone_01",            label: "Stone",            group: "site", size: "clutter" },
   { slug: "coast_rocks_01",      label: "Coast formation",  group: "site", size: "hero" },
   { slug: "coast_rocks_03",      label: "Coast formation 3", group: "site", size: "hero" },
   { slug: "coast_rocks_05",      label: "Reef rock",        group: "site", size: "mid" },
-  { slug: "coast_line_01",       label: "Coastline",        group: "site", size: "hero" },
-  { slug: "coast_line_02",       label: "Coastline 2",      group: "site", size: "hero" },
-  { slug: "coastal_cliff_01",    label: "Coastal cliff",    group: "site", size: "hero" },
-  { slug: "coastal_cliff_02",    label: "Coastal cliff 2",  group: "site", size: "hero" },
-  { slug: "moon_rock_01",        label: "Moon rock 1",      group: "site", size: "clutter" },
-  { slug: "moon_rock_02",        label: "Moon rock 2",      group: "site", size: "clutter" },
-  { slug: "moon_rock_03",        label: "Moon rock 3",      group: "site", size: "clutter" },
-  { slug: "moon_rock_04",        label: "Moon rock 4",      group: "site", size: "clutter" },
-  { slug: "moon_rock_05",        label: "Moon rock 5",      group: "site", size: "clutter" },
-  { slug: "moon_rock_06",        label: "Moon rock 6",      group: "site", size: "clutter" },
-  { slug: "moon_rock_07",        label: "Moon rock 7",      group: "site", size: "clutter" },
+  { slug: "coast_line_01",       label: "Coastline",        group: "site", size: "hero", retired: true },
+  { slug: "coast_line_02",       label: "Coastline 2",      group: "site", size: "hero", retired: true },
+  { slug: "coastal_cliff_01",    label: "Coastal cliff",    group: "site", size: "hero", retired: true },
+  { slug: "coastal_cliff_02",    label: "Coastal cliff 2",  group: "site", size: "hero", retired: true },
+  { slug: "moon_rock_01",        label: "Moon rock 1",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_02",        label: "Moon rock 2",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_03",        label: "Moon rock 3",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_04",        label: "Moon rock 4",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_05",        label: "Moon rock 5",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_06",        label: "Moon rock 6",      group: "site", size: "clutter", retired: true },
+  { slug: "moon_rock_07",        label: "Moon rock 7",      group: "site", size: "clutter", retired: true },
 ];
 
 // The pre-flight rule that would have caught every canopy failure before a
@@ -488,9 +488,14 @@ async function main() {
     await remeasure(new NodeIO().registerExtensions(ALL_EXTENSIONS));
     return;
   }
+  // A RETIRED entry stays in the list so it can still be fetched BY NAME.
+  // Param retired these on 2026-09-10 and props-hd is gitignored, so the
+  // slug is the only route any of them has back; cutting the line would
+  // have made the delete permanent. It is simply not part of what a bare
+  // run downloads.
   const list = wanted.length
     ? LIST.filter((item) => wanted.includes(item.slug))
-    : LIST;
+    : LIST.filter((item) => !item.retired);
   if (!list.length) {
     console.log("nothing matched; known slugs:\n  "
       + LIST.map((i) => i.slug).join("\n  "));

@@ -399,12 +399,31 @@ async function main() {
     props,
   }, null, 2) + "\n");
 
-  // The NOTICE gains truth about the second source.
+  // THE CREDITS COME FROM THE MANIFEST, exactly as they do in fetch.mjs,
+  // and for the same reason: a header written by hand is a licence claim
+  // that nobody re-checks when the folder grows. This one said "two
+  // libraries" over a folder that had held three since the decals
+  // arrived, so an ingest run would have quietly deleted ambientCG's
+  // line from a file whose whole job is to name who made what.
+  const libraries = new Map();
+  for (const prop of props) {
+    const source = prop.source || "";
+    const where = /polyhaven/.test(source) ? "Poly Haven"
+      : /ambientcg/i.test(source) ? "ambientCG"
+        : /fab\.com/.test(source) ? "Quixel Megascans, via Fab"
+          : "other";
+    const line = `${where} -- ${prop.licence || "licence unstated"}`;
+    libraries.set(line, (libraries.get(line) || 0) + 1);
+  }
   const notice = [
-    "Models in this folder come from two libraries:",
-    "  - Poly Haven, CC0 1.0 (no credit required; offered anyway)",
-    "  - Quixel Megascans by Epic Games, via Fab, under the Fab Standard",
-    "    License (free Epic account; usable with any compatible tool)",
+    "Models in this folder come from more than one library. Each is",
+    "credited below; the licences they arrived under are:",
+    ...[...libraries.entries()].sort()
+      .map(([line, count]) => `  ${line}  (${count})`),
+    "",
+    "Poly Haven and ambientCG ask for no credit and this file is offered",
+    "anyway. The Fab Standard License needs a free Epic account and",
+    "permits use with any compatible tool, which the glTF export is.",
     "",
     ...props.map((p) => `${p.key}\n  ${p.label}\n  ${p.source}`),
   ].join("\n");

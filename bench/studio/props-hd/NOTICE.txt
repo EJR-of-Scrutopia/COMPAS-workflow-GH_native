@@ -1,6 +1,6 @@
 Models in this folder come from more than one library. Each is
 credited below; the licences they arrived under are:
-  Poly Haven -- CC0 1.0  (94)
+  Poly Haven -- CC0 1.0  (65)
   Quixel Megascans, via Fab -- Fab Standard License  (20)
   ambientCG -- CC0 1.0  (10)
 
@@ -170,9 +170,6 @@ pine_sapling_small
 planter_box_01
   Planter box
   https://polyhaven.com/a/planter_box_01
-planter_box_03
-  Long planter
-  https://polyhaven.com/a/planter_box_03
 potted_plant_01
   Potted plant
   https://polyhaven.com/a/potted_plant_01
@@ -230,24 +227,9 @@ weed_plant_02
 wild_rooibos_bush
   Rooibos bush
   https://polyhaven.com/a/wild_rooibos_bush
-Barrel_02
-  Barrel
-  https://polyhaven.com/a/Barrel_02
-WetFloorSign_01
-  Wet floor sign
-  https://polyhaven.com/a/WetFloorSign_01
 boulder_01
   Small boulder
   https://polyhaven.com/a/boulder_01
-cement_bag
-  Cement bag
-  https://polyhaven.com/a/cement_bag
-coast_line_01
-  Coastline
-  https://polyhaven.com/a/coast_line_01
-coast_line_02
-  Coastline 2
-  https://polyhaven.com/a/coast_line_02
 coast_rocks_01
   Coast formation
   https://polyhaven.com/a/coast_rocks_01
@@ -257,36 +239,6 @@ coast_rocks_03
 coast_rocks_05
   Reef rock
   https://polyhaven.com/a/coast_rocks_05
-coastal_cliff_01
-  Coastal cliff
-  https://polyhaven.com/a/coastal_cliff_01
-coastal_cliff_02
-  Coastal cliff 2
-  https://polyhaven.com/a/coastal_cliff_02
-moon_rock_01
-  Moon rock 1
-  https://polyhaven.com/a/moon_rock_01
-moon_rock_02
-  Moon rock 2
-  https://polyhaven.com/a/moon_rock_02
-moon_rock_03
-  Moon rock 3
-  https://polyhaven.com/a/moon_rock_03
-moon_rock_04
-  Moon rock 4
-  https://polyhaven.com/a/moon_rock_04
-moon_rock_05
-  Moon rock 5
-  https://polyhaven.com/a/moon_rock_05
-moon_rock_06
-  Moon rock 6
-  https://polyhaven.com/a/moon_rock_06
-moon_rock_07
-  Moon rock 7
-  https://polyhaven.com/a/moon_rock_07
-mountainside
-  Mountainside
-  https://polyhaven.com/a/mountainside
 ms_beach_boulder
   Nordic beach boulder
   https://www.fab.com/sellers/Quixel
@@ -320,30 +272,12 @@ namaqualand_boulder_06
 namaqualand_boulders_01
   Boulders
   https://polyhaven.com/a/namaqualand_boulders_01
-namaqualand_cliff_01
-  Cliff outcrop
-  https://polyhaven.com/a/namaqualand_cliff_01
-namaqualand_cliff_02
-  Cliff wall
-  https://polyhaven.com/a/namaqualand_cliff_02
 namaqualand_rocks_01
   Quartz rocks
   https://polyhaven.com/a/namaqualand_rocks_01
 namaqualand_stones_01
   Stones
   https://polyhaven.com/a/namaqualand_stones_01
-rock_07
-  Rock
-  https://polyhaven.com/a/rock_07
-rock_09
-  Rock small
-  https://polyhaven.com/a/rock_09
-rock_face_01
-  Rock face
-  https://polyhaven.com/a/rock_face_01
-rock_face_02
-  Rock face small
-  https://polyhaven.com/a/rock_face_02
 rock_moss_set_01
   Mossy rocks
   https://polyhaven.com/a/rock_moss_set_01
@@ -356,27 +290,6 @@ sand_rocks_small_01
 stone_01
   Stone
   https://polyhaven.com/a/stone_01
-concrete_road_barrier
-  Road barrier
-  https://polyhaven.com/a/concrete_road_barrier
-concrete_road_barrier_02
-  Road barrier low
-  https://polyhaven.com/a/concrete_road_barrier_02
-fire_hydrant
-  Fire hydrant
-  https://polyhaven.com/a/fire_hydrant
-modular_chainlink_fence
-  Chainlink fence
-  https://polyhaven.com/a/modular_chainlink_fence
-modular_electricity_poles
-  Power pole
-  https://polyhaven.com/a/modular_electricity_poles
-utility_box_01
-  Utility box
-  https://polyhaven.com/a/utility_box_01
-utility_box_02
-  Utility cabinet
-  https://polyhaven.com/a/utility_box_02
 water_manhole_cover
   Manhole cover
   https://polyhaven.com/a/water_manhole_cover

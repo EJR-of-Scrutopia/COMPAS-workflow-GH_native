@@ -202,3 +202,150 @@ def test_the_notice_names_every_library_actually_in_the_folder():
     # Every model is credited by name, not merely counted.
     for prop in manifest["props"]:
         assert prop["key"] in notice, prop["key"]
+
+
+# What Param retired on 2026-09-10: "i think we can remove some assets
+# too, the hydrants, the long planter, barrel, utility box, barrier,
+# chainlink fence, coastline, rockface, cliff wall, powerpole,
+# mountainside, costal cliff, 1 and 2, cliff outcrop, wet floor sign,
+# cement bag, rock, all moon rocks. This is in props and scatter."
+# Numbered variants of a thing he named go with it -- rock face 1 and 2,
+# coastal cliff 1 and 2, road barrier and road barrier low, utility box
+# and cabinet, Rock and Rock small, moon rocks 1 to 7. Loose name
+# matches he did NOT name stay, because small site rocks are good
+# scatter fodder: rock_moss_set_01/02, planter_box_01, potted_plant_02,
+# sand_rocks_small_01, ms_forest_rocks_small, namaqualand_rocks_01.
+RETIRED = {
+    "props": ["barrel", "barrier", "rock"],
+    "props-hd": [
+        "Barrel_02", "WetFloorSign_01", "cement_bag", "coast_line_01",
+        "coast_line_02", "coastal_cliff_01", "coastal_cliff_02",
+        "concrete_road_barrier", "concrete_road_barrier_02", "fire_hydrant",
+        "modular_chainlink_fence", "modular_electricity_poles",
+        "moon_rock_01", "moon_rock_02", "moon_rock_03", "moon_rock_04",
+        "moon_rock_05", "moon_rock_06", "moon_rock_07", "mountainside",
+        "namaqualand_cliff_01", "namaqualand_cliff_02", "planter_box_03",
+        "rock_07", "rock_09", "rock_face_01", "rock_face_02",
+        "utility_box_01", "utility_box_02",
+    ],
+}
+
+
+def test_a_retired_prop_is_gone_from_the_folder_and_not_merely_the_manifest():
+    """The folder is the authority, not the manifest -- see
+    test_a_model_the_manifest_does_not_mention_is_still_offered. So
+    deleting a manifest entry does not retire a prop: it strips the prop
+    of its credit and its real size and goes on offering it as an
+    undescribed model, which is worse than leaving it alone. The MODEL
+    has to go. This test is what stops a future tidy-up from doing only
+    the bookkeeping half."""
+
+    for library, keys in RETIRED.items():
+        root = REPO / "bench" / "studio" / library
+        manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+        described = {prop["key"] for prop in manifest["props"]}
+        on_disk = {path.stem for path in root.glob("*.glb")}
+        for key in keys:
+            assert key not in described, (
+                "{}/{} is back in the manifest".format(library, key))
+            assert key not in on_disk, (
+                "{}/{}.glb is still in the folder, so the studio still "
+                "offers it -- as an undescribed prop now, with no credit "
+                "and no size".format(library, key))
+
+
+def test_no_model_in_either_library_is_a_stranger_to_its_manifest():
+    """Three ways a library drifts, all of them silent. A model with no
+    entry loses its credit and its size. An entry with no model is a tile
+    that 404s the moment anybody clicks it. A thumbnail with no model is
+    dead weight that still gets served."""
+
+    for library in ("props", "props-hd"):
+        root = REPO / "bench" / "studio" / library
+        manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+        named = {prop["file"] for prop in manifest["props"]}
+        on_disk = {path.name for path in root.glob("*.glb")}
+        assert named == on_disk, (
+            "{}: entries with no model {}, models with no entry {}".format(
+                library, sorted(named - on_disk), sorted(on_disk - named)))
+        for thumb in root.glob("*.glb.thumb.png"):
+            model = thumb.name[: -len(".thumb.png")]
+            assert model in on_disk, (
+                "{}/{} is a thumbnail of nothing".format(library, thumb.name))
+
+
+def test_a_retired_slug_can_still_be_fetched_back_by_name():
+    """props-hd is gitignored, so git cannot undo a delete. Cutting the
+    catalogue line as well would have made 37 MB of retired models
+    unrecoverable by any route at all. They are MARKED instead: a bare
+    run skips them, and naming one still fetches it."""
+
+    source = (REPO / "tools" / "props" / "fetch.mjs").read_text(encoding="utf-8")
+    for key in RETIRED["props-hd"]:
+        line = [row for row in source.split("\n")
+                if 'slug: "{}"'.format(key) in row]
+        assert len(line) == 1, "{}: {} catalogue lines".format(key, len(line))
+        assert "retired: true" in line[0], (
+            "{} is not marked retired, so a bare fetch downloads it "
+            "again".format(key))
+
+    assert "? LIST.filter((item) => wanted.includes(item.slug))" in source, (
+        "the named path must search the WHOLE list, retired included, or "
+        "nothing ever comes back"
+    )
+    assert ": LIST.filter((item) => !item.retired);" in source, (
+        "a bare run must skip the retired entries"
+    )
+
+
+def test_every_notice_writer_derives_its_libraries_from_the_manifest():
+    """Three tools write NOTICE.txt and any of them can run last, so the
+    rule has to hold in all three. fetch.mjs claimed everything was Poly
+    Haven CC0 over twenty Fab assets; ingest.mjs claimed "two libraries"
+    over a folder that had held three since the decals arrived. Both were
+    hand-written sentences above correctly derived entries, which is the
+    worse half to get wrong."""
+
+    writers = {
+        "fetch.mjs": (REPO / "tools" / "props" / "fetch.mjs"),
+        "ingest.mjs": (REPO / "tools" / "props" / "ingest.mjs"),
+        "fetch_decals.py": (REPO / "tools" / "props" / "fetch_decals.py"),
+    }
+    false_claims = (
+        "Every model in this folder is from Poly Haven",
+        "come from two libraries",
+    )
+    for name, path in writers.items():
+        source = path.read_text(encoding="utf-8")
+        assert "NOTICE.txt" in source, "{} no longer writes it".format(name)
+
+        # A hard-coded notice line is a bare string literal in the list
+        # being joined. Prose ABOUT the old bug is not, and all three of
+        # these files carry that prose deliberately -- searching the
+        # whole source would ban the explanation along with the defect.
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if not stripped.startswith(('"', "'")):
+                continue
+            for claim in false_claims:
+                assert claim not in stripped, (
+                    "{} hard-codes a library claim again: {}".format(
+                        name, stripped))
+
+        # And the positive half, which is what actually keeps it true: the
+        # header is a count per library, taken from the props themselves.
+        counted = ("  {}  ({})" in source              # python
+                   or "  ${line}  (${count})" in source)  # javascript
+        assert counted, (
+            "{} must emit one counted line per library found in the "
+            "manifest, not a sentence somebody typed".format(name))
+        assert "polyhaven" in source and "ambientcg" in source.lower(), (
+            "{} must sort each source into its library to count them, and "
+            "a writer that knows only some of the libraries will drop the "
+            "rest from the header".format(name)
+        )
+        assert "licence unstated" in source, (
+            "{} must have something to say about a prop whose licence is "
+            "missing; falling back to a named licence is how a wrong one "
+            "gets asserted".format(name)
+        )
