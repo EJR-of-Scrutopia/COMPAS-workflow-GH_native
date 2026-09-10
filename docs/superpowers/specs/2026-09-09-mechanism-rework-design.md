@@ -479,10 +479,11 @@ MESH radius, so a 0.200 m pulley trawls a 30 mm annulus against a 0.060 m spool'
 dividing by the drum's own owned count does not remove that size bias.
 
 AMENDED TO: the figure is disagreement with the published radius, counted over the whole
-neighbourhood a reel's ownership window reaches, with every ownership refusal counted as a
-reject by default. Under this reading, measured on his file: spools 4.00 to 4.24, pulley 7
-reads 0.0407, pulley 9 reads 0.1747, a hundredfold gap between the defect and the two honest
-wraps.
+neighbourhood a reel's ownership window reaches, where a REFUSED frame is classified by the
+SAME band test as an owned one. So a refusal that still sits at the published radius counts
+as agreeing, and only a frame that actually disagrees with the published radius counts against
+the reel. Under this reading, measured on his file: spools 4.00 to 4.24, pulley 7 reads 0.0407,
+pulley 9 reads 0.1747, a hundredfold gap between the defect and the two honest wraps.
 
 AND ADD: the ownership margin bounds the population the figure is taken over, so a drum with
 no flange at all sits outside the gate's reach in one direction. State that direction
