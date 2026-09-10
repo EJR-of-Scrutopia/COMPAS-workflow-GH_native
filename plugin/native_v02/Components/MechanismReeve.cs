@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -27,22 +27,19 @@ internal static class MechanismReeve
     /// binding): a per-wire override, if authored, beats everything else;
     /// failing that, <paramref name="machineDefault"/>.
     ///
-    /// TODAY, <paramref name="machineDefault"/> IS THE PAYLOAD'S OWN
-    /// PROVISIONAL reeve.default (Task 4), because the collector does not
-    /// yet cite a machine -- the Machine (MA) port that will hand it the
-    /// cited machine's own authored default is Task 6's own work, not
-    /// this one's. THE SWAP TASK 6 MAKES IS AT ITS CALL SITE, NOT HERE:
-    /// once MA is read, the one line that computes machineDefault is
-    /// replaced to read the cited machine's own default instead of the
-    /// payload's provisional one, and nothing about this method's
-    /// signature, its resolution order, or its "machine" source name
-    /// changes.
+    /// <paramref name="machineDefault"/> IS THE CITED MACHINE'S OWN
+    /// AUTHORED DEFAULT (Task 6). It was the payload's own provisional
+    /// reeve.default while the Machine (MA) port was registered and unread
+    /// (Task 4); that placeholder is retired, and the swap was made at the
+    /// CALL SITE, not here, exactly as this comment said it would be:
+    /// nothing about this method's signature, its resolution order or its
+    /// "machine" source name moved.
     ///
-    /// NEVER a hardcoded 1.0: a caller with nothing authored for
-    /// <paramref name="machineDefault"/> either has nothing to resolve
-    /// with and must refuse by name itself (see
-    /// <c>MechanismDocument.Json</c>'s own reeve.default refusal), rather
-    /// than this method inventing a number nobody wrote down.
+    /// THERE IS NO THIRD SOURCE. A caller with no machine to take a default
+    /// from has nothing to resolve with and must refuse BY NAME itself (see
+    /// <c>MechanismDocument.Json</c>, which refuses a study that cites no
+    /// machine), rather than this method inventing a number nobody wrote
+    /// down. NEVER a hardcoded 1.0.
     /// </summary>
     public static (double Value, string Source) Resolve(
         double machineDefault,
