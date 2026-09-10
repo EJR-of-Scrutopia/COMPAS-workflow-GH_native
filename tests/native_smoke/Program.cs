@@ -3464,6 +3464,27 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismPortRule(plugin);
+            Console.WriteLine(
+                "PASS  The port rule (spec 3.0), on both components: new "
+                + "ports append at the end, a withdrawn port keeps its slot "
+                + "as a refusing stub, and neither component ever reorders, "
+                + "inserts or deletes a port, because Grasshopper archives "
+                + "a wire by index and a slot that moves silently re-points "
+                + "every wire after it onto a permissive port -- a text "
+                + "port that casts from almost anything, or an item port "
+                + "that solves once per item of a list and keeps only the "
+                + "last. Pinned name, nickname and index for all fifteen "
+                + "of the Machine component's inputs and all fourteen of "
+                + "the Mechanism component's.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismPortRule: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMechanismDocument(plugin);
             Console.WriteLine(
                 "PASS  MechanismDocument (bench.mechanism/1, the fourth "
@@ -41412,18 +41433,26 @@ internal static partial class Program
     /// reaches behind the cable line" means something; and the datum is the
     /// wire first-frames, never the body origin.
     ///
-    /// WHAT THIS DOES NOT YET PROVE, and Task 2 closes: the fixture wires no
-    /// tie and no anchor, because the ports that accept them still exist on
-    /// the Machine component. The recursive refusal above WILL catch them
-    /// the moment they are actually wired (a NON-NULL "tensionTie" or
-    /// "anchor" anywhere in the document), which is why it walks the whole
-    /// document rather than the root; it deliberately does NOT fire on the
-    /// null placeholder those two keys carry today, since Dictionary&lt;
-    /// string, object?&gt; writes an explicit JSON null for an unwired part
-    /// rather than omitting the key, and refusing on the bare key NAME
-    /// would fail on every machine document this codebase has ever built,
-    /// wired or not -- a check that fires on correct input is a defect, not
-    /// a safeguard.
+    /// WHAT THIS STILL DOES NOT PROVE, updated by Task 2: the fixture below
+    /// still wires no tie and no anchor, calling BuildMachine directly
+    /// beneath the component, so it was already null-safe before Task 2 and
+    /// its pinned footprint literals do not move. What Task 2 actually
+    /// closes sits one level up, at the Machine component's own reader
+    /// (MechanismComponents.cs, MachineComponent.ReadAsset): TT and AN are
+    /// now refusing stubs there, so that component can no longer hand
+    /// BuildMachine a non-null tie or anchor no matter what he leaves wired
+    /// to the two withdrawn ports; see ValidateMechanismPortRule below for
+    /// the port-index half of that guarantee. The recursive refusal here
+    /// remains the second line of defence, for whatever future caller of
+    /// BuildMachine does not go through the component at all: it WOULD
+    /// catch a non-null "tensionTie" or "anchor" anywhere in the document
+    /// (which is why it walks the whole document rather than the root), it
+    /// deliberately does NOT fire on the null placeholder those two keys
+    /// carry today, since Dictionary&lt;string, object?&gt; writes an
+    /// explicit JSON null for an unwired part rather than omitting the
+    /// key, and refusing on the bare key NAME would fail on every machine
+    /// document this codebase has ever built, wired or not -- a check that
+    /// fires on correct input is a defect, not a safeguard.
     /// </summary>
     private static void ValidateMachineDocument(Assembly plugin)
     {
@@ -41758,6 +41787,86 @@ internal static partial class Program
                 "reels (ten plus the deliberately mirrored eleventh), " +
                 "built by the same path the study document uses.");
         }
+    }
+
+    /// <summary>
+    /// THE PORT RULE (spec 3.0), on both components at once: new ports
+    /// APPEND at the end, a withdrawn port keeps its slot as a REFUSING
+    /// STUB, and neither component ever reorders, inserts or deletes a
+    /// port. Grasshopper archives a wire by INDEX, so an insertion or a
+    /// deletion silently re-points every wire after it onto whichever port
+    /// now sits in that slot, and the ports it re-points onto are the
+    /// permissive ones: a text port casts from almost anything, and a list
+    /// arriving at an item port makes the whole component solve once per
+    /// item and keep the last. That is how a 55 mm bracket once exported
+    /// in place of a whole frame in this codebase.
+    ///
+    /// Pinned here by name, nickname AND index for every port either
+    /// component carries, spec tables 3.1 and 5.1 verbatim: the Machine
+    /// component's fifteen (0 to 14) and the Mechanism component's
+    /// fourteen (0 to 13). "MechanismComponent" in the brief this check
+    /// was written from is this codebase's actual MechanismCollectorComponent
+    /// (the "Mechanism" / "ME" component feeding Export beside RES and
+    /// Cells); there is no separate type of that shorter name.
+    ///
+    /// WHAT THIS DOES NOT PROVE: that a withdrawn port's READER actually
+    /// refuses what is wired to it (that is RefuseMovedPort, exercised by
+    /// wiring a fixture rather than by reflection on the registered
+    /// parameters), or that MA and RW resolve to anything yet -- they are
+    /// appended and unread by design, later tasks' work.
+    /// </summary>
+    private static void ValidateMechanismPortRule(Assembly plugin)
+    {
+        void Ports(string typeName, (int At, string Nick, string Name)[] want)
+        {
+            Type type = RequireComponentType(plugin, typeName);
+            object component = Activator.CreateInstance(type)!;
+            var parameters = (IList)type.BaseType!
+                .GetProperty("Params")!.GetValue(component)!
+                .GetType().GetProperty("Input")!
+                .GetValue(type.BaseType!.GetProperty("Params")!.GetValue(component))!;
+            foreach ((int at, string nick, string name) in want)
+            {
+                if (at >= parameters.Count)
+                {
+                    throw new InvalidOperationException(
+                        $"{typeName} must carry input {at} ({nick}); it has " +
+                        $"{parameters.Count} inputs.");
+                }
+                object p = parameters[at]!;
+                string gotNick = (string)p.GetType().GetProperty("NickName")!.GetValue(p)!;
+                if (!string.Equals(gotNick, nick, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{typeName} input {at} must be {nick} ({name}); it is " +
+                        $"{gotNick}. Grasshopper archives a wire by INDEX, so a " +
+                        "port that moves silently re-points every wire he has " +
+                        "saved, and the ports it re-points onto are the " +
+                        "permissive ones: a text port casts from almost " +
+                        "anything, and a list at an item port makes the whole " +
+                        "component solve once per item and keep the last.");
+                }
+            }
+        }
+
+        Ports("MachineComponent", new (int, string, string)[]
+        {
+            (0, "N", "Name"), (1, "F", "Folder"), (2, "W", "Write"),
+            (3, "TT", "Tension Tie"), (4, "AN", "Anchor"),
+            (5, "F1", "Frame 1"), (6, "F2", "Frame 2"), (7, "MO", "Motors"),
+            (8, "RE", "Reel"), (9, "AX", "Reel Axis"), (10, "RT", "Routing"),
+            (11, "FM", "Frame Meaning"), (12, "WS", "Wire Start"),
+            (13, "ID", "Machine Id"), (14, "RV", "Reeve"),
+        });
+        Ports("MechanismCollectorComponent", new (int, string, string)[]
+        {
+            (0, "RES", "Result"), (1, "TT", "Tension Tie"),
+            (2, "F1", "Frame 1"), (3, "F2", "Frame 2"), (4, "MO", "Motors"),
+            (5, "RE", "Reel"), (6, "AX", "Reel Axis"), (7, "RT", "Routing"),
+            (8, "PL", "Placement"), (9, "WS", "Wire Start"),
+            (10, "FM", "Frame Meaning"), (11, "AN", "Anchor"),
+            (12, "MA", "Machine"), (13, "RW", "Reeve Per Wire"),
+        });
     }
 
     /// <summary>
