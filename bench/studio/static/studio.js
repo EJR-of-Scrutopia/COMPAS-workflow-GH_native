@@ -153,6 +153,7 @@ const state = {
   cameraAspect: "fill",  // the Camera frame: "fill" or a ratio as a string
   projection: "perspective",  // or "orthographic": a picture, or a drawing
   stillSize: "a3-300",   // the plate the Render button writes
+  detail: "balanced",    // how soon distant props drop detail in the viewport; stills and takes ignore it
   stillRendering: false, // a plate in flight; the button and resize both check it
   // The cut. mode "off" or "plane"; axis is which way the plane
   // faces; offset is where along that axis it sits, in metres.
@@ -450,12 +451,18 @@ function clampCameraAboveFloor() {
 // every frame, and a `let` declared down there would sit in its temporal
 // dead zone if a render ever happened during boot.
 let propGumball = null;
+// The instanced props' batches, declared up here for the same reason:
+// renderView settles them every frame (see "the instanced props").
+const propBatches = new Map();
 
 function renderView() {
   clampCameraAboveFloor();
   // Every render path goes through here, the recorder's included, so the
   // gumball's screen-constant size is settled in one place.
   sizePropGumball();
+  // So are the instanced props, and BEFORE the shadow fit, which measures
+  // the batches: a stroke's new casters have to be in them when it looks.
+  settlePropInstances();
   // And so is the shadow fit, for the same reason and one more: a scatter
   // places hundreds of casters in a burst, and re-measuring the scene per
   // prop would be quadratic. Marking it dirty and settling it once a
@@ -1552,32 +1559,159 @@ function adoptLayers(saved) {
   }
 }
 
+// ---------- the layout, and where it is kept ----------
+// A layout written as one object per prop was about two hundred bytes a
+// prop, so a 25,375-prop field was five megabytes of JSON, written whole
+// to browser storage on every gesture. The store's quota is five: the
+// write threw, and because taking each prop of an undone stroke away
+// saved the layout again, the throw came out of the undo itself (Param's
+// log: "could not undo scattering 1846 props: ... exceeded the quota").
+//
+// So a prop is nine numbers now, to the millimetre and the ten-thousandth
+// of a radian, its type an index into a list written once; the write
+// waits until the gestures stop; a layout too big for the browser leaves
+// a marker there instead of throwing; and the server keeps a copy beside
+// the study that always fits, which is also what a second device opens.
+const LAYOUT_STRIDE = 9;
+const LAYOUT_SETTLE_MS = 600;
+const layoutMemo = new Map();   // propsKey -> the layout last written or pulled this session
+let layoutWrite = null;         // the write waiting for the gestures to stop
+let layoutTooBigSaid = false;
+
+function roundMm(value) { return Math.round((+value || 0) * 1000) / 1000; }
+function roundTurn(value) { return Math.round((+value || 0) * 10000) / 10000; }
+
+function encodeProps(props) {
+  const types = [];
+  const typeIndex = new Map();
+  const rows = [];
+  const extras = {};
+  props.forEach((p, i) => {
+    let t = typeIndex.get(p.type);
+    if (t === undefined) { t = types.length; types.push(p.type); typeIndex.set(p.type, t); }
+    rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), roundTurn(p.rotation),
+      roundTurn(p.rotX || 0), roundTurn(p.rotY || 0), roundMm(p.scale || 1), p.layer || 1);
+    // Only a fixture carries these three, and a fixture always does.
+    if (p.size || p.lumens !== undefined || p.kelvin !== undefined) {
+      extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin };
+    }
+  });
+  return { stride: LAYOUT_STRIDE, types, rows, extras };
+}
+
+// Both shapes a layout or a scene has ever held: the list of objects
+// written until 2026-09-11, and the rows written since.
+function decodeProps(block) {
+  if (Array.isArray(block)) return block;
+  if (!block || !Array.isArray(block.rows) || !Array.isArray(block.types)) return null;
+  const stride = +block.stride || LAYOUT_STRIDE;
+  const rows = block.rows;
+  const extras = block.extras || {};
+  const entries = [];
+  for (let i = 0; i + stride <= rows.length; i += stride) {
+    const entry = { type: block.types[rows[i]], x: rows[i + 1], y: rows[i + 2],
+      z: rows[i + 3], rotation: rows[i + 4], rotX: rows[i + 5], rotY: rows[i + 6],
+      scale: rows[i + 7], layer: rows[i + 8] };
+    const extra = extras[entries.length];
+    if (extra) Object.assign(entry, extra);
+    entries.push(entry);
+  }
+  return entries;
+}
+
+// Asked for after every change and done once they stop. WHERE it goes and
+// WHAT it holds are taken now, not when it runs: a study switched in the
+// meantime must not be handed the last study's props.
 function saveProps() {
   if (!state.bundle) return;   // no study, nowhere to key the layout
-  const layout = {
-    layers: state.propLayers.map((layer) => ({
-      id: layer.id, name: layer.name, visible: layer.visible })),
-    props: state.props.map((p) => ({
-      type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation,
-      rotX: p.rotX || 0, rotY: p.rotY || 0,
-      scale: p.scale || 1, layer: p.layer || 1,
-      // Only a fixture carries these three, and a fixture always does.
-      size: p.size, lumens: p.lumens, kelvin: p.kelvin })),
+  if (layoutWrite) clearTimeout(layoutWrite.timer);
+  layoutWrite = {
+    key: propsKey(),
+    export: state.bundle.export,
+    props: state.props,
+    layers: state.propLayers,
     // The scatter's RULES, not its output. The props it made are already
     // in the list above as ordinary records; what would otherwise be
     // lost on a reload is the species he picked, the spacing he tuned
     // and the seed that produced a field he liked -- and a dice with no
     // seed to go back to is not a dice.
     scatter: state.scatter,
+    timer: setTimeout(flushProps, LAYOUT_SETTLE_MS),
   };
-  localStorage.setItem(propsKey(), JSON.stringify(layout));
+}
+
+function flushProps() {
+  const pending = layoutWrite;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  layoutWrite = null;
+  const layout = {
+    saved: Date.now(),
+    layers: pending.layers.map((layer) => ({
+      id: layer.id, name: layer.name, visible: layer.visible })),
+    props: encodeProps(pending.props),
+    scatter: pending.scatter,
+  };
+  layoutMemo.set(pending.key, layout);
+  const text = JSON.stringify(layout);
+  try {
+    localStorage.setItem(pending.key, text);
+  } catch (error) {
+    // Too big for the browser. A marker stays, so a reload knows to ask
+    // the server rather than restore whatever was there before.
+    try {
+      localStorage.setItem(pending.key, JSON.stringify({ saved: layout.saved, onServer: true }));
+    } catch (again) { /* the store is full of something else; the server has it */ }
+    if (!layoutTooBigSaid) {
+      layoutTooBigSaid = true;
+      logStudio("the prop layout is too big for the browser's store; it is kept on the server");
+    }
+  }
+  fetch("/api/studies/" + encodeURIComponent(pending.export) + "/layout", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: text,
+  }).then((response) => {
+    if (!response.ok) throw new Error("the server said " + response.status);
+  }).catch((error) => logStudio("the prop layout did not reach the server: " + error.message));
+}
+
+// The server's copy wins when it is newer: the layout another device
+// wrote, or the one the browser was too small to hold. Asked once a study
+// is built, and ignored if he has started changing things since.
+async function pullServerLayout() {
+  if (!state.bundle) return;
+  const key = propsKey();
+  let remote = null;
+  try {
+    const response = await fetch("/api/studies/"
+      + encodeURIComponent(state.bundle.export) + "/layout");
+    if (response.status !== 200) return;    // 204: none kept yet
+    remote = await response.json();
+  } catch (error) {
+    return;
+  }
+  if (!state.bundle || propsKey() !== key || layoutWrite || !remote) return;
+  const local = layoutMemo.get(key) || readLocalLayout(key);
+  if (local && !local.onServer && (+local.saved || 0) >= (+remote.saved || 0)) return;
+  layoutMemo.set(key, remote);
+  restoreProps(remote);
+}
+
+function readLocalLayout(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch (error) {
+    return null;
+  }
 }
 
 // Mirrors disposeShell's rule: whatever is replaced owns GPU buffers.
 function disposeProp(object) {
-  // Library props are clones sharing one template's geometry and materials,
-  // so freeing them here would empty the template every other clone is
-  // still drawing from. The template owns its resources for the session.
+  // A batched prop owns nothing but its place in the batch: it gives the
+  // place back, and the batch is written again on the next frame.
+  if (object.instancedIn) { leaveBatch(object); return; }
+  // Library props share one template's geometry and materials, so
+  // freeing them here would empty the template everything else is still
+  // drawing from. The template owns its resources for the session.
   if (object.userData.fromLibrary) return;
   object.traverse((child) => {
     if (child.isMesh) {
@@ -1621,7 +1755,9 @@ function adoptScatter(saved) {
   };
   state.scatter = {
     species,
-    spacing: number("spacing", 0.6, 3),
+    // The dial's own floor. At 0.6 a reload quietly loosened every dense
+    // field he had tuned below it, and the next stroke came out sparse.
+    spacing: number("spacing", 0.3, 3),
     sizeMin: number("sizeMin", 0.3, 1),
     sizeMax: number("sizeMax", 1, 3),
     clump: number("clump", 0, 100),
@@ -1633,25 +1769,31 @@ function adoptScatter(saved) {
   };
 }
 
-function restoreProps() {
+function restoreProps(given) {
+  // A write still waiting for the gestures to stop would be overtaken by
+  // the read below, and the props it held would come back as they were.
+  flushProps();
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
   // Through selectProp, never by assignment: the outline and the gumball
   // follow the selection, and a bare null leaves them orbiting a corpse.
   selectProp(null);
-  let layout = [];
-  try {
-    layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
-  } catch (error) {
-    layout = [];
+  let layout = given || layoutMemo.get(propsKey()) || null;
+  if (!layout) {
+    try {
+      layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
+    } catch (error) {
+      layout = [];
+    }
   }
-  // Two shapes on disk: the old bare array of props, and the layered
-  // {layers, props} that replaced it. Both restore.
+  // Three shapes on disk: the old bare array of props, the layered
+  // {layers, props} that replaced it, and the same with its props as
+  // rows (decodeProps). All restore.
   let entries = layout;
-  if (!Array.isArray(layout) && layout && Array.isArray(layout.props)) {
+  if (!Array.isArray(layout) && layout && layout.props) {
     adoptLayers(layout.layers);
     adoptScatter(layout.scatter);
-    entries = layout.props;
+    entries = decodeProps(layout.props);
   } else {
     adoptLayers(null);
   }
@@ -1700,8 +1842,32 @@ const propTemplates = new Map();
 // file every time a template arrived and never converge.
 const propTemplatePromises = new Map();
 
+// The library by key and by family, rebuilt whenever the list itself is
+// replaced (loadPropLibrary always assigns a new array, never edits one).
+// A scatter dart asks for its variant's entry three times and a stroke
+// throws thousands of darts, and a find over 270 entries each time was a
+// million comparisons a stamp before a single disc had been tested.
+let libraryIndexFor = null;
+let libraryByKey = new Map();
+let libraryByFamily = new Map();
+
+function libraryIndex() {
+  if (libraryIndexFor !== state.propLibrary) {
+    libraryIndexFor = state.propLibrary;
+    libraryByKey = new Map();
+    libraryByFamily = new Map();
+    for (const entry of state.propLibrary || []) {
+      libraryByKey.set(entry.key, entry);
+      const family = entry.family || entry.key;
+      if (!libraryByFamily.has(family)) libraryByFamily.set(family, []);
+      libraryByFamily.get(family).push(entry);
+    }
+  }
+  return libraryByKey;
+}
+
 function propLibraryEntry(key) {
-  return state.propLibrary.find((entry) => entry.key === key) || null;
+  return libraryIndex().get(key) || null;
 }
 
 // The library loads NOTHING up front any more. Eager loading pulled all
@@ -1843,6 +2009,344 @@ async function loadPropTemplate(entry) {
   const template = new THREE.Group();
   template.add(model);
   return template;
+}
+
+// ---------- the instanced props ----------
+// A placed library prop is ONE INSTANCE of its variant's batch. A field
+// of 25,375 grass tufts was 25,375 cloned groups, and the renderer paid a
+// draw call for every clone and another for every caster in the shadow
+// map: 48,078 calls a frame, one core flat out, the 4090 at 6% and the
+// viewport at two frames a second. Batched, the same field is a draw call
+// per variant, per mesh in its model, per detail tier.
+//
+// The RECORD is untouched and is still the truth. record.object is still
+// an Object3D whose position, rotation, scale and visible every existing
+// writer sets exactly as before: the carry, the gumball, R and plus and
+// minus, the stamp, the layer eye, every undo. It is a PROXY. It carries
+// no mesh and stands outside the scene graph, so the renderer never walks
+// 25,000 of them; once a frame settlePropInstances compares each proxy
+// with what it last saw, and only a batch that changed, or a view that
+// moved, is written again.
+//
+// Two small liberties let a proxy answer what a clone used to. Its PARENT
+// is propsGroup although propsGroup does not list it, so its world matrix
+// carries the floor's drop and nothing renders it. And it wears a
+// GEOMETRY holding only its model's bounds, which is all
+// Box3.setFromObject reads, so the selection outline, the lift's height
+// and the box pick measure it exactly as they measured the clone.
+
+// A tier is drawn while the model's bounding radius covers at least this
+// many pixels; below the second, the far tier. Draft stretches each
+// threshold, so detail goes sooner, and Full never leaves the first. A
+// still and a take always render at Full, whatever the viewport is set
+// to: detail traded for speed while composing must never reach a plate.
+const PROP_TIER_PIXELS = [48, 14];
+const DETAIL_REACH = { draft: 2.5, balanced: 1, full: 0 };
+const DETAIL_KEY = "vaulted-prop-detail";
+
+function propInstance(type, template) {
+  const batch = propBatch(type, template);
+  const proxy = new THREE.Object3D();
+  proxy.parent = propsGroup;           // for its world matrix only; see above
+  proxy.geometry = batch.bounds;       // for Box3.setFromObject only
+  proxy.instancedIn = batch;
+  proxy.batchIndex = batch.proxies.length;
+  proxy.seen = new Float64Array(11).fill(NaN);
+  batch.proxies.push(proxy);
+  batch.dirty = true;
+  return proxy;
+}
+
+// Given back by disposeProp, which every removal already calls. Swapped
+// with the last rather than spliced, so taking a whole stroke away is a
+// constant cost per prop and not a pass over the batch for each one.
+function leaveBatch(proxy) {
+  const batch = proxy.instancedIn;
+  if (!batch) return;
+  const last = batch.proxies.pop();
+  if (last !== proxy) {
+    batch.proxies[proxy.batchIndex] = last;
+    last.batchIndex = proxy.batchIndex;
+  }
+  proxy.instancedIn = null;
+  batch.dirty = true;
+}
+
+function propBatch(type, template) {
+  let batch = propBatches.get(type);
+  if (batch) return batch;
+  template.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(template);
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const bounds = new THREE.BufferGeometry();
+  bounds.setAttribute("position", new THREE.Float32BufferAttribute(
+    [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z], 3));
+  bounds.computeBoundingBox();
+  const near = bakeTier(template, null);
+  batch = {
+    type, proxies: [], tiers: [near], dirty: true, bounds,
+    radius: sphere.radius, centre: sphere.center.clone(),
+    casts: near.parts.some((part) => part.castShadow),
+  };
+  propBatches.set(type, batch);
+  const entry = propLibraryEntry(type);
+  if (entry && Array.isArray(entry.lods)) loadPropLods(batch, entry, template);
+  return batch;
+}
+
+// Every mesh of a model with its geometry baked into the model's own
+// space, so ONE instance matrix places them all, and its material kept as
+// it is: the batch draws with the template's own materials, which is also
+// why the section plane still cuts a batched field. A far tier borrows
+// its materials from the near one, mesh for mesh, because a sidecar
+// carries no textures of its own (tools/props/lod.mjs).
+function bakeTier(root, borrow) {
+  root.updateMatrixWorld(true);
+  const parts = [];
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    const geometry = child.geometry.clone();
+    floatAttributes(geometry);
+    geometry.applyMatrix4(child.matrixWorld);
+    const from = borrow ? borrow[parts.length] : child;
+    parts.push({ geometry, material: from.material,
+      castShadow: from.castShadow, receiveShadow: from.receiveShadow });
+  });
+  return { parts, meshes: [], capacity: 0, slots: [], count: 0 };
+}
+
+// The fetch QUANTISES: positions arrive as 16-bit integers that the
+// node's own scale undoes, which is fine for a clone that keeps the node
+// and fatal for a bake, whose applyMatrix4 writes floats back into an
+// Int16Array. What the bake transforms is widened to floats first.
+function floatAttributes(geometry) {
+  for (const name of ["position", "normal", "tangent"]) {
+    const attribute = geometry.getAttribute(name);
+    if (!attribute) continue;
+    if (attribute.array instanceof Float32Array
+        && !attribute.isInterleavedBufferAttribute) continue;
+    const size = attribute.itemSize;
+    const out = new Float32Array(attribute.count * size);
+    for (let i = 0; i < attribute.count; i++) {
+      out[i * size] = attribute.getX(i);
+      if (size > 1) out[i * size + 1] = attribute.getY(i);
+      if (size > 2) out[i * size + 2] = attribute.getZ(i);
+      if (size > 3) out[i * size + 3] = attribute.getW(i);
+    }
+    geometry.setAttribute(name, new THREE.BufferAttribute(out, size));
+  }
+}
+
+// The far tiers arrive after the batch is already drawing: until they
+// do, every instance draws near, which is only slower. A sidecar whose
+// meshes do not line up with the model's one for one cannot borrow its
+// materials, and is not drawn at all rather than drawn wrong.
+function loadPropLods(batch, entry, template) {
+  const model = template.children[0];
+  const near = batch.tiers[0].parts;
+  entry.lods.forEach((lod, index) => {
+    propLoader.loadAsync("/api/props/" + encodeURIComponent(lod.file)).then((gltf) => {
+      const side = gltf.scene;
+      side.rotation.copy(model.rotation);
+      side.scale.copy(model.scale);
+      side.position.copy(model.position);
+      const holder = new THREE.Group();
+      holder.add(side);
+      let meshes = 0;
+      side.traverse((child) => { if (child.isMesh) meshes += 1; });
+      if (meshes !== near.length) return;
+      batch.tiers[index + 1] = bakeTier(holder, near);
+      batch.dirty = true;
+    }).catch(() => { /* a missing tier is only slower, never wrong */ });
+  });
+}
+
+// A tier's meshes, one per part, sharing ONE instance buffer: every mesh
+// of a model stands in the same places. Rebuilt rather than resized when
+// the batch outgrows them, because an instance buffer's length is fixed
+// when it is made.
+function sizeTier(tier, needed) {
+  if (tier.meshes.length && tier.capacity >= needed) return;
+  for (const mesh of tier.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
+  let capacity = 64;
+  while (capacity < needed) capacity *= 2;
+  const places = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
+  places.setUsage(THREE.DynamicDrawUsage);
+  tier.meshes = tier.parts.map((part) => {
+    const mesh = new THREE.InstancedMesh(part.geometry, part.material, 0);
+    mesh.instanceMatrix = places;
+    mesh.castShadow = part.castShadow;
+    mesh.receiveShadow = part.receiveShadow;
+    // Culled per INSTANCE in fillBatch, not per mesh by three.js: a
+    // batch's bounding sphere is the whole field, which is nearly always
+    // in view, and one left stale by a moved prop would cull a tile of a
+    // still (the rule rebuildFormworkObjects learned for the net).
+    mesh.frustumCulled = false;
+    mesh.propSlots = tier.slots;
+    propsGroup.add(mesh);
+    return mesh;
+  });
+  tier.capacity = capacity;
+}
+
+const propViewSeen = new Float64Array(34).fill(NaN);
+const propCull = new THREE.Frustum();
+const propViewMatrix = new THREE.Matrix4();
+const propCullSphere = new THREE.Sphere();
+
+// Once a frame, from renderView, so the recorder and the still export
+// inherit it. A proxy that has not moved costs eleven comparisons; a
+// batch nothing touched, under a view that did not move, writes nothing.
+function settlePropInstances() {
+  if (!propBatches.size) return;
+  camera.updateMatrixWorld();
+  const reach = state.recording ? 0
+    : (state.detail in DETAIL_REACH ? DETAIL_REACH[state.detail] : 1);
+  const view = camera.matrixWorld.elements;
+  const lens = camera.projectionMatrix.elements;
+  const height = renderer.domElement.height;
+  let moved = false;
+  for (let i = 0; i < 16; i++) {
+    if (propViewSeen[i] !== view[i]) { propViewSeen[i] = view[i]; moved = true; }
+    if (propViewSeen[16 + i] !== lens[i]) { propViewSeen[16 + i] = lens[i]; moved = true; }
+  }
+  if (propViewSeen[32] !== reach) { propViewSeen[32] = reach; moved = true; }
+  if (propViewSeen[33] !== height) { propViewSeen[33] = height; moved = true; }
+  if (moved) {
+    propViewMatrix.copy(camera.matrixWorld).invert().premultiply(camera.projectionMatrix);
+    propCull.setFromProjectionMatrix(propViewMatrix);
+  }
+  propsGroup.updateWorldMatrix(true, false);
+  for (const batch of propBatches.values()) {
+    let changed = batch.dirty;
+    for (const proxy of batch.proxies) {
+      if (proxyMoved(proxy)) changed = true;
+    }
+    if (changed || moved) fillBatch(batch, reach, height);
+    // Only a change of WHAT stands where re-fits the sun's shadow map. A
+    // moving camera changes tiers, never places, and casters are never
+    // culled, so the fit it would make is the one already made.
+    if (changed && batch.casts) noteCastersChanged();
+    batch.dirty = false;
+    if (batch.retired && !batch.proxies.length) disposePropBatch(batch);
+  }
+}
+
+// A prop folder swapped under a standing field: each batch is filed
+// under a name no placement will ask for, goes on drawing what already
+// stands, and is freed by the settle above once the last of it has gone.
+let retiredBatchCount = 0;
+
+function retirePropBatches() {
+  for (const [key, batch] of [...propBatches]) {
+    if (batch.retired) continue;
+    propBatches.delete(key);
+    batch.retired = true;
+    retiredBatchCount += 1;
+    propBatches.set(key + "#retired-" + retiredBatchCount, batch);
+  }
+}
+
+// Everything a batch owns and its templates do not: the baked geometry
+// of every tier, the bounds the proxies wore, and the instance buffers,
+// which InstancedMesh.dispose frees and geometry.dispose does not.
+function disposePropBatch(batch) {
+  for (const [key, held] of propBatches) {
+    if (held === batch) { propBatches.delete(key); break; }
+  }
+  for (const tier of batch.tiers) {
+    if (!tier) continue;
+    for (const mesh of tier.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
+    for (const part of tier.parts) part.geometry.dispose();
+  }
+  batch.bounds.dispose();
+}
+
+function proxyMoved(proxy) {
+  const seen = proxy.seen;
+  const p = proxy.position, q = proxy.quaternion, s = proxy.scale;
+  const shown = proxy.visible ? 1 : 0;
+  if (seen[0] === p.x && seen[1] === p.y && seen[2] === p.z
+      && seen[3] === q.x && seen[4] === q.y && seen[5] === q.z && seen[6] === q.w
+      && seen[7] === s.x && seen[8] === s.y && seen[9] === s.z
+      && seen[10] === shown) return false;
+  seen[0] = p.x; seen[1] = p.y; seen[2] = p.z;
+  seen[3] = q.x; seen[4] = q.y; seen[5] = q.z; seen[6] = q.w;
+  seen[7] = s.x; seen[8] = s.y; seen[9] = s.z; seen[10] = shown;
+  proxy.updateMatrix();
+  return true;
+}
+
+// Every visible instance of a batch, sorted into its tier by how many
+// pixels its model covers from here. Written from scratch each time: a
+// tier is a packed list, and a moving camera re-deals most of it anyway.
+function fillBatch(batch, reach, height) {
+  const tiers = batch.tiers;
+  if (!tiers[0].parts.length) return;
+  for (const tier of tiers) {
+    if (!tier) continue;
+    sizeTier(tier, batch.proxies.length);
+    tier.count = 0;
+  }
+  const lift = propsGroup.matrixWorld.elements;
+  const eye = camera.matrixWorld.elements;
+  // The lens is read off the camera that HAS one, by name: an orthographic
+  // camera has no fov, and its pixels a metre are its frame over its zoom.
+  const ortho = camera === orthographicCamera;
+  const perMetre = ortho
+    ? height * orthographicCamera.zoom
+      / Math.max(1e-6, orthographicCamera.top - orthographicCamera.bottom)
+    : height / (2 * Math.max(1e-6, Math.tan(THREE.MathUtils.degToRad(
+      perspectiveCamera.fov) / 2) / (perspectiveCamera.zoom || 1)));
+  const c = batch.centre;
+  for (const proxy of batch.proxies) {
+    if (!proxy.visible) continue;
+    const m = proxy.matrix.elements;
+    const x = m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12] + lift[12];
+    const y = m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13] + lift[13];
+    const z = m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14] + lift[14];
+    const radius = batch.radius * Math.max(Math.abs(proxy.scale.x),
+      Math.abs(proxy.scale.y), Math.abs(proxy.scale.z));
+    // Only what casts nothing is culled by the view. A tree behind the
+    // camera still throws its shadow across the frame.
+    if (!batch.casts) {
+      propCullSphere.center.set(x, y, z);
+      propCullSphere.radius = radius;
+      if (!propCull.intersectsSphere(propCullSphere)) continue;
+    }
+    let t = 0;
+    if (reach > 0) {
+      const distance = ortho ? 1 : Math.max(1e-3,
+        Math.hypot(x - eye[12], y - eye[13], z - eye[14]));
+      const pixels = radius * perMetre / distance;
+      if (pixels < PROP_TIER_PIXELS[1] * reach) t = 2;
+      else if (pixels < PROP_TIER_PIXELS[0] * reach) t = 1;
+      while (t > 0 && !tiers[t]) t -= 1;
+    }
+    const tier = tiers[t];
+    tier.meshes[0].instanceMatrix.array.set(m, tier.count * 16);
+    tier.slots[tier.count] = proxy.record;
+    tier.count += 1;
+  }
+  for (const tier of tiers) {
+    if (!tier) continue;
+    tier.slots.length = tier.count;
+    for (const mesh of tier.meshes) {
+      mesh.count = tier.count;
+      mesh.visible = tier.count > 0;
+      // Measured again when asked: the shadow fit reads these.
+      mesh.boundingBox = null;
+      mesh.boundingSphere = null;
+    }
+    // Only the packed front of the buffer goes up. A zero-length range
+    // would not be a no-op: WebGL2 reads a length of 0 as "to the end".
+    if (tier.count) {
+      const places = tier.meshes[0].instanceMatrix;
+      places.clearUpdateRanges();
+      places.addUpdateRange(0, tier.count * 16);
+      places.needsUpdate = true;
+    }
+  }
 }
 
 function buildPropTiles() {
@@ -2003,10 +2507,11 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   // which is truthy and kept, while a fresh placement passes nothing.
   if (!z && isDecal(type)) z = DECAL_LIFT;
   const template = propTemplates.get(type);
-  // A clone shares geometry and materials with its template, which is what
-  // makes twenty figures cost one model; it is also why disposeProp does
-  // not free anything for a library prop (see there).
-  const object = template ? template.clone() : makeProp(type);
+  // A library prop is one instance of its variant's batch, drawn with the
+  // template's own geometry and materials: twenty figures cost one model
+  // and one draw call, and twenty thousand tufts cost the same one (see
+  // "the instanced props"). The object it answers to is a proxy.
+  const object = template ? propInstance(type, template) : makeProp(type);
   // z is a deliberate height offset, zero for everything placed on the
   // ground and negative for the assets Param needs to sink into it
   // ("allowing them to clip below ground, as some assets need to do so").
@@ -2021,10 +2526,13 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   // which is what lets a strip light be lengthened without becoming a
   // longer, fatter strip. Applied again by applyPropSize below whenever
   // either number moves.
-  propsGroup.add(object);
+  // A proxy stands outside the scene graph; a lamp is its own object in it.
+  if (!object.instancedIn) propsGroup.add(object);
   object.userData.fromLibrary = !!template;
   const record = { type, x, y, z, rotation, rotX, rotY, scale,
     layer: state.activeLayer, object };
+  // The batch's pick answers with a record, so the proxy knows its own.
+  if (object.instancedIn) object.record = record;
   // A lamp arrives lit, wearing whatever the Lights sliders currently
   // say. The caller (a restore, a scene) may overwrite both numbers and
   // call applyPropLight again; placing one by hand should not need to.
@@ -2403,6 +2911,13 @@ function propRecordAt(event) {
   // reads as a selection that just did not work.
   const hits = propRaycaster.intersectObjects(propsGroup.children, true);
   for (const hit of hits) {
+    // A batched prop is one instance of a batch mesh: the hit says which
+    // instance, and the tier's slot list says whose record it is.
+    if (hit.object.propSlots) {
+      const mine = hit.object.propSlots[hit.instanceId];
+      if (mine && mine.object.visible) return mine;
+      continue;
+    }
     let node = hit.object;
     while (node.parent && node.parent !== propsGroup) node = node.parent;
     const record = state.props.find((p) => p.object === node);
@@ -2979,6 +3494,7 @@ function buildScene(bundle, preserve) {
   updateVectorLayers();
   updateMaterialControls();
   restoreProps();
+  pullServerLayout();
   updateHud();
   // The weight line was written only when an appearance control was
   // touched, so a freshly loaded study showed an empty row until you
@@ -3104,13 +3620,10 @@ function collectScene() {
       scaleX: state.ground.scaleX, scaleY: state.ground.scaleY,
       relief: state.ground.relief, offset: state.ground.offset.slice(),
       rotation: state.ground.rotation },
-    props: state.props.map((record) => ({
-      type: record.type, x: record.x, y: record.y, z: record.z || 0,
-      rotation: record.rotation,
-      rotX: record.rotX || 0, rotY: record.rotY || 0,
-      scale: record.scale, layer: record.layer || 1,
-      size: record.size, lumens: record.lumens, kelvin: record.kelvin,
-    })),
+    // Rows, not objects: see "the layout, and where it is kept". A scene
+    // of a 25,000-prop field was five megabytes as objects, over the
+    // server's four-megabyte scene limit.
+    props: encodeProps(state.props),
     propLayers: state.propLayers.map((layer) => ({
       id: layer.id, name: layer.name, visible: layer.visible })),
     layers: Object.assign({}, state.layers),
@@ -3207,7 +3720,9 @@ async function applyScene(record) {
   // Props: cleared and replaced rather than merged, because a scene is a
   // whole picture. placeProp with save=false keeps the per-study layout in
   // localStorage untouched until the user moves one themselves.
-  if (Array.isArray(scene_.props)) {
+  // Either shape a scene has held: a list of objects, or rows.
+  const sceneProps = decodeProps(scene_.props);
+  if (sceneProps) {
     for (const existing of state.props) {
       disposeProp(existing.object);
       propsGroup.remove(existing.object);
@@ -3218,10 +3733,10 @@ async function applyScene(record) {
     // Every model the scene stands on, loaded before any is placed: the
     // library is lazy now, and a scene that placed only what happened to
     // be resident would come back missing furniture.
-    await Promise.all([...new Set(scene_.props.map((entry) => entry.type))]
+    await Promise.all([...new Set(sceneProps.map((entry) => entry.type))]
       .filter((type) => propLibraryEntry(type))
       .map((type) => ensurePropTemplate(type)));
-    for (const entry of scene_.props) {
+    for (const entry of sceneProps) {
       if (!knownPropType(entry.type)) continue;
       const record = placeProp(entry.type, +entry.x || 0, +entry.y || 0,
         +entry.rotation || 0, false, +entry.scale || 1, +entry.z || 0,
@@ -3459,9 +3974,19 @@ function rememberSession() {
   if (!study) return;
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      study, state: collectScene(), when: new Date().toISOString(),
+      study, state: sessionScene(), when: new Date().toISOString(),
     }));
   } catch (error) { /* a full or blocked store is not worth a banner */ }
+}
+
+// The session reopens the VIEW. The props come back from the study's own
+// layout, which buildScene restores anyway; carrying them here as well
+// wrote the whole field into browser storage a second time on every blur.
+function sessionScene() {
+  const scene_ = collectScene();
+  delete scene_.props;
+  delete scene_.propLayers;
+  return scene_;
 }
 
 function rememberedSession() {
@@ -3474,6 +3999,13 @@ function rememberedSession() {
 
 // Written when the window goes away and whenever the view settles, so a
 // crash or a killed server loses at most the last camera move.
+// The prop layout's waiting write goes first, on both (listeners run in
+// the order they were added): a tab closed within the settle time of the
+// last gesture would otherwise lose that gesture.
+window.addEventListener("beforeunload", flushProps);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushProps();
+});
 window.addEventListener("beforeunload", rememberSession);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") rememberSession();
@@ -5667,11 +6199,14 @@ for (const id of ["light-size", "light-length"]) {
 // select the props we want, how often each one appears, the size ratio we
 // pick, and some other relevant settings".
 //
-// What it draws is ORDINARY PROP RECORDS through placeProp, not an
-// InstancedMesh. That is the whole reason the gumball, the drag, R, plus
-// and minus, Delete, the layer eye, undo and the scene round trip all work
-// on a scattered tree with no new code: it is a prop like any other, and
-// there is no second universe of pickable things to keep in step.
+// What it makes is ORDINARY PROP RECORDS through placeProp. That is the
+// whole reason the gumball, the drag, R, plus and minus, Delete, the layer
+// eye, undo and the scene round trip all work on a scattered tree with no
+// new code: it is a prop like any other, and there is no second universe
+// of pickable things to keep in step. How a record is DRAWN is placeProp's
+// business, not the scatter's: since 2026-09-11 a library prop is one
+// instance of its variant's batch (see "the instanced props"), and nothing
+// here had to change for it.
 //
 // The ceiling is TRIANGLES, not instances, and it is measured rather than
 // argued (bench/scripts/scatter_budget.mjs, on the 4090 at 1080p):
@@ -5698,7 +6233,7 @@ function scatterRandom(seed) {
 }
 
 function propEntry(type) {
-  return (state.propLibrary || []).find((entry) => entry.key === type) || null;
+  return libraryIndex().get(type) || null;
 }
 
 // ---------- families ----------
@@ -5712,7 +6247,8 @@ function propEntry(type) {
 function familyOf(entry) { return entry.family || entry.key; }
 
 function familyMembers(family) {
-  return (state.propLibrary || []).filter((entry) => familyOf(entry) === family);
+  libraryIndex();
+  return libraryByFamily.get(family) || [];
 }
 
 // The family's label is the variant's with its number taken off, because
@@ -5881,7 +6417,7 @@ function scatterKeepOut(clearance, spacing) {
 // second kind is the clumping: at 0 the field is even, at 100 it gathers
 // into stands with open ground between, which is what makes planting read
 // as planting rather than as sprinkling.
-function scatterSolve(region, salt) {
+function scatterSolve(region, salt, strokeKeepOut) {
   const rules = state.scatter;
   const chosen = rules.species.filter((s) => familyMembers(s.type).length);
   if (!chosen.length) return { items: [], note: "no species chosen" };
@@ -5902,7 +6438,10 @@ function scatterSolve(region, salt) {
     return chosen[chosen.length - 1].type;
   };
 
-  const keepOut = scatterKeepOut(rules.clearance, rules.spacing);
+  // A stroke keeps ONE index for all its stamps (runScatter hands it
+  // back): rebuilt per stamp, it was a pass over every placed prop twenty
+  // times a sweep. What each stamp places is filed in it as it lands.
+  const keepOut = strokeKeepOut || scatterKeepOut(rules.clearance, rules.spacing);
   const placed = [];
   let triangles = 0;
   let refused = 0;
@@ -5953,7 +6492,7 @@ function scatterSolve(region, salt) {
   const stopped = placed.length >= SCATTER_MAX_ITEMS ? "the six thousand item cap"
     : triangles >= SCATTER_BUDGET_TRIANGLES ? "the triangle budget"
       : null;
-  return { items: placed, triangles, refused, stopped };
+  return { items: placed, triangles, refused, stopped, keepOut };
 }
 
 function withinRegion(region, x, y) {
@@ -5974,7 +6513,9 @@ async function runScatter(region, options) {
     for (const member of familyMembers(s.type)) await ensurePropTemplate(member.key);
   }
 
-  const solved = scatterSolve(region, settings.salt);
+  const solved = scatterSolve(region, settings.salt,
+    settings.stroke ? settings.stroke.keepOut : null);
+  if (settings.stroke) settings.stroke.keepOut = solved.keepOut;
   if (!solved.items.length) {
     document.getElementById("scatter-readout").textContent =
       settings.intoLayer
@@ -6005,7 +6546,7 @@ async function runScatter(region, options) {
   }
   state.scatterRuns.push({ layer: home.id, records });
   pushUndo("scattering " + records.length + " props", () => {
-    for (const record of records) removePropRecord(record);
+    removePropRecords(records);
     state.scatterRuns = state.scatterRuns.filter((run) => run.records !== records);
     paintScatter();
   }, () => runScatter(region, settings));
@@ -6407,7 +6948,7 @@ function endBrushStroke(stroke) {
   if (!records.length) return;
   const stamps = stroke.stamps;
   pushUndo("painting " + records.length + " props", () => {
-    for (const record of records) removePropRecord(record);
+    removePropRecords(records);
     state.scatterRuns = state.scatterRuns.filter((run) => run !== stroke.run);
     paintScatter();
   }, async () => {
@@ -6586,7 +7127,7 @@ function placeStampInstance(hit) {
   const planted = stampRig.records.slice();
   pushUndo("placing " + planted.length + (planted.length === 1
     ? " copy" : " copies"), () => {
-    for (const record of planted) removePropRecord(record);
+    removePropRecords(planted);
   });
   saveProps();
   spawnStampInstance(hit.x, hit.y);
@@ -6684,7 +7225,7 @@ if (skyBrightness) {
 document.getElementById("scatter-undo-last").addEventListener("click", () => {
   const run = state.scatterRuns.pop();
   if (!run) return;
-  for (const record of run.records) removePropRecord(record);
+  removePropRecords(run.records);
   saveProps();
   renderShelf();
   paintScatter();
@@ -9485,6 +10026,9 @@ document.getElementById("props-folder-choose").addEventListener("click", () =>
     // the scene, and the scene has not been asked to change.
     propTemplates.clear();
     propTemplatePromises.clear();
+    // Their batches go on drawing them, but no new placement may join one:
+    // it would wear the old folder's model under the new folder's name.
+    retirePropBatches();
     await loadPropLibrary();
   }));
 
@@ -13197,22 +13741,35 @@ undoableSelect("render-skin", "the skin change");
 undoableSelect("ground-preset", "the floor change");
 
 function removePropRecord(record) {
-  if (state.carrying && state.carrying.record === record) {
+  removePropRecords([record]);
+}
+
+// Any number at once, in one pass. An undone stroke of 2,000 props was
+// 2,000 calls of the one above, each filtering the whole list and writing
+// the whole layout again: quadratic in the field, and 2,000 writes of it.
+function removePropRecords(records) {
+  const gone = new Set(records);
+  if (!gone.size) return;
+  if (state.carrying && gone.has(state.carrying.record)) {
     state.carrying = null;
     state.propDrag = false;
     controls.enabled = true;
   }
-  disposeProp(record.object);
-  propsGroup.remove(record.object);
+  let lamps = false;
+  for (const record of gone) {
+    disposeProp(record.object);
+    propsGroup.remove(record.object);
+    if (isLamp(record)) lamps = true;
+  }
   // A caster leaving matters as much as one arriving: clearing a
   // scattered field would otherwise leave the shadow map sized for the
   // props that are gone.
   noteCastersChanged();
-  state.props = state.props.filter((p) => p !== record);
-  if (state.selectedProp === record) selectProp(null);
+  state.props = state.props.filter((p) => !gone.has(p));
+  if (gone.has(state.selectedProp)) selectProp(null);
   // A lamp leaving changes what the Lights row is talking about, and it
   // may not have been the selected one (which would have said so above).
-  if (isLamp(record)) syncLightControls();
+  if (lamps) syncLightControls();
   saveProps();
   // The drawer is a picture of state.props, so a prop leaving has to
   // reach it: deleting one in the viewport used to leave its tile behind
@@ -13371,6 +13928,23 @@ guarded("the output section", () => {
   document.getElementById("still-render").addEventListener("click", renderStill);
   paintStillControls();
   paintStillSize();
+});
+guarded("the prop detail", () => {
+  // A per-viewer choice, like the theme: the iPad wants Draft where the
+  // desktop wants Balanced, and neither is part of any scene.
+  try {
+    const kept = localStorage.getItem(DETAIL_KEY);
+    if (kept && kept in DETAIL_REACH) state.detail = kept;
+  } catch (error) { /* a blocked store keeps the default */ }
+  const select = document.getElementById("prop-detail");
+  buildSegmented("prop-detail-segments", "prop-detail");
+  select.value = state.detail;
+  paintSegmented("prop-detail-segments", "prop-detail");
+  select.addEventListener("change", (e) => {
+    state.detail = e.target.value;
+    paintSegmented("prop-detail-segments", "prop-detail");
+    try { localStorage.setItem(DETAIL_KEY, state.detail); } catch (error) { /* ditto */ }
+  });
 });
 guarded("the panel groups", buildGroups);
 // The libraries load in the background: the studio is usable before either

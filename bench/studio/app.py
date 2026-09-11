@@ -74,6 +74,10 @@ SCENE_SCHEMA = "bench.scene/1"
 # reach the filesystem. The pattern is asserted on every route anyway.
 SCENE_ID = re.compile(r"^scene-[0-9a-f]{12}$")
 MAX_SCENE_BYTES = 4 * 1024 * 1024
+# A study's prop layout, kept beside it (see put_layout). A field of
+# 100,000 props is about four and a half megabytes in the rows the client
+# writes, so this is room for a big site rather than a guess at one.
+MAX_LAYOUT_BYTES = 64 * 1024 * 1024
 MAX_THUMBNAIL_BYTES = 400 * 1024
 THUMBNAIL_PREFIX = "data:image/jpeg;base64,"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"
@@ -728,6 +732,44 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             # whole point (it says where to look), so it is carried through
             # unchanged rather than paraphrased or swallowed into a 500.
             raise HTTPException(400, str(error))
+
+    # THE PROP LAYOUT, beside the study. It lived only in browser storage,
+    # whose quota is five megabytes: a 25,375-prop field filled it, the
+    # write threw, and the throw came out of the undo that was trying to
+    # take the field away. The browser still keeps a copy when it fits;
+    # this one always does, and it is what a second device opens with.
+    def layout_path(export: str) -> Path:
+        if export not in geometry.available_exports(bundle.UPLOAD_DIR):
+            raise HTTPException(404, "no export named {!r}".format(export))
+        return bundle.STUDIES_DIR / geometry.slugify(export) / "studio" / "layout.json"
+
+    @app.get("/api/studies/{export}/layout")
+    def get_layout(export: str):
+        path = layout_path(export)
+        # No layout yet is an ordinary state of a study, not a missing
+        # thing: a 404 here put a red line in the console every time a
+        # study without one was opened.
+        if not path.is_file():
+            return Response(status_code=204)
+        return Response(content=path.read_bytes(), media_type="application/json")
+
+    @app.put("/api/studies/{export}/layout")
+    async def put_layout(export: str, request: Request):
+        path = layout_path(export)
+        body = await request.body()
+        if len(body) > MAX_LAYOUT_BYTES:
+            raise HTTPException(413, "the layout is {} bytes; the limit is {}.".format(
+                len(body), MAX_LAYOUT_BYTES))
+        try:
+            document = json.loads(body)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "not valid JSON")
+        if not isinstance(document, dict) or not isinstance(
+                document.get("props"), (dict, list)):
+            raise HTTPException(400, "a layout is an object carrying props")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        bundle.write_json_atomically(path, document)
+        return {"saved": len(body)}
 
     @app.get("/api/studies/{export}/formwork")
     def get_formwork(export: str):

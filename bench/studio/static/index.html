@@ -610,6 +610,19 @@
       <button id="prop-edit" title="Move, rotate and scale the placed props: click one to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
       <button id="props-clear" class="danger" title="Remove every placed prop">Clear</button>
     </div>
+    <!-- How much detail distant props keep in the VIEWPORT. A tuft thirty
+         metres off covers four pixels, and drawing every blade of it was
+         most of what made a scattered field run at two frames a second.
+         A still and a take always render every prop at Full, whatever
+         this says: detail traded for speed while composing never reaches
+         a plate. -->
+    <span class="row-heading">Detail</span>
+    <select id="prop-detail" class="hidden" title="How soon distant props drop detail in the viewport. Stills and takes always render every prop at full detail.">
+      <option value="draft">Draft</option>
+      <option value="balanced" selected>Balanced</option>
+      <option value="full">Full</option>
+    </select>
+    <div id="prop-detail-segments" class="segmented"></div>
     <!-- The prop grid lives in the shelf now: see #shelf at body level. -->
     <select id="prop-type" class="hidden"></select>
 

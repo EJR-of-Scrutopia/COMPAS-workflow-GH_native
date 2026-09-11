@@ -361,6 +361,39 @@ Poly Haven is exhausted for grass (three grasses exist there in total).
 More grass, meadow flowers and every tree come from Fab into the UE 5.4
 project, through tools/props/ingest.mjs, and that list is his.
 
+## Verified 2026-09-11, morning: the field's frame rate
+
+Param's readout over a 25,375-prop field: 48,078 draw calls, 88.5 M
+triangles, 2 fps, GPU 6%, CPU 8% (one core of sixteen flat out). The
+bottleneck was draw submission on the main thread, not the GPU.
+
+1. **Instancing.** A placed library prop is one instance of its
+   variant's batch. The record and record.object survive; the object is
+   a proxy outside the scene graph, and settlePropInstances copies what
+   changed into per-variant, per-mesh, per-tier InstancedMeshes once a
+   frame. Picking maps the hit's instanceId back to its record; the
+   outline, the gumball, the carry, the stamp, the layer eye and every
+   undo work unchanged.
+2. **Distance tiers.** tools/props/lod.mjs cuts geometry-only sidecars at
+   0.35 and 0.12 of LOD0, borrowing LOD0's materials. The first cut
+   pruned the UVs with the textures and was caught before any client
+   read it. A Detail control (Draft, Balanced, Full) sets how soon
+   distant props drop a tier; stills and takes always render Full.
+3. **Per-instance culling** of whatever casts no shadow; casters are
+   never culled, because a tree behind the camera still shades the frame.
+4. **The stroke.** Left button paints and drags, middle orbits, right
+   pans; the keep-out is a uniform grid (4,000 darts against 25,000
+   discs: 353 ms to 2.6 ms) and one index serves a whole stroke.
+5. **The undo that failed** was browser storage: five megabytes of
+   layout written per gesture, and once per prop by an undone stroke.
+   Layouts are compact rows now, written once the gestures stop, with a
+   server copy beside the study.
+
+Measured on the 4090 in the studio's own readout, 25,000 props: 476 draw
+calls, 15.9 M triangles at Balanced (88.4 M at Full), 129 fps still, 75
+fps orbiting; a dragged stroke of 7,080 props in 363 ms; its undo in one
+press; the layout 953 KB in the browser and whole on the server.
+
 ## Task 3: The Output panel
 
 A seventh panel section. It holds the still-render controls and it TAKES

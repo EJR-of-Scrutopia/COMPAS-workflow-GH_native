@@ -317,6 +317,15 @@ Escape would close the drawer again); a CLOSED shelf is not "another
 drawer" and must not disarm the tool. The click-to-place version lasted
 one morning: "i want to drag the brush around".
 
+**Detail is the viewport's, never the plate's.** The Props block's
+Detail segments (Draft, Balanced, Full; `prop-detail`) decide how soon a
+distant prop drops to its lighter tier while composing. A still and a
+take always render every prop at Full whatever the segments say
+(`state.recording` forces it), so a speed trade made at the desk can
+never reach a figure. It is remembered per viewer, like the theme, and
+belongs to no scene: the iPad wants Draft where the desktop wants
+Balanced.
+
 **A drawer shows a family once.** A species with variants
 (`entry.family`) is one tile, labelled without its variant number, and
 every placement draws a variant at random. The props drawer carries one;

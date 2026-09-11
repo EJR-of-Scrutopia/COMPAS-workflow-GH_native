@@ -220,9 +220,9 @@ def test_restores_summon_their_own_models():
     placing any."""
 
     source = STUDIO_JS.read_text(encoding="utf-8")
-    restore = _js_function(source, "function restoreProps()")
+    restore = _js_function(source, "function restoreProps(given)")
     assert "ensurePropTemplate(entry.type)" in restore
-    assert "restoreProps()" in restore.replace("function restoreProps()", "", 1)
+    assert "restoreProps()" in restore.replace("function restoreProps(given)", "", 1)
     scene_block = source[source.index("adoptLayers(scene_.propLayers)"):]
     scene_block = scene_block[:scene_block.index("applyLayerVisibility()")]
     assert "await Promise.all" in scene_block
@@ -751,8 +751,11 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
         "  // The drawer is a picture of state.props" in js
     assert "  if (propEditOneShot) setPropEdit(false);\n"\
         "  // A prop arriving on the open layer earns its tile" in js
-    remove = _js_function(js, "function removePropRecord(record)")
+    # removePropRecord hands one record to removePropRecords, which takes
+    # any number in one pass (an undone stroke was 2,000 separate saves).
+    remove = _js_function(js, "function removePropRecords(records)")
     assert "refreshLayersShelf();" in remove
+    assert "removePropRecords([record]);" in _js_function(js, "function removePropRecord(record)")
     # The undo path too: putting a deleted prop back must give its tile
     # back. Pinned contiguously because OneDrive reverted exactly this
     # line once while the rest of the wave survived, and the suite stayed
@@ -1110,8 +1113,12 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     assert "if (child.isSprite) child.material.dispose();" in js
 
     # Both numbers survive a reload and a scene.
-    assert "lumens: p.lumens, kelvin: p.kelvin })" in js, "the study layout"
-    assert "lumens: record.lumens, kelvin: record.kelvin," in js, "the scene"
+    # The layout and the scene share one encoder, which carries a lamp's
+    # numbers beside its row, and one decoder, which puts them back.
+    assert "extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin };" in js, (
+        "the study layout")
+    assert "props: encodeProps(state.props)," in js, "the scene"
+    assert "if (extra) Object.assign(entry, extra);" in js
     assert js.count("adoptLampSettings(record, entry);") == 2, (
         "restoreProps and applyScene both give a lamp its numbers back")
     adopt = _js_function(js, "function adoptLampSettings(record, entry)")
@@ -1904,8 +1911,12 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     assert "object.position.set(x, y, z);" in js
     assert "const record = { type, x, y, z, rotation, rotX, rotY, scale," in js
     # Persisted by BOTH memories: the per-study layout and a saved scene.
-    assert "type: p.type, x: p.x, y: p.y, z: p.z || 0, rotation: p.rotation," in js
-    assert "type: record.type, x: record.x, y: record.y, z: record.z || 0," in js
+    # Re-pinned 2026-09-11: both memories write rows through one encoder,
+    # z the fourth number of each, and one decoder reads it back.
+    assert ("rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), "
+            "roundTurn(p.rotation),") in js
+    assert "props: encodeProps(state.props)," in js
+    assert "z: rows[i + 3], rotation: rows[i + 4], rotX: rows[i + 5], rotY: rows[i + 6]," in js
     # And restored by every reader, or a sunk prop pops back to the floor.
     assert js.count("+entry.scale || 1, +entry.z || 0,") == 2, (
         "restoreProps and applyScene both give a prop its height back")
@@ -1987,9 +1998,11 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     # Tilt is real state, not just a control: all three arcs turn something.
     assert "function applyPropRotation(record)" in js
     assert "record.object.rotation.set(record.rotX || 0, record.rotY || 0," in js
-    assert "rotX: p.rotX || 0, rotY: p.rotY || 0," in js, "the layout keeps tilt"
-    assert "rotX: record.rotX || 0, rotY: record.rotY || 0," in js, (
-        "a saved scene keeps tilt")
+    # Both memories write through one encoder (re-pinned 2026-09-11), so
+    # the tilt is the sixth and seventh numbers of every row, in each.
+    assert "roundTurn(p.rotX || 0), roundTurn(p.rotY || 0), roundMm(p.scale || 1)," in js, (
+        "the layout keeps tilt")
+    assert "props: encodeProps(state.props)," in js, "a saved scene keeps tilt"
     assert js.count("+entry.rotX || 0, +entry.rotY || 0)") == 2, (
         "restoreProps and applyScene both give a prop its tilt back")
 
@@ -2212,7 +2225,7 @@ def test_the_scatter_stops_at_a_measured_budget_and_says_why():
 
     js = STUDIO_JS.read_text(encoding="utf-8")
     assert "const SCATTER_BUDGET_TRIANGLES = 35e6;" in js
-    solve = _js_function(js, "function scatterSolve(region, salt)")
+    solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
     assert "if (triangles >= SCATTER_BUDGET_TRIANGLES) break;" in solve
     assert "if (placed.length >= SCATTER_MAX_ITEMS) break;" in solve
     paint = _js_function(js, "function paintScatter(solved)")
@@ -2328,8 +2341,10 @@ def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():
         "only the long axis moves")
     assert "applyPropSize(record);" in write
     # Saved both ways, and read back both ways.
-    assert "size: p.size, lumens: p.lumens, kelvin: p.kelvin }))," in js
-    assert "size: record.size, lumens: record.lumens, kelvin: record.kelvin," in js
+    # One encoder for both memories carries it beside the row, and one
+    # decoder hands it back to both readers.
+    assert "if (p.size || p.lumens !== undefined || p.kelvin !== undefined) {" in js
+    assert "const extra = extras[entries.length];" in js
     assert js.count("record.size = entry.size.map(Number);") == 2, (
         "the layout restore and the scene restore both read it")
 
@@ -2345,7 +2360,7 @@ def test_the_scatter_brush_thickens_rather_than_repeating_itself():
     one is refused, and the field simply stops thickening."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    solve = _js_function(js, "function scatterSolve(region, salt)")
+    solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
     assert "Math.imul(salt || 0, 0x9E3779B1)" in solve
     # The fill happens on pointerUP, and only when the press did not
     # travel: that is what tells a click from an orbit drag.
@@ -2376,7 +2391,7 @@ def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
     assert "const steps = Math.max(1, Math.ceil((long - short) / Math.max(0.5, short / 2)));" in keep
     assert "propFootprint(record.type) * (record.scale || 1) * gap" in keep
     assert "* 0.6" not in keep
-    solve = _js_function(js, "function scatterSolve(region, salt)")
+    solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
     assert "scatterKeepOut(rules.clearance, rules.spacing)" in solve
 
 
@@ -2396,7 +2411,7 @@ def test_the_keep_out_is_a_grid_and_not_a_list():
     clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
     assert "if (index.seen[id] === pass) continue;" in clear
     assert "if (dx * dx + dy * dy < reach * reach) return false;" in clear
-    solve = _js_function(js, "function scatterSolve(region, salt)")
+    solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
     assert "if (!keepOutClear(keepOut, x, y, radius)) { refused += 1; continue; }" in solve
     assert "keepOutAdd(keepOut, x, y, radius);" in solve
 
@@ -2453,6 +2468,118 @@ def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():
     place = _js_function(js, "function placeProp(type, x, y, rotation, save, scale = 1, z = 0,")
     assert "noteCastersChanged();" in place
     assert place.index("noteCastersChanged();") < place.index("return record;")
+
+
+def test_a_library_prop_is_one_instance_of_its_variants_batch():
+    """25,375 scattered props were 25,375 cloned groups: 48,078 draw calls
+    a frame, one core flat out, the 4090 at 6% and the viewport at 2 fps
+    (Param's readout). A library prop is one instance of its variant's
+    batch now. The record is untouched and record.object is still an
+    Object3D every existing writer moves, so the gumball, the carry, the
+    stamp, the layer eye and every undo work on it unchanged: it is a
+    PROXY outside the scene graph, and once a frame the batches follow
+    whatever the proxies say."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    place = _js_function(js, "function placeProp(type, x, y, rotation, save, scale = 1, z = 0,")
+    assert "const object = template ? propInstance(type, template) : makeProp(type);" in place
+    assert "if (!object.instancedIn) propsGroup.add(object);" in place
+    assert "if (object.instancedIn) object.record = record;" in place
+    proxy = _js_function(js, "function propInstance(type, template)")
+    # Its world matrix carries the floor's drop, and Box3 can measure it,
+    # without the renderer ever walking it.
+    assert "proxy.parent = propsGroup;" in proxy
+    assert "proxy.geometry = batch.bounds;" in proxy
+    assert "propsGroup.add" not in proxy
+    dispose = _js_function(js, "function disposeProp(object)")
+    assert "if (object.instancedIn) { leaveBatch(object); return; }" in dispose
+    leave = _js_function(js, "function leaveBatch(proxy)")
+    assert "batch.proxies[proxy.batchIndex] = last;" in leave, (
+        "swapped with the last, so taking a stroke away is not quadratic")
+    view = _js_function(js, "function renderView()")
+    assert view.index("settlePropInstances();") < view.index(
+        "if (shadowFitPending) fitSunShadow();"), (
+        "the shadow fit measures the batches, so they are settled first")
+    pick = _js_function(js, "function propRecordAt(event)")
+    assert "const mine = hit.object.propSlots[hit.instanceId];" in pick
+    moved = _js_function(js, "function proxyMoved(proxy)")
+    assert "seen[10] === shown) return false;" in moved, (
+        "a hidden layer is a change the batch must hear about")
+    fill = _js_function(js, "function fillBatch(batch, reach, height)")
+    assert "if (!batch.casts) {" in fill, (
+        "a tree behind the camera still throws its shadow across the frame")
+    assert "tier.slots[tier.count] = proxy.record;" in fill
+    size = _js_function(js, "function sizeTier(tier, needed)")
+    assert "mesh.instanceMatrix = places;" in size
+    assert "mesh.frustumCulled = false;" in size
+    settle = _js_function(js, "function settlePropInstances()")
+    assert "const reach = state.recording ? 0" in settle, (
+        "a still and a take render every prop at full detail")
+    swap = js[js.index("Every template belongs to the old folder."):]
+    assert "retirePropBatches();" in swap[:swap.index("await loadPropLibrary();")]
+
+
+def test_the_far_tiers_borrow_the_near_materials_and_the_viewport_picks_the_detail():
+    """A sidecar is bare geometry (tools/props/lod.mjs), so a far tier is
+    drawn with the near tier's own materials, mesh for mesh, and one
+    whose meshes do not line up is not drawn at all rather than drawn
+    wrong. The fetch QUANTISES positions, which a clone kept and a bake
+    would have written floats back into, so the bake widens them first."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    bake = _js_function(js, "function bakeTier(root, borrow)")
+    assert "const from = borrow ? borrow[parts.length] : child;" in bake
+    assert bake.index("floatAttributes(geometry);") < bake.index(
+        "geometry.applyMatrix4(child.matrixWorld);")
+    lods = _js_function(js, "function loadPropLods(batch, entry, template)")
+    assert "if (meshes !== near.length) return;" in lods
+    assert "side.rotation.copy(model.rotation);" in lods
+    assert "const PROP_TIER_PIXELS = [48, 14];" in js
+    assert "const DETAIL_REACH = { draft: 2.5, balanced: 1, full: 0 };" in js
+    fill = _js_function(js, "function fillBatch(batch, reach, height)")
+    assert "if (pixels < PROP_TIER_PIXELS[1] * reach) t = 2;" in fill
+    assert "while (t > 0 && !tiers[t]) t -= 1;" in fill, (
+        "a tier still loading falls back to the nearer one, never to nothing")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="prop-detail"' in html and 'id="prop-detail-segments"' in html
+    assert 'buildSegmented("prop-detail-segments", "prop-detail");' in js
+
+
+def test_the_layout_is_rows_and_a_full_store_cannot_break_an_undo():
+    """Param's log: "could not undo scattering 1846 props: Failed to
+    execute 'setItem' on 'Storage': ... exceeded the quota". A layout was
+    two hundred bytes a prop and written whole on every gesture, and an
+    undone stroke wrote it once for EVERY prop it took away, so the throw
+    came out of the undo. Now: nine numbers a prop, one write after the
+    gestures stop, a marker instead of a throw when it will not fit, a
+    copy on the server that always fits, and one removal for a stroke."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    encode = _js_function(js, "function encodeProps(props)")
+    assert ("rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), "
+            "roundTurn(p.rotation),") in encode
+    decode = _js_function(js, "function decodeProps(block)")
+    assert "if (Array.isArray(block)) return block;" in decode, (
+        "every layout and scene written before still opens")
+    save = _js_function(js, "function saveProps()")
+    assert "key: propsKey()," in save, "where it goes is taken when asked"
+    assert "timer: setTimeout(flushProps, LAYOUT_SETTLE_MS)," in save
+    flush = _js_function(js, "function flushProps()")
+    assert "localStorage.setItem(pending.key, text);" in flush
+    assert ("localStorage.setItem(pending.key, JSON.stringify({ saved: layout.saved, "
+            "onServer: true }));") in flush
+    assert '"/api/studies/" + encodeURIComponent(pending.export) + "/layout"' in flush
+    restore = _js_function(js, "function restoreProps(given)")
+    assert restore.index("flushProps();") < restore.index("localStorage.getItem"), (
+        "a waiting write would otherwise be overtaken by the read")
+    remove = _js_function(js, "function removePropRecords(records)")
+    assert "state.props = state.props.filter((p) => !gone.has(p));" in remove
+    assert remove.count("saveProps();") == 1
+    run = _js_function(js, "async function runScatter(region, options)")
+    assert "removePropRecords(records);" in run
+    session = _js_function(js, "function sessionScene()")
+    assert "delete scene_.props;" in session, (
+        "the session reopens the view; the layout brings the props")
 
 
 def test_the_brush_replaced_the_whole_floor_button():

@@ -167,10 +167,17 @@ async function buildTier(source, tier) {
   // is still a name in LOD0's hierarchy, and dedup on accessors only:
   // deduping meshes would fold two identical tufts under one name and
   // break the pairing for the other.
+  //
+  // keepAttributes, because the client draws a sidecar with LOD0's OWN
+  // material, maps and all. With the textures stripped nothing in the
+  // sidecar referenced TEXCOORD_0 any more, so prune removed it from
+  // every tier of every prop, and a grass card with no UVs samples one
+  // texel for its whole face: its alpha cut-out fails and the far field
+  // turns into solid green quads.
   await doc.transform(
-    prune({ keepLeaves: true }),
+    prune({ keepLeaves: true, keepAttributes: true }),
     quantize({ quantizePosition: 14, quantizeNormal: 10, quantizeTexcoord: 12 }),
-    prune({ keepLeaves: true }),
+    prune({ keepLeaves: true, keepAttributes: true }),
     dedup({ propertyTypes: [PropertyType.ACCESSOR] }),
   );
   return { doc, triangles };
@@ -186,6 +193,11 @@ async function mtime(file) {
 async function isStale(entry) {
   if (!Array.isArray(entry.lods)) return true;
   const model = await mtime(path.join(OUT, entry.file));
+  // An entry judged too small to tier has no sidecar for the model to be
+  // newer than, so without this a re-fetch or a re-split that grew it
+  // past the minimum was skipped by every bare run for ever. It keeps the
+  // model's own time from when it was judged instead.
+  if (!entry.lods.length) return model !== null && model > (entry.lodsFrom || 0);
   for (const lod of entry.lods) {
     const side = await mtime(path.join(OUT, lod.file));
     if (side === null || model > side) return true;
@@ -270,6 +282,8 @@ async function main() {
     if (!result) continue;
     // Everything else on the entry stays as it was; only lods is replaced.
     entry.lods = result.lods;
+    if (result.lods.length) delete entry.lodsFrom;
+    else entry.lodsFrom = await mtime(path.join(OUT, entry.file));
     done += 1;
     sidecars += result.lods.length;
     bytes += result.bytes;

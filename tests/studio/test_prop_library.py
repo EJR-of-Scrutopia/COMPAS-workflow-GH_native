@@ -487,7 +487,7 @@ def test_a_species_is_a_family_and_every_placement_is_a_variant():
         "spacing is a multiple of each item's own width, so a 30 m tree "
         "keeps its own clearance and needs no fence")
 
-    solve = js[js.index("function scatterSolve(region, salt)"):]
+    solve = js[js.index("function scatterSolve(region, salt, strokeKeepOut)"):]
     solve = solve[:solve.index("\n}\n")]
     assert "const type = pickVariant(pick(), random);" in solve, (
         "the VARIANT is drawn from the same seeded stream, before its "
@@ -528,9 +528,58 @@ def test_the_lod_tool_cuts_two_tiers_of_bare_geometry_under_the_same_names():
     assert "flatten(" not in tool and "join({" not in tool, (
         "a join or a flatten renames the meshes the client pairs on")
     assert "dedup({ propertyTypes: [PropertyType.ACCESSOR] })" in tool
-    assert "prune({ keepLeaves: true })" in tool, (
-        "a node that lost its mesh is still a name in LOD0's hierarchy")
+    # Counted, not found: there are two prunes, and a pin that found one
+    # would pass with the other taking the UVs away.
+    assert tool.count("prune({ keepLeaves: true, keepAttributes: true }),") == 2, (
+        "a node that lost its mesh is still a name in LOD0's hierarchy, and "
+        "the UVs LOD0's material samples must survive the textures going")
+    # An entry too small to tier keeps the model's time, so a re-fetch
+    # that grows it is tiered by the next bare run rather than never.
+    assert ("if (!entry.lods.length) return model !== null && "
+            "model > (entry.lodsFrom || 0);") in tool
     assert "simplifier: error === tier.error ? MeshoptSimplifier : PruningSimplifier," in tool
+
+
+def _glb_attributes(path):
+    """Every primitive's attribute names, in mesh and primitive order,
+    read straight out of the GLB's JSON chunk."""
+
+    import struct
+
+    data = path.read_bytes()
+    magic, _version, _length = struct.unpack_from("<4sII", data, 0)
+    assert magic == b"glTF", path.name
+    chunk_length, chunk_type = struct.unpack_from("<I4s", data, 12)
+    assert chunk_type == b"JSON", path.name
+    document = json.loads(data[20:20 + chunk_length])
+    return [sorted(primitive["attributes"])
+            for mesh in document.get("meshes", [])
+            for primitive in mesh["primitives"]]
+
+
+def test_a_sidecar_keeps_the_uvs_its_borrowed_material_samples():
+    """The client draws every tier with LOD0's material, maps and all.
+    The first cut stripped the textures and then pruned, and with nothing
+    in the sidecar referencing TEXCOORD_0 any more the prune took it off
+    every tier of every prop: 450 files whose grass cards would have
+    sampled one texel for their whole face and drawn as solid quads."""
+
+    root = REPO / "bench" / "studio" / "props-hd"
+    manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+    checked = 0
+    for entry in manifest["props"]:
+        lods = entry.get("lods") or []
+        if not lods or not (root / entry["file"]).exists():
+            continue
+        base = _glb_attributes(root / entry["file"])
+        for lod in lods:
+            tier = _glb_attributes(root / lod["file"])
+            assert len(tier) == len(base), lod["file"]
+            for mine, theirs in zip(tier, base):
+                if "TEXCOORD_0" in theirs:
+                    assert "TEXCOORD_0" in mine, lod["file"]
+            checked += 1
+    assert checked >= 200, "the library has been tiered"
 
 
 def test_every_planting_prop_of_any_size_has_descending_tiers_on_disk():

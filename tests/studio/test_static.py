@@ -1296,9 +1296,12 @@ def test_props_come_from_a_library_of_real_models():
     assert "model.scale.multiplyScalar(wanted / height)" in loader
     assert "model.rotation.x = Math.PI / 2" in loader, "glTF is Y-up, the studio is Z-up"
     assert "model.position.z -= stood.min.z" in loader, "a prop stands on the ground"
-    # Clones share the template's geometry, which is what makes twenty
-    # figures cost one model, and is why disposing one must not free it.
-    assert "template ? template.clone() : makeProp(type)" in js
+    # A placed library prop is one instance of its variant's batch, drawn
+    # with the template's geometry: twenty figures cost one model and one
+    # draw call (re-pinned 2026-09-11, from template.clone(), when a
+    # 25,375-prop field of clones ran at 2 fps). Disposing one frees
+    # nothing the template owns.
+    assert "template ? propInstance(type, template) : makeProp(type)" in js
     assert "if (object.userData.fromLibrary) return;" in _function_body(js, "disposeProp")
     # An empty library leaves the studio exactly as it was.
     assert "if (!entries.length) return;" in _function_body(js, "loadPropLibrary")
@@ -1335,7 +1338,10 @@ def test_props_persist_per_study_and_stay_out_of_the_analysis():
     assert "castShadow = true" in make
     restore = _function_body(js, "restoreProps")
     assert "localStorage.getItem" in restore
-    save = _function_body(js, "saveProps")
+    # The write happens once the gestures stop, in flushProps, not in the
+    # saveProps every gesture calls (a whole field written per gesture was
+    # what filled the browser's store).
+    save = _function_body(js, "flushProps")
     assert "localStorage.setItem" in save
     # A prop leaves its own geometry and material behind on the GPU when it
     # is dropped; every site that removes one from propsGroup must dispose
@@ -2695,7 +2701,11 @@ def test_the_studio_opens_where_it_was_left():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'const SESSION_KEY = "bench-studio-session";' in js
     remember = _function_body(js, "rememberSession")
-    assert "collectScene()" in remember
+    # The scene less its props (re-pinned 2026-09-11): the study's own
+    # layout brings them back, and carrying a 25,000-prop field here too
+    # wrote it into browser storage a second time on every blur.
+    assert "sessionScene()" in remember
+    assert "const scene_ = collectScene();" in _function_body(js, "sessionScene")
     # The whole line, indentation included: a text pin that matched the
     # call anywhere would pass a write that had been commented out or
     # guarded off, which is exactly the mutation this was proved against.
@@ -2919,7 +2929,9 @@ def test_layers_group_props_and_survive_saves():
     assert 'className = "layer-tab"' in tabs
     assert 'id="layer-tabs"' in (STATIC / "index.html").read_text(encoding="utf-8")
     save = _function_body(js, "saveProps")
-    assert "layers:" in save and "layer: p.layer || 1" in save
+    assert "layers: state.propLayers," in save
+    # Each prop's layer is the ninth number of its row.
+    assert "roundMm(p.scale || 1), p.layer || 1);" in _function_body(js, "encodeProps")
 
 
 def test_gathered_objects_stamp_until_escape():

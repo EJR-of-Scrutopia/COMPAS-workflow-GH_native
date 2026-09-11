@@ -68,6 +68,41 @@ def wait_for(client, run_id, timeout=10.0):
     raise AssertionError("run never finished: {}".format(state))
 
 
+def test_the_prop_layout_is_kept_beside_the_study(tmp_path, monkeypatch):
+    """Browser storage holds five megabytes and a 25,375-prop field filled
+    it: the write threw, and the throw came out of the undo that was
+    taking the field away. The layout is kept beside the study as well,
+    where it always fits, and a second device opens with it."""
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    # None yet is an ordinary state, not an error in the console.
+    assert client.get("/api/studies/Tiny/layout").status_code == 204
+    layout = {
+        "saved": 1789123456789,
+        "layers": [{"id": 1, "name": "Layer 1", "visible": True}],
+        "props": {"stride": 9, "types": ["stone_01"],
+                  "rows": [0, 1.25, -2.5, 0, 0.7854, 0, 0, 1.1, 1], "extras": {}},
+        "scatter": {"species": []},
+    }
+    assert client.put("/api/studies/Tiny/layout", json=layout).status_code == 200
+    assert client.get("/api/studies/Tiny/layout").json() == layout
+    assert (studies / "tiny" / "studio" / "layout.json").is_file()
+    # Only for a study that exists, and only a layout that is one.
+    assert client.put("/api/studies/Nobody/layout", json=layout).status_code == 404
+    assert client.get("/api/studies/Nobody/layout").status_code == 404
+    assert client.put("/api/studies/Tiny/layout", content=b"not json").status_code == 400
+    assert client.put("/api/studies/Tiny/layout", json={"props": 3}).status_code == 400
+
+
+def test_a_layout_beyond_its_bound_is_refused(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    import app as app_module
+
+    monkeypatch.setattr(app_module, "MAX_LAYOUT_BYTES", 64)
+    big = {"props": {"stride": 9, "types": [], "rows": [0] * 100}}
+    assert client.put("/api/studies/Tiny/layout", json=big).status_code == 413
+
+
 def bay_contract():
     """A 3x3 grid of unit quads with the (2, 1) face removed.
 

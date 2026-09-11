@@ -16,7 +16,8 @@
       "credit": "Cracked ground by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=AsphaltDamage001",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995566216.2217
     },
     {
       "key": "decal-drain",
@@ -33,7 +34,8 @@
       "credit": "Drain cover by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=ManholeCover001",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995574713.6885
     },
     {
       "key": "decal-gum",
@@ -50,7 +52,8 @@
       "credit": "Ground litter by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=ChewingGum001",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995580205.7993
     },
     {
       "key": "decal-inspection",
@@ -67,7 +70,8 @@
       "credit": "Inspection cover by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=ManholeCover008",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995577228.208
     },
     {
       "key": "decal-line-white",
@@ -84,7 +88,8 @@
       "credit": "Painted line by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=RoadLines019A",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995578897.514
     },
     {
       "key": "decal-line-worn",
@@ -101,7 +106,8 @@
       "credit": "Worn line by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=RoadLines022A",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995573126.8591
     },
     {
       "key": "decal-manhole",
@@ -118,7 +124,8 @@
       "credit": "Manhole cover by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=ManholeCover011",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995563292.3657
     },
     {
       "key": "decal-manhole-square",
@@ -135,7 +142,8 @@
       "credit": "Square cover by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=ManholeCover004",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995564746.4421
     },
     {
       "key": "decal-paving-edge",
@@ -152,7 +160,8 @@
       "credit": "Paving edge by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=PavingEdge001",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995567726.465
     },
     {
       "key": "decal-paving-edge-2",
@@ -169,7 +178,8 @@
       "credit": "Paving edge 2 by ambientCG",
       "licence": "CC0 1.0",
       "source": "https://ambientcg.com/view?id=PavingEdge002",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1788995570524.2246
     },
     {
       "key": "anthurium_botany_01__a",
@@ -2872,7 +2882,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480222.822
     },
     {
       "key": "grass_bermuda_01__dead_b",
@@ -2892,7 +2903,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480230.71
     },
     {
       "key": "grass_bermuda_01__flattened_a",
@@ -2912,7 +2924,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480239.1045
     },
     {
       "key": "grass_bermuda_01__medium_a",
@@ -2932,7 +2945,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480249.4094
     },
     {
       "key": "grass_bermuda_01__medium_b",
@@ -2952,7 +2966,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480257.6506
     },
     {
       "key": "grass_bermuda_01__medium_c",
@@ -2972,7 +2987,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480266.7307
     },
     {
       "key": "grass_bermuda_01__medium_d",
@@ -2992,7 +3008,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480274.7324
     },
     {
       "key": "grass_bermuda_01__medium_e",
@@ -3012,7 +3029,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480283.3745
     },
     {
       "key": "grass_bermuda_01__medium_f",
@@ -3032,7 +3050,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480290.932
     },
     {
       "key": "grass_bermuda_01__seedling_a",
@@ -3168,7 +3187,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480332.05
     },
     {
       "key": "grass_bermuda_01__single_b",
@@ -3188,7 +3208,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480340.0728
     },
     {
       "key": "grass_bermuda_01__small_a",
@@ -3208,7 +3229,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480347.9277
     },
     {
       "key": "grass_bermuda_01__small_b",
@@ -3228,7 +3250,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480354.629
     },
     {
       "key": "grass_bermuda_01__small_c",
@@ -3248,7 +3271,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480362.6306
     },
     {
       "key": "grass_bermuda_01__small_d",
@@ -3268,7 +3292,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480370.225
     },
     {
       "key": "grass_bermuda_01__small_e",
@@ -3288,7 +3313,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480377.2263
     },
     {
       "key": "grass_bermuda_01__small_f",
@@ -3308,7 +3334,8 @@
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_bermuda_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480385.2383
     },
     {
       "key": "grass_medium_01__large_a",
@@ -3672,7 +3699,8 @@
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480536.7043
     },
     {
       "key": "grass_medium_01__tiny_c",
@@ -3717,7 +3745,8 @@
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/grass_medium_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480552.6226
     },
     {
       "key": "grass_medium_01__tiny_e",
@@ -4019,7 +4048,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480697.0823
     },
     {
       "key": "moss_01__b",
@@ -4039,7 +4069,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480704.5938
     },
     {
       "key": "moss_01__c",
@@ -4059,7 +4090,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480713.106
     },
     {
       "key": "moss_01__d",
@@ -4079,7 +4111,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480720.1497
     },
     {
       "key": "moss_01__e",
@@ -4099,7 +4132,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480729.363
     },
     {
       "key": "moss_01__f",
@@ -4119,7 +4153,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480738.0295
     },
     {
       "key": "moss_01__g",
@@ -4139,7 +4174,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480748.682
     },
     {
       "key": "moss_01__h",
@@ -4159,7 +4195,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480756.7605
     },
     {
       "key": "moss_01__i",
@@ -4179,7 +4216,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480765.7778
     },
     {
       "key": "moss_01__j",
@@ -4199,7 +4237,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480773.727
     },
     {
       "key": "moss_01__tall_a",
@@ -4219,7 +4258,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480780.982
     },
     {
       "key": "moss_01__tall_b",
@@ -4239,7 +4279,8 @@
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/moss_01",
-      "lods": []
+      "lods": [],
+      "lodsFrom": 1789082480789.5706
     },
     {
       "key": "ms_tree_high_poly",
