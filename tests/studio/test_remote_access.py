@@ -4496,14 +4496,14 @@ def test_a_drawer_stays_on_screen_and_hides_what_it_hides():
                 one = " ".join(one.split())
                 if one != selector and not one.endswith(" " + selector):
                     continue
-                for part in body.split(";"):
+                for at, part in enumerate(body.split(";")):
                     if ":" not in part:
                         continue
                     name, value = part.split(":", 1)
                     value = " ".join(value.split())
                     out.append((name.strip().lower(), value,
                                 (value.endswith("!important"),
-                                 _specificity(one), offset)))
+                                 _specificity(one), offset, at)))
                 break
         return out
 
