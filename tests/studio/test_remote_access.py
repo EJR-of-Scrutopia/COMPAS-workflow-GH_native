@@ -2479,6 +2479,205 @@ def test_the_area_stays_in_hand_and_a_click_fills_it_again():
     assert "scatterQueue = scatterQueue.then(async () => {" in fill
 
 
+def test_every_placement_lands_on_the_open_layer():
+    """Param: "in layers the scatters i do should land in the layer thats
+    active not create a new one, same with lights etc. As well when I undo
+    it doesnt always remove the scatter layer even though the objects are
+    gone."
+
+    A scatter minted "Scatter N" and then made it the open layer, so every
+    fixture and prop placed after it landed there too, and no undo entry
+    knew the layer had been made. Now every placement goes through
+    placementLayer(): the open layer, shown if hidden, and a layer is made
+    only when there is none, owned by the entry of the action that made it.
+    A redo names its layer outright, so a replay can neither mint a second
+    layer nor land on whatever is open by then."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    run = _js_function(js, "async function runScatter(region, options)")
+    assert "placementLayer()" in run
+    assert 'newLayer("Scatter "' not in run, "a scatter never mints its own layer"
+    assert "state.activeLayer = home.id;" not in run, (
+        "a placement never changes which layer is open")
+    assert "record.layer = home.id;" in run, "a redo aimed at another layer re-stamps"
+    fill = run[run.index('pushUndo("scattering "'):]
+    assert "at = dropLayerIfEmpty(owns);" in fill
+    assert "if (owns && at >= 0) reinstateLayer(owns, at);" in fill
+    assert "Object.assign({}, settings, { intoLayer: home.id, owns })" in fill, (
+        "the fill's redo names its layer, never the first fill's null")
+    end = _js_function(js, "function endBrushStroke(stroke)")
+    assert "at = dropLayerIfEmpty(owns);" in end
+    assert "if (owns && at >= 0) reinstateLayer(owns, at);" in end
+    assert "let layer = null;" not in end, "a stroke's redo starts from its own layer"
+    assert "intoLayer: homeId," in end
+    for header in ("function armScatterBrush()", "function armScatterArea()"):
+        assert "state.scatterBrushLayer = placementLayer().layer.id;" in _js_function(js, header)
+    assert "placementLayer();" in _js_function(js, "function carryNewProp(type)"), (
+        "a fixture or prop from a tile lands on the open layer, shown if hidden")
+    remove_last = js[js.index('getElementById("scatter-undo-last").addEventListener'):][:700]
+    assert "dropLayerIfEmpty(run.minted);" in remove_last
+    assert "again.layer = layerById(gone.layer) ? gone.layer : state.activeLayer;" in js, (
+        "an undone delete never lands on a layer with no tab")
+    group = _js_function(js, "function groupToNewLayer(again)")
+    assert 'pushUndo("grouping " + chosen.length + " props", () => {' in group
+    assert "at = dropLayerIfEmpty(home);" in group
+    assert "() => groupToNewLayer({ chosen, home, at, openBefore })" in group
+    # Say where things go.
+    paint = _js_function(js, "function paintScatter(solved)")
+    assert '"  --  brush it on, or drag an area, onto " + placingOntoName()' in paint
+    assert '" placed onto "' in paint
+    assert '"press and drag to paint onto " + placingOntoName()' in _js_function(
+        js, "function armScatterBrush()")
+    assert '"drag a rectangle to fill it onto " + placingOntoName()' in _js_function(
+        js, "function armScatterArea()")
+    assert '"; new fixtures go onto " + placingOntoName()' in _js_function(
+        js, "function syncLightControls()")
+
+
+def _js_whole_function(source, header):
+    """One column-0 function, from its header to its own closing brace."""
+
+    start = source.index(header)
+    return source[start:source.index("\n}", start) + 2]
+
+
+LAYER_HARNESS = r"""
+const logs = [];
+const undo = [];
+const state = {
+  propLayers: [{ id: 1, name: "Layer 1", visible: true },
+    { id: 2, name: "Layer 2", visible: true }],
+  activeLayer: 2, nextLayerId: 3, props: [], scatterRuns: [],
+  scatter: { species: [{ type: "tuft", weight: 1 }] },
+};
+const gatheredProps = new Set();
+const document = { getElementById: () => ({ textContent: "", disabled: false }) };
+function applyLayerVisibility() {}
+function saveProps() {}
+function renderShelf() {}
+function refreshLayersShelf() {}
+function paintScatter() {}
+function logStudio(message) { logs.push(message); }
+function pushUndo(label, undo_, redo) { undo.push({ label, undo: undo_, redo }); }
+function familyMembers() { return []; }
+async function ensurePropTemplate() {}
+function scatterSolve(region, salt) {
+  return { items: [{ type: "tuft", x: salt, y: 0, rotation: 0, scale: 1 },
+    { type: "tuft", x: salt, y: 1, rotation: 0, scale: 1 }], keepOut: null, triangles: 0 };
+}
+// placeProp's own rule, the one that matters here: the open layer.
+function placeProp(type, x, y, rotation, save, scale) {
+  const record = { type, x, y, layer: state.activeLayer,
+    object: { visible: layerVisible(state.activeLayer) } };
+  state.props.push(record);
+  return record;
+}
+function removePropRecords(records) {
+  const gone = new Set(records);
+  state.props = state.props.filter((p) => !gone.has(p));
+}
+%(functions)s
+const ids = () => state.propLayers.map((l) => l.id);
+const on = () => [...new Set(state.props.map((p) => p.layer))];
+const out = {};
+const region = { kind: "rect", x0: 0, y0: 0, x1: 4, y1: 4 };
+(async () => {
+  // Two fills with Layer 2 open, as an armed area tool makes them.
+  await runScatter(region, { salt: 1, intoLayer: placementLayer().layer.id });
+  await runScatter(region, { salt: 2, intoLayer: 2 });
+  out.filled = { layers: ids(), open: state.activeLayer, on: on(), props: state.props.length };
+  // He opens Layer 1, then undoes both fills and redoes both.
+  state.activeLayer = 1;
+  const second = undo.pop(), first = undo.pop();
+  await second.undo(); await first.undo();
+  out.undone = { layers: ids(), props: state.props.length };
+  await first.redo(); await second.redo();
+  out.redone = { layers: ids(), open: state.activeLayer, on: on(), props: state.props.length };
+  // A hidden open layer is shown by the placement, and the log says so.
+  state.props = []; undo.length = 0;
+  state.propLayers[0].visible = false;
+  await runScatter(region, { salt: 3 });
+  out.hidden = { shown: state.propLayers[0].visible, on: on(),
+    visible: state.props.every((p) => p.object.visible), said: logs.join("|") };
+  // With no layer at all one is made; its undo takes it away once there is
+  // another, and its redo brings the SAME one back, twice over.
+  state.props = []; undo.length = 0;
+  state.propLayers = []; state.activeLayer = 7; state.nextLayerId = 5;
+  await runScatter(region, { salt: 4 });
+  const made = state.propLayers[0];
+  newLayer(null);
+  let entry = undo.pop();
+  await entry.undo();
+  out.minted = { made: made.id, afterUndo: ids(), open: state.activeLayer };
+  await entry.redo();
+  out.minted.afterRedo = ids();
+  out.minted.on = on();
+  entry = undo.pop();
+  await entry.undo();
+  out.minted.afterSecondUndo = ids();
+  // Group is one entry: undo puts them back and takes the layer away,
+  // redo brings the same layer back in the same place.
+  state.propLayers = [{ id: 1, name: "Layer 1", visible: true },
+    { id: 2, name: "Layer 2", visible: true }];
+  state.activeLayer = 1; state.nextLayerId = 3; undo.length = 0;
+  const a = { layer: 1, object: {} }, b = { layer: 2, object: {} };
+  state.props = [a, b];
+  gatheredProps.add(a); gatheredProps.add(b);
+  groupToNewLayer();
+  out.grouped = { a: a.layer, b: b.layer, layers: ids(), open: state.activeLayer,
+    entries: undo.length };
+  entry = undo.pop();
+  entry.undo();
+  out.ungrouped = { a: a.layer, b: b.layer, layers: ids(), open: state.activeLayer };
+  entry.redo();
+  out.regrouped = { a: a.layer, b: b.layer, layers: ids(), open: state.activeLayer,
+    entries: undo.length };
+  console.log(JSON.stringify(out));
+})().catch((error) => { console.error(error.stack); process.exit(1); });
+"""
+
+
+def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
+    """The layer functions and runScatter themselves, run under node with
+    the scene stubbed out: two fills onto the open Layer 2 add no layer;
+    undoing both after opening Layer 1 leaves the list as it was, and
+    redoing both puts them back on Layer 2, not on the open one. A hidden
+    open layer is shown by the placement. A layer made because there was
+    none is taken away by the undo and brought back, same id, by the redo,
+    however many times. Group undoes and redoes as one entry."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    headers = ("function layerById(id)", "function layerVisible(id)",
+               "function newLayer(name)", "function placementLayer()",
+               "function showLayerForPlacing(layer)", "function placingOntoName()",
+               "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
+               "function groupToNewLayer(again)",
+               "async function runScatter(region, options)")
+    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    script = tmp_path / "layers.mjs"
+    script.write_text(LAYER_HARNESS % {"functions": functions}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["filled"] == {"layers": [1, 2], "open": 2, "on": [2], "props": 4}
+    assert out["undone"] == {"layers": [1, 2], "props": 0}
+    assert out["redone"] == {"layers": [1, 2], "open": 1, "on": [2], "props": 4}
+    assert out["hidden"]["shown"] is True and out["hidden"]["on"] == [1]
+    assert out["hidden"]["visible"] is True
+    assert "Layer 1 was hidden, so it is shown again" in out["hidden"]["said"]
+    assert out["minted"] == {"made": 5, "afterUndo": [6], "open": 6,
+                             "afterRedo": [5, 6], "on": [5], "afterSecondUndo": [6]}
+    assert out["grouped"] == {"a": 3, "b": 3, "layers": [1, 2, 3], "open": 3, "entries": 1}
+    assert out["ungrouped"] == {"a": 1, "b": 2, "layers": [1, 2], "open": 1}
+    assert out["regrouped"] == {"a": 3, "b": 3, "layers": [1, 2, 3], "open": 3, "entries": 1}
+
+
 def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():
     """The window's general Escape handler closes whatever drawer is
     open. The tool's own Escape reopens the drawer it folded away, so if

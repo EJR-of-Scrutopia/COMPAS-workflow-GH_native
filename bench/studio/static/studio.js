@@ -187,8 +187,8 @@ const state = {
     radius: 4,
   },
   scatterStroke: 0,     // bumped per brush click, mixed into the seed
-  scatterBrushLayer: null,  // one layer per painting session, not per click
-  scatterRuns: [],      // [{ layer, records }], newest last, for Remove last
+  scatterBrushLayer: null,  // the open layer, taken when a scatter tool is armed
+  scatterRuns: [],      // [{ layer, records, minted }], newest last, for Remove last
   scatterArmed: false,  // waiting for him to drag a rectangle on the floor
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
@@ -1723,6 +1723,66 @@ function newLayer(name) {
   state.propLayers.push(layer);
   state.activeLayer = layer.id;
   return layer;
+}
+
+// Where the next placement goes: the OPEN layer, whatever is being placed
+// (Param: "in layers the scatters i do should land in the layer thats
+// active not create a new one, same with lights etc"). With no open layer
+// it falls back to the first, and only with no layer at all is one made;
+// the caller owns that one, and its undo takes it away again. Placing
+// never changes which layer is open: only the tab strip, + and Group do.
+function placementLayer() {
+  let layer = layerById(state.activeLayer);
+  if (!layer && state.propLayers.length) layer = state.propLayers[0];
+  let minted = null;
+  if (!layer) layer = minted = newLayer(null);
+  state.activeLayer = layer.id;
+  showLayerForPlacing(layer);
+  return { layer, minted };
+}
+
+// A placement onto a hidden layer would plant props nobody can see, which
+// reads as a scatter or a fixture that failed. The layer is shown instead,
+// and the log says so.
+function showLayerForPlacing(layer) {
+  if (!layer || layer.visible !== false) return;
+  layer.visible = true;
+  applyLayerVisibility();
+  saveProps();
+  refreshLayersShelf();
+  logStudio(layer.name + " was hidden, so it is shown again to take what you "
+    + "place; hide it again from the Layers drawer when you are done");
+}
+
+// The layer the readouts name: where the next placement will land.
+function placingOntoName() {
+  const layer = layerById(state.activeLayer) || state.propLayers[0];
+  return layer ? layer.name : "a new layer";
+}
+
+// The undo half of a minted layer. Only the entry whose action made the
+// layer calls this, and it reads state.props NOW, not the entry's own
+// records: props grouped or restored onto the layer since keep it alive.
+// Never the last layer. Returns where it stood, for the redo.
+function dropLayerIfEmpty(layer) {
+  if (!layer || state.props.some((record) => record.layer === layer.id)) return -1;
+  if (state.propLayers.length <= 1) return -1;
+  const index = state.propLayers.indexOf(layer);
+  if (index < 0) return -1;
+  state.propLayers.splice(index, 1);
+  if (!layerById(state.activeLayer)) state.activeLayer = state.propLayers[0].id;
+  return index;
+}
+
+// The redo half: the SAME layer comes back, same id and same place in the
+// strip, so every later entry that names its id still finds it. The id
+// counter only ever climbs. An id already taken (a scene applied since)
+// is left alone.
+function reinstateLayer(layer, index) {
+  if (!layer || layerById(layer.id)) return;
+  const at = index >= 0 ? Math.min(index, state.propLayers.length) : state.propLayers.length;
+  state.propLayers.splice(at, 0, layer);
+  state.nextLayerId = Math.max(state.nextLayerId, layer.id + 1);
 }
 
 // Restore a saved layers list (from a layout or a scene), tolerating the
@@ -6304,21 +6364,45 @@ function renderLayerTabs() {
 }
 
 // Group: the selected objects move house to a fresh layer of their own,
-// staying exactly where they stand.
-function groupToNewLayer() {
-  const chosen = [...gatheredProps]
+// staying exactly where they stand. It is one undo entry: the undo puts
+// each back on the layer it came from and takes the fresh layer away once
+// it is empty (Ctrl+Z after a Group used to undo whatever came before it);
+// the redo brings the SAME layer back and moves them again.
+function groupToNewLayer(again) {
+  const chosen = (again ? again.chosen : [...gatheredProps])
     .filter((record) => state.props.includes(record));
   if (!chosen.length) return;
-  const home = newLayer(null);
+  const openBefore = again ? again.openBefore : state.activeLayer;
+  let home;
+  if (again) {
+    reinstateLayer(again.home, again.at);
+    home = again.home;
+    state.activeLayer = home.id;
+  } else {
+    home = newLayer(null);
+  }
+  const before = chosen.map((record) => record.layer);
   for (const record of chosen) record.layer = home.id;
   gatheredProps.clear();
   applyLayerVisibility();
   saveProps();
   renderShelf();
+  let at = -1;
+  pushUndo("grouping " + chosen.length + " props", () => {
+    chosen.forEach((record, i) => {
+      // One whose old layer has gone since stays where it is.
+      if (layerById(before[i])) record.layer = before[i];
+    });
+    at = dropLayerIfEmpty(home);
+    if (layerById(openBefore)) state.activeLayer = openBefore;
+    applyLayerVisibility();
+    saveProps();
+    renderShelf();
+  }, () => groupToNewLayer({ chosen, home, at, openBefore }));
   logStudio(chosen.length + " props grouped onto " + home.name);
 }
 
-document.getElementById("layer-group").addEventListener("click", groupToNewLayer);
+document.getElementById("layer-group").addEventListener("click", () => groupToNewLayer());
 
 function deleteLayer(id) {
   const layer = layerById(id);
@@ -7153,20 +7237,29 @@ async function runScatter(region, options) {
   if (settings.stroke) settings.stroke.keepOut = solved.keepOut;
   if (!solved.items.length) {
     document.getElementById("scatter-readout").textContent =
-      settings.intoLayer
+      settings.stroke
         ? "no more will fit there: loosen the spacing or widen the brush"
         : "nothing fitted: loosen the spacing, or draw a bigger area";
     return;
   }
-  // A brush stroke joins the session's own layer. Minting one per click
-  // would leave him with forty layers after a minute of painting.
-  const home = settings.intoLayer
-    ? (layerById(settings.intoLayer) || newLayer("Scatter "
-      + (state.scatterRuns.length + 1)))
-    : newLayer("Scatter " + (state.scatterRuns.length + 1));
-  state.activeLayer = home.id;
+  // Every placement lands on the open layer (placementLayer), and a scatter
+  // never opens another. A redo names the layer its first run landed on,
+  // so it lands there again even when another layer is open by then.
+  const target = settings.intoLayer && layerById(settings.intoLayer)
+    ? { layer: layerById(settings.intoLayer), minted: null } : placementLayer();
+  const home = target.layer;
+  showLayerForPlacing(home);
+  // The layer this run made, if it had to make one, or the one a redo was
+  // handed back: the undo entry that owns it takes it away once empty.
+  const owns = target.minted || settings.owns || null;
   const records = solved.items.map((item) => placeProp(
     item.type, item.x, item.y, item.rotation, false, item.scale));
+  // placeProp stamps the open layer; a redo aimed at another re-stamps.
+  for (const record of records) {
+    record.layer = home.id;
+    record.object.visible = layerVisible(home.id);
+  }
+  solved.home = home;
   if (settings.stroke) {
     // One stamp of a brush stroke. The stroke owns the undo entry, the
     // run and the save: they happen once, when the pointer lifts.
@@ -7176,15 +7269,25 @@ async function runScatter(region, options) {
       stroke.run = { layer: home.id, records: stroke.records };
       state.scatterRuns.push(stroke.run);
     }
+    if (owns) stroke.run.minted = owns;
     paintScatter(solved);
     return;
   }
-  state.scatterRuns.push({ layer: home.id, records });
+  state.scatterRuns.push({ layer: home.id, records, minted: owns });
+  // The redo names its layer outright. Replaying the first fill's own
+  // settings, whose intoLayer was null, is what used to mint a second
+  // "Scatter 1" and split one session across two layers.
+  let at = -1;
   pushUndo("scattering " + records.length + " props", () => {
     removePropRecords(records);
     state.scatterRuns = state.scatterRuns.filter((run) => run.records !== records);
+    at = dropLayerIfEmpty(owns);
     paintScatter();
-  }, () => runScatter(region, settings));
+    refreshLayersShelf();
+  }, () => {
+    if (owns && at >= 0) reinstateLayer(owns, at);
+    return runScatter(region, Object.assign({}, settings, { intoLayer: home.id, owns }));
+  });
   saveProps();
   renderShelf();
   logStudio("scattered " + records.length + " props onto " + home.name);
@@ -7206,10 +7309,11 @@ function paintScatter(solved) {
       return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
     });
     readout.textContent = names.join(", ")
-      + "  --  brush it on, or drag an area";
+      + "  --  brush it on, or drag an area, onto " + placingOntoName();
     return;
   }
-  readout.textContent = solved.items.length + " placed, "
+  readout.textContent = solved.items.length + " placed onto "
+    + (solved.home ? solved.home.name : placingOntoName()) + ", "
     + (solved.triangles / 1e6).toFixed(1) + " M triangles"
     + (solved.stopped ? "  --  stopped at " + solved.stopped
       + ", loosen the spacing or pick something lighter" : "");
@@ -7517,10 +7621,14 @@ function armScatterBrush() {
   }
   disarmScatterArea();
   state.scatterArmed = "brush";
-  state.scatterBrushLayer = null;
+  // The session paints onto the layer open now. Opening any other drawer
+  // (the Layers tabs included) puts the tool down, so it cannot change
+  // under the brush.
+  state.scatterBrushLayer = placementLayer().layer.id;
   document.getElementById("scatter-brush").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "press and drag to paint; middle-drag orbits, right-drag pans; Escape to stop";
+    "press and drag to paint onto " + placingOntoName()
+    + "; middle-drag orbits, right-drag pans; Escape to stop";
   // The drawer gets out of the way: a brush needs the floor, and the
   // floor was under the tiles (Param: "the tiles are a bit in the way").
   // Escape or the button brings it back.
@@ -7560,9 +7668,9 @@ function onBrushMove(event) {
 }
 
 // One stamp of the brush, with a fresh salt so it deals different points
-// from the last, into the stroke's own layer. Stamps queue behind each
-// other because a stamp awaits its templates, and two running at once
-// would both mint a layer.
+// from the last, onto the layer taken when the brush was armed. Stamps
+// queue behind each other because a stamp awaits its templates, and two
+// running at once would solve against one keep-out.
 function stampBrush(hit) {
   const stroke = brushStroke;
   stroke.last = { x: hit.x, y: hit.y };
@@ -7571,12 +7679,8 @@ function stampBrush(hit) {
   const stamp = { region: brushRegion(), salt: state.scatterStroke };
   stroke.stamps.push(stamp);
   stroke.busy = scatterQueue = scatterQueue.then(async () => {
-    const before = state.props.length;
     await runScatter(stamp.region, { salt: stamp.salt,
       intoLayer: state.scatterBrushLayer, stroke });
-    if (!state.scatterBrushLayer && state.props.length > before) {
-      state.scatterBrushLayer = state.props[state.props.length - 1].layer;
-    }
     // Painting must survive its own repaint: a redraw of the drawer would
     // otherwise leave the circle behind and the button unlit.
     if (state.scatterArmed === "brush") {
@@ -7607,24 +7711,30 @@ function endBrushStroke(stroke) {
   const records = stroke.records;
   if (!records.length) return;
   const stamps = stroke.stamps;
+  // The stroke's own layer: its redo paints back onto it, never onto
+  // whatever is open by then, and never onto a fresh one.
+  const homeId = records[0].layer;
+  const owns = (stroke.run && stroke.run.minted) || null;
+  let at = -1;
   pushUndo("painting " + records.length + " props", () => {
     removePropRecords(records);
     state.scatterRuns = state.scatterRuns.filter((run) => run !== stroke.run);
+    at = dropLayerIfEmpty(owns);
     paintScatter();
+    refreshLayersShelf();
   }, async () => {
+    if (owns && at >= 0) reinstateLayer(owns, at);
     const replay = { pointerId: null, last: null, stamps: [], records: [],
       run: null, busy: Promise.resolve() };
-    let layer = null;
     for (const stamp of stamps) {
       replay.stamps.push(stamp);
-      await runScatter(stamp.region, { salt: stamp.salt, intoLayer: layer,
-        stroke: replay });
-      if (replay.records.length) layer = replay.records[replay.records.length - 1].layer;
+      await runScatter(stamp.region, { salt: stamp.salt, intoLayer: homeId,
+        owns, stroke: replay });
     }
     endBrushStroke(replay);
   });
   saveProps();
-  const home = layerById(records[0].layer);
+  const home = layerById(homeId);
   logStudio("painted " + records.length + " props onto "
     + (home ? home.name : "the scatter"));
 }
@@ -7637,11 +7747,13 @@ function armScatterArea() {
     return;
   }
   state.scatterArmed = "area";
+  state.scatterBrushLayer = placementLayer().layer.id;
   scatterDrag = null;
   areaPress = null;
   document.getElementById("scatter-area").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "drag a rectangle to fill it, click to fill it again, drag another to move on; "
+    "drag a rectangle to fill it onto " + placingOntoName()
+    + ", click to fill it again, drag another to move on; "
     + "middle-drag orbits, right-drag pans; Escape to stop";
   closeShelf();
   logStudio("scatter: drag a rectangle on the floor to fill it, click to fill it "
@@ -7753,21 +7865,18 @@ function onAreaUp(event) {
   fillScatterArea();
 }
 
-// Every fill deals afresh (its own salt, as a brush stamp does) into the
-// session's one layer, and is its own undo entry. It queues behind any
-// fill or stamp still waiting on its models, so a burst of clicks cannot
-// solve two fills against one keep-out and plant them through each other.
+// Every fill deals afresh (its own salt, as a brush stamp does) onto the
+// layer taken when the tool was armed, and is its own undo entry. It
+// queues behind any fill or stamp still waiting on its models, so a burst
+// of clicks cannot solve two fills against one keep-out and plant them
+// through each other.
 function fillScatterArea() {
   const region = { kind: "rect", x0: scatterDrag.x0, y0: scatterDrag.y0,
     x1: scatterDrag.x1, y1: scatterDrag.y1 };
   state.scatterStroke += 1;
   const salt = state.scatterStroke;
   scatterQueue = scatterQueue.then(async () => {
-    const before = state.props.length;
     await runScatter(region, { salt, intoLayer: state.scatterBrushLayer });
-    if (!state.scatterBrushLayer && state.props.length > before) {
-      state.scatterBrushLayer = state.props[state.props.length - 1].layer;
-    }
     // A fill repaints the drawer, which would leave the rectangle and the
     // lit button behind while the tool is still in hand.
     if (state.scatterArmed === "area") {
@@ -7798,6 +7907,8 @@ function beginStamp() {
   const chosen = [...gatheredProps]
     .filter((record) => state.props.includes(record));
   if (!chosen.length) return;
+  // The copies land on the open layer, shown if it was hidden.
+  placementLayer();
   let cx = 0, cy = 0;
   for (const record of chosen) { cx += record.x; cy += record.y; }
   cx /= chosen.length; cy /= chosen.length;
@@ -7929,6 +8040,9 @@ document.getElementById("scatter-undo-last").addEventListener("click", () => {
   const run = state.scatterRuns.pop();
   if (!run) return;
   removePropRecords(run.records);
+  // A run that had to make its layer takes it away once it leaves it
+  // empty, exactly as its undo does.
+  dropLayerIfEmpty(run.minted);
   saveProps();
   renderShelf();
   paintScatter();
@@ -10991,11 +11105,12 @@ function syncLightControls() {
   const lamps = state.props.filter(isLamp);
   const one = isLamp(state.selectedProp) ? state.selectedProp : null;
   if (heading) {
-    heading.textContent = one
+    heading.textContent = (one
       ? "tuning the selected fixture"
       : lamps.length
         ? "tuning all " + lamps.length + " fixtures"
-        : "click a fixture to place it, then a placed one to tune it";
+        : "click a fixture to place it, then a placed one to tune it")
+      + "; new fixtures go onto " + placingOntoName();
   }
   // The sliders show the selected lamp's own numbers, or the defaults a
   // newly placed lamp will wear.
@@ -11217,6 +11332,9 @@ document.getElementById("ground-preset").addEventListener("change", async (e) =>
 function carryNewProp(type) {
   if (!state.bundle) return;
   const centre = state.centre || new THREE.Vector3();
+  // Onto the open layer, which is shown if it was hidden: a fixture placed
+  // onto a hidden layer would vanish the moment it landed.
+  placementLayer();
   const record = placeProp(type, centre.x, centre.y, 0, false);
   state.carrying = { record, from: null };
   selectProp(record);
@@ -11563,7 +11681,9 @@ window.addEventListener("keydown", (event) => {
       await ensurePropTemplate(gone.type);
       const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
         false, gone.scale, gone.z || 0, gone.rotX || 0, gone.rotY || 0);
-      again.layer = gone.layer;
+      // Back onto its old layer, or onto the open one if that has been
+      // deleted since: an id with no tab could never be hidden again.
+      again.layer = layerById(gone.layer) ? gone.layer : state.activeLayer;
       again.object.visible = layerVisible(again.layer);
       saveProps();
       // Undoing a delete must give the tile back too, or the drawer

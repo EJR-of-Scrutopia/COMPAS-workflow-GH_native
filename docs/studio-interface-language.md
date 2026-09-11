@@ -329,8 +329,14 @@ area stays in hand until Escape: a drag draws a rectangle and fills it,
 the rectangle stays on the floor, a click fills it again with a fresh
 deal, and a new drag moves on. A press only becomes a drag past
 `AREA_DRAG_PX` (12 px; 24 for a fingertip), so a firm click never draws
-a rectangle by accident. Each fill is its own undo entry, and a session's
-fills share one layer. Arming a tool folds the
+a rectangle by accident. Each fill is its own undo entry. Every
+placement lands on the open layer: a scatter, a fixture, a prop or a
+stamp goes onto the layer whose tab is open (shown again, and the log
+says so, if it was hidden), the scatter and Lights readouts name that
+layer, and nothing but the tab strip, + and Group changes which layer
+is open. A layer is made only when there is none; an undo that empties
+a layer its own action made takes it away, and the redo brings the
+same layer back. Group is one undo entry. Arming a tool folds the
 shelf away and ONE Escape brings it back (the tool's handler is in the
 capture phase and stops the event immediately, or the window's general
 Escape would close the drawer again); a CLOSED shelf is not "another
