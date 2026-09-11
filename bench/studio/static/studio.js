@@ -18,7 +18,6 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
-import { Pass, FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
 import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
@@ -35,8 +34,6 @@ import {
   ATMOSPHERE_PRESETS, ATMOSPHERE_SKY_GLSL, ATMOSPHERE_LINEAR_OFF,
   atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
   atmospherePreviewPixels, createAtmosphere, installAtmosphere, writeAtmosphere,
-  SHAFT_STEPS, SHAFT_MAX_DISTANCE, SHAFT_GAIN, SHAFTS_GLSL, SHAFTS_COMPOSITE_GLSL,
-  SHAFTS_VERTEX, shaftsStrength,
 } from "/static/atmosphere.js";
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
@@ -547,74 +544,6 @@ function applyAtmosphere() {
   }
   writeAtmosphere(atmosphere.uniforms, on && !camera.isOrthographicCamera
     ? atmosphereLayers(state.atmosphere, state.bundle ? groundLevel() : 0) : null);
-  applyShafts();
-}
-
-// How hard the shafts are driven, and whether the pass runs at all.
-// AT ZERO IT DOES NOT RUN: the composer skips a disabled pass outright,
-// so the frame is the frame it was before the shafts existed, down to
-// the number of buffer swaps, and the depth attachment stops being
-// resolved, which is the only per-frame cost it has. A plan or an
-// elevation gets none either, for the reason the fog gets none: a
-// world-distance march from a parallel projection is not a measurement
-// of anything.
-function applyShafts() {
-  if (!shaftsPass) return;
-  const strength = camera.isOrthographicCamera ? 0 : shaftsStrength(state.atmosphere);
-  shaftsPass.march.uniforms.shaftStrength.value = strength;
-  composerTarget.resolveDepthBuffer = strength > 0;
-  composer.renderTarget2.resolveDepthBuffer = strength > 0;
-}
-
-// Whether the pass runs THIS frame, settled before the composer walks
-// its list. The shadow map does not exist until something has been
-// drawn with a shadow in it, and marching a map that is not there is a
-// black frame, so the arming asks for it every frame rather than
-// latching a decision taken at boot.
-function armShafts() {
-  if (!shaftsPass) return;
-  const map = sun.shadow.map;
-  shaftsPass.enabled = shaftsPass.march.uniforms.shaftStrength.value > 0
-    && !!(map && map.depthTexture);
-}
-
-// This frame's matrices, written from inside the pass (see settle).
-function settleShafts() {
-  const uniforms = shaftsPass.march.uniforms;
-  const map = sun.shadow.map;
-  if (!map || !map.depthTexture) return;
-  uniforms.shaftShadowMap.value = map.depthTexture;
-  uniforms.shaftShadowMatrix.value.copy(sun.shadow.matrix);
-  uniforms.shaftEye.value.copy(camera.position);
-  uniforms.shaftCameraWorld.value.copy(camera.matrixWorld);
-  uniforms.shaftProjectionInverse.value.copy(camera.projectionMatrixInverse);
-  // The slab is what a bias in metres has to be measured against: the
-  // map's depth runs across sun.shadow.camera, so half a metre of it is
-  // half a metre divided by its depth. Enough to clear the map's own
-  // texel slope, little enough that a shaft still meets its caster.
-  const slab = Math.max(1, sun.shadow.camera.far - sun.shadow.camera.near);
-  uniforms.shaftBias.value = 0.5 / slab;
-  // Where this tile sits in the WHOLE plate, so the dither each pixel
-  // gets is the one it would have had in a plate rendered in one piece.
-  // gl_FragCoord counts up from the bottom and a view offset counts down
-  // from the top, which is the whole of the second term.
-  const view = camera.view;
-  if (view && view.enabled) {
-    uniforms.shaftPixelOrigin.value.set(
-      view.offsetX, view.fullHeight - view.offsetY - view.height);
-  } else {
-    uniforms.shaftPixelOrigin.value.set(0, 0);
-  }
-}
-
-// A still and a take march at full resolution with no upsample at all;
-// the live view marches at half and blends the result back. Called
-// around both, and the composer hands the pass its new size on the way
-// through, so this only has to say which scale is wanted.
-function setShaftResolution(full) {
-  if (!shaftsPass) return;
-  shaftsPass.fullResolution = full;
-  shaftsPass.setSize(shaftsPass.width, shaftsPass.height);
 }
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
@@ -623,156 +552,12 @@ let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + project
 // around mid grey, which is only meaningful AFTER tone mapping, so the
 // grade pass sits last, on the OutputPass's sRGB result. samples: 4
 // keeps the antialiasing the direct canvas render had.
-// The depth attachment the light shafts march against. In r185 this
-// texture hangs on the single-sample framebuffer and the multisampled
-// one is blitted into it, DEPTH_BUFFER_BIT and all; measured on this
-// GPU (Brave, ANGLE D3D11, RTX 4090, no multisampled_render_to_texture)
-// the resolved depth came back identical texel for texel to the same
-// scene drawn with no MSAA at all, so the shafts read the frame the
-// eye is actually shown rather than a depth pre-pass of their own.
-// resolveDepthBuffer is FALSE until the shafts are turned on, so a
-// studio that never uses them pays for the allocation and nothing else.
-const composerTarget = new THREE.WebGLRenderTarget(1, 1, {
-  samples: 4, type: THREE.HalfFloatType,
-  depthTexture: new THREE.DepthTexture(1, 1),
-});
-composerTarget.resolveDepthBuffer = false;
-// EffectComposer clones this target for its second buffer, and a clone
-// is a structural copy: the second buffer gets a depth texture of its
-// OWN. That matters because the shafts add a third swapping pass, so
-// the RenderPass draws into either buffer depending on the frame, and
-// the pass reads the depth of whichever one it was handed.
+const composerTarget = new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType });
 const composer = new EffectComposer(renderer, composerTarget);
 // Held, not anonymous: switching projection means handing this pass the
 // other camera, and a pass nobody has a name for cannot be told.
 const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
-
-// ---------- the light shafts ----------
-// Param asked for "a fog but super detailed nice fog we might find in
-// the likes of unreal engine". The height fog (atmosphere.js) is the
-// analytic half of that and it is blind to what stands in the way: air
-// in the vault's shadow glows exactly as brightly as air beside it. This
-// is the volumetric half. It marches the sun's shadow map through the
-// same fog, so a low sun behind the vault throws real shafts between the
-// ribs and leaves the air behind them dark.
-//
-// It sits straight after the RenderPass, which means what it adds is
-// linear HDR and the OutputPass tone maps it afterwards: an inscatter
-// above 1 is legal here and comes back as a highlight rather than as
-// clipped white. (The grade is last of all, on the tone-mapped result,
-// which is why the order of these four passes is not arbitrary.)
-//
-// HALF RESOLUTION for the live view, put back with a depth-aware
-// upsample; FULL resolution, no upsample, for a still and for a take.
-// A plate is drawn in tiles through camera.setViewOffset, and anything
-// that reads its neighbours reads the wrong ones across a tile edge --
-// the tiling comment in renderStill says so in full. At full resolution
-// every pixel is its own answer and a tile is exactly the piece of the
-// plate it stands for.
-class ShaftsPass extends Pass {
-  constructor(shared) {
-    super();
-    this.march = new THREE.ShaderMaterial({
-      name: "shafts.march",
-      defines: { SHAFT_STEPS, SHAFT_GAIN },
-      // The atmosphere's own uniform objects, by reference, so the fog
-      // the shafts are made of is the same fog the surfaces wear: one
-      // write of a density moves both.
-      uniforms: Object.assign({
-        tDepth: { value: null },
-        shaftShadowMap: { value: null },
-        shaftShadowMatrix: { value: new THREE.Matrix4() },
-        shaftProjectionInverse: { value: new THREE.Matrix4() },
-        shaftCameraWorld: { value: new THREE.Matrix4() },
-        shaftEye: { value: new THREE.Vector3() },
-        shaftStrength: { value: 0 },
-        shaftBias: { value: 0 },
-        shaftMaxDistance: { value: SHAFT_MAX_DISTANCE },
-        shaftPixelOrigin: { value: new THREE.Vector2() },
-      }, shared),
-      vertexShader: SHAFTS_VERTEX,
-      fragmentShader: SHAFTS_GLSL,
-    });
-    this.composite = new THREE.ShaderMaterial({
-      name: "shafts.composite",
-      uniforms: {
-        tDiffuse: { value: null },
-        tShafts: { value: null },
-        tDepth: { value: null },
-        // The same matrix object the march holds, so the upsample
-        // measures distance the way the march measured it.
-        shaftProjectionInverse: this.march.uniforms.shaftProjectionInverse,
-        shaftLowResolution: { value: new THREE.Vector2(1, 1) },
-        shaftUpsample: { value: 1 },
-      },
-      vertexShader: SHAFTS_VERTEX,
-      fragmentShader: SHAFTS_COMPOSITE_GLSL,
-    });
-    this.target = new THREE.WebGLRenderTarget(1, 1, {
-      type: THREE.HalfFloatType, depthBuffer: false });
-    this.fullResolution = false;
-    this.width = 1;
-    this.height = 1;
-    // Set by the studio to the function that writes this frame's
-    // matrices. It runs HERE rather than in renderView because the
-    // sun's shadow map and its matrix are made by the RenderPass, one
-    // pass earlier: read a frame too soon they are the previous
-    // frame's, and through a day cycle that is a shaft that lags the
-    // shadow it belongs to.
-    this.settle = null;
-    this._quad = new FullScreenQuad(this.march);
-  }
-
-  setSize(width, height) {
-    this.width = width;
-    this.height = height;
-    const scale = this.fullResolution ? 1 : 0.5;
-    const wide = Math.max(1, Math.round(width * scale));
-    const tall = Math.max(1, Math.round(height * scale));
-    this.target.setSize(wide, tall);
-    this.composite.uniforms.shaftLowResolution.value.set(wide, tall);
-    this.composite.uniforms.shaftUpsample.value = this.fullResolution ? 0 : 1;
-  }
-
-  render(renderer_, writeBuffer, readBuffer) {
-    if (this.settle) this.settle();
-    // The depth of the buffer the RenderPass just drew into, which is
-    // the one handed here as the read buffer.
-    this.march.uniforms.tDepth.value = readBuffer.depthTexture;
-    this.composite.uniforms.tDepth.value = readBuffer.depthTexture;
-    this.composite.uniforms.tDiffuse.value = readBuffer.texture;
-    this.composite.uniforms.tShafts.value = this.target.texture;
-    renderer_.setRenderTarget(this.target);
-    this._quad.material = this.march;
-    this._quad.render(renderer_);
-    renderer_.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    this._quad.material = this.composite;
-    this._quad.render(renderer_);
-  }
-
-  dispose() {
-    this.march.dispose();
-    this.composite.dispose();
-    this.target.dispose();
-    this._quad.dispose();
-  }
-}
-
-// Built only where it can run. On the iPad path there is NO PASS AT
-// ALL, rather than a pass held at zero: a raymarch of the shadow map
-// per pixel is the one effect a constrained device cannot afford, and
-// the dial that would drive it is hidden there too, because a dial that
-// moves nothing is worse than no dial.
-const shaftsPass = CONSTRAINED_DEVICE ? null : new ShaftsPass(atmosphere.uniforms);
-if (shaftsPass) {
-  shaftsPass.enabled = false;
-  // The matrices the frame is drawn with, written from inside the pass.
-  // A pass earlier they are still the previous frame numbers, and through
-  // a day cycle that is a shaft lagging the shadow it belongs to.
-  shaftsPass.settle = settleShafts;
-  composer.addPass(shaftsPass);
-}
 composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(BrightnessContrastShader);
 composer.addPass(gradePass);
@@ -865,7 +650,6 @@ function renderView() {
   // frame costs one traverse whatever happens.
   if (shadowFitPending) fitSunShadow();
   settleAtmosphereFloor();
-  armShafts();
   composer.render();
 }
 
@@ -6296,7 +6080,6 @@ async function renderStill() {
   try {
     renderer.setPixelRatio(1);
     composer.setPixelRatio(1);
-    setShaftResolution(true);
     for (let row = 0; row < down; row += 1) {
       for (let column = 0; column < across; column += 1) {
         const x = column * STILL_TILE;
@@ -6348,7 +6131,6 @@ async function renderStill() {
     composer.setPixelRatio(wasPixelRatio);
     renderer.setSize(wasWidth, wasHeight, false);
     composer.setSize(wasWidth, wasHeight);
-    setShaftResolution(false);
     state.recording = false;       // resize() picks the canvas back up
     document.body.classList.remove("stilling");
     state.stillRendering = false;
@@ -11833,7 +11615,6 @@ const ATMOSPHERE_DIALS = [
   ["atmosphere-lobe", "sunLobe", 0],
   ["atmosphere-mist", "mist", 1],
   ["atmosphere-mist-height", "mistHeight", 1],
-  ["atmosphere-shafts", "shafts", 0],
 ];
 
 // The dials show only while a preset is chosen (a dial that does nothing
@@ -11842,11 +11623,7 @@ const ATMOSPHERE_DIALS = [
 function syncAtmosphereControls() {
   const on = atmosphereIsOn(state.atmosphere);
   for (const label of document.querySelectorAll("#shelf-sky-settings .atmosphere-dial")) {
-    // The shafts are the one atmosphere dial the iPad never gets: there
-    // is no pass behind it there, so it stays away rather than sitting
-    // dead among the dials that do work.
-    const desktopOnly = label.id === "atmosphere-shafts-row";
-    label.classList.toggle("hidden", !on || (desktopOnly && CONSTRAINED_DEVICE));
+    label.classList.toggle("hidden", !on);
   }
   for (const [id, key, digits] of ATMOSPHERE_DIALS) {
     const input = document.getElementById(id);
@@ -14804,7 +14581,6 @@ async function recordAnimation() {
   composer.setPixelRatio(1);
   renderer.setSize(frame.width, frame.height, false);
   composer.setSize(frame.width, frame.height);
-  setShaftResolution(true);
   applyCameraFrustum(frame.width / frame.height);
   // Measured, not guessed at: the next time a take is slow, the log says
   // which of the three is eating it rather than leaving us to reason.
@@ -14918,7 +14694,6 @@ async function recordAnimation() {
     paintRecordButton();
     renderer.setPixelRatio(wasPixelRatio);
     composer.setPixelRatio(wasPixelRatio);
-    setShaftResolution(false);
     state.timeline.playing = wasPlaying;
     state.dayCycle.playing = wasDayCyclePlaying;
     state.showMode = wasShowMode;
@@ -15542,9 +15317,6 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // The atmosphere's shared uniforms and its one fog object, so a probe
   // can read what the shaders are being given rather than guess it.
   atmosphere, get atmosphereFog() { return atmosphereFog; },
-  // The shaft pass itself, so a probe can read whether it is running and
-  // at what size rather than inferring it from pixels.
-  get shaftsPass() { return shaftsPass; },
   // The clock, so a probe can photograph a named hour through the same
   // path the day track takes.
   setSunMinutes };
