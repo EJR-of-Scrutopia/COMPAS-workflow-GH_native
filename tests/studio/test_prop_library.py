@@ -264,7 +264,11 @@ def test_no_model_in_either_library_is_a_stranger_to_its_manifest():
         root = REPO / "bench" / "studio" / library
         manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
         named = {prop["file"] for prop in manifest["props"]}
-        on_disk = {path.name for path in root.glob("*.glb")}
+        # A LOD sidecar (<key>.lod1.glb, from tools/props/lod.mjs) is part
+        # of its model, not a model; the lods test below holds each one
+        # to its entry.
+        on_disk = {path.name for path in root.glob("*.glb")
+                   if not studio_app.LOD_SIDECAR.match(path.name)}
         assert named == on_disk, (
             "{}: entries with no model {}, models with no entry {}".format(
                 library, sorted(named - on_disk), sorted(on_disk - named)))
@@ -495,3 +499,96 @@ def test_a_species_is_a_family_and_every_placement_is_a_variant():
     assert "for (const member of familyMembers(s.type)) await ensurePropTemplate(member.key);" in run, (
         "every variant's template in hand before placing, or placeProp "
         "plants a primitive")
+
+
+def test_the_lod_tool_cuts_two_tiers_of_bare_geometry_under_the_same_names():
+    """A scattered field of 25,375 props ran at 2 fps. Instancing takes the
+    draw calls; the 88.5 million triangles need distance tiers, and Poly
+    Haven ships none, so tools/props/lod.mjs cuts them with the fetch's
+    own simplifier.
+
+    A sidecar is GEOMETRY ONLY: the client reuses LOD0's materials,
+    pairing by mesh name and primitive order, so the tool may strip every
+    texture but may not join, flatten or rename. Deduping MESHES would
+    fold two identical tufts under one name and break the pairing for the
+    other, so dedup is held to accessors."""
+
+    tool = (REPO / "tools" / "props" / "lod.mjs").read_text(encoding="utf-8")
+    assert "const LOD1_RATIO = 0.35;" in tool
+    assert "const LOD2_RATIO = 0.12;" in tool
+    assert "const MIN_TRIANGLES = 12;" in tool, (
+        "a tuft of 80 triangles has no LOD2 worth the fetch")
+    # Stripped, in two steps: the five slots by name, then whatever an
+    # extension still holds.
+    assert "function stripTextures(doc)" in tool
+    assert "material.setBaseColorTexture(null);" in tool
+    assert "for (const texture of root.listTextures()) texture.dispose();" in tool
+    # Preserved: LOD0 is never touched, and nothing here renames.
+    assert "const attempt = cloneDocument(doc)" in tool
+    assert "flatten(" not in tool and "join({" not in tool, (
+        "a join or a flatten renames the meshes the client pairs on")
+    assert "dedup({ propertyTypes: [PropertyType.ACCESSOR] })" in tool
+    assert "prune({ keepLeaves: true })" in tool, (
+        "a node that lost its mesh is still a name in LOD0's hierarchy")
+    assert "simplifier: error === tier.error ? MeshoptSimplifier : PruningSimplifier," in tool
+
+
+def test_every_planting_prop_of_any_size_has_descending_tiers_on_disk():
+    """The manifest records only the tiers that exist, so a lods entry is
+    a promise the folder has to keep: the file is there, it is a sidecar
+    of THIS prop, and each tier is smaller than the one before. A prop
+    under 200 triangles is allowed no tiers (its far tier would be under
+    a dozen triangles), and a sidecar the manifest does not record is a
+    stale file from an earlier run, which the tool deletes."""
+
+    import re
+
+    root = REPO / "bench" / "studio" / "props-hd"
+    manifest = json.loads((root / "props.json").read_text(encoding="utf-8"))
+    recorded = set()
+    tiered = 0
+    for prop in manifest["props"]:
+        lods = prop.get("lods")
+        if prop["group"] == "planting" and prop["triangles"] >= 200:
+            assert lods, "{}: no lods list".format(prop["key"])
+        if not lods:
+            continue
+        tiered += 1
+        stem = prop["file"][: -len(".glb")]
+        counts = [prop["triangles"]] + [lod["triangles"] for lod in lods]
+        assert counts == sorted(counts, reverse=True) and len(set(counts)) == len(counts), (
+            "{}: tiers do not descend: {}".format(prop["key"], counts))
+        for lod in lods:
+            assert re.fullmatch(re.escape(stem) + r"\.lod[12]\.glb", lod["file"]), (
+                "{}: {} is not this prop's sidecar".format(prop["key"], lod["file"]))
+            assert (root / lod["file"]).is_file(), lod["file"]
+            recorded.add(lod["file"])
+    assert tiered >= 200, "the tool has been run over the library"
+    on_disk = {p.name for p in root.glob("*.lod?.glb")}
+    assert on_disk == recorded, (
+        "sidecars the manifest does not record {}".format(sorted(on_disk - recorded)))
+    assert not list((root / "rows").glob("*.lod?.glb")), (
+        "the rows are out of the scanned folder and get no tiers")
+
+
+def test_a_sidecar_is_served_by_name_but_never_offered_as_a_prop(tmp_path, monkeypatch):
+    """The folder is the authority on what is a prop, and a sidecar is a
+    .glb in the folder, so without a rule every <key>.lod1.glb would be
+    offered as an undescribed model of the same plant with no textures.
+    The file route still has to serve it, or the client cannot fetch the
+    tier the manifest names."""
+
+    folder = tmp_path / "props"
+    folder.mkdir()
+    (folder / "a.glb").write_bytes(b"glTF\x02\x00\x00\x00")
+    (folder / "a.lod1.glb").write_bytes(b"glTF\x02\x00\x00\x00")
+    monkeypatch.setattr(studio_app, "PROPS_DIR", folder)
+    monkeypatch.setattr(studio_app, "SETTINGS_PATH", tmp_path / "settings.json")
+    client = TestClient(studio_app.create_app())
+
+    offered = [entry["file"] for entry in client.get("/api/props").json()["props"]]
+    assert offered == ["a.glb"], offered
+    assert client.get("/api/props/folder").json()["count"] == 1
+    served = client.get("/api/props/a.lod1.glb")
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "model/gltf-binary"

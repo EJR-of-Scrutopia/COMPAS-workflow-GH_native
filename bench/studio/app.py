@@ -52,6 +52,9 @@ SCENES_DIR = Path(__file__).resolve().parent / "scenes"
 # columns and hdri, because these are files somebody put there rather than
 # anything the studio derives.
 PROPS_DIR = Path(__file__).resolve().parent / "props"
+# A LOD sidecar, written by tools/props/lod.mjs beside its model as
+# <key>.lod1.glb and <key>.lod2.glb. It is part of that prop, not a prop.
+LOD_SIDECAR = re.compile(r".*\.lod\d\.glb$")
 # The one setting the studio remembers between runs: which folder the
 # vaults are read from. Beside the studio, not in the folder itself, so
 # pointing at a new folder cannot lose the way back.
@@ -1573,8 +1576,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 lambda d: len([p for p in d.glob("*-mechanism.json")
                                if p.is_file()]))
         else:
+            # Sidecars are not counted, for the reason /api/props gives.
             directory, counter = PROPS_DIR, (
-                lambda d: len([p for p in d.glob("*.glb") if p.is_file()]))
+                lambda d: len([p for p in d.glob("*.glb")
+                               if p.is_file() and not LOD_SIDECAR.match(p.name)]))
         present = bool(directory) and directory.is_dir()
         return {
             "path": str(directory) if directory else "",
@@ -1773,6 +1778,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         # not authored in metres.
         for path in sorted(PROPS_DIR.glob("*.glb")):
             if path.name in described:
+                continue
+            # A LOD sidecar is part of its prop, not a prop. Because the
+            # folder is the authority, every <key>.lod1.glb would otherwise
+            # be offered as an undescribed model of the same plant with no
+            # textures. The route below still serves it by name; the client
+            # asks for a tier by the file the manifest's lods list records.
+            if LOD_SIDECAR.match(path.name):
                 continue
             props.append({
                 "key": path.stem,

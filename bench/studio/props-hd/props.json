@@ -15,7 +15,8 @@
       "bytes": 2504920,
       "credit": "Cracked ground by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=AsphaltDamage001"
+      "source": "https://ambientcg.com/view?id=AsphaltDamage001",
+      "lods": []
     },
     {
       "key": "decal-drain",
@@ -31,7 +32,8 @@
       "bytes": 1365384,
       "credit": "Drain cover by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=ManholeCover001"
+      "source": "https://ambientcg.com/view?id=ManholeCover001",
+      "lods": []
     },
     {
       "key": "decal-gum",
@@ -47,7 +49,8 @@
       "bytes": 650244,
       "credit": "Ground litter by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=ChewingGum001"
+      "source": "https://ambientcg.com/view?id=ChewingGum001",
+      "lods": []
     },
     {
       "key": "decal-inspection",
@@ -63,7 +66,8 @@
       "bytes": 1973276,
       "credit": "Inspection cover by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=ManholeCover008"
+      "source": "https://ambientcg.com/view?id=ManholeCover008",
+      "lods": []
     },
     {
       "key": "decal-line-white",
@@ -79,7 +83,8 @@
       "bytes": 1772752,
       "credit": "Painted line by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=RoadLines019A"
+      "source": "https://ambientcg.com/view?id=RoadLines019A",
+      "lods": []
     },
     {
       "key": "decal-line-worn",
@@ -95,7 +100,8 @@
       "bytes": 1715072,
       "credit": "Worn line by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=RoadLines022A"
+      "source": "https://ambientcg.com/view?id=RoadLines022A",
+      "lods": []
     },
     {
       "key": "decal-manhole",
@@ -111,7 +117,8 @@
       "bytes": 2034888,
       "credit": "Manhole cover by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=ManholeCover011"
+      "source": "https://ambientcg.com/view?id=ManholeCover011",
+      "lods": []
     },
     {
       "key": "decal-manhole-square",
@@ -127,7 +134,8 @@
       "bytes": 2212364,
       "credit": "Square cover by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=ManholeCover004"
+      "source": "https://ambientcg.com/view?id=ManholeCover004",
+      "lods": []
     },
     {
       "key": "decal-paving-edge",
@@ -143,7 +151,8 @@
       "bytes": 1018664,
       "credit": "Paving edge by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=PavingEdge001"
+      "source": "https://ambientcg.com/view?id=PavingEdge001",
+      "lods": []
     },
     {
       "key": "decal-paving-edge-2",
@@ -159,7 +168,8 @@
       "bytes": 787108,
       "credit": "Paving edge 2 by ambientCG",
       "licence": "CC0 1.0",
-      "source": "https://ambientcg.com/view?id=PavingEdge002"
+      "source": "https://ambientcg.com/view?id=PavingEdge002",
+      "lods": []
     },
     {
       "key": "anthurium_botany_01__a",
@@ -178,7 +188,17 @@
       "bytes": 386928,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__a.lod1.glb",
+          "triangles": 5531
+        },
+        {
+          "file": "anthurium_botany_01__a.lod2.glb",
+          "triangles": 1896
+        }
+      ]
     },
     {
       "key": "anthurium_botany_01__b",
@@ -197,7 +217,17 @@
       "bytes": 382632,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__b.lod1.glb",
+          "triangles": 5439
+        },
+        {
+          "file": "anthurium_botany_01__b.lod2.glb",
+          "triangles": 1865
+        }
+      ]
     },
     {
       "key": "anthurium_botany_01__c",
@@ -216,7 +246,17 @@
       "bytes": 265560,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__c.lod1.glb",
+          "triangles": 3175
+        },
+        {
+          "file": "anthurium_botany_01__c.lod2.glb",
+          "triangles": 1088
+        }
+      ]
     },
     {
       "key": "anthurium_botany_01__d",
@@ -235,7 +275,17 @@
       "bytes": 291320,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__d.lod1.glb",
+          "triangles": 3626
+        },
+        {
+          "file": "anthurium_botany_01__d.lod2.glb",
+          "triangles": 1242
+        }
+      ]
     },
     {
       "key": "anthurium_botany_01__e",
@@ -254,7 +304,17 @@
       "bytes": 241264,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__e.lod1.glb",
+          "triangles": 2682
+        },
+        {
+          "file": "anthurium_botany_01__e.lod2.glb",
+          "triangles": 918
+        }
+      ]
     },
     {
       "key": "anthurium_botany_01__f",
@@ -273,7 +333,17 @@
       "bytes": 261644,
       "credit": "Anthurium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/anthurium_botany_01"
+      "source": "https://polyhaven.com/a/anthurium_botany_01",
+      "lods": [
+        {
+          "file": "anthurium_botany_01__f.lod1.glb",
+          "triangles": 3046
+        },
+        {
+          "file": "anthurium_botany_01__f.lod2.glb",
+          "triangles": 1043
+        }
+      ]
     },
     {
       "key": "bark_debris_01__a",
@@ -292,7 +362,17 @@
       "bytes": 176112,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/bark_debris_01"
+      "source": "https://polyhaven.com/a/bark_debris_01",
+      "lods": [
+        {
+          "file": "bark_debris_01__a.lod1.glb",
+          "triangles": 1836
+        },
+        {
+          "file": "bark_debris_01__a.lod2.glb",
+          "triangles": 648
+        }
+      ]
     },
     {
       "key": "bark_debris_01__b",
@@ -311,7 +391,17 @@
       "bytes": 192552,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/bark_debris_01"
+      "source": "https://polyhaven.com/a/bark_debris_01",
+      "lods": [
+        {
+          "file": "bark_debris_01__b.lod1.glb",
+          "triangles": 2110
+        },
+        {
+          "file": "bark_debris_01__b.lod2.glb",
+          "triangles": 800
+        }
+      ]
     },
     {
       "key": "bark_debris_01__c",
@@ -330,7 +420,17 @@
       "bytes": 247908,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/bark_debris_01"
+      "source": "https://polyhaven.com/a/bark_debris_01",
+      "lods": [
+        {
+          "file": "bark_debris_01__c.lod1.glb",
+          "triangles": 2822
+        },
+        {
+          "file": "bark_debris_01__c.lod2.glb",
+          "triangles": 1096
+        }
+      ]
     },
     {
       "key": "bark_debris_01__d",
@@ -349,7 +449,17 @@
       "bytes": 174528,
       "credit": "Bark debris by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/bark_debris_01"
+      "source": "https://polyhaven.com/a/bark_debris_01",
+      "lods": [
+        {
+          "file": "bark_debris_01__d.lod1.glb",
+          "triangles": 1788
+        },
+        {
+          "file": "bark_debris_01__d.lod2.glb",
+          "triangles": 680
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_01",
@@ -365,7 +475,17 @@
       "bytes": 19679052,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_01.lod1.glb",
+          "triangles": 59545
+        },
+        {
+          "file": "beech_european_beech_forest_01.lod2.glb",
+          "triangles": 17944
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_04",
@@ -381,7 +501,17 @@
       "bytes": 18127528,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_04.lod1.glb",
+          "triangles": 25867
+        },
+        {
+          "file": "beech_european_beech_forest_04.lod2.glb",
+          "triangles": 20381
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_05",
@@ -397,7 +527,17 @@
       "bytes": 11896004,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_05.lod1.glb",
+          "triangles": 69747
+        },
+        {
+          "file": "beech_european_beech_forest_05.lod2.glb",
+          "triangles": 23983
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_06",
@@ -413,7 +553,17 @@
       "bytes": 8700888,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_06.lod1.glb",
+          "triangles": 45436
+        },
+        {
+          "file": "beech_european_beech_forest_06.lod2.glb",
+          "triangles": 15600
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_07",
@@ -429,7 +579,17 @@
       "bytes": 7256284,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_07.lod1.glb",
+          "triangles": 34176
+        },
+        {
+          "file": "beech_european_beech_forest_07.lod2.glb",
+          "triangles": 5672
+        }
+      ]
     },
     {
       "key": "beech_european_beech_forest_08",
@@ -445,7 +605,17 @@
       "bytes": 6637336,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_forest_08.lod1.glb",
+          "triangles": 31536
+        },
+        {
+          "file": "beech_european_beech_forest_08.lod2.glb",
+          "triangles": 11023
+        }
+      ]
     },
     {
       "key": "beech_european_beech_sapling_01",
@@ -461,7 +631,17 @@
       "bytes": 3708000,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_sapling_01.lod1.glb",
+          "triangles": 14735
+        },
+        {
+          "file": "beech_european_beech_sapling_01.lod2.glb",
+          "triangles": 4648
+        }
+      ]
     },
     {
       "key": "beech_european_beech_sapling_02",
@@ -477,7 +657,17 @@
       "bytes": 7071704,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_sapling_02.lod1.glb",
+          "triangles": 44531
+        },
+        {
+          "file": "beech_european_beech_sapling_02.lod2.glb",
+          "triangles": 14965
+        }
+      ]
     },
     {
       "key": "beech_european_beech_sapling_03",
@@ -493,7 +683,17 @@
       "bytes": 6337756,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_sapling_03.lod1.glb",
+          "triangles": 52489
+        },
+        {
+          "file": "beech_european_beech_sapling_03.lod2.glb",
+          "triangles": 17004
+        }
+      ]
     },
     {
       "key": "beech_european_beech_sapling_04",
@@ -509,7 +709,17 @@
       "bytes": 4796324,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_sapling_04.lod1.glb",
+          "triangles": 32428
+        },
+        {
+          "file": "beech_european_beech_sapling_04.lod2.glb",
+          "triangles": 10874
+        }
+      ]
     },
     {
       "key": "beech_european_beech_seedling_01",
@@ -525,7 +735,17 @@
       "bytes": 2296108,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_seedling_01.lod1.glb",
+          "triangles": 278
+        },
+        {
+          "file": "beech_european_beech_seedling_01.lod2.glb",
+          "triangles": 95
+        }
+      ]
     },
     {
       "key": "beech_european_beech_seedling_02",
@@ -541,7 +761,17 @@
       "bytes": 2464848,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_seedling_02.lod1.glb",
+          "triangles": 2187
+        },
+        {
+          "file": "beech_european_beech_seedling_02.lod2.glb",
+          "triangles": 743
+        }
+      ]
     },
     {
       "key": "beech_european_beech_seedling_03",
@@ -557,7 +787,17 @@
       "bytes": 2303396,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_seedling_03.lod1.glb",
+          "triangles": 491
+        },
+        {
+          "file": "beech_european_beech_seedling_03.lod2.glb",
+          "triangles": 158
+        }
+      ]
     },
     {
       "key": "beech_european_beech_seedling_04",
@@ -573,7 +813,17 @@
       "bytes": 2266016,
       "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf"
+      "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+      "lods": [
+        {
+          "file": "beech_european_beech_seedling_04.lod1.glb",
+          "triangles": 54
+        },
+        {
+          "file": "beech_european_beech_seedling_04.lod2.glb",
+          "triangles": 17
+        }
+      ]
     },
     {
       "key": "calathea_orbifolia_01__a",
@@ -592,7 +842,17 @@
       "bytes": 136484,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/calathea_orbifolia_01"
+      "source": "https://polyhaven.com/a/calathea_orbifolia_01",
+      "lods": [
+        {
+          "file": "calathea_orbifolia_01__a.lod1.glb",
+          "triangles": 2066
+        },
+        {
+          "file": "calathea_orbifolia_01__a.lod2.glb",
+          "triangles": 706
+        }
+      ]
     },
     {
       "key": "calathea_orbifolia_01__b",
@@ -611,7 +871,17 @@
       "bytes": 93780,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/calathea_orbifolia_01"
+      "source": "https://polyhaven.com/a/calathea_orbifolia_01",
+      "lods": [
+        {
+          "file": "calathea_orbifolia_01__b.lod1.glb",
+          "triangles": 1206
+        },
+        {
+          "file": "calathea_orbifolia_01__b.lod2.glb",
+          "triangles": 411
+        }
+      ]
     },
     {
       "key": "calathea_orbifolia_01__c",
@@ -630,7 +900,17 @@
       "bytes": 95400,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/calathea_orbifolia_01"
+      "source": "https://polyhaven.com/a/calathea_orbifolia_01",
+      "lods": [
+        {
+          "file": "calathea_orbifolia_01__c.lod1.glb",
+          "triangles": 1239
+        },
+        {
+          "file": "calathea_orbifolia_01__c.lod2.glb",
+          "triangles": 425
+        }
+      ]
     },
     {
       "key": "calathea_orbifolia_01__d",
@@ -649,7 +929,17 @@
       "bytes": 65076,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/calathea_orbifolia_01"
+      "source": "https://polyhaven.com/a/calathea_orbifolia_01",
+      "lods": [
+        {
+          "file": "calathea_orbifolia_01__d.lod1.glb",
+          "triangles": 629
+        },
+        {
+          "file": "calathea_orbifolia_01__d.lod2.glb",
+          "triangles": 215
+        }
+      ]
     },
     {
       "key": "calathea_orbifolia_01__e",
@@ -668,7 +958,17 @@
       "bytes": 68308,
       "credit": "Calathea by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/calathea_orbifolia_01"
+      "source": "https://polyhaven.com/a/calathea_orbifolia_01",
+      "lods": [
+        {
+          "file": "calathea_orbifolia_01__e.lod1.glb",
+          "triangles": 696
+        },
+        {
+          "file": "calathea_orbifolia_01__e.lod2.glb",
+          "triangles": 239
+        }
+      ]
     },
     {
       "key": "celandine_01__a",
@@ -687,7 +987,17 @@
       "bytes": 54020,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/celandine_01"
+      "source": "https://polyhaven.com/a/celandine_01",
+      "lods": [
+        {
+          "file": "celandine_01__a.lod1.glb",
+          "triangles": 217
+        },
+        {
+          "file": "celandine_01__a.lod2.glb",
+          "triangles": 74
+        }
+      ]
     },
     {
       "key": "celandine_01__b",
@@ -706,7 +1016,17 @@
       "bytes": 53524,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/celandine_01"
+      "source": "https://polyhaven.com/a/celandine_01",
+      "lods": [
+        {
+          "file": "celandine_01__b.lod1.glb",
+          "triangles": 209
+        },
+        {
+          "file": "celandine_01__b.lod2.glb",
+          "triangles": 71
+        }
+      ]
     },
     {
       "key": "celandine_01__c",
@@ -725,7 +1045,17 @@
       "bytes": 150932,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/celandine_01"
+      "source": "https://polyhaven.com/a/celandine_01",
+      "lods": [
+        {
+          "file": "celandine_01__c.lod1.glb",
+          "triangles": 1505
+        },
+        {
+          "file": "celandine_01__c.lod2.glb",
+          "triangles": 516
+        }
+      ]
     },
     {
       "key": "celandine_01__d",
@@ -744,7 +1074,17 @@
       "bytes": 117112,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/celandine_01"
+      "source": "https://polyhaven.com/a/celandine_01",
+      "lods": [
+        {
+          "file": "celandine_01__d.lod1.glb",
+          "triangles": 1050
+        },
+        {
+          "file": "celandine_01__d.lod2.glb",
+          "triangles": 360
+        }
+      ]
     },
     {
       "key": "celandine_01__e",
@@ -763,7 +1103,17 @@
       "bytes": 50264,
       "credit": "Celandine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/celandine_01"
+      "source": "https://polyhaven.com/a/celandine_01",
+      "lods": [
+        {
+          "file": "celandine_01__e.lod1.glb",
+          "triangles": 154
+        },
+        {
+          "file": "celandine_01__e.lod2.glb",
+          "triangles": 55
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__a",
@@ -782,7 +1132,17 @@
       "bytes": 50560,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__a.lod1.glb",
+          "triangles": 227
+        },
+        {
+          "file": "cheiridopsis_succulent__a.lod2.glb",
+          "triangles": 77
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__b",
@@ -801,7 +1161,17 @@
       "bytes": 62268,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__b.lod1.glb",
+          "triangles": 393
+        },
+        {
+          "file": "cheiridopsis_succulent__b.lod2.glb",
+          "triangles": 133
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__c",
@@ -820,7 +1190,17 @@
       "bytes": 76432,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__c.lod1.glb",
+          "triangles": 603
+        },
+        {
+          "file": "cheiridopsis_succulent__c.lod2.glb",
+          "triangles": 206
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__d",
@@ -839,7 +1219,17 @@
       "bytes": 106892,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__d.lod1.glb",
+          "triangles": 1009
+        },
+        {
+          "file": "cheiridopsis_succulent__d.lod2.glb",
+          "triangles": 346
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__e",
@@ -858,7 +1248,17 @@
       "bytes": 117152,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__e.lod1.glb",
+          "triangles": 1110
+        },
+        {
+          "file": "cheiridopsis_succulent__e.lod2.glb",
+          "triangles": 427
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__f",
@@ -877,7 +1277,17 @@
       "bytes": 106752,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__f.lod1.glb",
+          "triangles": 981
+        },
+        {
+          "file": "cheiridopsis_succulent__f.lod2.glb",
+          "triangles": 336
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__g",
@@ -896,7 +1306,17 @@
       "bytes": 121712,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__g.lod1.glb",
+          "triangles": 1161
+        },
+        {
+          "file": "cheiridopsis_succulent__g.lod2.glb",
+          "triangles": 426
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__h",
@@ -915,7 +1335,17 @@
       "bytes": 141244,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__h.lod1.glb",
+          "triangles": 1403
+        },
+        {
+          "file": "cheiridopsis_succulent__h.lod2.glb",
+          "triangles": 487
+        }
+      ]
     },
     {
       "key": "cheiridopsis_succulent__i",
@@ -934,7 +1364,17 @@
       "bytes": 146396,
       "credit": "Cheiridopsis by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/cheiridopsis_succulent"
+      "source": "https://polyhaven.com/a/cheiridopsis_succulent",
+      "lods": [
+        {
+          "file": "cheiridopsis_succulent__i.lod1.glb",
+          "triangles": 1496
+        },
+        {
+          "file": "cheiridopsis_succulent__i.lod2.glb",
+          "triangles": 527
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__a",
@@ -953,7 +1393,17 @@
       "bytes": 103244,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__a.lod1.glb",
+          "triangles": 1076
+        },
+        {
+          "file": "crystalline_iceplant__a.lod2.glb",
+          "triangles": 369
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__b",
@@ -972,7 +1422,17 @@
       "bytes": 94128,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__b.lod1.glb",
+          "triangles": 901
+        },
+        {
+          "file": "crystalline_iceplant__b.lod2.glb",
+          "triangles": 309
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__c",
@@ -991,7 +1451,17 @@
       "bytes": 89120,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__c.lod1.glb",
+          "triangles": 804
+        },
+        {
+          "file": "crystalline_iceplant__c.lod2.glb",
+          "triangles": 274
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__d",
@@ -1010,7 +1480,17 @@
       "bytes": 81904,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__d.lod1.glb",
+          "triangles": 659
+        },
+        {
+          "file": "crystalline_iceplant__d.lod2.glb",
+          "triangles": 225
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__e",
@@ -1029,7 +1509,17 @@
       "bytes": 72440,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__e.lod1.glb",
+          "triangles": 473
+        },
+        {
+          "file": "crystalline_iceplant__e.lod2.glb",
+          "triangles": 162
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__f",
@@ -1048,7 +1538,17 @@
       "bytes": 63416,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__f.lod1.glb",
+          "triangles": 297
+        },
+        {
+          "file": "crystalline_iceplant__f.lod2.glb",
+          "triangles": 102
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__g",
@@ -1067,7 +1567,17 @@
       "bytes": 58904,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__g.lod1.glb",
+          "triangles": 210
+        },
+        {
+          "file": "crystalline_iceplant__g.lod2.glb",
+          "triangles": 72
+        }
+      ]
     },
     {
       "key": "crystalline_iceplant__h",
@@ -1086,7 +1596,17 @@
       "bytes": 56256,
       "credit": "Iceplant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/crystalline_iceplant"
+      "source": "https://polyhaven.com/a/crystalline_iceplant",
+      "lods": [
+        {
+          "file": "crystalline_iceplant__h.lod1.glb",
+          "triangles": 175
+        },
+        {
+          "file": "crystalline_iceplant__h.lod2.glb",
+          "triangles": 54
+        }
+      ]
     },
     {
       "key": "dandelion_01__a",
@@ -1105,7 +1625,17 @@
       "bytes": 319776,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dandelion_01"
+      "source": "https://polyhaven.com/a/dandelion_01",
+      "lods": [
+        {
+          "file": "dandelion_01__a.lod1.glb",
+          "triangles": 3544
+        },
+        {
+          "file": "dandelion_01__a.lod2.glb",
+          "triangles": 1213
+        }
+      ]
     },
     {
       "key": "dandelion_01__b",
@@ -1124,7 +1654,17 @@
       "bytes": 323752,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dandelion_01"
+      "source": "https://polyhaven.com/a/dandelion_01",
+      "lods": [
+        {
+          "file": "dandelion_01__b.lod1.glb",
+          "triangles": 3579
+        },
+        {
+          "file": "dandelion_01__b.lod2.glb",
+          "triangles": 1225
+        }
+      ]
     },
     {
       "key": "dandelion_01__c",
@@ -1143,7 +1683,17 @@
       "bytes": 77844,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dandelion_01"
+      "source": "https://polyhaven.com/a/dandelion_01",
+      "lods": [
+        {
+          "file": "dandelion_01__c.lod1.glb",
+          "triangles": 485
+        },
+        {
+          "file": "dandelion_01__c.lod2.glb",
+          "triangles": 165
+        }
+      ]
     },
     {
       "key": "dandelion_01__d",
@@ -1162,7 +1712,17 @@
       "bytes": 70976,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dandelion_01"
+      "source": "https://polyhaven.com/a/dandelion_01",
+      "lods": [
+        {
+          "file": "dandelion_01__d.lod1.glb",
+          "triangles": 395
+        },
+        {
+          "file": "dandelion_01__d.lod2.glb",
+          "triangles": 132
+        }
+      ]
     },
     {
       "key": "dandelion_01__e",
@@ -1181,7 +1741,17 @@
       "bytes": 64304,
       "credit": "Dandelion by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dandelion_01"
+      "source": "https://polyhaven.com/a/dandelion_01",
+      "lods": [
+        {
+          "file": "dandelion_01__e.lod1.glb",
+          "triangles": 318
+        },
+        {
+          "file": "dandelion_01__e.lod2.glb",
+          "triangles": 109
+        }
+      ]
     },
     {
       "key": "dead_quiver_branch_01",
@@ -1197,7 +1767,17 @@
       "bytes": 309400,
       "credit": "Dead branch by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dead_quiver_branch_01"
+      "source": "https://polyhaven.com/a/dead_quiver_branch_01",
+      "lods": [
+        {
+          "file": "dead_quiver_branch_01.lod1.glb",
+          "triangles": 5190
+        },
+        {
+          "file": "dead_quiver_branch_01.lod2.glb",
+          "triangles": 1780
+        }
+      ]
     },
     {
       "key": "dead_quiver_branch_02",
@@ -1213,7 +1793,17 @@
       "bytes": 293432,
       "credit": "Dead branch 2 by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dead_quiver_branch_02"
+      "source": "https://polyhaven.com/a/dead_quiver_branch_02",
+      "lods": [
+        {
+          "file": "dead_quiver_branch_02.lod1.glb",
+          "triangles": 5032
+        },
+        {
+          "file": "dead_quiver_branch_02.lod2.glb",
+          "triangles": 1724
+        }
+      ]
     },
     {
       "key": "dead_quiver_trunk",
@@ -1229,7 +1819,17 @@
       "bytes": 337548,
       "credit": "Quiver trunk by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dead_quiver_trunk"
+      "source": "https://polyhaven.com/a/dead_quiver_trunk",
+      "lods": [
+        {
+          "file": "dead_quiver_trunk.lod1.glb",
+          "triangles": 6292
+        },
+        {
+          "file": "dead_quiver_trunk.lod2.glb",
+          "triangles": 2152
+        }
+      ]
     },
     {
       "key": "dead_tree_trunk",
@@ -1245,7 +1845,17 @@
       "bytes": 1829960,
       "credit": "Fallen trunk by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dead_tree_trunk"
+      "source": "https://polyhaven.com/a/dead_tree_trunk",
+      "lods": [
+        {
+          "file": "dead_tree_trunk.lod1.glb",
+          "triangles": 35630
+        },
+        {
+          "file": "dead_tree_trunk.lod2.glb",
+          "triangles": 12214
+        }
+      ]
     },
     {
       "key": "dead_tree_trunk_02",
@@ -1261,7 +1871,17 @@
       "bytes": 1621412,
       "credit": "Dead trunk by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dead_tree_trunk_02"
+      "source": "https://polyhaven.com/a/dead_tree_trunk_02",
+      "lods": [
+        {
+          "file": "dead_tree_trunk_02.lod1.glb",
+          "triangles": 29090
+        },
+        {
+          "file": "dead_tree_trunk_02.lod2.glb",
+          "triangles": 9968
+        }
+      ]
     },
     {
       "key": "didelta_spinosa",
@@ -1277,7 +1897,17 @@
       "bytes": 4776248,
       "credit": "Didelta shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/didelta_spinosa"
+      "source": "https://polyhaven.com/a/didelta_spinosa",
+      "lods": [
+        {
+          "file": "didelta_spinosa.lod1.glb",
+          "triangles": 52392
+        },
+        {
+          "file": "didelta_spinosa.lod2.glb",
+          "triangles": 17901
+        }
+      ]
     },
     {
       "key": "dry_branches_medium_01",
@@ -1293,7 +1923,17 @@
       "bytes": 383744,
       "credit": "Dry branches by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dry_branches_medium_01"
+      "source": "https://polyhaven.com/a/dry_branches_medium_01",
+      "lods": [
+        {
+          "file": "dry_branches_medium_01.lod1.glb",
+          "triangles": 5880
+        },
+        {
+          "file": "dry_branches_medium_01.lod2.glb",
+          "triangles": 2016
+        }
+      ]
     },
     {
       "key": "dry_quiver_leaf",
@@ -1309,7 +1949,17 @@
       "bytes": 476428,
       "credit": "Dry leaf by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/dry_quiver_leaf"
+      "source": "https://polyhaven.com/a/dry_quiver_leaf",
+      "lods": [
+        {
+          "file": "dry_quiver_leaf.lod1.glb",
+          "triangles": 8396
+        },
+        {
+          "file": "dry_quiver_leaf.lod2.glb",
+          "triangles": 2878
+        }
+      ]
     },
     {
       "key": "fern_02__a",
@@ -1328,7 +1978,17 @@
       "bytes": 42196,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fern_02"
+      "source": "https://polyhaven.com/a/fern_02",
+      "lods": [
+        {
+          "file": "fern_02__a.lod1.glb",
+          "triangles": 300
+        },
+        {
+          "file": "fern_02__a.lod2.glb",
+          "triangles": 94
+        }
+      ]
     },
     {
       "key": "fern_02__b",
@@ -1347,7 +2007,17 @@
       "bytes": 74120,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fern_02"
+      "source": "https://polyhaven.com/a/fern_02",
+      "lods": [
+        {
+          "file": "fern_02__b.lod1.glb",
+          "triangles": 834
+        },
+        {
+          "file": "fern_02__b.lod2.glb",
+          "triangles": 285
+        }
+      ]
     },
     {
       "key": "fern_02__c",
@@ -1366,7 +2036,17 @@
       "bytes": 71464,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fern_02"
+      "source": "https://polyhaven.com/a/fern_02",
+      "lods": [
+        {
+          "file": "fern_02__c.lod1.glb",
+          "triangles": 785
+        },
+        {
+          "file": "fern_02__c.lod2.glb",
+          "triangles": 269
+        }
+      ]
     },
     {
       "key": "fern_02__d",
@@ -1385,7 +2065,17 @@
       "bytes": 42808,
       "credit": "Fern by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fern_02"
+      "source": "https://polyhaven.com/a/fern_02",
+      "lods": [
+        {
+          "file": "fern_02__d.lod1.glb",
+          "triangles": 321
+        },
+        {
+          "file": "fern_02__d.lod2.glb",
+          "triangles": 97
+        }
+      ]
     },
     {
       "key": "fir_sapling",
@@ -1401,7 +2091,17 @@
       "bytes": 8032752,
       "credit": "Small fir by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fir_sapling"
+      "source": "https://polyhaven.com/a/fir_sapling",
+      "lods": [
+        {
+          "file": "fir_sapling.lod1.glb",
+          "triangles": 52493
+        },
+        {
+          "file": "fir_sapling.lod2.glb",
+          "triangles": 17993
+        }
+      ]
     },
     {
       "key": "fir_sapling_medium",
@@ -1417,7 +2117,17 @@
       "bytes": 11039828,
       "credit": "Fir sapling by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/fir_sapling_medium"
+      "source": "https://polyhaven.com/a/fir_sapling_medium",
+      "lods": [
+        {
+          "file": "fir_sapling_medium.lod1.glb",
+          "triangles": 52476
+        },
+        {
+          "file": "fir_sapling_medium.lod2.glb",
+          "triangles": 17992
+        }
+      ]
     },
     {
       "key": "flower_empodium__a",
@@ -1436,7 +2146,17 @@
       "bytes": 51832,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_empodium"
+      "source": "https://polyhaven.com/a/flower_empodium",
+      "lods": [
+        {
+          "file": "flower_empodium__a.lod1.glb",
+          "triangles": 265
+        },
+        {
+          "file": "flower_empodium__a.lod2.glb",
+          "triangles": 90
+        }
+      ]
     },
     {
       "key": "flower_empodium__b",
@@ -1455,7 +2175,17 @@
       "bytes": 51536,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_empodium"
+      "source": "https://polyhaven.com/a/flower_empodium",
+      "lods": [
+        {
+          "file": "flower_empodium__b.lod1.glb",
+          "triangles": 265
+        },
+        {
+          "file": "flower_empodium__b.lod2.glb",
+          "triangles": 90
+        }
+      ]
     },
     {
       "key": "flower_empodium__c",
@@ -1474,7 +2204,17 @@
       "bytes": 56560,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_empodium"
+      "source": "https://polyhaven.com/a/flower_empodium",
+      "lods": [
+        {
+          "file": "flower_empodium__c.lod1.glb",
+          "triangles": 325
+        },
+        {
+          "file": "flower_empodium__c.lod2.glb",
+          "triangles": 111
+        }
+      ]
     },
     {
       "key": "flower_empodium__d",
@@ -1493,7 +2233,17 @@
       "bytes": 40876,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_empodium"
+      "source": "https://polyhaven.com/a/flower_empodium",
+      "lods": [
+        {
+          "file": "flower_empodium__d.lod1.glb",
+          "triangles": 135
+        },
+        {
+          "file": "flower_empodium__d.lod2.glb",
+          "triangles": 43
+        }
+      ]
     },
     {
       "key": "flower_empodium__e",
@@ -1512,7 +2262,17 @@
       "bytes": 37016,
       "credit": "Empodium by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_empodium"
+      "source": "https://polyhaven.com/a/flower_empodium",
+      "lods": [
+        {
+          "file": "flower_empodium__e.lod1.glb",
+          "triangles": 85
+        },
+        {
+          "file": "flower_empodium__e.lod2.glb",
+          "triangles": 29
+        }
+      ]
     },
     {
       "key": "flower_gazania__a",
@@ -1531,7 +2291,17 @@
       "bytes": 65824,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__a.lod1.glb",
+          "triangles": 145
+        },
+        {
+          "file": "flower_gazania__a.lod2.glb",
+          "triangles": 49
+        }
+      ]
     },
     {
       "key": "flower_gazania__b",
@@ -1550,7 +2320,17 @@
       "bytes": 67356,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__b.lod1.glb",
+          "triangles": 179
+        },
+        {
+          "file": "flower_gazania__b.lod2.glb",
+          "triangles": 52
+        }
+      ]
     },
     {
       "key": "flower_gazania__c",
@@ -1569,7 +2349,17 @@
       "bytes": 74752,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__c.lod1.glb",
+          "triangles": 263
+        },
+        {
+          "file": "flower_gazania__c.lod2.glb",
+          "triangles": 89
+        }
+      ]
     },
     {
       "key": "flower_gazania__d",
@@ -1588,7 +2378,17 @@
       "bytes": 99472,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__d.lod1.glb",
+          "triangles": 470
+        },
+        {
+          "file": "flower_gazania__d.lod2.glb",
+          "triangles": 161
+        }
+      ]
     },
     {
       "key": "flower_gazania__e",
@@ -1607,7 +2407,17 @@
       "bytes": 128064,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__e.lod1.glb",
+          "triangles": 731
+        },
+        {
+          "file": "flower_gazania__e.lod2.glb",
+          "triangles": 292
+        }
+      ]
     },
     {
       "key": "flower_gazania__f",
@@ -1626,7 +2436,17 @@
       "bytes": 147148,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__f.lod1.glb",
+          "triangles": 953
+        },
+        {
+          "file": "flower_gazania__f.lod2.glb",
+          "triangles": 371
+        }
+      ]
     },
     {
       "key": "flower_gazania__g",
@@ -1645,7 +2465,17 @@
       "bytes": 157008,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__g.lod1.glb",
+          "triangles": 1050
+        },
+        {
+          "file": "flower_gazania__g.lod2.glb",
+          "triangles": 399
+        }
+      ]
     },
     {
       "key": "flower_gazania__h",
@@ -1664,7 +2494,17 @@
       "bytes": 170568,
       "credit": "Gazania by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_gazania"
+      "source": "https://polyhaven.com/a/flower_gazania",
+      "lods": [
+        {
+          "file": "flower_gazania__h.lod1.glb",
+          "triangles": 1236
+        },
+        {
+          "file": "flower_gazania__h.lod2.glb",
+          "triangles": 424
+        }
+      ]
     },
     {
       "key": "flower_heliophila__large",
@@ -1683,7 +2523,17 @@
       "bytes": 307308,
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_heliophila"
+      "source": "https://polyhaven.com/a/flower_heliophila",
+      "lods": [
+        {
+          "file": "flower_heliophila__large.lod1.glb",
+          "triangles": 4098
+        },
+        {
+          "file": "flower_heliophila__large.lod2.glb",
+          "triangles": 1405
+        }
+      ]
     },
     {
       "key": "flower_heliophila__medium",
@@ -1702,7 +2552,17 @@
       "bytes": 210088,
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_heliophila"
+      "source": "https://polyhaven.com/a/flower_heliophila",
+      "lods": [
+        {
+          "file": "flower_heliophila__medium.lod1.glb",
+          "triangles": 2556
+        },
+        {
+          "file": "flower_heliophila__medium.lod2.glb",
+          "triangles": 881
+        }
+      ]
     },
     {
       "key": "flower_heliophila__small",
@@ -1721,7 +2581,17 @@
       "bytes": 125004,
       "credit": "Heliophila by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_heliophila"
+      "source": "https://polyhaven.com/a/flower_heliophila",
+      "lods": [
+        {
+          "file": "flower_heliophila__small.lod1.glb",
+          "triangles": 1408
+        },
+        {
+          "file": "flower_heliophila__small.lod2.glb",
+          "triangles": 482
+        }
+      ]
     },
     {
       "key": "flower_stinkkruid__a",
@@ -1740,7 +2610,17 @@
       "bytes": 530484,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_stinkkruid"
+      "source": "https://polyhaven.com/a/flower_stinkkruid",
+      "lods": [
+        {
+          "file": "flower_stinkkruid__a.lod1.glb",
+          "triangles": 4312
+        },
+        {
+          "file": "flower_stinkkruid__a.lod2.glb",
+          "triangles": 1478
+        }
+      ]
     },
     {
       "key": "flower_stinkkruid__b",
@@ -1759,7 +2639,17 @@
       "bytes": 424260,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_stinkkruid"
+      "source": "https://polyhaven.com/a/flower_stinkkruid",
+      "lods": [
+        {
+          "file": "flower_stinkkruid__b.lod1.glb",
+          "triangles": 3456
+        },
+        {
+          "file": "flower_stinkkruid__b.lod2.glb",
+          "triangles": 1154
+        }
+      ]
     },
     {
       "key": "flower_stinkkruid__c",
@@ -1778,7 +2668,17 @@
       "bytes": 69040,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_stinkkruid"
+      "source": "https://polyhaven.com/a/flower_stinkkruid",
+      "lods": [
+        {
+          "file": "flower_stinkkruid__c.lod1.glb",
+          "triangles": 283
+        },
+        {
+          "file": "flower_stinkkruid__c.lod2.glb",
+          "triangles": 97
+        }
+      ]
     },
     {
       "key": "flower_stinkkruid__d",
@@ -1797,7 +2697,17 @@
       "bytes": 73492,
       "credit": "Stinkkruid by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_stinkkruid"
+      "source": "https://polyhaven.com/a/flower_stinkkruid",
+      "lods": [
+        {
+          "file": "flower_stinkkruid__d.lod1.glb",
+          "triangles": 331
+        },
+        {
+          "file": "flower_stinkkruid__d.lod2.glb",
+          "triangles": 113
+        }
+      ]
     },
     {
       "key": "flower_ursinia__a",
@@ -1816,7 +2726,17 @@
       "bytes": 265232,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_ursinia"
+      "source": "https://polyhaven.com/a/flower_ursinia",
+      "lods": [
+        {
+          "file": "flower_ursinia__a.lod1.glb",
+          "triangles": 3559
+        },
+        {
+          "file": "flower_ursinia__a.lod2.glb",
+          "triangles": 1197
+        }
+      ]
     },
     {
       "key": "flower_ursinia__b",
@@ -1835,7 +2755,17 @@
       "bytes": 162008,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_ursinia"
+      "source": "https://polyhaven.com/a/flower_ursinia",
+      "lods": [
+        {
+          "file": "flower_ursinia__b.lod1.glb",
+          "triangles": 1938
+        },
+        {
+          "file": "flower_ursinia__b.lod2.glb",
+          "triangles": 664
+        }
+      ]
     },
     {
       "key": "flower_ursinia__c",
@@ -1854,7 +2784,17 @@
       "bytes": 131284,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_ursinia"
+      "source": "https://polyhaven.com/a/flower_ursinia",
+      "lods": [
+        {
+          "file": "flower_ursinia__c.lod1.glb",
+          "triangles": 1430
+        },
+        {
+          "file": "flower_ursinia__c.lod2.glb",
+          "triangles": 478
+        }
+      ]
     },
     {
       "key": "flower_ursinia__d",
@@ -1873,7 +2813,17 @@
       "bytes": 85408,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_ursinia"
+      "source": "https://polyhaven.com/a/flower_ursinia",
+      "lods": [
+        {
+          "file": "flower_ursinia__d.lod1.glb",
+          "triangles": 761
+        },
+        {
+          "file": "flower_ursinia__d.lod2.glb",
+          "triangles": 254
+        }
+      ]
     },
     {
       "key": "flower_ursinia__e",
@@ -1892,7 +2842,17 @@
       "bytes": 78224,
       "credit": "Ursinia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/flower_ursinia"
+      "source": "https://polyhaven.com/a/flower_ursinia",
+      "lods": [
+        {
+          "file": "flower_ursinia__e.lod1.glb",
+          "triangles": 651
+        },
+        {
+          "file": "flower_ursinia__e.lod2.glb",
+          "triangles": 219
+        }
+      ]
     },
     {
       "key": "grass_bermuda_01__dead_a",
@@ -1911,7 +2871,8 @@
       "bytes": 38612,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__dead_b",
@@ -1930,7 +2891,8 @@
       "bytes": 38616,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__flattened_a",
@@ -1949,7 +2911,8 @@
       "bytes": 38792,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_a",
@@ -1968,7 +2931,8 @@
       "bytes": 38732,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_b",
@@ -1987,7 +2951,8 @@
       "bytes": 38532,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_c",
@@ -2006,7 +2971,8 @@
       "bytes": 38852,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_d",
@@ -2025,7 +2991,8 @@
       "bytes": 38648,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_e",
@@ -2044,7 +3011,8 @@
       "bytes": 38932,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__medium_f",
@@ -2063,7 +3031,8 @@
       "bytes": 39048,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__seedling_a",
@@ -2082,7 +3051,17 @@
       "bytes": 41720,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": [
+        {
+          "file": "grass_bermuda_01__seedling_a.lod1.glb",
+          "triangles": 50
+        },
+        {
+          "file": "grass_bermuda_01__seedling_a.lod2.glb",
+          "triangles": 17
+        }
+      ]
     },
     {
       "key": "grass_bermuda_01__seedling_b",
@@ -2101,7 +3080,17 @@
       "bytes": 41516,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": [
+        {
+          "file": "grass_bermuda_01__seedling_b.lod1.glb",
+          "triangles": 49
+        },
+        {
+          "file": "grass_bermuda_01__seedling_b.lod2.glb",
+          "triangles": 16
+        }
+      ]
     },
     {
       "key": "grass_bermuda_01__seedling_c",
@@ -2120,7 +3109,17 @@
       "bytes": 41268,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": [
+        {
+          "file": "grass_bermuda_01__seedling_c.lod1.glb",
+          "triangles": 44
+        },
+        {
+          "file": "grass_bermuda_01__seedling_c.lod2.glb",
+          "triangles": 15
+        }
+      ]
     },
     {
       "key": "grass_bermuda_01__seedling_d",
@@ -2139,7 +3138,17 @@
       "bytes": 44444,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": [
+        {
+          "file": "grass_bermuda_01__seedling_d.lod1.glb",
+          "triangles": 93
+        },
+        {
+          "file": "grass_bermuda_01__seedling_d.lod2.glb",
+          "triangles": 32
+        }
+      ]
     },
     {
       "key": "grass_bermuda_01__single_a",
@@ -2158,7 +3167,8 @@
       "bytes": 38732,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__single_b",
@@ -2177,7 +3187,8 @@
       "bytes": 38732,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_a",
@@ -2196,7 +3207,8 @@
       "bytes": 38620,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_b",
@@ -2215,7 +3227,8 @@
       "bytes": 38620,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_c",
@@ -2234,7 +3247,8 @@
       "bytes": 38824,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_d",
@@ -2253,7 +3267,8 @@
       "bytes": 38588,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_e",
@@ -2272,7 +3287,8 @@
       "bytes": 38588,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_bermuda_01__small_f",
@@ -2291,7 +3307,8 @@
       "bytes": 38584,
       "credit": "Bermuda grass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_bermuda_01"
+      "source": "https://polyhaven.com/a/grass_bermuda_01",
+      "lods": []
     },
     {
       "key": "grass_medium_01__large_a",
@@ -2310,7 +3327,17 @@
       "bytes": 233892,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__large_a.lod1.glb",
+          "triangles": 2247
+        },
+        {
+          "file": "grass_medium_01__large_a.lod2.glb",
+          "triangles": 770
+        }
+      ]
     },
     {
       "key": "grass_medium_01__large_b",
@@ -2329,7 +3356,17 @@
       "bytes": 177196,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__large_b.lod1.glb",
+          "triangles": 1586
+        },
+        {
+          "file": "grass_medium_01__large_b.lod2.glb",
+          "triangles": 543
+        }
+      ]
     },
     {
       "key": "grass_medium_01__large_c",
@@ -2348,7 +3385,17 @@
       "bytes": 217164,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__large_c.lod1.glb",
+          "triangles": 2056
+        },
+        {
+          "file": "grass_medium_01__large_c.lod2.glb",
+          "triangles": 705
+        }
+      ]
     },
     {
       "key": "grass_medium_01__mid_a",
@@ -2367,7 +3414,17 @@
       "bytes": 119996,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__mid_a.lod1.glb",
+          "triangles": 914
+        },
+        {
+          "file": "grass_medium_01__mid_a.lod2.glb",
+          "triangles": 273
+        }
+      ]
     },
     {
       "key": "grass_medium_01__mid_b",
@@ -2386,7 +3443,17 @@
       "bytes": 89708,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__mid_b.lod1.glb",
+          "triangles": 439
+        },
+        {
+          "file": "grass_medium_01__mid_b.lod2.glb",
+          "triangles": 150
+        }
+      ]
     },
     {
       "key": "grass_medium_01__mid_c",
@@ -2405,7 +3472,17 @@
       "bytes": 94608,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__mid_c.lod1.glb",
+          "triangles": 507
+        },
+        {
+          "file": "grass_medium_01__mid_c.lod2.glb",
+          "triangles": 174
+        }
+      ]
     },
     {
       "key": "grass_medium_01__small_a",
@@ -2424,7 +3501,17 @@
       "bytes": 77136,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__small_a.lod1.glb",
+          "triangles": 289
+        },
+        {
+          "file": "grass_medium_01__small_a.lod2.glb",
+          "triangles": 107
+        }
+      ]
     },
     {
       "key": "grass_medium_01__small_b",
@@ -2443,7 +3530,17 @@
       "bytes": 72300,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__small_b.lod1.glb",
+          "triangles": 226
+        },
+        {
+          "file": "grass_medium_01__small_b.lod2.glb",
+          "triangles": 85
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tall_a",
@@ -2462,7 +3559,17 @@
       "bytes": 62736,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tall_a.lod1.glb",
+          "triangles": 100
+        },
+        {
+          "file": "grass_medium_01__tall_a.lod2.glb",
+          "triangles": 34
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tall_b",
@@ -2481,7 +3588,17 @@
       "bytes": 63404,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tall_b.lod1.glb",
+          "triangles": 110
+        },
+        {
+          "file": "grass_medium_01__tall_b.lod2.glb",
+          "triangles": 37
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tall_c",
@@ -2500,7 +3617,17 @@
       "bytes": 64328,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tall_c.lod1.glb",
+          "triangles": 117
+        },
+        {
+          "file": "grass_medium_01__tall_c.lod2.glb",
+          "triangles": 40
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tiny_a",
@@ -2519,7 +3646,13 @@
       "bytes": 56680,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tiny_a.lod1.glb",
+          "triangles": 27
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tiny_b",
@@ -2538,7 +3671,8 @@
       "bytes": 55232,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": []
     },
     {
       "key": "grass_medium_01__tiny_c",
@@ -2557,7 +3691,13 @@
       "bytes": 55580,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tiny_c.lod1.glb",
+          "triangles": 16
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tiny_d",
@@ -2576,7 +3716,8 @@
       "bytes": 55376,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": []
     },
     {
       "key": "grass_medium_01__tiny_e",
@@ -2595,7 +3736,13 @@
       "bytes": 56152,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tiny_e.lod1.glb",
+          "triangles": 21
+        }
+      ]
     },
     {
       "key": "grass_medium_01__tiny_f",
@@ -2614,7 +3761,13 @@
       "bytes": 56024,
       "credit": "Grass clumps by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_01"
+      "source": "https://polyhaven.com/a/grass_medium_01",
+      "lods": [
+        {
+          "file": "grass_medium_01__tiny_f.lod1.glb",
+          "triangles": 21
+        }
+      ]
     },
     {
       "key": "grass_medium_02__a",
@@ -2633,7 +3786,17 @@
       "bytes": 39300,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_02"
+      "source": "https://polyhaven.com/a/grass_medium_02",
+      "lods": [
+        {
+          "file": "grass_medium_02__a.lod1.glb",
+          "triangles": 248
+        },
+        {
+          "file": "grass_medium_02__a.lod2.glb",
+          "triangles": 85
+        }
+      ]
     },
     {
       "key": "grass_medium_02__b",
@@ -2652,7 +3815,17 @@
       "bytes": 64176,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_02"
+      "source": "https://polyhaven.com/a/grass_medium_02",
+      "lods": [
+        {
+          "file": "grass_medium_02__b.lod1.glb",
+          "triangles": 615
+        },
+        {
+          "file": "grass_medium_02__b.lod2.glb",
+          "triangles": 211
+        }
+      ]
     },
     {
       "key": "grass_medium_02__c",
@@ -2671,7 +3844,17 @@
       "bytes": 50844,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_02"
+      "source": "https://polyhaven.com/a/grass_medium_02",
+      "lods": [
+        {
+          "file": "grass_medium_02__c.lod1.glb",
+          "triangles": 425
+        },
+        {
+          "file": "grass_medium_02__c.lod2.glb",
+          "triangles": 145
+        }
+      ]
     },
     {
       "key": "grass_medium_02__d",
@@ -2690,7 +3873,17 @@
       "bytes": 80992,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_02"
+      "source": "https://polyhaven.com/a/grass_medium_02",
+      "lods": [
+        {
+          "file": "grass_medium_02__d.lod1.glb",
+          "triangles": 871
+        },
+        {
+          "file": "grass_medium_02__d.lod2.glb",
+          "triangles": 298
+        }
+      ]
     },
     {
       "key": "grass_medium_02__e",
@@ -2709,7 +3902,17 @@
       "bytes": 62944,
       "credit": "Grass tufts by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/grass_medium_02"
+      "source": "https://polyhaven.com/a/grass_medium_02",
+      "lods": [
+        {
+          "file": "grass_medium_02__e.lod1.glb",
+          "triangles": 582
+        },
+        {
+          "file": "grass_medium_02__e.lod2.glb",
+          "triangles": 199
+        }
+      ]
     },
     {
       "key": "leipoldtia_schultzei__large",
@@ -2728,7 +3931,17 @@
       "bytes": 446996,
       "credit": "Leipoldtia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei",
+      "lods": [
+        {
+          "file": "leipoldtia_schultzei__large.lod1.glb",
+          "triangles": 5045
+        },
+        {
+          "file": "leipoldtia_schultzei__large.lod2.glb",
+          "triangles": 1727
+        }
+      ]
     },
     {
       "key": "leipoldtia_schultzei__medium",
@@ -2747,7 +3960,17 @@
       "bytes": 236144,
       "credit": "Leipoldtia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei",
+      "lods": [
+        {
+          "file": "leipoldtia_schultzei__medium.lod1.glb",
+          "triangles": 2612
+        },
+        {
+          "file": "leipoldtia_schultzei__medium.lod2.glb",
+          "triangles": 895
+        }
+      ]
     },
     {
       "key": "leipoldtia_schultzei__small",
@@ -2766,7 +3989,17 @@
       "bytes": 81044,
       "credit": "Leipoldtia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/leipoldtia_schultzei"
+      "source": "https://polyhaven.com/a/leipoldtia_schultzei",
+      "lods": [
+        {
+          "file": "leipoldtia_schultzei__small.lod1.glb",
+          "triangles": 736
+        },
+        {
+          "file": "leipoldtia_schultzei__small.lod2.glb",
+          "triangles": 250
+        }
+      ]
     },
     {
       "key": "moss_01__a",
@@ -2785,7 +4018,8 @@
       "bytes": 24068,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__b",
@@ -2804,7 +4038,8 @@
       "bytes": 23860,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__c",
@@ -2823,7 +4058,8 @@
       "bytes": 24064,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__d",
@@ -2842,7 +4078,8 @@
       "bytes": 23856,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__e",
@@ -2861,7 +4098,8 @@
       "bytes": 23944,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__f",
@@ -2880,7 +4118,8 @@
       "bytes": 23948,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__g",
@@ -2899,7 +4138,8 @@
       "bytes": 23856,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__h",
@@ -2918,7 +4158,8 @@
       "bytes": 23616,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__i",
@@ -2937,7 +4178,8 @@
       "bytes": 23612,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__j",
@@ -2956,7 +4198,8 @@
       "bytes": 23648,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__tall_a",
@@ -2975,7 +4218,8 @@
       "bytes": 24068,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "moss_01__tall_b",
@@ -2994,7 +4238,8 @@
       "bytes": 24068,
       "credit": "Moss by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/moss_01"
+      "source": "https://polyhaven.com/a/moss_01",
+      "lods": []
     },
     {
       "key": "ms_tree_high_poly",
@@ -3010,7 +4255,17 @@
       "bytes": 3776620,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_tree_high_poly.lod1.glb",
+          "triangles": 9684
+        },
+        {
+          "file": "ms_tree_high_poly.lod2.glb",
+          "triangles": 3307
+        }
+      ]
     },
     {
       "key": "nettle_plant__medium_a",
@@ -3029,7 +4284,17 @@
       "bytes": 144608,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__medium_a.lod1.glb",
+          "triangles": 1582
+        },
+        {
+          "file": "nettle_plant__medium_a.lod2.glb",
+          "triangles": 542
+        }
+      ]
     },
     {
       "key": "nettle_plant__medium_b",
@@ -3048,7 +4313,17 @@
       "bytes": 138988,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__medium_b.lod1.glb",
+          "triangles": 1518
+        },
+        {
+          "file": "nettle_plant__medium_b.lod2.glb",
+          "triangles": 521
+        }
+      ]
     },
     {
       "key": "nettle_plant__small_a",
@@ -3067,7 +4342,17 @@
       "bytes": 103000,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__small_a.lod1.glb",
+          "triangles": 963
+        },
+        {
+          "file": "nettle_plant__small_a.lod2.glb",
+          "triangles": 329
+        }
+      ]
     },
     {
       "key": "nettle_plant__small_b",
@@ -3086,7 +4371,17 @@
       "bytes": 60308,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__small_b.lod1.glb",
+          "triangles": 291
+        },
+        {
+          "file": "nettle_plant__small_b.lod2.glb",
+          "triangles": 99
+        }
+      ]
     },
     {
       "key": "nettle_plant__tall_a",
@@ -3105,7 +4400,17 @@
       "bytes": 160584,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__tall_a.lod1.glb",
+          "triangles": 1872
+        },
+        {
+          "file": "nettle_plant__tall_a.lod2.glb",
+          "triangles": 642
+        }
+      ]
     },
     {
       "key": "nettle_plant__tall_b",
@@ -3124,7 +4429,17 @@
       "bytes": 182312,
       "credit": "Nettles by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/nettle_plant"
+      "source": "https://polyhaven.com/a/nettle_plant",
+      "lods": [
+        {
+          "file": "nettle_plant__tall_b.lod1.glb",
+          "triangles": 2166
+        },
+        {
+          "file": "nettle_plant__tall_b.lod2.glb",
+          "triangles": 742
+        }
+      ]
     },
     {
       "key": "othonna_cerarioides",
@@ -3140,7 +4455,17 @@
       "bytes": 3893760,
       "credit": "Othonna tree by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/othonna_cerarioides"
+      "source": "https://polyhaven.com/a/othonna_cerarioides",
+      "lods": [
+        {
+          "file": "othonna_cerarioides.lod1.glb",
+          "triangles": 41770
+        },
+        {
+          "file": "othonna_cerarioides.lod2.glb",
+          "triangles": 14040
+        }
+      ]
     },
     {
       "key": "pachira_aquatica_01__a",
@@ -3159,7 +4484,17 @@
       "bytes": 644172,
       "credit": "Pachira by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+      "source": "https://polyhaven.com/a/pachira_aquatica_01",
+      "lods": [
+        {
+          "file": "pachira_aquatica_01__a.lod1.glb",
+          "triangles": 8078
+        },
+        {
+          "file": "pachira_aquatica_01__a.lod2.glb",
+          "triangles": 2756
+        }
+      ]
     },
     {
       "key": "pachira_aquatica_01__b",
@@ -3178,7 +4513,17 @@
       "bytes": 324932,
       "credit": "Pachira by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+      "source": "https://polyhaven.com/a/pachira_aquatica_01",
+      "lods": [
+        {
+          "file": "pachira_aquatica_01__b.lod1.glb",
+          "triangles": 1775
+        },
+        {
+          "file": "pachira_aquatica_01__b.lod2.glb",
+          "triangles": 599
+        }
+      ]
     },
     {
       "key": "pachira_aquatica_01__c",
@@ -3197,7 +4542,17 @@
       "bytes": 621568,
       "credit": "Pachira by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+      "source": "https://polyhaven.com/a/pachira_aquatica_01",
+      "lods": [
+        {
+          "file": "pachira_aquatica_01__c.lod1.glb",
+          "triangles": 7136
+        },
+        {
+          "file": "pachira_aquatica_01__c.lod2.glb",
+          "triangles": 2434
+        }
+      ]
     },
     {
       "key": "pachira_aquatica_01__d",
@@ -3216,7 +4571,17 @@
       "bytes": 765660,
       "credit": "Pachira by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pachira_aquatica_01"
+      "source": "https://polyhaven.com/a/pachira_aquatica_01",
+      "lods": [
+        {
+          "file": "pachira_aquatica_01__d.lod1.glb",
+          "triangles": 9761
+        },
+        {
+          "file": "pachira_aquatica_01__d.lod2.glb",
+          "triangles": 3335
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__01",
@@ -3235,7 +4600,17 @@
       "bytes": 315240,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__01.lod1.glb",
+          "triangles": 2708
+        },
+        {
+          "file": "periwinkle_plant__01.lod2.glb",
+          "triangles": 405
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__02",
@@ -3254,7 +4629,17 @@
       "bytes": 255860,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__02.lod1.glb",
+          "triangles": 2209
+        },
+        {
+          "file": "periwinkle_plant__02.lod2.glb",
+          "triangles": 732
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__03",
@@ -3273,7 +4658,17 @@
       "bytes": 178228,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__03.lod1.glb",
+          "triangles": 1302
+        },
+        {
+          "file": "periwinkle_plant__03.lod2.glb",
+          "triangles": 298
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__04",
@@ -3292,7 +4687,17 @@
       "bytes": 147532,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__04.lod1.glb",
+          "triangles": 1038
+        },
+        {
+          "file": "periwinkle_plant__04.lod2.glb",
+          "triangles": 108
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__05",
@@ -3311,7 +4716,17 @@
       "bytes": 118552,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__05.lod1.glb",
+          "triangles": 774
+        },
+        {
+          "file": "periwinkle_plant__05.lod2.glb",
+          "triangles": 54
+        }
+      ]
     },
     {
       "key": "periwinkle_plant__06",
@@ -3330,7 +4745,17 @@
       "bytes": 74828,
       "credit": "Periwinkle by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/periwinkle_plant"
+      "source": "https://polyhaven.com/a/periwinkle_plant",
+      "lods": [
+        {
+          "file": "periwinkle_plant__06.lod1.glb",
+          "triangles": 361
+        },
+        {
+          "file": "periwinkle_plant__06.lod2.glb",
+          "triangles": 123
+        }
+      ]
     },
     {
       "key": "pine_roots__a",
@@ -3349,7 +4774,17 @@
       "bytes": 278268,
       "credit": "Pine roots by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pine_roots"
+      "source": "https://polyhaven.com/a/pine_roots",
+      "lods": [
+        {
+          "file": "pine_roots__a.lod1.glb",
+          "triangles": 4196
+        },
+        {
+          "file": "pine_roots__a.lod2.glb",
+          "triangles": 1439
+        }
+      ]
     },
     {
       "key": "pine_roots__b",
@@ -3368,7 +4803,17 @@
       "bytes": 269120,
       "credit": "Pine roots by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pine_roots"
+      "source": "https://polyhaven.com/a/pine_roots",
+      "lods": [
+        {
+          "file": "pine_roots__b.lod1.glb",
+          "triangles": 4175
+        },
+        {
+          "file": "pine_roots__b.lod2.glb",
+          "triangles": 1430
+        }
+      ]
     },
     {
       "key": "pine_sapling_small",
@@ -3384,7 +4829,17 @@
       "bytes": 5807568,
       "credit": "Small pine by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/pine_sapling_small"
+      "source": "https://polyhaven.com/a/pine_sapling_small",
+      "lods": [
+        {
+          "file": "pine_sapling_small.lod1.glb",
+          "triangles": 52479
+        },
+        {
+          "file": "pine_sapling_small.lod2.glb",
+          "triangles": 17985
+        }
+      ]
     },
     {
       "key": "planter_box_01",
@@ -3400,7 +4855,17 @@
       "bytes": 219732,
       "credit": "Planter box by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/planter_box_01"
+      "source": "https://polyhaven.com/a/planter_box_01",
+      "lods": [
+        {
+          "file": "planter_box_01.lod1.glb",
+          "triangles": 2832
+        },
+        {
+          "file": "planter_box_01.lod2.glb",
+          "triangles": 968
+        }
+      ]
     },
     {
       "key": "potted_plant_01",
@@ -3416,7 +4881,17 @@
       "bytes": 3129828,
       "credit": "Potted plant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/potted_plant_01"
+      "source": "https://polyhaven.com/a/potted_plant_01",
+      "lods": [
+        {
+          "file": "potted_plant_01.lod1.glb",
+          "triangles": 52498
+        },
+        {
+          "file": "potted_plant_01.lod2.glb",
+          "triangles": 17952
+        }
+      ]
     },
     {
       "key": "potted_plant_02",
@@ -3432,7 +4907,17 @@
       "bytes": 1497908,
       "credit": "Planter plant by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/potted_plant_02"
+      "source": "https://polyhaven.com/a/potted_plant_02",
+      "lods": [
+        {
+          "file": "potted_plant_02.lod1.glb",
+          "triangles": 24428
+        },
+        {
+          "file": "potted_plant_02.lod2.glb",
+          "triangles": 8340
+        }
+      ]
     },
     {
       "key": "potted_plant_04",
@@ -3448,7 +4933,17 @@
       "bytes": 216400,
       "credit": "Potted aloe by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/potted_plant_04"
+      "source": "https://polyhaven.com/a/potted_plant_04",
+      "lods": [
+        {
+          "file": "potted_plant_04.lod1.glb",
+          "triangles": 3125
+        },
+        {
+          "file": "potted_plant_04.lod2.glb",
+          "triangles": 1067
+        }
+      ]
     },
     {
       "key": "quiver_tree_01",
@@ -3464,7 +4959,17 @@
       "bytes": 3627628,
       "credit": "Quiver tree by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/quiver_tree_01"
+      "source": "https://polyhaven.com/a/quiver_tree_01",
+      "lods": [
+        {
+          "file": "quiver_tree_01.lod1.glb",
+          "triangles": 52536
+        },
+        {
+          "file": "quiver_tree_01.lod2.glb",
+          "triangles": 18002
+        }
+      ]
     },
     {
       "key": "quiver_tree_02",
@@ -3480,7 +4985,17 @@
       "bytes": 1657552,
       "credit": "Quiver tree small by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/quiver_tree_02"
+      "source": "https://polyhaven.com/a/quiver_tree_02",
+      "lods": [
+        {
+          "file": "quiver_tree_02.lod1.glb",
+          "triangles": 28719
+        },
+        {
+          "file": "quiver_tree_02.lod2.glb",
+          "triangles": 9846
+        }
+      ]
     },
     {
       "key": "root_cluster_01",
@@ -3496,7 +5011,17 @@
       "bytes": 3582788,
       "credit": "Root cluster by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/root_cluster_01"
+      "source": "https://polyhaven.com/a/root_cluster_01",
+      "lods": [
+        {
+          "file": "root_cluster_01.lod1.glb",
+          "triangles": 52442
+        },
+        {
+          "file": "root_cluster_01.lod2.glb",
+          "triangles": 17958
+        }
+      ]
     },
     {
       "key": "root_cluster_02",
@@ -3512,7 +5037,17 @@
       "bytes": 552052,
       "credit": "Root mat by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/root_cluster_02"
+      "source": "https://polyhaven.com/a/root_cluster_02",
+      "lods": [
+        {
+          "file": "root_cluster_02.lod1.glb",
+          "triangles": 8389
+        },
+        {
+          "file": "root_cluster_02.lod2.glb",
+          "triangles": 2876
+        }
+      ]
     },
     {
       "key": "searsia_lucida",
@@ -3528,7 +5063,17 @@
       "bytes": 8039364,
       "credit": "Searsia by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/searsia_lucida"
+      "source": "https://polyhaven.com/a/searsia_lucida",
+      "lods": [
+        {
+          "file": "searsia_lucida.lod1.glb",
+          "triangles": 68436
+        },
+        {
+          "file": "searsia_lucida.lod2.glb",
+          "triangles": 23371
+        }
+      ]
     },
     {
       "key": "shrub_01__v1",
@@ -3547,7 +5092,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v1.lod1.glb",
+          "triangles": 12150
+        },
+        {
+          "file": "shrub_01__v1.lod2.glb",
+          "triangles": 4080
+        }
+      ]
     },
     {
       "key": "shrub_01__v2",
@@ -3566,7 +5121,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v2.lod1.glb",
+          "triangles": 19250
+        },
+        {
+          "file": "shrub_01__v2.lod2.glb",
+          "triangles": 6488
+        }
+      ]
     },
     {
       "key": "shrub_01__v3",
@@ -3585,7 +5150,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v3.lod1.glb",
+          "triangles": 10544
+        },
+        {
+          "file": "shrub_01__v3.lod2.glb",
+          "triangles": 3567
+        }
+      ]
     },
     {
       "key": "shrub_01__v4",
@@ -3604,7 +5179,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v4.lod1.glb",
+          "triangles": 895
+        },
+        {
+          "file": "shrub_01__v4.lod2.glb",
+          "triangles": 307
+        }
+      ]
     },
     {
       "key": "shrub_01__v5",
@@ -3623,7 +5208,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v5.lod1.glb",
+          "triangles": 1308
+        },
+        {
+          "file": "shrub_01__v5.lod2.glb",
+          "triangles": 447
+        }
+      ]
     },
     {
       "key": "shrub_01__v6",
@@ -3642,7 +5237,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v6.lod1.glb",
+          "triangles": 1383
+        },
+        {
+          "file": "shrub_01__v6.lod2.glb",
+          "triangles": 474
+        }
+      ]
     },
     {
       "key": "shrub_01__v7",
@@ -3661,7 +5266,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v7.lod1.glb",
+          "triangles": 1823
+        },
+        {
+          "file": "shrub_01__v7.lod2.glb",
+          "triangles": 624
+        }
+      ]
     },
     {
       "key": "shrub_01__v8",
@@ -3680,7 +5295,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v8.lod1.glb",
+          "triangles": 2087
+        },
+        {
+          "file": "shrub_01__v8.lod2.glb",
+          "triangles": 713
+        }
+      ]
     },
     {
       "key": "shrub_01__v9",
@@ -3699,7 +5324,17 @@
       "credit": "Flowering shrub by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_01",
-      "familyLabel": "Flowering shrub"
+      "familyLabel": "Flowering shrub",
+      "lods": [
+        {
+          "file": "shrub_01__v9.lod1.glb",
+          "triangles": 3030
+        },
+        {
+          "file": "shrub_01__v9.lod2.glb",
+          "triangles": 1039
+        }
+      ]
     },
     {
       "key": "shrub_02",
@@ -3715,7 +5350,17 @@
       "bytes": 630504,
       "credit": "Hedge mass by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_02"
+      "source": "https://polyhaven.com/a/shrub_02",
+      "lods": [
+        {
+          "file": "shrub_02.lod1.glb",
+          "triangles": 9530
+        },
+        {
+          "file": "shrub_02.lod2.glb",
+          "triangles": 3093
+        }
+      ]
     },
     {
       "key": "shrub_03__a",
@@ -3734,7 +5379,17 @@
       "bytes": 89008,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_03"
+      "source": "https://polyhaven.com/a/shrub_03",
+      "lods": [
+        {
+          "file": "shrub_03__a.lod1.glb",
+          "triangles": 833
+        },
+        {
+          "file": "shrub_03__a.lod2.glb",
+          "triangles": 284
+        }
+      ]
     },
     {
       "key": "shrub_03__b",
@@ -3753,7 +5408,17 @@
       "bytes": 84140,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_03"
+      "source": "https://polyhaven.com/a/shrub_03",
+      "lods": [
+        {
+          "file": "shrub_03__b.lod1.glb",
+          "triangles": 746
+        },
+        {
+          "file": "shrub_03__b.lod2.glb",
+          "triangles": 254
+        }
+      ]
     },
     {
       "key": "shrub_03__c",
@@ -3772,7 +5437,17 @@
       "bytes": 77092,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_03"
+      "source": "https://polyhaven.com/a/shrub_03",
+      "lods": [
+        {
+          "file": "shrub_03__c.lod1.glb",
+          "triangles": 625
+        },
+        {
+          "file": "shrub_03__c.lod2.glb",
+          "triangles": 210
+        }
+      ]
     },
     {
       "key": "shrub_03__d",
@@ -3791,7 +5466,17 @@
       "bytes": 80540,
       "credit": "Meadow shrub by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_03"
+      "source": "https://polyhaven.com/a/shrub_03",
+      "lods": [
+        {
+          "file": "shrub_03__d.lod1.glb",
+          "triangles": 691
+        },
+        {
+          "file": "shrub_03__d.lod2.glb",
+          "triangles": 237
+        }
+      ]
     },
     {
       "key": "shrub_04__v1",
@@ -3810,7 +5495,17 @@
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_04",
-      "familyLabel": "Undergrowth"
+      "familyLabel": "Undergrowth",
+      "lods": [
+        {
+          "file": "shrub_04__v1.lod1.glb",
+          "triangles": 1128
+        },
+        {
+          "file": "shrub_04__v1.lod2.glb",
+          "triangles": 383
+        }
+      ]
     },
     {
       "key": "shrub_04__v2",
@@ -3829,7 +5524,17 @@
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_04",
-      "familyLabel": "Undergrowth"
+      "familyLabel": "Undergrowth",
+      "lods": [
+        {
+          "file": "shrub_04__v2.lod1.glb",
+          "triangles": 1983
+        },
+        {
+          "file": "shrub_04__v2.lod2.glb",
+          "triangles": 680
+        }
+      ]
     },
     {
       "key": "shrub_04__v3",
@@ -3848,7 +5553,17 @@
       "credit": "Undergrowth by Poly Haven",
       "licence": "CC0 1.0",
       "source": "https://polyhaven.com/a/shrub_04",
-      "familyLabel": "Undergrowth"
+      "familyLabel": "Undergrowth",
+      "lods": [
+        {
+          "file": "shrub_04__v3.lod1.glb",
+          "triangles": 5181
+        },
+        {
+          "file": "shrub_04__v3.lod2.glb",
+          "triangles": 1766
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__a",
@@ -3867,7 +5582,17 @@
       "bytes": 36872,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__a.lod1.glb",
+          "triangles": 123
+        },
+        {
+          "file": "shrub_sorrel_01__a.lod2.glb",
+          "triangles": 42
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__b",
@@ -3886,7 +5611,17 @@
       "bytes": 38132,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__b.lod1.glb",
+          "triangles": 144
+        },
+        {
+          "file": "shrub_sorrel_01__b.lod2.glb",
+          "triangles": 49
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__c",
@@ -3905,7 +5640,17 @@
       "bytes": 35132,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__c.lod1.glb",
+          "triangles": 99
+        },
+        {
+          "file": "shrub_sorrel_01__c.lod2.glb",
+          "triangles": 34
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__d",
@@ -3924,7 +5669,17 @@
       "bytes": 51608,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__d.lod1.glb",
+          "triangles": 393
+        },
+        {
+          "file": "shrub_sorrel_01__d.lod2.glb",
+          "triangles": 117
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__e",
@@ -3943,7 +5698,17 @@
       "bytes": 40288,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__e.lod1.glb",
+          "triangles": 195
+        },
+        {
+          "file": "shrub_sorrel_01__e.lod2.glb",
+          "triangles": 60
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__f",
@@ -3962,7 +5727,17 @@
       "bytes": 36760,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__f.lod1.glb",
+          "triangles": 124
+        },
+        {
+          "file": "shrub_sorrel_01__f.lod2.glb",
+          "triangles": 42
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__g",
@@ -3981,7 +5756,13 @@
       "bytes": 30248,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__g.lod1.glb",
+          "triangles": 24
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__h",
@@ -4000,7 +5781,13 @@
       "bytes": 30248,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__h.lod1.glb",
+          "triangles": 24
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__i",
@@ -4019,7 +5806,13 @@
       "bytes": 30080,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__i.lod1.glb",
+          "triangles": 22
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__j",
@@ -4038,7 +5831,13 @@
       "bytes": 30164,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__j.lod1.glb",
+          "triangles": 23
+        }
+      ]
     },
     {
       "key": "shrub_sorrel_01__k",
@@ -4057,7 +5856,17 @@
       "bytes": 32152,
       "credit": "Sorrel by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/shrub_sorrel_01"
+      "source": "https://polyhaven.com/a/shrub_sorrel_01",
+      "lods": [
+        {
+          "file": "shrub_sorrel_01__k.lod1.glb",
+          "triangles": 51
+        },
+        {
+          "file": "shrub_sorrel_01__k.lod2.glb",
+          "triangles": 17
+        }
+      ]
     },
     {
       "key": "single_root",
@@ -4073,7 +5882,17 @@
       "bytes": 492368,
       "credit": "Single root by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/single_root"
+      "source": "https://polyhaven.com/a/single_root",
+      "lods": [
+        {
+          "file": "single_root.lod1.glb",
+          "triangles": 8386
+        },
+        {
+          "file": "single_root.lod2.glb",
+          "triangles": 2874
+        }
+      ]
     },
     {
       "key": "tree_small_02",
@@ -4089,7 +5908,17 @@
       "bytes": 7623080,
       "credit": "Broadleaf tree by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/tree_small_02"
+      "source": "https://polyhaven.com/a/tree_small_02",
+      "lods": [
+        {
+          "file": "tree_small_02.lod1.glb",
+          "triangles": 70084
+        },
+        {
+          "file": "tree_small_02.lod2.glb",
+          "triangles": 24148
+        }
+      ]
     },
     {
       "key": "tree_stump_01",
@@ -4105,7 +5934,17 @@
       "bytes": 922704,
       "credit": "Tree stump by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/tree_stump_01"
+      "source": "https://polyhaven.com/a/tree_stump_01",
+      "lods": [
+        {
+          "file": "tree_stump_01.lod1.glb",
+          "triangles": 14363
+        },
+        {
+          "file": "tree_stump_01.lod2.glb",
+          "triangles": 4923
+        }
+      ]
     },
     {
       "key": "tree_stump_02",
@@ -4121,7 +5960,17 @@
       "bytes": 1241476,
       "credit": "Old stump by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/tree_stump_02"
+      "source": "https://polyhaven.com/a/tree_stump_02",
+      "lods": [
+        {
+          "file": "tree_stump_02.lod1.glb",
+          "triangles": 21817
+        },
+        {
+          "file": "tree_stump_02.lod2.glb",
+          "triangles": 7480
+        }
+      ]
     },
     {
       "key": "weed_plant_02__a",
@@ -4140,7 +5989,17 @@
       "bytes": 97884,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/weed_plant_02"
+      "source": "https://polyhaven.com/a/weed_plant_02",
+      "lods": [
+        {
+          "file": "weed_plant_02__a.lod1.glb",
+          "triangles": 1038
+        },
+        {
+          "file": "weed_plant_02__a.lod2.glb",
+          "triangles": 356
+        }
+      ]
     },
     {
       "key": "weed_plant_02__b",
@@ -4159,7 +6018,17 @@
       "bytes": 85660,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/weed_plant_02"
+      "source": "https://polyhaven.com/a/weed_plant_02",
+      "lods": [
+        {
+          "file": "weed_plant_02__b.lod1.glb",
+          "triangles": 795
+        },
+        {
+          "file": "weed_plant_02__b.lod2.glb",
+          "triangles": 271
+        }
+      ]
     },
     {
       "key": "weed_plant_02__c",
@@ -4178,7 +6047,17 @@
       "bytes": 78380,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/weed_plant_02"
+      "source": "https://polyhaven.com/a/weed_plant_02",
+      "lods": [
+        {
+          "file": "weed_plant_02__c.lod1.glb",
+          "triangles": 617
+        },
+        {
+          "file": "weed_plant_02__c.lod2.glb",
+          "triangles": 211
+        }
+      ]
     },
     {
       "key": "weed_plant_02__d",
@@ -4197,7 +6076,17 @@
       "bytes": 79024,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/weed_plant_02"
+      "source": "https://polyhaven.com/a/weed_plant_02",
+      "lods": [
+        {
+          "file": "weed_plant_02__d.lod1.glb",
+          "triangles": 674
+        },
+        {
+          "file": "weed_plant_02__d.lod2.glb",
+          "triangles": 231
+        }
+      ]
     },
     {
       "key": "weed_plant_02__e",
@@ -4216,7 +6105,17 @@
       "bytes": 84272,
       "credit": "Weeds by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/weed_plant_02"
+      "source": "https://polyhaven.com/a/weed_plant_02",
+      "lods": [
+        {
+          "file": "weed_plant_02__e.lod1.glb",
+          "triangles": 763
+        },
+        {
+          "file": "weed_plant_02__e.lod2.glb",
+          "triangles": 261
+        }
+      ]
     },
     {
       "key": "wild_rooibos_bush__a",
@@ -4235,7 +6134,17 @@
       "bytes": 477956,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+      "source": "https://polyhaven.com/a/wild_rooibos_bush",
+      "lods": [
+        {
+          "file": "wild_rooibos_bush__a.lod1.glb",
+          "triangles": 4888
+        },
+        {
+          "file": "wild_rooibos_bush__a.lod2.glb",
+          "triangles": 1546
+        }
+      ]
     },
     {
       "key": "wild_rooibos_bush__b",
@@ -4254,7 +6163,17 @@
       "bytes": 260632,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+      "source": "https://polyhaven.com/a/wild_rooibos_bush",
+      "lods": [
+        {
+          "file": "wild_rooibos_bush__b.lod1.glb",
+          "triangles": 2407
+        },
+        {
+          "file": "wild_rooibos_bush__b.lod2.glb",
+          "triangles": 754
+        }
+      ]
     },
     {
       "key": "wild_rooibos_bush__c",
@@ -4273,7 +6192,17 @@
       "bytes": 202672,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+      "source": "https://polyhaven.com/a/wild_rooibos_bush",
+      "lods": [
+        {
+          "file": "wild_rooibos_bush__c.lod1.glb",
+          "triangles": 1453
+        },
+        {
+          "file": "wild_rooibos_bush__c.lod2.glb",
+          "triangles": 504
+        }
+      ]
     },
     {
       "key": "wild_rooibos_bush__d",
@@ -4292,7 +6221,17 @@
       "bytes": 156308,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+      "source": "https://polyhaven.com/a/wild_rooibos_bush",
+      "lods": [
+        {
+          "file": "wild_rooibos_bush__d.lod1.glb",
+          "triangles": 933
+        },
+        {
+          "file": "wild_rooibos_bush__d.lod2.glb",
+          "triangles": 320
+        }
+      ]
     },
     {
       "key": "wild_rooibos_bush__e",
@@ -4311,7 +6250,17 @@
       "bytes": 109956,
       "credit": "Rooibos bush by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/wild_rooibos_bush"
+      "source": "https://polyhaven.com/a/wild_rooibos_bush",
+      "lods": [
+        {
+          "file": "wild_rooibos_bush__e.lod1.glb",
+          "triangles": 411
+        },
+        {
+          "file": "wild_rooibos_bush__e.lod2.glb",
+          "triangles": 143
+        }
+      ]
     },
     {
       "key": "boulder_01",
@@ -4327,7 +6276,17 @@
       "bytes": 1626704,
       "credit": "Small boulder by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/boulder_01"
+      "source": "https://polyhaven.com/a/boulder_01",
+      "lods": [
+        {
+          "file": "boulder_01.lod1.glb",
+          "triangles": 18064
+        },
+        {
+          "file": "boulder_01.lod2.glb",
+          "triangles": 6192
+        }
+      ]
     },
     {
       "key": "coast_rocks_01",
@@ -4343,7 +6302,17 @@
       "bytes": 3884588,
       "credit": "Coast formation by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/coast_rocks_01"
+      "source": "https://polyhaven.com/a/coast_rocks_01",
+      "lods": [
+        {
+          "file": "coast_rocks_01.lod1.glb",
+          "triangles": 31459
+        },
+        {
+          "file": "coast_rocks_01.lod2.glb",
+          "triangles": 10792
+        }
+      ]
     },
     {
       "key": "coast_rocks_03",
@@ -4359,7 +6328,17 @@
       "bytes": 4101352,
       "credit": "Coast formation 3 by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/coast_rocks_03"
+      "source": "https://polyhaven.com/a/coast_rocks_03",
+      "lods": [
+        {
+          "file": "coast_rocks_03.lod1.glb",
+          "triangles": 31480
+        },
+        {
+          "file": "coast_rocks_03.lod2.glb",
+          "triangles": 10793
+        }
+      ]
     },
     {
       "key": "coast_rocks_05",
@@ -4375,7 +6354,17 @@
       "bytes": 795640,
       "credit": "Reef rock by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/coast_rocks_05"
+      "source": "https://polyhaven.com/a/coast_rocks_05",
+      "lods": [
+        {
+          "file": "coast_rocks_05.lod1.glb",
+          "triangles": 10487
+        },
+        {
+          "file": "coast_rocks_05.lod2.glb",
+          "triangles": 3596
+        }
+      ]
     },
     {
       "key": "ms_beach_boulder",
@@ -4391,7 +6380,17 @@
       "bytes": 535408,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_beach_boulder.lod1.glb",
+          "triangles": 2898
+        },
+        {
+          "file": "ms_beach_boulder.lod2.glb",
+          "triangles": 994
+        }
+      ]
     },
     {
       "key": "ms_desert_rock_cluster",
@@ -4407,7 +6406,17 @@
       "bytes": 769728,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_desert_rock_cluster.lod1.glb",
+          "triangles": 5863
+        },
+        {
+          "file": "ms_desert_rock_cluster.lod2.glb",
+          "triangles": 2011
+        }
+      ]
     },
     {
       "key": "ms_forest_cluster",
@@ -4423,7 +6432,17 @@
       "bytes": 788464,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_forest_cluster.lod1.glb",
+          "triangles": 4907
+        },
+        {
+          "file": "ms_forest_cluster.lod2.glb",
+          "triangles": 1679
+        }
+      ]
     },
     {
       "key": "ms_forest_rocks_small",
@@ -4439,7 +6458,17 @@
       "bytes": 936364,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_forest_rocks_small.lod1.glb",
+          "triangles": 6406
+        },
+        {
+          "file": "ms_forest_rocks_small.lod2.glb",
+          "triangles": 2196
+        }
+      ]
     },
     {
       "key": "ms_forest_terrain",
@@ -4455,7 +6484,17 @@
       "bytes": 1114216,
       "credit": "Quixel Megascans (Epic Games), via Fab",
       "licence": "Fab Standard License",
-      "source": "https://www.fab.com/sellers/Quixel"
+      "source": "https://www.fab.com/sellers/Quixel",
+      "lods": [
+        {
+          "file": "ms_forest_terrain.lod1.glb",
+          "triangles": 9665
+        },
+        {
+          "file": "ms_forest_terrain.lod2.glb",
+          "triangles": 3310
+        }
+      ]
     },
     {
       "key": "namaqualand_boulder_02",
@@ -4471,7 +6510,17 @@
       "bytes": 734072,
       "credit": "Boulder by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulder_02"
+      "source": "https://polyhaven.com/a/namaqualand_boulder_02",
+      "lods": [
+        {
+          "file": "namaqualand_boulder_02.lod1.glb",
+          "triangles": 10495
+        },
+        {
+          "file": "namaqualand_boulder_02.lod2.glb",
+          "triangles": 3598
+        }
+      ]
     },
     {
       "key": "namaqualand_boulder_03",
@@ -4487,7 +6536,17 @@
       "bytes": 640372,
       "credit": "Boulder large by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulder_03"
+      "source": "https://polyhaven.com/a/namaqualand_boulder_03",
+      "lods": [
+        {
+          "file": "namaqualand_boulder_03.lod1.glb",
+          "triangles": 10498
+        },
+        {
+          "file": "namaqualand_boulder_03.lod2.glb",
+          "triangles": 3598
+        }
+      ]
     },
     {
       "key": "namaqualand_boulder_04",
@@ -4503,7 +6562,17 @@
       "bytes": 649200,
       "credit": "Boulder round by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulder_04"
+      "source": "https://polyhaven.com/a/namaqualand_boulder_04",
+      "lods": [
+        {
+          "file": "namaqualand_boulder_04.lod1.glb",
+          "triangles": 10498
+        },
+        {
+          "file": "namaqualand_boulder_04.lod2.glb",
+          "triangles": 3600
+        }
+      ]
     },
     {
       "key": "namaqualand_boulder_05",
@@ -4519,7 +6588,17 @@
       "bytes": 748804,
       "credit": "Boulder low by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulder_05"
+      "source": "https://polyhaven.com/a/namaqualand_boulder_05",
+      "lods": [
+        {
+          "file": "namaqualand_boulder_05.lod1.glb",
+          "triangles": 10496
+        },
+        {
+          "file": "namaqualand_boulder_05.lod2.glb",
+          "triangles": 3598
+        }
+      ]
     },
     {
       "key": "namaqualand_boulder_06",
@@ -4535,7 +6614,17 @@
       "bytes": 686604,
       "credit": "Boulder tall by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulder_06"
+      "source": "https://polyhaven.com/a/namaqualand_boulder_06",
+      "lods": [
+        {
+          "file": "namaqualand_boulder_06.lod1.glb",
+          "triangles": 10498
+        },
+        {
+          "file": "namaqualand_boulder_06.lod2.glb",
+          "triangles": 3598
+        }
+      ]
     },
     {
       "key": "namaqualand_boulders_01__namaqualand_rocks_01_a",
@@ -4554,7 +6643,17 @@
       "bytes": 387792,
       "credit": "Boulders by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulders_01"
+      "source": "https://polyhaven.com/a/namaqualand_boulders_01",
+      "lods": [
+        {
+          "file": "namaqualand_boulders_01__namaqualand_rocks_01_a.lod1.glb",
+          "triangles": 4122
+        },
+        {
+          "file": "namaqualand_boulders_01__namaqualand_rocks_01_a.lod2.glb",
+          "triangles": 1414
+        }
+      ]
     },
     {
       "key": "namaqualand_boulders_01__namaqualand_rocks_01_b",
@@ -4573,7 +6672,17 @@
       "bytes": 492500,
       "credit": "Boulders by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_boulders_01"
+      "source": "https://polyhaven.com/a/namaqualand_boulders_01",
+      "lods": [
+        {
+          "file": "namaqualand_boulders_01__namaqualand_rocks_01_b.lod1.glb",
+          "triangles": 6370
+        },
+        {
+          "file": "namaqualand_boulders_01__namaqualand_rocks_01_b.lod2.glb",
+          "triangles": 2184
+        }
+      ]
     },
     {
       "key": "namaqualand_rocks_01__a",
@@ -4592,7 +6701,17 @@
       "bytes": 79544,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_rocks_01"
+      "source": "https://polyhaven.com/a/namaqualand_rocks_01",
+      "lods": [
+        {
+          "file": "namaqualand_rocks_01__a.lod1.glb",
+          "triangles": 494
+        },
+        {
+          "file": "namaqualand_rocks_01__a.lod2.glb",
+          "triangles": 168
+        }
+      ]
     },
     {
       "key": "namaqualand_rocks_01__b",
@@ -4611,7 +6730,17 @@
       "bytes": 79788,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_rocks_01"
+      "source": "https://polyhaven.com/a/namaqualand_rocks_01",
+      "lods": [
+        {
+          "file": "namaqualand_rocks_01__b.lod1.glb",
+          "triangles": 504
+        },
+        {
+          "file": "namaqualand_rocks_01__b.lod2.glb",
+          "triangles": 172
+        }
+      ]
     },
     {
       "key": "namaqualand_rocks_01__c",
@@ -4630,7 +6759,17 @@
       "bytes": 74308,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_rocks_01"
+      "source": "https://polyhaven.com/a/namaqualand_rocks_01",
+      "lods": [
+        {
+          "file": "namaqualand_rocks_01__c.lod1.glb",
+          "triangles": 392
+        },
+        {
+          "file": "namaqualand_rocks_01__c.lod2.glb",
+          "triangles": 134
+        }
+      ]
     },
     {
       "key": "namaqualand_rocks_01__d",
@@ -4649,7 +6788,17 @@
       "bytes": 88560,
       "credit": "Quartz rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_rocks_01"
+      "source": "https://polyhaven.com/a/namaqualand_rocks_01",
+      "lods": [
+        {
+          "file": "namaqualand_rocks_01__d.lod1.glb",
+          "triangles": 706
+        },
+        {
+          "file": "namaqualand_rocks_01__d.lod2.glb",
+          "triangles": 242
+        }
+      ]
     },
     {
       "key": "namaqualand_stones_01__a",
@@ -4668,7 +6817,17 @@
       "bytes": 75400,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+      "source": "https://polyhaven.com/a/namaqualand_stones_01",
+      "lods": [
+        {
+          "file": "namaqualand_stones_01__a.lod1.glb",
+          "triangles": 586
+        },
+        {
+          "file": "namaqualand_stones_01__a.lod2.glb",
+          "triangles": 200
+        }
+      ]
     },
     {
       "key": "namaqualand_stones_01__b",
@@ -4687,7 +6846,17 @@
       "bytes": 63572,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+      "source": "https://polyhaven.com/a/namaqualand_stones_01",
+      "lods": [
+        {
+          "file": "namaqualand_stones_01__b.lod1.glb",
+          "triangles": 324
+        },
+        {
+          "file": "namaqualand_stones_01__b.lod2.glb",
+          "triangles": 120
+        }
+      ]
     },
     {
       "key": "namaqualand_stones_01__c",
@@ -4706,7 +6875,17 @@
       "bytes": 83952,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+      "source": "https://polyhaven.com/a/namaqualand_stones_01",
+      "lods": [
+        {
+          "file": "namaqualand_stones_01__c.lod1.glb",
+          "triangles": 760
+        },
+        {
+          "file": "namaqualand_stones_01__c.lod2.glb",
+          "triangles": 260
+        }
+      ]
     },
     {
       "key": "namaqualand_stones_01__d",
@@ -4725,7 +6904,17 @@
       "bytes": 52236,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+      "source": "https://polyhaven.com/a/namaqualand_stones_01",
+      "lods": [
+        {
+          "file": "namaqualand_stones_01__d.lod1.glb",
+          "triangles": 94
+        },
+        {
+          "file": "namaqualand_stones_01__d.lod2.glb",
+          "triangles": 32
+        }
+      ]
     },
     {
       "key": "namaqualand_stones_01__e",
@@ -4744,7 +6933,17 @@
       "bytes": 63996,
       "credit": "Stones by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/namaqualand_stones_01"
+      "source": "https://polyhaven.com/a/namaqualand_stones_01",
+      "lods": [
+        {
+          "file": "namaqualand_stones_01__e.lod1.glb",
+          "triangles": 328
+        },
+        {
+          "file": "namaqualand_stones_01__e.lod2.glb",
+          "triangles": 116
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock01",
@@ -4763,7 +6962,17 @@
       "bytes": 192224,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock01.lod1.glb",
+          "triangles": 1828
+        },
+        {
+          "file": "rock_moss_set_01__rock01.lod2.glb",
+          "triangles": 626
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock02",
@@ -4782,7 +6991,17 @@
       "bytes": 194472,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock02.lod1.glb",
+          "triangles": 1822
+        },
+        {
+          "file": "rock_moss_set_01__rock02.lod2.glb",
+          "triangles": 626
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock03",
@@ -4801,7 +7020,17 @@
       "bytes": 146816,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock03.lod1.glb",
+          "triangles": 830
+        },
+        {
+          "file": "rock_moss_set_01__rock03.lod2.glb",
+          "triangles": 284
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock04",
@@ -4820,7 +7049,17 @@
       "bytes": 186660,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock04.lod1.glb",
+          "triangles": 1760
+        },
+        {
+          "file": "rock_moss_set_01__rock04.lod2.glb",
+          "triangles": 602
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock05",
@@ -4839,7 +7078,17 @@
       "bytes": 229604,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock05.lod1.glb",
+          "triangles": 2752
+        },
+        {
+          "file": "rock_moss_set_01__rock05.lod2.glb",
+          "triangles": 942
+        }
+      ]
     },
     {
       "key": "rock_moss_set_01__rock06",
@@ -4858,7 +7107,17 @@
       "bytes": 171844,
       "credit": "Mossy rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_01"
+      "source": "https://polyhaven.com/a/rock_moss_set_01",
+      "lods": [
+        {
+          "file": "rock_moss_set_01__rock06.lod1.glb",
+          "triangles": 1494
+        },
+        {
+          "file": "rock_moss_set_01__rock06.lod2.glb",
+          "triangles": 512
+        }
+      ]
     },
     {
       "key": "rock_moss_set_02",
@@ -4874,7 +7133,17 @@
       "bytes": 650608,
       "credit": "Mossy rocks 2 by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/rock_moss_set_02"
+      "source": "https://polyhaven.com/a/rock_moss_set_02",
+      "lods": [
+        {
+          "file": "rock_moss_set_02.lod1.glb",
+          "triangles": 10496
+        },
+        {
+          "file": "rock_moss_set_02.lod2.glb",
+          "triangles": 3598
+        }
+      ]
     },
     {
       "key": "sand_rocks_small_01",
@@ -4890,7 +7159,17 @@
       "bytes": 175848,
       "credit": "Sand rocks by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/sand_rocks_small_01"
+      "source": "https://polyhaven.com/a/sand_rocks_small_01",
+      "lods": [
+        {
+          "file": "sand_rocks_small_01.lod1.glb",
+          "triangles": 2098
+        },
+        {
+          "file": "sand_rocks_small_01.lod2.glb",
+          "triangles": 768
+        }
+      ]
     },
     {
       "key": "stone_01",
@@ -4906,7 +7185,17 @@
       "bytes": 153852,
       "credit": "Stone by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/stone_01"
+      "source": "https://polyhaven.com/a/stone_01",
+      "lods": [
+        {
+          "file": "stone_01.lod1.glb",
+          "triangles": 2098
+        },
+        {
+          "file": "stone_01.lod2.glb",
+          "triangles": 718
+        }
+      ]
     },
     {
       "key": "water_manhole_cover",
@@ -4922,7 +7211,17 @@
       "bytes": 180260,
       "credit": "Manhole cover by Poly Haven",
       "licence": "CC0 1.0",
-      "source": "https://polyhaven.com/a/water_manhole_cover"
+      "source": "https://polyhaven.com/a/water_manhole_cover",
+      "lods": [
+        {
+          "file": "water_manhole_cover.lod1.glb",
+          "triangles": 2098
+        },
+        {
+          "file": "water_manhole_cover.lod2.glb",
+          "triangles": 682
+        }
+      ]
     }
   ]
 }
