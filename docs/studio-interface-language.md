@@ -174,9 +174,24 @@ A shelf drawer is:
     one row of actions
     one readout line
 
-in that order. The grid is the only part that scrolls, so the dials and
-the readout stay in view while browsing. `Scatter` and `Lights` are the
-worked examples.
+in that order. `Scatter` and `Lights` are the worked examples.
+
+A drawer is bounded to the viewport. Its head, with the close button,
+never leaves the screen, whatever the drawer holds: the head stays
+pinned at the top of the drawer on an opaque ground. The tile grid
+scrolls inside the drawer, and when the grids and the dials together
+are taller than the viewport, the drawer's body scrolls under its head
+as well. Nothing a drawer shows can push its own close button out of
+reach. (The Skies drawer in Sky mode, with the weather grid open, did
+exactly that: the close button sat 203 px above the top of a 720 px
+screen, and the only way out was to press the tile again.)
+
+Controls that do nothing in the current mode are hidden rather than
+shown dead. The Skies drawer shows the weather picker only in Sky mode,
+and Projection, Scale and Height only in HDRI mode, with Scale and
+Height only for the grounded dome. Brightness and Rotation act in every
+mode and always show. The HDRI tiles stay in every mode, because
+choosing one switches to HDRI.
 
 The readout line is a full sentence in the second ink, and it says the
 state, not an instruction, once there is state to report: "18 placed,

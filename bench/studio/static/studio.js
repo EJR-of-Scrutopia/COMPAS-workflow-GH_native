@@ -790,11 +790,25 @@ function setEnvironmentTexture(texture, target) {
   scene.environment = texture;
 }
 
+function paintSkyDials() {
+  // A dial that does nothing in the current mode is hidden, not shown
+  // dead (Param's ruling, 2026-09-11). Projection tunes an HDRI
+  // photograph and nothing else, and Scale and Height tune only its
+  // grounded dome. Brightness and Rotation act in every mode, so they
+  // stay. Called wherever the mode, the projection or the drawer changes.
+  const hdri = state.environmentMode === "hdri";
+  const dome = hdri && state.hdriProjection === "projected";
+  document.getElementById("hdri-projection-row").classList.toggle("hidden", !hdri);
+  document.getElementById("hdri-scale-row").classList.toggle("hidden", !dome);
+  document.getElementById("hdri-height-row").classList.toggle("hidden", !dome);
+}
+
 function applyEnvironment() {
   // The cheap pass: lights, backdrop ownership, fog, row visibility.
   // PMREM lives in regenerateEnvironment only (E6).
   applySunFromSliders();
   document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
+  paintSkyDials();
   // The picker too, not only its grid: outside Sky mode the weather picker
   // did nothing but could still be opened, and the next pass through here
   // slammed the grid shut on whoever had just opened it. A mode-dependent
@@ -922,8 +936,7 @@ function applyHdriBackdrop() {
   // alike; the rotation slider's "input" handler moves the live dome/
   // background directly instead of paying for a rebuild every drag tick.
   disposeHdriDome();
-  document.getElementById("hdri-scale-row").classList.toggle("hidden", state.hdriProjection !== "projected");
-  document.getElementById("hdri-height-row").classList.toggle("hidden", state.hdriProjection !== "projected");
+  paintSkyDials();
   const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
   // Equirects are authored Y-up; the scene is Z-up, so the environment
   // sampler rotates a quarter turn about X, same as the old flat backdrop.
@@ -6065,6 +6078,7 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "skies");
   document.getElementById("shelf-sky-modes").classList
     .toggle("hidden", shelfKind !== "skies");
+  paintSkyDials();
   document.getElementById("shelf-assign-skin").classList
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("shelf-assign-ground").classList

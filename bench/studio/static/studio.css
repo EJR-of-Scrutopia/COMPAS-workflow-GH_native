@@ -237,6 +237,13 @@ body { overflow: hidden;
    panel styles by element has to be beaten inside the panel by name. */
 .hidden { display: none; }
 #panel .hidden { display: none !important; }
+/* The drawer's twin of the line above, for the same reason. The shelf is
+   outside #panel, and there `.dial-block label { display: contents }`
+   and `.picker { display: grid }` both outrank a bare .hidden: the HDRI
+   Scale and Height rows stayed on screen under the Infinite projection,
+   and the weather chip stayed in HDRI and Studio modes, each tagged
+   hidden and each still showing. */
+#shelf .hidden { display: none !important; }
 #panel .tile, #panel .segmented button,
 #panel #props-row button, #panel #props-row select,
 #panel #mode-row .mode, #panel #day-cycle-row button {
@@ -976,7 +983,15 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
 #shelf { position: fixed; left: 50%; transform: translateX(-50%);
   bottom: 14px; z-index: 25; display: flex; flex-direction: column;
   align-items: center; gap: 6px; width: min(880px, calc(100vw - 380px)); }
-#shelf-tabs { display: flex; gap: 6px; }
+/* BOUNDED TO THE VIEWPORT. The drawer is anchored to the bottom and grows
+   upward, and nothing capped it: the Skies drawer in Sky mode, weather
+   grid open, put its close button 203 px above the top of a 720 px
+   screen (Param: "i cant reach the close button for the open tile").
+   14 px clear at the top as at the bottom; the tab strip is inside
+   #shelf, so the bound already allows for it. The vh line is the
+   fallback for a browser without dvh. */
+#shelf { max-height: calc(100vh - 28px); max-height: calc(100dvh - 28px); }
+#shelf-tabs { display: flex; gap: 6px; flex: 0 0 auto; }
 #shelf-tabs button { width: auto; margin: 0; padding: 5px 16px;
   font-size: 12px; color: var(--ink-2); background: var(--scrim);
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -987,10 +1002,14 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
 #shelf-body { width: 100%; background: var(--scrim);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line);
-  border-radius: var(--radius); overflow: hidden; }
+  border-radius: var(--radius); min-height: 0; overflow-y: auto; }
 #shelf-body.hidden { display: none; }
+/* The head, with the close button, never leaves the screen: when the
+   body scrolls, the head stays pinned to its top. It needs an opaque
+   ground, or scrolled tiles show through it, and z above the tiles. */
 #shelf-head { display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 2; background: var(--panel); }
 #shelf-cats { display: flex; gap: 4px; flex: 1 1 auto; flex-wrap: wrap; }
 #shelf-cats button { width: auto; margin: 0; padding: 3px 10px;
   font-size: 11px; color: var(--ink-2); background: transparent;
@@ -1005,8 +1024,11 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
   color: var(--ink-3); background: transparent; border: none;
   font-size: 13px; }
 #shelf-close:hover { color: var(--ink); }
-#shelf-sky-settings { display: grid; grid-template-columns: 1fr 1fr;
-  gap: 2px 18px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+/* Framing only. This rule once set its own two-column grid, and an id
+   outranks .dial-block's eight: every sky dial's four cells poured into
+   two columns and landed in the wrong places (Param: "ui is messed up
+   here"). The grid is .dial-block's alone. */
+#shelf-sky-settings { padding: 8px 12px; border-bottom: 1px solid var(--line); }
 #shelf-sky-settings.hidden { display: none; }
 #shelf-body .tile-grid { display: grid;
   grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px;
@@ -1023,6 +1045,13 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
 #shelf-body .tile img, #shelf-body .tile canvas { width: 100%;
   aspect-ratio: 1; object-fit: cover; display: block; }
 #shelf-body .wide .tile img { aspect-ratio: 2; }
+/* The weather presets are skies, 2:1 like the HDRI tiles, and the five
+   of them sit on one row. The rule above for squares matched them at
+   the same specificity as the 2:1 rule and later, so it won and they
+   came out 198 px squares; these outrank it by a second id instead of
+   by luck of order. */
+#shelf-body #weather-tiles .tile canvas { aspect-ratio: 2 / 1; }
+#shelf-body #weather-tiles { grid-template-columns: repeat(5, 1fr); }
 #shelf-body .tile span { padding: 0 6px 6px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; text-align: left; }
 #shelf-body .tile:hover { border-color: var(--ink-3); color: var(--ink); }

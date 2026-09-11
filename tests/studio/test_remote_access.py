@@ -3607,6 +3607,225 @@ def test_a_dial_block_holds_nothing_but_dials():
         "shift every dial after them: " + ", ".join(offenders))
 
 
+def _css_rules(css):
+    """Every plain rule in a stylesheet, as (selector, body, offset).
+
+    Comments are blanked to spaces first, so offsets still order the
+    rules as the cascade does. An @media wrapper's own brace is skipped
+    by construction: a selector may not contain a brace, so the first
+    rule inside a media block still reads as its own selector."""
+
+    import re
+
+    clean = re.sub(r"/\*.*?\*/", lambda m: " " * len(m.group(0)), css,
+                   flags=re.S)
+    return [(m.group(1).strip(), m.group(2), m.start())
+            for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", clean)]
+
+
+def _declarations(body):
+    """A rule body as {property: value}, the later of a repeat winning."""
+
+    out = {}
+    for part in body.split(";"):
+        if ":" in part:
+            name, value = part.split(":", 1)
+            out[name.strip().lower()] = " ".join(value.split())
+    return out
+
+
+def _specificity(selector):
+    """(ids, classes and pseudo-classes, elements) for one plain
+    selector, which is all this stylesheet uses."""
+
+    import re
+
+    ids = selector.count("#")
+    classes = len(re.findall(r"\.[\w-]|\[|(?<!:):[\w-]", selector))
+    elements = len(re.findall(r"(?:^|[\s>+~])[a-zA-Z][\w-]*", selector))
+    return (ids, classes, elements)
+
+
+def test_no_id_rule_undoes_a_dial_block_grid():
+    """The Skies dials landed in the wrong cells, and every dial test
+    passed while they did: they read the markup, and the markup was
+    right. The fault was one rule, `#shelf-sky-settings { display: grid;
+    grid-template-columns: 1fr 1fr; ... }`, left over from before the
+    block joined the dial language. An id outranks `.dial-block`, so the
+    eight-column grid never applied and each dial's four cells poured
+    into two columns (Param: "ui is messed up here").
+
+    So no rule aimed at a dial block's own id may set display, or a
+    grid other than the dial grid itself. `#graphs-dials` is a deliberate
+    one-dial block, so one or two repeats of the four cells both pass.
+    The `.hidden` form of the block may still say `display: none`: an id
+    rule is what it takes to beat `.dial-block { display: grid }`."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    blocks = [name for name, _ in _dial_blocks(html)]
+    assert "shelf-sky-settings" in blocks
+    allowed = {"auto 1fr auto auto", "repeat(2, auto 1fr auto auto)"}
+    offenders = []
+    for selector, body, _ in _css_rules(css):
+        for one in selector.split(","):
+            # The block itself, not something inside it: the last
+            # compound of the selector is the one the rule lands on.
+            last = re.split(r"[\s>+~]+", one.strip())[-1]
+            for name in blocks + ["graphs-dials"]:
+                match = re.fullmatch("#" + re.escape(name)
+                                     + r"((?:[.:][\w-]+)*)", last)
+                if not match:
+                    continue
+                said = _declarations(body)
+                if "display" in said and not (
+                        match.group(1) == ".hidden"
+                        and said["display"] == "none"):
+                    offenders.append(one.strip() + " sets display: "
+                                     + said["display"])
+                columns = said.get("grid-template-columns")
+                if columns is not None and columns not in allowed:
+                    offenders.append(one.strip() + " sets columns: "
+                                     + columns)
+    assert not offenders, (
+        "an id rule outranks .dial-block and throws every dial's four "
+        "cells out of line: " + "; ".join(offenders))
+
+
+def test_a_drawer_stays_on_screen_and_hides_what_it_hides():
+    """Param: "in some instances i cant reach the close button for the
+    open tile and therefore am stuck with it open unless i press the
+    tile again". The drawer is anchored to the bottom and grew upward
+    with nothing to stop it: the Skies drawer in Sky mode, weather grid
+    open, put its close button 203 px above a 720 px screen.
+
+    Bounded now, with the head pinned: #shelf is capped to the viewport,
+    the body scrolls, and the head (the close button's home) sticks to
+    the body's top on an opaque ground. And the drawer's own twin of
+    `#panel .hidden`, because outside #panel `.dial-block label` and
+    `.picker` both outrank a bare `.hidden`: rows tagged hidden stayed
+    on screen."""
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    rules = _css_rules(css)
+
+    def said(selector):
+        out = {}
+        for one, body, _ in rules:
+            if one == selector:
+                out.update(_declarations(body))
+        return out
+
+    assert "#shelf .hidden { display: none !important; }" in css, (
+        "without it a hidden dial row or the weather picker stays on "
+        "screen in the drawer")
+    shelf_text = " ".join(body for one, body, _ in rules if one == "#shelf")
+    assert "max-height: calc(100vh - 28px)" in shelf_text, "the fallback"
+    assert "max-height: calc(100dvh - 28px)" in shelf_text
+    assert shelf_text.index("100vh - 28px") < shelf_text.index("100dvh"), (
+        "the vh line first, or it overrides dvh where dvh is understood")
+    body = said("#shelf-body")
+    assert body.get("overflow-y") == "auto", "the body scrolls"
+    assert body.get("min-height") == "0", "or the flex child never shrinks"
+    assert "overflow" not in body, (
+        "overflow: hidden clipped the drawer instead of scrolling it")
+    head = said("#shelf-head")
+    assert head.get("position") == "sticky" and head.get("top") == "0"
+    assert head.get("background") == "var(--panel)", (
+        "an opaque, themed ground: the scrim would show tiles through it")
+    assert int(head.get("z-index", "0")) >= 2, "above the tiles it covers"
+    assert said("#shelf-tabs").get("flex") == "0 0 auto", (
+        "the tab strip keeps its height; the body is what gives way")
+
+    doc = (REPO / "docs" / "studio-interface-language.md").read_text(
+        encoding="utf-8")
+    drawers = doc[doc.index("## 7. Drawers"):doc.index("## 8. Messages")]
+    assert "never leaves the screen" in drawers
+    assert "hidden rather than\nshown dead" in drawers
+    assert "The grid is the only part that scrolls" not in doc
+
+
+def test_the_weather_tiles_are_skies_not_squares():
+    """The weather presets are 2:1 skies, painted into a 2:1 buffer.
+    When the grid moved into the drawer, `#shelf-body .tile canvas
+    { aspect-ratio: 1 }` came to match them at the same specificity as
+    the 2:1 rule and later, so it won: 198 px squares, two rows of
+    them, 454 px of drawer. The 2:1 rule must outrank the square one by
+    the cascade, not by luck of order, and the five presets sit on one
+    row. The pinned four-column `#shelf-body .tile-grid` is untouched."""
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    rules = _css_rules(css)
+    square, wide = [], []
+    for selector, body, at in rules:
+        said = _declarations(body)
+        for one in (s.strip() for s in selector.split(",")):
+            if one == "#shelf-body .tile canvas" \
+                    and said.get("aspect-ratio") == "1":
+                square.append((_specificity(one), at))
+            if one.endswith("#weather-tiles .tile canvas") \
+                    and said.get("aspect-ratio") == "2 / 1":
+                wide.append((_specificity(one), at))
+    assert square and wide
+    assert max(wide) > max(square), (
+        "the square thumbnail rule wins over the weather skies: "
+        + repr((max(wide), max(square))))
+
+    five = [(_specificity(s.strip()), at) for selector, body, at in rules
+            for s in selector.split(",")
+            if s.strip() == "#shelf-body #weather-tiles"
+            and _declarations(body).get("grid-template-columns")
+            == "repeat(5, 1fr)"]
+    four = [(_specificity(s.strip()), at) for selector, body, at in rules
+            for s in selector.split(",")
+            if s.strip() == "#shelf-body .tile-grid"
+            and "grid-template-columns" in _declarations(body)]
+    assert five and four and max(five) > max(four), (
+        "the five presets go on one row by a rule that outranks the "
+        "drawer's four-column grid")
+
+
+def test_the_hdri_dials_show_only_in_hdri_mode():
+    """Param's ruling: a control that does nothing in the current mode is
+    hidden, not shown dead. Projection tunes the HDRI photograph, and
+    Scale and Height only its grounded dome, yet all three showed under
+    the Sky presets. Brightness and Rotation act in every mode and stay.
+
+    One painter, called wherever the mode (applyEnvironment), the
+    projection (applyHdriBackdrop) or the drawer (renderShelf) changes."""
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    row = html[html.index('<label id="hdri-projection-row"'):]
+    row = row[:row.index("</label>")]
+    assert 'id="hdri-projection"' in row, "the row is the Projection dial"
+
+    paint = _js_function(js, "function paintSkyDials()")
+    assert 'const hdri = state.environmentMode === "hdri";' in paint
+    assert 'const dome = hdri && state.hdriProjection === "projected";' in paint
+    assert ('document.getElementById("hdri-projection-row").classList'
+            '.toggle("hidden", !hdri);') in paint
+    for name in ("scale", "height"):
+        assert ('document.getElementById("hdri-' + name + '-row").classList'
+                '.toggle("hidden", !dome);') in paint, name
+    for kept in ("sky-brightness", "hdri-rotation"):
+        assert kept not in paint, kept + " acts in every mode"
+    for header in ("function applyEnvironment()", "function applyHdriBackdrop()",
+                   "function renderShelf()"):
+        assert "paintSkyDials();" in _js_function(js, header), header
+    # One painter: nothing else decides these rows on its own terms.
+    assert js.count('getElementById("hdri-scale-row")') == 1
+    assert js.count('getElementById("hdri-height-row")') == 1
+
+
 def test_a_restored_orthographic_scene_keeps_the_framing_it_was_saved_with():
     """Shipped broken, and the static test that "the fields are saved"
     said nothing about it.
