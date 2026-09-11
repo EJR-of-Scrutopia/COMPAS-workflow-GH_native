@@ -341,7 +341,10 @@ def test_the_presets_are_sane_and_the_page_offers_exactly_them(tmp_path):
     # Each dial's range is the module's, so a clamped scene and a dragged
     # dial agree about what is allowed.
     dials = re.findall(r'\["(atmosphere-[a-z-]+)", "([A-Za-z]+)", \d\]', js)
-    assert len(dials) == 9
+    # Ten since the light shafts joined them (Shafts, a per cent, desktop
+    # only). Counted rather than merely scanned, so a dial added to the
+    # page and forgotten in the table is caught here.
+    assert len(dials) == 10
     for ident, key in dials:
         tag = re.search(r'<input id="' + ident + r'" type="range"([^>]*)>', html)
         assert tag, ident + " is a range on the page"
@@ -523,8 +526,276 @@ def test_the_atmosphere_lives_in_the_skies_drawer():
         assert ident in modes
     settings = html[html.index('<div id="shelf-sky-settings"'):]
     settings = settings[:settings.index('<div id="prop-tiles"')]
-    assert settings.count('class="atmosphere-dial hidden"') == 9, "hidden until a preset is chosen"
+    assert settings.count('class="atmosphere-dial hidden"') == 10, (
+        "hidden until a preset is chosen")
     js = STUDIO_JS.read_text(encoding="utf-8")
     sync = _body(js, "function syncAtmosphereControls()")
-    assert 'label.classList.toggle("hidden", !on);' in sync
+    # The toggle now carries the one exception: the shafts have no pass
+    # behind them on a constrained device, so that row stays away there
+    # even when a preset is chosen.
+    assert 'label.classList.toggle("hidden", !on || (desktopOnly && CONSTRAINED_DEVICE));' in sync
     assert 'document.getElementById(id + "-value").textContent' in sync
+# ---------- the light shafts ----------
+# The volumetric half of the atmosphere: a raymarch of the sun's shadow
+# map through the same height fog, added before tone mapping. The marching
+# itself is pure, so node runs it here against the analytic integral it
+# has to agree with; the wiring, the gate and the two resolutions are
+# pinned against the page.
+
+SHAFT_CHECK = textwrap.dedent("""
+    import {
+      ATMOSPHERE_PRESETS, ATMOSPHERE_RANGES, atmosphereFromPreset, adoptAtmosphere,
+      atmosphereLayers, atmosphereAmounts, shaftInscatter, shaftsStrength,
+      SHAFT_STEPS, SHAFT_MAX_DISTANCE,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b, rel) { return Math.abs(a - b) <= rel * Math.max(1e-12, Math.abs(b)); }
+
+    const lit = () => 1;
+    const dark = () => 0;
+
+    // THE IDENTITY THE MARCH IS BUILT ON. Each step adds
+    // transmittance * (1 - exp(-tau)) and then multiplies the
+    // transmittance by exp(-tau), so with the sun reaching every sample
+    // the sum collapses to 1 - exp(-sum of tau), which is exactly the
+    // analytic glow. It holds for ANY step count, so it pins the segment
+    // length, the height at each step and the transmittance together: get
+    // any one of them wrong and the march no longer agrees with the fog
+    // the surfaces wear.
+    const rays = [
+      ["clear-air", 1.7, -0.02, 200], ["haze", 1.7, 0.0, 120],
+      ["morning-mist", 0.6, -0.3, 60], ["valley-fog", 12, 0.4, 230],
+      ["haze", 30, -0.9, 40], ["clear-air", 1.7, 0.25, 5],
+    ];
+    for (const [key, eye, dz, L] of rays) {
+      const layers = atmosphereLayers(atmosphereFromPreset(key), 0);
+      const marched = shaftInscatter(layers, eye, dz, L, lit);
+      const analytic = atmosphereAmounts(layers, eye, dz, L)[1];
+      expect(near(marched, analytic, 1e-9),
+        "a fully lit march is the analytic glow: " + marched + " against " + analytic
+        + " for " + [key, eye, dz, L]);
+    }
+    // And it holds whatever the jitter does, because the jitter moves only
+    // where the SUN is asked about, never how much air a segment holds.
+    for (const jitter of [0, 0.25, 0.5, 0.99]) {
+      const layers = atmosphereLayers(atmosphereFromPreset("haze"), 0);
+      expect(near(shaftInscatter(layers, 1.7, -0.02, 150, lit, jitter),
+        atmosphereAmounts(layers, 1.7, -0.02, 150)[1], 1e-9),
+        "the jitter moves no energy (jitter " + jitter + ")");
+    }
+
+    const haze = atmosphereLayers(atmosphereFromPreset("haze"), 0);
+    // Shadow is darkness: no sun anywhere on the ray adds no light at all.
+    expect(shaftInscatter(haze, 1.7, 0, 150, dark) === 0, "fog in shadow gains nothing");
+    // And a half shadowed ray sits between the two, strictly.
+    const half = shaftInscatter(haze, 1.7, 0, 150, (at) => (at > 75 ? 1 : 0));
+    const all = shaftInscatter(haze, 1.7, 0, 150, lit);
+    expect(half > 0 && half < all, "a half shadowed ray is between the two: " + half);
+    // The far half of the ray is the half the eye sees least of, because
+    // the fog in front of it has already taken its light.
+    const front = shaftInscatter(haze, 1.7, 0, 150, (at) => (at < 75 ? 1 : 0));
+    expect(front > half, "the near half of a ray carries more than the far half");
+
+    // Nothing before the sun glow's own start, which is where the analytic
+    // glow begins too, so the two cannot disagree about where light starts.
+    const late = atmosphereLayers({ ...atmosphereFromPreset("haze"), sunStart: 80 }, 0);
+    expect(shaftInscatter(late, 1.7, 0, 60, lit) === 0, "nothing before the sun start");
+
+    // The march stops at its own reach, so a sky pixel reconstructed at the
+    // far plane does not spread 32 samples over half a kilometre.
+    const reach = shaftInscatter(haze, 1.7, 0, SHAFT_MAX_DISTANCE, lit);
+    expect(shaftInscatter(haze, 1.7, 0, 4000, lit) === reach, "the march stops at its reach");
+    expect(SHAFT_STEPS >= 16 && SHAFT_MAX_DISTANCE > 0, "the march has steps and a reach");
+
+    // The cap the rest of the atmosphere obeys.
+    const thick = atmosphereLayers({ ...atmosphereFromPreset("valley-fog"), maxOpacity: 40 }, 0);
+    expect(near(shaftInscatter(thick, 0.5, 0, 200, lit), 0.4, 1e-12), "max opacity caps the march");
+
+    // Denser air carries more light, which is the whole reason the dial
+    // for density and the dial for shafts are different dials.
+    const thin = atmosphereLayers({ ...atmosphereFromPreset("haze"), density: 1 }, 0);
+    const dense = atmosphereLayers({ ...atmosphereFromPreset("haze"), density: 20 }, 0);
+    expect(shaftInscatter(dense, 1.7, 0, 150, lit) > shaftInscatter(thin, 1.7, 0, 150, lit),
+      "denser air carries more of the sun");
+
+    // THE DIAL. Shafts need air: with the atmosphere at None there is
+    // nothing to light, so the pass does not run whatever the dial says.
+    expect(shaftsStrength(atmosphereFromPreset("none")) === 0, "no atmosphere, no shafts");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: 60 }) === 0.6, "sixty per cent");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: 400 }) === 1, "clamped high");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: -5 }) === 0, "clamped low");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: undefined }) === 0,
+      "a setting with no shafts in it is no shafts");
+
+    // EVERY PRESET RESTS AT ZERO, so choosing an atmosphere never turns on
+    // a desktop-only pass behind his back, and a scene saved before the
+    // shafts existed carries none and loads at nought.
+    for (const key of Object.keys(ATMOSPHERE_PRESETS)) {
+      if (key === "none") continue;
+      expect(ATMOSPHERE_PRESETS[key].shafts === 0, key + " rests with the shafts off");
+    }
+    expect(ATMOSPHERE_RANGES.shafts[0] === 0 && ATMOSPHERE_RANGES.shafts[1] === 100,
+      "the dial runs nought to a hundred");
+    expect(adoptAtmosphere({ preset: "haze" }).shafts === 0, "an older scene loads at 0");
+    expect(adoptAtmosphere({ preset: "haze", shafts: 60 }).shafts === 60, "a saved 60 comes back");
+    expect(adoptAtmosphere({ preset: "haze", shafts: 999 }).shafts === 100, "a saved 999 is clamped");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_shaft_march_is_the_analytic_glow_once_the_sun_reaches_every_step(tmp_path):
+    assert "ok" in _run_node(tmp_path, SHAFT_CHECK)
+
+
+def test_the_shafts_march_between_the_render_and_the_tone_map():
+    """Order is the whole argument. After the RenderPass, what the shafts
+    add is linear HDR and the OutputPass tone maps it, so an inscatter
+    above 1 comes back as a highlight; after the OutputPass it would be
+    added to display-space sRGB and clip flat. The grade stays last."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+    order = [js.index(line) for line in (
+        "composer.addPass(renderPass);",
+        "  composer.addPass(shaftsPass);",
+        "composer.addPass(new OutputPass());",
+        "composer.addPass(gradePass);")]
+    assert order == sorted(order), "render, shafts, tone map, grade, in that order"
+
+    # The depth it marches against: a texture on the composer's own target,
+    # resolved out of the 4x MSAA one, which was measured on this GPU
+    # before it was relied on.
+    assert "depthTexture: new THREE.DepthTexture(1, 1)," in js
+    assert "samples: 4, type: THREE.HalfFloatType," in js
+    # Off until the shafts are on, so a studio that never uses them never
+    # pays for the resolve.
+    assert "composerTarget.resolveDepthBuffer = false;" in js
+    apply_ = _body(js, "function applyShafts()")
+    assert "composerTarget.resolveDepthBuffer = strength > 0;" in apply_
+    assert "composer.renderTarget2.resolveDepthBuffer = strength > 0;" in apply_
+
+    # The pass reads the depth of the buffer it was HANDED. The shafts add
+    # a third swapping pass, so the RenderPass draws into either buffer
+    # depending on the frame, and a cached reference would read the buffer
+    # that was drawn last frame every other frame.
+    body = _body(js, "class ShaftsPass extends Pass")
+    assert "this.march.uniforms.tDepth.value = readBuffer.depthTexture;" in body
+    assert "this.composite.uniforms.tDiffuse.value = readBuffer.texture;" in body
+
+    # At nought the pass does not run at all, rather than running at zero.
+    arm = _body(js, "function armShafts()")
+    assert "shaftsPass.enabled = shaftsPass.march.uniforms.shaftStrength.value > 0" in arm
+    assert "armShafts();" in _body(js, "function renderView()")
+
+    # The shafts carry a gain of their own. Without it they inherit
+    # ATMOSPHERE_SUN_GAIN, which is tuned for a glow spread over the whole
+    # sky, and a live probe at golden hour could not tell 60 per cent from
+    # nought: the pass was correct and invisible.
+    assert "defines: { SHAFT_STEPS, SHAFT_GAIN }," in js
+    assert "float( SHAFT_GAIN )" in module, "the gain reaches the shader"
+
+    # The matrices are written from INSIDE the pass, because the shadow map
+    # and its matrix are made by the RenderPass one pass earlier.
+    assert "shaftsPass.settle = settleShafts;" in js
+    settle = _body(js, "function settleShafts()")
+    assert "uniforms.shaftShadowMatrix.value.copy(sun.shadow.matrix);" in settle
+    assert "if (this.settle) this.settle();" in body
+
+
+def test_the_shafts_are_not_built_at_all_on_a_constrained_device():
+    """A raymarch of the shadow map per pixel is the one effect the iPad
+    path cannot afford. There is no pass there, not a pass held at zero,
+    and the dial that would drive it is hidden rather than sitting dead
+    among the dials that work."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert ("const shaftsPass = CONSTRAINED_DEVICE ? null : new ShaftsPass(atmosphere.uniforms);"
+            in js)
+    sync = _body(js, "function syncAtmosphereControls()")
+    assert 'const desktopOnly = label.id === "atmosphere-shafts-row";' in sync
+    # Everything that touches the pass survives its absence.
+    for owner in ("function applyShafts()", "function armShafts()",
+                  "function setShaftResolution(full)"):
+        assert "if (!shaftsPass) return;" in _body(js, owner), owner
+
+
+def test_a_still_and_a_take_march_at_full_resolution():
+    """renderStill draws a plate in tiles through camera.setViewOffset, and
+    its own comment says why anything screen-space and blurred breaks it: a
+    tile's neighbours are not the plate's neighbours. So the half
+    resolution march and its depth-aware upsample are the LIVE VIEW only.
+    At full resolution each pixel takes its own texel by texelFetch, which
+    is the same answer a tile gets as the whole plate would have given it."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+
+    size = _body(js, "  setSize(width, height) {")
+    assert "const scale = this.fullResolution ? 1 : 0.5;" in size
+    assert "this.composite.uniforms.shaftUpsample.value = this.fullResolution ? 0 : 1;" in size
+    assert "texelFetch( tShafts, ivec2( gl_FragCoord.xy ), 0 )" in module
+
+    still = _body(js, "async function renderStill()")
+    assert "setShaftResolution(true);" in still
+    assert still.index("setShaftResolution(true);") < still.index("camera.setViewOffset("), (
+        "the resolution is settled before the first tile is drawn")
+    assert "setShaftResolution(false);" in still, "and put back afterwards"
+
+    take = _body(js, "async function recordAnimation()")
+    assert "setShaftResolution(true);" in take
+    assert "setShaftResolution(false);" in take
+
+
+def test_the_shafts_read_no_clock_at_all():
+    """Any noise in a take must be seeded from the take clock and never the
+    wall clock, or the same take rendered twice is two different videos.
+    These shafts go further and read NO clock: the only stochastic thing in
+    them is a dither seeded from the pixel's place in the whole frame, so a
+    take is reproducible frame for frame AND a tile of a still gets the
+    dither it would have had in the whole plate."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+    shafts = module[module.index("export const SHAFTS_GLSL"):]
+    for banned in ("uTime", "iTime", "shaftTime", "performance.now", "Date.now", "deltaTime"):
+        assert banned not in shafts, "the march reads " + banned
+
+    assert "float shaftDither( vec2 pixel ) {" in shafts
+    assert "shaftLight( vUv, gl_FragCoord.xy + shaftPixelOrigin )" in shafts
+
+    settle = _body(js, "function settleShafts()")
+    for banned in ("performance.now", "Date.now", "state.timeline", "Math.random"):
+        assert banned not in settle, "the shafts read " + banned
+    # The tile's place in the whole plate. gl_FragCoord counts up from the
+    # bottom and a view offset counts down from the top, which is the whole
+    # of the second term; get it wrong and every tile dithers differently.
+    assert "view.offsetX, view.fullHeight - view.offsetY - view.height);" in settle
+
+
+def test_the_shafts_dial_wears_the_four_part_shape_and_saves_with_the_scene():
+    """Four parts, a reading that something writes, and a declared unit
+    because it rests at zero. It rides in state.atmosphere, so the scene
+    that already carries the atmosphere carries this too."""
+
+    html = INDEX.read_text(encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    label = html[html.index('<label id="atmosphere-shafts-row"'):]
+    label = label[:label.index("</label>") + len("</label>")]
+    assert "<span>Shafts</span>" in label
+    assert '<input id="atmosphere-shafts" type="range" data-unit="1" min="0" max="100"' in label
+    assert '<b id="atmosphere-shafts-value">0</b>' in label
+    assert "<em>%</em>" in label
+    assert 'class="atmosphere-dial hidden"' in label, "hidden until a preset is chosen"
+    # It rests at zero, where panel.js cannot derive the factor, so the
+    # markup states it (docs/studio-interface-language.md section 3).
+    assert 'data-unit="1"' in label
+
+    assert '["atmosphere-shafts", "shafts", 0],' in js, "the dial table drives it"
+    # The scene already carries state.atmosphere whole, so the shafts ride
+    # in with it and an older scene without them adopts a nought.
+    assert "atmosphere: { ...state.atmosphere }," in _body(js, "function collectScene(options)")
