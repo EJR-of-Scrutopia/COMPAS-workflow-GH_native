@@ -2408,6 +2408,257 @@ def test_a_fixture_emits_from_its_shape_and_every_resize_relays_it():
     assert "state.selectedProp.object.scale.setScalar(" not in js
 
 
+EMITTER_HARNESS = r"""
+import * as THREE from %(three)s;
+import { fixtureFaces } from %(fields)s;
+
+%(consts)s
+
+%(functions)s
+
+function expect(condition, message) {
+  if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+}
+function near(a, b, tol) { return Math.abs(a - b) < (tol || 1e-6); }
+
+// What three's WebGLLights and the LTC shader make of one rect light:
+// the rotation of its world matrix carries width along its X and height
+// along its Y, the corners are taken in the shader's own order, and
+// LTC_Evaluate lights only the side cross(r1 - r0, r3 - r0) points to.
+function shaded(light) {
+  light.updateWorldMatrix(true, false);
+  const rotation = new THREE.Matrix4().extractRotation(light.matrixWorld);
+  const centre = new THREE.Vector3().setFromMatrixPosition(light.matrixWorld);
+  const hw = new THREE.Vector3(light.width * 0.5, 0, 0).applyMatrix4(rotation);
+  const hh = new THREE.Vector3(0, light.height * 0.5, 0).applyMatrix4(rotation);
+  const r0 = centre.clone().add(hw).sub(hh);
+  const r1 = centre.clone().sub(hw).sub(hh);
+  const r3 = centre.clone().add(hw).add(hh);
+  const normal = new THREE.Vector3().crossVectors(
+    r1.clone().sub(r0), r3.clone().sub(r0)).normalize();
+  return { centre, normal, hw, hh };
+}
+
+// Every rect light on a fixture, checked against the box it is laid on,
+// worked out here independently of fixtureFaces.
+function checkFaces(record, faces, label) {
+  const object = record.object;
+  object.updateWorldMatrix(true, true);
+  const globe = object.children.find((child) => child.userData.lampGlobe);
+  const box = globe.geometry.boundingBox;
+  const half = [(box.max.x - box.min.x) / 2, (box.max.y - box.min.y) / 2,
+    (box.max.z - box.min.z) / 2];
+  const scale = object.scale.toArray();
+  const axis = (i) => new THREE.Vector3(...[0, 1, 2].map((k) => (k === i ? 1 : 0)))
+    .applyQuaternion(object.quaternion);
+  const lights = object.children.filter((child) => child.isRectAreaLight);
+  expect(lights.length === faces.length, label + ": one light per face");
+  let power = 0;
+  const radiance = [];
+  lights.forEach((light, n) => {
+    const sign = faces[n][0] === "-" ? -1 : 1;
+    const a = "xyz".indexOf(faces[n][1]);
+    const local = globe.position.clone();
+    local.setComponent(a, local.getComponent(a) + sign * half[a]);
+    const centre = object.localToWorld(local);
+    const outward = axis(a).multiplyScalar(sign);
+    const seen = shaded(light);
+    expect(seen.centre.distanceTo(centre) < 1e-6,
+      label + " " + faces[n] + ": the light sits on its face");
+    expect(seen.normal.dot(outward) > 1 - 1e-6,
+      label + " " + faces[n] + ": the light shines out of its face");
+    // Width and height lie along the face's own two axes, at their size
+    // in the world.
+    const others = [0, 1, 2].filter((k) => k !== a);
+    const extent = (k) => 2 * half[k] * Math.abs(scale[k]);
+    for (const half_ of [seen.hw, seen.hh]) {
+      const along = others.find((k) => Math.abs(half_.clone().normalize().dot(axis(k))) > 1 - 1e-6);
+      expect(along !== undefined, label + " " + faces[n] + ": a side lies along the face");
+      expect(near(2 * half_.length(), extent(along)),
+        label + " " + faces[n] + ": each side at its world size");
+    }
+    expect(light.color.equals(kelvinColour(record.kelvin)), label + ": its colour");
+    power += light.power;
+    radiance.push(light.intensity);
+  });
+  expect(near(power, record.lumens, 1e-6 * record.lumens),
+    label + ": the faces share the whole output");
+  for (const r of radiance) {
+    expect(near(r, radiance[0], 1e-9 * Math.max(1, radiance[0])),
+      label + ": every face equally bright, so shares go by area");
+  }
+}
+
+// A twelve metre strip at scale 1.5, turned and lifted, warm-white off.
+const strip = { type: "light-strip", object: lightStrip(), scale: 1.5,
+  size: [6, 1, 1], lumens: 4000, kelvin: 5000 };
+strip.object.position.set(3, -2, 1.5);
+strip.object.rotation.set(0, 0, Math.PI / 6);
+applyPropSize(strip);
+checkFaces(strip, STRIP_FACES, "strip");
+expect(near(strip.object.children.find((c) => c.isRectAreaLight).width
+  * strip.object.children.find((c) => c.isRectAreaLight).height, 18 * 0.09),
+  "the +y face of a 18 m strip is 18 m by 90 mm");
+
+// The Output dial reaches the faces through applyPropLight.
+strip.lumens = 2500;
+applyPropLight(strip);
+checkFaces(strip, STRIP_FACES, "strip at 2500 lm");
+
+// A cube at Size 2, tipped on all three axes.
+const cube = { type: "light-cube", object: lightCube(), scale: 2,
+  lumens: 900, kelvin: 2200 };
+cube.object.position.set(-4, 5, 0.5);
+cube.object.rotation.set(0.3, 0.2, 1.0);
+applyPropSize(cube);
+checkFaces(cube, BOX_FACES, "cube");
+
+// The sphere keeps one point light, at its centre, carrying all of it.
+const sphere = { type: "light-sphere", object: lightSphere(), scale: 1,
+  lumens: 700, kelvin: 3000 };
+applyPropLight(sphere);
+const points = sphere.object.children.filter((c) => c.isLight);
+expect(points.length === 1 && points[0].isPointLight, "the sphere: one point light");
+expect(near(points[0].power, 700, 1e-6), "the sphere: all of its output");
+console.log("ok");
+"""
+
+
+def _js_statement(source, head):
+    """One top-level statement: its lines, up to the one whose code (its
+    trailing comment set aside) ends the statement."""
+
+    start = source.index("\n" + head) + 1
+    lines = []
+    for line in source[start:].split("\n"):
+        lines.append(line)
+        if line.split(" //")[0].rstrip().endswith(";"):
+            return "\n".join(lines) + "\n"
+    raise ValueError(head)
+
+
+def test_a_fixtures_emitters_are_laid_on_its_faces_and_shine_out_of_them(tmp_path):
+    """The real layFixtureEmitters, syncFixtureEmission, applyPropSize and
+    applyPropLight, run under node on vendored three: every face light of a
+    turned, stretched strip and a tipped cube sits on its face, shines out
+    of it by the LTC shader's own test, is its face's world size, wears the
+    fixture's colour, and the faces share the fixture's own output by area.
+    Source pins alone let the basis, the positions and the output go wrong
+    with every fixture test green."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    static = REPO / "bench" / "studio" / "static"
+    consts = "\n".join(_js_statement(js, head) for head in (
+        "const LAMP_LUMENS", "const LAMP_KELVIN", "const KELVIN_MIN",
+        "const STRIP_FACES", "const BOX_FACES", "const LAMP_TYPES",
+        "const faceAxes", "const faceBasis"))
+    headers = ("function kelvinColour(kelvin)", "function isLamp(record)",
+               "function lightEmitter(geometry, lift, faces)",
+               "function layFixtureEmitters(object, lumens, colour)",
+               "function syncFixtureEmission(record)",
+               "function lightSphere()", "function lightStrip()",
+               "function lightCube()", "function applyPropSize(record)",
+               "function applyPropLight(record)")
+    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    script = tmp_path / "emitters.mjs"
+    script.write_text(EMITTER_HARNESS % {
+        "three": json.dumps((static / "vendor" / "three.module.js").as_uri()),
+        "fields": json.dumps((static / "fields.js").as_uri()),
+        "consts": consts, "functions": functions}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.strip() == "ok"
+
+
+ROLL_HARNESS = r"""
+import * as THREE from %(three)s;
+const problems = [];
+function reportProblem(message) { problems.push(message); }
+
+%(regex)s
+
+%(roll)s
+
+const before = THREE.ShaderChunk.lights_fragment_begin;
+const chunks = { lights_fragment_begin: before };
+const rolled = rollRectAreaLoop(chunks);
+const problemsAfterFirst = problems.length;
+const again = rollRectAreaLoop({ lights_fragment_begin: chunks.lights_fragment_begin });
+console.log(JSON.stringify({ rolled, problemsAfterFirst, again,
+  problems: problems.length, before, after: chunks.lights_fragment_begin }));
+"""
+
+
+def test_the_rect_light_loop_is_rolled_so_a_strip_does_not_freeze_the_page(tmp_path):
+    """Three unrolls its rect-light loop, so each strip put four more copies
+    of the area-light shading into every lit program, and the fifth strip
+    froze the page for ten seconds while they all recompiled. The loop is
+    rolled on the vendored chunk at boot: only that loop loses its pragmas,
+    nothing else in the chunk moves, and a chunk that no longer matches is
+    reported rather than left to stall. Run on the real vendored chunk."""
+
+    import json
+    import shutil
+    import subprocess
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    call = js.index("\nrollRectAreaLoop(THREE.ShaderChunk);\n")
+    assert call < js.index("previewRig = buildPreviewRig();"), (
+        "rolled before either renderer builds a program")
+    assert call < js.index("RectAreaLightUniformsLib.init();") + 2000
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    static = REPO / "bench" / "studio" / "static"
+    script = tmp_path / "roll.mjs"
+    script.write_text(ROLL_HARNESS % {
+        "three": json.dumps((static / "vendor" / "three.module.js").as_uri()),
+        "regex": _js_statement(js, "const RECT_AREA_UNROLLED"),
+        "roll": _js_whole_function(js, "function rollRectAreaLoop(chunks)")},
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["rolled"] is True and out["problemsAfterFirst"] == 0
+    before, after = out["before"], out["after"]
+    loop = "for ( int i = 0; i < NUM_RECT_AREA_LIGHTS; i ++ ) {"
+    segment = after[after.index("RectAreaLight rectAreaLight;"):after.index(loop) + 400]
+    assert "#pragma" not in segment.split("#endif")[0], "the rect loop is plain"
+    assert after.count("#pragma unroll_loop_start") == before.count("#pragma unroll_loop_start") - 1
+    assert after.count("#pragma unroll_loop_end") == before.count("#pragma unroll_loop_end") - 1
+    tail = "#endif\n#if defined( RE_IndirectDiffuse )"
+    expected = before.replace("#pragma unroll_loop_start\n\t" + loop, loop, 1).replace(
+        "\t}\n\t#pragma unroll_loop_end\n" + tail, "\t}\n" + tail, 1)
+    assert expected != before, "the vendored chunk still has the unrolled rect loop"
+    assert after == expected, "only the two pragmas round the rect loop go"
+    assert out["again"] is False and out["problems"] == 1, (
+        "a chunk the patch no longer fits is reported, not passed over")
+
+
+def test_undoing_a_delete_brings_a_fixture_back_as_it_was():
+    """Delete a twelve metre strip at 6000 lm, undo, and it came back a
+    two metre strip at whatever the Lights sliders said: the undo carried
+    neither the size nor the fixture's own two numbers."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    block = js[js.index('} else if (event.key === "Delete" || event.key === "Backspace") {'):]
+    gone = block[:block.index("pushUndo(")]
+    assert "size: Array.isArray(record.size) ? record.size.slice() : null," in gone
+    assert "lumens: record.lumens, kelvin: record.kelvin };" in gone
+    undo = block[block.index("pushUndo("):block.index("removePropRecord(record);")]
+    placed = undo.index("const again = placeProp(")
+    assert placed < undo.index("again.size = gone.size.slice();")
+    assert undo.index("again.size = gone.size.slice();") < undo.index("applyPropSize(again);")
+    assert placed < undo.index("adoptLampSettings(again, gone);"), (
+        "placeProp lights it from the sliders; the fixture's own numbers go on after")
+
+
 def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():
     """A strip whose thickness followed its length would just be a bigger
     strip, which is not resizing it. And a size that did not persist

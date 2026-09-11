@@ -491,6 +491,30 @@ if (!THREE.UniformsLib.LTC_FLOAT_1 || !THREE.UniformsLib.LTC_HALF_1) {
     + "three 0.185.0");
 }
 
+// Every lit material loops over the rect lights, and three unrolls that
+// loop: each strip put four more copies of the whole area-light shading
+// into every program, and every change in the count recompiles all of
+// them. Measured on the 4090, the fifth strip froze the page for ten
+// seconds. Rolled back into a plain loop (GLSL ES 3.0 indexes a uniform
+// array with a loop counter), the same strip compiles in under two and
+// shades the same. Patched on the vendored chunk before any program is
+// built, and checked, like the Sky's daylight patch.
+const RECT_AREA_UNROLLED = /#pragma unroll_loop_start\s*(for \( int i = 0; i < NUM_RECT_AREA_LIGHTS; i \+\+ \) \{[^}]*\})\s*#pragma unroll_loop_end/;
+
+function rollRectAreaLoop(chunks) {
+  const before = chunks.lights_fragment_begin;
+  const after = before.replace(RECT_AREA_UNROLLED, "$1");
+  if (after === before) {
+    reportProblem("the vendored rect-light loop no longer has the shape the "
+      + "roll patch expects, so every strip or cube placed will stall the "
+      + "page while it recompiles; check lights_fragment_begin in three 0.185.0");
+    return false;
+  }
+  chunks.lights_fragment_begin = after;
+  return true;
+}
+rollRectAreaLoop(THREE.ShaderChunk);
+
 function applyGrade() {
   renderer.toneMappingExposure = state.exposureBase * state.brightness * EXPOSURE_GAIN;
   gradePass.uniforms.brightness.value = 0;
@@ -11694,11 +11718,21 @@ window.addEventListener("keydown", (event) => {
                    z: record.z || 0, rotX: record.rotX || 0,
                    rotY: record.rotY || 0,
                    rotation: record.rotation, scale: record.scale,
-                   layer: record.layer };
+                   layer: record.layer,
+                   // A stretched strip comes back at its own length, and a
+                   // fixture at its own output and warmth, not at whatever
+                   // the Lights sliders happen to say by the time of the undo.
+                   size: Array.isArray(record.size) ? record.size.slice() : null,
+                   lumens: record.lumens, kelvin: record.kelvin };
     pushUndo("deleting the " + gone.type, async () => {
       await ensurePropTemplate(gone.type);
       const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
         false, gone.scale, gone.z || 0, gone.rotX || 0, gone.rotY || 0);
+      if (gone.size) {
+        again.size = gone.size.slice();
+        applyPropSize(again);
+      }
+      adoptLampSettings(again, gone);
       // Back onto its old layer, or onto the open one if that has been
       // deleted since: an id with no tab could never be hidden again.
       again.layer = layerById(gone.layer) ? gone.layer : state.activeLayer;
