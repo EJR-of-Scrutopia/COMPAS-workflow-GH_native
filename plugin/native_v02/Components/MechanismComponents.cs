@@ -71,9 +71,19 @@ internal sealed record MechanismFrame(
 /// Transform leaves its stored ZAxis genuinely LEFT-HANDED (ZAxis no longer
 /// equal to XAxis cross YAxis), and that is exactly the signal the
 /// placement maths below reads to build a reflection rather than a
-/// rotation. Deriving Z here, the way <see cref="MechanismFrame"/> does,
-/// would silently throw that signal away and turn every mirrored instance
-/// into an upside-down one instead of a flipped one.
+/// rotation. Deriving Z here as X cross Y, rather than reading the plane's
+/// own stored ZAxis, would silently throw that signal away and turn every
+/// mirrored instance into an upside-down one instead of a flipped one.
+///
+/// <see cref="MechanismFrame"/> CARRIES ITS Z TOO, and this sentence used to
+/// say the opposite: that MechanismFrame derived one, and that this record
+/// differed from it by not doing so. It does not derive one, and the
+/// difference never existed. The correction matters because spec 4.4's
+/// reflection guard now rests on the frame's carried Z: a reel body's
+/// determinant is measured from the frame's OWN authored axes, so a reader
+/// who trusted the old sentence and re-derived Z anywhere in this file
+/// would leave every determinant positive and the guard would pass a
+/// mirrored drum in silence.
 /// </summary>
 internal sealed record MechanismPlacementPlane(
     double[] Origin, double[] XAxis, double[] YAxis, double[] ZAxis);
@@ -446,6 +456,94 @@ internal static class MechanismCollector
         "is meshed.";
 
     /// <summary>
+    /// PUT EACH WIRE'S TRUE START BACK ON THE FRONT OF ITS ROUTE (spec 3.5),
+    /// SHARED by the two components that carry a Wire Start (WS) port so
+    /// that a machine and a study can never disagree about what a route
+    /// begins with.
+    ///
+    /// WHY IT IS SHARED RATHER THAN COPIED. The first plane of a route is
+    /// the DATUM. On a study it is what the placement correspondence, the
+    /// net-vertex match and the residual are all read from; on a machine it
+    /// IS <c>datum.frames</c>, which every study placed against that machine
+    /// is pinned to. He offsets his routing planes so the drawn cable stops
+    /// cutting the drums, and that offset moves planes[0]. A second copy of
+    /// this loop that drifted from the first would move one document's datum
+    /// and not the other's, and both documents would still report a residual
+    /// of 0.000000 m and read as a success.
+    ///
+    /// A wire with no start of its own, or with no route at all, is carried
+    /// through UNCHANGED rather than refused: WS is optional by nature, and
+    /// wiring it for some wires and not others is a partial authoring rather
+    /// than a fault. The note names the wires that carry routing and no
+    /// start, because those are the ones whose anchor still reads as moved.
+    ///
+    /// NOTHING IS SAID WHEN NOTHING IS WIRED. A note about offsets on a
+    /// machine that has none would be noise raised on correct input.
+    ///
+    /// NOT PROVED HERE, and stated rather than left to be found: this method
+    /// cannot know whether the planes it is handed came off the right PORT.
+    /// That is the reader's job (<c>ReadWireStarts</c>, which takes its port
+    /// index as an argument for exactly this reason), and the harness pins
+    /// the two components' indices against their own registrations.
+    /// </summary>
+    public static List<MechanismRoutingWire> PrependWireStarts(
+        IReadOnlyList<MechanismRoutingWire> routing,
+        IReadOnlyDictionary<int, MechanismFrame> starts,
+        List<string> notes)
+    {
+        ArgumentNullException.ThrowIfNull(routing);
+        ArgumentNullException.ThrowIfNull(starts);
+        ArgumentNullException.ThrowIfNull(notes);
+
+        var rejoined = new List<MechanismRoutingWire>(routing.Count);
+        if (starts.Count == 0)
+        {
+            rejoined.AddRange(routing);
+            return rejoined;
+        }
+
+        int prepended = 0;
+        double worstJump = 0.0;
+        foreach (MechanismRoutingWire wire in routing)
+        {
+            if (!starts.TryGetValue(wire.Wire, out MechanismFrame? start) ||
+                wire.Route.Count == 0)
+            {
+                rejoined.Add(wire);
+                continue;
+            }
+            var route = new List<MechanismFrame>(wire.Route.Count + 1) { start };
+            route.AddRange(wire.Route);
+            rejoined.Add(new MechanismRoutingWire(wire.Wire, route));
+            prepended++;
+            double jump = Distance(start.Origin, wire.Route[0].Origin);
+            if (jump > worstJump)
+                worstJump = jump;
+        }
+
+        var missing = rejoined
+            .Where(w => w.Route.Count > 0 && !starts.ContainsKey(w.Wire))
+            .Select(w => w.Wire)
+            .ToList();
+        notes.Add(
+            $"Wire Start (WS): {prepended} wire(s) had their true start " +
+            "prepended, so an offset routing path still begins at the " +
+            "anchor the datum, the placement and the net-vertex match are " +
+            "all read from. The furthest a start sits from the first " +
+            "offset plane is " +
+            worstJump.ToString("0.####", CultureInfo.InvariantCulture) +
+            " m, which is the step the drawn cable takes leaving its " +
+            "anchor and should be about the offset you applied." +
+            (missing.Count > 0
+                ? " Wire(s) " + string.Join(", ", missing) +
+                  " carry routing but NO start, so their route still " +
+                  "begins at the offset plane and their anchor will read " +
+                  "as moved."
+                : string.Empty));
+        return rejoined;
+    }
+
+    /// <summary>
     /// Build the mechanism payload, or null when nothing was wired at all
     /// (spec section 8 item 6: "the collector with NOTHING wired produces
     /// no mechanism document and no warning noise"). <paramref
@@ -527,9 +625,23 @@ internal static class MechanismCollector
         ArgumentNullException.ThrowIfNull(warnings);
         ArgumentNullException.ThrowIfNull(notes);
 
+        // EVERY PART THIS BUILD CAN CARRY, THE ANCHOR INCLUDED (final fix
+        // wave). The anchor was dropped from this list when the list was
+        // last edited, and since Tasks 3 and 5.1 made Frame 1, Frame 2,
+        // Motors, Reel and Reel Axis refusing stubs on the COLLECTOR, that
+        // component's own reader can hand this method nothing but a tie and
+        // an anchor. So "anyAssetPart" quietly came to mean "a tie was
+        // wired": an anchor wired with NO tie built no mechanism block at
+        // all, which took the anchor body, cableRadius, cableThickness,
+        // cableMatchesNetCable and routingFrameMeaning out of the document
+        // with it, while the anchors[] rows below still pointed at a
+        // "mechanism.anchor" that was no longer there. Everything drew, the
+        // cable drew at a reader default rather than his 0.02 m, and the
+        // reference dangled.
         bool anyAssetPart =
             asset.Frame1 is not null || asset.Frame2.Count > 0 || asset.Motors is not null ||
-            asset.TensionTie is not null || asset.Reels.Count > 0;
+            asset.TensionTie is not null || asset.Anchor is not null ||
+            asset.Reels.Count > 0;
         bool anyRouting = routing.Any(w => w.Route.Count > 0);
         bool nothingWired = !anyAssetPart && !anyRouting && placements.Count == 0;
         if (nothingWired)
@@ -537,11 +649,25 @@ internal static class MechanismCollector
 
         if (!anyAssetPart && (placements.Count > 0 || anyRouting))
         {
+            // THE PARTS ARE NAMED, THE PORTS ARE NOT (final fix wave, for
+            // the reason the citation's own doc comment above gives). This
+            // build is SHARED: on the Machine component the frame, motor
+            // and reel ports are the live ones and Tension Tie and Anchor
+            // are refusing stubs, and on the Mechanism component it is
+            // exactly the other way round. The message used to list "Frame
+            // 1, Frame 2, Motors, Tension Tie or Reel", which on the
+            // Mechanism component told him to wire four ports that refuse
+            // by name. Naming the PART, and saying which component owns
+            // it, is true from either side.
             warnings.Add(
                 "Placement (PL) or Routing (RT) was authored, but no " +
-                "mechanism part (Frame 1, Frame 2, Motors, Tension Tie or " +
-                "Reel) was; nothing is instanced without a mechanism to " +
-                "instance.");
+                "mechanism part reached this build: no frame, no motors, " +
+                "no reel, no tension tie and no anchor. Nothing is " +
+                "instanced without a mechanism to instance. The parts are " +
+                "split across two components (spec 3.3): the frame, motor " +
+                "and reel parts are the Machine component's, and the " +
+                "tension tie and the anchor are the Mechanism component's, " +
+                "so the port to wire is on whichever of the two this is.");
         }
 
         // REEL ENTRIES AND BODIES (spec 4.1, his ruling 1.5 of 2026-09-09:
@@ -3436,11 +3562,24 @@ internal static class MechanismCollector
                     "bank.idlers are ENTRY indices: an entry is one reel " +
                     "KIND, one authored mesh carried to as many places as " +
                     "it has bodies.",
-                ["bodies"] = "bank.drivenBodies, and a routing frame's own " +
-                    "ownerReel, are PHYSICAL BODY indices: entry 0's " +
-                    "bodies in order, then entry 1's, and so on. A wire " +
-                    "rides one drum, not one kind, so the frames count " +
-                    "bodies.",
+                ["bodies"] = "bank.drivenBodies counts PHYSICAL BODIES: " +
+                    "entry 0's bodies in order, then entry 1's, and so " +
+                    "on. IT IS THE ONLY KEY IN THIS DOCUMENT THAT COUNTS " +
+                    "IN THAT SPACE, and this entry used to claim a second " +
+                    "one that does not exist. This document's routing " +
+                    "frames carry NO owner and NO ownerReel at all: they " +
+                    "are plain frames, so there is no per-frame reel " +
+                    "ownership here to resolve. The STUDY document does " +
+                    "carry an ownerReel on each of its own routing " +
+                    "frames, and on every study written today it reads -1 " +
+                    "with owner \"body\" on every frame, because the " +
+                    "reels left the study when the machine split out of " +
+                    "it. Binding a wire to the drum it rides is an OPEN " +
+                    "ITEM on the plugin side, registered as a running " +
+                    "deferral in its own test harness rather than left to " +
+                    "be discovered; until it is closed, read an ownerReel " +
+                    "on a study as ABSENT and not as an index into this " +
+                    "document's bodies.",
             },
             ["bank"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -4340,13 +4479,17 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         : base(
             "Mechanism",
             "ME",
-            "Collect the ONE authored mechanism's parts -- Tension Tie, " +
-            "Frame 1, Frame 2, Motors, Reel, Reel Axis, Routing -- and " +
-            "place it at every Placement branch, deriving each instance's " +
-            "transform from Routing wire 0 against that branch's own " +
-            "first plane and validating it against the other six. " +
-            "Nothing wired produces nothing: this is the fourth sibling " +
-            "document, and it is optional per study.",
+            "Collect the STUDY's own mechanism work -- the Tension Tie, " +
+            "the Anchor, the Routing and the Placements, plus the machine " +
+            "this study cites -- and place that machine at every " +
+            "Placement branch, deriving each instance's transform from " +
+            "Routing wire 0 against that branch's own first plane and " +
+            "validating it against the other six. Frame 1, Frame 2, " +
+            "Motors, Reel and Reel Axis are REFUSING STUBS here since " +
+            "spec 3.1 and 5.1: those parts moved to the Machine " +
+            "component, so the machine uploads once instead of riding " +
+            "every study. Nothing wired produces nothing: this is the " +
+            "fourth sibling document, and it is optional per study.",
             ComponentCategories.Deliver,
             "mechanism")
     {
@@ -4354,6 +4497,16 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
 
     public override Guid ComponentGuid =>
         new("6b2e9f14-8a3d-4c7e-9f21-5d0a7c3e9b41");
+
+    /// <summary>
+    /// WHERE Wire Start (WS) SITS ON THIS COMPONENT, declared once so that
+    /// the registration below and <see cref="ReadWireStarts"/> index the
+    /// same port (spec 3.5). The reader is shared with the Machine
+    /// component, where WS sits at 12; on THAT component index 9 is Reel
+    /// Axis, also a plane tree, so a reader that carried this number with
+    /// it would read reel axes as wire starts and say nothing.
+    /// </summary>
+    internal const int WireStartPort = 9;
 
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
@@ -4488,7 +4641,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "planes[0] is genuinely the net end. Only the first plane of " +
             "each branch is read.",
             GH_ParamAccess.tree);
-        parameters[9].Optional = true;
+        parameters[WireStartPort].Optional = true;
 
         parameters.AddTextParameter(
             "Frame Meaning",
@@ -4621,51 +4774,13 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
 
             // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route, so
             // an offset path still begins at the anchor everything else in
-            // this document is pinned to.
-            Dictionary<int, MechanismFrame> wireStarts = ReadWireStarts(data, warnings);
-            if (wireStarts.Count > 0)
-            {
-                var rejoined = new List<MechanismRoutingWire>(routing.Count);
-                int prepended = 0;
-                double worstJump = 0.0;
-                foreach (MechanismRoutingWire wire in routing)
-                {
-                    if (!wireStarts.TryGetValue(wire.Wire, out MechanismFrame? start) ||
-                        wire.Route.Count == 0)
-                    {
-                        rejoined.Add(wire);
-                        continue;
-                    }
-                    var route = new List<MechanismFrame>(wire.Route.Count + 1) { start };
-                    route.AddRange(wire.Route);
-                    rejoined.Add(new MechanismRoutingWire(wire.Wire, route));
-                    prepended++;
-                    double jump = MechanismCollector.Distance(
-                        start.Origin, wire.Route[0].Origin);
-                    if (jump > worstJump)
-                        worstJump = jump;
-                }
-                routing = rejoined;
-                var missing = routing
-                    .Where(w => w.Route.Count > 0 && !wireStarts.ContainsKey(w.Wire))
-                    .Select(w => w.Wire)
-                    .ToList();
-                notes.Add(
-                    $"Wire Start (WS): {prepended} wire(s) had their true " +
-                    "start prepended, so an offset routing path still " +
-                    "begins at the anchor the placement and the net-vertex " +
-                    "match are read from. The furthest a start sits from " +
-                    "the first offset plane is " +
-                    worstJump.ToString("0.####", CultureInfo.InvariantCulture) +
-                    " m, which is the step the drawn cable takes leaving " +
-                    "its anchor and should be about the offset you applied." +
-                    (missing.Count > 0
-                        ? " Wire(s) " + string.Join(", ", missing) +
-                          " carry routing but NO start, so their route " +
-                          "still begins at the offset plane and their " +
-                          "anchor will read as moved."
-                        : string.Empty));
-            }
+            // this document is pinned to. The loop itself is
+            // MechanismCollector.PrependWireStarts, shared with the Machine
+            // component so the two documents cannot disagree about what a
+            // route begins with.
+            Dictionary<int, MechanismFrame> wireStarts =
+                ReadWireStarts(data, WireStartPort);
+            routing = MechanismCollector.PrependWireStarts(routing, wireStarts, notes);
             List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
             string meaning = string.Empty;
@@ -4998,12 +5113,28 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// correspondence, the net-vertex match and the residual all read it.
     /// Prepending the un-offset plane gives the drawn cable its real start
     /// and leaves every one of those readings exactly as it was.
+    ///
+    /// THE PORT INDEX IS AN ARGUMENT, NOT A CONSTANT (spec 3.5, and the
+    /// final fix wave's own CRITICAL). This reader is shared with the
+    /// Machine component, where Wire Start sits at index 12 and index 9 is
+    /// Reel Axis, ALSO a plane tree. A hard-coded 9 reused there compiles,
+    /// runs, and prepends each reel's AXIS PLANE to the front of every
+    /// wire's route, moving the whole machine to a plausible wrong place
+    /// with a residual of 0.000000 m. Each caller passes its own
+    /// <c>WireStartPort</c>, which is the same constant its own
+    /// registration indexes, so the two cannot drift apart silently.
+    ///
+    /// STATIC BECAUSE IT IS SHARED, and it holds no component state: it
+    /// reads a tree off the data access it is handed and returns what it
+    /// found. Nothing is refused by name here, which is why it takes no
+    /// warnings list: a branch with no indices, or a null plane, is simply
+    /// not a start, and WS is optional for every wire.
     /// </summary>
-    private Dictionary<int, MechanismFrame> ReadWireStarts(
-        IGH_DataAccess data, List<string> warnings)
+    internal static Dictionary<int, MechanismFrame> ReadWireStarts(
+        IGH_DataAccess data, int at)
     {
         var starts = new Dictionary<int, MechanismFrame>();
-        data.GetDataTree(9, out GH_Structure<GH_Plane> wsTree);
+        data.GetDataTree(at, out GH_Structure<GH_Plane> wsTree);
         foreach (GH_Path path in wsTree.Paths)
         {
             if (path.Indices.Length == 0)
@@ -5317,11 +5448,15 @@ public sealed class MachineComponent : NativeComponentBase
         : base(
             "Machine",
             "MC",
-            "The machine alone -- bodies, reels and axes, routing, the " +
-            "anchor and tie -- written to its own bench.machine/1 file. " +
-            "No Result, no placement, no study: this is the thing you own " +
-            "and may own several of, at different wire counts, and a study " +
-            "says which one it was laid out for.",
+            "The machine alone -- the frame parts, the motors, the reel " +
+            "entries and their axes, and the unit-local routing -- " +
+            "written to its own bench.machine/1 file. NOT the anchor and " +
+            "NOT the tension tie: those are a study's permanent works " +
+            "(spec 3.3) and belong to the Mechanism component, and the " +
+            "slots held here for them refuse by name. No Result, no " +
+            "placement, no study: this is the thing you own and may own " +
+            "several of, at different wire counts, and a study says which " +
+            "one it was laid out for.",
             ComponentCategories.Deliver,
             "machine")
     {
@@ -5329,6 +5464,18 @@ public sealed class MachineComponent : NativeComponentBase
 
     public override Guid ComponentGuid =>
         new("7c4f1a28-5d63-4e90-8b17-2af6c05d9e33");
+
+    /// <summary>
+    /// WHERE Wire Start (WS) SITS ON THIS COMPONENT, declared once so that
+    /// the registration below and the read path in
+    /// <see cref="SolveInstance"/> index the same port (spec 3.5). The
+    /// reader is shared with the Mechanism component, where WS sits at 9;
+    /// index 9 HERE is Reel Axis, also a plane tree, so reusing that number
+    /// would prepend each reel's axis plane to the front of every wire's
+    /// route and move the whole machine to a plausible wrong place with a
+    /// residual of 0.000000 m.
+    /// </summary>
+    internal const int WireStartPort = 12;
 
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
@@ -5460,7 +5607,7 @@ public sealed class MachineComponent : NativeComponentBase
             "and planes[0] is this machine's DATUM, so without this the " +
             "offset moves every study placed against it.",
             GH_ParamAccess.tree);
-        parameters[12].Optional = true;
+        parameters[WireStartPort].Optional = true;
 
         parameters.AddTextParameter(
             "Machine Id", "ID",
@@ -5524,6 +5671,22 @@ public sealed class MachineComponent : NativeComponentBase
 
             MechanismAssetInput asset = ReadAsset(data, warnings, notes);
             List<MechanismRoutingWire> routing = ReadRouting(data, warnings, notes);
+
+            // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route,
+            // BEFORE the document is built (spec 3.5, and the final fix
+            // wave's own CRITICAL). Wire Start was registered on this
+            // component from the start and read by nothing: the tooltip
+            // promised the offset no longer moved the datum, the datum
+            // stayed the offset route[0] anyway, and every study placed
+            // against this machine was displaced by his own offset while
+            // the residual read 0.000000 m and reported success.
+            //
+            // The port index is this component's OWN constant, never the
+            // collector's: index 9 here is Reel Axis, also a plane tree
+            // (see WireStartPort above).
+            Dictionary<int, MechanismFrame> wireStarts =
+                MechanismCollectorComponent.ReadWireStarts(data, WireStartPort);
+            routing = MechanismCollector.PrependWireStarts(routing, wireStarts, notes);
 
             // THE NAME REACHES THE DOCUMENT AS AUTHORED, and the id comes
             // from its own port (spec 3.6). StudyName still sanitises the

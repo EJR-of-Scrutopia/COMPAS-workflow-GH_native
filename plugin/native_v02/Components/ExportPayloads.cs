@@ -811,12 +811,22 @@ internal static class FormworkDocument
 /// section 1), built from TWO halves that never disagree about a row
 /// because they share one call (<see cref="MechanismGeometry"/>):
 ///
-/// the SHAPE half is the MECHANISM collector's own payload, already
-/// validated and passed through here verbatim (bodies, spinners, axes,
-/// sockets, reeve factor, spool radius, anchor tie meshes); the PLACEMENT
-/// half is computed here, against the Result Export already owns, exactly
-/// the way the formwork document's frames are built here and not by
-/// Columns or Animate.
+/// the SHAPE half is the MECHANISM collector's own payload, and it is NOT
+/// passed through verbatim: it is filtered to the six keys
+/// <see cref="StudyMechanismKeys"/> names (tensionTie, anchor, cableRadius,
+/// cableThickness, cableMatchesNetCable, routingFrameMeaning), which is the
+/// whole point of the machine split. Everything else the collector's block
+/// can carry -- frame1, frame2, motors, reels and spoolRadius -- belongs to
+/// the machine document and is dropped here rather than copied into every
+/// study. The PLACEMENT half is computed here, against the Result Export
+/// already owns, exactly the way the formwork document's frames are built
+/// here and not by Columns or Animate.
+///
+/// THE OLD SENTENCE SAID THE OPPOSITE, and is recorded because it is the
+/// seventh piece of stale text this rework has had to correct: it listed
+/// "bodies, spinners, axes, sockets, reeve factor, spool radius, anchor tie
+/// meshes" as passed through verbatim, and every one of those either left
+/// for the machine document or never existed under that name.
 ///
 /// Caught on its own by the caller, the way formwork is: a Result the
 /// mechanism payload's shape does not fit (a node reel with no columns,
@@ -2008,13 +2018,24 @@ internal static class MechanismDocument
                     "pull it. THE RADIUS COMES FROM THE CITED MACHINE'S " +
                     "OWN DOCUMENT (see the machine block above), not from " +
                     "this one, which carries no reels at all since the " +
-                    "machine left the study: use the OWNING REEL's own " +
-                    "windingRadius there, found by following this wire's " +
-                    "machine_wire to that document's routing and the reel " +
-                    "its frames ride. That document's own spoolRadius is " +
-                    "only the median across the reels that carry wire, and " +
-                    "a pulley and a spool do not share a radius. THE " +
-                    "SUBTRACTION IS frame0 MINUS " +
+                    "machine left the study. WHICH reel a given wire rides " +
+                    "is NOT PUBLISHED ANYWHERE TODAY, and this document " +
+                    "will not pretend it is: the machine document's own " +
+                    "routing frames carry no owner and no ownerReel, and " +
+                    "this document's frames carry ownerReel -1 with owner " +
+                    "\"body\" on every frame, because the reels left the " +
+                    "study when the machine split out of it. Binding a " +
+                    "wire to its drum is an OPEN ITEM on the plugin side, " +
+                    "registered as a running deferral in its own test " +
+                    "harness. Until it is closed, use the cited machine's " +
+                    "bank: bank.radius is the median winding radius across " +
+                    "the entries whose bodies terminate wire routes, which " +
+                    "is the spools and not the pulleys, so it is the right " +
+                    "median for a take-up rate even though it is one " +
+                    "number for every wire. A pulley and a spool do not " +
+                    "share a radius, so do NOT fall back to the machine's " +
+                    "own spoolRadius, which is medianed over a wider " +
+                    "population. THE SUBTRACTION IS frame0 MINUS " +
                     "t, not the other way about, so that taking up reads " +
                     "POSITIVE and agrees with the sign sentence: reeling " +
                     "in SHORTENS what is pulled, so frame0 minus t grows. " +

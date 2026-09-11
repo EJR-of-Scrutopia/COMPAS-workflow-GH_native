@@ -21,9 +21,17 @@ the code as it stands on `feature/mould-round-three`.
        mesh (the frame parts, the motors, the reel entries and their bodies, the
        unit-local wire routing) now lives in its own document, one per machine
        design, and the study document carries none of it. A machine document is
-       written as "<Name>-machine.json" into the machine library folder your reader
-       already scans (the same folder a Machine component's Folder port and Export's
-       Machine Folder port both point at). Its header carries schema, id (a minted
+       written as "<Name>-machine.json" by the Machine component, into whatever
+       folder that component's own Folder (F) port names; THAT folder is the machine
+       library, and it is the one to scan for machines. Do not read Export's Machine
+       Folder (MF) port as the same thing: despite its name, MF is where the STUDY
+       document "<Name>-mechanism.json" is written, and it defaults to a "Mechanisms"
+       folder inside the export Path. The two are independent strings that have to be
+       pointed at the same place BY HAND, and nothing in the plugin checks that they
+       agree, so a machine written to one folder while the studies cite it from
+       another resolves to nothing at all. The two file names differ ("-machine.json"
+       against "-mechanism.json"), so the two kinds can share one folder without
+       colliding once they are pointed at it. Its header carries schema, id (a minted
        code, never derived from the name), name (a renameable label), units,
        wireCount, a reeve block, a bank summary, a footprint and a datum; the body is
        the reel entries and their bodies, the frame and motor parts, and the

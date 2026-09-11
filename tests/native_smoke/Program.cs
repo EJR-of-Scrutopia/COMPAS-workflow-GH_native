@@ -3602,6 +3602,91 @@ internal static partial class Program
 
         try
         {
+            ValidateMachineWireStart(plugin);
+            Console.WriteLine(
+                "PASS  Wire Start (WS) reaches the MACHINE's own datum (spec "
+                + "3.5; the final whole-branch review's CRITICAL). The port "
+                + "was registered at index 12 on the Machine component and "
+                + "READ BY NOTHING: its only reader hard-coded index 9, which "
+                + "is the Mechanism component's WS slot and the MACHINE "
+                + "component's Reel Axis. So the tooltip promised his 0.02 m "
+                + "routing offset no longer moved the datum, the datum stayed "
+                + "the offset route[0], and every study placed against that "
+                + "machine came out displaced by his own offset while the "
+                + "residual read 0.000000 m and the export reported success. "
+                + "The check that stood here pinned the port's nickname, "
+                + "index and access, which is exactly how a port nothing "
+                + "reads satisfies a port check. THREE THINGS NOW, each "
+                + "independently able to fail: each component declares its "
+                + "own WireStartPort const, indexes its registration by it "
+                + "and hands it to the now-shared reader, and the port "
+                + "sitting at each const must be WS / Wire Start / tree, so "
+                + "pointing the machine's at 9 lands on Reel Axis and is "
+                + "named; the Machine component's own compiled code must "
+                + "reference both ReadWireStarts and PrependWireStarts, "
+                + "scanned out of its IL because SolveInstance needs an "
+                + "IGH_DataAccess this harness cannot build (what that is "
+                + "worth, and is not, is written out in the method's own doc "
+                + "comment); and THE DATUM ITSELF, read off the document "
+                + "BuildMachine actually wrote: without the starts "
+                + "datum.frames[0] is the offset plane, which is the shipped "
+                + "bug as a measurement, and with them it is the true start, "
+                + "the route is four frames rather than three, the start "
+                + "comes FIRST, and the note reports the 0.02 m step. Plus "
+                + "two correct-input cases: a machine with no starts wired "
+                + "raises no Wire Start note at all, a repair raises the same "
+                + "number of warnings as the same machine raises without one "
+                + "and none of its own, and a machine with starts on six of "
+                + "its seven wires NAMES the seventh rather than leaving its "
+                + "anchor quietly moved.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MachineWireStart: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismAnchorWithoutTie(plugin);
+            Console.WriteLine(
+                "PASS  An ANCHOR wired with NO tension tie (the final "
+                + "whole-branch review's finding 2, and no fixture wired one "
+                + "before this, which is how it survived). BuildWithResult "
+                + "decides whether to write a mechanism block from "
+                + "anyAssetPart, and the anchor had been dropped from that "
+                + "list; since Tasks 3 and 5.1 made Frame 1, Frame 2, Motors, "
+                + "Reel and Reel Axis refusing stubs on the COLLECTOR, its "
+                + "reader can hand that build nothing but a tie and an "
+                + "anchor, so the test had quietly come to mean \"a tie was "
+                + "wired\". An anchor with no tie built mechanism: null, "
+                + "taking the anchor body, cableRadius, cableThickness, "
+                + "cableMatchesNetCable and routingFrameMeaning with it, "
+                + "while every anchors[] row still carried ref "
+                + "\"mechanism.anchor\" pointing at a block that was not "
+                + "there: the document validated, the anchors drew in the "
+                + "right places, and the cables drew at a reader's own "
+                + "default thickness instead of his 0.02 m radius. Now the "
+                + "block is built, carries the anchor body at its real vertex "
+                + "count and NO tensionTie key at all, every anchors[] ref "
+                + "resolves, and NOTHING is said about a missing part or "
+                + "about the anchor, which is correct input on that "
+                + "component (the NO REEL message a study build does raise "
+                + "is deliberately left alone: it belongs to the ownership "
+                + "deferral, is true of every study the collector can "
+                + "produce, and silencing it here would hide it). The "
+                + "control proves the pairing the other "
+                + "way: with no part at all the block IS null, every ref is "
+                + "null rather than dangling, and the warning that fires "
+                + "names PARTS, not the four ports it used to name that "
+                + "REFUSE on the component raising it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismAnchorWithoutTie: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMachineWriteGuard(plugin);
             Console.WriteLine(
                 "PASS  The machine library's write guard (Task 4 fix round, "
@@ -12658,7 +12743,7 @@ internal static partial class Program
                 // from the arch (an arch tree whose sole node is a rib's
                 // shared notch has HeadMain == -1 under Step 7, since it owns
                 // nothing), and Step 7 states plainly that such a tree
-                // "builds no member and no foot at all" — so footNode[t] is
+                // "builds no member and no foot at all", so footNode[t] is
                 // -1 for both, and levelNodes[-1] throws
                 // IndexOutOfRangeException if the brief's code runs as
                 // written. The two arch trees BORROWING their ribs' shared
@@ -12719,16 +12804,16 @@ internal static partial class Program
             //    check in this file runs at Branching 1, where a tree holds
             //    exactly ONE notch: HeadMain can then only be 0 or -1, and the
             //    trunk, the fork and the member build all run to Nodes[0]
-            //    whichever it is. The real job — picking the innermost OWNED
+            //    whichever it is. The real job, picking the innermost OWNED
             //    notch out of several when the would-be main is itself
-            //    borrowed, and building the geometry to THAT node — was
+            //    borrowed and building the geometry to THAT node, was
             //    therefore never exercised.
             //
             //    The arch holds nine free notches, bar positions 1 to 9, so at
             //    Branching 3 the layout is 3, 3, 3 (nine odd, centre tree of
             //    three, no strays) and the middle group is the free stations
             //    3, 4, 5, that is bar positions 4, 5 and 6. Its main is the
-            //    station at the row centre, bar position 5 — EXACTLY the node
+            //    station at the row centre, bar position 5, EXACTLY the node
             //    the rib lands on. The rib holds ten free notches against the
             //    arch's nine and owns the shared node by the rule's first
             //    clause, so the arch's middle tree is [5, 4, 6] with Owned
@@ -43025,8 +43110,8 @@ internal static partial class Program
         }
 
         // ================================================================
-        // SCENARIO 4: HIS OWN MACHINE'S SHAPE -- FOUR ENTRIES, TEN BODIES
-        // -- AND THE BANK RE-DERIVED FOR IT (spec 4.6).
+        // SCENARIO 4: HIS OWN MACHINE'S SHAPE -- FOUR ENTRIES, ELEVEN
+        // BODIES -- AND THE BANK RE-DERIVED FOR IT (spec 4.6).
         //
         // WHY THIS FIXTURE HAD TO BE BUILT. The old bank rule was "the
         // largest group of reels sharing one axis direction AND one winding
@@ -43034,7 +43119,9 @@ internal static partial class Program
         // separate spool MESHES are authored. This is the same machine as
         // the fixture above -- the same seven drums at the same places, the
         // same three pulleys, the same seven wires -- authored the way
-        // ruling 1.5 says it must be: ONE spool entry at seven axes. Under
+        // ruling 1.5 says it must be: ONE spool entry carrying the seven
+        // drums, plus a SPARE EIGHTH drum added below for the footprint's
+        // sake, so eight axes on that entry and eleven bodies in all. Under
         // the old rule it reads TWO driven spools (the two pulleys whose
         // mesh-derived radii happen to fall within 5% of each other) against
         // seven wires, and fires its count-disagreement warning on a
@@ -43456,6 +43543,764 @@ internal static partial class Program
             (10, "FM", "Frame Meaning", "item"), (11, "AN", "Anchor", "list"),
             (12, "MA", "Machine", "item"), (13, "RW", "Reeve Per Wire", "tree"),
         });
+    }
+
+    /// <summary>
+    /// WIRE START (WS) ON THE MACHINE COMPONENT, AND THE DATUM IT MOVES
+    /// (spec 3.5; the final whole-branch review's own CRITICAL).
+    ///
+    /// WHAT WENT WRONG, AND WHY NOTHING CAUGHT IT. WS was registered on the
+    /// Machine component at index 12 and READ BY NOTHING. Its only reader,
+    /// MechanismCollectorComponent.ReadWireStarts, hard-coded index 9, which
+    /// is that component's own WS slot and the MACHINE component's Reel
+    /// Axis. So the port existed, its tooltip promised that his 0.02 m
+    /// routing offset no longer moved the machine's datum, and the datum
+    /// stayed the offset route[0] regardless: every study placed against
+    /// that machine came out displaced by his own offset, while the residual
+    /// read 0.000000 m and the export reported success. The check that stood
+    /// here pinned the port's NICKNAME, INDEX AND ACCESS, which is exactly
+    /// how this got through: a registered port that nothing reads satisfies
+    /// all three.
+    ///
+    /// THREE THINGS ARE PROVED, each independently able to fail.
+    ///
+    /// 1. THE INDEX EACH READER USES IS THE INDEX ITS OWN REGISTRATION
+    ///    USED. Each component declares its own WireStartPort constant, and
+    ///    both its parameters[...] line and its read path index that
+    ///    constant. This check reads the constant back and requires the port
+    ///    sitting there to be WS / "Wire Start" / tree. Point the Machine
+    ///    component's constant at 9 and it lands on Reel Axis, also a plane
+    ///    tree, which would prepend reel axes to wire routes and say nothing
+    ///    at all.
+    ///
+    /// 2. THE MACHINE COMPONENT ACTUALLY CALLS BOTH HALVES: its own code
+    ///    must reference MechanismCollectorComponent.ReadWireStarts and
+    ///    MechanismCollector.PrependWireStarts.
+    ///
+    ///    HOW, AND WHAT THAT IS WORTH. The call sits in SolveInstance, which
+    ///    needs an IGH_DataAccess and a live Grasshopper document this
+    ///    harness has no native core to build, so it cannot be DRIVEN here.
+    ///    What is done instead is a byte scan of the compiled IL of every
+    ///    method the Machine component declares, looking for the four-byte
+    ///    metadata token a call to each of those two methods emits. That
+    ///    proves the token is REFERENCED. It does not prove the call is
+    ///    reached on every path, and it would not notice a call whose result
+    ///    was computed and then discarded. What it does catch is precisely
+    ///    the defect that shipped: no call at all.
+    ///
+    /// 3. THE DATUM ITSELF, driven through the product. A two-wire machine
+    ///    whose routes begin at offset planes, built twice by
+    ///    MechanismCollector.BuildMachine: once with the wire starts
+    ///    prepended and once without. WITHOUT, datum.frames[0] is the offset
+    ///    plane, which is the shipped bug stated as a measurement. WITH, it
+    ///    is the true start, the route is one frame longer and begins there,
+    ///    and the note reports the 0.02 m step. The numbers are read off the
+    ///    document the product actually wrote, never off the dictionary it
+    ///    was handed.
+    ///
+    /// AND TWO CORRECT-INPUT CASES, because a message raised on correct
+    /// input is a defect equal in seriousness to one that misses a fault: a
+    /// machine with NO wire starts wired raises no Wire Start note at all
+    /// and its routing is returned unchanged, while a machine with a start
+    /// start on six of its seven wires names the seventh by number rather
+    /// than staying silent about a route whose anchor still reads as moved.
+    ///
+    /// NOT CLAIMED HERE: that the build raises no warning at all. A machine
+    /// or study built with no reels wired says so, which belongs to the
+    /// ownership deferral this branch carries and not to this port. What is
+    /// claimed instead is that prepending the starts raises NOTHING NEW:
+    /// the same number of warnings as the same machine raises without them,
+    /// and none of them about Wire Start. The text is deliberately not
+    /// pinned, since the no-reel message counts routing frames and there is
+    /// legitimately one more per wire after a repair.
+    /// </summary>
+    private static void ValidateMachineWireStart(Assembly plugin)
+    {
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        Type machineComponentType = RequireComponentType(plugin, "MachineComponent");
+        Type collectorComponentType =
+            RequireComponentType(plugin, "MechanismCollectorComponent");
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        MethodInfo buildMachine = RequirePublicStatic(collectorType, "BuildMachine");
+        MethodInfo prepend = RequirePublicStatic(collectorType, "PrependWireStarts");
+
+        // ================================================================
+        // 1. THE PORT INDEX EACH COMPONENT READS IS ITS OWN.
+        // ================================================================
+        int PortConstant(Type componentType)
+        {
+            FieldInfo field = componentType.GetField(
+                "WireStartPort",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    componentType.Name + " must declare its own WireStartPort " +
+                    "constant, so that its registration and its read path " +
+                    "cannot index different ports. The reader is SHARED with " +
+                    "the other component, where Wire Start sits at a " +
+                    "different index and the index this one uses is a " +
+                    "different plane tree entirely.");
+            if (!field.IsLiteral)
+            {
+                throw new InvalidOperationException(
+                    componentType.Name + ".WireStartPort must be a const, " +
+                    "since a settable field could be changed after the ports " +
+                    "were registered against it.");
+            }
+            return (int)field.GetRawConstantValue()!;
+        }
+
+        void PortAtConstantIsWireStart(Type componentType)
+        {
+            int at = PortConstant(componentType);
+            object component = Activator.CreateInstance(componentType)!;
+            object owner = componentType.BaseType!
+                .GetProperty("Params")!.GetValue(component)!;
+            var inputs = (IList)owner.GetType().GetProperty("Input")!.GetValue(owner)!;
+            if (at < 0 || at >= inputs.Count)
+            {
+                throw new InvalidOperationException(
+                    $"{componentType.Name}.WireStartPort is {at}, but the " +
+                    $"component registers {inputs.Count} inputs.");
+            }
+            object port = inputs[at]!;
+            string nick = (string)port.GetType().GetProperty("NickName")!.GetValue(port)!;
+            string name = (string)port.GetType().GetProperty("Name")!.GetValue(port)!;
+            string access = port.GetType().GetProperty("Access")!.GetValue(port)!.ToString()!;
+            if (nick != "WS" || name != "Wire Start" || access != "tree")
+            {
+                throw new InvalidOperationException(
+                    $"{componentType.Name}.WireStartPort is {at}, and input " +
+                    $"{at} on that component is \"{name}\" ({nick}, " +
+                    $"GH_ParamAccess.{access}), not Wire Start (WS) as a " +
+                    "tree. The reader takes this number as an argument and " +
+                    "asks no questions about it, so a number pointing at " +
+                    "another PLANE TREE (Reel Axis is one on both " +
+                    "components) reads cleanly and prepends the wrong planes " +
+                    "to every wire's route: the machine moves to a plausible " +
+                    "wrong place and every residual still reads 0.000000 m.");
+            }
+        }
+
+        PortAtConstantIsWireStart(machineComponentType);
+        PortAtConstantIsWireStart(collectorComponentType);
+        if (PortConstant(machineComponentType) == PortConstant(collectorComponentType))
+        {
+            throw new InvalidOperationException(
+                "The two components' Wire Start indices happen to be equal, " +
+                "which leaves the shared reader's port argument untested by " +
+                "everything above: the whole finding was a reader that " +
+                "carried one component's index onto the other.");
+        }
+
+        // ================================================================
+        // 2. THE MACHINE COMPONENT'S OWN CODE REFERENCES BOTH HALVES.
+        // ================================================================
+        MethodInfo readWireStarts = collectorComponentType.GetMethod(
+            "ReadWireStarts",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "MechanismCollectorComponent.ReadWireStarts must be a STATIC " +
+                "method both components can call; it was the collector's own " +
+                "private instance method, which is half of why the Machine " +
+                "component never called it.");
+        ParameterInfo[] readParameters = readWireStarts.GetParameters();
+        if (readParameters.Length != 2 ||
+            readParameters[1].ParameterType != typeof(int))
+        {
+            throw new InvalidOperationException(
+                "ReadWireStarts must take its PORT INDEX as an argument " +
+                "(spec 3.5). A hard-coded index reused on the other " +
+                "component compiles, runs, and reads a plane tree that is " +
+                "not Wire Start.");
+        }
+        RequireDeclaredCodeReferences(
+            machineComponentType, readWireStarts,
+            "MechanismCollectorComponent.ReadWireStarts");
+        RequireDeclaredCodeReferences(
+            machineComponentType, prepend,
+            "MechanismCollector.PrependWireStarts");
+
+        // ================================================================
+        // 3. THE DATUM, MEASURED OFF THE DOCUMENT THE PRODUCT WROTE.
+        // ================================================================
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        // HIS OWN OFFSET, 0.02 m, applied in Y: the routing planes are
+        // pushed off the drums, and the FIRST plane moves with them.
+        const double Offset = 0.02;
+        const int WireCount = 7;
+        double[][] trueStarts = new double[WireCount][];
+        for (int w = 0; w < WireCount; w++)
+            trueStarts[w] = new[] { w * 1.0, 0.0, 0.0 };
+        object[] wires = new object[WireCount];
+        for (int w = 0; w < WireCount; w++)
+        {
+            wires[w] = Activator.CreateInstance(
+                routingWireType,
+                w,
+                MechanismListOf(
+                    frameType,
+                    FrameOf(new[] { trueStarts[w][0], Offset, 0.0 }),
+                    FrameOf(new[] { trueStarts[w][0], 1.0, 0.0 }),
+                    FrameOf(new[] { trueStarts[w][0], 2.0, 0.5 })))!;
+        }
+        object routing = MechanismListOf(routingWireType, wires);
+
+        object asset = Activator.CreateInstance(
+            assetType,
+            Mesh(new[]
+            {
+                new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+                new[] { 0.0, 0.5, 0.4 },
+            }),
+            false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false, null, false,
+            MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+            null,
+            false)!;
+
+        Type startsType = typeof(Dictionary<,>).MakeGenericType(typeof(int), frameType);
+        object StartsFor(params int[] forWires)
+        {
+            var dictionary = (IDictionary)Activator.CreateInstance(startsType)!;
+            foreach (int w in forWires)
+                dictionary.Add(w, FrameOf(trueStarts[w]));
+            return dictionary;
+        }
+
+        string BuildFrom(object wireList, List<string> warnings, List<string> notes) =>
+            (string)buildMachine.Invoke(
+                null,
+                new object?[]
+                {
+                    asset, wireList, "MCH-WS-01", "Wire start test winch",
+                    4.0, "centreline", warnings, notes,
+                })!;
+
+        double[] DatumOrigin(JsonDocument document, int wire) =>
+            document.RootElement.GetProperty("datum").GetProperty("frames")[wire]
+                .GetProperty("origin").EnumerateArray()
+                .Select(e => e.GetDouble()).ToArray();
+
+        // THE BUG, STATED AS A MEASUREMENT: with no start prepended the
+        // datum IS the offset plane.
+        var offsetWarnings = new List<string>();
+        var offsetNotes = new List<string>();
+        string offsetOnly = BuildFrom(routing, offsetWarnings, offsetNotes);
+        using (JsonDocument document = JsonDocument.Parse(offsetOnly))
+        {
+            double[] datum = DatumOrigin(document, 0);
+            if (Math.Abs(datum[1] - Offset) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "This fixture only means anything while an UNREPAIRED " +
+                    "route puts the offset plane at the datum; wanted y = " +
+                    $"{Offset}, got {datum[1]}.");
+            }
+        }
+        if (offsetNotes.Any(n => n.Contains("Wire Start (WS)", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "A machine with NO wire starts wired must raise NO Wire " +
+                "Start note: a note about offsets on a machine that has none " +
+                "is noise on correct input, and it teaches him to ignore the " +
+                "line that will one day be real. Got: " +
+                string.Join(" | ", offsetNotes));
+        }
+
+        // AND THE REPAIR, THROUGH THE SAME BUILD.
+        var repairedNotes = new List<string>();
+        object repaired = prepend.Invoke(
+            null,
+            new object?[]
+            {
+                routing, StartsFor(Enumerable.Range(0, WireCount).ToArray()),
+                repairedNotes,
+            })!;
+        var repairedWarnings = new List<string>();
+        string withStarts = BuildFrom(repaired, repairedWarnings, repairedNotes);
+        using (JsonDocument document = JsonDocument.Parse(withStarts))
+        {
+            for (int w = 0; w < WireCount; w++)
+            {
+                double[] datum = DatumOrigin(document, w);
+                for (int i = 0; i < 3; i++)
+                {
+                    if (Math.Abs(datum[i] - trueStarts[w][i]) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            "THE MACHINE'S DATUM MUST BE THE WIRE START, not " +
+                            "the offset plane: datum.frames is what every " +
+                            "study placed against this machine is pinned to, " +
+                            "so an offset that reaches it displaces every one " +
+                            "of them while the residual still reads 0.000000 " +
+                            $"m. Wire {w} wanted [" +
+                            string.Join(", ", trueStarts[w]) + "], got [" +
+                            string.Join(", ", datum) + "].");
+                    }
+                }
+            }
+            JsonElement route = document.RootElement.GetProperty("routing")[0]
+                .GetProperty("route");
+            if (route.GetArrayLength() != 4)
+            {
+                throw new InvalidOperationException(
+                    "The start is PREPENDED, so the drawn cable runs from its " +
+                    "real anchor out onto the offset path: a three-plane " +
+                    "route must become four. Got " + route.GetArrayLength() +
+                    ", and three means the start replaced the first plane " +
+                    "rather than joining it.");
+            }
+            double[] first = route[0].GetProperty("origin")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            double[] second = route[1].GetProperty("origin")
+                .EnumerateArray().Select(e => e.GetDouble()).ToArray();
+            if (Math.Abs(first[1]) > 1.0e-12 || Math.Abs(second[1] - Offset) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "The prepended start must come FIRST and the offset plane " +
+                    "second, in that order; got y = " + first[1] + " then " +
+                    second[1] + ". Appending instead of prepending leaves the " +
+                    "datum on the offset plane and draws the cable back to " +
+                    "its anchor at the far end.");
+            }
+        }
+
+        string? step = repairedNotes.FirstOrDefault(
+            n => n.Contains("Wire Start (WS)", StringComparison.Ordinal));
+        if (step is null || !step.Contains("0.02", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Wire Start note must report the step the cable takes " +
+                "leaving its anchor, so he can check it against the offset he " +
+                "applied: 0.02 m here. Got: " + (step ?? "no note at all"));
+        }
+        // PREPENDING RAISES NOTHING NEW. The claim is made against the
+        // unrepaired build's own warnings rather than as "no warnings at
+        // all", because a build with no reels wired says so by design and
+        // that message belongs to the ownership deferral this branch
+        // carries, not to this port. It is made as a COUNT and a subject
+        // rather than as text equality, because that message counts routing
+        // frames and there is legitimately one more per wire now: pinning
+        // the text would make a correct repair fail.
+        if (repairedWarnings.Count != offsetWarnings.Count ||
+            repairedWarnings.Any(w =>
+                w.Contains("Wire Start", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "A machine with every wire's start wired must raise the same " +
+                "number of warnings the same machine raises without them, " +
+                "and none of its own. Without: " +
+                string.Join(" | ", offsetWarnings) + ". With: " +
+                string.Join(" | ", repairedWarnings));
+        }
+
+        // A PARTIAL AUTHORING IS NOT A FAULT, AND IS NOT SILENT EITHER.
+        var partialNotes = new List<string>();
+        object partial = prepend.Invoke(
+            null,
+            new object?[]
+            {
+                routing, StartsFor(Enumerable.Range(0, WireCount - 1).ToArray()),
+                partialNotes,
+            })!;
+        string? partialNote = partialNotes.FirstOrDefault(
+            n => n.Contains("Wire Start (WS)", StringComparison.Ordinal));
+        if (partialNote is null ||
+            !partialNote.Contains("Wire(s) 6", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A wire carrying routing and NO start must be NAMED: its " +
+                "route still begins at the offset plane and its anchor still " +
+                "reads as moved, which is the very fault this port exists to " +
+                "repair, surviving on one wire out of two. Got: " +
+                (partialNote ?? "no note at all"));
+        }
+        var partialWarnings = new List<string>();
+        using (JsonDocument document = JsonDocument.Parse(
+            BuildFrom(partial, partialWarnings, partialNotes)))
+        {
+            if (Math.Abs(DatumOrigin(document, 0)[1]) > 1.0e-12 ||
+                Math.Abs(DatumOrigin(document, WireCount - 1)[1] - Offset) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "A partial authoring must repair exactly the wires it " +
+                    "names and leave the rest alone; got wire 0 at y = " +
+                    DatumOrigin(document, 0)[1] + " and wire " +
+                    (WireCount - 1) + " at y = " +
+                    DatumOrigin(document, WireCount - 1)[1] + ".");
+            }
+        }
+    }
+
+    /// <summary>
+    /// DOES THIS TYPE'S OWN COMPILED CODE REFERENCE THAT METHOD? A byte scan
+    /// of the IL of every method the type DECLARES, for the four-byte
+    /// metadata token a call to <paramref name="callee"/> emits.
+    ///
+    /// WHAT IT IS WORTH, SAID PLAINLY. It proves the token appears in the
+    /// type's own code, which is what a call site emits and what deleting the
+    /// call removes. It does NOT prove the call is reached on every path,
+    /// that its result is used, or that its arguments are right. It is used
+    /// where the behaviour itself cannot be driven at all, because the call
+    /// lives in a SolveInstance needing an IGH_DataAccess and a live
+    /// Grasshopper document this harness has no native core to build, and
+    /// because the alternative is what shipped: a reader that exists and is
+    /// never called.
+    ///
+    /// It scans every DECLARED method rather than one named method, so moving
+    /// a call into a private helper of the same type does not turn it red: a
+    /// check that fires on a correct refactor is a defect of its own. If no
+    /// method body can be read at all it THROWS rather than passing, since a
+    /// scan over nothing proves nothing.
+    /// </summary>
+    private static void RequireDeclaredCodeReferences(
+        Type owner, MethodBase callee, string label)
+    {
+        int token = callee.MetadataToken;
+        byte[] want =
+        {
+            (byte)token,
+            (byte)(token >> 8),
+            (byte)(token >> 16),
+            (byte)(token >> 24),
+        };
+        bool readAnyBody = false;
+        IEnumerable<MethodBase> declared = owner
+            .GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Instance | BindingFlags.Static |
+                BindingFlags.DeclaredOnly)
+            .Cast<MethodBase>()
+            .Concat(owner.GetConstructors(
+                BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        foreach (MethodBase method in declared)
+        {
+            byte[]? il = method.GetMethodBody()?.GetILAsByteArray();
+            if (il is null)
+                continue;
+            readAnyBody = true;
+            for (int i = 0; i + 3 < il.Length; i++)
+            {
+                if (il[i] == want[0] && il[i + 1] == want[1] &&
+                    il[i + 2] == want[2] && il[i + 3] == want[3])
+                {
+                    return;
+                }
+            }
+        }
+        if (!readAnyBody)
+        {
+            throw new InvalidOperationException(
+                "No method body could be read off " + owner.Name + " at all, " +
+                "so this check proves nothing and fails rather than passing " +
+                "vacuously.");
+        }
+        throw new InvalidOperationException(
+            owner.Name + " does not reference " + label + " anywhere in its " +
+            "own code. A port that is registered, documented and READ BY " +
+            "NOTHING is the exact shape of this branch's own CRITICAL: the " +
+            "tooltip promised the offset no longer moved the datum, nothing " +
+            "happened, and every study placed against the machine came out " +
+            "displaced while the residual read 0.000000 m.");
+    }
+
+    /// <summary>
+    /// AN ANCHOR WIRED WITH NO TENSION TIE (the final whole-branch review's
+    /// finding 2). No fixture wired one before this, which is how the hole
+    /// survived.
+    ///
+    /// WHAT THE HOLE WAS. MechanismCollector.BuildWithResult decides whether
+    /// to write a mechanism block at all from "anyAssetPart", and the anchor
+    /// had been dropped from that list. Since Tasks 3 and 5.1 made Frame 1,
+    /// Frame 2, Motors, Reel and Reel Axis refusing stubs on the COLLECTOR,
+    /// its reader can hand that build nothing but a tie and an anchor, so the
+    /// test effectively read "a tie was wired". An anchor with no tie
+    /// therefore produced mechanism: null, which took the anchor BODY,
+    /// cableRadius, cableThickness, cableMatchesNetCable and
+    /// routingFrameMeaning out of the document with it, while every anchors[]
+    /// row still carried ref "mechanism.anchor" pointing at a block that was
+    /// not there. Nothing failed: the document validated, the anchors drew at
+    /// the right places, and the cables drew at a reader's own default
+    /// thickness instead of his 0.02 m radius.
+    ///
+    /// PROVED HERE, each half independently able to fail:
+    ///
+    /// 1. ANCHOR AND NO TIE BUILDS A MECHANISM BLOCK, carrying the anchor
+    ///    body with its real vertex count, the two cable numbers, the
+    ///    cable-matches flag and the frame meaning, and NO tensionTie key at
+    ///    all (spec 3.3's rule that an absent part is an absent key, never a
+    ///    key holding null).
+    /// 2. EVERY anchors[] ROW'S ref RESOLVES: "mechanism.anchor" is written
+    ///    only when the block it names exists.
+    /// 3. NOTHING IS SAID about a missing part or about the anchor, since
+    ///    this is correct input on that component and a warning on correct
+    ///    input is a defect of the same seriousness as a missed fault. The
+    ///    NO REEL message a study build does raise is deliberately left
+    ///    alone: it belongs to the ownership deferral this branch carries,
+    ///    it is true of every study the collector can produce, and silencing
+    ///    it here would hide it.
+    ///
+    /// THE CONTROL: the same build with the anchor taken away as well, so
+    /// nothing but routing remains. There the mechanism block IS null, every
+    /// anchors[] ref is null rather than dangling, and the "no mechanism
+    /// part" warning DOES fire, naming PARTS rather than PORTS, since the
+    /// ports differ between the two components that share this build.
+    /// </summary>
+    private static void ValidateMechanismAnchorWithoutTie(Assembly plugin)
+    {
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type placementBranchType =
+            RequireComponentType(plugin, "MechanismPlacementBranch");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo build = RequirePublicStatic(collectorType, "BuildWithResult");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type pointType = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object Mesh(double[][] vertices) => Activator.CreateInstance(
+            meshType, (object)vertices, (object)Array.Empty<int[]>())!;
+        object FrameOf(double[] origin) => Activator.CreateInstance(
+            frameType,
+            origin,
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, 1.0 })!;
+
+        // TWO ANCHOR ROWS OF SEVEN, at x = -8 and x = +8, chained within each
+        // row and never across, so the rows are two connected groups and the
+        // anchor derivation finds both.
+        var near = new List<double[]>();
+        var far = new List<double[]>();
+        for (int k = 0; k < 7; k++)
+        {
+            near.Add(new[] { -8.0, -1.5 + (0.5 * k), 0.0 });
+            far.Add(new[] { 8.0, -1.5 + (0.5 * k), 0.0 });
+        }
+        var all = new List<double[]>();
+        all.AddRange(near);
+        all.AddRange(far);
+        Array vertices = Array.CreateInstance(pointType, all.Count);
+        for (int i = 0; i < all.Count; i++)
+        {
+            vertices.SetValue(
+                Activator.CreateInstance(pointType, all[i][0], all[i][1], all[i][2])!, i);
+        }
+        var edgePairs = new List<(int, int)>();
+        for (int k = 0; k + 1 < 7; k++)
+        {
+            edgePairs.Add((k, k + 1));
+            edgePairs.Add((7 + k, 8 + k));
+        }
+        Array edges = Array.CreateInstance(edgeType, edgePairs.Count);
+        for (int i = 0; i < edgePairs.Count; i++)
+        {
+            edges.SetValue(
+                Activator.CreateInstance(
+                    edgeType, edgePairs[i].Item1, edgePairs[i].Item2)!, i);
+        }
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertices);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, edgePairs.Count).ToArray());
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(0, all.Count).ToArray());
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        object[] wires = new object[7];
+        for (int k = 0; k < 7; k++)
+        {
+            wires[k] = Activator.CreateInstance(
+                routingWireType,
+                k,
+                MechanismListOf(
+                    frameType,
+                    FrameOf(near[k]),
+                    FrameOf(new[] { -10.0, near[k][1], 1.0 })))!;
+        }
+        object routing = MechanismListOf(routingWireType, wires);
+
+        const int AnchorVertices = 5;
+        double[][] anchorMesh = new double[AnchorVertices][];
+        for (int i = 0; i < AnchorVertices; i++)
+            anchorMesh[i] = new[] { 0.1 * i, 0.0, 0.0 };
+
+        object AssetWith(object? anchor) => Activator.CreateInstance(
+            assetType,
+            null, false,
+            MechanismListOf(meshType),
+            MechanismListOf(typeof(bool)),
+            null, false,
+            null, false,                    // THE TENSION TIE IS NOT WIRED
+            MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+            anchor, false)!;
+
+        string Build(object? anchor, List<string> warnings, List<string> notes) =>
+            (string)build.Invoke(
+                null,
+                new object?[]
+                {
+                    AssetWith(anchor),
+                    routing,
+                    MechanismListOf(placementBranchType),
+                    warnings, notes, result, null, null, null,
+                })!;
+
+        // ================================================================
+        // THE FIXTURE: AN ANCHOR, AND NO TIE.
+        // ================================================================
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string json = Build(Mesh(anchorMesh), warnings, notes);
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            JsonElement mechanism = document.RootElement.GetProperty("mechanism");
+            if (mechanism.ValueKind == JsonValueKind.Null)
+            {
+                throw new InvalidOperationException(
+                    "An ANCHOR wired with no tension tie must build a " +
+                    "mechanism block: it is one of the two permanent works a " +
+                    "study carries, and without the block the anchor body, " +
+                    "cableRadius, cableThickness, cableMatchesNetCable and " +
+                    "routingFrameMeaning all vanish while anchors[].ref goes " +
+                    "on naming \"mechanism.anchor\". Got mechanism: null in " +
+                    json);
+            }
+            if (mechanism.TryGetProperty("tensionTie", out _))
+            {
+                throw new InvalidOperationException(
+                    "No tie means NO KEY, never a key holding null (spec " +
+                    "3.3): a key standing for \"there is no such part\" says " +
+                    "nothing its absence does not, and it forces the leak " +
+                    "checks to tolerate nulls by name.");
+            }
+            if (!mechanism.TryGetProperty("anchor", out JsonElement anchorBody) ||
+                anchorBody.GetProperty("vertices").GetArrayLength() != AnchorVertices)
+            {
+                throw new InvalidOperationException(
+                    "The anchor BODY must reach the document with its own " +
+                    $"{AnchorVertices} vertices; got " + mechanism);
+            }
+            double cableRadius = mechanism.GetProperty("cableRadius").GetDouble();
+            double cableThickness = mechanism.GetProperty("cableThickness").GetDouble();
+            if (Math.Abs(cableRadius - 0.02) > 1.0e-12 ||
+                Math.Abs(cableThickness - 0.04) > 1.0e-12 ||
+                !mechanism.GetProperty("cableMatchesNetCable").GetBoolean() ||
+                mechanism.GetProperty("routingFrameMeaning").GetString() != "centreline")
+            {
+                throw new InvalidOperationException(
+                    "The cable facts travel with the anchor, since they are " +
+                    "what a reader draws the wires from: radius 0.02, " +
+                    "thickness 0.04, cableMatchesNetCable true and " +
+                    "routingFrameMeaning \"centreline\". Got " + mechanism);
+            }
+
+            JsonElement anchors = document.RootElement.GetProperty("anchors");
+            if (anchors.GetArrayLength() == 0)
+            {
+                throw new InvalidOperationException(
+                    "This fixture means nothing unless anchors are derived " +
+                    "off the Result; got none in " + json);
+            }
+            foreach (JsonElement row in anchors.EnumerateArray())
+            {
+                if (row.GetProperty("ref").GetString() != "mechanism.anchor")
+                {
+                    throw new InvalidOperationException(
+                        "Every anchor row must point at the body that IS " +
+                        "there; got ref " + row.GetProperty("ref") + ".");
+                }
+            }
+        }
+        // AN ANCHOR WITH NO TIE IS CORRECT INPUT on the Mechanism
+        // component, whose Frame 1, Frame 2, Motors, Reel and Reel Axis
+        // ports all refuse by name, so nothing may be said about a missing
+        // part or about the anchor itself. The NO REEL message a study build
+        // does raise is left alone deliberately: it belongs to the ownership
+        // deferral this branch carries, it is true of every study the
+        // collector can produce, and silencing it here would hide it.
+        string[] wrong = warnings
+            .Where(w =>
+                w.Contains("no mechanism part", StringComparison.Ordinal) ||
+                w.Contains("Anchor (AN)", StringComparison.Ordinal))
+            .ToArray();
+        if (wrong.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "An anchor wired with no tie must raise nothing about a " +
+                "missing part and nothing about the anchor: it is correct " +
+                "input, and a warning on correct input teaches him to ignore " +
+                "the line that will one day be real. Got " +
+                string.Join(" | ", wrong));
+        }
+
+        // ================================================================
+        // THE CONTROL: NO PART AT ALL, so the pairing is proved both ways.
+        // ================================================================
+        var bareWarnings = new List<string>();
+        var bareNotes = new List<string>();
+        string bare = Build(null, bareWarnings, bareNotes);
+        using (JsonDocument document = JsonDocument.Parse(bare))
+        {
+            if (document.RootElement.GetProperty("mechanism").ValueKind
+                != JsonValueKind.Null)
+            {
+                throw new InvalidOperationException(
+                    "Routing with NO part at all must still write no " +
+                    "mechanism block; got " + bare);
+            }
+            foreach (JsonElement row in
+                     document.RootElement.GetProperty("anchors").EnumerateArray())
+            {
+                if (row.GetProperty("ref").ValueKind != JsonValueKind.Null)
+                {
+                    throw new InvalidOperationException(
+                        "With no anchor body there is nothing to point at, so " +
+                        "ref must be null rather than a dangling " +
+                        "\"mechanism.anchor\"; got " + row.GetProperty("ref"));
+                }
+            }
+        }
+        string? said = bareWarnings.FirstOrDefault(
+            w => w.Contains("no mechanism part", StringComparison.Ordinal));
+        if (said is null)
+        {
+            throw new InvalidOperationException(
+                "Routing authored with no part at all must be named; got " +
+                string.Join(" | ", bareWarnings));
+        }
+        if (said.Contains(
+                "Frame 1, Frame 2, Motors, Tension Tie or Reel",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The message must not tell him to wire ports that REFUSE on " +
+                "the component he is looking at. This build is shared: Frame " +
+                "1, Frame 2, Motors and Reel are refusing stubs on the " +
+                "Mechanism component and live on the Machine component, and " +
+                "Tension Tie and Anchor are the other way round. Got: " + said);
+        }
     }
 
     /// <summary>
