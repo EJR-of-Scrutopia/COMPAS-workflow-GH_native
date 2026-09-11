@@ -2652,6 +2652,13 @@ def test_undoing_a_delete_brings_a_fixture_back_as_it_was():
     assert "size: Array.isArray(record.size) ? record.size.slice() : null," in gone
     assert "lumens: record.lumens, kelvin: record.kelvin };" in gone
     undo = block[block.index("pushUndo("):block.index("removePropRecord(record);")]
+    # Guard and all: a condition that can never hold brought the two metre
+    # strip back, with every pinned line still standing where it was.
+    assert ("      if (gone.size) {\n"
+            "        again.size = gone.size.slice();\n"
+            "        applyPropSize(again);\n"
+            "      }\n"
+            "      adoptLampSettings(again, gone);") in undo
     placed = undo.index("const again = placeProp(")
     assert placed < undo.index("again.size = gone.size.slice();")
     assert undo.index("again.size = gone.size.slice();") < undo.index("applyPropSize(again);")
@@ -4477,30 +4484,48 @@ def test_a_drawer_stays_on_screen_and_hides_what_it_hides():
     rules = _css_rules(css)
 
     def cascade(selector):
-        """Every declaration any rule makes for `selector`, a grouped
-        selector (`#shelf, #x { ... }`) included, in cascade order, from
-        the comment-stripped sheet: a rule commented out says nothing."""
+        """Every declaration any rule makes for `selector`, from the
+        comment-stripped sheet: a rule commented out says nothing. A
+        grouped selector (`#shelf, #x { ... }`) counts, and so does a
+        longer one ending in it (`body #shelf`). Each declaration carries
+        the rank the cascade gives it: important first, then specificity,
+        then where it stands in the sheet."""
         out = []
-        for group, body, _ in rules:
-            if selector in (" ".join(s.split()) for s in group.split(",")):
+        for group, body, offset in rules:
+            for one in group.split(","):
+                one = " ".join(one.split())
+                if one != selector and not one.endswith(" " + selector):
+                    continue
                 for part in body.split(";"):
-                    if ":" in part:
-                        name, value = part.split(":", 1)
-                        out.append((name.strip().lower(),
-                                    " ".join(value.split())))
+                    if ":" not in part:
+                        continue
+                    name, value = part.split(":", 1)
+                    value = " ".join(value.split())
+                    out.append((name.strip().lower(), value,
+                                (value.endswith("!important"),
+                                 _specificity(one), offset)))
+                break
         return out
 
     def said(selector):
-        return dict(cascade(selector))
+        """What the browser would use for each property."""
+        best = {}
+        for name, value, rank in cascade(selector):
+            if name not in best or rank > best[name][1]:
+                best[name] = (value, rank)
+        return {name: value for name, (value, _) in best.items()}
 
     assert said("#shelf .hidden").get("display") == "none !important", (
         "without it a hidden dial row or the weather picker stays on "
         "screen in the drawer")
-    heights = [value for name, value in cascade("#shelf")
-               if name == "max-height"]
+    plain = _specificity("#shelf")
+    heights = [value for name, value, rank in cascade("#shelf")
+               if name == "max-height" and rank[1] == plain]
     assert heights[-2:] == ["calc(100vh - 28px)", "calc(100dvh - 28px)"], (
-        "the vh fallback, then dvh, and nothing later undoing the bound: "
-        + repr(heights))
+        "the vh fallback, then dvh: " + repr(heights))
+    assert said("#shelf").get("max-height") == "calc(100dvh - 28px)", (
+        "and nothing outranks it: not a later rule, not a longer "
+        "selector such as `body #shelf`, not an important one")
     body = said("#shelf-body")
     assert body.get("overflow-y") == "auto", "the body scrolls"
     assert body.get("min-height") == "0", "or the flex child never shrinks"
