@@ -142,6 +142,11 @@ out.band = { least: band.x[0].length, most: band.x[1].length,
 out.loadRange = loadSpec.layout.yaxis.range;
 out.loadAutorange = loadSpec.layout.yaxis.autorange;
 out.loadMax = Math.max(...s.load.kN, ...s.load.checks.map((c) => c.kN));
+// The cable card's first trace is the band's LEAST edge: its range must
+// come from the most loaded edge, or the top cables are clipped.
+out.cableRange = cableSpec.layout.yaxis.range;
+out.cableMost = Math.max(...s.cables.max);
+out.cableLeast = Math.max(...s.cables.min);
 out.zeroRange = fixedRange([{ y: [0, 0, 0] }]);
 
 // A coarse solver: its first stage weighs nothing (the course's cell
@@ -292,6 +297,10 @@ def test_the_y_axis_is_fixed_from_the_whole_take(out):
     assert out["loadAutorange"] is False
     assert out["loadRange"] == pytest.approx([0, out["loadMax"] * 1.08], rel=1e-12)
     assert out["zeroRange"] == [0, 1]
+    # Every trace of the card counts, not the first: the cable card opens
+    # with the band's least edge, well under the most loaded one.
+    assert out["cableLeast"] < out["cableMost"]
+    assert out["cableRange"] == pytest.approx([0, out["cableMost"] * 1.08], rel=1e-12)
 
 
 @needs_node
@@ -454,6 +463,11 @@ def test_the_page_wires_the_graphs_to_the_take():
     tick = tick[:tick.index("\n}\n")]
     assert "if (k === liveGraphs.lastK && !force) return;" in tick, (
         "the cursor moves when the sample does, not sixty times a second")
+    # Paused, a constrained device's lagging traces catch up at once: a
+    # one-sample scrub left them a sample past or short of the cursor.
+    catch_up = "if (liveGraphs.drawnK !== k && !state.timeline.playing) force = true;"
+    assert catch_up in tick
+    assert tick.index(catch_up) < tick.index("if (k === liveGraphs.lastK && !force) return;")
     # One update per card per sample carries the cut traces AND the cursor
     # (the relayout of the cursor alone survives only between the
     # constrained device's every-second-sample trace updates).
@@ -577,3 +591,63 @@ def test_the_header_says_when_a_skin_sets_the_weight():
     assert "if (pattern.test(entry.name)) { word = pattern.source; break; }" in word
     build = _body(js, "async function buildLiveGraphs()")
     assert '(skinWord ? " cut in " + skinWord : "")' in build
+
+
+SKIN_WORD_HARNESS = r"""
+%(tables)s
+const library = [
+  { key: "metal/copper-mill-copper", family: "metal", name: "copper-mill-copper", label: "Copper mill copper" },
+  { key: "timber/grain-honey", family: "timber", name: "grain-honey", label: "Grain honey" },
+  { key: "stone/rough-ashlar", family: "stone", name: "rough-ashlar", label: "Rough ashlar" },
+  { key: "stone/limestone-buff", family: "stone", name: "limestone-buff", label: "Limestone buff" },
+  { key: "concrete/board-marked-grey", family: "concrete", name: "board-marked-grey", label: "Board marked grey" },
+];
+const state = { appearance: { skin: null } };
+const isLibraryKey = (key) => typeof key === "string" && key.includes("/");
+const libraryEntry = (key) => library.find((entry) => entry.key === key) || null;
+%(word)s
+const said = (skin, material, density, fromSkin) => {
+  state.appearance.skin = skin;
+  return liveSkinWord({ material, provenance: { density_from_skin: fromSkin } }, density);
+};
+console.log(JSON.stringify({
+  copper: said("metal/copper-mill-copper", "concrete", 8940, true),
+  timber: said("timber/grain-honey", "timber", 500, true),
+  stone: said("stone/rough-ashlar", "stone", 2400, true),
+  limestone: said("stone/limestone-buff", "stone", 2400, true),
+  concrete: said("concrete/board-marked-grey", "concrete", 2400, true),
+  plain: said("concrete", "concrete", 2400, false),
+}));
+"""
+
+
+@needs_node
+def test_the_header_names_the_skin_not_its_own_class(tmp_path):
+    """A timber skin weighs 500 kg/m3 against the structural 385, and
+    stone's family figure is 2400 against 2500, so the line said "timber
+    cut in a timber skin": a skin set the weight, but the words named the
+    same material. When the family IS the cut's class, the skin itself
+    is named."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    tables = []
+    for head in ("const STRUCTURAL_DENSITIES = {", "const FAMILY_DENSITIES = {",
+                 "const FAMILY_TO_STRUCTURAL = {"):
+        start = js.index(head)
+        tables.append(js[start:js.index("};", start) + 2])
+    start = js.index("const NAME_DENSITIES = [")
+    tables.append(js[start:js.index("];", start) + 2])
+    word = "function liveSkinWord(bundle, density)" + _body(js, "function liveSkinWord(bundle, density)")[
+        len("function liveSkinWord(bundle, density)"):] + "\n}\n"
+    script = tmp_path / "skin_word.mjs"
+    script.write_text(SKIN_WORD_HARNESS % {"tables": "\n".join(tables), "word": word},
+                      encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    said = json.loads(result.stdout)
+    assert said["copper"] == "a copper skin"
+    assert said["timber"] == "a grain honey skin"
+    assert said["stone"] == "a rough ashlar skin"
+    assert said["limestone"] == "a limestone skin", "a name word that says more is kept"
+    assert said["concrete"] == "a board marked grey skin"
+    assert said["plain"] == ""

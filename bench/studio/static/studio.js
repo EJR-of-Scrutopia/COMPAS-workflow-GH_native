@@ -6565,6 +6565,11 @@ function liveSkinWord(bundle, density) {
   for (const [pattern] of NAME_DENSITIES) {
     if (pattern.test(entry.name)) { word = pattern.source; break; }
   }
+  // A family word that is the cut's own class says nothing ("timber cut
+  // in a timber skin", "stone cut in a stone skin"): name the skin itself.
+  if (FAMILY_TO_STRUCTURAL[word] === bundle.material) {
+    word = (entry.label || entry.name).toLowerCase();
+  }
   return (/^[aeiou]/i.test(word) ? "an " : "a ") + word + " skin";
 }
 
@@ -6673,8 +6678,9 @@ async function buildLiveGraphs() {
 // changes, and with them each card's traces cut at the clock and its
 // cursor, in ONE Plotly.update per card, so the curves grow as the take
 // plays, a scrub back truncates them, and a paused take shows them up to
-// the cursor. On a constrained device the traces follow every second
-// sample and the cursor alone moves between (a relayout of one shape).
+// the cursor. On a constrained device, while playing, the traces follow
+// every second sample and the cursor alone moves between (a relayout of
+// one shape); paused, they always stand at the cursor.
 function tickLiveGraphs(force) {
   if (!liveGraphs.shown || !state.timeline || !state.bundle) return;
   if (liveGraphs.tucked) return;
@@ -6682,6 +6688,10 @@ function tickLiveGraphs(force) {
   const series = liveGraphs.series;
   if (!series || !liveGraphs.specs) return;
   const { k, t } = liveCursorAt(series);
+  // Paused, the traces stand at the cursor: a constrained device lets
+  // them lag a sample while playing, and a one-sample scrub or the sample
+  // the take stopped on is made up at once, never left drawn past or short.
+  if (liveGraphs.drawnK !== k && !state.timeline.playing) force = true;
   if (k === liveGraphs.lastK && !force) return;
   liveGraphs.lastK = k;
   const grow = force || !CONSTRAINED_DEVICE || Math.abs(k - liveGraphs.drawnK) >= 2;
