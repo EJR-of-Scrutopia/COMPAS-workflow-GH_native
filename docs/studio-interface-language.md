@@ -322,6 +322,16 @@ Escape would close the drawer again); a CLOSED shelf is not "another
 drawer" and must not disarm the tool. The click-to-place version lasted
 one morning: "i want to drag the brush around".
 
+**Brightness is the day, and Night is an hour.** The Skies drawer's
+Brightness dial (`sky-brightness`) scales everything the day gives at
+once: the sun, the sky light, the sky itself, the backdrop, the fog, a
+photograph's dome and the environment. It never touches a lamp, which is
+what lets a fixture read when the day is turned down. Night is not a
+preset's angle but a time on the site's own clock (dusk plus ninety
+minutes), so the day track, the day cycle and every environment mode
+agree about what hour it is; below the horizon the sun goes out and the
+moon takes the shadow.
+
 **Detail is the viewport's, never the plate's.** The Props block's
 Detail segments (Draft, Balanced, Full; `prop-detail`) decide how soon a
 distant prop drops to its lighter tier while composing. A still and a

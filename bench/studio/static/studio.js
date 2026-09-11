@@ -353,10 +353,86 @@ function setEnvironmentIntensity(base) {
   applySkyBrightness();
 }
 
+// ---------- daylight, and the night ----------
+// Param's screenshot: the Night preset, Brightness at 0, and a scene in
+// full afternoon. Three faults stood behind it. The dial reached only the
+// environment map: the sun stayed at 3.0, the hemisphere at 0.5, the
+// studio backdrop at its daytime tone, and in sky mode the sky itself is
+// a MESH that backgroundIntensity never touches. The instrument floored
+// the sun at 0.35 "so a night scene is lit by something", so no hour was
+// ever dark. And the Night preset placed the sun at twenty degrees, which
+// is an afternoon under a dark fog.
+//
+// So: every daylight source is a BASE times the one dial (the sun, the
+// sky light, the sky mesh, the backdrop, the fog, the HDRI dome, the
+// environment); the sun goes out below the horizon and a moon takes the
+// shadow over; the sky light, the sky and the fog fade with the night
+// factor; stars come out; and Night is an hour, not an angle.
+const lightBase = {
+  sun: 3.0,          // the sun's, or the moon's, intensity before the dial
+  hemi: 0.5,         // the sky light's, before the dial and the night
+  backdrop: null,    // the studio backdrop's daytime colour, a THREE.Color
+  fog: null,         // the fog's daytime colour, or null
+};
+// Moonlight against full sun. Physically nearer one part in four hundred
+// thousand, but the eye adapts and a picture cannot: eight per cent is a
+// moonlit night that still shows where the vault stands (five, measured,
+// left it a black hole wherever no lamp reached).
+const MOON_STRENGTH = 0.08;
+const MOON_COLOUR = 0xb4c4e0;
+// The ramp's own top, 0.35 + 2.9, from before the floor went.
+const FULL_SUN = 3.25;
+// What is left of the sky light at the bottom of the night: a tenth. The
+// moon lights the night; this is the sky's own faint glow on the shadowed
+// side, without which a moonlit shadow is a hole in the picture.
+const NIGHT_FLOOR = 0.1;
+// What the visible sky is multiplied by (see the Sky's shader patch).
+const skyDaylight = { value: 1 };
+// False until the instrument has been placed once, so applyEnvironment
+// can run during boot before the sun has a time to be at.
+let sunInstrumentReady = false;
+
+// How much day is left in the sky: 1 with the sun two degrees up, 0 at
+// twelve below (astronomical twilight is eighteen; twelve is where a
+// picture reads as night), smooth between.
+function nightFactor(elevation) {
+  const t = Math.max(0, Math.min(1, (elevation + 12) / 14));
+  return t * t * (3 - 2 * t);
+}
+
+function daylightNow() {
+  return sunInstrumentReady ? nightFactor(currentSun().elevation) : 1;
+}
+
 function applySkyBrightness() {
   const dial = state.skyBrightness;
+  const night = daylightNow();
   scene.environmentIntensity = environmentBase * dial;
+  // The studio's room environment is stand-in daylight and knows no
+  // clock, so it takes the night here; a sky's PMREM is captured dark
+  // already, and a photograph's daylight is the photograph's own.
+  if (state.environmentMode === "studio") {
+    scene.environmentIntensity *= Math.max(NIGHT_FLOOR, night);
+  }
   scene.backgroundIntensity = dial;
+  sun.intensity = lightBase.sun * dial;
+  // Sky light is the sky's: it goes with the night. The sun's own floor
+  // is the moon (applySunFromTime).
+  hemi.intensity = lightBase.hemi * dial * Math.max(NIGHT_FLOOR, night);
+  // The visible sky, for the eye. The PMREM takes it WITHOUT the dial
+  // (regenerateEnvironment), or the environment would be dimmed twice.
+  skyDaylight.value = dial * (0.03 + 0.97 * night);
+  if (lightBase.backdrop && scene.background && scene.background.isColor) {
+    scene.background.copy(lightBase.backdrop).multiplyScalar(dial * (0.08 + 0.92 * night));
+  }
+  if (lightBase.fog && scene.fog) {
+    scene.fog.color.copy(lightBase.fog).multiplyScalar(dial * (0.06 + 0.94 * night));
+  }
+  // A photograph's dome is a lit mesh, not a background: dimmed by its
+  // own colour, which multiplies the map.
+  if (hdriDome) hdriDome.children[0].material.color.setScalar(dial);
+  stars.material.opacity = (1 - night) * Math.min(1, dial);
+  stars.visible = state.environmentMode === "sky" && stars.material.opacity > 0.01;
 }
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
@@ -535,7 +611,70 @@ sky.scale.setScalar(450);
 sky.visible = false;
 sky.material.uniforms.up.value.set(0, 0, 1);
 sky.material.uniforms.cloudCoverage.value = 0; // the cloud block is hardcoded Y-up; scattering respects up, clouds do not
+// The sky is a mesh, so nothing dims it but its own shader: one uniform,
+// multiplied in at the end, is the whole of the dial's and the night's
+// reach into it. Patched on the vendored source rather than kept as a
+// fork, and checked, so a vendor upgrade that moves the line is loud.
+{
+  const shader = sky.material;
+  const before = shader.fragmentShader;
+  shader.fragmentShader = before
+    .replace("uniform vec3 up;", "uniform vec3 up;\n\t\tuniform float daylight;")
+    .replace("gl_FragColor = vec4( texColor, 1.0 );",
+      "gl_FragColor = vec4( texColor * daylight, 1.0 );");
+  if (shader.fragmentShader === before) {
+    reportProblem("the vendored Sky shader no longer has the line the daylight patch expects");
+  }
+  shader.uniforms.daylight = skyDaylight;
+  shader.needsUpdate = true;
+}
 scene.add(sky);
+
+// Stars, for a sky the clock has taken past dusk. Two thousand points on
+// the upper hemisphere, additive, unattenuated, most faint and a few
+// bright and warm; they fade in with the night and out with the dial, and
+// show in sky mode only: a photograph brings its own sky, and the studio
+// backdrop is a wall. Outside the fog, or at two hundred metres they
+// would be fogged to nothing on the very night they are for.
+function starField() {
+  const count = 2000;
+  const positions = new Float32Array(count * 3);
+  const colours = new Float32Array(count * 3);
+  let seed = 7;
+  const rnd = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const radius = 200;
+  for (let i = 0; i < count; i++) {
+    const az = rnd() * Math.PI * 2;
+    const el = Math.asin(rnd());              // even over the hemisphere
+    positions[i * 3] = radius * Math.cos(el) * Math.cos(az);
+    positions[i * 3 + 1] = radius * Math.cos(el) * Math.sin(az);
+    positions[i * 3 + 2] = radius * Math.sin(el);
+    const bright = rnd() ** 3;
+    const warm = rnd() < 0.2;
+    const v = 0.35 + 0.65 * bright;
+    colours[i * 3] = v;
+    colours[i * 3 + 1] = v * (warm ? 0.9 : 0.96);
+    colours[i * 3 + 2] = v * (warm ? 0.72 : 1);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+  const material = new THREE.PointsMaterial({
+    size: 1.8, sizeAttenuation: false, vertexColors: true, transparent: true,
+    opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+    toneMapped: false, fog: false,
+  });
+  const points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  points.visible = false;
+  points.raycast = () => {};
+  return points;
+}
+const stars = starField();
+scene.add(stars);
 
 // E2: weather presets are parameter bundles on that one shader. The
 // numbers are starting values tuned by eye, not physics claims; elevation
@@ -564,7 +703,11 @@ const WEATHER = {
   night: {
     turbidity: 2, rayleigh: 0.4, mieCoefficient: 0.002, mieDirectionalG: 0.7,
     sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.45,
-    hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250, elevation: 20,
+    hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250,
+    // An hour, not an angle: the picker moves the clock past dusk (see
+    // its handler), and the instrument does the rest. The twenty degrees
+    // this used to hold was an afternoon under a dark fog.
+    elevation: null, night: true,
   },
 };
 
@@ -663,11 +806,13 @@ function applyEnvironment() {
     sky.visible = true;
     scene.background = null;
     scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
+    lightBase.fog = new THREE.Color(preset.fogColor);
+    lightBase.backdrop = null;
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
     // F4: a day cycle's captured intensity survives an environment redraw
     // the same way its captured colour already does, below.
-    if (state.sunIntensityOverride === null) sun.intensity = preset.sunIntensity;
+    if (state.sunIntensityOverride === null) lightBase.sun = preset.sunIntensity;
     // F3: the colour input must show the truth. A preset write bypasses the
     // input's own "input" handler (the only other place that sets
     // sun.color), so it has to sync #sun-colour itself or the swatch keeps
@@ -677,30 +822,34 @@ function applyEnvironment() {
       document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
     }
     sun.shadow.radius = preset.shadowRadius;
-    hemi.intensity = preset.hemisphere;
+    lightBase.hemi = preset.hemisphere;
     state.exposureBase = preset.exposure;
     setEnvironmentIntensity(0.6);
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
     scene.fog = null;
+    lightBase.fog = null;
+    lightBase.backdrop = null;
     applyHdriBackdrop();
-    hemi.intensity = 0.25;
+    lightBase.hemi = 0.25;
     state.exposureBase = 0.7;
     setEnvironmentIntensity(1.0);
   } else {
     sky.visible = false;
     scene.fog = null;
+    lightBase.fog = null;
     const tone = +document.getElementById("background-tone").value / 100;
     scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
+    lightBase.backdrop = scene.background.clone();
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
-    if (state.sunIntensityOverride === null) sun.intensity = 3.0;
+    if (state.sunIntensityOverride === null) lightBase.sun = 3.0;
     if (state.sunColourOverride === null) {
       sun.color.set(0xffffff);
       document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
     }
     sun.shadow.radius = 1;
-    hemi.intensity = 0.5;
+    lightBase.hemi = 0.5;
     // Light concretes were clipping to white under the room environment plus
     // filmic tone mapping, which made three different presets look identical.
     state.exposureBase = 0.85;
@@ -715,17 +864,19 @@ function applyEnvironment() {
   if (sunInstrumentReady) applySunFromTime();
 }
 
-// False until the instrument has been placed once, so applyEnvironment can
-// run during boot before the sun has a time to be at.
-let sunInstrumentReady = false;
-
 function regenerateEnvironment() {
   // The one PMREM site (E6): mode entry, weather change, sun slider
   // release in sky mode, and HDRI load all land here.
   if (state.environmentMode === "sky") {
     const holder = new THREE.Scene();
     holder.add(sky); // borrows the mesh; a mesh lives in one scene at a time
+    // Captured with the night in and the dial OUT: the dial reaches the
+    // environment through environmentIntensity, and a sky captured
+    // already dimmed would be dimmed twice. A night sky lights a night.
+    const shown = skyDaylight.value;
+    skyDaylight.value = 0.03 + 0.97 * daylightNow();
     const target = pmrem.fromScene(holder, 0.04);
+    skyDaylight.value = shown;
     scene.add(sky);
     setEnvironmentTexture(target.texture, target);
   } else if (state.environmentMode === "hdri" && state.hdriTexture) {
@@ -782,6 +933,7 @@ function applyHdriBackdrop() {
     scene.add(group);
     hdriDome = group;
     scene.background = null;
+    applySkyBrightness();   // the new dome wears the dial at once
   } else {
     scene.background = backdropTexture(); // null paints the clear colour until a file loads
     scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
@@ -942,7 +1094,7 @@ async function loadHdri(name) {
     // applyEnvironment's hdri branch deliberately leaves sun.intensity and
     // sun.color alone (Task 3 sets only hemi, exposure and
     // environmentIntensity there), so the estimate survives the call below.
-    sun.intensity = estimate.intensity;
+    lightBase.sun = estimate.intensity;
     status.textContent = "";
     applyEnvironment();
     regenerateEnvironment();
@@ -3674,7 +3826,7 @@ function collectScene(options) {
       elevationSetting: state.sunElevationSetting,
       colour: control("sun-colour").value,
       colourOverride: state.sunColourOverride,
-      intensity: sun.intensity,
+      intensity: lightBase.sun,     // before the dial, which is its own field
       intensityOverride: state.sunIntensityOverride,
     },
     // WHERE and WHEN, saved beside the angles the two of them produce.
@@ -3932,8 +4084,9 @@ async function applyScene(record) {
     control("sun-colour").value = sunState.colour;
     sun.color.set(sunState.colour);
   }
-  if (typeof sunState.intensity === "number") sun.intensity = sunState.intensity;
+  if (typeof sunState.intensity === "number") lightBase.sun = sunState.intensity;
   applySunFromSliders();
+  applySkyBrightness();
 
   // The site AFTER the angles, and only when the scene carries one. A
   // scene saved before this existed holds angles and no place, and
@@ -4486,15 +4639,38 @@ function applySunFromTime() {
   document.getElementById("sun-azimuth").value = Math.round(sceneAngle);
   document.getElementById("sun-elevation").value =
     Math.round(Math.max(0, placed.elevation));
-  const colour = new THREE.Color(light.colour);
+  // The sun by day and the moon by night. The ramp runs out at the
+  // horizon, and the floor that once kept "a night scene lit by something"
+  // is gone: what lights a night is the moon, stood opposite the sun the
+  // way a full moon is, cool, and five per cent as strong.
+  const moon = light.strength <= 0;
+  const colour = new THREE.Color(moon ? MOON_COLOUR : light.colour);
   if (!state.sunColourOverride) sun.color.copy(colour);
   document.getElementById("sun-colour").value = "#" + colour.getHexString();
-  // Strength is the ramp's own figure relative to full sun, and the floor
-  // keeps a night scene lit by something rather than going black.
   if (state.sunIntensityOverride === null) {
-    sun.intensity = 0.35 + 2.9 * light.strength;
+    lightBase.sun = moon ? FULL_SUN * MOON_STRENGTH : FULL_SUN * light.strength;
   }
   applySunAt(sceneAngle, Math.max(-2, placed.elevation));
+  if (moon) {
+    // The sky keeps the true sun, under the horizon, so it is dark; only
+    // the light stands where the moon does, opposite, and never lower
+    // than twelve degrees or its shadows would run off the ground.
+    const az = THREE.MathUtils.degToRad(sceneAngle + 180);
+    const el = THREE.MathUtils.degToRad(Math.max(12, Math.min(60, -placed.elevation)));
+    sun.position.set(SUN_DISTANCE * Math.cos(el) * Math.cos(az),
+      SUN_DISTANCE * Math.cos(el) * Math.sin(az), SUN_DISTANCE * Math.sin(el));
+    // The two-degree clamp above keeps a dusk's glow. Past six under, the
+    // sky's sun goes to its true depth: from a camera twelve metres up
+    // the clamped disc stood above the far edge of the ground, a warm
+    // sun in the middle of the night (photographed before this went in).
+    if (placed.elevation < -6) {
+      const deep = THREE.MathUtils.degToRad(placed.elevation);
+      const along = THREE.MathUtils.degToRad(sceneAngle);
+      sky.material.uniforms.sunPosition.value.set(
+        Math.cos(deep) * Math.cos(along), Math.cos(deep) * Math.sin(along), Math.sin(deep));
+    }
+  }
+  applySkyBrightness();
   paintSunWidget();
   paintDayTrack();
 }
@@ -10590,6 +10766,16 @@ document.getElementById("weather-preset").addEventListener("change", (e) => {
   if (preset.elevation !== null) {
     document.getElementById("sun-elevation").value = preset.elevation;
   }
+  // Night is an HOUR: an hour and a half past dusk at the site, where the
+  // instrument puts the sun under the horizon and the moon up. Any other
+  // weather chosen while the clock still stands at night brings the day
+  // back, or "Clear" at half past midnight would read as a broken preset
+  // rather than as a clear night.
+  if (preset.night) {
+    setSunMinutes(Math.min(1439, dayCycleEnd() + 90));
+  } else if (sunInstrumentReady && currentSun().elevation < -0.833) {
+    setSunMinutes(Math.round((dayCycleStart() + dayCycleEnd()) / 2));
+  }
   applyEnvironment();
   regenerateEnvironment();
 });
@@ -13535,7 +13721,7 @@ async function recordAnimation() {
       // next redraw (a slider nudge, a mode change) does not silently
       // revert the sun mid-review.
       state.sunColourOverride = document.getElementById("sun-colour").value;
-      state.sunIntensityOverride = sun.intensity;
+      state.sunIntensityOverride = lightBase.sun;
     }
     await settle();                      // the last frame is still in the air
     const each = (performance.now() - began) / 1000 / Math.max(1, total);
@@ -14025,7 +14211,7 @@ function frame(now) {
       // F4: the intensity gets the same treatment, so a sunset that ends
       // dim does not snap back to the preset's full daylight brightness.
       state.sunColourOverride = document.getElementById("sun-colour").value;
-      state.sunIntensityOverride = sun.intensity;
+      state.sunIntensityOverride = lightBase.sun;
       document.getElementById("day-cycle-button").textContent = "Day cycle";
     }
   }

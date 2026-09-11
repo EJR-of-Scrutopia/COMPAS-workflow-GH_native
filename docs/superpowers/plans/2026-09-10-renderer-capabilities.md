@@ -394,6 +394,34 @@ calls, 15.9 M triangles at Balanced (88.4 M at Full), 129 fps still, 75
 fps orbiting; a dragged stroke of 7,080 props in 363 ms; its undo in one
 press; the layout 953 KB in the browser and whole on the server.
 
+## Verified 2026-09-11, afternoon: the night
+
+Param's screenshot: the Night preset with Brightness at 0, and a scene in
+full afternoon. Three faults, each read off the code before anything
+moved. The Brightness dial reached only the environment map (the sun
+stayed at 3.0, the hemisphere at 0.5, the studio backdrop at its noon
+tone, and in sky mode the visible sky is a MESH that backgroundIntensity
+never touches). The sun instrument floored every hour at 0.35 "so a night
+scene is lit by something". And the Night preset placed the sun at twenty
+degrees, an afternoon under a dark fog.
+
+Built: every daylight source is a base times the one dial (sun, sky
+light, the sky mesh through its own uniform, backdrop, fog, HDRI dome,
+environment); below the horizon the sun goes out and a moon stands
+opposite it at eight per cent, cool; the sky light, the sky and the fog
+fade with a night factor (1 at two degrees up, 0 at twelve under); two
+thousand stars come out in sky mode; and Night is an hour, dusk plus
+ninety minutes at the site, so every mode and the day cycle share one
+clock. Photographed on the 4090: sky mode 13:00 reads 146/255, Night 4,
+Night with two lamps 10; studio mode day 134, night with lamps 26; the
+dial at 0 by day 3.5. A saved scene keeps the sun before the dial.
+
+Not built, and worth naming: bloom (withdrawn earlier as unproven on the
+software renderer; it can now be tested on the real GPU through headless
+Brave, which the probes use), lamp shadows (six renders a frame each,
+off by design), and an exposure that follows the clock (the presets'
+exposures are hand-tuned; a night could ask for more).
+
 ## Task 3: The Output panel
 
 A seventh panel section. It holds the still-render controls and it TAKES

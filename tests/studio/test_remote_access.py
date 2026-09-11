@@ -2785,6 +2785,65 @@ def test_the_sky_brightness_multiplies_the_mode_rather_than_replacing_it():
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
         encoding="utf-8")
     assert 'id="sky-brightness"' in html
+    # And since 2026-09-11 the dial reaches EVERYTHING the day gives, not
+    # the environment map alone: Param's screenshot had it at 0 with the
+    # sun at 3.0, the hemisphere at 0.5 and the backdrop at its noon tone.
+    assert "sun.intensity = lightBase.sun * dial;" in apply
+    assert "hemi.intensity = lightBase.hemi * dial * Math.max(NIGHT_FLOOR, night);" in apply
+    assert "scene.environmentIntensity *= Math.max(NIGHT_FLOOR, night);" in apply, (
+        "the studio's room environment is stand-in daylight and takes the night")
+    assert "skyDaylight.value = dial * (0.03 + 0.97 * night);" in apply
+    assert "if (hdriDome) hdriDome.children[0].material.color.setScalar(dial);" in apply
+    assert "scene.background.copy(lightBase.backdrop).multiplyScalar(dial * (0.08 + 0.92 * night));" in apply
+    assert "sun.intensity = 3.0;" not in js, "no mode writes the sun past the dial"
+    assert "hemi.intensity = 0.5;" not in js, "nor the sky light"
+
+
+def test_night_is_an_hour_and_the_moon_takes_the_shadow():
+    """The Night preset stood the sun at twenty degrees, and the instrument
+    floored every hour at 0.35 "so a night scene is lit by something": no
+    hour was ever dark. Night is an hour past dusk now. Below the horizon
+    the sun goes out and a moon stands opposite it at five per cent, cool;
+    the sky mesh, which no background intensity reaches, is dimmed by its
+    own uniform with the night and the dial; the sky light and the fog
+    fade with the night; stars come out in sky mode; and a day preset
+    chosen at night brings the day back rather than reading as broken."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "0.35 + 2.9 * light.strength" not in js, "the floor is gone"
+    assert "const MOON_STRENGTH = 0.08;" in js
+    assert "const FULL_SUN = 3.25;" in js
+    assert "const NIGHT_FLOOR = 0.1;" in js
+    placer = _js_function(js, "function applySunFromTime()")
+    assert "const moon = light.strength <= 0;" in placer
+    assert "lightBase.sun = moon ? FULL_SUN * MOON_STRENGTH : FULL_SUN * light.strength;" in placer
+    assert "const az = THREE.MathUtils.degToRad(sceneAngle + 180);" in placer, (
+        "the moon stands opposite the sun")
+    assert "Math.max(12, Math.min(60, -placed.elevation))" in placer
+    assert "applySkyBrightness();" in placer
+    factor = _js_function(js, "function nightFactor(elevation)")
+    assert "(elevation + 12) / 14" in factor
+    # The sky's shader, patched on the vendored source and checked.
+    assert '.replace("gl_FragColor = vec4( texColor, 1.0 );",' in js
+    assert '"gl_FragColor = vec4( texColor * daylight, 1.0 );");' in js
+    assert "shader.uniforms.daylight = skyDaylight;" in js
+    regen = _js_function(js, "function regenerateEnvironment()")
+    assert "skyDaylight.value = 0.03 + 0.97 * daylightNow();" in regen, (
+        "the environment is captured without the dial, or it is dimmed twice")
+    assert "skyDaylight.value = shown;" in regen
+    # Stars: outside the fog, in sky mode only.
+    stars = _js_function(js, "function starField()")
+    assert "toneMapped: false, fog: false," in stars
+    assert 'stars.visible = state.environmentMode === "sky" && stars.material.opacity > 0.01;' in js
+    # The preset is an hour.
+    assert "elevation: null, night: true," in js
+    assert "if (preset.night) {\n    setSunMinutes(Math.min(1439, dayCycleEnd() + 90));" in js
+    assert "} else if (sunInstrumentReady && currentSun().elevation < -0.833) {" in js
+    # A saved scene keeps the sun BEFORE the dial, and the day cycle's
+    # capture is the same figure.
+    assert "intensity: lightBase.sun," in js
+    assert js.count("state.sunIntensityOverride = lightBase.sun;") == 2
+    assert "state.sunIntensityOverride = sun.intensity;" not in js
 
 
 def test_shift_takes_the_whole_run_between_two_clicks():
