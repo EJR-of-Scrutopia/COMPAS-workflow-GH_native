@@ -792,3 +792,44 @@ export function sunLight(elevation) {
   }
   return { colour, strength };
 }
+
+// Where each emitting face of a box fixture sits and how big it is, for
+// the strip and cube lights (studio.js, layFixtureEmitters). half is the
+// box's half size in its own unscaled frame, centre its centre there,
+// scale the fixture's scale on each axis, and faces a list such as
+// ["+y", "-z"]. Each face comes back with:
+//   position  the face's centre in the fixture's own unscaled frame,
+//             which the fixture's scale then carries to the right place;
+//   axes      the light's own X, Y and Z in that frame. X runs along its
+//             width and Y along its height, and Z points INTO the
+//             fixture, because a three.js RectAreaLight shines down its
+//             -Z. X cross Y is Z, so the three make a true rotation;
+//   width, height  the face's size in metres in the WORLD, because a rect
+//             light is shaded from its rotation alone and never picks up
+//             its parent's scale;
+//   share     its part of the fixture's output, by area. They sum to 1.
+export function fixtureFaces(half, centre, scale, faces) {
+  const extent = [0, 1, 2].map((i) => 2 * half[i] * Math.abs(scale[i]));
+  const unit = (i, sign) => {
+    const axis = [0, 0, 0];
+    axis[i] = sign;
+    return axis;
+  };
+  const laid = faces.map((face) => {
+    const sign = face[0] === "-" ? -1 : 1;
+    const a = "xyz".indexOf(face[1]);
+    if (a < 0) throw new Error("not a face of a box: " + face);
+    const b = (a + 1) % 3;
+    const c = (a + 2) % 3;
+    // Width and height are the face's other two axes, taken in the order
+    // that makes width cross height point into the fixture.
+    const [ui, vi] = sign > 0 ? [c, b] : [b, c];
+    const position = centre.slice();
+    position[a] += sign * half[a];
+    return { position, axes: [unit(ui, 1), unit(vi, 1), unit(a, -sign)],
+      width: extent[ui], height: extent[vi], area: extent[ui] * extent[vi] };
+  });
+  const total = laid.reduce((sum, face) => sum + face.area, 0);
+  for (const face of laid) face.share = total > 0 ? face.area / total : 0;
+  return laid;
+}

@@ -20,12 +20,14 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
+import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
 import {
   boxUVs, segmentUVOffset, segmentWindow, sheetUVs, footprintSpan, uvQuarterTurn,
   smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
+  fixtureFaces,
 } from "/static/fields.js";
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
@@ -259,7 +261,6 @@ const state = {
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   outline: 0,            // the dark line inked round each voussoir, in metres
-  glow: 0.6,             // how far a lamp's halo spreads; 0 is no halo at all
   // What a newly placed lamp is given, and what the Lights sliders write
   // to when no single lamp is selected. The literals are LAMP_LUMENS and
   // LAMP_KELVIN, which are declared with the lamp itself far below: a
@@ -470,54 +471,24 @@ composer.addPass(new OutputPass());
 const gradePass = new ShaderPass(BrightnessContrastShader);
 composer.addPass(gradePass);
 
-// The glow around a lamp (Param: "place an orb light say inside the
-// pavilion, it will glow"). Drawn as a HALO ON THE LAMP -- an additive,
-// camera-facing disc of light around the globe -- rather than as a
-// full-frame bloom pass.
-//
-// A bloom (UnrealBloomPass) was built first and then withdrawn. It is
-// wired correctly: with the threshold dropped it takes the whole image
-// to near white. But in SKY mode every capture came back blank while
-// studio mode was unaffected, and the composer was rendering and
-// throwing nothing throughout. I could not settle whether that was real:
-// the software renderer these checks run under draws about once a
-// second, and the readings that condemned it were taken against a canvas
-// that may not have been redrawn. So it is withdrawn as UNPROVEN rather
-// than as broken -- a feature that might blank the viewport on his
-// machine is not one to ship on a maybe, and re-testing it wants a real
-// GPU, not this one.
-//
-// The halo costs one transparent quad per lamp, behaves identically on
-// every device, is occluded by the vault the way a real light is, and I
-// can photograph it working. Bloom stays available as an upgrade if he
-// wants the whole image to bleed: it is one npm dependency away, and
-// wants testing on his own GPU.
-let haloTexture = null;
-
-function lampHaloTexture() {
-  if (haloTexture) return haloTexture;
-  const size = 128;
-  const canvasEl = document.createElement("canvas");
-  canvasEl.width = canvasEl.height = size;
-  const context = canvasEl.getContext("2d");
-  const gradient = context.createRadialGradient(
-    size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  // A steep falloff: a lamp's halo is a small hot core with a wide, very
-  // faint skirt, and a linear ramp reads as a painted disc instead.
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.18, "rgba(255,255,255,0.55)");
-  gradient.addColorStop(0.45, "rgba(255,255,255,0.13)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, size, size);
-  haloTexture = new THREE.CanvasTexture(canvasEl);
-  haloTexture.colorSpace = THREE.SRGBColorSpace;
-  return haloTexture;
+// The strip and cube fixtures give their light from their faces, through
+// RectAreaLight, and three's WebGL renderer reads the LTC tables that
+// light is shaded with from UniformsLib as soon as one exists. Without
+// them every lit surface goes black the moment a strip is placed. They
+// are filled here, once, before anything renders; UniformsLib belongs to
+// the module, so the tile preview's second renderer shares them. Checked,
+// so a vendor upgrade that moves them is loud rather than a dark studio.
+try {
+  RectAreaLightUniformsLib.init();
+} catch (error) {
+  reportProblem("the area-light tables failed to initialise (" + error.message
+    + "), so strip and cube fixtures will light nothing; re-vendor "
+    + "vendor/addons/lights from three 0.185.0", error);
 }
-
-function applyGlow() {
-  // Every lamp already on the scene, since the halo is the lamp's own.
-  for (const record of state.props) applyPropLight(record);
+if (!THREE.UniformsLib.LTC_FLOAT_1 || !THREE.UniformsLib.LTC_HALF_1) {
+  reportProblem("the area-light tables are missing, so strip and cube "
+    + "fixtures will light nothing; re-vendor vendor/addons/lights from "
+    + "three 0.185.0");
 }
 
 function applyGrade() {
@@ -1479,19 +1450,37 @@ function kelvinColour(kelvin) {
 // nothing else, and each is sized by the record's own size vector, which
 // is what makes a strip a strip rather than a sphere stretched by eye.
 //
-// One PointLight per fixture, at the emitter's centre. three.js does have
-// RectAreaLight, which is the physically right answer for a strip and a
-// panel, but it lights only Standard and Physical materials, casts no
-// shadow at all, and needs its uniforms library initialised before first
-// use. A point light at the centre of a two metre strip is an
-// approximation, and it is the honest one to start from; if the falloff
-// along a long strip ever reads wrong, the fix is several lights sharing
-// the power, not a different light type.
-function lightEmitter(geometry, lift) {
+// How a fixture gives its light: from its shape. Param: "the light itself
+// when we scale it and chnage the shape etc it doesnt make that objects
+// light project from the shape just from a point."
+//
+// The sphere keeps one PointLight at its centre, and there it is not a
+// stand-in: a sphere that emits evenly from its surface lights anything
+// outside it exactly as a point of the same output at its centre does.
+// The strip and the cube emit from their FACES: one RectAreaLight on each
+// face that gives light, sized to that face and aimed straight out of it,
+// each carrying its share of the output by area. So a twelve metre strip
+// lights a twelve metre stripe of floor, not a round pool at its middle.
+// The strip's two end caps are left out: at sixty millimetres square they
+// carry almost nothing, and two more lights per strip is cost for no
+// picture. fixtureFaces (fields.js) does the geometry, tested under node.
+//
+// What a rect light gives up: it lights only Standard and Physical
+// materials (every lit surface here is one), and it casts no shadow (no
+// fixture ever did; the sun is what the shadow study is for). Its tables
+// are initialised at boot, beside the composer.
+//
+// The Glow dial, a camera-facing halo sprite on every fixture, was removed
+// on 2026-09-11 (Param: "glow doesnt work well id rather remove it"). A
+// fixture now reads as a light by what it lights.
+const STRIP_FACES = ["+y", "-y", "+z", "-z"];
+const BOX_FACES = ["+x", "-x", "+y", "-y", "+z", "-z"];
+
+function lightEmitter(geometry, lift, faces) {
   const group = new THREE.Group();
   // UNLIT (MeshBasicMaterial): it is the source, so nothing in the scene
-  // should be shading it, and its colour is pushed above 1 so the bloom
-  // threshold has something to catch.
+  // should be shading it, and applyPropLight pushes its colour above 1 so
+  // it reads as brighter than white rather than as a pale ball.
   // Built WARM rather than white. applyPropLight writes the real colour
   // from the fixture's own kelvin the moment one is placed, but a tile's
   // preview never gets that call, so a pure white emitter came out white
@@ -1504,37 +1493,102 @@ function lightEmitter(geometry, lift) {
   globe.position.z = lift;
   globe.userData.lampGlobe = true;
   globe.castShadow = globe.receiveShadow = false;
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: lampHaloTexture(), transparent: true,
-    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-  halo.position.z = lift;
-  halo.userData.lampHalo = true;
-  const light = new THREE.PointLight(0xffffff, 1, 0, 2);
-  light.position.z = lift;
-  light.userData.lampLight = true;
-  // A point light's shadow is six renders of the whole scene, every
-  // frame. Deliberately off: the lights are for mood, and the sun is what
-  // the shadow study is for.
-  light.castShadow = false;
-  group.add(globe, halo, light);
+  geometry.computeBoundingBox();
+  group.add(globe);
+  if (!faces) {
+    // decay 2 is the inverse square, which is what makes a lamp read as a
+    // lamp: bright at the wall it is near and gone across the room.
+    const light = new THREE.PointLight(0xffffff, 1, 0, 2);
+    light.position.z = lift;
+    light.userData.lampLight = true;
+    // A point light's shadow is six renders of the whole scene, every
+    // frame. Deliberately off: the lights are for mood, and the sun is
+    // what the shadow study is for.
+    light.castShadow = false;
+    group.add(light);
+  } else {
+    for (const face of faces) {
+      const light = new THREE.RectAreaLight(0xffffff, 1, 1, 1);
+      light.userData.lampLight = true;
+      light.userData.lampFace = face;
+      light.castShadow = false;
+      group.add(light);
+    }
+  }
+  // Laid out and lit at the defaults now, so a tile's preview, which never
+  // gets a record, carries emitters that match the shape it shows.
+  layFixtureEmitters(group, LAMP_LUMENS, kelvinColour(LAMP_KELVIN));
   return group;
+}
+
+// Every emitter a fixture carries, laid to its shape as it stands now and
+// given its colour and its share of the output. A rect light needs its
+// WORLD size written on it: three shades one from its rotation alone, so
+// the group's scale moves where it sits but never how big it is. Width
+// and height go on before power, because three turns power into intensity
+// by dividing by the area. propsGroup is never scaled, so the group's own
+// scale is its size in the world.
+const faceAxes = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+const faceBasis = new THREE.Matrix4();
+
+function layFixtureEmitters(object, lumens, colour) {
+  const globe = object.children.find((child) => child.userData.lampGlobe);
+  if (!globe) return;
+  if (!globe.geometry.boundingBox) globe.geometry.computeBoundingBox();
+  const box = globe.geometry.boundingBox;
+  const half = [(box.max.x - box.min.x) / 2, (box.max.y - box.min.y) / 2,
+    (box.max.z - box.min.z) / 2];
+  const lights = object.children.filter(
+    (child) => child.isLight && child.userData.lampLight);
+  const laid = fixtureFaces(half, globe.position.toArray(), object.scale.toArray(),
+    lights.filter((light) => light.isRectAreaLight)
+      .map((light) => light.userData.lampFace));
+  let next = 0;
+  for (const light of lights) {
+    light.color.copy(colour);
+    if (!light.isRectAreaLight) {
+      // three.js takes lumens directly and does the 4*pi itself.
+      light.power = lumens;
+      continue;
+    }
+    const face = laid[next++];
+    light.position.fromArray(face.position);
+    for (let k = 0; k < 3; k++) faceAxes[k].fromArray(face.axes[k]);
+    faceBasis.makeBasis(faceAxes[0], faceAxes[1], faceAxes[2]);
+    light.quaternion.setFromRotationMatrix(faceBasis);
+    light.width = face.width;
+    light.height = face.height;
+    light.power = lumens * face.share;
+  }
+}
+
+// The one writer of a placed fixture's light. applyPropLight calls it for
+// colour and output, and applyPropSize for every change of shape: the
+// Size and Length dials, the gumball, the + and - keys, undo and every
+// restore. No path can leave the light the size the fixture used to be.
+function syncFixtureEmission(record) {
+  if (!isLamp(record) || !record.object) return;
+  const kelvin = Math.min(KELVIN_MAX, Math.max(KELVIN_MIN,
+    +record.kelvin || LAMP_KELVIN));
+  const lumens = Math.max(0, +record.lumens || 0);
+  layFixtureEmitters(record.object, lumens, kelvinColour(kelvin));
 }
 
 // A sphere of light, hanging where he puts it. 0.25 m radius, so the
 // default reads as a bare bulb rather than a beach ball.
 function lightSphere() {
-  return lightEmitter(new THREE.SphereGeometry(0.25, 24, 16), 0.25);
+  return lightEmitter(new THREE.SphereGeometry(0.25, 24, 16), 0.25, null);
 }
 
 // A strip: two metres by sixty by sixty, the shape of a real linear
 // fitting. Long in X, so a rotation about Z aims it the way he wants.
 function lightStrip() {
-  return lightEmitter(new THREE.BoxGeometry(2.0, 0.06, 0.06), 0.03);
+  return lightEmitter(new THREE.BoxGeometry(2.0, 0.06, 0.06), 0.03, STRIP_FACES);
 }
 
 // A cube of light, for a light box or a glowing plinth.
 function lightCube() {
-  return lightEmitter(new THREE.BoxGeometry(0.4, 0.4, 0.4), 0.2);
+  return lightEmitter(new THREE.BoxGeometry(0.4, 0.4, 0.4), 0.2, BOX_FACES);
 }
 
 // The old fixture, kept ONLY so a scene saved before 2026-09-09 still
@@ -1543,42 +1597,6 @@ function lightCube() {
 // he did not want.
 function propOrbLight() {
   return lightSphere();
-}
-
-function propOrbLightOld() {
-  const group = new THREE.Group();
-  const globe = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
-  globe.position.z = 0.9;
-  globe.userData.lampGlobe = true;
-  globe.castShadow = globe.receiveShadow = false;
-  const stem = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.025, 0.045, 0.62, 8), propMaterial(0x2b2e33));
-  stem.rotation.x = Math.PI / 2;
-  stem.position.z = 0.31;
-  const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.05, 16),
-    propMaterial(0x2b2e33));
-  foot.rotation.x = Math.PI / 2;
-  foot.position.z = 0.025;
-  // decay 2 is the inverse square, which is what makes a lamp read as a
-  // lamp: bright at the wall it is near and gone across the room.
-  // The halo: additive, camera-facing, and DEPTH TESTED, so the vault
-  // hides it exactly as it hides the globe. Its own material per lamp,
-  // because each lamp carries its own colour; the texture is shared.
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: lampHaloTexture(), transparent: true,
-    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-  halo.position.z = 0.9;
-  halo.userData.lampHalo = true;
-  const light = new THREE.PointLight(0xffffff, 1, 0, 2);
-  light.position.z = 0.9;
-  light.userData.lampLight = true;
-  // A point light's shadow is six renders of the whole scene, every
-  // frame. Deliberately off: the lamps are for mood, and the sun is what
-  // the shadow study is for.
-  light.castShadow = false;
-  group.add(globe, stem, foot, halo, light);
-  return group;
 }
 
 const PROP_BUILDERS = {
@@ -1624,6 +1642,8 @@ function applyPropSize(record) {
   } else {
     record.object.scale.setScalar(scale);
   }
+  // A fixture's light follows its shape; any other prop returns at once.
+  syncFixtureEmission(record);
 }
 
 // A lamp's two numbers, written on to the objects that answer for them.
@@ -1635,30 +1655,16 @@ function applyPropLight(record) {
   const lumens = Math.max(0, +record.lumens || 0);
   const colour = kelvinColour(kelvin);
   record.object.traverse((child) => {
-    if (child.isLight && child.userData.lampLight) {
-      child.color.copy(colour);
-      // three.js takes lumens directly and does the 4*pi itself.
-      child.power = lumens;
-    }
     if (child.isMesh && child.userData.lampGlobe) {
-      // Above 1 so the bloom has something to catch, and brighter with
-      // the lamp: a dim lamp should not wear the same halo as a bright
-      // one. Off entirely reads as a globe that is simply off.
+      // Pushed above 1 so the source reads as brighter than white rather
+      // than as a pale ball, and brighter with the fixture's output. Off
+      // entirely reads as a globe that is simply off.
       const punch = lumens > 0 ? 1.2 + 1.8 * Math.min(1, lumens / 3000) : 0.25;
       child.material.color.copy(colour).multiplyScalar(punch);
     }
-    if (child.isSprite && child.userData.lampHalo) {
-      // Metres across, from the Glow slider and the lamp's own output: a
-      // dim lamp must not wear a bright lamp's halo, and a lamp that is
-      // off wears none at all.
-      const spread = lumens > 0
-        ? state.glow * (1.4 + 2.6 * Math.min(1, lumens / 3000)) : 0;
-      child.visible = spread > 0;
-      child.scale.setScalar(Math.max(0.001, spread));
-      child.material.color.copy(colour);
-      child.material.opacity = 0.45 + 0.55 * Math.min(1, lumens / 3000);
-    }
   });
+  // And the light itself, from every face that gives it.
+  syncFixtureEmission(record);
 }
 
 // A restore hands back both numbers. An entry saved before lamps existed
@@ -2023,10 +2029,6 @@ function disposeProp(object) {
       child.geometry.dispose();
       child.material.dispose();
     }
-    // A lamp's halo is a Sprite, not a Mesh, and owns a material per
-    // lamp. Its TEXTURE is one shared canvas for the whole page, and
-    // Material.dispose leaves that alone.
-    if (child.isSprite) child.material.dispose();
   });
 }
 
@@ -3906,7 +3908,6 @@ function collectScene(options) {
     brightness: state.brightness,
     contrast: state.contrast,
     outline: state.outline,
-    glow: state.glow,
     lamp: { lumens: state.lampLumens, kelvin: state.lampKelvin },
     hdri: {
       name: state.hdriName, projection: state.hdriProjection,
@@ -4111,11 +4112,7 @@ async function applyScene(record) {
     control("outline-width").value = scene_.outline;
     applyOutline();
   }
-  if (typeof scene_.glow === "number") {
-    state.glow = scene_.glow;
-    control("glow-strength").value = scene_.glow;
-    applyGlow();
-  }
+  // Older scenes carry "glow", the removed halo dial: ignored on purpose.
   if (scene_.lamp) {
     if (typeof scene_.lamp.lumens === "number") state.lampLumens = scene_.lamp.lumens;
     if (typeof scene_.lamp.kelvin === "number") state.lampKelvin = scene_.lamp.kelvin;
@@ -11151,7 +11148,6 @@ function syncLightControls() {
   };
   write("lamp-lumens", lumens, Math.round(lumens));
   write("lamp-kelvin", kelvin, Math.round(kelvin));
-  write("glow-strength", state.glow, Math.round(state.glow * 100));
 }
 
 function writeLamps(field, value) {
@@ -11182,11 +11178,6 @@ document.getElementById("lamp-kelvin").addEventListener("input", (e) => {
 for (const id of ["lamp-lumens", "lamp-kelvin"]) {
   document.getElementById(id).addEventListener("change", () => saveProps());
 }
-document.getElementById("glow-strength").addEventListener("input", (e) => {
-  state.glow = Math.max(0, +e.target.value);
-  applyGlow();
-  syncLightControls();
-});
 // Both read as percentages because that is how a grade is discussed,
 // and both are held as multipliers. Contrast declares its factor: its
 // range SPANS zero, and at zero the derivation gives up.
@@ -11594,7 +11585,9 @@ canvas.addEventListener("pointermove", (event) => {
       const distance = Math.hypot(ground.x - record.x, ground.y - record.y);
       record.scale = Math.min(5, Math.max(0.2,
         startScale * distance / startReading));
-      record.object.scale.setScalar(record.scale);
+      // Through applyPropSize, which keeps a stretched strip stretched and
+      // lays a fixture's light to its new size.
+      applyPropSize(record);
     }
     refreshPropOutline();
     refreshPropGumball();
@@ -11630,7 +11623,7 @@ function endPropDrag(event) {
       pushUndo("the adjustment", () => {
         Object.assign(record, before);
         applyPropRotation(record);
-        record.object.scale.setScalar(before.scale);
+        applyPropSize(record);
         record.object.position.set(before.x, before.y, before.z);
         if (state.selectedProp === record) {
           refreshPropOutline();
@@ -11691,7 +11684,7 @@ window.addEventListener("keydown", (event) => {
     const grow = event.key === "+" || event.key === "=";
     const next = (state.selectedProp.scale || 1) * (grow ? 1.1 : 1 / 1.1);
     state.selectedProp.scale = Math.min(5, Math.max(0.2, next));
-    state.selectedProp.object.scale.setScalar(state.selectedProp.scale);
+    applyPropSize(state.selectedProp);
     refreshPropOutline();
     setPropGumball(state.selectedProp);  // the ring re-fits the new size
     saveProps();

@@ -4,6 +4,7 @@ and the vendor files are the pinned build."""
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -2125,6 +2126,32 @@ def test_the_environment_addons_are_vendored():
         assert "from 'three'" in text or 'from "three"' in text, (
             "addons must import bare 'three' so the importmap resolves them"
         )
+
+
+def test_the_area_light_tables_are_vendored():
+    """The strip and cube fixtures emit through RectAreaLight, whose LTC
+    tables come from three's examples/jsm/lights, vendored from three
+    0.185.0 byte for byte (npm pack three@0.185.0, 2026-09-11). They must
+    be that release's: a table from another release shades silently
+    wrong rather than failing. Hashed with line endings normalised, so a
+    checkout that turns LF into CRLF is still the same file."""
+
+    lights = STATIC / "vendor" / "addons" / "lights"
+    uniforms = lights / "RectAreaLightUniformsLib.js"
+    tables = lights / "RectAreaLightTexturesLib.js"
+    assert uniforms.is_file() and tables.is_file()
+
+    def sha(path):
+        return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+    assert sha(uniforms) == "494fef2d731ff1689050cc6040ad78d927c22b9125a12f532beb0374c2811c6e", "RectAreaLightUniformsLib.js is not three 0.185.0's"
+    assert sha(tables) == "6dd4043bb052594357a5eeff13dc0519f0a80b100b97ec80c12808f887897bc1", "RectAreaLightTexturesLib.js is not three 0.185.0's"
+    for path in (uniforms, tables):
+        text = path.read_text(encoding="utf-8")
+        assert "from 'three'" in text or 'from "three"' in text, (
+            "addons must import bare 'three' so the importmap resolves them")
+    assert "import { RectAreaLightTexturesLib } from './RectAreaLightTexturesLib.js';" in (
+        uniforms.read_text(encoding="utf-8")), "the two files travel together"
 
 
 def test_the_environment_select_owns_three_exclusive_modes():

@@ -1092,25 +1092,41 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     assert "THREE.SRGBColorSpace);" in kelvin
 
     lit = _js_function(js, "function applyPropLight(record)")
-    assert "child.color.copy(colour);" in lit
-    assert "child.power = lumens;" in lit, "three.js takes lumens directly"
+    # Colour and output reach the light through the one writer of it,
+    # which every size change also goes through (2026-09-11).
+    assert "syncFixtureEmission(record);" in lit
+    laid = _js_function(js, "function layFixtureEmitters(object, lumens, colour)")
+    assert "light.color.copy(colour);" in laid
+    assert "light.power = lumens;" in laid, "three.js takes lumens directly"
     # The globe is the source: unlit, and pushed above 1 so it reads as
     # brighter than white rather than as a pale ball.
     assert "1.2 + 1.8 * Math.min(1, lumens / 3000)" in lit
-    # The halo is the glow, and it dies with the lamp.
-    assert "child.visible = spread > 0;" in lit
 
     # A source casting a hard sun shadow of ITSELF reads as plastic.
     made = _js_function(js, "function makeProp(type)")
     assert "if (child.isMesh && !child.userData.lampGlobe) {" in made
 
-    # The halo is depth tested, so the vault hides it exactly as it hides
-    # the globe. depthWrite is off so it never occludes what is behind it.
-    assert "blending: THREE.AdditiveBlending, depthWrite: false" in js
     assert "depthTest: false" not in _js_function(js, "function propOrbLight()")
-    # And its material is freed with the prop: a Sprite is not a Mesh, so
-    # the mesh branch above it never sees one.
-    assert "if (child.isSprite) child.material.dispose();" in js
+
+    # Glow is gone, all of it. Param, 2026-09-11: "glow doesnt work well
+    # id rather remove it". The dial, its state, the halo sprite and its
+    # texture, and every write to them. control("glow-strength") in the
+    # scene restore is named on purpose: the guard that every id the
+    # script asks for exists reads only getElementById, so a lookup of a
+    # removed id through control() would pass it and then throw on
+    # restoring any old scene.
+    assert "glow-strength" not in html
+    assert "glow-strength" not in js
+    assert 'control("glow-strength")' not in js
+    assert "lampHalo" not in js and "haloTexture" not in js
+    assert "state.glow" not in js and "applyGlow" not in js
+    assert "child.isSprite" not in js, "the dispose branch served only the halo"
+    # A scene saved with a glow still opens: the key is left unread, and
+    # nothing writes it any more.
+    restore = _js_function(js, "async function applyScene(record)")
+    assert '// Older scenes carry "glow", the removed halo dial: ignored on purpose.' in restore
+    assert "scene_.glow" not in js
+    assert "glow: state" not in js
 
     # Both numbers survive a reload and a scene.
     # The layout and the scene share one encoder, which carries a lamp's
@@ -1131,7 +1147,7 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # all the lights there and not in props".
     drawer = html[html.index('<div id="lights-panel"'):]
     drawer = drawer[:drawer.index('<div id="shelf-grid"')]
-    for control in ("lamp-lumens", "lamp-kelvin", "glow-strength",
+    for control in ("lamp-lumens", "lamp-kelvin",
                     "light-size", "light-length"):
         assert 'id="%s"' % control in drawer, control
     scene = html[html.index('<details id="scene-section">'):]
@@ -2312,9 +2328,21 @@ def test_the_fixtures_are_emitters_with_no_furniture_on_them():
     nothing -- but it builds the bare sphere now."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    body = _js_function(js, "function lightEmitter(geometry, lift)")
+    body = _js_function(js, "function lightEmitter(geometry, lift, faces)")
     assert "MeshBasicMaterial" in body, "the source must not be shaded"
-    assert "PointLight" in body
+    # The sphere keeps its PointLight, which for a sphere is exact; the
+    # strip and the cube emit from their faces (2026-09-11).
+    assert "new THREE.PointLight(0xffffff, 1, 0, 2)" in body
+    assert "new THREE.RectAreaLight(0xffffff, 1, 1, 1)" in body
+    assert body.count("light.castShadow = false;") == 2, (
+        "no fixture casts a shadow, the point light or the faces")
+    assert "0.25, null);" in _js_function(js, "function lightSphere()")
+    assert "0.03, STRIP_FACES);" in _js_function(js, "function lightStrip()")
+    assert "0.2, BOX_FACES);" in _js_function(js, "function lightCube()")
+    assert 'const STRIP_FACES = ["+y", "-y", "+z", "-z"];' in js, (
+        "the strip's four long faces; its end caps carry almost nothing")
+    assert 'const BOX_FACES = ["+x", "-x", "+y", "-y", "+z", "-z"];' in js
+    assert "propOrbLightOld" not in js, "the dead stem-and-foot builder is gone"
     assert "CylinderGeometry" not in body, "no stem and no foot"
     for maker in ("function lightSphere()", "function lightStrip()",
                   "function lightCube()"):
@@ -2326,6 +2354,58 @@ def test_the_fixtures_are_emitters_with_no_furniture_on_them():
     # white emitter came out white on the pale tile and Param said he
     # could barely see it.
     assert "color: kelvinColour(LAMP_KELVIN)" in body
+
+
+def test_a_fixture_emits_from_its_shape_and_every_resize_relays_it():
+    """Param, 2026-09-11: "the light itself when we scale it and chnage
+    the shape etc it doesnt make that objects light project from the shape
+    just from a point."
+
+    A strip and a cube carry a RectAreaLight on each face that gives
+    light, laid out by fixtureFaces (fields.js, tested under node) at the
+    fixture's WORLD size. Two things make that true in the page: the LTC
+    tables are in place before anything renders, and every path that
+    changes a fixture's shape re-lays its light."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert ('import { RectAreaLightUniformsLib } from '
+            '"three/addons/lights/RectAreaLightUniformsLib.js";') in js
+    init = js.index("RectAreaLightUniformsLib.init();")
+    assert init < js.index("previewRig = buildPreviewRig();"), (
+        "the preview renderer shares the tables, so they come first")
+    assert init < js.index("function renderView()"), "before the first frame"
+    guard = js[init:init + 900]
+    assert "if (!THREE.UniformsLib.LTC_FLOAT_1 || !THREE.UniformsLib.LTC_HALF_1) {" in guard
+    assert guard.count("reportProblem(") == 2, (
+        "a failed init and a missing table are both loud")
+    assert "  fixtureFaces,\n} from \"/static/fields.js\";" in js
+
+    laid = _js_function(js, "function layFixtureEmitters(object, lumens, colour)")
+    assert "fixtureFaces(half, globe.position.toArray(), object.scale.toArray()," in laid, (
+        "the faces are sized from the fixture's scale as it stands now")
+    assert "light.quaternion.setFromRotationMatrix(faceBasis);" in laid
+    power = laid.index("light.power = lumens * face.share;")
+    assert laid.index("light.width = face.width;") < power, (
+        "three divides power by the area, so the size goes on first")
+    assert laid.index("light.height = face.height;") < power
+    sync = _js_function(js, "function syncFixtureEmission(record)")
+    assert "layFixtureEmitters(record.object, lumens, kelvinColour(kelvin));" in sync
+
+    # Every writer of a fixture's shape goes through applyPropSize, and
+    # applyPropSize re-lays the light. The gumball, the keys and the undo
+    # used to set a uniform scale, which also threw away a stretched
+    # strip's length until the next reload.
+    size = _js_function(js, "function applyPropSize(record)")
+    assert "syncFixtureEmission(record);" in size
+    assert "applyPropSize(record);" in _js_function(js, "function writeLightSize()")
+    gumball = js[js.index("startScale * distance / startReading));"):]
+    assert "applyPropSize(record);" in gumball[:300]
+    undo = js[js.index('pushUndo("the adjustment", () => {'):]
+    assert "applyPropSize(record);" in undo[:300]
+    assert "applyPropSize(state.selectedProp);" in js, "the + and - keys"
+    assert "record.object.scale.setScalar(record.scale);" not in js
+    assert "record.object.scale.setScalar(before.scale);" not in js
+    assert "state.selectedProp.object.scale.setScalar(" not in js
 
 
 def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():

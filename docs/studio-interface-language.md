@@ -248,7 +248,7 @@ accounted for rather than outstanding.
     Camera     Field of view, Brightness, Contrast
     Scene      Background, Size, Scale, Relief
     Scatter    Brush, Spacing, Size, Clumping, Clump size, Keep clear
-    Lights     Output, Warmth, Glow, Size, Length
+    Lights     Output, Warmth, Size, Length
 
 Three are HIDDEN inputs -- `sun-azimuth`, `sun-elevation` and
 `day-cycle-seconds` -- which are the model behind the sun dial widget
@@ -256,6 +256,10 @@ rather than dials anyone reads. Three are exempt for stated reasons:
 `timeline-scrubber` is a transport whose position IS the time, and
 `scatter-size-min` and `-max` are one dial with two grips sharing the
 reading "0.80 to 1.30".
+
+Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
+rather remove it"), so the count is now **30 of 36**, and the Lights
+row above is four dials. A fixture reads as a light by what it lights.
 
 Two tests are the ratchet. `test_the_sweep_is_finished_and_stays_finished`
 fails on any new visible slider that is not in the language, and
@@ -380,7 +384,13 @@ itself (Plotly sizes a plot once, from its box). The numbers come from
 Brightness dial (`sky-brightness`) scales everything the day gives at
 once: the sun, the sky light, the sky itself, the backdrop, the fog, a
 photograph's dome and the environment. It never touches a lamp, which is
-what lets a fixture read when the day is turned down. Night is not a
+what lets a fixture read when the day is turned down. A fixture
+emits from its shape: the sphere from its centre, which is exactly how a
+sphere that glows evenly lights anything outside it, and the strip and
+the cube from their faces, one area light per face sized to that face in
+the world and given its share of the output by area. A longer strip
+lights a longer stripe of floor, and the Size and Length dials, the
+gumball and the + and - keys all re-lay the light as they reshape it. Night is not a
 preset's angle but a time on the site's own clock (dusk plus ninety
 minutes), so the day track, the day cycle and every environment mode
 agree about what hour it is; below the horizon the sun goes out and the

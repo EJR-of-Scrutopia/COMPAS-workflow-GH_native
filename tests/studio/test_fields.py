@@ -200,8 +200,78 @@ def test_fields_module_exists_and_is_pure():
     for name in ("segmentUVOffset", "boxUVs", "stressValueOf",
                  "smoothStressField", "interpolateScalarField",
                  "sampleScalar", "sampleVector", "creaseNormals",
-                 "estimateSunFromEquirect"):
+                 "estimateSunFromEquirect", "fixtureFaces"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)
+
+
+FACES_CHECK = textwrap.dedent("""
+    import { fixtureFaces } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+    function same(a, b) { return a.every((x, i) => near(x, b[i])); }
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+    // The strip as built, 2 x 0.06 x 0.06 m standing 0.03 m up, stretched
+    // by Length 12: its four long faces are 24 m by 60 mm in the world.
+    const strip = fixtureFaces([1, 0.03, 0.03], [0, 0, 0.03], [12, 1, 1],
+      ["+y", "-y", "+z", "-z"]);
+    expect(strip.length === 4, "one emitter per long face");
+    for (const face of strip) {
+      const [u, v, w] = face.axes;
+      expect(same(cross(u, v), w), "width cross height is the light's own +Z");
+      expect(near(Math.max(face.width, face.height), 24),
+        "the long side is the WORLD length: 2 m times 12");
+      expect(near(Math.min(face.width, face.height), 0.06), "the thin side stays 60 mm");
+      expect(near(face.share, 0.25), "four equal faces share the output equally");
+    }
+    // A rect light shines down its -Z, so -Z must be the outward normal.
+    const side = strip[0];
+    expect(same(side.position, [0, 0.03, 0.03]), "+y sits on the +y face, unscaled");
+    expect(same(side.axes[2], [0, -1, 0]), "+y shines out along +y");
+    expect(near(side.width, 24) && near(side.height, 0.06), "+y is 24 m wide");
+    const top = strip[2];
+    expect(same(top.position, [0, 0, 0.06]), "+z sits on the top face");
+    expect(same(top.axes[2], [0, 0, -1]), "the top face shines up");
+    const under = strip[3];
+    expect(same(under.position, [0, 0, 0]), "-z sits on the floor");
+    expect(same(under.axes[2], [0, 0, 1]), "the underside shines down");
+
+    // The cube stretched to three times its length: two 0.4 m square ends
+    // and four 1.2 x 0.4 m sides, the output split by area.
+    const cube = fixtureFaces([0.2, 0.2, 0.2], [0, 0, 0.2], [3, 1, 1],
+      ["+x", "-x", "+y", "-y", "+z", "-z"]);
+    const total = 2 * 0.16 + 4 * 0.48;
+    expect(near(cube[0].share, 0.16 / total), "an end's share is its area's");
+    expect(near(cube[2].share, 0.48 / total), "a side's share is its area's");
+    expect(near(cube.reduce((sum, face) => sum + face.share, 0), 1), "the shares make the whole");
+    expect(same(cube[1].axes[2], [1, 0, 0]), "-x shines out along -x");
+    for (const face of cube) {
+      expect(same(cross(face.axes[0], face.axes[1]), face.axes[2]), "a true rotation, every face");
+    }
+    // Size 2 on a plain cube: every face 0.8 m square.
+    for (const face of fixtureFaces([0.2, 0.2, 0.2], [0, 0, 0.2], [2, 2, 2], ["+x", "-z"])) {
+      expect(near(face.width, 0.8) && near(face.height, 0.8), "Size scales every face");
+    }
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_a_fixture_emits_from_each_face_at_its_world_size(tmp_path):
+    """Param, 2026-09-11: the strip and cube lit from a point, whatever
+    their shape. They now carry one area light per face, and this is the
+    geometry of it: where each face is, which way its light shines, how
+    big it is in the world, and its share of the output."""
+
+    script = tmp_path / "faces.mjs"
+    script.write_text(FACES_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
 
 
 FORMWORK_CHECK = textwrap.dedent("""
