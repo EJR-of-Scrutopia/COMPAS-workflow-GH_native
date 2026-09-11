@@ -2705,7 +2705,7 @@ def test_the_studio_opens_where_it_was_left():
     # layout brings them back, and carrying a 25,000-prop field here too
     # wrote it into browser storage a second time on every blur.
     assert "sessionScene()" in remember
-    assert "const scene_ = collectScene();" in _function_body(js, "sessionScene")
+    assert "return collectScene({ props: false });" in _function_body(js, "sessionScene")
     # The whole line, indentation included: a text pin that matched the
     # call anywhere would pass a write that had been commented out or
     # guarded off, which is exactly the mutation this was proved against.

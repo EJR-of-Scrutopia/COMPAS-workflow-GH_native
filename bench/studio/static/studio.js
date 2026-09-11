@@ -1575,8 +1575,14 @@ function adoptLayers(saved) {
 const LAYOUT_STRIDE = 9;
 const LAYOUT_SETTLE_MS = 600;
 const layoutMemo = new Map();   // propsKey -> the layout last written or pulled this session
+const layoutAwaiting = new Set();  // keys restored from nothing, until the server has answered
+const layoutOverQuota = new Set(); // keys whose last write left only the marker here
 let layoutWrite = null;         // the write waiting for the gestures to stop
 let layoutTooBigSaid = false;
+let layoutServerSaid = false;
+// Bumped when a scene takes the props over: a layout still arriving from
+// the server must not put the study's field back over the scene's.
+let propsGeneration = 0;
 
 function roundMm(value) { return Math.round((+value || 0) * 1000) / 1000; }
 function roundTurn(value) { return Math.round((+value || 0) * 10000) / 10000; }
@@ -1644,6 +1650,11 @@ function flushProps() {
   const pending = layoutWrite;
   if (!pending) return;
   clearTimeout(pending.timer);
+  // Restored from nothing, or from the marker, with the server's copy
+  // still on its way: held until it has been heard (pullServerLayout lets
+  // it go), or an edit made in the meantime would be written over a whole
+  // field it never saw.
+  if (layoutAwaiting.has(pending.key)) return;
   layoutWrite = null;
   const layout = {
     saved: Date.now(),
@@ -1656,9 +1667,11 @@ function flushProps() {
   const text = JSON.stringify(layout);
   try {
     localStorage.setItem(pending.key, text);
+    layoutOverQuota.delete(pending.key);
   } catch (error) {
     // Too big for the browser. A marker stays, so a reload knows to ask
     // the server rather than restore whatever was there before.
+    layoutOverQuota.add(pending.key);
     try {
       localStorage.setItem(pending.key, JSON.stringify({ saved: layout.saved, onServer: true }));
     } catch (again) { /* the store is full of something else; the server has it */ }
@@ -1667,31 +1680,79 @@ function flushProps() {
       logStudio("the prop layout is too big for the browser's store; it is kept on the server");
     }
   }
-  fetch("/api/studies/" + encodeURIComponent(pending.export) + "/layout", {
+  putLayout(pending.export, text);
+}
+
+// One PUT at a time, and only the newest layout of each study. Over the
+// tailnet a large layout takes seconds, and two in flight can land in
+// either order: the bigger, older one arriving last put back a field the
+// user had just undone.
+const layoutPutQueue = new Map();   // export -> the newest text not yet sent
+let layoutPutting = false;
+
+function putLayout(exportName, text) {
+  layoutPutQueue.set(exportName, text);
+  if (!layoutPutting) sendLayout();
+}
+
+function sendLayout() {
+  const next = layoutPutQueue.entries().next();
+  if (next.done) { layoutPutting = false; return; }
+  const [exportName, text] = next.value;
+  layoutPutQueue.delete(exportName);
+  layoutPutting = true;
+  fetch("/api/studies/" + encodeURIComponent(exportName) + "/layout", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: text,
   }).then((response) => {
     if (!response.ok) throw new Error("the server said " + response.status);
-  }).catch((error) => logStudio("the prop layout did not reach the server: " + error.message));
+  }).catch((error) => {
+    // Once a session: a studio started before this route existed answers
+    // every write with a 404, and a line per gesture drowned the log.
+    if (!layoutServerSaid) {
+      layoutServerSaid = true;
+      logStudio("the prop layout did not reach the server: " + error.message);
+    }
+  }).finally(sendLayout);
 }
 
 // The server's copy wins when it is newer: the layout another device
 // wrote, or the one the browser was too small to hold. Asked once a study
-// is built, and ignored if he has started changing things since.
+// is built.
 async function pullServerLayout() {
   if (!state.bundle) return;
   const key = propsKey();
+  const generation = propsGeneration;
   let remote = null;
   try {
     const response = await fetch("/api/studies/"
       + encodeURIComponent(state.bundle.export) + "/layout");
-    if (response.status !== 200) return;    // 204: none kept yet
-    remote = await response.json();
+    if (response.status === 200) remote = await response.json();   // 204: none kept yet
   } catch (error) {
+    remote = null;
+  }
+  const awaiting = layoutAwaiting.delete(key);
+  if (!state.bundle || propsKey() !== key) return;
+  const heldBack = !!layoutWrite && layoutWrite.key === key;
+  // Nothing on the server, or a scene opened in the meantime (a scene is a
+  // whole picture and owns the props now): whatever was held back goes.
+  if (!remote || propsGeneration !== generation) {
+    if (heldBack) flushProps();
     return;
   }
-  if (!state.bundle || propsKey() !== key || layoutWrite || !remote) return;
-  const local = layoutMemo.get(key) || readLocalLayout(key);
-  if (local && !local.onServer && (+local.saved || 0) >= (+remote.saved || 0)) return;
+  if (awaiting) {
+    // Restored from nothing: the server's field wins over anything drawn
+    // in the moments before it arrived, which it has never seen.
+    if (heldBack) {
+      layoutWrite = null;
+      logStudio("the prop layout arrived from the server and replaced what was drawn before it");
+    }
+  } else {
+    // Restored from this browser's own copy: the server's wins only when
+    // it is newer, and never over a change in hand.
+    if (layoutWrite || brushStroke || state.carrying) return;
+    const local = layoutMemo.get(key) || readLocalLayout(key);
+    if (local && !local.onServer && (+local.saved || 0) >= (+remote.saved || 0)) return;
+  }
   layoutMemo.set(key, remote);
   restoreProps(remote);
 }
@@ -1780,11 +1841,17 @@ function restoreProps(given) {
   selectProp(null);
   let layout = given || layoutMemo.get(propsKey()) || null;
   if (!layout) {
+    let stored = null;
     try {
-      layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
+      stored = localStorage.getItem(propsKey());
+      layout = JSON.parse(stored || "[]");
     } catch (error) {
       layout = [];
     }
+    // Nothing kept in this browser, or only the marker a too-big layout
+    // leaves: the server's copy decides, and until it has been heard
+    // nothing may be written over it (flushProps, pullServerLayout).
+    if (!stored || (layout && layout.onServer)) layoutAwaiting.add(propsKey());
   }
   // Three shapes on disk: the old bare array of props, the layered
   // {layers, props} that replaced it, and the same with its props as
@@ -1799,6 +1866,10 @@ function restoreProps(given) {
   }
   if (!Array.isArray(entries)) entries = [];
   propsAwaitingLibrary = false;
+  // Every model this layout is still waiting for, loaded together and
+  // answered with ONE re-run once the last has landed. A re-run per model
+  // placed a field of eighteen variants nineteen times over on a cold open.
+  const waiting = [];
   for (const entry of entries) {
     if (!knownPropType(entry.type)) {
       // Either the manifest is still in flight, or this prop is gone from
@@ -1806,13 +1877,11 @@ function restoreProps(given) {
       // library that arrives late can put it back.
       propsAwaitingLibrary = true;
       // Known to the manifest but not loaded yet: ask for exactly this
-      // model, and run the restore again when it lands. ensure dedupes,
-      // and the re-run fires only from the call that CREATED the load, so
-      // repeated restores cannot multiply into repeated fetches.
+      // model. ensure dedupes, and only the call that CREATED a load joins
+      // the wait below, so repeated restores cannot multiply into repeated
+      // fetches or repeated re-runs.
       if (propLibraryEntry(entry.type) && !propTemplatePromises.has(entry.type)) {
-        ensurePropTemplate(entry.type).then((template) => {
-          if (template && propsAwaitingLibrary) restoreProps();
-        });
+        waiting.push(ensurePropTemplate(entry.type));
       }
       continue;
     }
@@ -1827,6 +1896,11 @@ function restoreProps(given) {
     adoptLampSettings(record, entry);
   }
   applyLayerVisibility();
+  // A failed load resolves null rather than rejecting, so one bad model
+  // cannot hold the rest of the field back for ever.
+  if (waiting.length) {
+    Promise.all(waiting).then(() => { if (propsAwaitingLibrary) restoreProps(); });
+  }
 }
 
 // ---------- the prop library ----------
@@ -2187,6 +2261,11 @@ function sizeTier(tier, needed) {
     return mesh;
   });
   tier.capacity = capacity;
+  // Clipping planes live on MATERIALS, and applySection only reaches the
+  // ones worn by meshes already in the scene. A clone was in the scene the
+  // moment it was placed; a batch's meshes arrive a frame later, so a
+  // scene restored with its section on drew its new batches uncut.
+  if (state.section.mode === "plane") applySection();
 }
 
 const propViewSeen = new Float64Array(34).fill(NaN);
@@ -3562,7 +3641,11 @@ function captureThumbnail(width = 240) {
 // Everything worth keeping, and nothing that cannot be rebuilt: no bundle,
 // no THREE handles, no derived exposure base, no HDRI texture (its NAME is
 // enough to load it again).
-function collectScene() {
+function collectScene(options) {
+  // The session asks for everything BUT the props (sessionScene): encoding
+  // a 100,000-prop field only to throw it away cost 20 ms on every camera
+  // release.
+  const withProps = !options || options.props !== false;
   const control = (id) => document.getElementById(id);
   return {
     camera: { position: camera.position.toArray(), target: controls.target.toArray(),
@@ -3623,9 +3706,9 @@ function collectScene() {
     // Rows, not objects: see "the layout, and where it is kept". A scene
     // of a 25,000-prop field was five megabytes as objects, over the
     // server's four-megabyte scene limit.
-    props: encodeProps(state.props),
-    propLayers: state.propLayers.map((layer) => ({
-      id: layer.id, name: layer.name, visible: layer.visible })),
+    props: withProps ? encodeProps(state.props) : undefined,
+    propLayers: withProps ? state.propLayers.map((layer) => ({
+      id: layer.id, name: layer.name, visible: layer.visible })) : undefined,
     layers: Object.assign({}, state.layers),
     cut: {
       material: control("material-select").value,
@@ -3723,6 +3806,11 @@ async function applyScene(record) {
   // Either shape a scene has held: a list of objects, or rows.
   const sceneProps = decodeProps(scene_.props);
   if (sceneProps) {
+    // The scene owns the props now: a layout still arriving from the
+    // server, or a model re-run the study's own restore left waiting, must
+    // not put the study's field back over it.
+    propsGeneration += 1;
+    propsAwaitingLibrary = false;
     for (const existing of state.props) {
       disposeProp(existing.object);
       propsGroup.remove(existing.object);
@@ -3983,10 +4071,7 @@ function rememberSession() {
 // layout, which buildScene restores anyway; carrying them here as well
 // wrote the whole field into browser storage a second time on every blur.
 function sessionScene() {
-  const scene_ = collectScene();
-  delete scene_.props;
-  delete scene_.propLayers;
-  return scene_;
+  return collectScene({ props: false });
 }
 
 function rememberedSession() {
@@ -4002,7 +4087,16 @@ function rememberedSession() {
 // The prop layout's waiting write goes first, on both (listeners run in
 // the order they were added): a tab closed within the settle time of the
 // last gesture would otherwise lose that gesture.
-window.addEventListener("beforeunload", flushProps);
+window.addEventListener("beforeunload", (event) => {
+  flushProps();
+  // A layout too big for the browser lives only on the server, so a PUT
+  // still going when the tab closes is the last gesture lost: the browser
+  // is asked to hold the page while one is.
+  if ((layoutPutting || layoutPutQueue.size) && layoutOverQuota.size) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushProps();
 });
@@ -6841,6 +6935,11 @@ const BRUSH_STEP = 0.5;
 // every stamp it made (region and salt, so a redo can replay it) and
 // every record it placed (so ONE undo takes the whole stroke back).
 let brushStroke = null;
+// ONE queue for every stamp of every stroke. A second stroke begun while
+// the first one's stamps still wait on their models would otherwise solve
+// against a keep-out that never saw the first stroke's later stamps, and
+// the two would plant through each other.
+let scatterQueue = Promise.resolve();
 
 function giveButtonsToTool(armed) {
   controls.mouseButtons = armed ? TOOL_BUTTONS : ORBIT_BUTTONS;
@@ -6914,7 +7013,7 @@ function stampBrush(hit) {
   state.scatterStroke += 1;
   const stamp = { region: brushRegion(), salt: state.scatterStroke };
   stroke.stamps.push(stamp);
-  stroke.busy = stroke.busy.then(async () => {
+  stroke.busy = scatterQueue = scatterQueue.then(async () => {
     const before = state.props.length;
     await runScatter(stamp.region, { salt: stamp.salt,
       intoLayer: state.scatterBrushLayer, stroke });
@@ -6927,7 +7026,8 @@ function stampBrush(hit) {
       document.getElementById("scatter-brush").classList.add("active");
       showScatterOutline(brushRegion());
     }
-  });
+  // A stamp that throws must not stop every stamp queued behind it.
+  }).catch((error) => logStudio("scatter: a stamp failed: " + error.message));
 }
 
 async function onBrushUp(event) {
@@ -6944,6 +7044,9 @@ async function onBrushUp(event) {
 // one sweep would make the Undo button a lottery. The redo replays the
 // stamps, region and salt each, so it deals the same field.
 function endBrushStroke(stroke) {
+  // The stroke's keep-out index is the whole scene's, and the undo entry
+  // below holds the stroke: fifty entries each keeping one was a leak.
+  stroke.keepOut = null;
   const records = stroke.records;
   if (!records.length) return;
   const stamps = stroke.stamps;
@@ -14008,6 +14111,9 @@ requestAnimationFrame(frame);
 // a pointer gesture per prop. Placing twenty by hand through click events is
 // how a check nobody runs gets written.
 window.__studio = { state, scene, controls, applyDayCycle, placeProp,
+  // A probe that places props must be able to take them away: a batched
+  // prop's proxy is not propsGroup's child, so parent.remove does nothing.
+  disposeProp,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,
   // A GETTER, because `camera` is now a binding that moves between two

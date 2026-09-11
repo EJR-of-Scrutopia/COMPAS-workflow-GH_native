@@ -1117,7 +1117,7 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # numbers beside its row, and one decoder, which puts them back.
     assert "extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin };" in js, (
         "the study layout")
-    assert "props: encodeProps(state.props)," in js, "the scene"
+    assert "props: withProps ? encodeProps(state.props) : undefined," in js, "the scene"
     assert "if (extra) Object.assign(entry, extra);" in js
     assert js.count("adoptLampSettings(record, entry);") == 2, (
         "restoreProps and applyScene both give a lamp its numbers back")
@@ -1915,7 +1915,7 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     # z the fourth number of each, and one decoder reads it back.
     assert ("rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), "
             "roundTurn(p.rotation),") in js
-    assert "props: encodeProps(state.props)," in js
+    assert "props: withProps ? encodeProps(state.props) : undefined," in js
     assert "z: rows[i + 3], rotation: rows[i + 4], rotX: rows[i + 5], rotY: rows[i + 6]," in js
     # And restored by every reader, or a sunk prop pops back to the floor.
     assert js.count("+entry.scale || 1, +entry.z || 0,") == 2, (
@@ -2002,7 +2002,7 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     # the tilt is the sixth and seventh numbers of every row, in each.
     assert "roundTurn(p.rotX || 0), roundTurn(p.rotY || 0), roundMm(p.scale || 1)," in js, (
         "the layout keeps tilt")
-    assert "props: encodeProps(state.props)," in js, "a saved scene keeps tilt"
+    assert "props: withProps ? encodeProps(state.props) : undefined," in js, "a saved scene keeps tilt"
     assert js.count("+entry.rotX || 0, +entry.rotY || 0)") == 2, (
         "restoreProps and applyScene both give a prop its tilt back")
 
@@ -2432,7 +2432,7 @@ def test_the_brush_is_a_stroke_and_the_stroke_is_one_undo():
     move = _js_function(js, "function onBrushMove(event)")
     assert "if (Math.hypot(hit.x - brushStroke.last.x, hit.y - brushStroke.last.y) >= step) {" in move
     stamp = _js_function(js, "function stampBrush(hit)")
-    assert "stroke.busy = stroke.busy.then(async () => {" in stamp
+    assert "stroke.busy = scatterQueue = scatterQueue.then(async () => {" in stamp
     up = _js_function(js, "async function onBrushUp(event)")
     assert "await stroke.busy;" in up
     assert "endBrushStroke(stroke);" in up
@@ -2568,7 +2568,7 @@ def test_the_layout_is_rows_and_a_full_store_cannot_break_an_undo():
     assert "localStorage.setItem(pending.key, text);" in flush
     assert ("localStorage.setItem(pending.key, JSON.stringify({ saved: layout.saved, "
             "onServer: true }));") in flush
-    assert '"/api/studies/" + encodeURIComponent(pending.export) + "/layout"' in flush
+    assert "putLayout(pending.export, text);" in flush
     restore = _js_function(js, "function restoreProps(given)")
     assert restore.index("flushProps();") < restore.index("localStorage.getItem"), (
         "a waiting write would otherwise be overtaken by the read")
@@ -2578,8 +2578,60 @@ def test_the_layout_is_rows_and_a_full_store_cannot_break_an_undo():
     run = _js_function(js, "async function runScatter(region, options)")
     assert "removePropRecords(records);" in run
     session = _js_function(js, "function sessionScene()")
-    assert "delete scene_.props;" in session, (
+    assert "return collectScene({ props: false });" in session, (
         "the session reopens the view; the layout brings the props")
+
+
+def test_the_review_of_the_batched_field_held():
+    """An adversarial review of the batched field confirmed ten faults,
+    each with a scenario; each fix is held here.
+
+    The section plane lives on materials, and a batch's meshes arrive a
+    frame after placement, so a scene restored with its section on drew
+    new batches uncut. A restore from nothing (a second device) or from
+    the too-big marker, followed by an edit before the server's copy
+    arrived, would have PUT an empty field over the whole one. The pull
+    could replace a scene opened meanwhile. Two PUTs in flight could land
+    in either order. Every stroke's undo entry held a keep-out of the
+    whole scene. Two queued strokes solved against stale keep-outs. A
+    cold open re-ran the restore once per late model. The session encoded
+    the whole field to throw it away."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    size = _js_function(js, "function sizeTier(tier, needed)")
+    assert 'if (state.section.mode === "plane") applySection();' in size
+    end = _js_function(js, "function endBrushStroke(stroke)")
+    assert end.index("stroke.keepOut = null;") < end.index("pushUndo(")
+    stamp = _js_function(js, "function stampBrush(hit)")
+    assert "stroke.busy = scatterQueue = scatterQueue.then(async () => {" in stamp
+    restore = _js_function(js, "function restoreProps(given)")
+    assert "waiting.push(ensurePropTemplate(entry.type));" in restore
+    assert ("Promise.all(waiting).then(() => { if (propsAwaitingLibrary) "
+            "restoreProps(); });") in restore
+    assert "if (!stored || (layout && layout.onServer)) layoutAwaiting.add(propsKey());" in restore
+    flush = _js_function(js, "function flushProps()")
+    assert flush.index("if (layoutAwaiting.has(pending.key)) return;") < flush.index(
+        "layoutWrite = null;"), "a held write stays in hand, not thrown away"
+    pull = _js_function(js, "async function pullServerLayout()")
+    assert "const awaiting = layoutAwaiting.delete(key);" in pull
+    assert "if (!remote || propsGeneration !== generation) {" in pull
+    assert "if (layoutWrite || brushStroke || state.carrying) return;" in pull
+    scene_block = js[js.index("const sceneProps = decodeProps(scene_.props);"):]
+    scene_block = scene_block[:scene_block.index("adoptLayers(scene_.propLayers);")]
+    assert "propsGeneration += 1;" in scene_block
+    assert "propsAwaitingLibrary = false;" in scene_block
+    put = _js_function(js, "function sendLayout()")
+    assert "}).finally(sendLayout);" in put, "one PUT at a time"
+    assert "if (!layoutServerSaid) {" in put, "a stale server is said once, not per gesture"
+    assert "layoutPutQueue.set(exportName, text);" in _js_function(
+        js, "function putLayout(exportName, text)")
+    assert "if ((layoutPutting || layoutPutQueue.size) && layoutOverQuota.size) {" in js
+    collect = _js_function(js, "function collectScene(options)")
+    assert "props: withProps ? encodeProps(state.props) : undefined," in collect
+    hook = js[js.index("window.__studio = {"):]
+    assert "disposeProp," in hook[:hook.index("};")]
+    probe = (REPO / "bench" / "scripts" / "scatter_budget.mjs").read_text(encoding="utf-8")
+    assert "S.disposeProp(record.object);" in probe
 
 
 def test_the_brush_replaced_the_whole_floor_button():

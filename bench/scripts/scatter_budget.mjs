@@ -170,9 +170,17 @@ for (const pick of [picks.median, picks.tree].filter(Boolean)) {
       marks.sort((a, b) => a - b);
       const out = { key, count, calls, triangles,
         median: marks[Math.floor(marks.length / 2)] };
-      // Put the scene back exactly as it was.
+      // Put the scene back exactly as it was. Through disposeProp, because
+      // a library prop is a proxy in its variant's batch now (2026-09-11)
+      // and not propsGroup's child: parent.remove did nothing, and every
+      // row went on measuring the rows before it.
       const placed = S.state.props.splice(before);
-      for (const record of placed) record.object.parent.remove(record.object);
+      for (const record of placed) {
+        S.disposeProp(record.object);
+        if (record.object.parent && record.object.parent.children.includes(record.object)) {
+          record.object.parent.remove(record.object);
+        }
+      }
       await sleep(300);
       return out;
     }, pick.key, count);
