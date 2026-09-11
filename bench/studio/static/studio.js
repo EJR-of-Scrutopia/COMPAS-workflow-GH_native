@@ -2035,14 +2035,15 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   }
   object.visible = layerVisible(record.layer);
   state.props.push(record);
+  // One more caster. A scatter is hundreds of these in a row, which is
+  // why this marks rather than measures. (It sat after the return for a
+  // while, and no placed prop ever told the shadow fit it had arrived.)
+  noteCastersChanged();
   // The Lights heading counts the lamps in the scene, so a placement has
   // to tell it. Without this the row said "Lights" over two lamps.
   if (isLamp(record)) syncLightControls();
   if (save) saveProps();
   return record;
-  // One more caster. A scatter is hundreds of these in a
-  // row, which is why this marks rather than measures.
-  noteCastersChanged();
 }
 
 // A library prop is a clone that SHARES its template's materials, so
@@ -5771,8 +5772,71 @@ function propTriangles(type) {
 // vault and its works, plus every prop already placed. Boxes rather than
 // meshes, because this runs once per candidate and a Box3 test is a
 // handful of compares.
+// ---------- the keep-out index ----------
+// A uniform grid over the keep-out discs, so a dart asks only the cells it
+// could touch. Every dart used to walk EVERY disc, and a dart-throwing
+// fill throws far more darts than it lands: with 25,000 props down a
+// 4,000-dart stamp was a hundred million distance tests, and the brush
+// felt glued to the floor. A disc is filed in every cell it overlaps and a
+// dart asks every cell its own disc overlaps, so the answer is exact
+// whatever the sizes; a 15 m tree files itself in 900 cells, once.
+const KEEP_OUT_CELL = 1;   // metres
+
+function keepOutIndex() {
+  return { cells: new Map(), discs: [], seen: [], pass: 0 };
+}
+
+function keepOutKey(ix, iy) {
+  // Two 21-bit halves in one double, exact to two million cells a side.
+  return (ix + 1048576) * 2097152 + (iy + 1048576);
+}
+
+function keepOutAdd(index, x, y, r) {
+  const id = index.discs.length;
+  index.discs.push([x, y, r]);
+  index.seen.push(0);
+  const x0 = Math.floor((x - r) / KEEP_OUT_CELL);
+  const x1 = Math.floor((x + r) / KEEP_OUT_CELL);
+  const y0 = Math.floor((y - r) / KEEP_OUT_CELL);
+  const y1 = Math.floor((y + r) / KEEP_OUT_CELL);
+  for (let ix = x0; ix <= x1; ix++) {
+    for (let iy = y0; iy <= y1; iy++) {
+      const key = keepOutKey(ix, iy);
+      const bucket = index.cells.get(key);
+      if (bucket) bucket.push(id); else index.cells.set(key, [id]);
+    }
+  }
+}
+
+// True when a disc of the given radius at (x, y) touches nothing filed.
+// A disc filed in several cells is tested once: the pass number marks it.
+function keepOutClear(index, x, y, radius) {
+  const pass = ++index.pass;
+  const x0 = Math.floor((x - radius) / KEEP_OUT_CELL);
+  const x1 = Math.floor((x + radius) / KEEP_OUT_CELL);
+  const y0 = Math.floor((y - radius) / KEEP_OUT_CELL);
+  const y1 = Math.floor((y + radius) / KEEP_OUT_CELL);
+  for (let ix = x0; ix <= x1; ix++) {
+    for (let iy = y0; iy <= y1; iy++) {
+      const bucket = index.cells.get(keepOutKey(ix, iy));
+      if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        const id = bucket[i];
+        if (index.seen[id] === pass) continue;
+        index.seen[id] = pass;
+        const d = index.discs[id];
+        const dx = x - d[0];
+        const dy = y - d[1];
+        const reach = d[2] + radius;
+        if (dx * dx + dy * dy < reach * reach) return false;
+      }
+    }
+  }
+  return true;
+}
+
 function scatterKeepOut(clearance, spacing) {
-  const discs = [];
+  const index = keepOutIndex();
   const box = new THREE.Box3();
   const parts = [state.objects.shell, state.objects.columns,
     state.objects.falsework].filter(Boolean);
@@ -5797,7 +5861,7 @@ function scatterKeepOut(clearance, spacing) {
         ? box.min.x + short / 2 + t * (long - short) : (box.min.x + box.max.x) / 2;
       const cy = along === "y"
         ? box.min.y + short / 2 + t * (long - short) : (box.min.y + box.max.y) / 2;
-      discs.push([cx, cy, r]);
+      keepOutAdd(index, cx, cy, r);
     }
   }
   // A placed prop keeps out by ITS OWN size and the CURRENT spacing. It
@@ -5806,21 +5870,10 @@ function scatterKeepOut(clearance, spacing) {
   // one however low the spacing was set.
   const gap = spacing || 1;
   for (const record of state.props) {
-    discs.push([record.x, record.y,
-      propFootprint(record.type) * (record.scale || 1) * gap]);
+    keepOutAdd(index, record.x, record.y,
+      propFootprint(record.type) * (record.scale || 1) * gap);
   }
-  return discs;
-}
-
-function clearOf(discs, x, y, radius) {
-  for (let i = 0; i < discs.length; i++) {
-    const d = discs[i];
-    const dx = x - d[0];
-    const dy = y - d[1];
-    const reach = d[2] + radius;
-    if (dx * dx + dy * dy < reach * reach) return false;
-  }
-  return true;
+  return index;
 }
 
 // Dart throwing against a growing list, with a share of the darts thrown
@@ -5849,7 +5902,7 @@ function scatterSolve(region, salt) {
     return chosen[chosen.length - 1].type;
   };
 
-  const discs = scatterKeepOut(rules.clearance, rules.spacing);
+  const keepOut = scatterKeepOut(rules.clearance, rules.spacing);
   const placed = [];
   let triangles = 0;
   let refused = 0;
@@ -5891,8 +5944,8 @@ function scatterSolve(region, salt) {
     const type = pickVariant(pick(), random);
     const scale = rules.sizeMin + random() * (rules.sizeMax - rules.sizeMin);
     const radius = propFootprint(type) * scale * rules.spacing;
-    if (!clearOf(discs, x, y, radius)) { refused += 1; continue; }
-    discs.push([x, y, radius]);
+    if (!keepOutClear(keepOut, x, y, radius)) { refused += 1; continue; }
+    keepOutAdd(keepOut, x, y, radius);
     placed.push({ type, x, y, scale,
       rotation: rules.turn ? random() * Math.PI * 2 : 0 });
     triangles += propTriangles(type);
@@ -5938,6 +5991,18 @@ async function runScatter(region, options) {
   state.activeLayer = home.id;
   const records = solved.items.map((item) => placeProp(
     item.type, item.x, item.y, item.rotation, false, item.scale));
+  if (settings.stroke) {
+    // One stamp of a brush stroke. The stroke owns the undo entry, the
+    // run and the save: they happen once, when the pointer lifts.
+    const stroke = settings.stroke;
+    for (const record of records) stroke.records.push(record);
+    if (!stroke.run) {
+      stroke.run = { layer: home.id, records: stroke.records };
+      state.scatterRuns.push(stroke.run);
+    }
+    paintScatter(solved);
+    return;
+  }
   state.scatterRuns.push({ layer: home.id, records });
   pushUndo("scattering " + records.length + " props", () => {
     for (const record of records) removePropRecord(record);
@@ -6212,21 +6277,33 @@ let scatterBrushAt = null;
 // different"). So the tools now watch pointerdown and pointerup and act
 // only on a press that did not travel: a press that moved is the orbit's,
 // and the orbit already had it.
-const CLICK_SLOP_PX = 5;
-let scatterPress = null;
+// That lasted one morning. Param: "the double click is wrong because i
+// want to drag the brush around etc. so lets stick with left click and
+// have right click still to pan and scroll to zoom". So while a tool is
+// armed the LEFT button is the tool's: a press paints, a drag keeps
+// painting along the path, a release ends the stroke. The camera keeps
+// the other two, middle to orbit and right to pan, and the wheel zooms,
+// so ground the stroke needs can be brought on screen without letting go
+// of the tool. Disarming hands the left button back to the orbit. On a
+// touch screen one finger is the tool and two fingers zoom and pan.
+const ORBIT_BUTTONS = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN };
+const TOOL_BUTTONS = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE,
+  RIGHT: THREE.MOUSE.PAN };
+const ORBIT_TOUCHES = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+const TOOL_TOUCHES = { ONE: null, TWO: THREE.TOUCH.DOLLY_PAN };
+// How far the brush travels between stamps, as a share of its radius.
+// Half: the discs overlap, so a stroke is a continuous band rather than
+// a string of beads, and the keep-out stops the overlap doubling up.
+const BRUSH_STEP = 0.5;
+// The stroke in hand: the pointer that owns it, where it last stamped,
+// every stamp it made (region and salt, so a redo can replay it) and
+// every record it placed (so ONE undo takes the whole stroke back).
+let brushStroke = null;
 
-function pressBegan(event) {
-  if (event.button !== 0) return;
-  scatterPress = { x: event.clientX, y: event.clientY };
-}
-
-// The press, if it was a click; null if it was a drag or never began.
-function pressEnded(event) {
-  const began = scatterPress;
-  scatterPress = null;
-  if (!began) return null;
-  const travelled = Math.hypot(event.clientX - began.x, event.clientY - began.y);
-  return travelled <= CLICK_SLOP_PX ? began : null;
+function giveButtonsToTool(armed) {
+  controls.mouseButtons = armed ? TOOL_BUTTONS : ORBIT_BUTTONS;
+  controls.touches = armed ? TOOL_TOUCHES : ORBIT_TOUCHES;
 }
 
 function brushRegion() {
@@ -6246,17 +6323,31 @@ function armScatterBrush() {
   state.scatterBrushLayer = null;
   document.getElementById("scatter-brush").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "click to fill the circle; click again to thicken it; Escape to stop";
+    "press and drag to paint; middle-drag orbits, right-drag pans; Escape to stop";
   // The drawer gets out of the way: a brush needs the floor, and the
   // floor was under the tiles (Param: "the tiles are a bit in the way").
   // Escape or the button brings it back.
   closeShelf();
-  logStudio("scatter: click the floor to fill the circle, click again to "
-    + "thicken it, drag to look around, Escape to stop");
+  logStudio("scatter: press and drag on the floor to paint, middle-drag to "
+    + "orbit, right-drag to pan, Escape to stop");
+  giveButtonsToTool(true);
+  canvas.addEventListener("pointerdown", onBrushDown);
   canvas.addEventListener("pointermove", onBrushMove);
-  canvas.addEventListener("pointerdown", pressBegan);
   canvas.addEventListener("pointerup", onBrushUp);
+  canvas.addEventListener("pointercancel", onBrushUp);
   window.addEventListener("keydown", onScatterKey, true);
+}
+
+function onBrushDown(event) {
+  if (event.button !== 0 || brushStroke) return;
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  // The stroke follows the pointer off the canvas and back; without the
+  // capture a fast sweep past the edge would end it.
+  canvas.setPointerCapture(event.pointerId);
+  brushStroke = { pointerId: event.pointerId, last: null, stamps: [],
+    records: [], run: null, busy: Promise.resolve() };
+  stampBrush(hit);
 }
 
 function onBrushMove(event) {
@@ -6264,26 +6355,77 @@ function onBrushMove(event) {
   if (!hit) return;
   scatterBrushAt = { x: hit.x, y: hit.y };
   showScatterOutline(brushRegion());
+  if (!brushStroke || !brushStroke.last) return;
+  const step = state.scatter.radius * BRUSH_STEP;
+  if (Math.hypot(hit.x - brushStroke.last.x, hit.y - brushStroke.last.y) >= step) {
+    stampBrush(hit);
+  }
+}
+
+// One stamp of the brush, with a fresh salt so it deals different points
+// from the last, into the stroke's own layer. Stamps queue behind each
+// other because a stamp awaits its templates, and two running at once
+// would both mint a layer.
+function stampBrush(hit) {
+  const stroke = brushStroke;
+  stroke.last = { x: hit.x, y: hit.y };
+  scatterBrushAt = { x: hit.x, y: hit.y };
+  state.scatterStroke += 1;
+  const stamp = { region: brushRegion(), salt: state.scatterStroke };
+  stroke.stamps.push(stamp);
+  stroke.busy = stroke.busy.then(async () => {
+    const before = state.props.length;
+    await runScatter(stamp.region, { salt: stamp.salt,
+      intoLayer: state.scatterBrushLayer, stroke });
+    if (!state.scatterBrushLayer && state.props.length > before) {
+      state.scatterBrushLayer = state.props[state.props.length - 1].layer;
+    }
+    // Painting must survive its own repaint: a redraw of the drawer would
+    // otherwise leave the circle behind and the button unlit.
+    if (state.scatterArmed === "brush") {
+      document.getElementById("scatter-brush").classList.add("active");
+      showScatterOutline(brushRegion());
+    }
+  });
 }
 
 async function onBrushUp(event) {
-  if (!pressEnded(event)) return;           // an orbit, not a click
-  const hit = groundPointAt(event);
-  if (!hit) return;
-  scatterBrushAt = { x: hit.x, y: hit.y };
-  state.scatterStroke += 1;
-  const before = state.props.length;
-  await runScatter(brushRegion(), { salt: state.scatterStroke,
-    intoLayer: state.scatterBrushLayer });
-  if (!state.scatterBrushLayer && state.props.length > before) {
-    state.scatterBrushLayer = state.props[state.props.length - 1].layer;
-  }
-  // Painting must survive its own repaint: renderShelf redraws the drawer
-  // and would otherwise leave the circle behind and the button unlit.
-  if (state.scatterArmed === "brush") {
-    document.getElementById("scatter-brush").classList.add("active");
-    showScatterOutline(brushRegion());
-  }
+  const stroke = brushStroke;
+  if (!stroke || event.pointerId !== stroke.pointerId) return;
+  brushStroke = null;
+  try { canvas.releasePointerCapture(event.pointerId); } catch (error) { /* gone already */ }
+  await stroke.busy;
+  endBrushStroke(stroke);
+}
+
+// The whole stroke is ONE undo entry, however many stamps it took: a
+// press, drag and release is one gesture to him, and forty entries for
+// one sweep would make the Undo button a lottery. The redo replays the
+// stamps, region and salt each, so it deals the same field.
+function endBrushStroke(stroke) {
+  const records = stroke.records;
+  if (!records.length) return;
+  const stamps = stroke.stamps;
+  pushUndo("painting " + records.length + " props", () => {
+    for (const record of records) removePropRecord(record);
+    state.scatterRuns = state.scatterRuns.filter((run) => run !== stroke.run);
+    paintScatter();
+  }, async () => {
+    const replay = { pointerId: null, last: null, stamps: [], records: [],
+      run: null, busy: Promise.resolve() };
+    let layer = null;
+    for (const stamp of stamps) {
+      replay.stamps.push(stamp);
+      await runScatter(stamp.region, { salt: stamp.salt, intoLayer: layer,
+        stroke: replay });
+      if (replay.records.length) layer = replay.records[replay.records.length - 1].layer;
+    }
+    endBrushStroke(replay);
+  });
+  saveProps();
+  const home = layerById(records[0].layer);
+  logStudio("painted " + records.length + " props onto "
+    + (home ? home.name : "the scatter"));
 }
 
 function armScatterArea() {
@@ -6297,16 +6439,16 @@ function armScatterArea() {
   scatterDrag = null;
   document.getElementById("scatter-area").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "click one corner of the area, then the opposite one; Escape to stop";
-  // Two clicks, not a drag, because a drag is how the camera moves and
-  // the area someone wants is usually not all on screen at once. Click
-  // a corner, look around, click the other.
+    "press on one corner and drag to the opposite one; middle-drag orbits, "
+    + "right-drag pans; Escape to stop";
   closeShelf();
-  logStudio("scatter: click one corner of the area on the floor, then the "
-    + "opposite corner; drag to look around; Escape to stop");
+  logStudio("scatter: press on one corner of the area and drag to the "
+    + "opposite corner; middle-drag to orbit, right-drag to pan; Escape to stop");
+  giveButtonsToTool(true);
+  canvas.addEventListener("pointerdown", onAreaDown);
   canvas.addEventListener("pointermove", onAreaMove);
-  canvas.addEventListener("pointerdown", pressBegan);
   canvas.addEventListener("pointerup", onAreaUp);
+  canvas.addEventListener("pointercancel", onAreaUp);
   window.addEventListener("keydown", onScatterKey, true);
 }
 
@@ -6315,30 +6457,54 @@ function disarmScatterArea() {
   state.scatterArmed = false;
   scatterDrag = null;
   scatterBrushAt = null;
-  scatterPress = null;
   state.scatterBrushLayer = null;
+  // A stroke still in hand when the tool is put down keeps what it
+  // painted, and still gets its one undo entry once its last stamp lands.
+  const stroke = brushStroke;
+  brushStroke = null;
+  if (stroke) stroke.busy.then(() => endBrushStroke(stroke));
   hideScatterOutline();
   for (const id of ["scatter-area", "scatter-brush"]) {
     const button = document.getElementById(id);
     if (button) button.classList.remove("active");
   }
+  giveButtonsToTool(false);
+  canvas.removeEventListener("pointerdown", onBrushDown);
   canvas.removeEventListener("pointermove", onBrushMove);
-  canvas.removeEventListener("pointermove", onAreaMove);
-  canvas.removeEventListener("pointerdown", pressBegan);
   canvas.removeEventListener("pointerup", onBrushUp);
+  canvas.removeEventListener("pointercancel", onBrushUp);
+  canvas.removeEventListener("pointerdown", onAreaDown);
+  canvas.removeEventListener("pointermove", onAreaMove);
   canvas.removeEventListener("pointerup", onAreaUp);
+  canvas.removeEventListener("pointercancel", onAreaUp);
   window.removeEventListener("keydown", onScatterKey, true);
   // The drawer that was folded away for the tool comes back with it.
   if (wasArmed) openShelf("scatter");
   paintScatter();
 }
 
+// ONE Escape leaves the tool and brings the drawer back. The window's
+// general Escape handler would close the drawer this has just reopened,
+// so the event stops here, immediately, before it can be seen twice.
 function onScatterKey(event) {
-  if (event.key === "Escape") { event.stopPropagation(); disarmScatterArea(); }
+  if (event.key !== "Escape") return;
+  event.stopImmediatePropagation();
+  event.preventDefault();
+  disarmScatterArea();
 }
 
-// The rectangle follows the cursor from the first corner until the
-// second is clicked, so what will be filled is always on screen.
+function onAreaDown(event) {
+  if (event.button !== 0 || scatterDrag) return;
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  canvas.setPointerCapture(event.pointerId);
+  scatterDrag = { kind: "rect", x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y,
+    pointerId: event.pointerId };
+  showScatterOutline(scatterDrag);
+}
+
+// The rectangle follows the pointer from the pressed corner until the
+// release, so what will be filled is always on screen.
 function onAreaMove(event) {
   if (!scatterDrag) return;
   const hit = groundPointAt(event);
@@ -6352,18 +6518,12 @@ function onAreaMove(event) {
 }
 
 function onAreaUp(event) {
-  if (!pressEnded(event)) return;           // an orbit, not a click
+  const drag = scatterDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  try { canvas.releasePointerCapture(event.pointerId); } catch (error) { /* gone already */ }
   const hit = groundPointAt(event);
-  if (!hit) return;
-  if (!scatterDrag) {
-    scatterDrag = { x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y, kind: "rect" };
-    showScatterOutline(scatterDrag);
-    logStudio("scatter: now click the opposite corner");
-    return;
-  }
-  scatterDrag.x1 = hit.x;
-  scatterDrag.y1 = hit.y;
-  const region = scatterDrag;
+  if (hit) { drag.x1 = hit.x; drag.y1 = hit.y; }
+  const region = { kind: "rect", x0: drag.x0, y0: drag.y0, x1: drag.x1, y1: drag.y1 };
   disarmScatterArea();
   if (Math.abs(region.x1 - region.x0) < 0.5
       || Math.abs(region.y1 - region.y0) < 0.5) {

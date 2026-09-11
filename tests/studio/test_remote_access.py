@@ -2241,23 +2241,27 @@ def test_leaving_the_scatter_tab_puts_the_region_drag_down():
     left behind would eat his next click on a prop."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    # The area tool is two CLICKS now, not a drag: a drag is how the camera
-    # moves, and the area someone wants is usually not all on screen at
-    # once. Both tools watch pointerdown and pointerup and act only on a
-    # press that did not travel; a press that moved was the orbit's.
-    assert 'canvas.addEventListener("pointerdown", pressBegan);' in js
-    assert 'canvas.addEventListener("pointerup", onAreaUp);' in js
+    # The tools own the LEFT button while armed: a press paints, a drag
+    # keeps painting, a release ends the stroke (Param: "i want to drag
+    # the brush around"). The camera keeps middle to orbit and right to
+    # pan, so the orbit is never disabled and ground a stroke needs can
+    # be brought on screen without putting the tool down.
+    assert 'canvas.addEventListener("pointerdown", onBrushDown);' in js
+    assert 'canvas.addEventListener("pointerdown", onAreaDown);' in js
+    assert "const TOOL_BUTTONS = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE," in js
     assert "controls.enabled = false;" not in _js_function(js, "function armScatterArea()"), (
         "the orbit stays live while the tool is armed")
     assert "controls.enabled = false;" not in _js_function(js, "function armScatterBrush()")
+    assert "giveButtonsToTool(true);" in _js_function(js, "function armScatterBrush()")
     assert "closeShelf();" in _js_function(js, "function armScatterBrush()"), (
         "the drawer gets out of the way: the floor was under the tiles")
     assert 'if (wasArmed) openShelf("scatter");' in _js_function(js, "function disarmScatterArea()")
     disarm = _js_function(js, "function disarmScatterArea()")
-    for gone in ('canvas.removeEventListener("pointerdown", pressBegan);',
-                 'canvas.removeEventListener("pointerup", onAreaUp);',
+    for gone in ('canvas.removeEventListener("pointerdown", onBrushDown);',
+                 'canvas.removeEventListener("pointerdown", onAreaDown);',
                  'canvas.removeEventListener("pointerup", onBrushUp);',
-                 'canvas.removeEventListener("pointermove", onAreaMove);'):
+                 'canvas.removeEventListener("pointermove", onAreaMove);',
+                 "giveButtonsToTool(false);"):
         assert gone in disarm, gone
     # Opening ANOTHER drawer puts the tool down; a CLOSED shelf does not,
     # because arming the brush folds the drawer away to clear the floor
@@ -2345,12 +2349,13 @@ def test_the_scatter_brush_thickens_rather_than_repeating_itself():
     assert "Math.imul(salt || 0, 0x9E3779B1)" in solve
     # The fill happens on pointerUP, and only when the press did not
     # travel: that is what tells a click from an orbit drag.
-    down = _js_function(js, "async function onBrushUp(event)")
-    assert "if (!pressEnded(event)) return;" in down
-    assert "state.scatterStroke += 1;" in down
-    assert "salt: state.scatterStroke" in down
-    # One layer for a painting session, not one per click.
-    assert "intoLayer: state.scatterBrushLayer" in down
+    # Every STAMP of a stroke deals a fresh salt, so a stroke dragged back
+    # over itself thickens rather than repeating.
+    stamp = _js_function(js, "function stampBrush(hit)")
+    assert "state.scatterStroke += 1;" in stamp
+    assert "const stamp = { region: brushRegion(), salt: state.scatterStroke };" in stamp
+    # One layer for a painting session, not one per stamp.
+    assert "intoLayer: state.scatterBrushLayer, stroke });" in stamp
     keep = _js_function(js, "function scatterKeepOut(clearance, spacing)")
     assert "for (const record of state.props) {" in keep
 
@@ -2373,6 +2378,81 @@ def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
     assert "* 0.6" not in keep
     solve = _js_function(js, "function scatterSolve(region, salt)")
     assert "scatterKeepOut(rules.clearance, rules.spacing)" in solve
+
+
+def test_the_keep_out_is_a_grid_and_not_a_list():
+    """Every dart walked EVERY disc, and a dart-throwing fill throws far
+    more darts than it lands: with 25,000 props down, a 4,000-dart stamp
+    was a hundred million distance tests and the brush felt glued to the
+    floor. A disc is filed in every grid cell it overlaps and a dart asks
+    only the cells its own disc overlaps, so the answer is exact whatever
+    the sizes, and a disc filed in several cells is tested once."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const KEEP_OUT_CELL = 1;   // metres" in js
+    assert "function clearOf(" not in js
+    add = _js_function(js, "function keepOutAdd(index, x, y, r)")
+    assert "if (bucket) bucket.push(id); else index.cells.set(key, [id]);" in add
+    clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
+    assert "if (index.seen[id] === pass) continue;" in clear
+    assert "if (dx * dx + dy * dy < reach * reach) return false;" in clear
+    solve = _js_function(js, "function scatterSolve(region, salt)")
+    assert "if (!keepOutClear(keepOut, x, y, radius)) { refused += 1; continue; }" in solve
+    assert "keepOutAdd(keepOut, x, y, radius);" in solve
+
+
+def test_the_brush_is_a_stroke_and_the_stroke_is_one_undo():
+    """Param, the morning after click-to-place: "the double click is
+    wrong because i want to drag the brush around etc. so lets stick with
+    left click and have right click still to pan and scroll to zoom".
+
+    A press stamps, a drag stamps again every half radius, a release ends
+    the stroke, and the WHOLE stroke is one undo entry: forty entries for
+    one sweep would make the Undo button a lottery. Stamps queue behind
+    each other, because a stamp awaits its templates and two at once
+    would both mint a layer."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const BRUSH_STEP = 0.5;" in js
+    move = _js_function(js, "function onBrushMove(event)")
+    assert "if (Math.hypot(hit.x - brushStroke.last.x, hit.y - brushStroke.last.y) >= step) {" in move
+    stamp = _js_function(js, "function stampBrush(hit)")
+    assert "stroke.busy = stroke.busy.then(async () => {" in stamp
+    up = _js_function(js, "async function onBrushUp(event)")
+    assert "await stroke.busy;" in up
+    assert "endBrushStroke(stroke);" in up
+    end = _js_function(js, "function endBrushStroke(stroke)")
+    assert 'pushUndo("painting " + records.length + " props", () => {' in end
+    run = _js_function(js, "async function runScatter(region, options)")
+    assert "if (settings.stroke) {" in run
+    assert "stroke.run = { layer: home.id, records: stroke.records };" in run
+    # The area is a drag again, the same way: press on a corner, release
+    # on the other, and the release is the pointer that pressed.
+    down = _js_function(js, "function onAreaDown(event)")
+    assert 'scatterDrag = { kind: "rect", x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y,' in down
+    area = _js_function(js, "function onAreaUp(event)")
+    assert "if (!drag || event.pointerId !== drag.pointerId) return;" in area
+
+
+def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():
+    """The window's general Escape handler closes whatever drawer is
+    open. The tool's own Escape reopens the drawer it folded away, so if
+    both saw the same press the drawer would open and close again in one
+    keystroke. The tool's handler is in the capture phase and stops the
+    event immediately; the general one never sees it."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    key = _js_function(js, "function onScatterKey(event)")
+    assert "event.stopImmediatePropagation();" in key
+    assert "disarmScatterArea();" in key
+    assert 'window.addEventListener("keydown", onScatterKey, true);' in js
+    assert 'if (event.key === "Escape" && shelfKind) {' in js, (
+        "the general handler this must beat")
+    # And a placed prop tells the shadow fit it has arrived. The call sat
+    # after the return for a while, so no prop ever did.
+    place = _js_function(js, "function placeProp(type, x, y, rotation, save, scale = 1, z = 0,")
+    assert "noteCastersChanged();" in place
+    assert place.index("noteCastersChanged();") < place.index("return record;")
 
 
 def test_the_brush_replaced_the_whole_floor_button():

@@ -305,12 +305,17 @@ latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 of Field of view), and the Output section's `still-size` segments.
 
 **Two gestures, written down.** A scatter tool never disables
-OrbitControls. It watches `pointerdown` and `pointerup` and acts on a
-press that travelled no more than `CLICK_SLOP_PX`; a press that moved
-was the orbit's. The area tool is two clicks, not a drag, because a drag
-is how the camera moves and the area someone wants is usually not all on
-screen. Arming a tool folds the shelf away and Escape brings it back; a
-CLOSED shelf is not "another drawer" and must not disarm the tool.
+OrbitControls; it takes the LEFT button and leaves the camera the other
+two (`giveButtonsToTool`: middle orbits, right pans, the wheel zooms; on
+touch, one finger is the tool and two fingers zoom and pan). The brush is
+a stroke: a press stamps, a drag stamps again every `BRUSH_STEP` of the
+radius, a release ends it, and the whole stroke is ONE undo entry. The
+area is a drag from one corner to the other. Arming a tool folds the
+shelf away and ONE Escape brings it back (the tool's handler is in the
+capture phase and stops the event immediately, or the window's general
+Escape would close the drawer again); a CLOSED shelf is not "another
+drawer" and must not disarm the tool. The click-to-place version lasted
+one morning: "i want to drag the brush around".
 
 **A drawer shows a family once.** A species with variants
 (`entry.family`) is one tile, labelled without its variant number, and
