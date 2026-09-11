@@ -3245,17 +3245,42 @@ def test_the_scatter_groups_are_chips_like_props_and_materials():
     body = _js_function(js, "function renderShelfScatter()")
     assert 'let scatterCategory = "all";' in js
     assert 'shelfChips(cats, ["all", ...groups], scatterCategory' in body
-    assert "scatterCategory = name;" in body
+    # A chip click redraws, or the grid and the lit chip sit still until
+    # some other click. "renderShelfScatter();" alone is in the body many
+    # times over, so the whole callback is pinned as one piece.
+    assert ("scatterCategory = name;\n    renderShelfScatter();\n  });"
+            in body), "a chip click must redraw the drawer"
     # The chips are only the groups this list holds, after the fixtures
     # are taken out, so none of them opens onto an empty grid.
     assert 'const groups = [...new Set(ordered.map((e) => e.group || "other"))];' in body
+    # A remembered group that is no longer in the list falls back to "all",
+    # or a changed library leaves an empty grid with no chip lit.
+    assert 'if (!groups.includes(scatterCategory)) scatterCategory = "all";' in body
     assert ': ordered.filter((e) => (e.group || "other") === scatterCategory);' in body
     assert "for (const entry of shown) {" in body
     assert "const keys = shown.map((item) => item.key);" in body
-    # The group survives a brush or area session.
+    # The group survives a brush or area session. Those put the drawer away
+    # through closeShelf and bring it back through openShelf and
+    # renderShelf's scatter line, so none of the three may touch it.
     opener = _js_function(js, "function openShelf(kind)")
     assert "scatterCategory" not in opener, (
         "openShelf must leave the scatter's group alone")
+    closer = _js_function(js, "function closeShelf()")
+    assert "scatterCategory" not in closer, (
+        "closeShelf must leave the scatter's group alone")
+    shelf_line = next(line for line in js.splitlines()
+                      if 'if (shelfKind === "scatter")' in line
+                      and "renderShelfScatter(); return; }" in line)
+    assert "scatterCategory" not in shelf_line, (
+        "renderShelf's scatter line must leave the scatter's group alone")
+    # And nothing else anywhere may either: the only writes are the
+    # declaration, the vanished-group fallback and the chip click.
+    import re
+
+    writes = re.findall(r"\bscatterCategory\s*=(?!=)", js)
+    assert len(writes) == 3, (
+        f"scatterCategory is written {len(writes)} times; only the "
+        "declaration, the fallback and the chip click may write it")
     # Every chip is a button, and every button says what it does.
     chips = _js_function(js, "function shelfChips(holder, names, chosen, pick)")
     assert 'chip.title = name === "all" ? "Show every group" : "Show only " + name;' in chips
