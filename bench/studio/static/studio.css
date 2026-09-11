@@ -1121,9 +1121,19 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
    language describes. */
 .dial-block > .scrub { grid-column: 1 / -1; }
 
-/* The size row carries two sliders; they share the one slider column. */
-.dial-block label > input[type="range"] + input[type="range"] {
-  grid-column: span 1; }
+/* EVERY DIAL IS FOUR CELLS: name, control, reading, unit. A label
+   dissolves into the eight-column grid, so a label with five things in it
+   pushes every dial after it one cell along. The scatter Size row carried
+   its two grips as two cells (the old rule here said they shared one; a
+   span of 1 shares nothing), and Param's screenshot had the % and m units
+   starting the next row. The pair is ONE cell now, grips side by side. */
+.dial-block label > .range-pair { display: flex; gap: 6px; min-width: 60px; }
+.dial-block label > .range-pair > input[type="range"] { flex: 1; width: 100%;
+  min-width: 0; margin: 0; }
+/* A select or a number field fills the cells its row has no reading or
+   unit for, so Turn and Seed start where every other dial starts. */
+.dial-block label > select { grid-column: span 3; }
+.dial-block label > input[type="number"] { grid-column: span 2; }
 .dial-block label > select, .dial-block label > input[type="number"] {
   width: 100%; margin: 0; font-size: 11px; }
 .dial-block label > button { width: auto; margin: 0; padding: 2px 8px;

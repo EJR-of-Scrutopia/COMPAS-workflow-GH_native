@@ -2025,7 +2025,12 @@ async function loadPropLibrary() {
     listPropTypes();
     return;
   }
-  const entries = (payload.props || []).filter((entry) => entry && entry.key && entry.file);
+  // A distance tier is part of its model, never a prop of its own
+  // (tools/props/lod.mjs). The server hides them, but a studio started
+  // before it learned to offered all 450 as white, textureless tiles
+  // reading "0 triangles", so the page refuses them too.
+  const entries = (payload.props || []).filter((entry) => entry && entry.key && entry.file
+    && !/\.lod\d\.glb$/i.test(entry.file));
   state.propLibrary = [...BUILT_IN_PROPS, ...entries];
   state.propCredits = payload.library || null;
   buildPropTiles();
@@ -6665,7 +6670,7 @@ function paintScatter(solved) {
       return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
     });
     readout.textContent = names.join(", ")
-      + "  --  drag an area, or fill the whole floor";
+      + "  --  brush it on, or drag an area";
     return;
   }
   readout.textContent = solved.items.length + " placed, "

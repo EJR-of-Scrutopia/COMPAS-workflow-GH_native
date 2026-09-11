@@ -2634,6 +2634,53 @@ def test_the_review_of_the_batched_field_held():
     assert "S.disposeProp(record.object);" in probe
 
 
+def test_every_dial_is_four_cells_so_the_rows_line_up():
+    """A dial block is an eight-column grid and every label dissolves into
+    it, so a label must put exactly four things there: name, control,
+    reading, unit. The scatter drawer's Size carried its two grips as two
+    cells, and every dial after it slid one cell along: Param's screenshot
+    had the % and m units starting the next row. Two grips share one
+    .range-pair; a select spans the three cells its row lacks, a number
+    field two. Counted over every dial block on the page."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
+    assert ".dial-block label > select { grid-column: span 3; }" in css
+    assert '.dial-block label > input[type="number"] { grid-column: span 2; }' in css
+    assert ".dial-block label > .range-pair { display: flex;" in css
+
+    blocks = 0
+    for opening in re.finditer(r'<div class="dial-block"[^>]*>', html):
+        depth, i = 1, opening.end()
+        while depth:
+            o, c = html.find("<div", i), html.find("</div>", i)
+            if o != -1 and o < c:
+                depth, i = depth + 1, o + 4
+            else:
+                depth, i = depth - 1, c + 6
+        blocks += 1
+        for label in re.findall(r"<label.*?</label>", html[opening.end():i], re.S):
+            inner = re.sub(r'<span class="range-pair">.*?</span>', "<pair>", label, flags=re.S)
+            inner = re.sub(r"<select.*?</select>", "<select>", inner, flags=re.S)
+            # A reading or a unit is ONE cell whatever it holds: Piece
+            # size's unit carries the piece and course counts as spans.
+            inner = re.sub(r"<b\b[^>]*>.*?</b>", "<b>", inner, flags=re.S)
+            inner = re.sub(r"<em\b[^>]*>.*?</em>", "<em>", inner, flags=re.S)
+            cells = 0
+            for tag, rest in re.findall(r"<(span|input|select|button|b|em|pair)\b([^>]*)>", inner):
+                if tag == "select":
+                    cells += 3
+                elif tag == "input" and 'type="number"' in rest:
+                    cells += 2
+                else:
+                    cells += 1
+            name = re.sub(r"<[^>]+>", " ", label).split()
+            assert cells == 4, "{} cells in the dial {!r}".format(cells, " ".join(name[:3]))
+    assert blocks >= 12, "every dial block on the page was counted"
+
+
 def test_the_brush_replaced_the_whole_floor_button():
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
         encoding="utf-8")
