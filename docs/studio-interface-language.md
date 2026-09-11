@@ -338,14 +338,23 @@ drawer" and must not disarm the tool. The click-to-place version lasted
 one morning: "i want to drag the brush around".
 
 **The live graphs are the model's own readings, with the model written
-on them.** `#graphs-panel` is a column of mostly translucent cards down
-the left edge (z 11: under the stilling cover and the data sheet), one
+on them.** `#graphs-panel` is a column of cards down the left edge on
+the drawers' own ground (`--scrim`, blur 10 px; z 11: under the stilling
+cover and the data sheet), one
 per quantity a physical model would instrument: cable force, the load on
 the formwork, column force with its strain, thrust at the supports. They
 come up when Play starts (the `#shelf-graphs` tile and the close button
 move the remembered switch), follow the clock from the render loop
 (never from applyTimeline, which stays pure in t), scrub with the
-scrubber, and a click on a graph seeks the take to that instant. Each
+scrubber, and a click on a graph seeks the take to that instant, ahead
+of the cursor as well as behind it. The traces grow with the clock:
+each is drawn only up to the cursor, with its tip on it, so the curves
+develop as the take plays, a scrub back truncates them and a paused take
+shows them up to where it stands; the y axis is fixed from the whole
+take, so it never rescales under a growing line. A handle on the
+column's right edge (`#graphs-collapse`) tucks it off to the left and
+brings it back, and the studio remembers which he left
+(`vaulted-live-graphs-tucked`); tucked, the cards cost nothing. Each
 card's header carries the name, the unit and the live reading in
 monospace; the notes line states every assumption in full; `CSV` hands
 over every series with those assumptions on top. The one number no

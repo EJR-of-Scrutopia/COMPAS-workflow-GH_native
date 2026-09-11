@@ -28,7 +28,6 @@
 
   --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
   --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
-  --veil-thin: rgba(16, 18, 22, 0.58); /* a mostly translucent card over the view */
   /* The live graphs' three inks, muted so the picture behind stays the
      picture: cables, the load, the columns. Charts read these at draw
      time, so they carry no hex of their own. */
@@ -82,7 +81,6 @@
   --accent-hover:#1c46c9;
 
   --scrim:    rgba(255, 255, 255, 0.88);
-  --veil-thin: rgba(255, 255, 255, 0.66);
   --graph-a: #2f8c7e; --graph-a-fill: rgba(47, 140, 126, 0.16);
   --graph-b: #b0762a;
   --graph-c: #b84a5f; --graph-c-fill: rgba(184, 74, 95, 0.16);
@@ -1273,24 +1271,50 @@ body.panel-collapsed #event-log { right: var(--s4); }
    recording. */
 body.recording #stats-overlay { display: none; }
 
-/* THE LIVE GRAPHS: a column of mostly translucent cards down the left
-   edge, under the stilling cover (z 12) and the data sheet (z 20), over
-   the view. The panel itself lets the pointer through between cards, so
+/* THE LIVE GRAPHS: a column of cards down the left edge on the drawers'
+   own ground (Param: "make the graphs more opaque"), under the stilling
+   cover (z 12) and the data sheet (z 20), over the view. The panel itself lets the pointer through between cards, so
    the orbit is not fenced off by an invisible rectangle. */
 #graphs-panel { position: fixed; left: 16px; top: 16px; bottom: 96px; width: 360px;
   z-index: 11; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 #graphs-panel.hidden { display: none; }
 #graphs-panel > * { pointer-events: auto; }
-#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--veil-thin);
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+/* Tucked to the side: the column slides off the left edge and its handle,
+   hung on its right edge, stays on the screen, the right panel's fold
+   mirrored. Separate rules, so the column's own two lines stand as they
+   are. */
+#graphs-panel { transition: transform 0.25s ease; }
+#graphs-panel.tucked { transform: translateX(calc(-100% - 16px)); }
+#graphs-collapse { position: absolute; left: 100%; top: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 64px; margin: 0; padding: 0;
+  display: grid; place-items: center;
+  background: var(--panel-veil); color: var(--ink-2);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+#graphs-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
+#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line); border-radius: var(--radius); }
-#graphs-head { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px;
+#graphs-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
   font-size: 11px; color: var(--ink-2); }
 #graphs-head #graphs-title { color: var(--ink); font-weight: 500; }
-#graphs-head #graphs-study { flex: 1; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; color: var(--ink-3); }
-#graphs-head button { width: auto; margin: 0; padding: 1px 8px; font-size: 11px;
-  background: var(--raised); color: var(--ink-2); }
+/* The study line wraps rather than clip: its end is the density the
+   graphs are weighed at, and the skin that set it. */
+#graphs-head #graphs-study { flex: 1; min-width: 0; line-height: 1.35;
+  color: var(--ink-3); }
+/* Outside the panel, so they state their own look: the drawer's action
+   buttons for CSV, the drawer's own close for the cross. */
+#graphs-head button { width: auto; margin: 0; height: var(--h-small);
+  padding: 0 var(--s2); background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; font-size: var(--t-meta); cursor: pointer; }
+#graphs-head button:hover { border-color: var(--line-lit); }
+#graphs-head #graphs-close { height: auto; padding: 2px 8px; color: var(--ink-3);
+  background: transparent; border: none; font-size: 13px; }
+#graphs-head #graphs-close:hover { color: var(--ink); }
 #graphs-dials { padding: 2px 10px 6px; grid-template-columns: auto 1fr auto auto; }
 #graphs-cards { flex: 1; min-height: 0; display: grid; grid-auto-rows: 1fr; gap: 8px; }
 .live-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }

@@ -141,6 +141,24 @@ export function pieceWeights(bundle, clock, thickness, density) {
   }));
 }
 
+// How many of the cut's cells claim no analysis face: the solver binds
+// each face WHOLE to one cell, so a cell smaller than a face (or one the
+// face's centre misses) is weighed as nothing, and its neighbour carries
+// its share. Null when the bundle carries no binding.
+export function unclaimedCells(bundle) {
+  const binding = bundle.binding;
+  if (!binding || !Array.isArray(binding.assignment) || !Array.isArray(binding.order)) {
+    return null;
+  }
+  const claimed = new Set();
+  for (const pair of binding.assignment) if (Array.isArray(pair)) claimed.add(pair.join(","));
+  let none = 0;
+  for (const pair of binding.order) {
+    if (Array.isArray(pair) && !claimed.has(pair.join(","))) none += 1;
+  }
+  return { none, cells: binding.order.length };
+}
+
 // The placed weight at t, in newtons, and the area under it.
 export function placedAt(t, weights) {
   let weightN = 0, areaM2 = 0;
@@ -262,6 +280,16 @@ export function buildLiveSeries(input) {
   }
   // The server's own per-course figures, at the instant each course's
   // last piece lands: the client's arithmetic drawn against the solver's.
+  // Each is drawn at the first SAMPLE at or after that landing, because
+  // the line is drawn through the samples: at the exact instant a check
+  // that agrees sat one piece under the line wherever the landing fell
+  // between two samples.
+  const firstSampleFrom = (time) => {
+    let at = Math.max(0, Math.min(samples - 1,
+      Math.ceil((samples - 1) * time / clock.duration - 1e-9)));
+    while (at < samples - 1 && t[at] < time) at += 1;
+    return at;
+  };
   const stages = bundle.staging && Array.isArray(bundle.staging.stages)
     ? bundle.staging.stages : [];
   stages.forEach((stage, index) => {
@@ -271,9 +299,31 @@ export function buildLiveSeries(input) {
     const upTo = typeof stage.courses_placed === "number" ? stage.courses_placed : index + 1;
     const mine = weights.filter((p) => p.course < upTo);
     if (!mine.length || typeof stage.formwork_carries_newtons !== "number") return;
-    load.checks.push({ stage: index + 1, t: Math.max(...mine.map((p) => p.landsAt)),
+    const landsAt = Math.max(...mine.map((p) => p.landsAt));
+    load.checks.push({ stage: index + 1, t: t[firstSampleFrom(landsAt)], landsAt,
       kN: stage.formwork_carries_newtons / 1000 });
   });
+  // When the solver's figures stray from the pieces' own weight, say why
+  // rather than leave dots floating off the line: staging weighs whole
+  // analysis faces, each bound to one cell, so on a cut whose cells are
+  // not unions of faces a course's figure leads or lags its pieces.
+  let strayKN = 0;
+  for (const check of load.checks) {
+    const exactKN = placedAt(check.landsAt, weights).weightN / 1000;
+    strayKN = Math.max(strayKN, Math.abs(check.kN - exactKN));
+  }
+  load.checkStrayKN = strayKN;
+  if (load.checks.length && strayKN > 0.02 * load.totalKN) {
+    const cells = unclaimedCells(bundle);
+    const claim = cells && cells.none > 0
+      ? cells.none + " of " + cells.cells + " cells claim none"
+      : "the faces do not follow the pieces' edges";
+    notes.push("the solver's per-course figures (the open circles on the load "
+      + "card) weigh whole analysis faces, each bound to one cell; on this cut "
+      + claim + ", so a course's figure can lead or lag its pieces by up to "
+      + strayKN.toFixed(1) + " kN. Read the line for the placed weight: it is "
+      + "the pieces' own, exactly");
+  }
 
   // One force at t for one member: the frames' own through the act; after
   // it, the tension the frames ended on (or the dial's prestress when
@@ -433,6 +483,17 @@ export function sampleAt(series, t, values) {
 // zero line, faint horizontal rules only, tight margins, monospaced
 // numbers, the acts as faint bands under the lines, one cursor. The
 // card's own header names the graph, its unit and the live reading.
+// The y axis is FIXED from the whole take, so a trace that grows with the
+// clock never rescales the axis under it: a little over the card's
+// largest value across every trace, or [0, 1] when all of it is zero.
+export function fixedRange(traces) {
+  let top = 0;
+  for (const trace of traces) {
+    for (const v of trace.y) if (Number.isFinite(v) && v > top) top = v;
+  }
+  return top > 0 ? [0, top * 1.08] : [0, 1];
+}
+
 export function liveLayout(series, theme, options) {
   const bands = series.acts.map((act, i) => ({
     type: "rect", xref: "x", yref: "paper", x0: act.from, x1: act.to, y0: 0, y1: 1,
@@ -458,7 +519,8 @@ export function liveLayout(series, theme, options) {
       hoverformat: ".1f" },
     yaxis: { showgrid: true, gridcolor: theme.line, gridwidth: 1, zeroline: false,
       ticks: "", tickfont: { family: theme.mono, size: 9 }, color: theme.ink2,
-      rangemode: "tozero", fixedrange: true, nticks: 4,
+      range: options && options.range ? options.range : [0, 1], autorange: false,
+      fixedrange: true, nticks: 4,
       ticksuffix: options && options.ticksuffix ? options.ticksuffix : "" },
     shapes: bands.concat([cursor]),
   };
@@ -479,8 +541,20 @@ function edge(x, y, name, fill, fillcolor) {
   return trace;
 }
 
+// An invisible line the full length of the take along the floor: the
+// drawn traces stop at the cursor, and a click AHEAD of it still needs a
+// point under the pointer to seek to. hoverinfo "none" still raises the
+// click; "skip" (the band edges') would not.
+function seekTrace(t) {
+  return { x: t, y: t.map(() => 0), type: "scatter", mode: "lines", name: "seek",
+    line: { width: 0, color: "rgba(0,0,0,0)" }, hoverinfo: "none", showlegend: false };
+}
+
 // The four cards' traces. Colours come from the theme (CSS tokens), so
 // the graphs follow light and dark and never carry a hex of their own.
+// Each spec also carries `cut`, parallel to its traces, saying how each
+// is cut at the clock (see liveCut); it stays off the traces themselves,
+// so Plotly never sees a key it does not know.
 export function liveSpecs(series, theme) {
   const specs = [];
   const t = series.t;
@@ -500,7 +574,7 @@ export function liveSpecs(series, theme) {
   // 2. The load on the formwork, with the server's per-course figures.
   const loadTraces = [line(t, series.load.kN, theme.b, 1.6, "on the formwork")];
   if (series.load.checks.length) {
-    loadTraces.push({ x: series.load.checks.map((c) => c.t),
+    loadTraces.push({ events: true, x: series.load.checks.map((c) => c.t),
       y: series.load.checks.map((c) => c.kN), type: "scatter", mode: "markers",
       name: "solver, per course", marker: { color: theme.ink, size: 4, symbol: "circle-open" },
       hovertemplate: "stage %{text}: %{y:.2f} kN<extra></extra>",
@@ -532,7 +606,46 @@ export function liveSpecs(series, theme) {
     data: [line(t, series.thrust.horizontalKN, theme.a, 1.6, "horizontal"),
       line(t, series.thrust.verticalKN, theme.b, 1.2, "vertical", "dot")],
     layout: liveLayout(series, theme) });
+  for (const spec of specs) {
+    spec.layout = liveLayout(series, theme, { range: fixedRange(spec.data) });
+    spec.cut = spec.data.map((trace) => (trace.events
+      ? { kind: "events", x: trace.x, y: trace.y }
+      : { kind: "series", x: t, y: trace.y }));
+    for (const trace of spec.data) delete trace.events;
+    spec.data.push(seekTrace(t));
+    spec.cut.push({ kind: "whole", x: t, y: spec.data[spec.data.length - 1].y });
+  }
   return specs;
+}
+
+// Every trace of a card cut at the clock, as Plotly.update takes it: a
+// series is drawn through sample k (never past t) with one tip point
+// interpolated at exactly t, so the line meets the cursor and grows with
+// it; both edges of a band are cut alike, so the fill never closes to the
+// wrong trace; a check shows once its instant has passed (the checks are
+// in time order, so what shows is a prefix and its hover text still lines
+// up); and the seek line is left whole.
+export function liveCut(spec, k, t) {
+  const x = [], y = [];
+  for (const rule of spec.cut) {
+    if (rule.kind === "whole") { x.push(rule.x); y.push(rule.y); continue; }
+    if (rule.kind === "events") {
+      let shown = 0;
+      while (shown < rule.x.length && rule.x[shown] <= t) shown += 1;
+      x.push(rule.x.slice(0, shown)); y.push(rule.y.slice(0, shown));
+      continue;
+    }
+    const times = rule.x;
+    let j = Math.max(0, Math.min(k, times.length - 1));
+    while (j > 0 && times[j] > t) j -= 1;
+    const cx = times.slice(0, j + 1), cy = rule.y.slice(0, j + 1);
+    if (t > times[j] && j + 1 < times.length) {
+      const u = (t - times[j]) / (times[j + 1] - times[j]);
+      cx.push(t); cy.push(rule.y[j] + (rule.y[j + 1] - rule.y[j]) * u);
+    }
+    x.push(cx); y.push(cy);
+  }
+  return { x, y };
 }
 
 // The series as a sheet, one row per sample, for the physical model's

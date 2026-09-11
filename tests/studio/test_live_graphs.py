@@ -38,7 +38,8 @@ SHELL = 2 * W / 1000        # the built shell over the 1000 N the net was solved
 # support reaction of (300, 0, -1000) N; one column member at 0.6 kN.
 HARNESS = r"""
 import { buildLiveSeries, pieceWeights, placedAt, raiseFactor, strikeFactor,
-  seriesToCsv, COLUMN_MODULUS_PA, GRAVITY } from "%(module)s";
+  seriesToCsv, liveSpecs, liveCut, fixedRange, unclaimedCells,
+  COLUMN_MODULUS_PA, GRAVITY } from "%(module)s";
 const G = 9.80665;
 const square = (x0, course) => ({
   mid: [[x0, 0, 0], [x0 + 1, 0, 0], [x0 + 1, 1, 0], [x0, 1, 0]],
@@ -78,6 +79,11 @@ out.columnAt = { t12: s.columns.max[at(12)], full: s.columns.max[at(14.5)] };
 out.strainAtFull = s.columns.strain.microstrainMax[at(14.5)];
 out.thrustAt = { t15: s.thrust.horizontalKN[at(15)], t18: s.thrust.horizontalKN[at(18)], v18: s.thrust.verticalKN[at(18)] };
 out.checks = s.load.checks;
+// Where each check is drawn: the sample it stands on, and the drawn line there.
+out.checkSample = s.load.checks.map((c) => s.t.indexOf(c.t));
+out.checkLine = s.load.checks.map((c) => s.load.kN[s.t.indexOf(c.t)]);
+out.firstSampleFrom = [12.8, 13.8].map((time) => s.t.findIndex((v) => v >= time));
+out.synthStray = s.notes.some((n) => n.includes("per-course figures"));
 out.acts = s.acts.map((a) => a.name);
 out.source = s.cables.source;
 out.notes = s.notes;
@@ -106,7 +112,49 @@ const sparse = Object.assign({}, bundle, { pieces: [square(0, 0), square(1, 2)],
   staging: { stages: [{ courses_placed: 1, formwork_carries_newtons: W1() },
     { courses_placed: 3, formwork_carries_newtons: 2 * W1() }] } });
 function W1() { return 1 * 0.2 * 2000 * G; }
-out.sparseChecks = buildLiveSeries(Object.assign({}, input, { bundle: sparse })).load.checks.map((c) => c.t);
+out.sparseChecks = buildLiveSeries(Object.assign({}, input, { bundle: sparse })).load.checks.map((c) => c.landsAt);
+
+// The traces cut at the clock: the load card (line, checks, seek line)
+// and the cable card (a band's two edges, the top cables, the mean).
+const theme = { ink: "i", ink2: "j", line: "l", scrim: "s", a: "a", aFill: "af", b: "b",
+  c: "c", cFill: "cf", font: "f", mono: "m" };
+const specs = liveSpecs(s, theme);
+const loadSpec = specs.find((sp) => sp.id === "live-load");
+const cableSpec = specs.find((sp) => sp.id === "live-cables");
+const kc = at(13.3);
+const tc = s.t[kc] + 0.4 * (s.t[kc + 1] - s.t[kc]);
+const cut = liveCut(loadSpec, kc, tc);
+out.cut = { kinds: loadSpec.cut.map((r) => r.kind), traces: loadSpec.data.length,
+  lineLength: cut.x[0].length, lineLastX: cut.x[0][cut.x[0].length - 1],
+  lineBeforeTip: cut.x[0][cut.x[0].length - 2],
+  lineTip: cut.y[0][cut.y[0].length - 1],
+  expectedTip: s.load.kN[kc] + 0.4 * (s.load.kN[kc + 1] - s.load.kN[kc]),
+  checksShown: cut.x[1].length, checkShownT: cut.x[1],
+  seekLength: cut.x[2].length, seekFull: cut.x[2] === s.t, samples: s.t.length,
+  hoverSeek: loadSpec.data[2].hoverinfo, t: tc, k: kc };
+// Scrubbed back before the first landing: nothing of the checks, the line short.
+const back = liveCut(loadSpec, at(5), 5);
+out.back = { lineLength: back.x[0].length, lastX: back.x[0][back.x[0].length - 1],
+  checksShown: back.x[1].length, seekLength: back.x[2].length };
+const band = liveCut(cableSpec, kc, tc);
+out.band = { least: band.x[0].length, most: band.x[1].length,
+  leastY: band.y[0].length, mostY: band.y[1].length, mean: band.x[band.x.length - 2].length };
+out.loadRange = loadSpec.layout.yaxis.range;
+out.loadAutorange = loadSpec.layout.yaxis.autorange;
+out.loadMax = Math.max(...s.load.kN, ...s.load.checks.map((c) => c.kN));
+out.zeroRange = fixedRange([{ y: [0, 0, 0] }]);
+
+// A coarse solver: its first stage weighs nothing (the course's cell
+// claims no face) and its second the lot, so the check strays a whole
+// piece from the pieces' own line; the notes say why, with the count.
+const coarse = Object.assign({}, bundle, {
+  binding: { assignment: [[1, 0], [1, 1]], order: [[0, 0], [1, 0], [1, 1]], keys: ["p0", "p1", "p2"] },
+  staging: { stages: [{ courses_placed: 1, formwork_carries_newtons: 0 },
+    { courses_placed: 2, formwork_carries_newtons: 2 * W1() }] } });
+const sc = buildLiveSeries(Object.assign({}, input, { bundle: coarse }));
+out.coarseNotes = sc.notes;
+out.coarseStray = sc.load.checkStrayKN;
+out.coarseCells = unclaimedCells(coarse);
 
 // No member forces in the contract, but frames with forces and column
 // forces: the frames' final tension is held after the act, not zero.
@@ -173,11 +221,17 @@ def test_the_placed_weight_is_exact_and_lands_when_the_piece_does(out):
     assert out["loadAt"]["full"] == pytest.approx(2 * W / 1000, rel=1e-6)
     # The strike (from 14.8 s for 2 s) takes it off again.
     assert out["loadAt"]["t18"] == 0
-    # The server's per-course figures sit at the instant each course lands,
-    # ON the line: the same g as staging.py, not 0.034% under it.
-    assert [c["t"] for c in out["checks"]] == pytest.approx([12.8, 13.8])
+    # The server's per-course figures belong to the instant each course
+    # lands, and are drawn at the first sample at or after it, because the
+    # line is drawn through the samples: ON the drawn line, with the same
+    # g as staging.py, not 0.034% under it.
+    assert [c["landsAt"] for c in out["checks"]] == pytest.approx([12.8, 13.8])
+    assert out["checkSample"] == out["firstSampleFrom"]
+    assert all(c["t"] >= c["landsAt"] for c in out["checks"])
     assert [c["kN"] for c in out["checks"]] == pytest.approx(
         [out["loadAt"]["t13"], out["loadAt"]["full"]], rel=1e-12)
+    assert [c["kN"] for c in out["checks"]] == pytest.approx(out["checkLine"], rel=1e-12)
+    assert not out["synthStray"], "cells that are unions of faces agree: no note"
     assert out["acts"] == ["formwork", "build", "strike", "stands"]
     assert out["g"] == 9.80665
 
@@ -199,6 +253,59 @@ def test_a_sparse_cut_s_checks_sit_where_its_courses_land(out):
     course-0 piece's."""
 
     assert out["sparseChecks"] == pytest.approx([12.8, 13.8])
+
+
+@needs_node
+def test_the_traces_grow_with_the_clock_and_stop_at_the_cursor(out):
+    """Param: "I would like the graphs to run more in real time showing
+    them develop instead of running over the pre calculation". Each series
+    is drawn through the cursor's sample with one tip point at exactly t,
+    a check shows once its instant has passed, a scrub back truncates,
+    and the invisible seek line stays whole so a click ahead still seeks."""
+
+    cut = out["cut"]
+    assert cut["kinds"] == ["series", "events", "whole"]
+    assert cut["traces"] == 3
+    assert cut["lineLength"] == cut["k"] + 2, "through sample k, then the tip"
+    assert cut["lineLastX"] == cut["t"], "the tip is exactly at the cursor"
+    assert cut["lineBeforeTip"] < cut["t"]
+    assert cut["lineTip"] == pytest.approx(cut["expectedTip"], rel=1e-12)
+    # 13.3 s: the first course (12.8) has landed, the second (13.8) not.
+    assert cut["checksShown"] == 1 and cut["checkShownT"][0] <= cut["t"]
+    assert cut["seekLength"] == cut["samples"] and cut["seekFull"]
+    assert cut["hoverSeek"] == "none", "skip would raise no click"
+    back = out["back"]
+    assert back["checksShown"] == 0
+    assert back["lastX"] == 5 and back["lineLength"] < cut["lineLength"]
+    assert back["seekLength"] == cut["samples"]
+    band = out["band"]
+    assert band["least"] == band["most"] == band["leastY"] == band["mostY"], (
+        "both edges of a band are cut alike, or the fill closes wrong")
+    assert band["mean"] == band["least"]
+
+
+@needs_node
+def test_the_y_axis_is_fixed_from_the_whole_take(out):
+    """A trace that grows would rescale an autoranged axis every sample;
+    the range is set once, a little over the card's largest value."""
+
+    assert out["loadAutorange"] is False
+    assert out["loadRange"] == pytest.approx([0, out["loadMax"] * 1.08], rel=1e-12)
+    assert out["zeroRange"] == [0, 1]
+
+
+@needs_node
+def test_a_coarse_solver_s_checks_are_explained_not_left_floating(out):
+    """The 2 Sided Vault's copper cut: each analysis face is bound whole to
+    one cell and 83 of 215 cells claim none, so a course's figure leads or
+    lags its pieces. The notes say so, with the count and the worst gap."""
+
+    assert out["coarseCells"] == {"none": 1, "cells": 3}
+    assert out["coarseStray"] == pytest.approx(W / 1000, rel=1e-9)
+    notes = " ".join(out["coarseNotes"])
+    assert "weigh whole analysis faces, each bound to one cell" in notes
+    assert "on this cut 1 of 3 cells claim none" in notes
+    assert "by up to " + format(W / 1000, ".1f") + " kN" in notes
 
 
 @needs_node
@@ -309,7 +416,7 @@ def test_the_page_wires_the_graphs_to_the_take():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
-    assert 'import { buildLiveSeries, liveSpecs, seriesToCsv } from "./live_graphs.js";' in js
+    assert 'import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";' in js
     assert 'id="graphs-panel"' in html and 'id="shelf-graphs"' in html
     assert 'id="graphs-csv"' in html and 'id="graphs-close"' in html
     start = js[js.index("function startPlaying(fromTheTop)"):]
@@ -347,7 +454,12 @@ def test_the_page_wires_the_graphs_to_the_take():
     tick = tick[:tick.index("\n}\n")]
     assert "if (k === liveGraphs.lastK && !force) return;" in tick, (
         "the cursor moves when the sample does, not sixty times a second")
-    assert "window.Plotly.relayout(plot, patch);" in tick
+    # One update per card per sample carries the cut traces AND the cursor
+    # (the relayout of the cursor alone survives only between the
+    # constrained device's every-second-sample trace updates).
+    assert "if (grow) window.Plotly.update(plot, liveCut(spec, k, t), patch);" in tick
+    assert "else window.Plotly.relayout(plot, patch);" in tick
+    assert "CONSTRAINED_DEVICE || Math.abs(k - liveGraphs.drawnK) >= 2;" in tick
     # The inks live in the theme, both of them, so a chart carries no hex.
     assert css.count("--graph-a:") == 2 and css.count("--graph-c-fill:") == 2
     assert "#graphs-panel { position: fixed; left: 16px; top: 16px; bottom: 96px; width: 360px;" in css
@@ -397,3 +509,71 @@ def test_a_dial_drag_rebuilds_once_it_settles_and_a_study_once():
     assert "invalidateLiveGraphs" not in _body(js, "function rebuildTimeline(preserve)")
     load = js[js.index("await reloadColumns(columnsForStudy("):]
     assert load.index("invalidateLiveGraphs();") < load.index("loaded = true;")
+
+
+def test_the_graphs_tuck_to_the_side_and_remember_it():
+    """Param: "Lets also have a side toggle where we can collapse the
+    graphs to the side or not. whatever the state was before is what it
+    defaults with." A handle on the column's right edge; a class on the
+    column, never the right panel's panel-collapsed names; its own key,
+    missing meaning expanded; no Plotly work while tucked; and coming
+    back draws the current instant at once."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    panel = html[html.index('<div id="graphs-panel"'):]
+    panel = panel[:panel.index('<div id="legend"')]
+    assert '<button id="graphs-collapse" title="Tuck the graphs to the side">' in panel
+    assert 'const LIVE_TUCKED_KEY = "vaulted-live-graphs-tucked";' in js
+    assert 'liveGraphs.tucked = localStorage.getItem(LIVE_TUCKED_KEY) === "1";' in js
+    tick = _body(js, "function tickLiveGraphs(force)")
+    early = tick.index("if (liveGraphs.tucked) return;")
+    assert early < tick.index("buildLiveGraphs();"), "no build while tucked either"
+    apply = _body(js, "function applyGraphsTucked(on)")
+    assert 'panel.classList.toggle("tucked", liveGraphs.tucked);' in apply
+    assert '"Bring the graphs back" : "Tuck the graphs to the side"' in apply
+    assert "panel-collapsed" not in apply
+    tucked = _body(js, "function setGraphsTucked(on)")
+    assert 'localStorage.setItem(LIVE_TUCKED_KEY, on ? "1" : "0")' in tucked
+    assert "if (!on) { liveGraphs.lastK = -1; tickLiveGraphs(true); }" in tucked
+    assert "applyGraphsTucked(liveGraphs.tucked);" in js, "restored at boot"
+    assert "#graphs-panel.tucked { transform: translateX(calc(-100% - 16px)); }" in css
+    assert "#graphs-collapse { position: absolute; left: 100%; top: 50%;" in css
+
+
+def test_the_graphs_stand_on_the_drawers_ground_with_the_drawers_buttons():
+    """Param: "Make the graphs more opaque and chnage the button styles to
+    match." The cards take the drawers' own ground, the CSV button the
+    drawer's action look and the cross the drawer's own close."""
+
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "--veil-thin" not in css, "the thin veil had no other use"
+    assert ("#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);\n"
+            "  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);") in css
+    button = css[css.index("#graphs-head button {"):]
+    button = button[:button.index("}")]
+    for said in ("height: var(--h-small);", "padding: 0 var(--s2);",
+                 "background: var(--raised);", "color: var(--ink);",
+                 "border: 1px solid var(--line);", "border-radius: var(--radius);",
+                 "font: inherit;", "font-size: var(--t-meta);", "cursor: pointer;"):
+        assert said in button, said
+    assert "#graphs-head button:hover { border-color: var(--line-lit); }" in css
+    assert "#graphs-head #graphs-close { height: auto; padding: 2px 8px; color: var(--ink-3);" in css
+    # The study line wraps rather than clip: its end is the density.
+    study = css[css.index("#graphs-head #graphs-study {"):]
+    study = study[:study.index("}")]
+    assert "nowrap" not in study and "ellipsis" not in study
+
+
+def test_the_header_says_when_a_skin_sets_the_weight():
+    """"concrete, 200 mm at 8940 kg/m3" was a copper skin's density on a
+    concrete cut; the study line names the skin that sets the weight."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    word = _body(js, "function liveSkinWord(bundle, density)")
+    assert "bundle.provenance.density_from_skin" in word
+    assert "(structural && Math.abs(density - structural) > 1)" in word
+    assert "if (pattern.test(entry.name)) { word = pattern.source; break; }" in word
+    build = _body(js, "async function buildLiveGraphs()")
+    assert '(skinWord ? " cut in " + skinWord : "")' in build

@@ -4,7 +4,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { buildLiveSeries, liveSpecs, seriesToCsv } from "./live_graphs.js";
+import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, buildSegmented, paintSegmented,
   buildGroups, paintGroupSummaries, setGroupSummaries,
@@ -278,11 +278,15 @@ const scrubber = document.getElementById("timeline-scrubber");
 // The live graphs' state, declared this early because applyTheme runs
 // during boot and invalidates them (see "the live graphs" far below).
 const liveGraphs = { series: null, specs: null, cards: new Map(), shown: false,
-  wanted: true, dirty: true, building: false, lastK: -1, prestress: 0.1 };
+  wanted: true, dirty: true, building: false, lastK: -1, drawnK: -1, prestress: 0.1,
+  tucked: false };
 const LIVE_GRAPHS_KEY = "vaulted-live-graphs";
 const LIVE_PRESTRESS_KEY = "vaulted-live-prestress";
+// Tucked to the side or not, as he left it; nothing stored is expanded.
+const LIVE_TUCKED_KEY = "vaulted-live-graphs-tucked";
 try {
   liveGraphs.wanted = localStorage.getItem(LIVE_GRAPHS_KEY) !== "0";
+  liveGraphs.tucked = localStorage.getItem(LIVE_TUCKED_KEY) === "1";
   // Nothing stored is not zero: +null is 0, and a fresh browser opened
   // with the dial at nought and every cable slack through the act.
   const stored = localStorage.getItem(LIVE_PRESTRESS_KEY);
@@ -6515,6 +6519,55 @@ function showLiveGraphs(on) {
   if (on) { liveGraphs.lastK = -1; tickLiveGraphs(true); }
 }
 
+// Tucked slides the whole column off the left edge and leaves its handle
+// on the screen; it is independent of shown, so hiding, showing and Play
+// all keep whichever he left. While tucked the cards cost nothing: the
+// tick does no Plotly work until they come back, and coming back draws
+// the take's current instant at once.
+function applyGraphsTucked(on) {
+  liveGraphs.tucked = !!on;
+  const panel = document.getElementById("graphs-panel");
+  if (panel) panel.classList.toggle("tucked", liveGraphs.tucked);
+  const handle = document.getElementById("graphs-collapse");
+  if (handle) {
+    handle.textContent = liveGraphs.tucked ? "›" : "‹";
+    handle.title = liveGraphs.tucked ? "Bring the graphs back" : "Tuck the graphs to the side";
+  }
+}
+
+function setGraphsTucked(on) {
+  applyGraphsTucked(on);
+  try { localStorage.setItem(LIVE_TUCKED_KEY, on ? "1" : "0"); } catch (error) { /* ditto */ }
+  if (!on) { liveGraphs.lastK = -1; tickLiveGraphs(true); }
+}
+
+// The sample under the take's clock, and the clock itself clamped to the
+// series: what the cursor stands on and where the traces stop.
+function liveCursorAt(series) {
+  const n = series.t.length;
+  const duration = series.t[n - 1] || 1;
+  const t = Math.max(0, Math.min(duration, state.timeline.t));
+  return { k: Math.round((n - 1) * t / duration), t };
+}
+
+// What the header says the vault is weighed as. A skin that sets the
+// density is named: "concrete, 200 mm at 8940 kg/m3" was a copper skin's
+// density on a concrete cut, and read as a contradiction.
+function liveSkinWord(bundle, density) {
+  const structural = STRUCTURAL_DENSITIES[bundle.material];
+  const fromSkin = bundle.provenance.density_from_skin
+    || (structural && Math.abs(density - structural) > 1);
+  if (!fromSkin) return "";
+  const skin = state.appearance.skin;
+  const entry = isLibraryKey(skin) ? libraryEntry(skin) : null;
+  if (!entry) return "a library skin";
+  let word = entry.family || entry.name;
+  for (const [pattern] of NAME_DENSITIES) {
+    if (pattern.test(entry.name)) { word = pattern.source; break; }
+  }
+  return (/^[aeiou]/i.test(word) ? "an " : "a ") + word + " skin";
+}
+
 // Wanted is the user's own switch, remembered; shown is whether the
 // cards are up now. Play brings them up when wanted; the close button
 // and the tile move the switch.
@@ -6555,7 +6608,9 @@ async function buildLiveGraphs() {
       liveGraphs.cards.delete(id);
     }
     const study = document.getElementById("graphs-study");
-    if (study) study.textContent = bundle.export + ", " + bundle.material + ", "
+    const skinWord = liveSkinWord(bundle, density);
+    if (study) study.textContent = bundle.export + ", " + bundle.material
+      + (skinWord ? " cut in " + skinWord : "") + ", "
       + Math.round(bundle.provenance.thickness * 1000) + " mm at " + Math.round(density) + " kg/m3";
     // Every card, and the notes line under them, is in place BEFORE any
     // plot is drawn: the cards share the column's height, and a card
@@ -6581,9 +6636,17 @@ async function buildLiveGraphs() {
     for (const spec of specs) holder.appendChild(liveGraphs.cards.get(spec.id));
     const notes = document.getElementById("graphs-notes");
     if (notes) notes.textContent = series.notes.join(" ");
+    // The first frame is already cut at the take's clock, so no frame of
+    // whole curves flashes before the first tick trims them.
+    const cursor = liveCursorAt(series);
     for (const spec of specs) {
       const plot = liveGraphs.cards.get(spec.id).querySelector(".live-plot");
-      await window.Plotly.react(plot, spec.data, spec.layout,
+      const cut = liveCut(spec, cursor.k, cursor.t);
+      const data = spec.data.map((trace, i) => Object.assign({}, trace,
+        { x: cut.x[i], y: cut.y[i] }));
+      const shape = spec.layout.shapes[spec.layout.shapes.length - 1];
+      shape.x0 = shape.x1 = cursor.t;
+      await window.Plotly.react(plot, data, spec.layout,
         { displayModeBar: false, responsive: true, doubleClick: false });
       // A click on a graph is a seek: the take goes to that instant and
       // waits there, which is the "pinpoint" he asked for.
@@ -6607,19 +6670,22 @@ async function buildLiveGraphs() {
 }
 
 // Once a frame from the render loop: the readings every time the sample
-// changes, the cursor with them. Four relayouts of one shape each is a
-// few milliseconds; the take's own render is the cost that matters.
+// changes, and with them each card's traces cut at the clock and its
+// cursor, in ONE Plotly.update per card, so the curves grow as the take
+// plays, a scrub back truncates them, and a paused take shows them up to
+// the cursor. On a constrained device the traces follow every second
+// sample and the cursor alone moves between (a relayout of one shape).
 function tickLiveGraphs(force) {
   if (!liveGraphs.shown || !state.timeline || !state.bundle) return;
+  if (liveGraphs.tucked) return;
   if (liveGraphs.dirty) { if (!liveGraphs.building) buildLiveGraphs(); return; }
   const series = liveGraphs.series;
   if (!series || !liveGraphs.specs) return;
-  const n = series.t.length;
-  const duration = series.t[n - 1] || 1;
-  const t = Math.max(0, Math.min(duration, state.timeline.t));
-  const k = Math.round((n - 1) * t / duration);
+  const { k, t } = liveCursorAt(series);
   if (k === liveGraphs.lastK && !force) return;
   liveGraphs.lastK = k;
+  const grow = force || !CONSTRAINED_DEVICE || Math.abs(k - liveGraphs.drawnK) >= 2;
+  if (grow) liveGraphs.drawnK = k;
   for (const spec of liveGraphs.specs) {
     const card = liveGraphs.cards.get(spec.id);
     if (!card) continue;
@@ -6631,7 +6697,8 @@ function tickLiveGraphs(force) {
     const patch = {};
     patch["shapes[" + last + "].x0"] = t;
     patch["shapes[" + last + "].x1"] = t;
-    window.Plotly.relayout(plot, patch);
+    if (grow) window.Plotly.update(plot, liveCut(spec, k, t), patch);
+    else window.Plotly.relayout(plot, patch);
   }
 }
 
@@ -6665,6 +6732,9 @@ function downloadLiveSeries() {
   if (tile) tile.addEventListener("click", () => setLiveGraphsWanted(!liveGraphs.shown));
   const close = document.getElementById("graphs-close");
   if (close) close.addEventListener("click", () => setLiveGraphsWanted(false));
+  applyGraphsTucked(liveGraphs.tucked);
+  const tuck = document.getElementById("graphs-collapse");
+  if (tuck) tuck.addEventListener("click", () => setGraphsTucked(!liveGraphs.tucked));
   const csv = document.getElementById("graphs-csv");
   if (csv) csv.addEventListener("click", downloadLiveSeries);
   const dial = document.getElementById("graphs-prestress");
