@@ -3691,6 +3691,14 @@ def test_no_id_rule_undoes_a_dial_block_grid():
                 if columns is not None and columns not in allowed:
                     offenders.append(one.strip() + " sets columns: "
                                      + columns)
+                # The shorthands reset the columns too: `grid: auto /
+                # 1fr 1fr` is the original fault in other words.
+                for shorthand in ("grid", "grid-template",
+                                  "grid-template-areas"):
+                    if shorthand in said:
+                        offenders.append(one.strip() + " sets "
+                                         + shorthand + ": "
+                                         + said[shorthand])
     assert not offenders, (
         "an id rule outranks .dial-block and throws every dial's four "
         "cells out of line: " + "; ".join(offenders))
@@ -3714,21 +3722,31 @@ def test_a_drawer_stays_on_screen_and_hides_what_it_hides():
         encoding="utf-8")
     rules = _css_rules(css)
 
-    def said(selector):
-        out = {}
-        for one, body, _ in rules:
-            if one == selector:
-                out.update(_declarations(body))
+    def cascade(selector):
+        """Every declaration any rule makes for `selector`, a grouped
+        selector (`#shelf, #x { ... }`) included, in cascade order, from
+        the comment-stripped sheet: a rule commented out says nothing."""
+        out = []
+        for group, body, _ in rules:
+            if selector in (" ".join(s.split()) for s in group.split(",")):
+                for part in body.split(";"):
+                    if ":" in part:
+                        name, value = part.split(":", 1)
+                        out.append((name.strip().lower(),
+                                    " ".join(value.split())))
         return out
 
-    assert "#shelf .hidden { display: none !important; }" in css, (
+    def said(selector):
+        return dict(cascade(selector))
+
+    assert said("#shelf .hidden").get("display") == "none !important", (
         "without it a hidden dial row or the weather picker stays on "
         "screen in the drawer")
-    shelf_text = " ".join(body for one, body, _ in rules if one == "#shelf")
-    assert "max-height: calc(100vh - 28px)" in shelf_text, "the fallback"
-    assert "max-height: calc(100dvh - 28px)" in shelf_text
-    assert shelf_text.index("100vh - 28px") < shelf_text.index("100dvh"), (
-        "the vh line first, or it overrides dvh where dvh is understood")
+    heights = [value for name, value in cascade("#shelf")
+               if name == "max-height"]
+    assert heights[-2:] == ["calc(100vh - 28px)", "calc(100dvh - 28px)"], (
+        "the vh fallback, then dvh, and nothing later undoing the bound: "
+        + repr(heights))
     body = said("#shelf-body")
     assert body.get("overflow-y") == "auto", "the body scrolls"
     assert body.get("min-height") == "0", "or the flex child never shrinks"
@@ -3824,6 +3842,61 @@ def test_the_hdri_dials_show_only_in_hdri_mode():
     # One painter: nothing else decides these rows on its own terms.
     assert js.count('getElementById("hdri-scale-row")') == 1
     assert js.count('getElementById("hdri-height-row")') == 1
+
+
+def test_the_hdri_dials_follow_the_mode_when_painted(tmp_path):
+    """The statements above can all be present in a painter that never
+    runs them (a `return;` at its top left every one in place). So the
+    painter is run, under node, against a stub document, walking the
+    modes and projections in an order where every step changes at least
+    one row: Projection shows only in HDRI, Scale and Height only in
+    HDRI with the projected dome, and nothing else is touched."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    paint = _js_function(STUDIO_JS.read_text(encoding="utf-8"),
+                         "function paintSkyDials()")
+    steps = [("hdri", "projected"), ("studio", "projected"),
+             ("hdri", "infinite"), ("sky", "infinite"),
+             ("hdri", "projected"), ("sky", "projected")]
+    script = tmp_path / "paint.mjs"
+    script.write_text("""
+const rows = {};
+const document = { getElementById(id) {
+  if (!rows[id]) {
+    const row = { hidden: null };
+    row.classList = { toggle(name, force) {
+      if (name === "hidden") row.hidden = Boolean(force); } };
+    rows[id] = row;
+  }
+  return rows[id];
+} };
+const state = {};
+const paintSkyDials = new Function("state", "document",
+  %s + "\\nreturn paintSkyDials;")(state, document);
+const out = [];
+for (const [mode, projection] of %s) {
+  state.environmentMode = mode;
+  state.hdriProjection = projection;
+  paintSkyDials();
+  const seen = {};
+  for (const id of Object.keys(rows)) seen[id] = rows[id].hidden;
+  out.push(seen);
+}
+console.log(JSON.stringify(out));
+""" % (json.dumps(paint), json.dumps(steps)), encoding="utf-8")
+    run = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    seen = json.loads(run.stdout)
+    for (mode, projection), rows in zip(steps, seen):
+        dome = mode == "hdri" and projection == "projected"
+        assert rows == {"hdri-projection-row": mode != "hdri",
+                        "hdri-scale-row": not dome,
+                        "hdri-height-row": not dome}, (mode, projection, rows)
 
 
 def test_a_restored_orthographic_scene_keeps_the_framing_it_was_saved_with():
