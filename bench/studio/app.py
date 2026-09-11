@@ -841,8 +841,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         Beside the positions, what the live graphs read (writer spec
         section 10): per-frame "forces" and "columnForces" passed through
         when their length is the edge or member count and dropped from
-        every frame with a "notes" entry when it is not; "forceDensities",
-        the contract's own filtered to the served edges; and
+        every frame with a "notes" entry when it is not (an empty series is
+        absent, silently); "edgeIndices", the contract's raw index of each
+        served edge, which the bundle's member forces are keyed on;
+        "forceDensities", the contract's own filtered to the served edges; and
         "columns.forces", the contract's mould memberForce aligned to the
         served members. Every one of them is optional and the client
         treats a missing key as absent, so an older document or contract
@@ -888,7 +890,12 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         # order; a formwork document that reorders or renumbers its
         # members would otherwise have each force drawn on the wrong leg.
         member_force = None
-        if "memberForce" not in columns:
+        if not columns:
+            # No mould columns block at all: an ordinary contract with
+            # nothing to align and nothing worth saying. The note below is
+            # for a block that exists and lacks its forces.
+            pass
+        elif "memberForce" not in columns:
             notes.append(
                 "columns.forces absent: the contract's mould block carries "
                 "no memberForce.")
@@ -930,6 +937,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             if not carried:
                 continue
             found = len(carried[0][key])
+            if found == 0:
+                # An empty series is nothing to draw, and served as present
+                # it would give a study with no columns a flat card of
+                # zeros captioned as the machine's own. Absent, silently.
+                for frame in served_frames:
+                    frame.pop(key, None)
+                continue
             if found != raw_count:
                 notes.append(
                     "per-frame {} dropped: {} values for {} {}".format(
@@ -945,6 +959,11 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             "columnNodeCount": document["columnNodeCount"],
             "frames": served_frames,
             "edges": edges,
+            # The contract's own index of each served edge. The bundle's
+            # member forces are keyed on the RAW list, so the client picks
+            # them through this rather than zipping a filtered list
+            # against an unfiltered one.
+            "edgeIndices": kept_edges,
             "forceDensities": force_densities,
             "columns": {
                 "members": members,

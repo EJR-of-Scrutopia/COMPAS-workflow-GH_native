@@ -6465,6 +6465,32 @@ function invalidateLiveGraphs() {
   liveGraphs.lastK = -1;
 }
 
+// A full rebuild is the series and every plot, a long frame of its own,
+// so a dial dragged across asks for one once the hand stops rather than
+// one per frame of the drag (which froze the take while it moved).
+const LIVE_REBUILD_MS = 150;
+function invalidateLiveGraphsSoon() {
+  clearTimeout(liveGraphs.rebuildTimer);
+  liveGraphs.rebuildTimer = setTimeout(invalidateLiveGraphs, LIVE_REBUILD_MS);
+}
+
+// Plotly sizes a plot from its box when it draws, and its responsive flag
+// only listens to the window; so a card whose box changes afterwards (the
+// notes line grows, a card comes or goes, the panel is shown again) is
+// redrawn to its new size here. A card's height is its grid row's, never
+// its plot's, so a redraw cannot feed back into another.
+const liveCardWatch = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => {
+    if (!window.Plotly) return;
+    for (const entry of entries) {
+      const plot = entry.target.querySelector(".live-plot");
+      if (!plot || !plot._fullLayout || entry.contentRect.height <= 0) continue;
+      const done = window.Plotly.Plots.resize(plot);
+      if (done && done.catch) done.catch(() => { /* hidden meanwhile */ });
+    }
+  })
+  : null;
+
 function showLiveGraphs(on) {
   const panel = document.getElementById("graphs-panel");
   if (!panel) return;
@@ -6510,12 +6536,17 @@ async function buildLiveGraphs() {
       if (specs.some((spec) => spec.id === id)) continue;
       const plot = card.querySelector(".live-plot");
       if (plot && window.Plotly) window.Plotly.purge(plot);
+      if (liveCardWatch) liveCardWatch.unobserve(card);
       card.remove();
       liveGraphs.cards.delete(id);
     }
     const study = document.getElementById("graphs-study");
     if (study) study.textContent = bundle.export + ", " + bundle.material + ", "
       + Math.round(bundle.provenance.thickness * 1000) + " mm at " + Math.round(density) + " kg/m3";
+    // Every card, and the notes line under them, is in place BEFORE any
+    // plot is drawn: the cards share the column's height, and a card
+    // appended after an earlier one was drawn left that one clipped to
+    // its new row with no x axis.
     for (const spec of specs) {
       let card = liveGraphs.cards.get(spec.id);
       if (!card) {
@@ -6526,16 +6557,22 @@ async function buildLiveGraphs() {
           + '<span class="live-aside"></span></header><div class="live-plot"></div>';
         holder.appendChild(card);
         liveGraphs.cards.set(spec.id, card);
-        const plot = card.querySelector(".live-plot");
-        // A click on a graph is a seek: the take goes to that instant and
-        // waits there, which is the "pinpoint" he asked for.
-        plot.addEventListener("plotly_click", () => {});
+        if (liveCardWatch) liveCardWatch.observe(card);
       }
       card.querySelector(".live-name").textContent = spec.name;
       card.querySelector(".live-unit").textContent = spec.unit;
-      const plot = card.querySelector(".live-plot");
+    }
+    // In the specs' order, so a card that arrives later (a study with
+    // columns after one without) stands where it belongs, not last.
+    for (const spec of specs) holder.appendChild(liveGraphs.cards.get(spec.id));
+    const notes = document.getElementById("graphs-notes");
+    if (notes) notes.textContent = series.notes.join(" ");
+    for (const spec of specs) {
+      const plot = liveGraphs.cards.get(spec.id).querySelector(".live-plot");
       await window.Plotly.react(plot, spec.data, spec.layout,
         { displayModeBar: false, responsive: true, doubleClick: false });
+      // A click on a graph is a seek: the take goes to that instant and
+      // waits there, which is the "pinpoint" he asked for.
       if (!plot.liveSeekBound) {
         plot.liveSeekBound = true;
         plot.on("plotly_click", (event) => {
@@ -6544,8 +6581,6 @@ async function buildLiveGraphs() {
         });
       }
     }
-    const notes = document.getElementById("graphs-notes");
-    if (notes) notes.textContent = series.notes.join(" ");
     liveGraphs.dirty = false;
     liveGraphs.lastK = -1;
   } catch (error) {
@@ -6626,7 +6661,7 @@ function downloadLiveSeries() {
       liveGraphs.prestress = +dial.value / 100;
       document.getElementById("graphs-prestress-value").textContent = dial.value;
       try { localStorage.setItem(LIVE_PRESTRESS_KEY, String(liveGraphs.prestress)); } catch (error) { /* ditto */ }
-      invalidateLiveGraphs();
+      invalidateLiveGraphsSoon();
     });
   }
 }
@@ -11777,8 +11812,9 @@ function rebuildTimeline(preserve) {
     orbitBase: null,
   };
   state.centre = sceneCentroid();
-  // A new timeline is a new x axis for the graphs.
-  invalidateLiveGraphs();
+  // The graphs are NOT invalidated here: the only way in is loadStudy,
+  // which invalidates once its columns are in. Doing it here too built
+  // them once with no columns (the card flashed away and back) and again.
   if (!preserve) {
     // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
     // damped approach toward controls.target must aim at the same point,
@@ -14409,8 +14445,8 @@ for (const [id, prop] of [["orbit-speed", "orbitSpeed"]]) {
       state.timeline[prop] = +e.target.value;
       applyTimeline(state.timeline.t);
       // The spin rate sets the last act's length, so the take's duration
-      // and the graphs' x axis move with it.
-      invalidateLiveGraphs();
+      // and the graphs' x axis move with it, once the hand stops.
+      invalidateLiveGraphsSoon();
     }
   });
 }

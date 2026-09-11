@@ -1640,11 +1640,31 @@ def test_every_series_is_filtered_to_the_served_pairs_by_raw_index(
                     column_forces=[99.0, 2.5]))
     assert served["notes"] == []
     assert len(served["edges"]) == 12
+    # The bundle's member forces are keyed on the raw list; the client
+    # picks them through these, so cable i is the same cable in both.
+    assert served["edgeIndices"] == list(range(1, 13))
     assert served["forceDensities"] == [-0.5 * i for i in range(12)]
     assert served["columns"] == {
         "members": [[0, 1]], "forces": [7.5], "forceUnit": "kN"}
     assert served["frames"][0]["forces"] == [float(i) for i in range(12)]
     assert served["frames"][0]["columnForces"] == [2.5]
+
+
+def test_an_empty_series_and_a_plain_contract_serve_nothing_and_say_nothing(
+        tmp_path, monkeypatch):
+    """A writer with no column members that always writes the key sends
+    columnForces: [] on every frame; served as present it drew a flat card
+    of zeros captioned as the machine's own. An empty series is absent,
+    silently, and a contract with no mould block at all has no column
+    forces to be missing, so nothing is said about them either."""
+
+    served = formwork_study(
+        tmp_path, monkeypatch, tiny_contract(),
+        tiny_frames(members=None, forces=[], column_forces=[]))
+    assert not any("columnForces" in frame for frame in served["frames"])
+    assert not any("forces" in frame for frame in served["frames"])
+    assert served["notes"] == []
+    assert served["columns"]["forces"] is None
 
 
 def test_the_live_graphs_module_is_remapped_to_its_versioned_address(

@@ -335,9 +335,14 @@ card's header carries the name, the unit and the live reading in
 monospace; the notes line states every assumption in full; `CSV` hands
 over every series with those assumptions on top. The one number no
 document states, the prestress the reels put into the net, is a dial in
-the four-part form, and the graphs say what fraction it is set to. The
-numbers come from `live_graphs.js`, which is pure and tested under node
-to the figure.
+the four-part form, and the graphs say what fraction it is set to: a
+fraction of each cable's final thrust, its force once the whole shell is
+placed. When the frames carry the machine's own forces the dial steps
+aside, and after the act each cable holds the tension the frames end on.
+The dial and the spin rate rebuild the graphs once the hand stops, never
+per frame of a drag, and every card is in place before any plot measures
+itself (Plotly sizes a plot once, from its box). The numbers come from
+`live_graphs.js`, which is pure and tested under node to the figure.
 
 **Brightness is the day, and Night is an hour.** The Skies drawer's
 Brightness dial (`sky-brightness`) scales everything the day gives at

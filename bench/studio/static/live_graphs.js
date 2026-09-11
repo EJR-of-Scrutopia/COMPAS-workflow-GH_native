@@ -33,16 +33,20 @@
 //                  the raise (reel 0..30 of the machine clock: slack;
 //                  raise 30..60: tensioning; finish and hold: at
 //                  prestress). No document states it, so it is a DIAL,
-//                  a fraction of each cable's final thrust, written on
-//                  the graph and set to the winch a physical model uses.
-//                  Cable elasticity is NOT modelled. When the frames
-//                  carry forces, those are used as they are and this
-//                  model is not.
+//                  a fraction of each cable's final thrust (its force
+//                  once the whole shell is placed), written on the graph
+//                  and set to the winch a physical model uses. Cable
+//                  elasticity is NOT modelled. When the frames carry
+//                  forces, those are used through the act, each cable
+//                  then holds the tension they end on, and the dial is
+//                  not used.
 //   load         = the placed weight, exactly: each landed piece's
 //                  mid-surface area x thickness x density x g, the same
-//                  arithmetic staging.py uses per course, with the
-//                  server's own per-course figure drawn as a check, and
-//                  the areal q it comes from in the reading.
+//                  arithmetic and the same g staging.py uses per course,
+//                  with the server's own per-course figure drawn as a
+//                  check, and the areal q it comes from in the reading.
+//                  Faces no cell claims (the cut's orphans) are never
+//                  placed and never weighed, here or there.
 //   column force = the exporter's final column force, on the same
 //                  prestress-and-share factor as the cables; strain is
 //                  force over E x A with E stated on the graph and A
@@ -58,7 +62,9 @@
 
 import { machineTime } from "./fields.js";
 
-export const GRAVITY = 9.81;
+// staging.py's own g, so the server's per-course checks sit ON the line
+// rather than a constant 0.034% under it.
+export const GRAVITY = 9.80665;
 // The column material the strain is read against. The exporter draws the
 // columns as steel tubes of one radius and states no modulus, so this is
 // an assumption and the graph says so.
@@ -96,29 +102,37 @@ export function pieceMidArea(piece) {
   return area;
 }
 
-export function meshArea(mesh) {
+// The mesh's area, less any faces in skip (a Set of face indices).
+export function meshArea(mesh, skip) {
   const v = mesh.vertices;
   let area = 0;
-  for (const face of mesh.faces) {
+  mesh.faces.forEach((face, index) => {
+    if (skip && skip.has(index)) return;
     for (let i = 2; i < face.length; i++) {
       const p = v[face[0]], q = v[face[i - 1]], r = v[face[i]];
       const ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2];
       const wx = r[0] - p[0], wy = r[1] - p[1], wz = r[2] - p[2];
       area += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) / 2;
     }
-  }
+  });
   return area;
 }
 
 // Every piece's weight and the instant it lands, in drop order. The
-// pieces' own areas are normalised to the analysis mesh's, because the
-// cut's subdivision adds a fraction of a per cent and the server's
-// per-course figure is measured on the mesh.
+// pieces' own areas are normalised to the area of the analysis mesh they
+// COVER, because the cut's subdivision adds a fraction of a per cent and
+// the server's per-course figure is measured on the mesh. The faces no
+// cell claims (the report's orphan_faces: 400 of them on a bonded-courses
+// cut of the 2 Sided Vault) are no piece's, so they are left out, or
+// every piece would be weighed as if it carried them.
 export function pieceWeights(bundle, clock, thickness, density) {
   const pieces = bundle.pieces || [];
   const areas = pieces.map(pieceMidArea);
   const sum = areas.reduce((a, b) => a + b, 0);
-  const mesh = bundle.analysis_mesh ? meshArea(bundle.analysis_mesh) : sum;
+  const report = bundle.tessellation && bundle.tessellation.report;
+  const orphans = new Set(report && Array.isArray(report.orphan_faces)
+    ? report.orphan_faces : []);
+  const mesh = bundle.analysis_mesh ? meshArea(bundle.analysis_mesh, orphans) : sum;
   const scale = sum > 0 && mesh > 0 ? mesh / sum : 1;
   return pieces.map((piece, order) => ({
     order, course: piece.course, areaM2: areas[order] * scale,
@@ -218,10 +232,23 @@ export function buildLiveSeries(input) {
       + "is not distributed to the cables or the columns; they are shown "
       + "at prestress");
   }
-  // The one factor every force wears: the prestress reached through the
-  // raise, plus the share of the placed weight while the net carries it.
-  const factorAt = (t) => prestress * raiseFactor(t, clock) + (loadScale
-    ? placedAt(t, weights).weightN * (1 - strikeFactor(t, clock)) * loadScale : 0);
+  // What the server said about the documents it served (a series of the
+  // wrong length dropped, a force list it could not align): first, so a
+  // model standing in for a discarded series is never silent about it.
+  if (formwork && Array.isArray(formwork.notes)) {
+    for (const note of formwork.notes) notes.push(String(note));
+  }
+  // The shell's built weight over the load the network was solved for:
+  // what turns a form-found member force into the cable's final thrust.
+  const shellScale = loadScale ? totalWeightN * loadScale : 1;
+  // The share of the placed weight while the net carries it, in units of
+  // the form-found member force; and the prestress reached through the
+  // raise, in the same units, as a fraction of the FINAL thrust.
+  const shareAt = (time) => (loadScale
+    ? placedAt(time, weights).weightN * (1 - strikeFactor(time, clock)) * loadScale : 0);
+  const prestressAt = (time) => prestress * shellScale * raiseFactor(time, clock);
+  const hasSeries = (key) => !!(frames && frames.length && Array.isArray(frames[0][key])
+    && frames[0][key].length);
 
   // ---- the load on the formwork ----
   const load = { kN: new Array(samples), areaM2: new Array(samples),
@@ -238,68 +265,113 @@ export function buildLiveSeries(input) {
   const stages = bundle.staging && Array.isArray(bundle.staging.stages)
     ? bundle.staging.stages : [];
   stages.forEach((stage, index) => {
-    const mine = weights.filter((p) => p.course <= index);
+    // A stage is every course below courses_placed: staging.py walks the
+    // courses PRESENT, so on a sparse cut (courses 0 and 2) the second
+    // stage is courses 0..2, not course 1.
+    const upTo = typeof stage.courses_placed === "number" ? stage.courses_placed : index + 1;
+    const mine = weights.filter((p) => p.course < upTo);
     if (!mine.length || typeof stage.formwork_carries_newtons !== "number") return;
     load.checks.push({ stage: index + 1, t: Math.max(...mine.map((p) => p.landsAt)),
       kN: stage.formwork_carries_newtons / 1000 });
   });
 
+  // One force at t for one member: the frames' own through the act; after
+  // it, the tension the frames ended on (or the dial's prestress when
+  // they carry none), plus the member's share of the placed weight.
+  // model is the member's form-found force (0 when there is none), held
+  // its frames' final value (null when the frames carry no series).
+  const forceAt = (time, model, held) => {
+    const share = shareAt(time) * model;
+    if (held !== null) return held * raiseFactor(time, clock) + share;
+    return model * prestressAt(time) + share;
+  };
+  const inAct = (time) => clock.formwork > 0 && time <= clock.formwork;
+  const dialNote = "a prestress of " + Math.round(prestress * 100) + "% of its final "
+    + "thrust (" + (loadScale ? "its force once the whole shell is placed"
+      : "its member force as exported") + "), reached through the raise";
+
   // ---- the cables ----
+  // The bundle's member forces are keyed on the contract's RAW edge list,
+  // and the served edges skip any pair the frames cannot draw, so they are
+  // picked through the served raw indices rather than zipped by position
+  // (a skipped edge would put every force one cable along).
   const memberForces = bundle.member_forces || [];
-  const edgeCount = formwork && Array.isArray(formwork.edges)
+  const servedCount = formwork && Array.isArray(formwork.edges)
     ? formwork.edges.length : memberForces.length;
-  const thrustKN = memberForces.slice(0, edgeCount).map((f) => Math.abs(f) / 1000);
-  const fromFrames = !!(frames && frames.length && Array.isArray(frames[0].forces));
-  const ranked = thrustKN.map((f, i) => [f, i]).sort((a, b) => b[0] - a[0]);
+  const edgeIndex = formwork && Array.isArray(formwork.edgeIndices)
+    ? formwork.edgeIndices
+    : memberForces.slice(0, servedCount).map((_, i) => i);
+  const thrustKN = memberForces.length
+    ? edgeIndex.map((raw) => Math.abs(memberForces[raw] || 0) / 1000) : [];
+  const fromFrames = hasSeries("forces");
+  // What the frames end on: the tension the machine's solver left in
+  // each cable, which is what it holds once the act is over.
+  const heldKN = fromFrames ? frameValuesAt(frames, "forces", 100).map(Math.abs) : null;
+  const basis = thrustKN.length ? thrustKN : (heldKN || []);
+  const ranked = basis.map((f, i) => [f, i]).sort((a, b) => b[0] - a[0]);
   const top = ranked.slice(0, CABLE_TOP).map(([, i]) => i);
-  const cables = { count: thrustKN.length, unit: "kN",
+  const cables = { count: basis.length, unit: "kN",
     source: fromFrames ? "frames" : "model", prestress,
     mean: new Array(samples), max: new Array(samples), min: new Array(samples),
-    top: top.map((edge) => ({ edge, series: new Array(samples) })),
-    thrust: stats(thrustKN), loadScale };
+    top: top.map((edge) => ({ edge,
+      name: edgeIndex[edge] !== undefined ? edgeIndex[edge] : edge,
+      series: new Array(samples) })),
+    thrust: stats(thrustKN), loadScale, shellScale };
   for (let k = 0; k < samples; k++) {
     let forces;
-    if (fromFrames && clock.formwork > 0 && t[k] <= clock.formwork) {
+    if (fromFrames && inAct(t[k])) {
       forces = frameValuesAt(frames, "forces", machineTime(t[k], clock.formwork))
-        .map((f) => Math.abs(f));
+        .map(Math.abs);
     } else {
-      const factor = factorAt(t[k]);
-      forces = thrustKN.map((f) => f * factor);
+      forces = basis.map((_, i) => forceAt(t[k], thrustKN[i] || 0,
+        heldKN ? heldKN[i] : null));
     }
     const s = stats(forces);
     cables.mean[k] = s.mean; cables.max[k] = s.max; cables.min[k] = s.min;
     cables.top.forEach((row) => { row.series[k] = forces[row.edge] || 0; });
   }
+  const cableHeld = fromFrames ? "the tension the frames end on" : dialNote;
   if (fromFrames) {
     notes.push("cable forces during the formwork act are the frames' own, "
-      + "as the machine's solver wrote them");
+      + "as the machine's solver wrote them, and after it each cable holds "
+      + "the tension they end on; the prestress dial is not used");
   }
-  notes.push("cable force is each cable's share of the placed weight (its "
-    + "form-found member force, scaled from the load the network was solved "
-    + "for to what is placed: a force density net at fixed geometry) plus a "
-    + "prestress of " + Math.round(prestress * 100) + "% of its final thrust, "
-    + "reached through the raise; elasticity not modelled");
+  if (!thrustKN.length) {
+    notes.push("the contract carries no member forces, so no cable carries a "
+      + "share of the placed weight; cable force is " + cableHeld);
+  } else if (loadScale) {
+    notes.push("cable force is each cable's share of the placed weight (its "
+      + "form-found member force, scaled from the load the network was solved "
+      + "for to what is placed: a force density net at fixed geometry) plus "
+      + cableHeld + "; elasticity not modelled");
+  } else {
+    notes.push("cable force is " + cableHeld + "; elasticity not modelled");
+  }
 
   // ---- the columns ----
-  const columnForces = Array.isArray(input.columnForcesKN) ? input.columnForcesKN : [];
+  const columnForces = Array.isArray(input.columnForcesKN)
+    ? input.columnForcesKN.map(Math.abs) : [];
   const radius = input.columnRadiusM > 0 ? input.columnRadiusM : COLUMN_RADIUS_M;
   const areaM2 = Math.PI * radius * radius;
-  const fromFramesColumns = !!(frames && frames.length && Array.isArray(frames[0].columnForces));
-  const columns = { count: columnForces.length, unit: "kN",
+  const fromFramesColumns = hasSeries("columnForces");
+  const heldColumnsKN = fromFramesColumns
+    ? frameValuesAt(frames, "columnForces", 100).map(Math.abs) : null;
+  const columnBasis = columnForces.length ? columnForces : (heldColumnsKN || []);
+  const columns = { count: columnBasis.length, unit: "kN",
     source: fromFramesColumns ? "frames" : (columnForces.length ? "model" : "none"),
     max: new Array(samples), mean: new Array(samples), min: new Array(samples),
-    members: columnForces.length <= 6
-      ? columnForces.map((_, index) => ({ index, series: new Array(samples) })) : [],
+    members: columnBasis.length <= 6
+      ? columnBasis.map((_, index) => ({ index, series: new Array(samples) })) : [],
     strain: { modulusPa: COLUMN_MODULUS_PA, areaM2, radiusM: radius,
       microstrainMax: new Array(samples) } };
   for (let k = 0; k < samples; k++) {
     let forces;
-    if (fromFramesColumns && clock.formwork > 0 && t[k] <= clock.formwork) {
+    if (fromFramesColumns && inAct(t[k])) {
       forces = frameValuesAt(frames, "columnForces", machineTime(t[k], clock.formwork))
-        .map((f) => Math.abs(f));
+        .map(Math.abs);
     } else {
-      const factor = factorAt(t[k]);
-      forces = columnForces.map((f) => Math.abs(f) * factor);
+      forces = columnBasis.map((_, i) => forceAt(t[k], columnForces[i] || 0,
+        heldColumnsKN ? heldColumnsKN[i] : null));
     }
     const s = stats(forces);
     columns.max[k] = s.max; columns.mean[k] = s.mean; columns.min[k] = s.min;
@@ -307,21 +379,28 @@ export function buildLiveSeries(input) {
     // Strain: force over E A, in microstrain.
     columns.strain.microstrainMax[k] = s.max * 1000 / (COLUMN_MODULUS_PA * areaM2) * 1e6;
   }
-  if (columnForces.length) {
-    notes.push("column force is the exporter's final figure on the cables' "
-      + "own prestress and share factor; strain is force over E A with E "
-      + (COLUMN_MODULUS_PA / 1e9).toFixed(0) + " GPa (steel, assumed) and a "
-      + "solid section of radius " + (radius * 1000).toFixed(0) + " mm");
+  const strainNote = "strain is force over E A with E "
+    + (COLUMN_MODULUS_PA / 1e9).toFixed(0) + " GPa (steel, assumed) and a "
+    + "solid section of radius " + (radius * 1000).toFixed(0) + " mm";
+  if (fromFramesColumns) {
+    notes.push("column forces during the formwork act are the frames' own, and "
+      + "after it each column holds the force they end on"
+      + (columnForces.length && loadScale
+        ? " plus the exporter's final figure's share of the placed weight" : "")
+      + "; " + strainNote);
+  } else if (columnForces.length) {
+    notes.push("column force is the exporter's final figure (at the load the "
+      + "network was solved for) on the cables' own share, plus " + dialNote
+      + "; " + strainNote);
   } else {
-    notes.push("no column forces: the contract's mould block carries none "
-      + "for this study");
+    notes.push("no column forces: neither the contract nor the columns "
+      + "document carries a final force per member for this study");
   }
 
   // ---- the supports ----
   const reactions = Object.values(bundle.reactions || {});
   const finalH = reactions.reduce((a, v) => a + Math.hypot(v[0], v[1]), 0) / 1000;
   const finalV = reactions.reduce((a, v) => a + Math.abs(v[2]), 0) / 1000;
-  const shellScale = loadScale ? totalWeightN * loadScale : 1;
   const thrust = { horizontalKN: new Array(samples), verticalKN: new Array(samples),
     finalHorizontalKN: finalH * shellScale, finalVerticalKN: finalV * shellScale };
   for (let k = 0; k < samples; k++) {
@@ -329,9 +408,13 @@ export function buildLiveSeries(input) {
     thrust.horizontalKN[k] = finalH * shellScale * handed;
     thrust.verticalKN[k] = finalV * shellScale * handed;
   }
-  notes.push("thrust is the thrust network's support reactions scaled from "
-    + "the load they were solved for to the built shell's weight, arriving "
-    + "as the strike hands the shell over");
+  notes.push(loadScale
+    ? "thrust is the thrust network's support reactions scaled from the load "
+      + "they were solved for to the built shell's weight, arriving as the "
+      + "strike hands the shell over"
+    : "thrust is the thrust network's support reactions as exported (the "
+      + "contract carries no nodal loads to scale them by), arriving as the "
+      + "strike hands the shell over");
 
   return { t, acts: acts(clock), load, cables, columns, thrust, notes,
     weightsKN: weights.map((p) => p.weightN / 1000) };
@@ -408,7 +491,7 @@ export function liveSpecs(series, theme) {
     edge(t, series.cables.max, "most", "tonexty", theme.aFill),
   ];
   for (const row of series.cables.top) {
-    cableTraces.push(line(t, row.series, theme.a, 0.8, "cable " + row.edge));
+    cableTraces.push(line(t, row.series, theme.a, 0.8, "cable " + row.name));
   }
   cableTraces.push(line(t, series.cables.mean, theme.ink, 1.4, "mean"));
   specs.push({ id: "live-cables", name: "Cable force", unit: "kN",
@@ -457,7 +540,7 @@ export function liveSpecs(series, theme) {
 export function seriesToCsv(series, study) {
   const head = ["t_s", "load_kN", "placed_area_m2", "cable_mean_kN", "cable_max_kN",
     "cable_min_kN"];
-  for (const row of series.cables.top) head.push("cable_" + row.edge + "_kN");
+  for (const row of series.cables.top) head.push("cable_" + row.name + "_kN");
   head.push("column_max_kN", "column_mean_kN", "column_strain_max_microstrain");
   for (const row of series.columns.members) head.push("column_" + (row.index + 1) + "_kN");
   head.push("thrust_horizontal_kN", "thrust_vertical_kN");
