@@ -4837,8 +4837,16 @@ def test_a_still_is_tiled_through_its_own_endpoint_and_covers_the_viewport():
     assert 'canvas.toBlob(resolve, "image/png")' in still, (
         "PNG, and off the canvas: a plate is printed, and the composer "
         "target is half float so reading it into bytes returns black")
-    assert "readRenderTargetPixels" not in js, (
+    assert "readRenderTargetPixels" not in still, (
         "measured: 2048 by 1316 of pure black, every channel (0, 0)")
+    # The page's one read of a render target is the atmosphere's horizon
+    # strip (T6, 2026-09-11), and it reads its half floats AS half floats,
+    # into a Uint16Array decoded by fromHalfFloat, never into bytes.
+    assert js.count("readRenderTargetPixels") == 1
+    horizon = _js_function(js, "function readSkyHorizon(holder)")
+    assert "readRenderTargetPixels" in horizon
+    assert "new Uint16Array(HORIZON_STRIP.width * HORIZON_STRIP.height * 4)" in horizon
+    assert "THREE.DataUtils.fromHalfFloat(" in horizon
     assert 'document.body.classList.add("stilling");' in still
     assert 'document.body.classList.remove("stilling");' in still
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(

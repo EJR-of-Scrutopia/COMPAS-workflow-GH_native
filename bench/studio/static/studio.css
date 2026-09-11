@@ -1366,3 +1366,7 @@ body.recording #scale-bar { display: none; }
 #shelf-sky-modes .segmented { margin: 0; }
 #shelf-sky-modes .picker { width: auto; margin: 0; }
 #shelf-sky-modes #weather-tiles { flex: 1 0 100%; }
+/* The atmosphere's tiles are skies too: one row of five, two to one. */
+#shelf-sky-modes #atmosphere-tiles { flex: 1 0 100%; }
+#shelf-body #atmosphere-tiles .tile canvas { aspect-ratio: 2 / 1; }
+#shelf-body #atmosphere-tiles { grid-template-columns: repeat(5, 1fr); }

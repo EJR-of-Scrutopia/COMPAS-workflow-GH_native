@@ -1679,3 +1679,15 @@ def test_the_live_graphs_module_is_remapped_to_its_versioned_address(
     assert re.search(
         r'"/static/live_graphs\.js": "/static/live_graphs\.js\?v=[0-9a-f]{6,}"',
         page), "live_graphs.js must be remapped to its versioned address"
+
+
+def test_the_atmosphere_module_is_remapped_to_its_versioned_address(
+        tmp_path, monkeypatch):
+    """The atmosphere's fog chunks live in their own module; a stale copy
+    would put an old fog on a new page, so it is versioned like the rest."""
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    page = client.get("/").text
+    assert re.search(
+        r'"/static/atmosphere\.js": "/static/atmosphere\.js\?v=[0-9a-f]{6,}"',
+        page), "atmosphere.js must be remapped to its versioned address"

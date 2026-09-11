@@ -68,14 +68,26 @@
         <option value="sky">Sky</option>
         <option value="hdri">HDRI</option>
       </select></label>
-      <button id="weather-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
+      <button id="weather-picker" class="picker" type="button" aria-controls="weather-tiles"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
+      <!-- The atmosphere: a height fog in every setting, off until a
+           preset is chosen. Its own picker beside the weather's, because
+           the air and the sky are separate choices. -->
+      <button id="atmosphere-picker" class="picker" type="button" aria-controls="atmosphere-tiles" title="The air between the eye and the distance: a height fog that thickens toward the ground and glows toward the sun, off until a preset is chosen"><span class="chosen-swatch"></span><span class="chosen-name">Atmosphere</span><span class="chevron"></span></button>
       <div id="weather-tiles" class="tile-grid hidden"></div>
+      <div id="atmosphere-tiles" class="tile-grid hidden"></div>
       <label id="weather-row" class="hidden">Weather <select id="weather-preset">
         <option value="clear" selected>Clear</option>
         <option value="hazy">Hazy</option>
         <option value="overcast">Overcast</option>
         <option value="golden-hour">Golden hour</option>
         <option value="night">Night</option>
+      </select></label>
+      <label id="atmosphere-row" class="hidden">Atmosphere <select id="atmosphere-preset">
+        <option value="none" selected>None</option>
+        <option value="clear-air">Clear air</option>
+        <option value="morning-mist">Morning mist</option>
+        <option value="haze">Haze</option>
+        <option value="valley-fog">Valley fog</option>
       </select></label>
     </div>
     <!-- Brought to the dial language on 2026-09-09: name, dial, reading,
@@ -100,6 +112,34 @@
       <label title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
         <input id="hdri-rotation" type="range" data-unit="1" min="0" max="360" step="1" value="0">
         <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
+      <!-- The atmosphere's dials, shown only while a preset is chosen. -->
+      <label class="atmosphere-dial hidden" title="How thick the fog is at its base: the share of each kilometre of view it takes"><span>Density</span>
+        <input id="atmosphere-density" type="range" min="0" max="50" step="0.1" value="1.5">
+        <b id="atmosphere-density-value">1.5</b><em>/km</em></label>
+      <label class="atmosphere-dial hidden" title="How high the fog reaches: every this many metres up it thins to about a third, so a crown can stand clear of a fogged floor"><span>Fog height</span>
+        <input id="atmosphere-height" type="range" min="0.5" max="200" step="0.5" value="60">
+        <b id="atmosphere-height-value">60.0</b><em>m</em></label>
+      <label class="atmosphere-dial hidden" title="Where the fog lies, in metres above the floor: it is densest here and thins upward"><span>Base</span>
+        <input id="atmosphere-base" type="range" data-unit="1" min="-5" max="50" step="0.5" value="0">
+        <b id="atmosphere-base-value">0.0</b><em>m</em></label>
+      <label class="atmosphere-dial hidden" title="How far from the eye the fog begins, so what stands close stays crisp"><span>Start</span>
+        <input id="atmosphere-start" type="range" min="0" max="100" step="1" value="30">
+        <b id="atmosphere-start-value">30</b><em>m</em></label>
+      <label class="atmosphere-dial hidden" title="The most the fog may ever hide, so the far distance never vanishes entirely"><span>Max opacity</span>
+        <input id="atmosphere-opacity" type="range" min="0" max="100" step="1" value="50">
+        <b id="atmosphere-opacity-value">50</b><em>%</em></label>
+      <label class="atmosphere-dial hidden" title="How much of the sun&#39;s light the fog throws toward the eye when you look toward the sun; the moon&#39;s at night"><span>Sun glow</span>
+        <input id="atmosphere-glow" type="range" min="0" max="200" step="5" value="40">
+        <b id="atmosphere-glow-value">40</b><em>%</em></label>
+      <label class="atmosphere-dial hidden" title="How tight the glow around the sun is: low spreads it across the sky, high keeps it close about the sun"><span>Sun lobe</span>
+        <input id="atmosphere-lobe" type="range" min="1" max="64" step="1" value="8">
+        <b id="atmosphere-lobe-value">8</b><em>x</em></label>
+      <label class="atmosphere-dial hidden" title="A second layer, of mist lying on the ground, at its base"><span>Ground mist</span>
+        <input id="atmosphere-mist" type="range" data-unit="1" min="0" max="100" step="0.5" value="0">
+        <b id="atmosphere-mist-value">0.0</b><em>/km</em></label>
+      <label class="atmosphere-dial hidden" title="How high the ground mist reaches: every this many metres up it thins to about a third"><span>Mist height</span>
+        <input id="atmosphere-mist-height" type="range" min="0.2" max="20" step="0.1" value="2">
+        <b id="atmosphere-mist-height-value">2.0</b><em>m</em></label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
     <!-- The scatter drawer. Param: "we should have a scatter tile next to

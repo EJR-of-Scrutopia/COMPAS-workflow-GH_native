@@ -193,7 +193,9 @@ shown dead. The Skies drawer shows the weather picker only in Sky mode,
 and Projection, Scale and Height only in HDRI mode, with Scale and
 Height only for the grounded dome. Brightness and Rotation act in every
 mode and always show. The HDRI tiles stay in every mode, because
-choosing one switches to HDRI.
+choosing one switches to HDRI. The atmosphere picker shows in every
+mode, because the fog works in all three, and its nine dials show only
+while a preset other than None is chosen.
 
 The readout line is a full sentence in the second ink, and it says the
 state, not an instruction, once there is state to report: "18 placed,
@@ -395,6 +397,35 @@ preset's angle but a time on the site's own clock (dusk plus ninety
 minutes), so the day track, the day cycle and every environment mode
 agree about what hour it is; below the horizon the sun goes out and the
 moon takes the shadow.
+
+**The atmosphere is a height fog, and it is off until chosen.** Param
+asked for "a fog but super detailed nice fog we might find in the likes
+of unreal engine". The Skies drawer's Atmosphere picker (`atmosphere-
+picker`, tiles in `#atmosphere-tiles`, beside the weather) offers None,
+Clear air, Morning mist, Haze and Valley fog, in every environment mode,
+and None is the default, so no scene changes until he picks one; a
+scene saved before it existed loads as None. It is Unreal's exponential
+height fog, worked in closed form on every fogged fragment
+(`atmosphere.js`, which replaces three's four fog chunks before anything
+renders): two layers, a main one and a ground mist, each thinning
+upward from a base above the floor, so a crown stands clearer than the
+floor it rises from; a start distance, so what stands close stays
+crisp; a cap on how much it may ever hide; and a glow toward the sun,
+the moon's by night, with its own start. The dials are Density and
+Ground mist in /km, Fog height, Mist height, Base and Start in metres,
+Max opacity and Sun glow in per cent, and Sun lobe as an exponent. The
+fog fades toward the scene's own horizon: the Sky's, measured from the
+sky itself; a photograph's, averaged from its horizon band as the
+backdrop shows it; the studio wall's. The Sky takes the same fog at a
+fixed distance, so a fogged floor meets a fogged sky without a seam.
+The Brightness dial and the night reach it as they reach the rest of
+the day, with a faint blue floor so a moonlit fog still reads as air.
+Plans and elevations (orthographic) stay clean. With the atmosphere at
+None, Sky mode keeps the weather's own linear haze exactly as before;
+once chosen, the atmosphere owns the fog. Anything drawn over
+everything (the gumball, the outlines, the analysis arrows) is never
+veiled. Each tile is drawn by the same integral, per pixel, so it shows
+what the preset does.
 
 **Detail is the viewport's, never the plate's.** The Props block's
 Detail segments (Draft, Balanced, Full; `prop-detail`) decide how soon a

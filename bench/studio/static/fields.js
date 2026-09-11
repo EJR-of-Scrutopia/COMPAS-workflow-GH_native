@@ -479,6 +479,40 @@ export function estimateSunFromEquirect(data, width, height, stride = 4) {
   };
 }
 
+// The colour of a photograph's horizon: the mean of the band of sky just
+// above it, all the way round. The atmosphere's fog fades toward this in
+// HDRI mode, so a fogged floor dissolves into the photograph's own air
+// rather than into a grey somebody picked.
+//
+// exposure, when given, puts each pixel through the same Reinhard map the
+// server bakes the backdrop with (hdri_preview._tone: v * e / (1 + v * e)),
+// so the answer is the linear colour the eye is actually shown; that also
+// keeps a sun in the band from outvoting the sky around it. Without it the
+// raw radiance is averaged. null when the band holds no pixel.
+export function equirectHorizonColour(data, width, height, stride = 4, options = {}) {
+  const fromDeg = options.fromDeg ?? 0;
+  const toDeg = options.toDeg ?? 8;
+  const exposure = options.exposure ?? null;
+  const step = Math.max(1, Math.floor(width / 512));
+  const sum = [0, 0, 0];
+  let count = 0;
+  for (let y = 0; y < height; y++) {
+    // Row y covers elevation 90 - 180 (y + 0.5) / height at its centre.
+    const elevation = 90 - ((y + 0.5) / height) * 180;
+    if (elevation < fromDeg || elevation > toDeg) continue;
+    for (let x = 0; x < width; x += step) {
+      const i = (y * width + x) * stride;
+      for (let c = 0; c < 3; c++) {
+        const value = Math.max(0, data[i + c]);
+        sum[c] += exposure === null ? value : (value * exposure) / (1 + value * exposure);
+      }
+      count += 1;
+    }
+  }
+  if (!count) return null;
+  return sum.map((total) => total / count);
+}
+
 // The formwork build playback's whole algorithm. The frames come from the
 // exporter's bench.frames/1 document (FRAMES-WRITER-SPEC-2026-09-03.md):
 // the writer samples the engine's own motion, so the reader NEVER

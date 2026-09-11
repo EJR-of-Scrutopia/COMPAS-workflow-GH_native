@@ -46,7 +46,7 @@ def test_every_asset_the_page_loads_carries_a_version(client):
     # And the modules studio.js imports, which are each their own cache
     # entry. A stale panel.js is the exact fault that was reported: native
     # sliders where scrub rows should be.
-    for module in ("panel.js", "pbr.js", "fields.js"):
+    for module in ("panel.js", "pbr.js", "fields.js", "atmosphere.js"):
         assert '"/static/{0}": "/static/{0}?v={1}"'.format(module, version) in page, (
             module + " must be remapped to its versioned address"
         )

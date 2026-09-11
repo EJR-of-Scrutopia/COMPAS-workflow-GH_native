@@ -2504,7 +2504,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         # pointed at their versioned addresses here and studio.js goes on
         # importing them by the plain path it always did.
         for module in ("panel.js", "pbr.js", "fields.js",
-                       "data_analysis.js", "live_graphs.js"):
+                       "data_analysis.js", "live_graphs.js", "atmosphere.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

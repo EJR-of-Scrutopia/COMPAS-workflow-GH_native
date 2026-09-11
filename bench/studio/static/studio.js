@@ -29,6 +29,12 @@ import {
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
   fixtureFaces,
 } from "/static/fields.js";
+import { equirectHorizonColour } from "/static/fields.js";
+import {
+  ATMOSPHERE_PRESETS, ATMOSPHERE_SKY_GLSL, ATMOSPHERE_LINEAR_OFF,
+  atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
+  atmospherePreviewPixels, createAtmosphere, installAtmosphere, writeAtmosphere,
+} from "/static/atmosphere.js";
 import {
   loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
   repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX, GROUND_BASE,
@@ -163,6 +169,9 @@ const state = {
   section: { mode: "off", axis: "y", offset: 0, cutMachine: false },
   cameraView: null,      // the snapped view last taken, for the highlight
   weatherPreset: "clear",    // E2: a key of WEATHER
+  // The atmosphere (atmosphere.js): a preset key and its dials. None until
+  // he picks one, in every environment mode, so nothing changes unasked.
+  atmosphere: atmosphereFromPreset("none"),
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
   // The floor texture's own dials: per-axis scale multipliers over the
@@ -336,6 +345,29 @@ renderer.localClippingEnabled = true;
 // presets whose numbers would then mean nothing to anybody reading them.
 const EXPOSURE_GAIN = 1 / 0.6;
 
+// The atmosphere's fog chunks and shared uniforms (atmosphere.js), put in
+// place before the first program is built with fog: a program compiled
+// under three's own chunks is cached under the same key and never picks
+// these up. Nothing is fogged at boot, so this line is early enough; it
+// sits up here so nothing that renders ever can come before it.
+const atmosphere = createAtmosphere(THREE);
+if (!installAtmosphere(THREE, atmosphere.inject)) {
+  reportProblem("the vendored fog chunks no longer have the shape the "
+    + "atmosphere replaces; the height fog may be wrong until atmosphere.js "
+    + "is checked against three 0.185.0's fog_fragment and fog_vertex");
+}
+// How much of the sun's light a Sun glow of 100% puts in the lobe, tuned
+// by eye against the Sky's horizon so a golden hour glows without a noon
+// blowing out.
+const ATMOSPHERE_SUN_GAIN = 0.22;
+// What is left of a moonlit fog at the bottom of the night, as a share of
+// the moon's colour: faint, and blue, so a night fog still reads as air.
+const ATMOSPHERE_NIGHT_FLOOR = 0.035;
+// The Reinhard exposure the server bakes an HDRI backdrop with
+// (hdri_preview.preview_rows: _tone(value, 3.2)), so the horizon colour
+// the fog fades to is the one the backdrop actually shows.
+const BACKDROP_REINHARD_EXPOSURE = 3.2;
+
 const scene = new THREE.Scene();
 // TWO CAMERAS, ONE BINDING. `camera` is a let, not a const, and every one
 // of the hundred-odd places that reads it picks up whichever projection
@@ -446,13 +478,72 @@ function applySkyBrightness() {
     scene.background.copy(lightBase.backdrop).multiplyScalar(dial * (0.08 + 0.92 * night));
   }
   if (lightBase.fog && scene.fog) {
-    scene.fog.color.copy(lightBase.fog).multiplyScalar(dial * (0.06 + 0.94 * night));
+    // The fog follows the backdrop it fades into: the sky's night in Sky
+    // mode (as it always has), the studio wall's in Studio, and none in
+    // HDRI, where the photograph keeps its own daylight.
+    const fogNight = state.environmentMode === "hdri" ? 1
+      : state.environmentMode === "studio" ? 0.08 + 0.92 * night : 0.06 + 0.94 * night;
+    scene.fog.color.copy(lightBase.fog).multiplyScalar(dial * fogNight);
   }
+  paintAtmosphereLight(dial, night);
   // A photograph's dome is a lit mesh, not a background: dimmed by its
   // own colour, which multiplies the map.
   if (hdriDome) hdriDome.children[0].material.color.setScalar(dial);
   stars.material.opacity = (1 - night) * Math.min(1, dial);
   stars.visible = state.environmentMode === "sky" && stars.material.opacity > 0.01;
+}
+// The atmosphere's light, written wherever the day's light is (the end of
+// the daylight chain above, so the clock, the day cycle and the dial all
+// reach it): the sun's glow in the fog is the sun's own colour and power,
+// the moon's by night, from where it stands; and a moonlit fog keeps a
+// faint blue floor rather than going to black. The Sky's copy of the fog
+// colour follows the scene's, so the two meet at the horizon.
+function paintAtmosphereLight(dial, night) {
+  const uniforms = atmosphere.uniforms;
+  const on = atmosphereIsOn(state.atmosphere);
+  if (on && scene.fog && state.environmentMode !== "hdri") {
+    scene.fog.color.add(new THREE.Color(MOON_COLOUR)
+      .multiplyScalar(ATMOSPHERE_NIGHT_FLOOR * dial * (1 - night)));
+  }
+  if (scene.fog) uniforms.atmoSkyColour.value.copy(scene.fog.color);
+  uniforms.atmoSunColour.value.copy(sun.color).multiplyScalar(on
+    ? sun.intensity * (state.atmosphere.sunGlow / 100) * ATMOSPHERE_SUN_GAIN : 0);
+  uniforms.atmoSunDir.value.copy(sun.position).normalize();
+}
+
+// The floor the fog lies on moves with the study (groundLevel reads the
+// bundle), so its base is settled every frame; one subtraction.
+function settleAtmosphereFloor() {
+  atmosphere.uniforms.atmoBase.value =
+    (state.bundle ? groundLevel() : 0) + state.atmosphere.base;
+}
+
+// The one fog object, made the first time any fog is wanted and kept for
+// the life of the page (applyEnvironment). A new Fog per call made every
+// fogged material ask for its program again (three compares the fog by
+// identity), and flipping fog on and off recompiles them all.
+let atmosphereFog = null;
+// The horizon colours the atmosphere fades to, per mode: the Sky's, read
+// back from the sky itself at each regeneration, and a photograph's,
+// averaged from its horizon band on load. null until known.
+let skyHorizon = null;
+let hdriHorizon = null;
+
+// The atmosphere's densities and the old linear fog's range. The linear
+// term is the weather's own haze, and stays exactly as it was in Sky mode
+// while the atmosphere is None; once the atmosphere is chosen it owns the
+// fog and the linear term is pushed out of sight. A plan or an elevation
+// (orthographic) is a drawing, and stays clean.
+function applyAtmosphere() {
+  const on = atmosphereIsOn(state.atmosphere);
+  if (atmosphereFog) {
+    const linear = state.environmentMode === "sky" && !on;
+    const preset = WEATHER[state.weatherPreset];
+    atmosphereFog.near = linear ? preset.fogNear : ATMOSPHERE_LINEAR_OFF;
+    atmosphereFog.far = linear ? preset.fogFar : 2 * ATMOSPHERE_LINEAR_OFF;
+  }
+  writeAtmosphere(atmosphere.uniforms, on && !camera.isOrthographicCamera
+    ? atmosphereLayers(state.atmosphere, state.bundle ? groundLevel() : 0) : null);
 }
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
@@ -558,6 +649,7 @@ function renderView() {
   // prop would be quadratic. Marking it dirty and settling it once a
   // frame costs one traverse whatever happens.
   if (shadowFitPending) fitSunShadow();
+  settleAtmosphereFloor();
   composer.render();
 }
 
@@ -636,10 +728,23 @@ sky.material.uniforms.cloudCoverage.value = 0; // the cloud block is hardcoded Y
     .replace("uniform vec3 up;", "uniform vec3 up;\n\t\tuniform float daylight;")
     .replace("gl_FragColor = vec4( texColor, 1.0 );",
       "gl_FragColor = vec4( texColor * daylight, 1.0 );");
+  // The atmosphere over the sky, chained after the daylight line: the
+  // same height-fog integral the ground takes, at the sky's distance, so a
+  // fogged floor meets a fogged sky at the horizon with no seam. Declared
+  // through the daylight uniform's own line.
+  shader.fragmentShader = shader.fragmentShader
+    .replace("uniform float daylight;", "uniform float daylight;\n" + ATMOSPHERE_SKY_GLSL)
+    .replace("gl_FragColor = vec4( texColor * daylight, 1.0 );",
+      "gl_FragColor = vec4( atmosphereSky( texColor * daylight, direction ), 1.0 );");
   if (shader.fragmentShader === before) {
     reportProblem("the vendored Sky shader no longer has the line the daylight patch expects");
   }
+  if (!shader.fragmentShader.includes("atmosphereSky( texColor * daylight, direction )")) {
+    reportProblem("the vendored Sky shader no longer takes the atmosphere patch, "
+      + "so a fogged floor will meet an unfogged sky at the horizon");
+  }
   shader.uniforms.daylight = skyDaylight;
+  Object.assign(shader.uniforms, atmosphere.uniforms);
   shader.needsUpdate = true;
 }
 scene.add(sky);
@@ -824,6 +929,17 @@ function applyEnvironment() {
   }
   document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
   if (state.environmentMode !== "hdri") disposeHdriDome();
+  // ONE fog object, made the first time fog is wanted and kept: Sky mode
+  // always has fog (the weather's haze), and the atmosphere brings it to
+  // Studio and HDRI too. Only those two, with the atmosphere at None, have
+  // none. Assigned before the branches below, whose dial pass paints it.
+  if (state.environmentMode === "sky" || atmosphereIsOn(state.atmosphere)) {
+    atmosphereFog = atmosphereFog || new THREE.Fog(0xffffff, ATMOSPHERE_LINEAR_OFF, 2 * ATMOSPHERE_LINEAR_OFF);
+    scene.fog = atmosphereFog;
+  } else {
+    scene.fog = null;
+  }
+  applyAtmosphere();
   if (state.environmentMode === "sky") {
     const preset = WEATHER[state.weatherPreset];
     const uniforms = sky.material.uniforms;
@@ -833,8 +949,10 @@ function applyEnvironment() {
     uniforms.mieDirectionalG.value = preset.mieDirectionalG;
     sky.visible = true;
     scene.background = null;
-    scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
-    lightBase.fog = new THREE.Color(preset.fogColor);
+    // The weather's own fog colour while the atmosphere is None, exactly
+    // as before it existed; the sky's measured horizon once it is chosen.
+    lightBase.fog = atmosphereIsOn(state.atmosphere) && skyHorizon
+      ? skyHorizon.clone() : new THREE.Color(preset.fogColor);
     lightBase.backdrop = null;
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
@@ -855,8 +973,8 @@ function applyEnvironment() {
     setEnvironmentIntensity(0.6);
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
-    scene.fog = null;
-    lightBase.fog = null;
+    // The photograph's own horizon, or a pale grey until one has loaded.
+    lightBase.fog = hdriHorizon ? hdriHorizon.clone() : new THREE.Color(0xa7adb3);
     lightBase.backdrop = null;
     applyHdriBackdrop();
     lightBase.hemi = 0.25;
@@ -864,11 +982,11 @@ function applyEnvironment() {
     setEnvironmentIntensity(1.0);
   } else {
     sky.visible = false;
-    scene.fog = null;
-    lightBase.fog = null;
     const tone = +document.getElementById("background-tone").value / 100;
     scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
     lightBase.backdrop = scene.background.clone();
+    // The studio's fog fades into the studio's wall.
+    lightBase.fog = lightBase.backdrop.clone();
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
     if (state.sunIntensityOverride === null) lightBase.sun = 3.0;
@@ -902,10 +1020,22 @@ function regenerateEnvironment() {
     // environment through environmentIntensity, and a sky captured
     // already dimmed would be dimmed twice. A night sky lights a night.
     const shown = skyDaylight.value;
+    // First the horizon the atmosphere fades to, read off the bare sky:
+    // no dial and no night (the daylight chain applies both to the fog),
+    // and no fog over it, since this is the colour the fog is made of.
+    skyDaylight.value = 1;
+    const measured = readSkyHorizon(holder);
+    if (measured) skyHorizon = measured;
+    if (skyHorizon && atmosphereIsOn(state.atmosphere)) lightBase.fog = skyHorizon.clone();
     skyDaylight.value = 0.03 + 0.97 * daylightNow();
+    // The capture sees the atmosphere over the sky as the eye does, but
+    // like the sky itself without the dial.
+    const keptAtmosphere = holdAtmosphereForCapture();
     const target = pmrem.fromScene(holder, 0.04);
+    keptAtmosphere();
     skyDaylight.value = shown;
     scene.add(sky);
+    applySkyBrightness();
     setEnvironmentTexture(target.texture, target);
   } else if (state.environmentMode === "hdri" && state.hdriTexture) {
     const target = pmrem.fromEquirectangular(state.hdriTexture);
@@ -913,6 +1043,92 @@ function regenerateEnvironment() {
   } else {
     setEnvironmentTexture(studioEnvironment, null);
   }
+}
+
+// The Sky's horizon, measured: the sky mesh rendered four times into a
+// strip a few pixels tall, looking out just above the horizon to the four
+// quarters, and averaged. The strip is half float and linear (a render
+// target is never tone mapped), which is the fog's own space. A pixel is
+// held to a luminance of 4 first, so a sun sitting on the horizon tints
+// the answer rather than taking it over. The atmosphere is off while it
+// looks, since the fog must not be made from itself.
+const HORIZON_STRIP = { width: 32, height: 4 };
+// The brightest the Sky's fog colour may be, as linear luminance (see the
+// end of readSkyHorizon): about a sunlit pale wall's, tuned by eye.
+const SKY_FOG_CEILING = 0.75;
+let horizonTarget = null;
+let horizonCamera = null;
+
+function readSkyHorizon(holder) {
+  try {
+    if (!horizonTarget) {
+      horizonTarget = new THREE.WebGLRenderTarget(HORIZON_STRIP.width, HORIZON_STRIP.height,
+        { type: THREE.HalfFloatType });
+      horizonCamera = new THREE.PerspectiveCamera(12, HORIZON_STRIP.width / HORIZON_STRIP.height, 0.1, 1000);
+      horizonCamera.up.set(0, 0, 1);
+    }
+    const density = atmosphere.uniforms.atmoDensity.value.clone();
+    atmosphere.uniforms.atmoDensity.value.set(0, 0);
+    const kept = renderer.getRenderTarget();
+    const pixels = new Uint16Array(HORIZON_STRIP.width * HORIZON_STRIP.height * 4);
+    const sum = [0, 0, 0];
+    let count = 0;
+    horizonCamera.position.set(0, 0, 2);
+    for (let quarter = 0; quarter < 4; quarter++) {
+      const angle = quarter * Math.PI / 2;
+      // Four degrees up: the band the sky's own horizon glow lives in.
+      horizonCamera.lookAt(Math.cos(angle), Math.sin(angle), 2 + Math.tan(4 * Math.PI / 180));
+      renderer.setRenderTarget(horizonTarget);
+      renderer.render(holder, horizonCamera);
+      renderer.readRenderTargetPixels(horizonTarget, 0, 0,
+        HORIZON_STRIP.width, HORIZON_STRIP.height, pixels);
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = THREE.DataUtils.fromHalfFloat(pixels[i]);
+        const g = THREE.DataUtils.fromHalfFloat(pixels[i + 1]);
+        const b = THREE.DataUtils.fromHalfFloat(pixels[i + 2]);
+        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const scale = luminance > 4 ? 4 / luminance : 1;
+        sum[0] += r * scale; sum[1] += g * scale; sum[2] += b * scale;
+        count += 1;
+      }
+    }
+    renderer.setRenderTarget(kept);
+    atmosphere.uniforms.atmoDensity.value.copy(density);
+    // Nothing read (a device that cannot read a half-float strip answers
+    // zeros, not an error) is not a black horizon.
+    if (!count || !sum.every(Number.isFinite) || !(sum[0] + sum[1] + sum[2] > 0)) return null;
+    const horizon = new THREE.Color(sum[0] / count, sum[1] / count, sum[2] / count);
+    // The Sky's radiance and the lit scene's are only loosely commensurate
+    // (the sky model's own 0.04 scale against a 3.25 sun): measured, the
+    // horizon came back two to three times brighter than a sunlit wall, and
+    // a tenth of a veil of it washed the whole vault out. Held to a ceiling
+    // with its hue kept; the sky is fogged toward the same colour, so the
+    // horizon still meets the ground without a seam.
+    const luminance = 0.2126 * horizon.r + 0.7152 * horizon.g + 0.0722 * horizon.b;
+    if (luminance > SKY_FOG_CEILING) horizon.multiplyScalar(SKY_FOG_CEILING / luminance);
+    return horizon;
+  } catch (error) {
+    reportProblem("the sky's horizon colour could not be measured (" + error.message
+      + "); the atmosphere keeps the weather's own fog colour", error);
+    return null;
+  }
+}
+
+// During the environment capture the atmosphere over the sky wears its
+// colours without the dial, exactly as skyDaylight does, or a dimmed day
+// would light the scene dimmed twice. Answers the function that puts the
+// eye's colours back.
+function holdAtmosphereForCapture() {
+  const uniforms = atmosphere.uniforms;
+  const sky_ = uniforms.atmoSkyColour.value.clone();
+  const sun_ = uniforms.atmoSunColour.value.clone();
+  const dial = Math.max(1e-3, state.skyBrightness);
+  uniforms.atmoSkyColour.value.multiplyScalar(1 / dial);
+  uniforms.atmoSunColour.value.multiplyScalar(1 / dial);
+  return () => {
+    uniforms.atmoSkyColour.value.copy(sky_);
+    uniforms.atmoSunColour.value.copy(sun_);
+  };
 }
 
 function disposeHdriDome() {
@@ -1106,6 +1322,11 @@ async function loadHdri(name) {
     localStorage.setItem("bench-studio-hdri", name);
     const image = texture.image;
     const estimate = estimateSunFromEquirect(image.data, image.width, image.height);
+    // The atmosphere fades toward this photograph's own horizon, measured
+    // the way the backdrop shows it (applyEnvironment, below, adopts it).
+    const horizon = equirectHorizonColour(image.data, image.width, image.height, 4,
+      { exposure: BACKDROP_REINHARD_EXPOSURE });
+    hdriHorizon = horizon ? new THREE.Color(horizon[0], horizon[1], horizon[2]) : null;
     // The estimator speaks image space. Three's equirect shader samples
     // u = atan2(dir.z, dir.x) / (2 * pi) + 0.5, and the backgroundRotation
     // quarter-turn is uploaded transposed, so world azimuth = 180 - image
@@ -2927,6 +3148,7 @@ function setPropOutline(record) {
   if (!record) return;
   propOutline = new THREE.BoxHelper(record.object, 0x93a6bb);
   propOutline.material.depthTest = false;
+  propOutline.material.fog = false;  // drawn over everything, so never veiled
   propOutline.renderOrder = 2;
   // The outline must never CATCH the pointer: it lives in propsGroup, and
   // a line raycast has a one-metre default threshold, so the box around
@@ -3021,7 +3243,7 @@ function setPropGumball(record) {
   const cube = radius * 0.075;
 
   const paint = (colour) => new THREE.MeshBasicMaterial({
-    color: colour, transparent: true, opacity: 0.92, depthTest: false });
+    color: colour, transparent: true, opacity: 0.92, depthTest: false, fog: false });
   const hidden = () => new THREE.MeshBasicMaterial({ visible: false });
   // The LOOK is slim; the GRAB is generous. A one-centimetre tube needs
   // pixel aim, so every visible handle hides a fat invisible twin that
@@ -3088,7 +3310,7 @@ function setPropGumball(record) {
   const origin = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 0.05, 12, 10),
     new THREE.MeshBasicMaterial({ color: 0xf4f4f4, transparent: true,
-      opacity: 0.95, depthTest: false }));
+      opacity: 0.95, depthTest: false, fog: false }));
   origin.renderOrder = 3;
   propGumball.add(origin);
 
@@ -3928,6 +4150,7 @@ function collectScene(options) {
     showMode: state.showMode,
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
+    atmosphere: { ...state.atmosphere },
     backgroundTone: +control("background-tone").value,
     brightness: state.brightness,
     contrast: state.contrast,
@@ -4119,6 +4342,11 @@ async function applyScene(record) {
   if (scene_.weatherPreset) state.weatherPreset = scene_.weatherPreset;
   control("environment-mode").value = state.environmentMode;
   control("weather-preset").value = state.weatherPreset;
+  // A scene saved before the atmosphere existed carries none, and comes
+  // back as None rather than inheriting whatever fog was showing.
+  state.atmosphere = adoptAtmosphere(scene_.atmosphere);
+  control("atmosphere-preset").value = state.atmosphere.preset;
+  syncAtmosphereControls();
   if (typeof scene_.backgroundTone === "number") {
     control("background-tone").value = scene_.backgroundTone;
   }
@@ -5444,10 +5672,23 @@ function wireAllPickers() {
     ["skin-picker", "skin-tiles", "render-skin", () => openShelf("materials")],
     ["ground-picker", "ground-tiles", "ground-preset", () => openShelf("materials")],
     ["weather-picker", "weather-tiles", "weather-preset"],
+    ["atmosphere-picker", "atmosphere-tiles", "atmosphere-preset"],
     ["hdri-picker", "hdri-tiles", "hdri-select", () => openShelf("skies")],
   ]) {
     wirePicker(trigger, holder, select,
       (swatch, value) => borrowTileImage(swatch, holder, value), openInstead);
+  }
+  // The weather and the atmosphere share the drawer's row: opening one
+  // puts the other away, so the drawer never carries both grids at once.
+  for (const [trigger, holder, other] of [
+    ["weather-picker", "weather-tiles", "atmosphere-tiles"],
+    ["atmosphere-picker", "atmosphere-tiles", "weather-tiles"],
+  ]) {
+    document.getElementById(trigger).addEventListener("click", () => {
+      if (!document.getElementById(holder).classList.contains("hidden")) {
+        closePicker(document.getElementById(other));
+      }
+    });
   }
 }
 
@@ -5576,6 +5817,9 @@ function setProjection(kind) {
   controls.object = camera;
   controls.update();
   state.projection = kind;
+  // A plan or an elevation is a drawing: the atmosphere clears from it,
+  // and comes back with the perspective.
+  applyAtmosphere();
   applyCameraFrustum(viewportAspect());
   clampCameraAboveFloor();
   paintProjectionControls();
@@ -6101,11 +6345,13 @@ function repaintSettingControls() {
     ["skin-picker", "skin-tiles", "render-skin"],
     ["ground-picker", "ground-tiles", "ground-preset"],
     ["weather-picker", "weather-tiles", "weather-preset"],
+    ["atmosphere-picker", "atmosphere-tiles", "atmosphere-preset"],
     ["hdri-picker", "hdri-tiles", "hdri-select"],
   ]) {
     paintPicker(trigger, select,
       (swatch, value) => borrowTileImage(swatch, holder, value));
   }
+  paintTileSelection(document.getElementById("atmosphere-tiles"), state.atmosphere.preset);
   syncGroundControls();
   syncAppearanceControls();
   syncCameraControls();
@@ -7580,7 +7826,7 @@ function showScatterOutline(region) {
   }
   scatterOutline = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color: 0x93a6bb, depthTest: false }));
+    new THREE.LineBasicMaterial({ color: 0x93a6bb, depthTest: false, fog: false }));
   scatterOutline.renderOrder = 3;
   // In the SCENE, never in propsGroup: propRecordAt raycasts that group
   // recursively and a stray pickable child there causes a wrong selection
@@ -8484,6 +8730,50 @@ function buildWeatherTiles() {
     // painter composed.
     const tile = previewTile(option.value, option.textContent,
       (canvasEl) => renderWeatherPreview(option.value, canvasEl), 2);
+    tile.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+      paintTileSelection(holder, option.value);
+    });
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
+}
+
+// The atmosphere presets, each drawn by its own fog: the same integral the
+// shader runs, per pixel, over an eye at head height, a low sun to the
+// right and three arches at 12, 35 and 90 metres (atmosphere.js). No
+// WebGL, so the tiles cost no context and look the same on every device.
+function paintAtmosphereTile(key, canvasEl) {
+  const context = canvasEl.getContext("2d");
+  const image = context.createImageData(canvasEl.width, canvasEl.height);
+  image.data.set(atmospherePreviewPixels(canvasEl.width, canvasEl.height,
+    atmosphereFromPreset(key)));
+  context.putImageData(image, 0, 0);
+}
+
+// A tile's title carries its numbers, in the dials' own units.
+function atmosphereTileTitle(key) {
+  const preset = ATMOSPHERE_PRESETS[key];
+  if (!preset || key === "none") {
+    return "None: no atmosphere. Sky mode keeps the weather's own haze";
+  }
+  return preset.label + ": " + preset.density + " /km thinning every " + preset.height
+    + " m, ground mist " + preset.mist + " /km over " + preset.mistHeight + " m, from "
+    + preset.start + " m, hiding at most " + preset.maxOpacity + "%, sun glow "
+    + preset.sunGlow + "%";
+}
+
+function buildAtmosphereTiles() {
+  const holder = document.getElementById("atmosphere-tiles");
+  const select = document.getElementById("atmosphere-preset");
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const option of select.options) {
+    const tile = previewTile(option.value, option.textContent,
+      (canvasEl) => paintAtmosphereTile(option.value, canvasEl), 2);
+    tile.title = atmosphereTileTitle(option.value);
     tile.addEventListener("click", () => {
       if (select.value === option.value) return;
       select.value = option.value;
@@ -9451,11 +9741,12 @@ function arrowField(entries, colour, anchor, lengthScale = 1,
   // in the way". Depth-test off plus a late render order draws every
   // shaft and head over whatever hides it.
   heads.material.depthTest = false;
+  heads.material.fog = false;
   heads.renderOrder = 25;
   const lines = new THREE.LineSegments(
     new THREE.BufferGeometry().setAttribute(
       "position", new THREE.BufferAttribute(new Float32Array(positions), 3)),
-    new THREE.LineBasicMaterial({ color: colour, depthTest: false }));
+    new THREE.LineBasicMaterial({ color: colour, depthTest: false, fog: false }));
   lines.renderOrder = 25;
   const group = new THREE.Group();
   group.add(lines); group.add(heads);
@@ -11280,6 +11571,64 @@ document.getElementById("hdri-rotation").addEventListener("change", () => {
   document.getElementById("sun-azimuth").value = Math.round(azimuth);
   applySunFromSliders();
 });
+// ---------- the atmosphere's controls ----------
+// Each dial, its key in state.atmosphere and the digits its reading shows.
+// The reading is the raw value, so a typed number lands as itself.
+const ATMOSPHERE_DIALS = [
+  ["atmosphere-density", "density", 1],
+  ["atmosphere-height", "height", 1],
+  ["atmosphere-base", "base", 1],
+  ["atmosphere-start", "start", 0],
+  ["atmosphere-opacity", "maxOpacity", 0],
+  ["atmosphere-glow", "sunGlow", 0],
+  ["atmosphere-lobe", "sunLobe", 0],
+  ["atmosphere-mist", "mist", 1],
+  ["atmosphere-mist-height", "mistHeight", 1],
+];
+
+// The dials show only while a preset is chosen (a dial that does nothing
+// is hidden, not shown dead), and wear the state's numbers, readings
+// included: a restored scene moves the numbers with the sliders.
+function syncAtmosphereControls() {
+  const on = atmosphereIsOn(state.atmosphere);
+  for (const label of document.querySelectorAll("#shelf-sky-settings .atmosphere-dial")) {
+    label.classList.toggle("hidden", !on);
+  }
+  for (const [id, key, digits] of ATMOSPHERE_DIALS) {
+    const input = document.getElementById(id);
+    input.value = state.atmosphere[key];
+    paintScrub(input);
+    document.getElementById(id + "-value").textContent = state.atmosphere[key].toFixed(digits);
+  }
+}
+
+for (const [id, key, digits] of ATMOSPHERE_DIALS) {
+  const input = document.getElementById(id);
+  // Every tick moves the fog: the densities and the glow are uniforms every
+  // fogged material holds by reference, so nothing recompiles.
+  input.addEventListener("input", () => {
+    state.atmosphere[key] = +input.value;
+    document.getElementById(id + "-value").textContent = (+input.value).toFixed(digits);
+    applyAtmosphere();
+    applySkyBrightness();
+  });
+  // On release the sky's light is captured again with the new air over it.
+  input.addEventListener("change", () => {
+    if (state.environmentMode === "sky") regenerateEnvironment();
+    rememberSession();
+  });
+}
+
+document.getElementById("atmosphere-preset").addEventListener("change", (e) => {
+  state.atmosphere = atmosphereFromPreset(e.target.value);
+  syncAtmosphereControls();
+  paintTileSelection(document.getElementById("atmosphere-tiles"), state.atmosphere.preset);
+  applyEnvironment();
+  regenerateEnvironment();
+  rememberSession();
+});
+syncAtmosphereControls();
+
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;
   state.sunColourOverride = null; // a new preset picks the colour again
@@ -12254,6 +12603,9 @@ const outlineWidth = { value: 0 };
 const outlineMaterial = new THREE.MeshBasicMaterial({
   color: 0x15120f, side: THREE.DoubleSide });
 outlineMaterial.onBeforeCompile = (shader) => {
+  // This hook shadows the prototype's, so it hands the atmosphere its
+  // uniforms itself, or the ribbon would compile a fog with no densities.
+  atmosphere.inject(shader);
   shader.uniforms.outlineWidth = outlineWidth;
   shader.vertexShader = "attribute vec3 outlineSide;\n"
     + "uniform float outlineWidth;\n"
@@ -14637,6 +14989,7 @@ undoableSelect("hdri-select", "the sky change");
 undoableSelect("environment-mode", "the environment change");
 undoableSelect("render-skin", "the skin change");
 undoableSelect("ground-preset", "the floor change");
+undoableSelect("atmosphere-preset", "the atmosphere change");
 
 function removePropRecord(record) {
   removePropRecords([record]);
@@ -14805,6 +15158,7 @@ function frame(now) {
 guarded("the material tiles", buildMaterialTiles);
 guarded("the ground tiles", buildGroundTiles);
 guarded("the weather tiles", buildWeatherTiles);
+guarded("the atmosphere tiles", buildAtmosphereTiles);
 guarded("the pickers", wireAllPickers);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the camera frame segments", () => {
@@ -14928,7 +15282,13 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // have been handed the perspective camera and quietly measured the
   // wrong frustum.
   get camera() { return camera; },
-  perspectiveCamera, orthographicCamera, setProjection, snapCameraTo };
+  perspectiveCamera, orthographicCamera, setProjection, snapCameraTo,
+  // The atmosphere's shared uniforms and its one fog object, so a probe
+  // can read what the shaders are being given rather than guess it.
+  atmosphere, get atmosphereFog() { return atmosphereFog; },
+  // The clock, so a probe can photograph a named hour through the same
+  // path the day track takes.
+  setSunMinutes };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.
