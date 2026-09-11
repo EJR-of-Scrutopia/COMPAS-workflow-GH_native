@@ -2541,7 +2541,7 @@ def _js_whole_function(source, header):
     return source[start:source.index("\n}", start) + 2]
 
 
-LAYER_HARNESS = r"""
+LAYER_STUBS = r"""
 const logs = [];
 const undo = [];
 const state = {
@@ -2579,6 +2579,10 @@ function removePropRecords(records) {
 %(functions)s
 const ids = () => state.propLayers.map((l) => l.id);
 const on = () => [...new Set(state.props.map((p) => p.layer))];
+"""
+
+
+LAYER_HARNESS = LAYER_STUBS + r"""
 const out = {};
 const region = { kind: "rect", x0: 0, y0: 0, x1: 4, y1: 4 };
 (async () => {
@@ -2676,6 +2680,168 @@ def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
     assert out["grouped"] == {"a": 3, "b": 3, "layers": [1, 2, 3], "open": 3, "entries": 1}
     assert out["ungrouped"] == {"a": 1, "b": 2, "layers": [1, 2], "open": 1}
     assert out["regrouped"] == {"a": 3, "b": 3, "layers": [1, 2, 3], "open": 3, "entries": 1}
+
+
+LAYER_GUARD_HARNESS = LAYER_STUBS + r"""
+let stampRig = null;
+const controls = { enabled: true };
+function selectProp() {}
+function closeShelf() {}
+function spawnStampInstance() {}
+const L = (id, visible = true) => ({ id, name: "Layer " + id, visible });
+function reset(layers, open) {
+  state.propLayers = layers; state.activeLayer = open;
+  state.nextLayerId = 1 + Math.max(0, ...layers.map((l) => l.id));
+  state.props = []; state.scatterRuns = []; undo.length = 0; logs.length = 0;
+  gatheredProps.clear();
+}
+const said = (text) => logs.some((line) => line.includes(text));
+const out = {};
+const region = { kind: "rect", x0: 0, y0: 0, x1: 4, y1: 4 };
+(async () => {
+  // Undoing a Group never takes away a layer something has moved onto since.
+  reset([L(1), L(2)], 1);
+  const a = { layer: 1, object: {} }, b = { layer: 2, object: {} }, c = { layer: 1, object: {} };
+  state.props = [a, b, c];
+  gatheredProps.add(a); gatheredProps.add(b);
+  groupToNewLayer();
+  c.layer = 3;
+  undo.pop().undo();
+  out.occupied = { layers: ids(), a: a.layer, b: b.layer, c: c.layer };
+  // Nor the last layer there is.
+  reset([], 7); state.nextLayerId = 5;
+  await runScatter(region, { salt: 1 });
+  undo.pop().undo();
+  out.last = { layers: ids(), open: state.activeLayer };
+  // A dropped layer that was open hands the open tab to one that lives.
+  reset([], 7); state.nextLayerId = 5;
+  await runScatter(region, { salt: 2 });
+  newLayer(null);
+  state.activeLayer = 5;
+  undo.pop().undo();
+  out.fallback = { layers: ids(), open: state.activeLayer };
+  // A fixture from a tile onto a hidden open layer: shown, and said.
+  reset([L(1), L(2, false)], 2);
+  state.bundle = {}; state.centre = { x: 0, y: 0 };
+  carryNewProp("light-sphere");
+  out.carry = { layers: ids(), layer: state.carrying.record.layer,
+    shown: state.propLayers[1].visible, seen: state.carrying.record.object.visible,
+    said: said("Layer 2 was hidden, so it is shown again") };
+  // A stamp onto a hidden open layer, the same.
+  reset([L(1), L(2, false)], 2);
+  const s = { layer: 1, x: 0, y: 0, rotation: 0, scale: 1, object: {} };
+  state.props = [s]; gatheredProps.add(s);
+  beginStamp();
+  out.stamp = { shown: state.propLayers[1].visible,
+    said: said("Layer 2 was hidden, so it is shown again") };
+  // The readouts name the OPEN layer, not the first.
+  reset([L(1), L(2)], 2);
+  out.naming = [placingOntoName()];
+  state.activeLayer = 9; out.naming.push(placingOntoName());
+  reset([], 9); out.naming.push(placingOntoName());
+  // A layer hidden while the area tool is armed is shown by the fill.
+  reset([L(1), L(2)], 2);
+  state.propLayers[1].visible = false;
+  await runScatter(region, { salt: 3, intoLayer: 2 });
+  out.armedHidden = { shown: state.propLayers[1].visible, on: on(),
+    visible: state.props.every((p) => p.object.visible),
+    said: said("Layer 2 was hidden, so it is shown again") };
+  // A redo onto the shown Layer 2 while the open Layer 1 is hidden: the
+  // props come back seen, and Layer 1 is left as he set it.
+  reset([L(1), L(2)], 2);
+  await runScatter(region, { salt: 4, intoLayer: 2 });
+  let entry = undo.pop();
+  entry.undo();
+  state.activeLayer = 1; state.propLayers[0].visible = false;
+  await entry.redo();
+  out.redoSeen = { on: on(), props: state.props.length,
+    visible: state.props.every((p) => p.object.visible),
+    layer1: state.propLayers[0].visible, open: state.activeLayer };
+  // Group from the open Layer 2: its undo reopens Layer 2, not the first.
+  reset([L(1), L(2)], 2);
+  const d = { layer: 2, object: {} }, e = { layer: 2, object: {} };
+  state.props = [d, e]; gatheredProps.add(d); gatheredProps.add(e);
+  groupToNewLayer();
+  undo.pop().undo();
+  out.groupOpen = { layers: ids(), open: state.activeLayer, d: d.layer, e: e.layer };
+  // reinstateLayer never doubles an id, and the counter only climbs.
+  reset([L(1), L(2)], 1);
+  reinstateLayer({ id: 2, name: "Other", visible: true }, 0);
+  out.duplicate = { layers: ids(), names: state.propLayers.map((l) => l.name) };
+  reinstateLayer(L(7), 1);
+  out.counter = { layers: ids(), next: state.nextLayerId };
+  // A stroke that made its layer owns it through every redo, so the undo
+  // after a redo takes it away again.
+  reset([], 7); state.nextLayerId = 5;
+  const stroke = { records: [], stamps: [], run: null, keepOut: null,
+    busy: Promise.resolve() };
+  for (const salt of [5, 6]) {
+    const stamp = { region, salt };
+    stroke.stamps.push(stamp);
+    await runScatter(region, { salt, stroke });
+  }
+  endBrushStroke(stroke);
+  newLayer(null);
+  entry = undo.pop();
+  entry.undo();
+  out.stroke = { afterUndo: ids() };
+  await entry.redo();
+  out.stroke.afterRedo = ids();
+  out.stroke.on = on();
+  undo.pop().undo();
+  out.stroke.afterSecondUndo = ids();
+  console.log(JSON.stringify(out));
+})().catch((error) => { console.error(error.stack); process.exit(1); });
+"""
+
+
+def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
+    """The guards the layer list stands on, each run for real under node:
+    an undo never takes away a layer that still holds a prop, nor the last
+    layer; a dropped open layer hands the open tab on; a fixture from a
+    tile, a stamp and an armed fill each show a hidden layer they place
+    onto and say so; the readouts name the open layer; a redo re-stamps
+    visibility from its own layer, not the open one; Group's undo reopens
+    the layer that was open; reinstateLayer never doubles an id and its
+    counter only climbs; a stroke owns the layer it made through a redo."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    headers = ("function layerById(id)", "function layerVisible(id)",
+               "function newLayer(name)", "function placementLayer()",
+               "function showLayerForPlacing(layer)", "function placingOntoName()",
+               "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
+               "function groupToNewLayer(again)",
+               "async function runScatter(region, options)",
+               "function carryNewProp(type)", "function beginStamp()",
+               "function endBrushStroke(stroke)")
+    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    script = tmp_path / "guards.mjs"
+    script.write_text(LAYER_GUARD_HARNESS % {"functions": functions}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["occupied"] == {"layers": [1, 2, 3], "a": 1, "b": 2, "c": 3}, (
+        "a layer that still holds a prop stays")
+    assert out["last"] == {"layers": [5], "open": 5}, "the last layer stays"
+    assert out["fallback"] == {"layers": [6], "open": 6}
+    assert out["carry"] == {"layers": [1, 2], "layer": 2, "shown": True, "seen": True,
+                            "said": True}
+    assert out["stamp"] == {"shown": True, "said": True}
+    assert out["naming"] == ["Layer 2", "Layer 1", "a new layer"]
+    assert out["armedHidden"] == {"shown": True, "on": [2], "visible": True, "said": True}
+    assert out["redoSeen"] == {"on": [2], "props": 2, "visible": True, "layer1": False,
+                               "open": 1}
+    assert out["groupOpen"] == {"layers": [1, 2], "open": 2, "d": 2, "e": 2}
+    assert out["duplicate"] == {"layers": [1, 2], "names": ["Layer 1", "Layer 2"]}
+    assert out["counter"] == {"layers": [1, 7, 2], "next": 8}
+    assert out["stroke"] == {"afterUndo": [6], "afterRedo": [5, 6], "on": [5],
+                             "afterSecondUndo": [6]}
 
 
 def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():
