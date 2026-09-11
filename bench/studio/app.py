@@ -11,6 +11,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -658,6 +659,56 @@ def _gpu_load():
         return None
 
 
+def _index_pairs(raw, count):
+    """The usable [u, v] pairs of a raw member or edge list, and the raw
+    index each one came from.
+
+    Both spellings the writers use are read: {"u": 0, "v": 1} in the
+    contract's equilibrium and mould blocks, [0, 1] in a formwork
+    document's own columns block. A pair whose ends fall outside 0..count
+    is skipped rather than served, because the client joins each pair to
+    the frame's positions by index and an out-of-range end would draw a
+    line to nowhere. The kept indices are what let a per-index series
+    (forceDensities, memberForce, per-frame forces) be filtered to the
+    same list in the same order, which is the only way those series can
+    be served aligned with the pairs.
+    """
+
+    pairs, kept = [], []
+    for index, member in enumerate(raw if isinstance(raw, list) else []):
+        if isinstance(member, list) and len(member) == 2:
+            u, v = member
+        elif isinstance(member, dict):
+            u, v = member.get("u"), member.get("v")
+        else:
+            continue
+        if isinstance(u, int) and isinstance(v, int) \
+                and not isinstance(u, bool) and not isinstance(v, bool) \
+                and 0 <= u < count and 0 <= v < count:
+            pairs.append([u, v])
+            kept.append(index)
+    return pairs, kept
+
+
+def _aligned(values, raw_count, kept):
+    """values filtered to the kept indices, or None when values is not a
+    list of one finite number per RAW entry: a series that does not
+    match the raw list cannot be aligned with the pairs at all, and a
+    served series of the wrong length would be joined to the wrong
+    members silently."""
+
+    if not isinstance(values, list) or len(values) != raw_count:
+        return None
+    out = []
+    for index in kept:
+        value = values[index]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(float(value)):
+            return None
+        out.append(float(value))
+    return out
+
+
 def create_app(runner=None, cra_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
@@ -786,6 +837,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         carries positions only, and the net's connectivity is the
         contract's own equilibrium.edges, which is the same index space
         the frame vertices use.
+
+        Beside the positions, what the live graphs read (writer spec
+        section 10): per-frame "forces" and "columnForces" passed through
+        when their length is the edge or member count and dropped from
+        every frame with a "notes" entry when it is not; "forceDensities",
+        the contract's own filtered to the served edges; and
+        "columns.forces", the contract's mould memberForce aligned to the
+        served members. Every one of them is optional and the client
+        treats a missing key as absent, so an older document or contract
+        serves exactly what it always did plus "notes".
         """
 
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
@@ -802,47 +863,95 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         reason = frames.pairing_error(document, contract)
         if reason is not None:
             raise HTTPException(404, reason)
-        edges = []
-        for edge in (contract.get("equilibrium") or {}).get("edges") or []:
-            u, v = edge.get("u"), edge.get("v")
-            if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["vertexCount"]                     and 0 <= v < document["vertexCount"]:
-                edges.append([u, v])
+        equilibrium = contract.get("equilibrium") or {}
+        raw_edges = equilibrium.get("edges") or []
+        edges, kept_edges = _index_pairs(raw_edges, document["vertexCount"])
+        notes = list(document.get("notes") or [])
         # The formwork document's own members first: it is self-contained
         # under the three-document set, and the contract's mould block is
         # the fallback for the older shape rather than the authority.
-        members = []
-        stored = document.get("columns")
-        if isinstance(stored, dict):
-            for member in stored.get("members") or []:
-                if isinstance(member, list) and len(member) == 2:
-                    u, v = member
-                elif isinstance(member, dict):
-                    u, v = member.get("u"), member.get("v")
-                else:
-                    continue
-                if isinstance(u, int) and isinstance(v, int) \
-                        and 0 <= u < document["columnNodeCount"] \
-                        and 0 <= v < document["columnNodeCount"]:
-                    members.append([u, v])
         columns = (contract.get("mould") or {}).get("columns") or {}
-        for member in [] if members else (columns.get("members") or []):
-            u, v = member.get("u"), member.get("v")
-            if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["columnNodeCount"]                     and 0 <= v < document["columnNodeCount"]:
-                members.append([u, v])
+        contract_members, kept_contract = _index_pairs(
+            columns.get("members"), document["columnNodeCount"])
         stored = document.get("columns")
-        if not members and isinstance(stored, dict):
-            for member in stored.get("members") or []:
-                if isinstance(member, list) and len(member) == 2:
-                    u, v = member
-                    if isinstance(u, int) and isinstance(v, int)                             and 0 <= u < document["columnNodeCount"]                             and 0 <= v < document["columnNodeCount"]:
-                        members.append([u, v])
+        own_raw = stored.get("members") if isinstance(stored, dict) else None
+        members, kept_members = _index_pairs(own_raw, document["columnNodeCount"])
+        if members:
+            raw_member_count = len(own_raw)
+        else:
+            members, kept_members = contract_members, kept_contract
+            raw_member_count = len(columns.get("members") or [])
+        # The columns' forces come from the contract's mould block, which
+        # is aligned with the CONTRACT's member list. They are served only
+        # when the members being drawn are that list, either because they
+        # came from it or because the document's own list is identical in
+        # order; a formwork document that reorders or renumbers its
+        # members would otherwise have each force drawn on the wrong leg.
+        member_force = None
+        if "memberForce" not in columns:
+            notes.append(
+                "columns.forces absent: the contract's mould block carries "
+                "no memberForce.")
+        elif members != contract_members:
+            notes.append(
+                "columns.forces absent: the formwork document's own members "
+                "are not the contract's mould members in the same order, "
+                "so memberForce cannot be aligned with them.")
+        else:
+            member_force = _aligned(
+                columns.get("memberForce"),
+                len(columns.get("members") or []), kept_contract)
+            if member_force is None:
+                notes.append(
+                    "columns.forces absent: the contract's memberForce is "
+                    "not one finite number per mould member.")
+        # The force densities are the contract's, one per equilibrium
+        # edge, filtered to exactly the edges served above so the client
+        # can zip the two. Absent is silent (older contracts have none);
+        # present but unalignable is said.
+        force_densities = None
+        if "forceDensities" in equilibrium:
+            force_densities = _aligned(
+                equilibrium.get("forceDensities"), len(raw_edges), kept_edges)
+            if force_densities is None:
+                notes.append(
+                    "forceDensities absent: the contract's list is not one "
+                    "finite number per equilibrium edge.")
+        # The optional per-frame series (spec section 10), checked here
+        # against the count the validator could not know. A series of
+        # the wrong length is dropped from EVERY frame with the reason in
+        # notes, because a graph over the wrong index space would draw
+        # each cable's force on another cable and nobody could tell.
+        served_frames = [dict(frame) for frame in document["frames"]]
+        for key, raw_count, kept, what in (
+                ("forces", len(raw_edges), kept_edges, "edges"),
+                ("columnForces", raw_member_count, kept_members, "column members")):
+            carried = [frame for frame in served_frames if key in frame]
+            if not carried:
+                continue
+            found = len(carried[0][key])
+            if found != raw_count:
+                notes.append(
+                    "per-frame {} dropped: {} values for {} {}".format(
+                        key, found, raw_count, what))
+                for frame in served_frames:
+                    frame.pop(key, None)
+                continue
+            for frame in served_frames:
+                frame[key] = [frame[key][index] for index in kept]
         return {
             "study": export,
             "vertexCount": document["vertexCount"],
             "columnNodeCount": document["columnNodeCount"],
-            "frames": document["frames"],
+            "frames": served_frames,
             "edges": edges,
-            "columns": {"members": members},
+            "forceDensities": force_densities,
+            "columns": {
+                "members": members,
+                "forces": member_force,
+                "forceUnit": "kN",
+            },
+            "notes": notes,
         }
 
     @app.get("/api/studies/{export}/mechanism")
@@ -2376,7 +2485,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         # pointed at their versioned addresses here and studio.js goes on
         # importing them by the plain path it always did.
         for module in ("panel.js", "pbr.js", "fields.js",
-                       "data_analysis.js"):
+                       "data_analysis.js", "live_graphs.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

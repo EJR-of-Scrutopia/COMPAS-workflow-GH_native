@@ -431,6 +431,12 @@ def run_staging(
             "geometry_path": str(export_pair.get("geometry") or ""),
             "material": material,
             "thickness": thickness,
+            # The SAME density the curve above was weighed with. Without
+            # it solve_stage weighed the shell by the material preset,
+            # so a vault wearing a copper skin was costed as copper on
+            # the formwork curve and solved as concrete in the stress
+            # fields: two weights for one building, in one document.
+            "density": density,
             "include_export_loads": True,
             "placed_faces": sorted(entry["faces"]),
         }) if material in FEA_MATERIALS else _fea_unavailable(material)

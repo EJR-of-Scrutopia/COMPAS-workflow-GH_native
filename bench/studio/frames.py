@@ -55,6 +55,77 @@ TIME_EPSILON = 1e-9
 # Guarantee 5's tolerance, the spec's own number: the time-100 frame
 # must equal the contract's equilibrium.vertices to 1e-9 per coordinate.
 PAIR_EPSILON = 1e-9
+# The two OPTIONAL per-frame series the live graphs read (spec section
+# 10): "forces", one kN per equilibrium edge, and "columnForces", one kN
+# per column member. Positions are the act; these are passengers, so a
+# malformed series costs the series and a disclosure, never the act.
+# Without them the studio draws a force-density model scaled with the
+# placed weight, which is a model of the cables and not a reading of
+# them; that is what the addition buys, and why it is worth carrying.
+OPTIONAL_SERIES = ("forces", "columnForces")
+
+
+def _finite_numbers(value: Any, label: str) -> List[float]:
+    """A list of finite numbers as floats, or ValueError naming the entry."""
+
+    if not isinstance(value, list):
+        raise ValueError(
+            "{} must be a list of numbers; found {}.".format(
+                label, type(value).__name__))
+    out = []
+    for i, number in enumerate(value):
+        if isinstance(number, bool) or not isinstance(number, (int, float)):
+            raise ValueError("{}[{}] must be a number.".format(label, i))
+        number_f = float(number)
+        if not math.isfinite(number_f):
+            raise ValueError(
+                "{}[{}] must be finite; found {!r}.".format(label, i, number))
+        out.append(number_f)
+    return out
+
+
+def _optional_series(raw_frames: List[Mapping[str, Any]], key: str,
+                     notes: List[str]) -> Optional[List[List[float]]]:
+    """One per-frame series, parsed for every frame, or None with the
+    reason appended to notes.
+
+    The validator cannot know the edge or member count (that is the
+    contract's, checked at the point of use in the formwork route), so
+    the rules here are the ones the document alone can answer: every
+    frame carries the series or none does, every value is a finite
+    number, and the length is one and the same across frames. A series
+    that breaks any of them is dropped whole, because a graph drawn from
+    half the frames would read as the forces falling to nothing at the
+    instant the writer stopped writing them.
+    """
+
+    carried = [index for index, frame in enumerate(raw_frames)
+               if frame.get(key) is not None]
+    if not carried:
+        return None
+    if len(carried) != len(raw_frames):
+        notes.append(
+            "per-frame {} dropped: carried by {} of {} frames; the series "
+            "is all-or-nothing across frames (spec section 10).".format(
+                key, len(carried), len(raw_frames)))
+        return None
+    series = []
+    for index, frame in enumerate(raw_frames):
+        try:
+            values = _finite_numbers(
+                frame.get(key), "frames[{}].{}".format(index, key))
+        except ValueError as error:
+            notes.append("per-frame {} dropped: {}".format(key, error))
+            return None
+        if series and len(values) != len(series[0]):
+            notes.append(
+                "per-frame {} dropped: frames[{}] carries {} values but "
+                "frames[0] carries {}; one length across frames is "
+                "required (spec section 10).".format(
+                    key, index, len(values), len(series[0])))
+            return None
+        series.append(values)
+    return series
 
 
 def _triples(value: Any, count: int, label: str, count_name: str) -> List[List[float]]:
@@ -178,6 +249,19 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
             "always samples them (spec section 3).".format(
                 ", ".join("{:g}".format(b) for b in missing)))
 
+    # The optional series ride on the frames only once every frame has
+    # passed the position checks above: a document refused for its
+    # positions is refused whole, and a document kept for them may still
+    # lose a series. "notes" carries each drop as one sentence, for the
+    # formwork route to serve beside the frames; the upload route lets
+    # the document in regardless, because the act does not need them.
+    notes: List[str] = []
+    for key in OPTIONAL_SERIES:
+        series = _optional_series(raw_frames, key, notes)
+        if series is not None:
+            for frame, values in zip(frames, series):
+                frame[key] = values
+
     normalised = {
         "schema": SCHEMA,
         "units": "m",
@@ -185,6 +269,7 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
         "vertexCount": vertex_count,
         "columnNodeCount": column_node_count,
         "frames": frames,
+        "notes": notes,
     }
     # Optional and carried through untouched: the writer spec puts the
     # columns' member list in the CONTRACT's mould block, and the reader

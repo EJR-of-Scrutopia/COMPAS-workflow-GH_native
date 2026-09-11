@@ -232,3 +232,84 @@ def test_a_machine_with_no_column_nodes_is_a_valid_if_bare_animation():
         frame["vertices"] = []
     with pytest.raises(ValueError):
         f.validate_frames_document(empty_net)
+
+
+# ------------------------------------------- the optional per-frame series
+
+
+def series_fixture():
+    """The complete fixture with both optional series on every frame
+    (spec section 10): three cable values per frame and one column value,
+    each stepping with the frame index so a served list can be told from
+    the one before it. The validator never knows the real edge count, so
+    three is a toy that only has to agree with itself."""
+
+    document = complete_fixture()
+    for index, frame in enumerate(document["frames"]):
+        frame["forces"] = [1.0 + index, 2.0, 3]
+        frame["columnForces"] = [0.5 * index]
+    return document
+
+
+def test_a_consistent_per_frame_series_rides_through_as_floats():
+    f = studio()
+    document = f.validate_frames_document(series_fixture())
+    assert [frame["forces"] for frame in document["frames"]] == [
+        [1.0, 2.0, 3.0], [2.0, 2.0, 3.0], [3.0, 2.0, 3.0],
+        [4.0, 2.0, 3.0], [5.0, 2.0, 3.0]]
+    assert [frame["columnForces"] for frame in document["frames"]] == [
+        [0.0], [0.5], [1.0], [1.5], [2.0]]
+    assert document["notes"] == []
+
+
+def test_a_series_carried_by_some_frames_only_is_dropped_whole_with_a_note():
+    """All-or-nothing across frames: a graph drawn from three frames of
+    five would read as the forces falling to nothing at the instant the
+    writer stopped writing them. A missing key and a null both count as
+    not carried, and the other series is untouched."""
+
+    f = studio()
+    raw = series_fixture()
+    del raw["frames"][1]["forces"]
+    raw["frames"][3]["forces"] = None
+    document = f.validate_frames_document(raw)
+    assert not any("forces" in frame for frame in document["frames"])
+    assert all("columnForces" in frame for frame in document["frames"]), (
+        "the other series is untouched")
+    assert len(document["notes"]) == 1, document["notes"]
+    assert "forces dropped: carried by 3 of 5 frames" in document["notes"][0]
+
+
+def test_a_series_whose_length_moves_between_frames_names_the_frame():
+    f = studio()
+    raw = series_fixture()
+    raw["frames"][2]["columnForces"] = [0.5, 0.6]
+    document = f.validate_frames_document(raw)
+    assert not any("columnForces" in frame for frame in document["frames"])
+    assert all("forces" in frame for frame in document["frames"])
+    assert ("columnForces dropped: frames[2] carries 2 values but "
+            "frames[0] carries 1") in document["notes"][0]
+
+
+def test_a_non_finite_force_costs_the_series_not_the_act():
+    """The positions are the act and the forces are passengers: a NaN in
+    a series drops that series with the entry named, and the document
+    validates exactly as it would without it."""
+
+    f = studio()
+    raw = series_fixture()
+    raw["frames"][4]["forces"][1] = float("nan")
+    document = f.validate_frames_document(raw)
+    assert len(document["frames"]) == 5, "the positions still stand"
+    assert not any("forces" in frame for frame in document["frames"])
+    assert "frames[4].forces[1] must be finite" in document["notes"][0]
+
+    raw = series_fixture()
+    raw["frames"][0]["columnForces"] = ["0.5"]
+    document = f.validate_frames_document(raw)
+    assert "frames[0].columnForces[0] must be a number" in document["notes"][0]
+
+    raw = series_fixture()
+    raw["frames"][1]["forces"] = {"a": 1.0}
+    document = f.validate_frames_document(raw)
+    assert "frames[1].forces must be a list of numbers; found dict" in document["notes"][0]

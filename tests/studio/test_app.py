@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -1501,3 +1502,160 @@ def test_a_stitch_heals_frames_whose_bytes_disagree_with_their_names(tmp_path, m
     assert (frames / "frame-000005.jpg").is_file(), (
         "the stitch heals BEFORE it checks for ffmpeg, so the frames are "
         "right for whoever runs it by hand")
+
+
+# ------------------------------------- the formwork route's graph passengers
+
+
+def tiny_with_mould():
+    """tiny_contract with the blocks the live graphs read: one force
+    density per equilibrium edge (twelve) and a mould block of two column
+    nodes joined by one member carrying one memberForce."""
+
+    contract = tiny_contract()
+    contract["equilibrium"]["forceDensities"] = [-0.5 * i for i in range(12)]
+    contract["mould"] = {"columns": {
+        "nodes": [{"x": 1.0, "y": 1.0, "z": 0.0}, {"x": 1.0, "y": 1.0, "z": 1.0}],
+        "members": [{"u": 0, "v": 1}],
+        "memberForce": [7.5],
+    }}
+    return contract
+
+
+def tiny_frames(forces=None, column_forces=None, members=((0, 1),)):
+    """A bench.frames/1 document that pairs with tiny_contract (its time-100
+    frame is the solved net, its column nodes the mould's), with the
+    optional series on every frame scaled by the frame's ordinal so each
+    served frame can be told from the last. members=None leaves the
+    document's columns block out, so the members come from the contract."""
+
+    solved = [[v["x"], v["y"], v["z"]] for v in tiny_contract()["equilibrium"]["vertices"]]
+    flat = [[x, y, 0.0] for x, y, _ in solved]
+    frames = []
+    schedule = ((0.0, "reel", 0.0), (30.0, "raise", 0.3), (60.0, "finish", 0.6),
+                (90.0, "hold", 0.9), (100.0, "hold", 1.0))
+    for ordinal, (time_, phase, u) in enumerate(schedule, start=1):
+        frame = {
+            "time": time_, "phase": phase,
+            "vertices": solved if u == 1.0 else [
+                [a[0], a[1], a[2] + (b[2] - a[2]) * u] for a, b in zip(flat, solved)],
+            "columnNodes": [[1.0, 1.0, 0.0], [1.0, 1.0, u]],
+        }
+        if forces is not None:
+            frame["forces"] = [value * ordinal for value in forces]
+        if column_forces is not None:
+            frame["columnForces"] = [value * ordinal for value in column_forces]
+        frames.append(frame)
+    document = {
+        "schema": "bench.frames/1", "units": "m", "study": "Tiny",
+        "vertexCount": len(solved), "columnNodeCount": 2, "frames": frames,
+    }
+    if members is not None:
+        document["columns"] = {"members": [list(pair) for pair in members]}
+    return document
+
+
+def formwork_study(tmp_path, monkeypatch, contract, document):
+    client, _ = make_client(tmp_path, monkeypatch)
+    upload = tmp_path / "upload"
+    (upload / "Tiny-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+    (upload / "Tiny-frames.json").write_text(json.dumps(document), encoding="utf-8")
+    answer = client.get("/api/studies/Tiny/formwork")
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_the_formwork_route_serves_per_frame_forces_that_fit_the_net(tmp_path, monkeypatch):
+    """Spec section 10, the happy path: twelve forces for twelve edges and
+    one column force for one member ride through on every frame, the
+    contract's force densities come out beside the edges, and the mould's
+    memberForce beside the members, all in the served order."""
+
+    served = formwork_study(
+        tmp_path, monkeypatch, tiny_with_mould(),
+        tiny_frames(forces=[float(i) for i in range(12)], column_forces=[2.5]))
+    assert served["notes"] == []
+    assert [frame["forces"][11] for frame in served["frames"]] == [
+        11.0, 22.0, 33.0, 44.0, 55.0]
+    assert [frame["columnForces"] for frame in served["frames"]] == [
+        [2.5], [5.0], [7.5], [10.0], [12.5]]
+    assert served["forceDensities"] == [-0.5 * i for i in range(12)]
+    assert served["columns"] == {
+        "members": [[0, 1]], "forces": [7.5], "forceUnit": "kN"}
+    assert len(served["edges"]) == 12
+
+
+def test_forces_of_the_wrong_length_leave_every_frame_with_the_reason_served(
+        tmp_path, monkeypatch):
+    """Five values for twelve edges cannot be joined to anything: the key
+    leaves every frame, the note says the two counts, and the column
+    series, which does fit, is untouched. The act itself is unharmed."""
+
+    served = formwork_study(
+        tmp_path, monkeypatch, tiny_with_mould(),
+        tiny_frames(forces=[1.0] * 5, column_forces=[2.5]))
+    assert not any("forces" in frame for frame in served["frames"])
+    assert all("columnForces" in frame for frame in served["frames"])
+    assert "per-frame forces dropped: 5 values for 12 edges" in served["notes"]
+    assert len(served["frames"]) == 5
+
+
+def test_columns_forces_are_null_when_the_documents_members_are_not_the_contracts(
+        tmp_path, monkeypatch):
+    """The mould's memberForce is aligned with the CONTRACT's member list.
+    A formwork document whose own members are the same legs in another
+    order would have each force drawn on the wrong leg, so the forces are
+    null and the note says why. A forceDensities list of the wrong length
+    is null the same way."""
+
+    contract = tiny_with_mould()
+    contract["equilibrium"]["forceDensities"] = [1.0] * 11
+    served = formwork_study(
+        tmp_path, monkeypatch, contract, tiny_frames(members=((1, 0),)))
+    assert served["columns"]["members"] == [[1, 0]]
+    assert served["columns"]["forces"] is None
+    assert served["forceDensities"] is None
+    notes = " ".join(served["notes"])
+    assert "not the contract's mould members in the same order" in notes
+    assert "forceDensities absent" in notes
+
+
+def test_every_series_is_filtered_to_the_served_pairs_by_raw_index(
+        tmp_path, monkeypatch):
+    """The served edges and members skip a pair whose end is out of range,
+    so every series keyed on the raw lists (forceDensities, memberForce,
+    the per-frame series) must be filtered by the SAME raw indices or the
+    client would zip a twelve-long list against thirteen-long values and
+    put every force one cable along. The members here come from the
+    contract, the older document shape, so its forces are served."""
+
+    contract = tiny_with_mould()
+    contract["equilibrium"]["edges"].insert(0, {"u": 0, "v": 50})
+    contract["equilibrium"]["forceDensities"] = [-99.0] + [-0.5 * i for i in range(12)]
+    contract["mould"]["columns"]["members"] = [{"u": 0, "v": 9}, {"u": 0, "v": 1}]
+    contract["mould"]["columns"]["memberForce"] = [99.0, 7.5]
+    served = formwork_study(
+        tmp_path, monkeypatch, contract,
+        tiny_frames(members=None, forces=[99.0] + [float(i) for i in range(12)],
+                    column_forces=[99.0, 2.5]))
+    assert served["notes"] == []
+    assert len(served["edges"]) == 12
+    assert served["forceDensities"] == [-0.5 * i for i in range(12)]
+    assert served["columns"] == {
+        "members": [[0, 1]], "forces": [7.5], "forceUnit": "kN"}
+    assert served["frames"][0]["forces"] == [float(i) for i in range(12)]
+    assert served["frames"][0]["columnForces"] == [2.5]
+
+
+def test_the_live_graphs_module_is_remapped_to_its_versioned_address(
+        tmp_path, monkeypatch):
+    """The import map is how a remote reload gets a fresh copy of each
+    module studio.js imports; a module left out of the tuple is served
+    from whatever the browser held, which is the stale-panel fault over
+    again for the graphs."""
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    page = client.get("/").text
+    assert re.search(
+        r'"/static/live_graphs\.js": "/static/live_graphs\.js\?v=[0-9a-f]{6,}"',
+        page), "live_graphs.js must be remapped to its versioned address"

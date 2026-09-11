@@ -64,7 +64,7 @@ def tiny_export(tmp_path):
 
 
 def run_stage(tmp_path, placed_faces, include_export_loads=True,
-              with_geometry=True):
+              with_geometry=True, density=None):
     contract_path, geometry_path = tiny_export(tmp_path)
     if not with_geometry:
         # What staging passes for an export that has no COMPAS half.
@@ -80,6 +80,10 @@ def run_stage(tmp_path, placed_faces, include_export_loads=True,
         "placed_faces": placed_faces,
         "workdir": str(workdir),
     }
+    if density is not None:
+        # What staging sends since the run's density reached the solve;
+        # left out, the request is the older shape and the preset weighs.
+        request["density"] = density
     request_path = tmp_path / "request-{}.json".format(workdir.name)
     out_path = tmp_path / "out-{}.json".format(workdir.name)
     request_path.write_text(json.dumps(request), encoding="utf-8")
@@ -287,3 +291,77 @@ def test_displacements_are_keyed_by_original_node_ids():
     assert result["converged"] is True
     assert sorted(int(k) for k in result["displacements"]) == [1, 2, 3, 4, 5, 6, 7, 8]
     assert sorted(result["stresses"]) == ["1", "2", "3"]
+
+
+def test_the_stage_weighs_with_the_request_density_over_the_preset():
+    """staging resolves one density for the run (the skin's, when the
+    vault wears one) and weighs the formwork curve with it; this solve
+    weighed by the preset regardless, so the two halves of one staging
+    document described two buildings. A request density is now the one
+    the shell is weighed with, echoed in the result, and doubling it
+    doubles the self-weight exactly."""
+
+    import tempfile
+
+    from ananke_fea.materials import PRESETS
+
+    preset = PRESETS["concrete"].density
+    with tempfile.TemporaryDirectory() as tmp:
+        by_preset = run_stage(Path(tmp), [0, 1, 2, 3])
+    with tempfile.TemporaryDirectory() as tmp:
+        doubled = run_stage(Path(tmp), [0, 1, 2, 3], density=2.0 * preset)
+    assert by_preset["density"] == preset
+    assert doubled["density"] == 2.0 * preset
+    assert by_preset["self_weight_newtons"] > 0.0
+    assert doubled["self_weight_newtons"] == pytest.approx(
+        2.0 * by_preset["self_weight_newtons"])
+
+
+def test_a_density_that_is_not_a_positive_number_falls_back_to_the_preset(monkeypatch):
+    """solve() called directly, with self_weight_loads replaced by a
+    capture that stops the solve there: what reaches rho is the request's
+    density when it is a positive finite number and the preset's when it
+    is absent, zero, negative, a string, infinite or a bool, so a bad
+    value can never weigh a shell as nothing."""
+
+    import importlib.util
+    import tempfile
+
+    from ananke_fea import model as fea_model
+    from ananke_fea.materials import PRESETS
+
+    spec = importlib.util.spec_from_file_location("solve_stage_under_test", SOLVE_STAGE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Captured(Exception):
+        pass
+
+    seen = []
+
+    def capture(mesh, thickness, rho):
+        seen.append(rho)
+        raise Captured()
+
+    monkeypatch.setattr(fea_model, "self_weight_loads", capture)
+    with tempfile.TemporaryDirectory() as tmp:
+        contract_path, geometry_path = tiny_export(Path(tmp))
+
+        def request(**extra):
+            return dict({
+                "contract_path": str(contract_path),
+                "geometry_path": str(geometry_path),
+                "material": "concrete", "thickness": 0.2,
+                "include_export_loads": True, "placed_faces": [0, 1, 2, 3],
+                "workdir": tmp,
+            }, **extra)
+
+        for bad in ({}, {"density": None}, {"density": 0.0}, {"density": -5.0},
+                    {"density": "8940"}, {"density": float("inf")}, {"density": True}):
+            with pytest.raises(Captured):
+                module.solve(request(**bad))
+        assert seen == [PRESETS["concrete"].density] * 7
+        seen.clear()
+        with pytest.raises(Captured):
+            module.solve(request(density=8940))
+        assert seen == [8940.0]

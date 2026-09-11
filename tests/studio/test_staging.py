@@ -901,3 +901,44 @@ def test_every_material_has_a_default_pattern():
     _, staging = studio()
     g = studio_module("generators")
     assert set(staging.DENSITIES) == set(g.DEFAULT_PATTERN)
+
+
+def test_the_resolved_density_reaches_every_stage_solve_request(tmp_path):
+    """One weight for one building. The formwork curve was already weighed
+    with the skin's density when the vault wears one, and the stage solve
+    weighed by the material preset regardless, so a copper-skinned vault
+    was costed as copper on the curve and solved as concrete in the
+    stress fields of the same document. The request now carries the same
+    resolved value the curve used: the override when it is in range, the
+    material's own when there is none or it is out of range."""
+
+    g, staging = studio()
+    contract_path = tmp_path / "Wide-contract.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Wide-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    seen = []
+
+    def stub(request):
+        seen.append(request["density"])
+        return {"converged": True, "message": ""}
+
+    def run(name, **kwargs):
+        seen.clear()
+        return staging.run_staging(
+            {"contract": contract_path, "geometry": geometry_path},
+            material="concrete", pattern="bonded-courses", size=1.2,
+            out_path=tmp_path / (name + ".json"), runner=stub,
+            include_cra=False, **kwargs)
+
+    copper = run("copper", density=8940.0)
+    assert seen == [8940.0, 8940.0], "the skin's density, on every stage"
+    run("plain")
+    assert seen == [2400.0, 2400.0], "concrete's own density without an override"
+    run("feather", density=5.0)
+    assert seen == [2400.0, 2400.0], "an out-of-range override falls back"
+    # And it is the same number the curve was weighed with, not a second
+    # resolution: copper's last stage carries 8940 / 2400 times the weight.
+    plain = run("plain-again")
+    assert (copper["stages"][-1]["placed_weight_newtons"]
+            / plain["stages"][-1]["placed_weight_newtons"]) == pytest.approx(8940.0 / 2400.0)

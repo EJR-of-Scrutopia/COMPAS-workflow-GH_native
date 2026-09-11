@@ -14,6 +14,7 @@ the reason, exit code 0. Only unreadable input exits non-zero.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import traceback
 from pathlib import Path
@@ -39,6 +40,20 @@ def solve(request: dict) -> dict:
 
     preset = PRESETS[request["material"]]
     thickness = float(request["thickness"])
+    # The density staging resolved for the run, when it sent one. The
+    # studio weighs a vault by the SKIN it wears (a copper shell is cut
+    # as masonry and weighs 8940 kg/m3), and staging's formwork curve
+    # already did; this solve weighed by the preset regardless, so the
+    # stress fields described a lighter building than the curve beside
+    # them. The preset stays the fallback for a request without one, or
+    # with one that is not a positive finite number, and the value used
+    # is echoed in the result so a reader can see what the weight came
+    # from rather than infer it.
+    density = request.get("density")
+    if isinstance(density, bool) or not isinstance(density, (int, float)) \
+            or not math.isfinite(float(density)) or float(density) <= 0.0:
+        density = preset.density
+    density = float(density)
     contract = reader.load_contract(request["contract_path"])
     # The COMPAS half when there is one, the contract's own mesh when
     # there is not. staging passes "" for a study whose export carries no
@@ -57,6 +72,7 @@ def solve(request: dict) -> dict:
         "combination_factor": 1.35,
         "placed_face_count": len(request["placed_faces"]),
         "support_count": 0,
+        "density": density,
     }
 
     def failure(message):
@@ -94,7 +110,7 @@ def solve(request: dict) -> dict:
             "the partial has nothing to stand on"
         )
 
-    weight = self_weight_loads(sub, thickness, preset.density)
+    weight = self_weight_loads(sub, thickness, density)
     loads = {k: list(v) for k, v in weight.items()}
     if request.get("include_export_loads", True):
         for k, v in reader.node_loads(contract).items():
