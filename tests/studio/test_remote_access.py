@@ -2441,12 +2441,42 @@ def test_the_brush_is_a_stroke_and_the_stroke_is_one_undo():
     run = _js_function(js, "async function runScatter(region, options)")
     assert "if (settings.stroke) {" in run
     assert "stroke.run = { layer: home.id, records: stroke.records };" in run
-    # The area is a drag again, the same way: press on a corner, release
-    # on the other, and the release is the pointer that pressed.
-    down = _js_function(js, "function onAreaDown(event)")
-    assert 'scatterDrag = { kind: "rect", x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y,' in down
+    # The area's release is the pointer that pressed, the same way (the
+    # rest of the area is test_the_area_stays_in_hand_and_a_click_fills_it_again).
     area = _js_function(js, "function onAreaUp(event)")
-    assert "if (!drag || event.pointerId !== drag.pointerId) return;" in area
+    assert "if (!press || event.pointerId !== press.pointerId) return;" in area
+
+
+def test_the_area_stays_in_hand_and_a_click_fills_it_again():
+    """Param, once the brush worked: "i drag the area it spawns one lot
+    the block rectangle still stays and if i keep clicking it continues
+    adding objects, then if i click and drag on a new area i can continue
+    placing up until i press esc. make sure the click and drag has enough
+    of a false start so it doesnt make the rectangles too easily, say a
+    click and a drag has to drag for more than 10px before it activates".
+
+    Twelve pixels for a mouse or a pen, twice that for a fingertip; a
+    press that stays inside it is a click, and a click fills the
+    rectangle on the floor again with a fresh deal."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert "const AREA_DRAG_PX = 12;" in js
+    assert "const AREA_DRAG_PX_TOUCH = 24;" in js
+    down = _js_function(js, "function onAreaDown(event)")
+    assert 'slop: event.pointerType === "touch" ? AREA_DRAG_PX_TOUCH : AREA_DRAG_PX };' in down
+    move = _js_function(js, "function onAreaMove(event)")
+    assert "if (travelled <= press.slop) return;" in move
+    assert move.index("if (travelled <= press.slop) return;") < move.index(
+        "scatterDrag = {"), "no rectangle until the false start is past"
+    up = _js_function(js, "function onAreaUp(event)")
+    assert "disarmScatterArea" not in up, "the tool stays in hand until Escape"
+    assert "} else if (!scatterDrag) {" in up, "a click with no rectangle yet says so"
+    assert "  fillScatterArea();" in up
+    fill = _js_function(js, "function fillScatterArea()")
+    assert "const salt = state.scatterStroke;" in fill, "every fill deals afresh"
+    assert "await runScatter(region, { salt, intoLayer: state.scatterBrushLayer });" in fill, (
+        "one layer for the session, not one per fill")
+    assert "scatterQueue = scatterQueue.then(async () => {" in fill
 
 
 def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():

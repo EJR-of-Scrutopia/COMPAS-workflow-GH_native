@@ -6856,6 +6856,22 @@ function syncScatterControls() {
 // boot and the studio's prop handling binds another, so anything that
 // merely listens later sees a press both of them have already acted on.
 let scatterDrag = null;
+// The area tool, as Param asked for it once the brush worked: "i drag the
+// area it spawns one lot the block rectangle still stays and if i keep
+// clicking it continues adding objects, then if i click and drag on a new
+// area i can continue placing up until i press esc". So it stays in hand
+// after a fill: the rectangle stays on the floor (scatterDrag), a click
+// fills it again with a fresh deal, a DRAG draws a new one, and Escape is
+// the way out.
+//
+// A press only becomes a drag once it has travelled this far ("make sure
+// the click and drag has enough of a false start so it doesnt make the
+// rectangles too easily ... more than 10px"). Twelve is past the wobble of
+// a firm click with a mouse or a pen and still only a few millimetres of
+// hand; a fingertip wobbles more, so a touch needs twice it.
+const AREA_DRAG_PX = 12;
+const AREA_DRAG_PX_TOUCH = 24;
+let areaPress = null;   // the press in hand: where it began, and whether it became a drag
 let scatterOutline = null;
 
 function showScatterOutline(region) {
@@ -7086,13 +7102,14 @@ function armScatterArea() {
   }
   state.scatterArmed = "area";
   scatterDrag = null;
+  areaPress = null;
   document.getElementById("scatter-area").classList.add("active");
   document.getElementById("scatter-readout").textContent =
-    "press on one corner and drag to the opposite one; middle-drag orbits, "
-    + "right-drag pans; Escape to stop";
+    "drag a rectangle to fill it, click to fill it again, drag another to move on; "
+    + "middle-drag orbits, right-drag pans; Escape to stop";
   closeShelf();
-  logStudio("scatter: press on one corner of the area and drag to the "
-    + "opposite corner; middle-drag to orbit, right-drag to pan; Escape to stop");
+  logStudio("scatter: drag a rectangle on the floor to fill it, click to fill it "
+    + "again, drag another to move on; middle-drag orbits, right-drag pans; Escape to stop");
   giveButtonsToTool(true);
   canvas.addEventListener("pointerdown", onAreaDown);
   canvas.addEventListener("pointermove", onAreaMove);
@@ -7105,6 +7122,7 @@ function disarmScatterArea() {
   const wasArmed = state.scatterArmed;
   state.scatterArmed = false;
   scatterDrag = null;
+  areaPress = null;
   scatterBrushAt = null;
   state.scatterBrushLayer = null;
   // A stroke still in hand when the tool is put down keeps what it
@@ -7143,43 +7161,84 @@ function onScatterKey(event) {
 }
 
 function onAreaDown(event) {
-  if (event.button !== 0 || scatterDrag) return;
+  if (event.button !== 0 || areaPress) return;
   const hit = groundPointAt(event);
   if (!hit) return;
   canvas.setPointerCapture(event.pointerId);
-  scatterDrag = { kind: "rect", x0: hit.x, y0: hit.y, x1: hit.x, y1: hit.y,
-    pointerId: event.pointerId };
-  showScatterOutline(scatterDrag);
+  areaPress = { pointerId: event.pointerId, clientX: event.clientX,
+    clientY: event.clientY, x0: hit.x, y0: hit.y, dragging: false,
+    slop: event.pointerType === "touch" ? AREA_DRAG_PX_TOUCH : AREA_DRAG_PX };
 }
 
-// The rectangle follows the pointer from the pressed corner until the
-// release, so what will be filled is always on screen.
+// Nothing happens until the press has travelled past the false start.
+// From then on the NEW rectangle follows the pointer from the pressed
+// corner, so what will be filled is always on screen.
 function onAreaMove(event) {
-  if (!scatterDrag) return;
+  const press = areaPress;
+  if (!press || event.pointerId !== press.pointerId) return;
   const hit = groundPointAt(event);
   if (!hit) return;
-  scatterDrag.x1 = hit.x;
-  scatterDrag.y1 = hit.y;
+  if (!press.dragging) {
+    const travelled = Math.hypot(event.clientX - press.clientX,
+      event.clientY - press.clientY);
+    if (travelled <= press.slop) return;
+    press.dragging = true;
+  }
+  scatterDrag = { kind: "rect", x0: press.x0, y0: press.y0, x1: hit.x, y1: hit.y };
   showScatterOutline(scatterDrag);
   const w = Math.abs(scatterDrag.x1 - scatterDrag.x0);
   const h = Math.abs(scatterDrag.y1 - scatterDrag.y0);
   logStudio("scatter: " + w.toFixed(1) + " by " + h.toFixed(1) + " m so far");
 }
 
+// A drag fills the rectangle it drew; a click fills the one already on the
+// floor again. Either way the tool stays in hand until Escape.
 function onAreaUp(event) {
-  const drag = scatterDrag;
-  if (!drag || event.pointerId !== drag.pointerId) return;
+  const press = areaPress;
+  if (!press || event.pointerId !== press.pointerId) return;
+  areaPress = null;
   try { canvas.releasePointerCapture(event.pointerId); } catch (error) { /* gone already */ }
-  const hit = groundPointAt(event);
-  if (hit) { drag.x1 = hit.x; drag.y1 = hit.y; }
-  const region = { kind: "rect", x0: drag.x0, y0: drag.y0, x1: drag.x1, y1: drag.y1 };
-  disarmScatterArea();
-  if (Math.abs(region.x1 - region.x0) < 0.5
-      || Math.abs(region.y1 - region.y0) < 0.5) {
-    logStudio("scatter: that area was too small to fill");
+  if (event.type === "pointercancel") return;
+  if (press.dragging) {
+    const hit = groundPointAt(event);
+    if (hit) { scatterDrag.x1 = hit.x; scatterDrag.y1 = hit.y; }
+    if (Math.abs(scatterDrag.x1 - scatterDrag.x0) < 0.5
+        || Math.abs(scatterDrag.y1 - scatterDrag.y0) < 0.5) {
+      scatterDrag = null;
+      hideScatterOutline();
+      logStudio("scatter: that area was too small to fill");
+      return;
+    }
+    showScatterOutline(scatterDrag);
+  } else if (!scatterDrag) {
+    logStudio("scatter: drag a rectangle first; a click fills the one on the floor again");
     return;
   }
-  runScatter(region);
+  fillScatterArea();
+}
+
+// Every fill deals afresh (its own salt, as a brush stamp does) into the
+// session's one layer, and is its own undo entry. It queues behind any
+// fill or stamp still waiting on its models, so a burst of clicks cannot
+// solve two fills against one keep-out and plant them through each other.
+function fillScatterArea() {
+  const region = { kind: "rect", x0: scatterDrag.x0, y0: scatterDrag.y0,
+    x1: scatterDrag.x1, y1: scatterDrag.y1 };
+  state.scatterStroke += 1;
+  const salt = state.scatterStroke;
+  scatterQueue = scatterQueue.then(async () => {
+    const before = state.props.length;
+    await runScatter(region, { salt, intoLayer: state.scatterBrushLayer });
+    if (!state.scatterBrushLayer && state.props.length > before) {
+      state.scatterBrushLayer = state.props[state.props.length - 1].layer;
+    }
+    // A fill repaints the drawer, which would leave the rectangle and the
+    // lit button behind while the tool is still in hand.
+    if (state.scatterArmed === "area") {
+      document.getElementById("scatter-area").classList.add("active");
+      if (scatterDrag) showScatterOutline(scatterDrag);
+    }
+  }).catch((error) => logStudio("scatter: a fill failed: " + error.message));
 }
 
 // ---------- the stamp ----------

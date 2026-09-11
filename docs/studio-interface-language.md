@@ -310,7 +310,12 @@ two (`giveButtonsToTool`: middle orbits, right pans, the wheel zooms; on
 touch, one finger is the tool and two fingers zoom and pan). The brush is
 a stroke: a press stamps, a drag stamps again every `BRUSH_STEP` of the
 radius, a release ends it, and the whole stroke is ONE undo entry. The
-area is a drag from one corner to the other. Arming a tool folds the
+area stays in hand until Escape: a drag draws a rectangle and fills it,
+the rectangle stays on the floor, a click fills it again with a fresh
+deal, and a new drag moves on. A press only becomes a drag past
+`AREA_DRAG_PX` (12 px; 24 for a fingertip), so a firm click never draws
+a rectangle by accident. Each fill is its own undo entry, and a session's
+fills share one layer. Arming a tool folds the
 shelf away and ONE Escape brings it back (the tool's handler is in the
 capture phase and stops the event immediately, or the window's general
 Escape would close the drawer again); a CLOSED shelf is not "another
