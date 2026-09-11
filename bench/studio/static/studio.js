@@ -4,6 +4,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { buildLiveSeries, liveSpecs, seriesToCsv } from "./live_graphs.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, buildSegmented, paintSegmented,
   buildGroups, paintGroupSummaries, setGroupSummaries,
@@ -274,6 +275,20 @@ const state = {
 
 const canvas = document.getElementById("view");
 const scrubber = document.getElementById("timeline-scrubber");
+// The live graphs' state, declared this early because applyTheme runs
+// during boot and invalidates them (see "the live graphs" far below).
+const liveGraphs = { series: null, specs: null, cards: new Map(), shown: false,
+  wanted: true, dirty: true, building: false, lastK: -1, prestress: 0.1 };
+const LIVE_GRAPHS_KEY = "vaulted-live-graphs";
+const LIVE_PRESTRESS_KEY = "vaulted-live-prestress";
+try {
+  liveGraphs.wanted = localStorage.getItem(LIVE_GRAPHS_KEY) !== "0";
+  // Nothing stored is not zero: +null is 0, and a fresh browser opened
+  // with the dial at nought and every cable slack through the act.
+  const stored = localStorage.getItem(LIVE_PRESTRESS_KEY);
+  const kept = stored === null ? NaN : +stored;
+  if (Number.isFinite(kept) && kept >= 0 && kept <= 1) liveGraphs.prestress = kept;
+} catch (error) { /* default on, a tenth */ }
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 // Full native density on the desktop; a ceiling on touch devices. An iPad
 // at DPR 2 is a 3200x2400 canvas, and shading it is half of why the studio
@@ -4950,6 +4965,8 @@ function applyTheme(theme) {
   // The button names what it will DO, not what is on, which is the one
   // choice that stops a toggle being ambiguous in a screenshot.
   if (button) button.textContent = light ? "Dark" : "Light";
+  // The graphs' inks are read at draw time, so they are drawn again.
+  invalidateLiveGraphs();
   try {
     localStorage.setItem("bench-studio-theme", light ? "light" : "dark");
   } catch (error) {
@@ -6399,6 +6416,220 @@ if (statsOverlay) statsOverlay.addEventListener("click", () => toggleStats(false
 const statsTile = document.getElementById("shelf-stats");
 if (statsTile) statsTile.addEventListener("click", () =>
   toggleStats(statsOverlay.classList.contains("hidden")));
+
+// ---------- the live graphs ----------
+// Four cards down the left edge that play with the take: the model in
+// live_graphs.js, sampled once per study and drawn once, then a cursor
+// and four readings that follow the clock. The series are built lazily
+// from whatever the studio holds (the bundle, the formwork document, the
+// columns) and thrown away whenever any of those changes; the cursor is
+// moved from the render loop, so play, scrub and record all drive it and
+// applyTimeline stays a pure function of t.
+// (liveGraphs itself is declared beside the scrubber, far above: applyTheme
+// runs during boot and invalidates the graphs, and a const declared down
+// here would still be in its temporal dead zone when it did.)
+
+// The studio's clock, as numbers, so the module stays pure.
+function liveClock() {
+  return { duration: timelineDuration(), opening: openingSeconds(),
+    formwork: formworkSeconds(), step: placementStep(), drop: DROP_SECONDS,
+    strike: STRIKE_SECONDS, pieces: placementCount() };
+}
+
+// The graphs' inks, read off the theme at draw time.
+function liveTheme() {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
+  return { ink: read("--ink", "#e6e6e6"), ink2: read("--ink-2", "#a0a0a0"),
+    line: read("--line", "#393939"), scrim: read("--scrim", "rgba(16,18,22,0.85)"),
+    a: read("--graph-a", "#5fb3a6"), aFill: read("--graph-a-fill", "rgba(95,179,166,0.16)"),
+    b: read("--graph-b", "#d9a25f"),
+    c: read("--graph-c", "#d77a8a"), cFill: read("--graph-c-fill", "rgba(215,122,138,0.16)"),
+    font: "system-ui, sans-serif", mono: "ui-monospace, monospace" };
+}
+
+// The exporter's final column forces: the formwork route's, when the
+// contract's mould block carried them, else the columns document's own.
+function liveColumnForces() {
+  const formwork = state.formwork;
+  if (formwork && formwork.columns && Array.isArray(formwork.columns.forces)) {
+    return formwork.columns.forces;
+  }
+  const members = state.columnMembers || [];
+  const forces = members.map((m) => (m && typeof m.force === "number") ? m.force : null);
+  return forces.length && forces.every((f) => f !== null) ? forces : null;
+}
+
+function invalidateLiveGraphs() {
+  liveGraphs.dirty = true;
+  liveGraphs.lastK = -1;
+}
+
+function showLiveGraphs(on) {
+  const panel = document.getElementById("graphs-panel");
+  if (!panel) return;
+  liveGraphs.shown = !!on;
+  panel.classList.toggle("hidden", !on);
+  const tile = document.getElementById("shelf-graphs");
+  if (tile) tile.classList.toggle("active", !!on);
+  if (on) { liveGraphs.lastK = -1; tickLiveGraphs(true); }
+}
+
+// Wanted is the user's own switch, remembered; shown is whether the
+// cards are up now. Play brings them up when wanted; the close button
+// and the tile move the switch.
+function setLiveGraphsWanted(on) {
+  liveGraphs.wanted = !!on;
+  try { localStorage.setItem(LIVE_GRAPHS_KEY, on ? "1" : "0"); } catch (error) { /* ditto */ }
+  showLiveGraphs(on);
+}
+
+async function buildLiveGraphs() {
+  if (!state.bundle || !state.timeline || liveGraphs.building) return;
+  liveGraphs.building = true;
+  try {
+    await ensurePlotly();
+    const bundle = state.bundle;
+    // Weighed as the bundle was: the provenance density is the skin's
+    // when a skin overrides, exactly what staging weighed the courses with.
+    const density = bundle.provenance.density || skinDensity() || structuralDensity();
+    const series = buildLiveSeries({
+      bundle, formwork: state.formwork, clock: liveClock(),
+      thickness: bundle.provenance.thickness, density,
+      columnForcesKN: liveColumnForces(), columnRadiusM: state.columnRadius,
+      prestress: liveGraphs.prestress,
+    });
+    const specs = liveSpecs(series, liveTheme());
+    liveGraphs.series = series;
+    liveGraphs.specs = specs;
+    const holder = document.getElementById("graphs-cards");
+    // A card the new specs no longer name (a study without columns after
+    // one with them) comes down, or a stale plot would stand under the
+    // new study's numbers.
+    for (const [id, card] of [...liveGraphs.cards]) {
+      if (specs.some((spec) => spec.id === id)) continue;
+      const plot = card.querySelector(".live-plot");
+      if (plot && window.Plotly) window.Plotly.purge(plot);
+      card.remove();
+      liveGraphs.cards.delete(id);
+    }
+    const study = document.getElementById("graphs-study");
+    if (study) study.textContent = bundle.export + ", " + bundle.material + ", "
+      + Math.round(bundle.provenance.thickness * 1000) + " mm at " + Math.round(density) + " kg/m3";
+    for (const spec of specs) {
+      let card = liveGraphs.cards.get(spec.id);
+      if (!card) {
+        card = document.createElement("div");
+        card.className = "live-card";
+        card.innerHTML = '<header><span class="live-name"></span><span class="live-unit"></span>'
+          + '<span class="live-reading"></span><span class="live-label"></span>'
+          + '<span class="live-aside"></span></header><div class="live-plot"></div>';
+        holder.appendChild(card);
+        liveGraphs.cards.set(spec.id, card);
+        const plot = card.querySelector(".live-plot");
+        // A click on a graph is a seek: the take goes to that instant and
+        // waits there, which is the "pinpoint" he asked for.
+        plot.addEventListener("plotly_click", () => {});
+      }
+      card.querySelector(".live-name").textContent = spec.name;
+      card.querySelector(".live-unit").textContent = spec.unit;
+      const plot = card.querySelector(".live-plot");
+      await window.Plotly.react(plot, spec.data, spec.layout,
+        { displayModeBar: false, responsive: true, doubleClick: false });
+      if (!plot.liveSeekBound) {
+        plot.liveSeekBound = true;
+        plot.on("plotly_click", (event) => {
+          const point = event && event.points && event.points[0];
+          if (point && Number.isFinite(point.x)) seekLiveGraphs(point.x);
+        });
+      }
+    }
+    const notes = document.getElementById("graphs-notes");
+    if (notes) notes.textContent = series.notes.join(" ");
+    liveGraphs.dirty = false;
+    liveGraphs.lastK = -1;
+  } catch (error) {
+    reportProblem("the live graphs could not be built: " + error.message, error);
+    liveGraphs.dirty = false;
+  } finally {
+    liveGraphs.building = false;
+  }
+  tickLiveGraphs(true);
+}
+
+// Once a frame from the render loop: the readings every time the sample
+// changes, the cursor with them. Four relayouts of one shape each is a
+// few milliseconds; the take's own render is the cost that matters.
+function tickLiveGraphs(force) {
+  if (!liveGraphs.shown || !state.timeline || !state.bundle) return;
+  if (liveGraphs.dirty) { if (!liveGraphs.building) buildLiveGraphs(); return; }
+  const series = liveGraphs.series;
+  if (!series || !liveGraphs.specs) return;
+  const n = series.t.length;
+  const duration = series.t[n - 1] || 1;
+  const t = Math.max(0, Math.min(duration, state.timeline.t));
+  const k = Math.round((n - 1) * t / duration);
+  if (k === liveGraphs.lastK && !force) return;
+  liveGraphs.lastK = k;
+  for (const spec of liveGraphs.specs) {
+    const card = liveGraphs.cards.get(spec.id);
+    if (!card) continue;
+    card.querySelector(".live-reading").textContent = spec.reading(k).toFixed(2);
+    card.querySelector(".live-label").textContent = spec.readingLabel;
+    card.querySelector(".live-aside").textContent = spec.aside ? spec.aside(k) : "";
+    const plot = card.querySelector(".live-plot");
+    const last = spec.layout.shapes.length - 1;
+    const patch = {};
+    patch["shapes[" + last + "].x0"] = t;
+    patch["shapes[" + last + "].x1"] = t;
+    window.Plotly.relayout(plot, patch);
+  }
+}
+
+function seekLiveGraphs(t) {
+  if (!state.timeline) return;
+  state.timeline.playing = false;
+  paintPlayButtons("Play");
+  applyTimeline(Math.max(0, Math.min(timelineDuration(), t)));
+  scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
+  updateHud();
+  tickLiveGraphs(true);
+}
+
+// The series as a sheet, to lay the physical model's readings beside.
+function downloadLiveSeries() {
+  if (!liveGraphs.series || !state.bundle) return;
+  const text = seriesToCsv(liveGraphs.series, state.bundle.export);
+  const blob = new Blob([text], { type: "text/csv" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = state.bundle.slug + "-live-series.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  logStudio("live graphs: " + link.download + " (" + liveGraphs.series.t.length + " rows)");
+}
+
+{
+  const tile = document.getElementById("shelf-graphs");
+  if (tile) tile.addEventListener("click", () => setLiveGraphsWanted(!liveGraphs.shown));
+  const close = document.getElementById("graphs-close");
+  if (close) close.addEventListener("click", () => setLiveGraphsWanted(false));
+  const csv = document.getElementById("graphs-csv");
+  if (csv) csv.addEventListener("click", downloadLiveSeries);
+  const dial = document.getElementById("graphs-prestress");
+  if (dial) {
+    dial.value = Math.round(liveGraphs.prestress * 100);
+    document.getElementById("graphs-prestress-value").textContent = dial.value;
+    dial.addEventListener("input", () => {
+      liveGraphs.prestress = +dial.value / 100;
+      document.getElementById("graphs-prestress-value").textContent = dial.value;
+      try { localStorage.setItem(LIVE_PRESTRESS_KEY, String(liveGraphs.prestress)); } catch (error) { /* ditto */ }
+      invalidateLiveGraphs();
+    });
+  }
+}
 
 // ---------- the lights drawer ----------
 // Param: "maybe we need to make a light tile and put all the lights there
@@ -9710,6 +9941,9 @@ async function loadStudy(exportName) {
     rebuildFormworkObjects();
     buildScene(fresh, preserve);
     await reloadColumns(columnsForStudy(state.columnFiles || [], exportName));
+    // The bundle, the formwork and the columns are all new: so are the
+    // graphs' series.
+    invalidateLiveGraphs();
     loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
@@ -9919,6 +10153,10 @@ function clearScene() {
   state.mechanism = null;
   disposeMachine();
   state.bundle = null;
+  // No study, no graphs: the cards go with the scene they described.
+  showLiveGraphs(false);
+  liveGraphs.series = null;
+  liveGraphs.dirty = true;
   selectProp(null);
   rebuildFormworkObjects();
   disposeShell();
@@ -11539,6 +11777,8 @@ function rebuildTimeline(preserve) {
     orbitBase: null,
   };
   state.centre = sceneCentroid();
+  // A new timeline is a new x axis for the graphs.
+  invalidateLiveGraphs();
   if (!preserve) {
     // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
     // damped approach toward controls.target must aim at the same point,
@@ -13928,6 +14168,9 @@ function startPlaying(fromTheTop) {
   if (fromT !== state.timeline.t) applyTimeline(fromT);
   state.timeline.playing = true;
   paintPlayButtons("Pause");
+  // "When i run the animation i would like to see 3 tiled graphs": play
+  // brings them up, unless he has put them away.
+  if (liveGraphs.wanted) showLiveGraphs(true);
 }
 
 document.getElementById("play-button").addEventListener("click", () => {
@@ -14162,7 +14405,13 @@ scrubber.addEventListener("input", () => {
 });
 for (const [id, prop] of [["orbit-speed", "orbitSpeed"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
-    if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
+    if (state.timeline) {
+      state.timeline[prop] = +e.target.value;
+      applyTimeline(state.timeline.t);
+      // The spin rate sets the last act's length, so the take's duration
+      // and the graphs' x axis move with it.
+      invalidateLiveGraphs();
+    }
   });
 }
 // Speed is a playback rate, not a scene parameter: routing it through the
@@ -14195,6 +14444,9 @@ function frame(now) {
     playingFrameCount += 1;
     if (playingFrameCount % 15 === 0) updateHud();
   }
+  // Playing or scrubbed, the graphs follow the clock from here, never
+  // from applyTimeline, which stays pure in t.
+  tickLiveGraphs(false);
   if (state.dayCycle.playing) {
     state.dayCycle.t = Math.min(state.dayCycle.t + delta, state.dayCycle.seconds);
     applyDayCycle(state.dayCycle.t / state.dayCycle.seconds);
@@ -14364,6 +14616,9 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // A probe that places props must be able to take them away: a batched
   // prop's proxy is not propsGroup's child, so parent.remove does nothing.
   disposeProp,
+  // The live graphs' series, so a probe can read the model's numbers at
+  // an instant rather than a card's rounded text.
+  liveGraphs,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,
   // A GETTER, because `camera` is now a binding that moves between two

@@ -28,6 +28,13 @@
 
   --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
   --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
+  --veil-thin: rgba(16, 18, 22, 0.58); /* a mostly translucent card over the view */
+  /* The live graphs' three inks, muted so the picture behind stays the
+     picture: cables, the load, the columns. Charts read these at draw
+     time, so they carry no hex of their own. */
+  --graph-a: #5fb3a6; --graph-a-fill: rgba(95, 179, 166, 0.16);
+  --graph-b: #d9a25f;
+  --graph-c: #d77a8a; --graph-c-fill: rgba(215, 122, 138, 0.16);
 
   /* component-height-100 and -75. A control is 32; a chip or a list row is
      24, which is the only other height the panel is allowed. */
@@ -75,6 +82,10 @@
   --accent-hover:#1c46c9;
 
   --scrim:    rgba(255, 255, 255, 0.88);
+  --veil-thin: rgba(255, 255, 255, 0.66);
+  --graph-a: #2f8c7e; --graph-a-fill: rgba(47, 140, 126, 0.16);
+  --graph-b: #b0762a;
+  --graph-c: #b84a5f; --graph-c-fill: rgba(184, 74, 95, 0.16);
 
   --panel-veil: rgba(252, 252, 252, 0.74);
 }
@@ -1232,6 +1243,41 @@ body.panel-collapsed #event-log { right: var(--s4); }
 /* Out of a take: a readout baked into a 56 minute recording is a ruined
    recording. */
 body.recording #stats-overlay { display: none; }
+
+/* THE LIVE GRAPHS: a column of mostly translucent cards down the left
+   edge, under the stilling cover (z 12) and the data sheet (z 20), over
+   the view. The panel itself lets the pointer through between cards, so
+   the orbit is not fenced off by an invisible rectangle. */
+#graphs-panel { position: fixed; left: 16px; top: 16px; bottom: 96px; width: 360px;
+  z-index: 11; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+#graphs-panel.hidden { display: none; }
+#graphs-panel > * { pointer-events: auto; }
+#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--veil-thin);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+#graphs-head { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px;
+  font-size: 11px; color: var(--ink-2); }
+#graphs-head #graphs-title { color: var(--ink); font-weight: 500; }
+#graphs-head #graphs-study { flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--ink-3); }
+#graphs-head button { width: auto; margin: 0; padding: 1px 8px; font-size: 11px;
+  background: var(--raised); color: var(--ink-2); }
+#graphs-dials { padding: 2px 10px 6px; grid-template-columns: auto 1fr auto auto; }
+#graphs-cards { flex: 1; min-height: 0; display: grid; grid-auto-rows: 1fr; gap: 8px; }
+.live-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.live-card header { display: flex; align-items: baseline; gap: 6px;
+  padding: 5px 10px 0; font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.live-card .live-name { color: var(--ink); }
+.live-card .live-unit { color: var(--ink-3); font-size: 10px; }
+.live-card .live-reading { margin-left: auto; color: var(--ink); font-size: 12px;
+  font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.live-card .live-label, .live-card .live-aside { color: var(--ink-3); font-size: 10px;
+  font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.live-card .live-plot { flex: 1; min-height: 0; }
+#graphs-notes { padding: 4px 10px; font-size: 10px; line-height: 1.35;
+  color: var(--ink-3); max-height: 5.5em; overflow: auto; }
+/* A narrow window gets narrower cards rather than none. */
+@media (max-width: 900px) { #graphs-panel { width: 280px; } }
 
 /* The orthographic scale bar, in the same corner and below the readout.
    Its WIDTH is the measurement, set in script from metres per pixel, so

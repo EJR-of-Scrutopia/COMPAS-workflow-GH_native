@@ -202,8 +202,35 @@
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
     <button id="shelf-stats" class="shelf-act" title="Show the objects, draw calls, VRAM and CPU readout">&#8801;</button>
+    <button id="shelf-graphs" class="shelf-act" title="Show the live graphs beside the take: cable force, the load on the formwork, column force and the thrust at the supports">&#8767;</button>
     <button id="shelf-fullscreen" class="shelf-act" title="Fill the display with the view">&#9974;</button>
   </div>
+</div>
+<!-- THE LIVE GRAPHS. Param: "3 tiled graphs to the left in a mostly
+     translucent window for each graph, each in a row to the left of the
+     screen ... so we can see live the pre stress per cable building".
+     Cards stacked down the left edge, drawn from live_graphs.js's model
+     as the take plays, scrubbed with it, and clickable to seek. The
+     header row names the study, offers the series as a sheet and closes
+     the window; the notes line states the model's assumptions in full,
+     because a number without its assumption is not a prediction. -->
+<div id="graphs-panel" class="hidden">
+  <header id="graphs-head">
+    <span id="graphs-title">Live</span>
+    <span id="graphs-study"></span>
+    <button id="graphs-csv" title="Download every series as a sheet, one row per instant, with the model's assumptions on top">CSV</button>
+    <button id="graphs-close" title="Hide the live graphs">&#215;</button>
+  </header>
+  <!-- The one number no document states: what the reels put into the net
+       before anything is cast, as a fraction of each cable's final
+       thrust. Set it to the winch a physical model uses. -->
+  <div class="dial-block" id="graphs-dials">
+    <label title="The prestress the machine puts into every cable before the first casting, as a share of that cable's final thrust. No document states it; set it to the winch the physical model uses."><span>Prestress</span>
+      <input id="graphs-prestress" type="range" min="0" max="100" step="5" value="10">
+      <b id="graphs-prestress-value">10</b><em>%</em></label>
+  </div>
+  <div id="graphs-cards"></div>
+  <div id="graphs-notes"></div>
 </div>
 <div id="legend" class="hidden">
   <div id="legend-title"></div>

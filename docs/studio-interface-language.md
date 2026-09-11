@@ -322,6 +322,23 @@ Escape would close the drawer again); a CLOSED shelf is not "another
 drawer" and must not disarm the tool. The click-to-place version lasted
 one morning: "i want to drag the brush around".
 
+**The live graphs are the model's own readings, with the model written
+on them.** `#graphs-panel` is a column of mostly translucent cards down
+the left edge (z 11: under the stilling cover and the data sheet), one
+per quantity a physical model would instrument: cable force, the load on
+the formwork, column force with its strain, thrust at the supports. They
+come up when Play starts (the `#shelf-graphs` tile and the close button
+move the remembered switch), follow the clock from the render loop
+(never from applyTimeline, which stays pure in t), scrub with the
+scrubber, and a click on a graph seeks the take to that instant. Each
+card's header carries the name, the unit and the live reading in
+monospace; the notes line states every assumption in full; `CSV` hands
+over every series with those assumptions on top. The one number no
+document states, the prestress the reels put into the net, is a dial in
+the four-part form, and the graphs say what fraction it is set to. The
+numbers come from `live_graphs.js`, which is pure and tested under node
+to the figure.
+
 **Brightness is the day, and Night is an hour.** The Skies drawer's
 Brightness dial (`sky-brightness`) scales everything the day gives at
 once: the sun, the sky light, the sky itself, the backdrop, the fog, a

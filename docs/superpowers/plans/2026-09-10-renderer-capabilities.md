@@ -394,6 +394,48 @@ calls, 15.9 M triangles at Balanced (88.4 M at Full), 129 fps still, 75
 fps orbiting; a dragged stroke of 7,080 props in 363 ms; its undo in one
 press; the layout 953 KB in the browser and whole on the server.
 
+## Verified 2026-09-11, afternoon: the live graphs
+
+Param: "3 tiled graphs to the left in a mostly translucent window ...
+live the pre stress per cable building ... one shows the q load, another
+the column strain ... a super accurate precise model that i can use to
+test against a physical model". A seven-agent recon read the formwork
+document, the backend physics, the exporter, the page and the tests
+before a line was written. What it settled:
+
+1. **What exists per instant.** The frames document carries positions
+   only (its spec's section 8 excludes forces). The live form document
+   carries the thrust network's member force per edge, force densities,
+   nodal loads and reactions; its self-weight load case was solved at a
+   placeholder density of 1, so those forces are the vault's thrust for a
+   unit weight. The exporter's mould block carries a final force per
+   column member, which the formwork route dropped. The cut carries every
+   piece's geometry, so the placed weight is exact.
+2. **The model, therefore.** Each cable's force is its SHARE of the placed
+   weight, its member force scaled from the load the network was solved
+   for to what is placed (a force density net at fixed geometry scales
+   linearly with load), plus a PRESTRESS the documents cannot give, so it
+   is a dial: a fraction of the cable's final thrust, default a tenth,
+   reached through the raise. The strike takes the share off. Columns
+   wear the same factor on the exporter's final force; strain is force
+   over E A with E 210 GPa stated. Thrust is the reactions scaled to the
+   shell's weight, arriving with the strike. Every assumption is printed
+   under the cards and on top of the CSV.
+3. **The data path for better numbers.** A frame may now carry `forces`
+   (kN per equilibrium edge) and `columnForces` (kN per column member);
+   when present the graphs use them as they are. That is the plugin's
+   addition, written up as a spec addendum: the machine's own solver
+   (Kangaroo or Karamba) knows the cable tensions the studio can only
+   model.
+4. **The skin density now reaches the stage solve.** solve_stage.py
+   weighed the shell with the material preset's density whatever skin the
+   study wore; the resolved density staging already computed is passed
+   through, so the struck-now solve and the formwork curve weigh alike.
+5. **Not in the recording.** The recorder reads the WebGL canvas; the
+   cards are DOM. A take with the graphs in it needs a composite (drawn
+   into the canvas, or server-side over the frames); recorded as a
+   follow-up, not built.
+
 ## Verified 2026-09-11, afternoon: the night
 
 Param's screenshot: the Night preset with Brightness at 0, and a scene in
