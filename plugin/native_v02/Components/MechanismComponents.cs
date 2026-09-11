@@ -526,11 +526,18 @@ internal static class MechanismCollector
             .Select(w => w.Wire)
             .ToList();
         notes.Add(
+            // WHAT THE DATUM IS FOR IS SAID PER DOCUMENT, because this
+            // note is now raised by BOTH components and a machine document
+            // has no placement correspondence and no net-vertex match in it
+            // at all. Naming them unconditionally would describe a study's
+            // machinery to someone building a machine.
             $"Wire Start (WS): {prepended} wire(s) had their true start " +
             "prepended, so an offset routing path still begins at the " +
-            "anchor the datum, the placement and the net-vertex match are " +
-            "all read from. The furthest a start sits from the first " +
-            "offset plane is " +
+            "wire's real anchor. That first plane is the DATUM: on a " +
+            "machine it is what every study placed against it is pinned " +
+            "to, and on a study it is what the placement correspondence " +
+            "and the net-vertex match are read from. The furthest a start " +
+            "sits from the first offset plane is " +
             worstJump.ToString("0.####", CultureInfo.InvariantCulture) +
             " m, which is the step the drawn cable takes leaving its " +
             "anchor and should be about the offset you applied." +

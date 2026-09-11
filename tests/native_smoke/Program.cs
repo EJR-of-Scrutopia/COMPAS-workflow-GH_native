@@ -3633,12 +3633,16 @@ internal static partial class Program
                 + "bug as a measurement, and with them it is the true start, "
                 + "the route is four frames rather than three, the start "
                 + "comes FIRST, and the note reports the 0.02 m step. Plus "
-                + "two correct-input cases: a machine with no starts wired "
-                + "raises no Wire Start note at all, a repair raises the same "
-                + "number of warnings as the same machine raises without one "
-                + "and none of its own, and a machine with starts on six of "
-                + "its seven wires NAMES the seventh rather than leaving its "
-                + "anchor quietly moved.");
+                + "four correct-input cases: a machine with no starts wired "
+                + "raises no Wire Start note at all; an EMPTY start tree "
+                + "hands the routing back unchanged, wire object for wire "
+                + "object, and raises nothing, which is the early-return "
+                + "branch every un-offset machine takes and which nothing "
+                + "reached before; a repair raises the same number of "
+                + "warnings as the same machine raises without one and none "
+                + "of its own; and a machine with starts on six of its seven "
+                + "wires NAMES the seventh rather than leaving its anchor "
+                + "quietly moved.");
         }
         catch (Exception exception)
         {
@@ -43588,8 +43592,8 @@ internal static partial class Program
     ///    was computed and then discarded. What it does catch is precisely
     ///    the defect that shipped: no call at all.
     ///
-    /// 3. THE DATUM ITSELF, driven through the product. A two-wire machine
-    ///    whose routes begin at offset planes, built twice by
+    /// 3. THE DATUM ITSELF, driven through the product. A SEVEN-wire
+    ///    machine whose routes begin at offset planes, built twice by
     ///    MechanismCollector.BuildMachine: once with the wire starts
     ///    prepended and once without. WITHOUT, datum.frames[0] is the offset
     ///    plane, which is the shipped bug stated as a measurement. WITH, it
@@ -43598,12 +43602,16 @@ internal static partial class Program
     ///    document the product actually wrote, never off the dictionary it
     ///    was handed.
     ///
-    /// AND TWO CORRECT-INPUT CASES, because a message raised on correct
-    /// input is a defect equal in seriousness to one that misses a fault: a
-    /// machine with NO wire starts wired raises no Wire Start note at all
-    /// and its routing is returned unchanged, while a machine with a start
-    /// start on six of its seven wires names the seventh by number rather
-    /// than staying silent about a route whose anchor still reads as moved.
+    /// AND THREE CORRECT-INPUT CASES, because a message raised on correct
+    /// input is a defect equal in seriousness to one that misses a fault.
+    /// A machine with NO wire starts wired raises no Wire Start note at all.
+    /// An EMPTY start tree handed to PrependWireStarts hands the routing
+    /// back unchanged, WIRE OBJECT FOR WIRE OBJECT, and raises nothing:
+    /// that early return is its own branch, and the no-note case above does
+    /// not reach it, since it builds from the authored routing directly. And
+    /// a machine with a start on six of its seven wires names the seventh by
+    /// number rather than staying silent about a route whose anchor still
+    /// reads as moved.
     ///
     /// NOT CLAIMED HERE: that the build raises no warning at all. A machine
     /// or study built with no reels wired says so, which belongs to the
@@ -43820,6 +43828,50 @@ internal static partial class Program
                 string.Join(" | ", offsetNotes));
         }
 
+        // AND THE EMPTY TREE ITSELF, which is a BRANCH OF ITS OWN and which
+        // nothing else here reaches: the case above never calls
+        // PrependWireStarts at all, it builds straight from the authored
+        // routing, so the early return this wave moved out of SolveInstance
+        // was exercised by nothing. The claim is made WIRE OBJECT FOR WIRE
+        // OBJECT rather than on the count or the coordinates, because a
+        // rebuild that happened to reproduce the same numbers is still a
+        // route reconstructed where none should have been, and a route that
+        // can be reconstructed is a route that can silently differ.
+        var emptyNotes = new List<string>();
+        object untouched = prepend.Invoke(
+            null,
+            new object?[]
+            {
+                routing, Activator.CreateInstance(startsType)!, emptyNotes,
+            })!;
+        var authored = (IList)routing;
+        var returned = (IList)untouched;
+        if (returned.Count != authored.Count)
+        {
+            throw new InvalidOperationException(
+                "An EMPTY Wire Start tree must hand the routing back " +
+                $"unchanged; got {returned.Count} wire(s) against " +
+                $"{authored.Count}.");
+        }
+        for (int w = 0; w < authored.Count; w++)
+        {
+            if (!ReferenceEquals(returned[w], authored[w]))
+            {
+                throw new InvalidOperationException(
+                    "An EMPTY Wire Start tree must hand back the very wires " +
+                    "that were authored, not rebuilt copies of them; wire " +
+                    $"{w} came back rebuilt.");
+            }
+        }
+        if (emptyNotes.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "An EMPTY Wire Start tree must raise NOTHING. Every machine " +
+                "he has not offset takes this branch, so a note here would " +
+                "be noise on almost every build. Got: " +
+                string.Join(" | ", emptyNotes));
+        }
+
         // AND THE REPAIR, THROUGH THE SAME BUILD.
         var repairedNotes = new List<string>();
         object repaired = prepend.Invoke(
@@ -43925,7 +43977,7 @@ internal static partial class Program
                 "A wire carrying routing and NO start must be NAMED: its " +
                 "route still begins at the offset plane and its anchor still " +
                 "reads as moved, which is the very fault this port exists to " +
-                "repair, surviving on one wire out of two. Got: " +
+                "repair, surviving on one wire out of seven. Got: " +
                 (partialNote ?? "no note at all"));
         }
         var partialWarnings = new List<string>();
