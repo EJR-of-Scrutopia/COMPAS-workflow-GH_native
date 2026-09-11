@@ -1010,6 +1010,28 @@ function applyEnvironment() {
   if (sunInstrumentReady) applySunFromTime();
 }
 
+// The fog's colour follows the Sky every time the sun moves, not only at
+// the environment capture. The day cycle and the recorder move the sun
+// every frame but capture every 30, and a fog colour measured only at the
+// capture held for 30 frames and then jumped, as much as 55 grey levels
+// in one frame at dawn: a strobe about once a second in an animation.
+// Measured like regenerateEnvironment measures it (the bare sky, no dial,
+// no night, no fog), and only while an atmosphere is chosen in Sky mode,
+// which is the only time the fog is made of the Sky's horizon.
+let horizonHolder = null;
+function followSkyHorizon() {
+  if (state.environmentMode !== "sky" || !atmosphereIsOn(state.atmosphere)) return;
+  horizonHolder = horizonHolder || new THREE.Scene();
+  horizonHolder.add(sky); // borrows the mesh, as regenerateEnvironment does
+  const shown = skyDaylight.value;
+  skyDaylight.value = 1;
+  const measured = readSkyHorizon(horizonHolder);
+  skyDaylight.value = shown;
+  scene.add(sky);
+  if (measured) skyHorizon = measured;
+  if (skyHorizon) lightBase.fog = skyHorizon.clone();
+}
+
 function regenerateEnvironment() {
   // The one PMREM site (E6): mode entry, weather change, sun slider
   // release in sky mode, and HDRI load all land here.
@@ -1047,12 +1069,15 @@ function regenerateEnvironment() {
 
 // The Sky's horizon, measured: the sky mesh rendered four times into a
 // strip a few pixels tall, looking out just above the horizon to the four
-// quarters, and averaged. The strip is half float and linear (a render
-// target is never tone mapped), which is the fog's own space. A pixel is
-// held to a luminance of 4 first, so a sun sitting on the horizon tints
-// the answer rather than taking it over. The atmosphere is off while it
-// looks, since the fog must not be made from itself.
-const HORIZON_STRIP = { width: 32, height: 4 };
+// quarters, and averaged. The quarters sit side by side in one target
+// (32 by 4 each) and are read back once, because a read stalls the GPU and
+// this runs every frame the sun moves (followSkyHorizon). The strip is half
+// float and linear (a render target is never tone mapped), which is the
+// fog's own space. A pixel is held to a luminance of 4 first, so a sun
+// sitting on the horizon tints the answer rather than taking it over. The
+// atmosphere is off while it looks, since the fog must not be made from
+// itself.
+const HORIZON_STRIP = { width: 128, height: 4 };
 // The brightest the Sky's fog colour may be, as linear luminance (see the
 // end of readSkyHorizon): about a sunlit pale wall's, tuned by eye.
 const SKY_FOG_CEILING = 0.75;
@@ -1061,10 +1086,13 @@ let horizonCamera = null;
 
 function readSkyHorizon(holder) {
   try {
+    const quarterWidth = HORIZON_STRIP.width / 4;
     if (!horizonTarget) {
       horizonTarget = new THREE.WebGLRenderTarget(HORIZON_STRIP.width, HORIZON_STRIP.height,
         { type: THREE.HalfFloatType });
-      horizonCamera = new THREE.PerspectiveCamera(12, HORIZON_STRIP.width / HORIZON_STRIP.height, 0.1, 1000);
+      // Scissored, so each quarter's clear leaves the others standing.
+      horizonTarget.scissorTest = true;
+      horizonCamera = new THREE.PerspectiveCamera(12, quarterWidth / HORIZON_STRIP.height, 0.1, 1000);
       horizonCamera.up.set(0, 0, 1);
     }
     const density = atmosphere.uniforms.atmoDensity.value.clone();
@@ -1078,19 +1106,21 @@ function readSkyHorizon(holder) {
       const angle = quarter * Math.PI / 2;
       // Four degrees up: the band the sky's own horizon glow lives in.
       horizonCamera.lookAt(Math.cos(angle), Math.sin(angle), 2 + Math.tan(4 * Math.PI / 180));
+      horizonTarget.viewport.set(quarter * quarterWidth, 0, quarterWidth, HORIZON_STRIP.height);
+      horizonTarget.scissor.copy(horizonTarget.viewport);
       renderer.setRenderTarget(horizonTarget);
       renderer.render(holder, horizonCamera);
-      renderer.readRenderTargetPixels(horizonTarget, 0, 0,
-        HORIZON_STRIP.width, HORIZON_STRIP.height, pixels);
-      for (let i = 0; i < pixels.length; i += 4) {
-        const r = THREE.DataUtils.fromHalfFloat(pixels[i]);
-        const g = THREE.DataUtils.fromHalfFloat(pixels[i + 1]);
-        const b = THREE.DataUtils.fromHalfFloat(pixels[i + 2]);
-        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        const scale = luminance > 4 ? 4 / luminance : 1;
-        sum[0] += r * scale; sum[1] += g * scale; sum[2] += b * scale;
-        count += 1;
-      }
+    }
+    renderer.readRenderTargetPixels(horizonTarget, 0, 0,
+      HORIZON_STRIP.width, HORIZON_STRIP.height, pixels);
+    for (let i = 0; i < pixels.length; i += 4) {
+      const r = THREE.DataUtils.fromHalfFloat(pixels[i]);
+      const g = THREE.DataUtils.fromHalfFloat(pixels[i + 1]);
+      const b = THREE.DataUtils.fromHalfFloat(pixels[i + 2]);
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      const scale = luminance > 4 ? 4 / luminance : 1;
+      sum[0] += r * scale; sum[1] += g * scale; sum[2] += b * scale;
+      count += 1;
     }
     renderer.setRenderTarget(kept);
     atmosphere.uniforms.atmoDensity.value.copy(density);
@@ -5011,6 +5041,7 @@ function applySunFromTime() {
         Math.cos(deep) * Math.cos(along), Math.cos(deep) * Math.sin(along), Math.sin(deep));
     }
   }
+  followSkyHorizon();
   applySkyBrightness();
   paintSunWidget();
   paintDayTrack();

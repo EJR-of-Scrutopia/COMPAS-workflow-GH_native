@@ -121,12 +121,19 @@ export function atmosphereLayers(settings, floor = 0) {
 
 // ---------- the integral, in JS (the twin of the GLSL below) ----------
 // One layer's optical depth over a ray segment of length d that starts at
-// height h0 above the base and climbs dz per metre. The stable form,
-// density * (exp(-f h0) - exp(-f h1)) / (f dz), is used wherever f dz d is
-// not tiny; below that its Taylor series, which is also the exact answer
-// when f = 0 (plain exponential distance fog). The exponent is capped, as
-// in the shader, where 32-bit floats would otherwise overflow deep in the
-// fog; the depth there is enormous either way.
+// height h0 above the base and climbs dz per metre. The closed form is
+// density * (exp(-f h0) - exp(-f h1)) / (f dz), written here as
+// density * exp(-f h0) * d * (1 - exp(-f dz d)) / (f dz d): the density
+// where the segment starts, times its length, times how much of that the
+// segment keeps as it climbs (or gains as it falls). Wherever f dz d is
+// tiny its Taylor series stands in, which is also the exact answer when
+// f = 0 (plain exponential distance fog). Each exponent is capped, as in
+// the shader, where 32-bit floats would otherwise overflow deep in the fog.
+// The two capped factors multiply and never subtract: written as a
+// difference, a ray starting and ending deep under the base had both terms
+// capped to the same number and came out with no fog at all, so thinning
+// the mist there turned a whiteout clear. Multiplied, the deepest answer
+// is at most 0.05 * e^40 * d * e^40 / 40, far inside a float for any d.
 const EXPONENT_CAP = 40;
 
 export function layerOpticalDepth(density, falloff, h0, dz, d) {
@@ -134,8 +141,8 @@ export function layerOpticalDepth(density, falloff, h0, dz, d) {
   const fall = falloff * dz * d;
   const e0 = Math.exp(Math.min(-falloff * h0, EXPONENT_CAP));
   if (Math.abs(fall) > 1e-3) {
-    const e1 = Math.exp(Math.min(-falloff * (h0 + dz * d), EXPONENT_CAP));
-    return density * (e0 - e1) / (falloff * dz);
+    const through = (1 - Math.exp(Math.min(-fall, EXPONENT_CAP))) / fall;
+    return density * e0 * d * through;
   }
   return density * e0 * d * (1 - 0.5 * fall);
 }
@@ -240,10 +247,14 @@ export function atmospherePreviewPixels(width, height, settings) {
 }
 
 // ---------- the integral, in GLSL ----------
-// The same functions as above, line for line. Declared once and shared by
-// the fog chunks (every fogged material) and the Sky's own patch (the sky
-// is a ShaderMaterial, which three never fogs), so the ground and the sky
-// are veiled by one law and meet at the horizon without a seam.
+// The same functions as above, line for line: atmosphereLayer is
+// layerOpticalDepth, atmosphereDepth is atmosphereOpticalDepth and
+// atmosphereAmounts is atmosphereAmounts. A test translates this GLSL into
+// JS and runs it against those twins over many rays, so the two cannot
+// drift apart. Declared once and shared by the fog chunks (every fogged
+// material) and the Sky's own patch (the sky is a ShaderMaterial, which
+// three never fogs), so the ground and the sky are veiled by one law and
+// meet at the horizon without a seam.
 export const ATMOSPHERE_GLSL = `
 uniform vec2 atmoDensity;
 uniform vec2 atmoFalloff;
@@ -259,8 +270,8 @@ float atmosphereLayer( float density, float falloff, float h0, float dz, float d
 	float fall = falloff * dz * d;
 	float e0 = exp( min( - falloff * h0, 40.0 ) );
 	if ( abs( fall ) > 1e-3 ) {
-		float e1 = exp( min( - falloff * ( h0 + dz * d ), 40.0 ) );
-		return density * ( e0 - e1 ) / ( falloff * dz );
+		float through = ( 1.0 - exp( min( - fall, 40.0 ) ) ) / fall;
+		return density * e0 * d * through;
 	}
 	return density * e0 * d * ( 1.0 - 0.5 * fall );
 }
@@ -270,11 +281,15 @@ float atmosphereDepth( vec3 dir, float L, float start ) {
 	return atmosphereLayer( atmoDensity.x, atmoFalloff.x, h0, dir.z, d )
 		+ atmosphereLayer( atmoDensity.y, atmoFalloff.y, h0, dir.z, d );
 }
-vec3 atmosphereApply( vec3 colour, vec3 ambient, vec3 dir, float L ) {
+vec2 atmosphereAmounts( vec3 dir, float L ) {
 	float veil = min( 1.0 - exp( - atmosphereDepth( dir, L, atmoStart ) ), atmoMaxOpacity );
 	float glow = min( 1.0 - exp( - atmosphereDepth( dir, L, atmoSunStart ) ), atmoMaxOpacity );
+	return vec2( veil, glow );
+}
+vec3 atmosphereApply( vec3 colour, vec3 ambient, vec3 dir, float L ) {
+	vec2 amounts = atmosphereAmounts( dir, L );
 	float lobe = pow( max( dot( dir, atmoSunDir ), 0.0 ), atmoSunExponent );
-	return colour * ( 1.0 - veil ) + ambient * veil + atmoSunColour * ( lobe * glow );
+	return colour * ( 1.0 - amounts.x ) + ambient * amounts.x + atmoSunColour * ( lobe * amounts.y );
 }
 `;
 

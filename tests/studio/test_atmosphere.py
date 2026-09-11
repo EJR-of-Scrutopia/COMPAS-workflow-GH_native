@@ -117,6 +117,34 @@ INTEGRAL_CHECK = textwrap.dedent("""
     expect(nearVeil === 0 && nearGlow > 0, "the glow starts where its own start says");
     // Deep in the fog the overflow guard keeps every answer finite.
     expect(Number.isFinite(layerOpticalDepth(0.05, 2, -60, -0.5, 400)), "finite deep in the fog");
+    // Deep under the base the exponent caps must never cancel. The case
+    // that found it: Valley fog's mist, the base 20 m up, a 0.4 m mist
+    // height, the eye at 1.7 m (18.3 m under the base). Every ray there is
+    // in a whiteout, and a ray falling toward the floor passes through
+    // more mist than a level one of the same length, never less.
+    for (const dz of [-0.001, -0.01, -0.05, -0.2, -0.5, -0.99]) {
+      const d = Math.min(2000, 1.7 / -dz);
+      const steep = layerOpticalDepth(0.05, 2.5, -18.3, dz, d);
+      const level = layerOpticalDepth(0.05, 2.5, -18.3, 0, d);
+      expect(steep >= level && steep > 50,
+        "a falling ray from under the base is in the whiteout too (dz " + dz + ": " + steep + ")");
+    }
+    // Rising from lower down never sees less fog: the depth never increases
+    // with the start height, across the cap and on either side of it, and
+    // no answer overflows a 32-bit float (the shader's).
+    for (const f of [2.5, 1 / 1.5, 1 / 30, 5]) {
+      for (const dz of [-0.9, -0.2, -1e-4, 0, 1e-4, 0.2, 0.9]) {
+        for (const d of [0.5, 40, 2000]) {
+          let above = layerOpticalDepth(0.05, f, -120, dz, d);
+          for (let h0 = -119.75; h0 <= 10; h0 += 0.25) {
+            const here = layerOpticalDepth(0.05, f, h0, dz, d);
+            expect(here <= above * (1 + 1e-9) && here < 3.4e38,
+              "depth " + here + " after " + above + " at h0 " + h0 + " (f " + f + ", dz " + dz + ", d " + d + ")");
+            above = here;
+          }
+        }
+      }
+    }
     console.log("ok");
 """)
 
@@ -124,6 +152,135 @@ INTEGRAL_CHECK = textwrap.dedent("""
 @needs_node
 def test_the_height_fog_integral_meets_its_limits_and_brute_force(tmp_path):
     assert "ok" in _run_node(tmp_path, INTEGRAL_CHECK)
+
+
+# The GLSL is what renders, and the JS twin is what the tests above hold to
+# the integral's limits. This translates the module's own GLSL into JS (the
+# functions are scalar but for dir, which stays an {x, y, z}, and the three
+# colours, which are run one channel at a time) and runs it against the twin
+# over seeded random rays, so the two cannot quietly drift apart.
+GLSL_TWIN_CHECK = textwrap.dedent(r"""
+    import {
+      ATMOSPHERE_SKY_GLSL, layerOpticalDepth, atmosphereOpticalDepth, atmosphereAmounts,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) <= 1e-9 * Math.max(1e-12, Math.abs(a), Math.abs(b)); }
+
+    function translate(glsl) {
+      let js = glsl.split("\n").filter((line) => !/^\s*uniform\s/.test(line)).join("\n");
+      js = js.replace(/^(?:float|vec2|vec3)\s+(\w+)\(([^)]*)\)\s*\{/gm, (whole, name, params) =>
+        "function " + name + "(" + params.split(",").map((p) => p.trim().split(/\s+/).pop())
+          .filter(Boolean).join(", ") + ") {");
+      js = js.replace(/\b(?:float|vec2|vec3)\s+(\w+)\s*=/g, "let $1 =");
+      js = js.replace(/(?<![\w.])(exp|min|max|abs|pow)\s*\(/g, "Math.$1(");
+      js = js.replace(/(?<![\w.])vec2\s*\(/g, "glslVec2(");
+      js = js.replace(/(?<![\w.])dot\s*\(/g, "glslDot(");
+      const left = js.match(/\b(float|vec2|vec3|vec4|uniform|mix|clamp)\b/);
+      expect(!left, "the translation left GLSL behind: " + (left && left[0]));
+      return js;
+    }
+    const UNIFORMS = ["atmoDensity", "atmoFalloff", "atmoBase", "atmoStart", "atmoMaxOpacity",
+      "atmoSunStart", "atmoSunExponent", "atmoSunColour", "atmoSunDir", "atmoSkyColour",
+      "atmoSkyDistance", "cameraPosition"];
+    const source = translate(ATMOSPHERE_SKY_GLSL);
+    const build = new Function(...UNIFORMS, "glslVec2", "glslDot", source
+      + "\nreturn { atmosphereLayer, atmosphereDepth, atmosphereAmounts, atmosphereApply, atmosphereSky };");
+    const glslVec2 = (x, y) => ({ x, y });
+    const glslDot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+    let seed = 20260911;
+    function random() {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+    const between = (low, high) => low + (high - low) * random();
+    function unit(x, y, z) { const n = Math.hypot(x, y, z); return { x: x / n, y: y / n, z: z / n }; }
+
+    let taylor = 0, pastEnd = 0, capped = 0;
+    for (let n = 0; n < 600; n++) {
+      const layers = {
+        density: [random() < 0.1 ? 0 : between(0, 0.05), random() < 0.3 ? 0 : between(0, 0.1)],
+        falloff: [1 / between(0.5, 200), 1 / between(0.2, 20)],
+        base: between(-5, 50), start: between(0, 100), maxOpacity: between(0, 1),
+        sunStart: between(0, 200), sunExponent: between(1, 64),
+      };
+      const cameraZ = between(-2, 60);
+      // Every fifth ray starts deep under the base in thin layers, where
+      // both exponents meet the cap. Written as a difference those two
+      // capped terms cancelled, so a whiteout read as clear air; left to
+      // chance the rays reached that branch once in six hundred.
+      if (n % 5 === 4) {
+        layers.base = cameraZ + between(60, 200);
+        layers.falloff = [1 / between(0.2, 1), 1 / between(0.2, 1)];
+      }
+      const kind = n % 4;
+      const dz = kind === 0 ? 0 : kind === 1 ? between(-1e-5, 1e-5) : between(-1, 1);
+      const dir = unit(between(-1, 1), between(-1, 1), 0);
+      const lift = Math.sqrt(1 - dz * dz);
+      dir.x *= lift; dir.y *= lift; dir.z = dz;
+      const L = random() < 0.25 ? between(0.01, 20) : between(0.01, 2000);
+      const sunDir = unit(between(-1, 1), between(-1, 1), between(-0.3, 1));
+      const sunColour = [between(0, 3), between(0, 3), between(0, 3)];
+      const skyColour = [between(0, 1), between(0, 1), between(0, 1)];
+      const colour = [between(0, 2), between(0, 2), between(0, 2)];
+      const ambient = [between(0, 1), between(0, 1), between(0, 1)];
+      const glsl = (channel) => build(
+        { x: layers.density[0], y: layers.density[1] }, { x: layers.falloff[0], y: layers.falloff[1] },
+        layers.base, layers.start, layers.maxOpacity, layers.sunStart, layers.sunExponent,
+        sunColour[channel], sunDir, skyColour[channel], 2000, { z: cameraZ }, glslVec2, glslDot);
+      const shader = glsl(0);
+      const where = "case " + n + " " + JSON.stringify({ layers, cameraZ, dir, L });
+
+      // One layer, over segments that start anywhere, including far under the base.
+      const h0 = cameraZ - layers.base;
+      for (const [k, f] of [[layers.density[0], layers.falloff[0]], [layers.density[1], layers.falloff[1]]]) {
+        const fall = Math.abs(f * dz * L);
+        if (fall > 0 && fall <= 1e-3 && k > 0) taylor += 1;
+        if (-f * h0 > 40) capped += 1;
+        expect(near(shader.atmosphereLayer(k, f, h0, dz, L), layerOpticalDepth(k, f, h0, dz, L)),
+          "atmosphereLayer is layerOpticalDepth, " + where);
+      }
+      // Both layers from the eye, for each start (the veil's and the glow's).
+      for (const start of [layers.start, layers.sunStart]) {
+        if (start > L && dz !== 0) pastEnd += 1;
+        expect(near(shader.atmosphereDepth(dir, L, start),
+          atmosphereOpticalDepth(layers, cameraZ, dz, L, start)),
+          "atmosphereDepth is atmosphereOpticalDepth, " + where);
+      }
+      const amounts = shader.atmosphereAmounts(dir, L);
+      const [veil, glow] = atmosphereAmounts(layers, cameraZ, dz, L);
+      expect(near(amounts.x, veil) && near(amounts.y, glow), "atmosphereAmounts, " + where);
+      // What reaches the pixel, channel by channel: the veil over the colour
+      // toward the ambient, and the sun's lobe carried by the glow.
+      const lobe = Math.pow(Math.max(glslDot(dir, sunDir), 0), layers.sunExponent);
+      const skyAmounts = atmosphereAmounts(layers, cameraZ, dz, 2000);
+      for (let channel = 0; channel < 3; channel++) {
+        const run = glsl(channel);
+        const pixel = colour[channel] * (1 - veil) + ambient[channel] * veil + sunColour[channel] * lobe * glow;
+        expect(near(run.atmosphereApply(colour[channel], ambient[channel], dir, L), pixel),
+          "atmosphereApply, channel " + channel + ", " + where);
+        const skyPixel = colour[channel] * (1 - skyAmounts[0]) + skyColour[channel] * skyAmounts[0]
+          + sunColour[channel] * lobe * skyAmounts[1];
+        expect(near(run.atmosphereSky(colour[channel], dir), skyPixel),
+          "atmosphereSky, channel " + channel + ", " + where);
+      }
+    }
+    // The rays reached every branch the functions have.
+    expect(taylor >= 20, "the Taylor branch was reached " + taylor + " times");
+    expect(pastEnd >= 20, "a start past the ray's end was reached " + pastEnd + " times");
+    expect(capped >= 20, "the exponent cap was reached " + capped + " times");
+    console.log("ok " + JSON.stringify({ taylor, pastEnd, capped }));
+""")
+
+
+@needs_node
+def test_the_shader_s_fog_is_its_tested_js_twin(tmp_path):
+    assert "ok" in _run_node(tmp_path, GLSL_TWIN_CHECK)
 
 
 PRESET_CHECK = textwrap.dedent("""
@@ -311,6 +468,28 @@ def test_the_sky_takes_the_same_fog_after_its_daylight():
     light = _body(js, "function paintAtmosphereLight(dial, night)")
     assert "uniforms.atmoSunDir.value.copy(sun.position).normalize();" in light
     assert "ATMOSPHERE_NIGHT_FLOOR * dial * (1 - night)" in light
+
+
+def test_the_fog_colour_follows_the_sky_whenever_the_sun_moves():
+    # The day cycle and the recorder move the sun every frame but capture
+    # the environment only every 30; a fog colour measured only at the
+    # capture held for 30 frames and then jumped, a strobe through dawn.
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    sun = _body(js, "function applySunFromTime()")
+    assert "followSkyHorizon();\n  applySkyBrightness();" in sun, (
+        "measured after the sky has its new sun and before the fog is painted")
+    assert "applySunFromTime();" in _body(js, "function applyDayCycle(u)")
+    follow = _body(js, "function followSkyHorizon()")
+    assert 'if (state.environmentMode !== "sky" || !atmosphereIsOn(state.atmosphere)) return;' in follow
+    assert "skyDaylight.value = 1;\n  const measured = readSkyHorizon(horizonHolder);" in follow
+    assert "if (skyHorizon) lightBase.fog = skyHorizon.clone();" in follow
+    # One read of the strip per measurement: four quarters drawn side by
+    # side into one target, not four stalls a frame.
+    horizon = _body(js, "function readSkyHorizon(holder)")
+    assert horizon.count("renderer.readRenderTargetPixels(") == 1
+    loop = horizon[horizon.index("for (let quarter = 0; quarter < 4; quarter++) {"):]
+    assert loop.index("horizonTarget.viewport.set(") < loop.index("renderer.readRenderTargetPixels(")
+    assert "}\n    renderer.readRenderTargetPixels(" in loop, "read once, after the loop"
 
 
 def test_nothing_drawn_over_everything_is_veiled():
