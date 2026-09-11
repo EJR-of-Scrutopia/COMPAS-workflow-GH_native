@@ -3229,6 +3229,39 @@ def test_shift_takes_the_whole_run_between_two_clicks():
     assert "layersAnchor = index;" in js
 
 
+def test_the_scatter_groups_are_chips_like_props_and_materials():
+    """Param: "On scatter can we also put the categories into the
+    clickable menus like we have with the props and materials."
+
+    The same chips in the drawer head, through the same helper, "all"
+    first. The grid shows only the lit group, a shift run stays inside
+    what is on screen, and the group is the scatter's OWN: openShelf
+    resets the shared one, and the brush and the area bring the drawer
+    back through openShelf("scatter") on Escape."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    doc = (REPO / "docs" / "studio-interface-language.md").read_text(
+        encoding="utf-8")
+    body = _js_function(js, "function renderShelfScatter()")
+    assert 'let scatterCategory = "all";' in js
+    assert 'shelfChips(cats, ["all", ...groups], scatterCategory' in body
+    assert "scatterCategory = name;" in body
+    # The chips are only the groups this list holds, after the fixtures
+    # are taken out, so none of them opens onto an empty grid.
+    assert 'const groups = [...new Set(ordered.map((e) => e.group || "other"))];' in body
+    assert ': ordered.filter((e) => (e.group || "other") === scatterCategory);' in body
+    assert "for (const entry of shown) {" in body
+    assert "const keys = shown.map((item) => item.key);" in body
+    # The group survives a brush or area session.
+    opener = _js_function(js, "function openShelf(kind)")
+    assert "scatterCategory" not in opener, (
+        "openShelf must leave the scatter's group alone")
+    # Every chip is a button, and every button says what it does.
+    chips = _js_function(js, "function shelfChips(holder, names, chosen, pick)")
+    assert 'chip.title = name === "all" ? "Show every group" : "Show only " + name;' in chips
+    assert 'offers them as chips in the drawer\n  head (`#shelf-cats`) through `shelfChips`, with "all" first.' in doc
+
+
 def _dial_blocks(html):
     """Every .dial-block in the page, as (id, inner html)."""
 

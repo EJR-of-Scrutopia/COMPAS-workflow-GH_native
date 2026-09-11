@@ -153,6 +153,8 @@ A tile is a `<button class="tile">` holding a canvas and a name, built by
 - Tiles live in a `.tile-grid`.
 - Groups are separated by `<span class="tile-family">`, whose text is the
   manifest's own group word, lower case.
+- A drawer whose items carry groups offers them as chips in the drawer
+  head (`#shelf-cats`) through `shelfChips`, with "all" first.
 - The `title` carries what the label cannot: real dimensions, triangle
   count, provenance. Labels lie about size -- "Pine roots" is a 15 cm
   root plate 1.9 m across -- so the numbers go in the tooltip.

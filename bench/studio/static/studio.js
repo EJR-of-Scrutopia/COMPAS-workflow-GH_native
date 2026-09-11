@@ -6128,6 +6128,7 @@ function shelfChips(holder, names, chosen, pick) {
   for (const name of names) {
     const chip = document.createElement("button");
     chip.textContent = name;
+    chip.title = name === "all" ? "Show every group" : "Show only " + name;
     chip.classList.toggle("active", name === chosen);
     chip.addEventListener("click", () => pick(name));
     holder.appendChild(chip);
@@ -7327,6 +7328,13 @@ function paintScatter(solved) {
 // WITHOUT shift. Kept outside the render so it survives the redraw that
 // every click causes.
 let scatterAnchor = null;
+// The group the species grid is showing (Param: "on scatter can we also
+// put the categories into the clickable menus like we have with the props
+// and materials"). Its own variable, NOT shelfCategory: openShelf resets
+// that one to "all", and the brush and the area put the drawer away and
+// bring it back through openShelf("scatter") on Escape, so sharing it
+// would drop his group after every stroke.
+let scatterCategory = "all";
 
 function renderShelfScatter() {
   const grid = document.getElementById("scatter-species");
@@ -7346,8 +7354,22 @@ function renderShelfScatter() {
     .sort((a, b) =>
       String(a.group || "other").localeCompare(String(b.group || "other"))
       || (a.sizeMetres ? a.sizeMetres[1] : 0) - (b.sizeMetres ? b.sizeMetres[1] : 0));
+  // The groups as chips in the drawer head, the way Props and Materials
+  // offer theirs: "all" first, then only the groups this list holds, in
+  // its own order, so no chip opens onto an empty grid. They are drawn
+  // here rather than in renderShelf because every tile click redraws
+  // through this function alone.
+  const cats = document.getElementById("shelf-cats");
+  const groups = [...new Set(ordered.map((e) => e.group || "other"))];
+  if (!groups.includes(scatterCategory)) scatterCategory = "all";
+  if (cats) shelfChips(cats, ["all", ...groups], scatterCategory, (name) => {
+    scatterCategory = name;
+    renderShelfScatter();
+  });
+  const shown = scatterCategory === "all" ? ordered
+    : ordered.filter((e) => (e.group || "other") === scatterCategory);
   let group = null;
-  for (const entry of ordered) {
+  for (const entry of shown) {
     if ((entry.group || "other") !== group) {
       group = entry.group || "other";
       const heading = document.createElement("span");
@@ -7381,10 +7403,11 @@ function renderShelfScatter() {
     // down then shift and click i expect it to also select all the object
     // from clicked point 1 to clicked point 2"). The run is over what is
     // ON SCREEN in this order, not over the library, so a heading between
-    // two tiles is simply skipped rather than ending the run.
+    // two tiles is simply skipped rather than ending the run, and a run
+    // under one group chip stays inside that group.
     const here = entry.key;
     tile.addEventListener("click", (event) => {
-      const keys = ordered.map((item) => item.key);
+      const keys = shown.map((item) => item.key);
       const chosenNow = new Set(state.scatter.species.map((sp) => sp.type));
       if (event.shiftKey && scatterAnchor && keys.includes(scatterAnchor)) {
         const from = keys.indexOf(scatterAnchor);
@@ -7411,7 +7434,9 @@ function renderShelfScatter() {
   }
   // The chosen species, each with how often it appears, and one way out
   // of the whole selection (Param: "in scatter mode, deselect all needs
-  // to be there").
+  // to be there"). This is the WHOLE mix, whatever group chip is lit:
+  // a species picked under another group keeps its pill, its weight and
+  // its cross while he browses this one.
   chosen.innerHTML = "";
   if (state.scatter.species.length) {
     const clear = document.createElement("button");
