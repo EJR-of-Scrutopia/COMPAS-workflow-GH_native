@@ -1764,8 +1764,11 @@ def test_the_machine_draws_the_way_he_asked():
         "the parts ride with their own side, not with the whole machine")
     assert "temporary.position.z = -1.5 * struck;" not in act, (
         "the machine no longer falls under the ground")
-    assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
+    assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
         "horizontal only: it drives off across the floor, not into it")
+    assert "const MACHINE_RETREAT = 3;" in js, (
+        "three metres in all, his measure: it is gone by the time it "
+        "stops, because the fade runs on the same strike fraction")
     # A ROW LEAVES AS ONE ROW. Taken per machine, the direction at the end
     # of a row pointed along the row, so the plant fanned apart. Param,
     # watching it: "you can see in the animation the machine is moving

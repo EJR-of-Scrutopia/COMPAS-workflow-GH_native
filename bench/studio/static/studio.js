@@ -3699,9 +3699,11 @@ const CABLE_BLACK = 0x24262a;
 // mechanism go backwards from its position on each side (backwards
 // mirrored) when the collapse and fade of the mechanism happens instead
 // of having it fall under the ground." It fades as it goes, so this only
-// has to read as driving away -- far enough to leave the springing, not
-// so far it is a speck before the fade finishes.
-const MACHINE_RETREAT = 8;
+// has to read as driving away, and it is gone by the time it stops:
+// three metres, on his measure ("they only need to move 3m back in
+// total, before reaching 0 opacity"). The fade runs on the same strike
+// fraction, so the last metre is already the faintest.
+const MACHINE_RETREAT = 3;
 
 function principalEdges() {
   const members = state.columnMembers || [];
