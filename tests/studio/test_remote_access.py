@@ -1538,7 +1538,7 @@ def test_clicking_a_fixture_out_of_edit_mode_opens_its_own_panel():
     # in the viewport closes it: the two halves of his one sentence.
     press = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
     press = press[:press.index('canvas.addEventListener("pointermove", (event) => {')]
-    opening = press.index("if (!state.propEdit) {")
+    opening = press.index("if (!state.propEdit && !gumballLoose) {")
     picking = press.index("const record = state.propEdit ? propRecordAt(event) : null;")
     assert opening < picking, (
         "the card is decided before the edit-mode pick, or the two "
@@ -2445,7 +2445,10 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     assert ("function placeProp(type, x, y, rotation, save, scale = 1, z = 0,\n"
             "                   rotX = 0, rotY = 0) {") in js
     assert "object.position.set(x, y, z);" in js
-    assert "const record = { type, x, y, z, rotation, rotX, rotY, scale," in js
+    assert ("const record = { id: nextPropId(), type, x, y, z, rotation, "
+            "rotX, rotY,") in js, (
+        "every prop carries a number so the hover badge can name it and "
+        "the layer tile can carry the same name")
     # Persisted by BOTH memories: the per-study layout and a saved scene.
     # Re-pinned 2026-09-11: both memories write rows through one encoder,
     # z the fourth number of each, and one decoder reads it back.
@@ -2898,7 +2901,8 @@ def test_a_fixture_emits_from_its_shape_and_every_resize_relays_it():
     assert "if (!THREE.UniformsLib.LTC_FLOAT_1 || !THREE.UniformsLib.LTC_HALF_1) {" in guard
     assert guard.count("reportProblem(") == 2, (
         "a failed init and a missing table are both loud")
-    assert "  fixtureFaces, spotShadowGrants,\n} from \"/static/fields.js\";" in js
+    assert ("  fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,"
+            "\n} from \"/static/fields.js\";") in js
 
     laid = _js_function(js, "function layFixtureEmitters(object, lumens, colour)")
     assert "fixtureFaces(half, globe.position.toArray(), object.scale.toArray()," in laid, (
@@ -4058,7 +4062,7 @@ def test_a_library_prop_is_one_instance_of_its_variants_batch():
     assert view.index("settlePropInstances();") < view.index(
         "if (shadowFitPending) fitSunShadow();"), (
         "the shadow fit measures the batches, so they are settled first")
-    pick = _js_function(js, "function propRecordAt(event)")
+    pick = _js_function(js, "function propRecordAt(event, fallback = true)")
     assert "const mine = hit.object.propSlots[hit.instanceId];" in pick
     moved = _js_function(js, "function proxyMoved(proxy)")
     assert "seen[10] === shown) return false;" in moved, (

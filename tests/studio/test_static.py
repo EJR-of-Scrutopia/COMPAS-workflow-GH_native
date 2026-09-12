@@ -3329,3 +3329,202 @@ def test_the_looking_tiles_moved_to_the_corner_and_nothing_covers_them():
         assert top >= 16 + 34 + 4, (
             "{} opens at {} px and would sit over the corner tiles".format(
                 panel.split(" ")[0], top))
+
+
+def test_hovering_a_prop_names_it_and_the_layer_tile_says_the_same():
+    """Param: "i would like a bounding box with the object type and id so
+    i can reference it in layers, that pops up when i hover over items
+    with the mouse."
+
+    The reference is the whole point, so the number has to be minted in
+    ONE place and shown in BOTH: a badge reading "Beech #7" over a
+    drawer full of tiles all reading "Beech" would be a label pointing
+    at nothing.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+
+    # ONE PLACE the number is minted, and every record gets one.
+    assert "function nextPropId() {" in js
+    assert "const record = { id: nextPropId(), type, x, y, z," in js
+    assert js.count("propSerial += 1;") == 1, (
+        "one counter; a second would hand out numbers that collide")
+
+    # BOTH FACES say the same thing, through the same function.
+    tag = _function_body(js, "propTag")
+    assert 'propDisplayName(record) + " #" + (record.id || 0)' in tag
+    layers = _function_body(js, "renderShelfLayers")
+    assert 'previewTile(record.type + "#" + index, propTag(record),' in layers, (
+        "the tile's VISIBLE label, not just its tooltip: a drawer of "
+        "tiles all reading 'Beech' is what the number is there to fix")
+    hover = _function_body(js, "setHoveredProp")
+    assert "propTag(record)" in hover, "and so does the badge"
+    # A fixture is called by its kind, not by the key that builds it.
+    named = _function_body(js, "propDisplayName")
+    assert "LIGHT_KINDS.find" in named and "kind.label" in named
+
+    # THE BOX HAS ITS OWN COLOUR. The selection's outline is blue-grey
+    # (0x93a6bb); a hover drawn in the same colour would claim a
+    # selection that has not happened.
+    assert "const HOVER_COLOUR = 0xd9a441;" in js
+    assert "new THREE.BoxHelper(record.object, HOVER_COLOUR)" in hover
+    assert "0x93a6bb" in js, "the selection's own colour is still there"
+
+    # AND IT MUST NOT CATCH THE POINTER. A line raycast has a one metre
+    # default threshold; the selection box hijacked clicks near its own
+    # edges once already, and this box is over things far more often.
+    assert "hoverBox.raycast = () => {};" in js
+
+    # THROTTLED, and the sweep over every prop is dropped on a big
+    # field: a pick is a raycast over every prop and then a box test
+    # over every prop, which on a scattered field is a stall per pick.
+    pick = _function_body(js, "hoverPick")
+    assert "HOVER_PICK_MS" in pick
+    assert "state.props.length <= HOVER_FALLBACK_CAP" in pick
+    every = int(re.search(r"const HOVER_PICK_MS = (\d+);", js).group(1))
+    assert 20 <= every <= 120, (
+        "{} ms is either a stall or a cost for a label".format(every))
+
+    # NOT WHILE THE POINTER IS ALREADY SPOKEN FOR, and never into a
+    # picture.
+    for guard in ("state.carrying", "state.gumball", "stampRig", "aimingLight",
+                  'document.body.classList.contains("stilling")'):
+        assert guard in pick, guard
+    assert "body.stilling #hover-badge { display: none; }" in css
+
+    # The badge is a LABEL: catching a click meant for the prop it names
+    # is the one thing it must not do.
+    assert '<div id="hover-badge" class="hidden"></div>' in html
+    badge = css[css.index("#hover-badge { position: fixed;"):]
+    badge = badge[:badge.index("}")]
+    assert "pointer-events: none" in badge
+
+    # It rides its prop as the camera moves, off ONE projected point:
+    # measuring the object per frame would traverse a tree's several
+    # hundred leaf cards sixty times a second to place a label.
+    assert "placeHoverBadge();" in _function_body(js, "renderView")
+    place = _function_body(js, "placeHoverBadge")
+    assert "hoverProjected.copy(hoverAnchor).project(camera)" in place
+    assert "hoverProjected.z > 1" in place, (
+        "behind the eye the projection flips and the badge would appear "
+        "on the opposite side of the screen from its prop")
+
+
+def test_the_hover_badge_answers_delete_and_the_arrow_keys():
+    """Param: "if i have an object i have hovered over and its got this
+    new bouding box i press delete or backspace it should be deleted or
+    the arrow keys to move it say 0.2m each time".
+
+    No edit mode required, which is the point of it. The pointer is the
+    more specific gesture, so while it is over a prop that prop is the
+    one being talked about whatever else may also be selected.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
+    keys = keys[:keys.index("\n});")]
+
+    # BEFORE the edit-mode guard, or none of this works without a mode
+    # he was told he would not need.
+    hovered = keys.index("if (hoveredProp && (event.key === \"Delete\"")
+    guarded = keys.index("if (!state.propEdit || !state.selectedProp) return;")
+    assert hovered < guarded, (
+        "the hover keys are answered before edit mode is demanded")
+    assert keys.index("nudgeHoveredProp(event.key)") < guarded
+
+    # ONE DELETION, shared with the selection's own Delete: two copies
+    # is how one of them grows a fault the other has not got.
+    assert js.count("function deletePropWithUndo(record)") == 1
+    assert "deletePropWithUndo(state.selectedProp);" in js
+    assert "deletePropWithUndo(going);" in js
+    gone = _function_body(js, "deletePropWithUndo")
+    assert 'pushUndo("deleting the "' in gone, "a delete is undoable"
+    assert "await ensurePropTemplate(gone.type);" in gone, (
+        "and the undo puts the model back even if it was unloaded since")
+
+    # 0.2 m, and a run of taps is ONE undo: twenty presses that each
+    # pushed an entry would flush the fifty the history holds.
+    assert "const NUDGE_METRES = 0.2;" in js
+    nudge = _function_body(js, "nudgeHoveredProp")
+    assert "arrowStep(key, screenGroundAxes(" in nudge
+    assert "NUDGE_JOIN_MS" in nudge and "lastNudge.record === record" in nudge
+    assert 'pushUndo("the nudge"' in nudge
+    assert "if (!joining) {" in nudge, "only the first tap of a run records one"
+    # The box and its label go with the prop, or they sit where it was.
+    assert nudge.count("if (hoverBox) hoverBox.update();") == 2, (
+        "the box follows the prop on the way out AND on the way back: "
+        "one of the two alone leaves it behind on an undo")
+    assert "placeHoverBadge();" in nudge
+    # And it is not an arrow key, so the studio's other keys still work.
+    assert "if (!step) return false;" in nudge
+
+
+def test_a_double_click_raises_the_handles_without_edit_mode():
+    """Param: "if i double click while its hovered over the gumball comes
+    up and i can move the object around, double clicking anywhere to turn
+    it off. this does not move us into edit mode."
+
+    Counted from the pointer stream rather than from the browser's own
+    dblclick: measured in a headless run, no dblclick reached the canvas
+    at all. Counting it here also lets the second click be answered
+    BEFORE the single-click behaviours it would otherwise have to undo
+    -- the fixture card most of all, which would open under the handles.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    assert "canvas.addEventListener(\"dblclick\"" not in js, (
+        "the native event never arrived; this is counted from the "
+        "pointer stream instead")
+    double = _function_body(js, "isDoubleClick")
+    assert "DOUBLE_CLICK_MS" in double and "DOUBLE_CLICK_SLOP" in double
+    assert "lastPointerDown = near ? null" in double, (
+        "a double click consumes its own history, so a third click in "
+        "the same spot begins a fresh pair rather than counting again")
+
+    window = int(re.search(r"const DOUBLE_CLICK_MS = (\d+);", js).group(1))
+    assert 250 <= window <= 600, (
+        "{} ms is outside what a hand does".format(window))
+    slop = int(re.search(r"const DOUBLE_CLICK_SLOP = (\d+);", js).group(1))
+    assert 2 <= slop <= 12, "a hand is never quite still between two clicks"
+
+    # NOT A MODE. The whole request turns on this: edit mode makes every
+    # prop grabbable and arms the keyboard, and he asked for handles on
+    # one prop with none of that.
+    toggle = _function_body(js, "toggleLooseGumball")
+    assert "state.propEdit" not in toggle and "setPropEdit" not in toggle, (
+        "raising the handles must not turn edit mode on, by writing the "
+        "flag or by calling the setter")
+    assert "gumballLoose = record;" in toggle
+    assert "closeFixturePanel();" in toggle, (
+        "the card would stand over the very handles it has nothing to "
+        "do with")
+    assert "gumballLoose = null;" in toggle, "and another click puts them away"
+
+    # ONE GUMBALL, two ways of having it: the drag, the undo and the
+    # save are the same code either way.
+    gate = _function_body(js, "gumballIsUpFor")
+    assert "state.propEdit || gumballLoose === record" in gate
+    assert "if (!gumballIsUpFor(record)) return;" in _function_body(
+        js, "setPropGumball")
+    # Sliced by hand: _function_body wants a declaration, and the
+    # viewport's handler is an inline listener.
+    down = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
+    down = down[:down.index('canvas.addEventListener("pointermove"')]
+    assert "if (gumballIsUpFor(state.selectedProp)) {" in down, (
+        "the handles are draggable however they were raised")
+
+    # The double click is read BEFORE the card and the carry, and after
+    # the stamp, which owns every click while it is in hand.
+    assert down.index("const doubled = isDoubleClick(event);") < down.index(
+        "if (!state.propEdit && !gumballLoose) {")
+    assert down.index("if (stampRig) {") < down.index(
+        "const doubled = isDoubleClick(event);")
+    assert "if (doubled && !state.propEdit && !state.carrying && !aimingLight) {" in down
+
+    # A prop that leaves takes its handles with it.
+    assert "if (gone.has(gumballLoose)) gumballLoose = null;" in _function_body(
+        js, "removePropRecords")

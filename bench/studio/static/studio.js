@@ -29,7 +29,7 @@ import {
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
   groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
-  fixtureFaces, spotShadowGrants,
+  fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
 import {
@@ -657,6 +657,9 @@ function renderView() {
   // frame costs one traverse whatever happens.
   if (shadowFitPending) fitSunShadow();
   if (spotFitPending) fitSpotShadows();
+  // One projection of one point: the badge rides its prop as the camera
+  // moves, rather than sitting where the prop used to be on screen.
+  placeHoverBadge();
   settleAtmosphereFloor();
   composer.render();
 }
@@ -3441,6 +3444,25 @@ function isDecal(type) {
   return !!entry && entry.group === "decals";
 }
 
+// EVERY PROP CARRIES A NUMBER, so that it can be named. Param: "i
+// would like a bounding box with the object type and id so i can
+// reference it in layers". The label alone cannot do that -- a field of
+// beeches is twelve tiles all reading "Beech" -- so the hover badge and
+// the layer tile both show a number, and they always agree because
+// there is only one number and one place it is minted.
+//
+// Session-scoped, and never reused: deleting a prop does not renumber
+// the ones that remain, which is what makes a number written down stay
+// true while he works. A reload numbers them again in the order the
+// layout restores, which is the order the Layers drawer lists them in,
+// so the badge and the tile still agree afterwards.
+let propSerial = 0;
+
+function nextPropId() {
+  propSerial += 1;
+  return propSerial;
+}
+
 function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
                    rotX = 0, rotY = 0) {
   // Falsy rather than undefined: a restore hands back the saved 0.002,
@@ -3469,8 +3491,8 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   // A proxy stands outside the scene graph; a lamp is its own object in it.
   if (!object.instancedIn) propsGroup.add(object);
   object.userData.fromLibrary = !!template;
-  const record = { type, x, y, z, rotation, rotX, rotY, scale,
-    layer: state.activeLayer, object };
+  const record = { id: nextPropId(), type, x, y, z, rotation, rotX, rotY,
+    scale, layer: state.activeLayer, object };
   // The batch's pick answers with a record, so the proxy knows its own.
   if (object.instancedIn) object.record = record;
   // A lamp arrives lit, wearing whatever the Lights sliders currently
@@ -3532,6 +3554,167 @@ function setPropOutline(record) {
 // drag it along. Cheap: BoxHelper.update recomputes from the object.
 function refreshPropOutline() {
   if (propOutline) propOutline.update();
+}
+
+// ---------- the hover badge ----------
+// Param, 2026-09-12: "i would like a bounding box with the object type
+// and id so i can reference it in layers, that pops up when i hover
+// over items with the mouse."
+//
+// A box in a colour of its OWN. The selection's outline is blue-grey,
+// and a hover drawn in the same colour would say "this is selected"
+// about something the pointer merely happens to be over; amber says
+// "this is what you are pointing at" and nothing more. Like the
+// outline, it lives in propsGroup and must never catch the pointer --
+// a line raycast has a one metre default threshold, which is what made
+// the selection box hijack clicks near its edges once already.
+const HOVER_COLOUR = 0xd9a441;
+let hoverBox = null;
+let hoveredProp = null;
+let lastHoverPick = 0;
+// The anchor is taken ONCE, when the hover changes, and re-projected
+// every frame. Measuring the object per frame would mean traversing a
+// tree's several hundred leaf cards sixty times a second to place a
+// label, and the prop does not move while it is being hovered.
+const hoverAnchor = new THREE.Vector3();
+const hoverBounds = new THREE.Box3();
+// How often the pointer asks what is under it. A pick is a raycast over
+// every prop and, where that misses, a box test over every prop: on a
+// scattered field that is real work, and sixty a second to place a
+// label is not worth it. Twenty a second reads as instant.
+const HOVER_PICK_MS = 50;
+// Above this many props the box-by-box fallback is skipped. It measures
+// every prop in the scene, which is what lets a click between a tree's
+// leaves still find the tree; on a field of thousands it is a stall per
+// pick, and badging one tuft out of four thousand is not worth one.
+const HOVER_FALLBACK_CAP = 400;
+
+function clearHoverBox() {
+  if (!hoverBox) return;
+  propsGroup.remove(hoverBox);
+  hoverBox.geometry.dispose();
+  hoverBox.material.dispose();
+  hoverBox = null;
+}
+
+function setHoveredProp(record) {
+  if (record === hoveredProp) return;
+  hoveredProp = record;
+  clearHoverBox();
+  const badge = document.getElementById("hover-badge");
+  if (!record || !record.object) {
+    if (badge) badge.classList.add("hidden");
+    return;
+  }
+  hoverBox = new THREE.BoxHelper(record.object, HOVER_COLOUR);
+  hoverBox.material.depthTest = false;
+  hoverBox.material.fog = false;
+  hoverBox.renderOrder = 2;
+  hoverBox.raycast = () => {};
+  propsGroup.add(hoverBox);
+  hoverBounds.setFromObject(record.object);
+  if (hoverBounds.isEmpty()) {
+    hoverAnchor.set(record.x, record.y, record.z || 0);
+  } else {
+    hoverAnchor.set((hoverBounds.min.x + hoverBounds.max.x) / 2,
+      (hoverBounds.min.y + hoverBounds.max.y) / 2, hoverBounds.max.z);
+  }
+  if (badge) {
+    badge.textContent = propTag(record) + "  \u00b7  " + layerName(record.layer);
+    badge.classList.remove("hidden");
+  }
+  placeHoverBadge();
+}
+
+// The badge follows its prop as the camera moves, which is one
+// projection of one point per frame.
+const hoverProjected = new THREE.Vector3();
+
+function placeHoverBadge() {
+  const badge = document.getElementById("hover-badge");
+  if (!badge || !hoveredProp) return;
+  hoverProjected.copy(hoverAnchor).project(camera);
+  // Behind the eye: the projection flips through the origin and the
+  // badge would appear on the opposite side of the screen from the
+  // thing it names.
+  if (hoverProjected.z > 1) { badge.classList.add("hidden"); return; }
+  badge.classList.remove("hidden");
+  const rect = canvas.getBoundingClientRect();
+  badge.style.left =
+    Math.round(rect.left + (hoverProjected.x * 0.5 + 0.5) * rect.width) + "px";
+  badge.style.top =
+    Math.round(rect.top + (-hoverProjected.y * 0.5 + 0.5) * rect.height) + "px";
+}
+
+// ---------- nudging what the pointer is over ----------
+// Param: "the arrow keys to move it say 0.2m each time".
+const NUDGE_METRES = 0.2;
+// A run of taps is ONE undo. Twenty presses that each pushed an entry
+// would flush the fifty the history holds and leave nothing else in it,
+// and a nudge is plainly one adjustment rather than twenty.
+const NUDGE_JOIN_MS = 1500;
+let lastNudge = null;
+
+function nudgeHoveredProp(key) {
+  const record = hoveredProp;
+  if (!record) return false;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const step = arrowStep(key, screenGroundAxes(forward.toArray(),
+    right.toArray(), up.toArray()), NUDGE_METRES);
+  if (!step) return false;
+  const now = performance.now();
+  const joining = lastNudge && lastNudge.record === record
+    && now - lastNudge.at < NUDGE_JOIN_MS;
+  if (!joining) {
+    const from = { x: record.x, y: record.y };
+    pushUndo("the nudge", () => {
+      record.x = from.x;
+      record.y = from.y;
+      record.object.position.set(from.x, from.y, record.z || 0);
+      if (state.selectedProp === record) {
+        refreshPropOutline();
+        refreshPropGumball();
+      }
+      if (hoverBox) hoverBox.update();
+      saveProps();
+    });
+  }
+  lastNudge = { record, at: now };
+  record.x += step[0];
+  record.y += step[1];
+  record.object.position.set(record.x, record.y, record.z || 0);
+  if (hoverBox) hoverBox.update();
+  hoverAnchor.x += step[0];
+  hoverAnchor.y += step[1];
+  placeHoverBadge();
+  if (state.selectedProp === record) {
+    refreshPropOutline();
+    refreshPropGumball();
+  }
+  saveProps();
+  refreshLayersShelf();
+  return true;
+}
+
+// What the pointer is over, at most twenty times a second. Nothing is
+// hovered while something is being carried, dragged, aimed or stamped:
+// the pointer is already spoken for, and a badge naming a second prop
+// during a drag is noise. Nor during a still, where it would reach the
+// picture.
+function hoverPick(event) {
+  if (state.carrying || state.gumball || stampRig || aimingLight
+      || document.body.classList.contains("stilling")) {
+    setHoveredProp(null);
+    return;
+  }
+  const now = performance.now();
+  if (now - lastHoverPick < HOVER_PICK_MS) return;
+  lastHoverPick = now;
+  setHoveredProp(propRecordAt(event,
+    state.props.length <= HOVER_FALLBACK_CAP));
 }
 
 // ---------- the gumball ----------
@@ -3601,9 +3784,26 @@ function sizePropGumball() {
   propGumball.scale.setScalar(Math.max(1e-4, GUMBALL_SCREEN * span));
 }
 
+// ---------- the gumball raised by a double click ----------
+// Param, 2026-09-12: "if i double click while its hovered over the
+// gumball comes up and i can move the object around, double clicking
+// anywhere to turn it off. this does not move us into edit mode."
+//
+// So there are two ways to have handles, and only one of them is a
+// mode. This holds the record whose gumball is up WITHOUT edit mode;
+// edit mode gives handles to whatever is selected, as it always has.
+// Everything downstream -- the drag, the undo, the save -- is the same
+// gumball either way, which is the point of doing it with one variable
+// rather than with a second set of handles.
+let gumballLoose = null;
+
+function gumballIsUpFor(record) {
+  return !!record && (state.propEdit || gumballLoose === record);
+}
+
 function setPropGumball(record) {
   clearPropGumball();
-  if (!record || !state.propEdit) return;
+  if (!gumballIsUpFor(record)) return;
   propGumball = new THREE.Group();
   const radius = 1;                       // sized on screen, not in metres
   const slim = radius * 0.02;
@@ -3843,7 +4043,11 @@ function groundPointAt(event) {
   return propRaycaster.ray.intersectPlane(plane, hit) ? hit : null;
 }
 
-function propRecordAt(event) {
+// `fallback` runs the box-by-box sweep when the ray hit nothing, which
+// is what lets a click between a tree's leaf cards still find the tree.
+// It measures every prop in the scene, so the hover pick turns it off
+// on a big field (HOVER_FALLBACK_CAP); a real click always gets it.
+function propRecordAt(event, fallback = true) {
   const rect = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -3873,6 +4077,7 @@ function propRecordAt(event) {
   // triangle. Fall back to the bounding boxes, nearest box first, so
   // clicking "the tree" means the tree rather than a lottery over its
   // leaf cards.
+  if (!fallback) return null;
   const box = new THREE.Box3();
   const point = new THREE.Vector3();
   let best = null;
@@ -6870,6 +7075,25 @@ function propLabel(record) {
   return entry ? entry.label : record.type;
 }
 
+// What a prop is CALLED, wherever it is named: the hover badge, the
+// layer tile, the log. A library prop takes its catalogue label; a
+// fixture takes the name of its kind, because "light-spot" is a key and
+// "Spot" is the thing he placed.
+function propDisplayName(record) {
+  if (isLamp(record)) {
+    const kind = LIGHT_KINDS.find((one) => one.key === record.type);
+    if (kind) return kind.label;
+  }
+  return propLabel(record);
+}
+
+// The name and the number together, which is the whole of what he asked
+// the badge to show: "Beech #7" says which beech, and the tile carrying
+// the same words is how the one in the viewport is found in the drawer.
+function propTag(record) {
+  return propDisplayName(record) + " #" + (record.id || 0);
+}
+
 function paintStampButton() {
   const count = [...gatheredProps]
     .filter((record) => state.props.includes(record)).length;
@@ -6913,12 +7137,15 @@ function renderShelfLayers(grid) {
   }
   members.forEach((record, index) => {
     const template = propTemplates.get(record.type);
-    const tile = previewTile(record.type + "#" + index, propLabel(record),
+    // THE SAME WORDS THE BADGE SHOWS. Hovering a prop in the viewport
+    // names it "Beech #7"; the tile has to say "Beech #7" too, or the
+    // number is a label pointing at nothing.
+    const tile = previewTile(record.type + "#" + index, propTag(record),
       (canvasEl) => {
         if (template) renderObjectPreview(template, canvasEl);
       });
     tile.classList.toggle("active", gatheredProps.has(record));
-    tile.title = propLabel(record)
+    tile.title = propTag(record)
       + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
       + " -- click to select: drag it in the viewport, Delete removes";
     tile.addEventListener("click", (event) => {
@@ -12653,6 +12880,13 @@ canvas.addEventListener("pointerdown", (event) => {
     if (hit) placeStampInstance(hit);
     return;
   }
+  // Counted before anything else can consume the press, but after the
+  // stamp, which owns every click while it is in hand.
+  const doubled = isDoubleClick(event);
+  if (doubled && !state.propEdit && !state.carrying && !aimingLight) {
+    toggleLooseGumball(event);
+    return;
+  }
   // The second of the two clicks a directional fixture takes: this one
   // says what it is lighting. It cannot collide with the carry below --
   // aiming only begins once the carry has ended.
@@ -12669,8 +12903,10 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   // The gumball outranks everything: its handles are the explicit
-  // controls and they sit over other geometry by design.
-  if (state.propEdit && state.selectedProp) {
+  // controls and they sit over other geometry by design. Raised by
+  // edit mode, or by a double click on one prop -- the handles behave
+  // the same either way.
+  if (gumballIsUpFor(state.selectedProp)) {
     const handle = gumballHandleAt(event);
     if (handle) {
       const record = state.selectedProp;
@@ -12708,7 +12944,7 @@ canvas.addEventListener("pointerdown", (event) => {
   // A click on anything else in the viewport closes it, which is the
   // second half of the same sentence. In edit mode neither happens:
   // there the click picks the fixture up, as it always has.
-  if (!state.propEdit) {
+  if (!state.propEdit && !gumballLoose) {
     const fixture = propRecordAt(event);
     if (isLamp(fixture)) {
       openFixturePanel(fixture);
@@ -12732,6 +12968,55 @@ canvas.addEventListener("pointerdown", (event) => {
     selectProp(null);
   }
 });
+// A DOUBLE CLICK RAISES THE HANDLES, and another puts them away.
+// Deliberately not edit mode: edit mode makes every prop grabbable and
+// arms the whole keyboard, and he asked for handles on ONE prop with
+// none of that ("this does not move us into edit mode").
+//
+// COUNTED FROM THE POINTER STREAM, not from the browser's own dblclick
+// event. Measured in a headless run: no dblclick arrived at the canvas
+// at all. The studio is built on pointer events throughout, a pointer
+// capture taken mid-drag can swallow the native event, and counting it
+// here lets the second click be answered BEFORE the single-click
+// behaviours it would otherwise have to undo -- the fixture card, most
+// of all, which would open under the handles.
+const DOUBLE_CLICK_MS = 400;
+const DOUBLE_CLICK_SLOP = 6;      // pixels; a hand is never quite still
+let lastPointerDown = null;
+
+function isDoubleClick(event) {
+  const now = performance.now();
+  const near = lastPointerDown
+    && now - lastPointerDown.at < DOUBLE_CLICK_MS
+    && Math.hypot(event.clientX - lastPointerDown.x,
+      event.clientY - lastPointerDown.y) < DOUBLE_CLICK_SLOP;
+  // A double click consumes its own history, so a third click in the
+  // same spot begins a fresh pair rather than counting as another.
+  lastPointerDown = near ? null
+    : { at: now, x: event.clientX, y: event.clientY };
+  return !!near;
+}
+
+function toggleLooseGumball(event) {
+  const record = hoveredProp || propRecordAt(event);
+  if (record && record !== gumballLoose) {
+    gumballLoose = record;
+    // The card would stand over the very handles it has nothing to do
+    // with, so it goes before they arrive.
+    closeFixturePanel();
+    selectProp(record);
+    logStudio("handles on " + propTag(record)
+      + ": drag an arrow to move, a ring to turn, a square to scale; "
+      + "double-click anywhere to put them away");
+    return;
+  }
+  // Anywhere else, or the same prop again: put them away.
+  if (gumballLoose) {
+    gumballLoose = null;
+    selectProp(null);
+  }
+}
+
 canvas.addEventListener("pointermove", (event) => {
   // The stamp rides the cursor as one unit.
   if (stampRig) {
@@ -12795,6 +13080,10 @@ canvas.addEventListener("pointermove", (event) => {
     refreshPropGumball();
     return;
   }
+  // WHAT THE POINTER IS OVER. Before the carry test below, which
+  // returns when nothing is being carried -- which is exactly when a
+  // hover is worth having.
+  hoverPick(event);
   const carried = state.carrying && state.carrying.record;
   if (!carried) return;
   const hit = groundPointAt(event);
@@ -12880,6 +13169,25 @@ window.addEventListener("keydown", (event) => {
   }
   const tag = document.activeElement ? document.activeElement.tagName : "";
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  // ---- the keys the hover badge answers to ----
+  // Param: "if i have an object i have hovered over and its got this
+  // new bouding box i press delete or backspace it should be deleted or
+  // the arrow keys to move it say 0.2m each time".
+  //
+  // The pointer is the more specific gesture: while it is over a prop,
+  // that prop is the one being talked about, whatever else may also be
+  // selected. No edit mode is required -- that is the point of it.
+  if (hoveredProp && (event.key === "Delete" || event.key === "Backspace")) {
+    event.preventDefault();
+    const going = hoveredProp;
+    setHoveredProp(null);
+    deletePropWithUndo(going);
+    return;
+  }
+  if (hoveredProp && nudgeHoveredProp(event.key)) {
+    event.preventDefault();
+    return;
+  }
   if (!state.propEdit || !state.selectedProp) return;
   if (event.key === "r" || event.key === "R") {
     // R turns one way, Shift+R the other: fifteen degrees a press.
@@ -12902,7 +13210,18 @@ window.addEventListener("keydown", (event) => {
     setPropGumball(state.selectedProp);  // the ring re-fits the new size
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
-    const record = state.selectedProp;
+    deletePropWithUndo(state.selectedProp);
+  }
+});
+
+// ---------- deleting one prop, undoably ----------
+// Lifted out of the edit-mode keys so that the hover badge's Delete and
+// the selection's Delete are the SAME deletion: one of them growing a
+// fault the other does not have is exactly what two copies of this
+// would buy.
+function deletePropWithUndo(record) {
+  if (!record) return;
+  {
     const gone = { type: record.type, x: record.x, y: record.y,
                    z: record.z || 0, rotX: record.rotX || 0,
                    rotY: record.rotY || 0,
@@ -12938,7 +13257,7 @@ window.addEventListener("keydown", (event) => {
     // placement: the prop it was loaned for is gone.
     if (propEditOneShot) setPropEdit(false);
   }
-});
+}
 // "change" (drag release), not "input": the file's own convention for every
 // other slider that rebuilds something, and this one re-runs the recolour
 // over every casting's geometry. On the real export that is 233 of them per
@@ -15885,6 +16204,9 @@ function removePropRecord(record) {
 function removePropRecords(records) {
   const gone = new Set(records);
   if (!gone.size) return;
+  // A loose gumball on a prop that is leaving goes with it, or the
+  // handles hang in the air over nothing.
+  if (gone.has(gumballLoose)) gumballLoose = null;
   if (state.carrying && gone.has(state.carrying.record)) {
     state.carrying = null;
     state.propDrag = false;
@@ -15904,6 +16226,8 @@ function removePropRecords(records) {
   noteSpotShadowsChanged();
   state.props = state.props.filter((p) => !gone.has(p));
   if (gone.has(state.selectedProp)) selectProp(null);
+  // And a badge naming a prop that no longer exists is worse than none.
+  if (gone.has(hoveredProp)) setHoveredProp(null);
   // A lamp leaving changes what the Lights row is talking about, and it
   // may not have been the selected one (which would have said so above).
   if (lamps) syncLightControls();

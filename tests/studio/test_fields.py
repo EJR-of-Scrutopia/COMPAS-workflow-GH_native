@@ -1049,3 +1049,113 @@ def test_only_as_many_spots_cast_shadows_as_the_card_can_link(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+ARROW_CHECK = textwrap.dedent("""
+    import { screenGroundAxes, arrowStep } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+    // A camera standing due south, looking north along +Y, level. Up
+    // the screen is north; right is east.
+    let axes = screenGroundAxes([0, 1, 0], [1, 0, 0], [0, 0, 1]);
+    expect(near(axes.up[0], 0) && near(axes.up[1], 1), "up the screen is where it looks");
+    expect(near(axes.right[0], 1) && near(axes.right[1], 0), "right is to its right");
+
+    // Turned a quarter of the way round, looking west along -X. The
+    // SAME key now has to move the prop a different way in the world,
+    // which is the whole reason the step is taken in the eye's frame.
+    axes = screenGroundAxes([-1, 0, 0], [0, 1, 0], [0, 0, 1]);
+    expect(near(axes.up[0], -1) && near(axes.up[1], 0), "up the screen turns with the eye");
+    expect(near(axes.right[0], 0) && near(axes.right[1], 1), "and so does right");
+
+    // TILTED DOWN, which is how the studio is usually flown: the
+    // forward vector has a large z, and only its floor part counts.
+    const s = Math.sqrt(0.5);
+    axes = screenGroundAxes([0, s, -s], [1, 0, 0], [0, s, s]);
+    expect(near(axes.up[0], 0) && near(axes.up[1], 1),
+      "a tilted eye still pushes north up the screen");
+
+    // STRAIGHT DOWN, the degenerate case: forward is vertical and
+    // flattens to nothing, so the camera's own up says which way is up
+    // the screen. Without this branch a plan view would answer [0, 1]
+    // whatever the eye had been turned to.
+    axes = screenGroundAxes([0, 0, -1], [1, 0, 0], [0, 1, 0]);
+    expect(near(axes.up[0], 0) && near(axes.up[1], 1), "from overhead, up is the camera's up");
+    axes = screenGroundAxes([0, 0, -1], [0, -1, 0], [1, 0, 0]);
+    expect(near(axes.up[0], 1) && near(axes.up[1], 0),
+      "and it turns with the eye there too");
+
+    // A ROLLED CAMERA. Banked on its side, looking level north with
+    // its own up pointing east, "up the screen" is east -- taking the
+    // forward vector instead would answer north and ignore the bank.
+    // OrbitControls never rolls, so this is the rule being right
+    // rather than a case the studio reaches; it is also what makes
+    // taking up FIRST the correct order rather than an arbitrary one.
+    axes = screenGroundAxes([0, 1, 0], [0, 0, -1], [1, 0, 0]);
+    expect(near(axes.up[0], 1) && near(axes.up[1], 0),
+      "up the screen follows the camera's own up, bank included");
+
+    // And the level case still falls through to forward, because a
+    // level camera's up is vertical and flattens to nothing.
+    axes = screenGroundAxes([0, 1, 0], [1, 0, 0], [0, 0, 1]);
+    expect(near(axes.up[0], 0) && near(axes.up[1], 1),
+      "a level camera has no up to flatten, so forward answers");
+
+    // Both answers are UNIT vectors, so a step is the length it says.
+    for (const one of [screenGroundAxes([3, 4, 9], [4, -3, 0], [0, 0, 1])]) {
+      expect(near(Math.hypot(one.up[0], one.up[1]), 1), "up is a unit vector");
+      expect(near(Math.hypot(one.right[0], one.right[1]), 1), "right is a unit vector");
+    }
+
+    // Nothing at all to go on: answered rather than thrown, because a
+    // camera in a strange pose must not stop an arrow key working.
+    axes = screenGroundAxes([0, 0, 1], [0, 0, 1], [0, 0, 1]);
+    expect(axes.right.length === 2 && axes.up.length === 2, "still two axes");
+
+    // THE STEP ITSELF. 0.2 m a press, and the length is the step
+    // whatever direction it is taken in.
+    const frame = screenGroundAxes([0, 1, 0], [1, 0, 0], [0, 0, 1]);
+    expect(arrowStep("ArrowRight", frame, 0.2)[0] === 0.2, "right is +x here");
+    expect(arrowStep("ArrowLeft", frame, 0.2)[0] === -0.2, "and left is -x");
+    expect(near(arrowStep("ArrowUp", frame, 0.2)[1], 0.2), "up is +y here");
+    expect(near(arrowStep("ArrowDown", frame, 0.2)[1], -0.2), "and down is -y");
+    const diagonal = screenGroundAxes([1, 1, 0], [1, -1, 0], [0, 0, 1]);
+    const step = arrowStep("ArrowUp", diagonal, 0.2);
+    expect(near(Math.hypot(step[0], step[1]), 0.2),
+      "0.2 m is 0.2 m in any direction, not 0.2 along each axis");
+
+    // ANY OTHER KEY IS NOT AN ARROW. Null rather than a zero step, so
+    // the caller can let R, Delete and the rest through to whatever
+    // else is waiting for them.
+    for (const key of ["r", "Delete", "Escape", "ArrowRightt", "", "Enter"]) {
+      expect(arrowStep(key, frame, 0.2) === null, key + " is not an arrow key");
+    }
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_arrow_keys_push_a_prop_the_way_the_screen_faces(tmp_path):
+    """Param: "the arrow keys to move it say 0.2m each time". An arrow
+    key means a direction on the SCREEN -- press right, the thing goes
+    right -- so the step is taken in the camera's own frame, flattened
+    onto the floor. World axes would mean the same key moved a prop a
+    different way depending on where the eye happened to be standing,
+    which is the very thing arrow keys exist to avoid.
+
+    The degenerate case is a plan view, where the forward vector is
+    vertical and flattens to nothing; there the camera's own up says
+    which way is up the screen."""
+
+    script = tmp_path / "check_arrows.mjs"
+    script.write_text(
+        ARROW_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

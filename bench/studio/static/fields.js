@@ -954,3 +954,49 @@ export function spotShadowGrants(wishes, budget) {
   }
   return grants;
 }
+
+// ---------- which way the arrow keys point ----------
+// Param: "the arrow keys to move it say 0.2m each time". An arrow key
+// means a direction on the SCREEN -- press right, the thing goes right
+// -- so the step is taken in the camera's own frame, flattened onto the
+// floor. World axes would mean the same key moved a prop a different
+// way depending on where the eye happened to be standing, which is the
+// very thing arrow keys exist to avoid.
+//
+// `forward`, `right` and `up` are the camera's three axes in world
+// space. Both answers come back as unit vectors in the XY plane.
+//
+// UP THE SCREEN IS THE CAMERA'S OWN UP, flattened -- not its forward.
+// For every ordinary pose the two agree, because an unrolled camera's
+// up and forward lean the same way over the floor; they part company
+// in the two cases that matter. Looking straight down, forward is
+// vertical and flattens to nothing, and up is the only one of them
+// that still says which way the screen is pointing. Looking level, it
+// is the other way about: up is vertical, and forward is what is left.
+// Taking up first and falling back to forward answers both, and
+// answers a rolled camera correctly into the bargain -- which forward
+// first does not, since a camera banked on its side still has north up
+// its screen only if you ignore the bank.
+export function screenGroundAxes(forward, right, up) {
+  const flat = (v) => {
+    if (!v) return null;
+    const length = Math.hypot(v[0], v[1]);
+    return length > 1e-6 ? [v[0] / length, v[1] / length] : null;
+  };
+  const across = flat(right) || [1, 0];
+  const along = flat(up) || flat(forward) || [0, 1];
+  return { right: across, up: along };
+}
+
+// One arrow key, as a step in metres on the floor. Null for any other
+// key, so the caller can let it through to whatever else wants it.
+export function arrowStep(key, axes, step) {
+  const table = {
+    ArrowRight: [axes.right, 1], ArrowLeft: [axes.right, -1],
+    ArrowUp: [axes.up, 1], ArrowDown: [axes.up, -1],
+  };
+  const chosen = table[key];
+  if (!chosen) return null;
+  const [axis, sign] = chosen;
+  return [axis[0] * step * sign, axis[1] * step * sign];
+}

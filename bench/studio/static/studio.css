@@ -1442,6 +1442,26 @@ body.recording #stats-overlay { display: none; }
    the rule is the statement and the label only names it. End ticks
    rather than a filled block: a bar you can read the ends of measures
    better than one you have to guess the middle of. */
+/* ---------- the hover badge ----------
+   The name that goes with the box drawn round whatever the pointer is
+   over. Param: "a bounding box with the object type and id so i can
+   reference it in layers". It is a LABEL, so it never takes the
+   pointer: catching a click meant for the prop it names would be the
+   one thing it must not do. Anchored by its own bottom centre just
+   above the prop's top, which is why the translate is -50% and -100%.
+
+   Above the drawers, since it can appear anywhere the pointer goes,
+   and below the stilling cover, so it can never reach a picture. */
+#hover-badge { position: fixed; z-index: 24; pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  padding: 3px 7px; font-size: 11px; line-height: 1.3;
+  white-space: nowrap; color: var(--ink);
+  background: var(--scrim); border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#hover-badge.hidden { display: none; }
+body.stilling #hover-badge { display: none; }
+
 #scale-bar { position: fixed; left: 12px; bottom: 40px; z-index: 15;
   height: 16px; box-sizing: border-box; padding: 0 4px;
   border: 1px solid rgba(255, 255, 255, 0.75); border-top: 0;
