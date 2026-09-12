@@ -923,3 +923,34 @@ export function fixtureFaces(half, centre, scale, faces) {
   for (const face of laid) face.share = total > 0 ? face.area / total : 0;
   return laid;
 }
+
+// ---------- which spots may cast a shadow ----------
+// Every shadow-casting light costs ONE fragment texture unit, and a
+// WebGL2 fragment shader is promised only sixteen of them. The
+// material's own maps, the sun's shadow and the two tables an area
+// light needs are all spending from that same purse, so the spots get
+// what is left and no more.
+//
+// Measured on the studio's own scene rather than guessed: the TENTH
+// shadow-casting spot makes every physical material fail to link
+// ("FRAGMENT shader texture image units count exceeds
+// MAX_TEXTURE_IMAGE_UNITS(16)"), and a material that will not link
+// draws BLACK. Param photographed the result -- seventeen spots in one
+// scene, and nothing on the screen but the sky.
+//
+// `wishes` is one entry per spot in PLACEMENT order, true where that
+// spot asks for a shadow and is on screen to need one. The first
+// `budget` wishes are granted and the rest are lit but cast nothing.
+// Placement order, never distance: a shadow that appeared and vanished
+// as the camera moved would be a worse fault than the one this fixes.
+export function spotShadowGrants(wishes, budget) {
+  const room = Math.max(0, Math.floor(budget) || 0);
+  const grants = [];
+  let given = 0;
+  for (const wish of wishes) {
+    const allow = !!wish && given < room;
+    if (allow) given += 1;
+    grants.push(allow);
+  }
+  return grants;
+}

@@ -1365,8 +1365,10 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
     four controls are the four a spot is specified by: the aperture (the
     WHOLE cone in degrees, where three wants the half angle in radians),
     how soft the edge is, how far it carries, and whether it casts. It
-    is the only fixture that casts by default, because a spot with
-    nothing to interrupt it reads as a glow rather than as a beam.
+    is the only fixture that ASKS to cast by default, because a spot with
+    nothing to interrupt it reads as a glow rather than as a beam; whether
+    it is granted a shadow map is settled over the whole scene, since the
+    card has a fixed number of them to give.
 
     A PANEL is the soft box a photograph wants: a flat slab giving its
     light out of ONE face, through the same face machinery the strip and
@@ -1414,7 +1416,12 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
     assert "light.target = target;" in spot and "group.add(shell, lens, light, target);" in spot, (
         "the target is a CHILD of the fixture, so the gumball aims the beam")
     assert "target.position.set(0, 0, -1);" in spot
-    assert "light.castShadow = true;" in spot
+    # NOT granted here. Seventeen spots each asking for a shadow map cost
+    # seventeen fragment texture units, and past the card's sixteen every
+    # physical material fails to link and draws black (Param, 2026-09-12,
+    # with the photograph). fitSpotShadows grants them over the whole
+    # scene, before the first frame that could draw one.
+    assert "light.castShadow = false;" in spot
     assert "light.shadow.mapSize.set(1024, 1024);" in spot, "one shadow map"
     assert "light.shadow.camera.near = 0.3;" in spot, (
         "the near plane clears the housing behind the light, or the "
@@ -1429,7 +1436,10 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
     assert "const aperture = Math.min(APERTURE_MAX, Math.max(APERTURE_MIN," in beam
     assert "spot.penumbra = record.softness === undefined" in beam
     assert "spot.distance = Math.max(0, +record.reach || 0);" in beam
-    assert "spot.castShadow = record.shadow === undefined ? SPOT_SHADOW" in beam
+    assert "castShadow" not in beam, (
+        "one fixture at a time cannot know what the scene as a whole can "
+        "afford; the Shadow tick is a wish and fitSpotShadows answers it")
+    assert "noteSpotShadowsChanged();" in beam
     assert "if (!spot) return;" in beam, (
         "every fixture goes through it and only the spot has a beam")
     assert "layFixtureBeam(record);" in _js_function(
@@ -1440,7 +1450,8 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
     # ITS OWN, so it travels with it: placed, saved, restored.
     assert "const SPOT_APERTURE = 45;" in js
     assert "const SPOT_SHADOW = true;" in js, (
-        "the only fixture that casts by default")
+        "the only fixture that ASKS to cast by default; whether it gets a "
+        "slot is fitSpotShadows's answer, not this constant's")
     assert "const APERTURE_MIN = 5, APERTURE_MAX = 150;" in js
     assert "spot: { aperture: 45, softness: 0.35, reach: 0, shadow: true }," in js
     assert "if (isSpot(record)) Object.assign(record, state.spot);" in js, (
@@ -2882,7 +2893,7 @@ def test_a_fixture_emits_from_its_shape_and_every_resize_relays_it():
     assert "if (!THREE.UniformsLib.LTC_FLOAT_1 || !THREE.UniformsLib.LTC_HALF_1) {" in guard
     assert guard.count("reportProblem(") == 2, (
         "a failed init and a missing table are both loud")
-    assert "  fixtureFaces,\n} from \"/static/fields.js\";" in js
+    assert "  fixtureFaces, spotShadowGrants,\n} from \"/static/fields.js\";" in js
 
     laid = _js_function(js, "function layFixtureEmitters(object, lumens, colour)")
     assert "fixtureFaces(half, globe.position.toArray(), object.scale.toArray()," in laid, (
@@ -3132,8 +3143,13 @@ expect(beam, "the spot carries a real spot light");
 expect(near(beam.angle, (60 * Math.PI / 180) / 2), "the HALF angle, in radians");
 expect(near(beam.penumbra, 0.5), "softness is the penumbra");
 expect(near(beam.distance, 12), "reach is the distance");
-expect(beam.castShadow === true, "and it casts, because a spot with "
-  + "nothing to interrupt it reads as a glow");
+// The WISH is on the record and the beam writer leaves it there: a
+// spot that granted itself a shadow map is how seventeen of them made
+// every material in the scene fail to link and draw black.
+expect(beamed.shadow === true, "the spot asks to cast, being the one "
+  + "fixture that reads as a glow without a shadow");
+expect(beam.castShadow === false, "but the beam writer does not grant "
+  + "it: fitSpotShadows answers that over the whole scene");
 expect(near(beam.power, 5000, 1e-6), "carrying the whole output");
 expect(beam.color.equals(fixtureColour(beamed)), "in the fixture's colour");
 // A WIDER APERTURE IS A WIDER CONE, which is the whole of the control.
@@ -3185,6 +3201,15 @@ const plainSphere = { type: "light-sphere", object: lightSphere(), scale: 1,
 applyPropLight(plainSphere);
 expect(plainSphere.object.children.filter((c) => c.isSpotLight).length === 0,
   "a sphere has no beam to write");
+// THE SHADOW IS NOT SETTLED HERE. Writing a beam asks for the
+// scene-wide fit instead, because seventeen spots each granting
+// themselves a shadow map is what made every material draw black.
+spotFitPending = false;
+applyPropLight(beamed);
+expect(spotFitPending === true,
+  "writing a beam leaves the scene-wide shadow fit owing an answer");
+expect(beamed.object.children.find((c) => c.isSpotLight).castShadow === false,
+  "and does not hand out a shadow map on its own");
 console.log("ok");
 """
 
@@ -3225,7 +3250,8 @@ def test_a_fixtures_emitters_are_laid_on_its_faces_and_shine_out_of_them(tmp_pat
         "const SPOT_APERTURE", "const SPOT_SOFTNESS", "const SPOT_REACH",
         "const SPOT_SHADOW", "const APERTURE_MIN", "const SPOT_LIFT",
         "const STRIP_FACES", "const BOX_FACES", "const LAMP_TYPES",
-        "const tintScratch", "const faceAxes", "const faceBasis"))
+        "const tintScratch", "const faceAxes", "const faceBasis",
+        "let spotFitPending"))
     headers = ("function kelvinColour(kelvin)",
                "function fixtureColour(record)", "function isLamp(record)",
                "function isSpot(record)", "function propMaterial(color)",
@@ -3233,6 +3259,7 @@ def test_a_fixtures_emitters_are_laid_on_its_faces_and_shine_out_of_them(tmp_pat
                "function layFixtureEmitters(object, lumens, colour)",
                "function syncFixtureEmission(record)",
                "function layFixtureBeam(record)",
+               "function noteSpotShadowsChanged()",
                "function applyFixtureBody(record)",
                "function lightSphere()", "function lightStrip()",
                "function lightCube()", "function lightPanel()",

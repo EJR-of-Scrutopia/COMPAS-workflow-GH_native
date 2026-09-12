@@ -2985,3 +2985,83 @@ def test_gathered_objects_stamp_until_escape():
     assert 'if (event.key === "Escape" && stampRig)' in js
     # Clicking an object row selects it in the viewport.
     assert "selectProp(record);" in _function_body(js, "renderShelfLayers")
+
+
+def test_no_more_spots_cast_shadows_than_the_card_can_link():
+    """Param, 2026-09-12: "right now theres a huge glitch with the spot
+    light", and a photograph of a scene that was nothing but sky, with the
+    fog gone too. Seventeen spots, each asking for a shadow map, each
+    costing one fragment texture unit: past the card's sixteen every
+    physical material fails to link and draws black.
+
+    The grant is made ONCE OVER THE WHOLE SCENE, because it is the scene
+    as a whole that runs out of units. Three things have to hold, and each
+    one of them was the bug at some point: the builder must not hand out a
+    shadow on its own, the per-fixture writer must not either, and the
+    frame must settle the budget before it draws.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # The budget is read from the card, not assumed, and floored at one so
+    # a card reporting nothing still draws.
+    budget = _function_body(js, "spotShadowBudget")
+    assert "renderer.capabilities" in budget and "maxTextures" in budget
+    assert "SPOT_SHADOW_RESERVE" in budget and "SPOT_SHADOW_CEILING" in budget
+    assert "Math.max(1," in budget, "a budget of zero spots would still have to draw"
+
+    # On the machine this was measured on: sixteen units, ten reserved for
+    # the material's maps, the sun and the area-light tables, six left. The
+    # measured ceiling was ten, so six clears it with room for a richer
+    # material.
+    reserve = int(re.search(r"const SPOT_SHADOW_RESERVE = (\d+);", js).group(1))
+    ceiling = int(re.search(r"const SPOT_SHADOW_CEILING = (\d+);", js).group(1))
+    granted = max(1, min(ceiling, 16 - reserve))
+    # MEASURED, not guessed: on this card nine shadow-casting spots link
+    # and the tenth does not, with a bare floor and with a four-map one
+    # alike. Six is that ceiling less four slots of margin, because the
+    # scene measured was not the richest the studio can draw -- a skin
+    # carrying clearcoat or transmission maps spends from the same
+    # sixteen, and the failure is a black screen rather than a slow one.
+    assert 1 <= granted <= 6, (
+        "the tenth shadow-casting spot fails to link on this card and "
+        "every material then draws black; a budget of {} leaves no room "
+        "for a material with more maps than the floor this was measured "
+        "against".format(granted))
+
+    # And a generous card does not spend the difference on shadow maps
+    # nobody asked for: past a handful of shadowed spots the cost is real
+    # and the picture barely changes, so the ceiling binds there instead
+    # of the reserve.
+    on_a_big_card = max(1, min(ceiling, 32 - reserve))
+    assert on_a_big_card <= 8, (
+        "a 32 unit card would grant {} spot shadows; the ceiling is what "
+        "stops the budget growing without a measurement behind "
+        "it".format(on_a_big_card))
+
+    # The builder leaves the shadow OFF: a restore of a layout full of
+    # spots must not have even one frame where all of them are asking.
+    built = _function_body(js, "lightSpot")
+    assert "light.castShadow = false;" in built
+    assert "light.castShadow = true;" not in built
+
+    # The per-fixture writer records the wish and asks for a refit; it
+    # does not decide, because it cannot see the other fixtures.
+    beam = _function_body(js, "layFixtureBeam")
+    assert "castShadow" not in beam, (
+        "layFixtureBeam sees one fixture and cannot know what the scene "
+        "as a whole can afford")
+    assert "noteSpotShadowsChanged()" in beam
+
+    # The fit runs from the render, before anything is drawn, and through
+    # the pure rule that the node harness holds.
+    fit = _function_body(js, "fitSpotShadows")
+    assert "spotShadowGrants(wishes, budget)" in fit
+    assert "record.object.visible !== false" in fit, (
+        "a spot on a hidden layer is not drawn and must not spend a slot")
+    view = _function_body(js, "renderView")
+    assert view.index("if (spotFitPending) fitSpotShadows();") < view.index("composer.render()")
+
+    # Every event that changes who is on screen asks for a refit.
+    assert "noteSpotShadowsChanged" in _function_body(js, "applyLayerVisibility")
+    assert "noteSpotShadowsChanged" in _function_body(js, "removePropRecords")

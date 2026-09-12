@@ -28,7 +28,7 @@ import {
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
   groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
-  fixtureFaces,
+  fixtureFaces, spotShadowGrants,
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
 import {
@@ -655,6 +655,7 @@ function renderView() {
   // prop would be quadratic. Marking it dirty and settling it once a
   // frame costs one traverse whatever happens.
   if (shadowFitPending) fitSunShadow();
+  if (spotFitPending) fitSpotShadows();
   settleAtmosphereFloor();
   composer.render();
 }
@@ -1914,8 +1915,82 @@ function layFixtureBeam(record) {
     ? SPOT_SOFTNESS : Math.min(1, Math.max(0, +record.softness || 0));
   // Zero is three's own word for no limit, and the dial says so.
   spot.distance = Math.max(0, +record.reach || 0);
-  spot.castShadow = record.shadow === undefined ? SPOT_SHADOW
-    : record.shadow !== false;
+  // The Shadow tick is a WISH, not the answer. Whether this spot gets a
+  // shadow map can only be settled over the whole scene, because it is
+  // the scene as a whole that runs out of texture units -- see
+  // fitSpotShadows, which runs once a frame and decides for all of them.
+  noteSpotShadowsChanged();
+}
+
+// ---------- the spots' shadow budget ----------
+// Param, 2026-09-12: "right now theres a huge glitch with the spot
+// light", with a photograph of a scene that was nothing but sky. The
+// cause was not the spot: it was seventeen of them, each asking for a
+// shadow map, each costing one fragment texture unit. Past the card's
+// limit every physical material fails to link, and a material that
+// will not link draws BLACK -- which is why the fog went with it.
+//
+// Measured on this machine: nine shadow-casting spots link, the tenth
+// does not, with or without a four-map floor. The reserve below is what
+// the material's own maps, the sun's shadow and the area-light tables
+// need out of the same sixteen; the spots share the rest. Read from the
+// renderer rather than hard-coded, so a card with thirty-two units is
+// allowed more -- up to a ceiling, because past a handful of shadowed
+// spots the cost is real and the picture barely changes.
+const SPOT_SHADOW_RESERVE = 10;
+const SPOT_SHADOW_CEILING = 8;
+
+function spotShadowBudget() {
+  const units = (renderer && renderer.capabilities
+    && renderer.capabilities.maxTextures) || 16;
+  return Math.max(1, Math.min(SPOT_SHADOW_CEILING, units - SPOT_SHADOW_RESERVE));
+}
+
+let spotFitPending = true;
+let spotShadowRefused = 0;
+
+function noteSpotShadowsChanged() { spotFitPending = true; }
+
+// Grant the shadow to as many spots as the budget allows and take it
+// from the rest, once a frame, over the scene as a whole. A spot on a
+// hidden layer is not drawn at all, so it neither gets a shadow nor
+// spends a slot on one -- which is what makes hiding a layer give the
+// shadows back to the layer he is working on.
+function fitSpotShadows() {
+  spotFitPending = false;
+  const budget = spotShadowBudget();
+  const beams = [];
+  const wishes = [];
+  for (const record of state.props) {
+    if (!isSpot(record) || !record.object) continue;
+    const beam = record.object.children.find((child) => child.isSpotLight);
+    if (!beam) continue;
+    beams.push(beam);
+    const wanted = record.shadow === undefined ? SPOT_SHADOW
+      : record.shadow !== false;
+    wishes.push(wanted && record.object.visible !== false);
+  }
+  const grants = spotShadowGrants(wishes, budget);
+  let granted = 0;
+  let wanted = 0;
+  grants.forEach((allow, i) => {
+    beams[i].castShadow = allow;
+    if (allow) granted += 1;
+    if (wishes[i]) wanted += 1;
+  });
+  // Said once per change of the shortfall, never once a frame: a spot
+  // that is lit but casts nothing is a decision he should be told
+  // about, and a decision repeated sixty times a second is noise.
+  const refused = wanted - granted;
+  if (refused !== spotShadowRefused) {
+    spotShadowRefused = refused;
+    if (refused > 0) {
+      logStudio(refused + (refused === 1 ? " spot is" : " spots are")
+        + " lit but cast no shadow: this card links " + budget
+        + " spot shadows at once, and past that every material goes black");
+    }
+  }
+  return { wanted, granted, budget };
 }
 
 // A sphere of light, hanging where he puts it. 0.25 m radius, so the
@@ -1994,7 +2069,11 @@ function lightSpot() {
   // node harness on the day this was written.
   light.position.set(0, 0, SPOT_LIFT - 0.12);
   light.userData.lampLight = true;
-  light.castShadow = true;
+  // NOT here. The shadow is granted by fitSpotShadows over the whole
+  // scene, before the first frame that could draw it: a restore of a
+  // layout holding seventeen spots must never have even one frame in
+  // which all seventeen are asking for a map.
+  light.castShadow = false;
   light.shadow.mapSize.set(1024, 1024);
   // The near plane clears the housing, which sits behind the light: a
   // shell inside the shadow frustum would draw its own mouth as a black
@@ -2205,6 +2284,9 @@ function applyLayerVisibility() {
   for (const record of state.props) {
     record.object.visible = layerVisible(record.layer);
   }
+  // A hidden spot is not drawn and so spends no shadow slot: hiding a
+  // layer gives its shadows back to the layer being worked on.
+  noteSpotShadowsChanged();
   if (state.selectedProp && !layerVisible(state.selectedProp.layer)) {
     selectProp(null);
   }
@@ -15687,6 +15769,8 @@ function removePropRecords(records) {
   // scattered field would otherwise leave the shadow map sized for the
   // props that are gone.
   noteCastersChanged();
+  // And a spot leaving hands its shadow slot to the next one waiting.
+  noteSpotShadowsChanged();
   state.props = state.props.filter((p) => !gone.has(p));
   if (gone.has(state.selectedProp)) selectProp(null);
   // A lamp leaving changes what the Lights row is talking about, and it

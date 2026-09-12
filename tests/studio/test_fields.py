@@ -978,3 +978,74 @@ def test_each_row_of_machines_reverses_out_along_one_direction(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+SHADOW_CHECK = textwrap.dedent("""
+    import { spotShadowGrants } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const count = (list) => list.filter(Boolean).length;
+
+    // Nobody asking, nobody granted.
+    expect(spotShadowGrants([], 6).length === 0, "no spots, no grants");
+    expect(count(spotShadowGrants([false, false, false], 6)) === 0,
+      "a spot that does not ask for a shadow is not given one");
+
+    // Under the budget every wish is met.
+    const few = spotShadowGrants([true, true, true], 6);
+    expect(few.length === 3 && count(few) === 3, "three spots under a budget of six all cast");
+
+    // AT the budget, and one past it: the cap is what makes the scene
+    // link at all, so it is never exceeded by one.
+    expect(count(spotShadowGrants(new Array(6).fill(true), 6)) === 6,
+      "six spots exactly fill a budget of six");
+    expect(count(spotShadowGrants(new Array(7).fill(true), 6)) === 6,
+      "the seventh spot is refused");
+    const many = spotShadowGrants(new Array(17).fill(true), 6);
+    expect(many.length === 17, "every spot gets an answer, granted or not");
+    expect(count(many) === 6, "seventeen spots still cast only six shadows");
+
+    // PLACEMENT ORDER, not a scramble: the first askers are the holders,
+    // so a shadow does not move from one spot to another on its own.
+    expect(many.slice(0, 6).every(Boolean) && many.slice(6).every((g) => !g),
+      "the first six asked and the first six were granted");
+
+    // A spot that does not ask spends nothing: the budget passes over it
+    // to the next one that does. This is what makes hiding a layer give
+    // its shadows back to the layer being worked on.
+    const mixed = spotShadowGrants([false, true, false, true, false, true], 2);
+    expect(count(mixed) === 2, "only the askers spend the budget");
+    expect(mixed[1] === true && mixed[3] === true && mixed[5] === false,
+      "the first two askers hold the two slots");
+
+    // A budget of zero or nonsense refuses everything rather than
+    // throwing: a card that reports no texture units must still draw.
+    expect(count(spotShadowGrants([true, true], 0)) === 0, "no budget, no shadows");
+    expect(count(spotShadowGrants([true, true], -3)) === 0, "a negative budget is none");
+    expect(count(spotShadowGrants([true, true], undefined)) === 0,
+      "an unknown budget is none");
+    expect(count(spotShadowGrants([true, true, true], 2.9)) === 2,
+      "a fractional budget is floored, never rounded up");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_only_as_many_spots_cast_shadows_as_the_card_can_link(tmp_path):
+    """Param, 2026-09-12: "right now theres a huge glitch with the spot
+    light", with a photograph of a scene that was nothing but sky. Each
+    shadow-casting light costs one fragment texture unit; measured on this
+    machine, the tenth makes every physical material fail to link, and a
+    material that will not link draws black -- taking the fog with it. The
+    grant is capped, in placement order, and never by one."""
+
+    script = tmp_path / "check_spot_shadows.mjs"
+    script.write_text(
+        SHADOW_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
