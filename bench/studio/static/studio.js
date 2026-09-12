@@ -2816,8 +2816,29 @@ function ensurePropTemplate(key) {
 // fresh group each time would strand its buffers on the GPU.
 const builtInPreviews = new Map();
 
+// THE QUIET TONE A PREVIEW'S SOURCE WEARS. Param, looking at the Lights
+// drawer: "make the colour less obnoxious". A placed fixture's globe
+// wears its own warmth multiplied by its output, which at four thousand
+// lumens is a saturated orange; five of those at two hundred pixels
+// each read as five orange blobs, and the choice being made in that
+// drawer is about SHAPE -- a sphere, a bar, a box, a cone, a slab.
+// Warm off-white, so it still reads as a source and not as a stone.
+const PREVIEW_GLOBE = 0xd9d3c9;
+
+// A preview is an ICON of the fixture, not a photograph of it lit. The
+// copy the drawer draws is its own object with its own materials
+// (makeProp builds fresh ones per call), so calming it here cannot
+// reach a single placed light.
 function builtInPreview(key) {
-  if (!builtInPreviews.has(key)) builtInPreviews.set(key, makeProp(key));
+  if (!builtInPreviews.has(key)) {
+    const object = makeProp(key);
+    object.traverse((child) => {
+      if (child.isMesh && child.userData.lampGlobe && child.material) {
+        child.material.color.set(PREVIEW_GLOBE);
+      }
+    });
+    builtInPreviews.set(key, object);
+  }
   return builtInPreviews.get(key);
 }
 
@@ -12403,6 +12424,88 @@ document.getElementById("ground-preset").addEventListener("change", async (e) =>
 // any angle while it is carried, it lands where the ground is under the
 // pointer, and picking an existing one back up is the same state again.
 // Escape puts it back where it came from, or removes it if it was new.
+// ---------- place, then point ----------
+// Param, 2026-09-12: "can we also do a click once to place and then a
+// second click elsewhere to point direction of the light". The first
+// click lands the fixture, the second says what it is lighting, and the
+// beam follows the cursor in between so the aim is chosen by eye rather
+// than by arithmetic. Escape leaves it pointing straight down, which is
+// where it landed.
+//
+// WHICH FIXTURES HAVE A DIRECTION AT ALL: a sphere shines every way, and
+// a strip and a cube shine out of every face, so aiming them would be a
+// gesture with no effect. A spot's cone and a panel's lit face both come
+// out of the fixture's own -Z, and both are worth aiming.
+const AIMABLE_LIGHTS = new Set(["light-spot", "light-panel"]);
+
+const aimMatrix = new THREE.Matrix4();
+const aimQuaternion = new THREE.Quaternion();
+const aimEuler = new THREE.Euler();
+const AIM_UP = new THREE.Vector3(0, 0, 1);
+
+// Turn a fixture so its -Z looks at a point. Matrix4.lookAt builds a
+// basis whose +Z runs from the target back to the eye, which IS a
+// light's convention -- the same one three uses for a camera -- so -Z
+// lands on the target with no sign to get wrong by hand. Written back
+// as the three angles the record already carries, so the gumball, the
+// save, the scene and the undo all see an ordinary rotation and none of
+// them has to learn what aiming is.
+function aimFixtureAt(record, point) {
+  const from = new THREE.Vector3(record.x, record.y, record.z || 0);
+  if (from.distanceToSquared(point) < 1e-6) return false;
+  aimMatrix.lookAt(from, point, AIM_UP);
+  aimQuaternion.setFromRotationMatrix(aimMatrix);
+  aimEuler.setFromQuaternion(aimQuaternion, "XYZ");
+  record.rotX = aimEuler.x;
+  record.rotY = aimEuler.y;
+  record.rotation = aimEuler.z;
+  applyPropRotation(record);
+  return true;
+}
+
+let aimingLight = null;
+
+function lightKindLabel(type) {
+  const kind = LIGHT_KINDS.find((one) => one.key === type);
+  return kind ? kind.label.toLowerCase() : "light";
+}
+
+function beginAimingLight(record) {
+  aimingLight = { record, from: { rotX: record.rotX || 0,
+    rotY: record.rotY || 0, rotation: record.rotation || 0 } };
+  controls.enabled = false;
+  canvas.style.cursor = "crosshair";
+  logStudio("click where the " + lightKindLabel(record.type)
+    + " should point, or escape to leave it pointing down");
+}
+
+function endAimingLight(commit) {
+  if (!aimingLight) return;
+  const { record, from } = aimingLight;
+  aimingLight = null;
+  controls.enabled = true;
+  canvas.style.cursor = state.propEdit ? "pointer" : "";
+  if (!commit) {
+    // Escape puts it back where it landed rather than leaving it
+    // half-turned at whatever the cursor last passed over.
+    Object.assign(record, from);
+    applyPropRotation(record);
+  } else {
+    pushUndo("the aim", () => {
+      Object.assign(record, from);
+      applyPropRotation(record);
+      if (state.selectedProp === record) {
+        refreshPropOutline();
+        refreshPropGumball();
+      }
+      saveProps();
+    });
+  }
+  refreshPropOutline();
+  refreshPropGumball();
+  saveProps();
+}
+
 function carryNewProp(type) {
   if (!state.bundle) return;
   const centre = state.centre || new THREE.Vector3();
@@ -12454,6 +12557,10 @@ function dropCarriedProp() {
   // A prop arriving on the open layer earns its tile at once, and a moved
   // one refreshes the coordinates its tile carries in its tooltip.
   refreshLayersShelf();
+  // A NEW spot or panel goes straight into aiming: the click that just
+  // placed it was the first of the two. A fixture being MOVED (it has a
+  // `from`) is not re-aimed -- it already points where he left it.
+  if (!from && AIMABLE_LIGHTS.has(record.type)) beginAimingLight(record);
 }
 
 function cancelCarry() {
@@ -12545,6 +12652,15 @@ canvas.addEventListener("pointerdown", (event) => {
     if (hit) placeStampInstance(hit);
     return;
   }
+  // The second of the two clicks a directional fixture takes: this one
+  // says what it is lighting. It cannot collide with the carry below --
+  // aiming only begins once the carry has ended.
+  if (aimingLight) {
+    const hit = groundPointAt(event);
+    if (hit) aimFixtureAt(aimingLight.record, hit);
+    endAimingLight(true);
+    return;
+  }
   // Carrying something: this click puts it down (whatever the mode -- the
   // carry began with a deliberate library choice).
   if (state.carrying) {
@@ -12620,6 +12736,16 @@ canvas.addEventListener("pointermove", (event) => {
   if (stampRig) {
     const hit = groundPointAt(event);
     if (hit) moveStamp(hit);
+    return;
+  }
+  // Between the two clicks the beam follows the cursor, so the aim is
+  // chosen by looking at it rather than by clicking and hoping.
+  if (aimingLight) {
+    const hit = groundPointAt(event);
+    if (hit) {
+      aimFixtureAt(aimingLight.record, hit);
+      refreshPropOutline();
+    }
     return;
   }
   // A live gumball drag: the ring turns the prop, the square scales it,
@@ -12730,6 +12856,10 @@ window.addEventListener("keydown", (event) => {
   // never had anywhere to go back to.
   if (event.key === "Escape" && stampRig) {
     endStamp();
+    return;
+  }
+  if (event.key === "Escape" && aimingLight) {
+    endAimingLight(false);
     return;
   }
   if (event.key === "Escape" && state.carrying) {

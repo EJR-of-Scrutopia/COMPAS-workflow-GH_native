@@ -5902,3 +5902,151 @@ def test_a_still_is_tiled_through_its_own_endpoint_and_covers_the_viewport():
     # Named for the page.
     assert '{ key: "a3-300", label: "A3", long: 4961 }' in js
     assert '{ key: "a2-300", label: "A2", long: 7016 }' in js
+
+
+AIM_HARNESS = r"""
+import * as THREE from %(three)s;
+
+%(consts)s
+
+// applyPropRotation, as the studio writes it, so the harness turns the
+// object exactly the way the studio does rather than a way of its own.
+function applyPropRotation(record) {
+  record.object.rotation.set(record.rotX || 0, record.rotY || 0,
+    record.rotation || 0);
+}
+
+%(functions)s
+
+function expect(condition, message) {
+  if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+}
+
+// Where the fixture's -Z actually lands once the record's three angles
+// are written onto an object. This is the whole claim: a spot's cone and
+// a panel's lit face come out of -Z, so -Z must land on the target.
+function beamOf(record) {
+  record.object.updateMatrixWorld(true);
+  return new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(record.object.quaternion).normalize();
+}
+
+const cases = [
+  ["due north along the floor", 0, 0, 0, [0, 10, 0]],
+  ["due east", 0, 0, 0, [10, 0, 0]],
+  ["straight down from four metres", 0, 0, 4, [0, 0, 0]],
+  ["down and away", 2, -3, 5, [9, 4, 0]],
+  ["back over its own shoulder", 6, 6, 3, [-4, -7, 0]],
+  ["steeply down, nearly under itself", 0, 0, 6, [0.2, 0.1, 0]],
+];
+for (const [name, x, y, z, target] of cases) {
+  const record = { x, y, z, object: new THREE.Object3D() };
+  record.object.position.set(x, y, z);
+  const point = new THREE.Vector3(target[0], target[1], target[2]);
+  expect(aimFixtureAt(record, point) === true, name + ": the aim is taken");
+  const want = point.clone().sub(new THREE.Vector3(x, y, z)).normalize();
+  // A tenth of a degree. Straight down is the degenerate case three
+  // nudges out of, and it lands within a thousandth of one.
+  expect(beamOf(record).dot(want) > 0.999998, name + ": -Z lands on the target");
+}
+
+// Aiming at itself is refused rather than answered with NaN: a click on
+// the fixture's own foot must leave it exactly as it stood.
+const still = { x: 1, y: 1, z: 1, rotX: 0.5, rotY: 0.25, rotation: 0.125,
+  object: new THREE.Object3D() };
+expect(aimFixtureAt(still, new THREE.Vector3(1, 1, 1)) === false,
+  "a target on top of the fixture is refused");
+expect(still.rotX === 0.5 && still.rotY === 0.25 && still.rotation === 0.125,
+  "and leaves the rotation exactly as it was");
+
+// Only the fixtures with a direction are aimed. A sphere shines every
+// way, and a strip and a cube out of every face, so the second click
+// would be a gesture with no effect.
+expect(AIMABLE_LIGHTS.has("light-spot") && AIMABLE_LIGHTS.has("light-panel"),
+  "the spot and the panel both point down their own -Z");
+expect(!AIMABLE_LIGHTS.has("light-sphere") && !AIMABLE_LIGHTS.has("light-strip")
+  && !AIMABLE_LIGHTS.has("light-cube"),
+  "nothing that shines every way is asked to be pointed");
+
+console.log("ok");
+"""
+
+
+def test_a_directional_fixture_is_placed_with_one_click_and_pointed_with_the_next(tmp_path):
+    """Param, 2026-09-12: "can we also do a click once to place and then a
+    second click elsewhere to point direction of the light". The real
+    aimFixtureAt, run under node on vendored three: the fixture's -Z lands
+    on the target from every quarter, including straight down, where the
+    look-at basis is degenerate and three nudges out of it.
+
+    The sign is the whole of this function. Matrix4.lookAt builds a basis
+    whose +Z runs from the target BACK to the eye, which is a light's own
+    convention; get it the other way round and every fixture points at the
+    sky, with a source pin still green."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    static = REPO / "bench" / "studio" / "static"
+    consts = "\n".join(_js_statement(js, head) for head in (
+        "const AIMABLE_LIGHTS", "const aimMatrix", "const aimQuaternion",
+        "const aimEuler", "const AIM_UP"))
+    functions = _js_whole_function(js, "function aimFixtureAt(record, point)")
+    script = tmp_path / "aim.mjs"
+    script.write_text(AIM_HARNESS % {
+        "three": json.dumps((static / "vendor" / "three.module.js").as_uri()),
+        "consts": consts, "functions": functions}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.strip() == "ok"
+
+
+def test_placing_a_spot_or_a_panel_hands_over_to_the_aim():
+    """The two clicks are one gesture, so the placement has to hand over
+    to the aim by itself: a fixture BEING MOVED already points where it
+    was left and must not be re-aimed, and escape between the clicks
+    leaves the fixture where it landed rather than half-turned at
+    whatever the cursor last passed over."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    drop = _js_function(js, "function dropCarriedProp()")
+    assert "if (!from && AIMABLE_LIGHTS.has(record.type)) beginAimingLight(record);" in drop, (
+        "a NEW spot or panel goes straight into aiming; one being moved "
+        "has a `from` and keeps the aim it already had")
+
+    begin = _js_function(js, "function beginAimingLight(record)")
+    assert "controls.enabled = false;" in begin, (
+        "the camera stays still between the two clicks, or the second "
+        "click is aimed at a view that moved under it")
+    assert 'canvas.style.cursor = "crosshair";' in begin
+
+    end = _js_function(js, "function endAimingLight(commit)")
+    assert "if (!commit) {" in end and "Object.assign(record, from);" in end
+    assert 'pushUndo("the aim"' in end, "an aim is one undoable step"
+    assert "controls.enabled = true;" in end
+
+    # The second click, and the live aim between them, both come before
+    # the carry branch: aiming only begins once a carry has ended, so the
+    # two can never both be true, and the order says which reads first.
+    down = _js_function(
+        js, 'canvas.addEventListener("pointerdown", (event) => {')
+    assert down.index("if (aimingLight) {") < down.index("if (state.carrying) {")
+    assert "endAimingLight(true);" in down
+    move = _js_function(
+        js, 'canvas.addEventListener("pointermove", (event) => {')
+    assert "aimFixtureAt(aimingLight.record, hit);" in move, (
+        "the beam follows the cursor, so the aim is chosen by eye")
+
+    # Two inline keydown listeners exist; the viewport's is the one whose
+    # first business is the stamp, so it is named by that rather than by
+    # being the first in the file (it is not).
+    keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
+    assert 'if (event.key === "Escape" && aimingLight) {' in keys[:1200]
+    assert keys.index("endAimingLight(false);") < keys.index("cancelCarry();"), (
+        "escape answers the nearer gesture first: the aim in hand before "
+        "a carry that has already ended")

@@ -1050,6 +1050,15 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
    by luck of order. */
 #shelf-body #weather-tiles .tile canvas { aspect-ratio: 2 / 1; }
 #shelf-body #weather-tiles { grid-template-columns: repeat(5, 1fr); }
+/* THE FIXTURES ARE ICONS. Param: "we can make the thumbnails smaller".
+   Four fractional columns gave each fixture a two hundred pixel square
+   and put the fifth on a row of its own; a sphere, a bar, a box, a cone
+   and a slab are told apart at a third of that. Sized rather than
+   fractional, so the row keeps its size whatever the drawer does, and
+   outranking the four-column rule by a second id rather than by luck of
+   source order -- the trap that made the weather tiles square. */
+#shelf-body #lights-kinds { grid-template-columns: repeat(auto-fill, 88px);
+  gap: 8px; padding: 10px 12px; }
 #shelf-body .tile span { padding: 0 6px 6px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; text-align: left; }
 #shelf-body .tile:hover { border-color: var(--ink-3); color: var(--ink); }

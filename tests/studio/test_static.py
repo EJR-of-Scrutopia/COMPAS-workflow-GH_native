@@ -3065,3 +3065,54 @@ def test_no_more_spots_cast_shadows_than_the_card_can_link():
     # Every event that changes who is on screen asks for a refit.
     assert "noteSpotShadowsChanged" in _function_body(js, "applyLayerVisibility")
     assert "noteSpotShadowsChanged" in _function_body(js, "removePropRecords")
+
+
+def test_the_fixture_tiles_are_small_icons_in_a_quiet_colour():
+    """Param, with a photograph of the Lights drawer: "we can make the
+    thumbnails smaller and make the colour less obnoxious".
+
+    Two faults in one picture. The drawer's four fractional columns gave
+    each fixture a two hundred pixel square and pushed the fifth onto a
+    row of its own; and the preview wore the fixture's real globe colour,
+    which at four thousand lumens is a saturated orange, so the row read
+    as orange blobs rather than as a sphere, a bar, a box, a cone and a
+    slab. The choice being made there is about SHAPE."""
+
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # SIZED, not fractional: five fixtures keep their size whatever the
+    # drawer does, and they fit on one row.
+    sized = re.search(
+        r"#shelf-body #lights-kinds \{ grid-template-columns: "
+        r"repeat\(auto-fill, (\d+)px\);", css)
+    assert sized, "the fixture tiles need a size of their own"
+    width = int(sized.group(1))
+    assert width <= 120, (
+        "{} px is still a photograph; a cone is told from a slab at half "
+        "that".format(width))
+    assert width * 5 + 4 * 8 < 880, (
+        "all five fixtures have to fit one row of the drawer")
+
+    # THE CASCADE, the trap this file has been bitten by twice. The
+    # four-column rule is "#shelf-body .tile-grid" -- one id, one class.
+    # A rule with two ids outranks it whatever the source order.
+    general = css.index("#shelf-body .tile-grid { display: grid;")
+    assert "grid-template-columns: repeat(4, 1fr)" in css[general:general + 200]
+    assert css.count("#shelf-body #lights-kinds {") == 1, (
+        "two ids, so it wins on specificity rather than on luck of order")
+
+    # THE PREVIEW'S QUIET TONE, and proof it cannot reach a placed light.
+    quiet = re.search(r"const PREVIEW_GLOBE = 0x([0-9a-fA-F]{6});", js)
+    assert quiet, "the preview needs a colour of its own"
+    red, green, blue = (int(quiet.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    assert max(red, green, blue) - min(red, green, blue) < 40, (
+        "near neutral: the orange it replaced spanned 0xff to 0x8a")
+    assert _luminance(quiet.group(1)) > 150, (
+        "still reads as a source rather than as a stone")
+
+    built = _function_body(js, "builtInPreview")
+    assert "child.userData.lampGlobe" in built and "PREVIEW_GLOBE" in built
+    assert "makeProp(key)" in built, (
+        "makeProp builds fresh materials per call, so the preview owns "
+        "what it recolours and no placed fixture can be reached by it")
