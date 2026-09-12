@@ -184,7 +184,10 @@ body { overflow: hidden;
 /* A contained, translucent sheet at the top left (Param: "slightly
    translucent like the banner... contained sized box"), not a full-height
    column: it sizes to its content up to a ceiling and scrolls inside. */
-#data-panel { position: fixed; left: 16px; top: 16px; width: 420px;
+/* BELOW THE CORNER TILES, which now hold the top left (#corner-acts).
+   A sheet that opened over them would bury the very buttons that are
+   there to be reached at any moment. */
+#data-panel { position: fixed; left: 16px; top: 58px; width: 420px;
               max-height: 72vh;
               overflow: auto; background: var(--scrim);
               -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
@@ -1317,8 +1320,27 @@ body.panel-collapsed #event-log { right: var(--s4); }
 /* The take's controls sit beside the drawer tabs but are not tabs: a
    beat of space says so, and they are square icon tiles -- play,
    restart, record -- rather than words. */
-#shelf-tabs .shelf-act { width: 34px; padding: 5px 0; text-align: center;
-  font-size: 13px; line-height: 1.2; }
+#shelf-tabs .shelf-act, #corner-acts .shelf-act { width: 34px;
+  padding: 5px 0; text-align: center; font-size: 13px; line-height: 1.2; }
+/* ---------- the corner tiles ----------
+   Param: "with the tiles at the bottom take the overlay tile, graph
+   tile and the full screen tile to the top left. id prefer them up
+   there." The three that are about LOOKING at the scene, away from the
+   strip that is about the take.
+
+   Dressed exactly like the tiles they came from, so the move is a move
+   and not a new kind of control. Above the drawer's own z-index, since
+   nothing should ever cover them -- reaching a control and finding it
+   behind something is the fault they were moved to avoid. */
+#corner-acts { position: fixed; left: 16px; top: 16px; z-index: 26;
+  display: flex; gap: 6px; }
+#corner-acts button { width: auto; margin: 0; color: var(--ink-2);
+  background: var(--scrim); border: 1px solid var(--line);
+  border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#corner-acts button:hover { color: var(--ink); border-color: var(--ink-3); }
+#corner-acts button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
 #shelf-play { margin-left: 10px; }
 /* THE GRAPHS TILE SAYS WHAT IT OPENS. Param: "maybe the graph icon on
    the tile can be more telling that its for graphs". It was a sine
@@ -1356,7 +1378,9 @@ body.recording #stats-overlay { display: none; }
    own ground (Param: "make the graphs more opaque"), under the stilling
    cover (z 12) and the data sheet (z 20), over the view. The panel itself lets the pointer through between cards, so
    the orbit is not fenced off by an invisible rectangle. */
-#graphs-panel { position: fixed; left: 16px; top: 16px; bottom: 96px; width: 360px;
+/* Below the corner tiles as well, and directly under the very tile
+   that opens it, which is the one place the column belongs. */
+#graphs-panel { position: fixed; left: 16px; top: 58px; bottom: 96px; width: 360px;
   z-index: 11; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 #graphs-panel.hidden { display: none; }
 #graphs-panel > * { pointer-events: auto; }

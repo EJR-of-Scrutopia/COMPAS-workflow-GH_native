@@ -35,6 +35,17 @@
      a lie that looked like a measurement. Its WIDTH is the measurement,
      so the label rides inside the rule it describes. -->
 <div id="scale-bar" hidden></div>
+<!-- THE CORNER TILES. Param: "with the tiles at the bottom take the
+     overlay tile, graph tile and the full screen tile to the top left.
+     id prefer them up there." They are about LOOKING at the scene
+     rather than about the take, which is what the strip beside the
+     drawers is for, so they read better away from it. Their ids do
+     not change, so every handler that drives them is untouched. -->
+<div id="corner-acts">
+  <button id="shelf-stats" class="shelf-act" title="Show the objects, draw calls, VRAM and CPU readout">&#8801;</button>
+  <button id="shelf-graphs" class="shelf-act" title="Show the live graphs beside the take: cable force, the load on the formwork, column force and the thrust at the supports">&#9601;&#9605;&#9608;</button>
+  <button id="shelf-fullscreen" class="shelf-act" title="Fill the display with the view">&#9974;</button>
+</div>
 <div id="event-log"></div>
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
@@ -261,9 +272,6 @@
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
-    <button id="shelf-stats" class="shelf-act" title="Show the objects, draw calls, VRAM and CPU readout">&#8801;</button>
-    <button id="shelf-graphs" class="shelf-act" title="Show the live graphs beside the take: cable force, the load on the formwork, column force and the thrust at the supports">&#9601;&#9605;&#9608;</button>
-    <button id="shelf-fullscreen" class="shelf-act" title="Fill the display with the view">&#9974;</button>
   </div>
 </div>
 <!-- THE LIVE GRAPHS. Param: "3 tiled graphs to the left in a mostly

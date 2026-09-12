@@ -476,7 +476,10 @@ def test_the_page_wires_the_graphs_to_the_take():
     assert "CONSTRAINED_DEVICE || Math.abs(k - liveGraphs.drawnK) >= 2;" in tick
     # The inks live in the theme, both of them, so a chart carries no hex.
     assert css.count("--graph-a:") == 2 and css.count("--graph-c-fill:") == 2
-    assert "#graphs-panel { position: fixed; left: 16px; top: 16px; bottom: 96px; width: 360px;" in css
+    # Below the corner tiles since 2026-09-12, and directly under the
+    # very tile that opens it.
+    assert ("#graphs-panel { position: fixed; left: 16px; top: 58px; "
+            "bottom: 96px; width: 360px;") in css
     assert "z-index: 11; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }" in css
 
 

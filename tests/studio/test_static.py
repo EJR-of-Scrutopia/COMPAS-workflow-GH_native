@@ -3270,3 +3270,62 @@ def test_the_fixture_card_is_thinner_glass_and_the_graphs_tile_says_so():
     assert "#shelf-graphs { letter-spacing:" in css, (
         "tightened, so the three sit as one mark rather than as three "
         "characters in a 34 px tile")
+
+
+def test_the_looking_tiles_moved_to_the_corner_and_nothing_covers_them():
+    """Param: "with the tiles at the bottom take the overlay tile, graph
+    tile and the full screen tile to the top left. id prefer them up
+    there."
+
+    The three that are about LOOKING at the scene, away from the strip
+    that is about the take. Their ids do not change, so every handler
+    that drives them is untouched -- which is the whole reason this is a
+    move rather than a rebuild. Two panels already held that corner and
+    now start below the tiles: a sheet that opened over them would bury
+    the very buttons that are there to be reached at any moment.
+    """
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+
+    corner = html[html.index('<div id="corner-acts">'):]
+    corner = corner[:corner.index("</div>")]
+    for which in ("shelf-stats", "shelf-graphs", "shelf-fullscreen"):
+        assert 'id="{}"'.format(which) in corner, which
+        assert html.count('id="{}"'.format(which)) == 1, (
+            "{} exists once; two copies would fight over the same "
+            "handler".format(which))
+
+    # And they left the strip, rather than being duplicated into two.
+    strip = html[html.index('<div id="shelf-tabs">'):]
+    strip = strip[:strip.index("</div>")]
+    for which in ("shelf-stats", "shelf-graphs", "shelf-fullscreen"):
+        assert which not in strip, "{} is in the corner now".format(which)
+    # The take's own controls stay where they were: they are not what he
+    # asked to move.
+    for which in ("shelf-play", "shelf-restart", "shelf-record"):
+        assert 'id="{}"'.format(which) in strip, which
+
+    # TOP LEFT, and dressed as the tiles they came from.
+    assert "#corner-acts { position: fixed; left: 16px; top: 16px;" in css
+    assert "#shelf-tabs .shelf-act, #corner-acts .shelf-act { width: 34px;" in css, (
+        "one rule for both, so the two faces cannot drift apart")
+
+    # ABOVE EVERYTHING. Reaching for a control and finding it behind
+    # something is the fault these were moved away from.
+    def layer(selector):
+        block = css[css.index(selector):]
+        return int(re.search(r"z-index: (\d+)", block[:block.index("}")]).group(1))
+
+    corner_z = layer("#corner-acts { position: fixed;")
+    assert corner_z >= layer("#shelf { position: fixed;")
+    assert corner_z >= layer("#graphs-panel { position: fixed;")
+
+    # The two panels that shared the corner start below the tiles.
+    for panel in ("#data-panel { position: fixed;", "#graphs-panel { position: fixed;"):
+        block = css[css.index(panel):]
+        block = block[:block.index("}")]
+        top = int(re.search(r"top: (\d+)px", block).group(1))
+        assert top >= 16 + 34 + 4, (
+            "{} opens at {} px and would sit over the corner tiles".format(
+                panel.split(" ")[0], top))
