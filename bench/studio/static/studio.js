@@ -16060,10 +16060,63 @@ function paintPlayButtons(text) {
   }
 }
 
+// ---------- stopping the take ----------
+// Param, 2026-09-12: "add in a stop button to the animation running
+// too. which takes us back to the state right before the animation was
+// run with the shell in the mode it was in."
+//
+// Pause holds the take where it is, which is a different thing: it
+// leaves the scene mid-build, in timeline mode, with the camera part
+// way round its turn. Stop undoes the whole excursion.
+//
+// TAKEN ON THE WAY IN, and only on the way in. Pressing Play again
+// after a pause must not overwrite what this is holding, or Stop would
+// put him back in the middle of the take he had just paused.
+let beforeTheTake = null;
+
+function paintStopButton() {
+  for (const id of ["stop-button", "shelf-stop"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !beforeTheTake;
+  }
+}
+
+function stopTake() {
+  if (!state.timeline || !beforeTheTake) return;
+  const was = beforeTheTake;
+  beforeTheTake = null;
+  state.timeline.playing = false;
+  paintPlayButtons("Play");
+  paintStopButton();
+  // The clock is set DIRECTLY rather than through applyTimeline, which
+  // would drive the camera round the take's own orbit -- the very
+  // thing being undone. setShowMode applies the scene at whatever the
+  // clock now reads, which is where it stood before Play.
+  state.timeline.t = was.t;
+  setShowMode(was.showMode);
+  camera.position.fromArray(was.camera);
+  controls.target.fromArray(was.target);
+  controls.update();
+  // The scrubber reads the clock, and nothing else has told it.
+  updateHud();
+  logStudio("stopped: the scene is back as it stood before the take");
+}
+
 function startPlaying(fromTheTop) {
   // Playing IS the animation view: it switches to it rather than asking
   // which mode the scene should be in first, and it takes its framing from
   // wherever the camera is standing at that moment.
+  //
+  // What it is switching FROM is worth keeping, so Stop has somewhere
+  // to go back to. Only on the way in: a resume after a pause is
+  // already in timeline mode and must not overwrite it.
+  if (state.showMode !== "timeline") {
+    beforeTheTake = { showMode: state.showMode,
+      t: state.timeline ? state.timeline.t : 0,
+      camera: camera.position.toArray(),
+      target: controls.target.toArray() };
+    paintStopButton();
+  }
   state.showMode = "timeline";
   paintShowButtons();
   settleControls();
@@ -16305,6 +16358,10 @@ document.getElementById("shelf-play").addEventListener("click", () => {
 document.getElementById("shelf-restart").addEventListener("click", () => {
   document.getElementById("restart-button").click();
 });
+for (const id of ["stop-button", "shelf-stop"]) {
+  const button = document.getElementById(id);
+  if (button) button.addEventListener("click", stopTake);
+}
 document.getElementById("shelf-record").addEventListener("click", () => {
   document.getElementById("record-button").click();
 });

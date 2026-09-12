@@ -279,6 +279,7 @@
          Delete and the arrow keys without one either. -->
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
+    <button id="shelf-stop" class="shelf-act" title="Stop, and put the scene back as it stood before the take" disabled>&#9632;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
   </div>
 </div>
@@ -533,6 +534,11 @@
     <summary>Animation</summary>
     <button id="play-button">Play</button>
     <button id="restart-button">Restart</button>
+    <!-- Param: "add in a stop button to the animation running too.
+         which takes us back to the state right before the animation was
+         run with the shell in the mode it was in." Pause holds the take
+         where it is; this leaves it altogether. -->
+    <button id="stop-button" title="Stop, and put the scene back as it stood before the take" disabled>Stop</button>
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
     <div class="dial-block" id="animation-dials">
     <label title="How fast the build plays back"><span>Timeline speed</span>

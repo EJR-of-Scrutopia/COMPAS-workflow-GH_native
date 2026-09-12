@@ -1348,6 +1348,12 @@ body.panel-collapsed #event-log { right: var(--s4); }
 #shelf-graphs { letter-spacing: -1px; font-size: 12px; }
 #shelf-undo { margin-right: 10px; }
 #shelf-record { color: #d05548; }
+/* Disabled until a take has been started, because with nothing
+   captured there is nowhere for Stop to go back to. Dimmed rather than
+   hidden: a control that comes and goes is harder to find than one
+   that is simply not available yet. */
+#shelf-tabs .shelf-act:disabled, #corner-acts .shelf-act:disabled {
+  opacity: 0.4; cursor: default; }
 
 
 /* ---------- the corner readout ----------

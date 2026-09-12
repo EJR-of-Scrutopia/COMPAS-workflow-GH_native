@@ -872,15 +872,71 @@ def test_stress_scale_and_legend_gradient_share_the_same_hexes():
     assert "studio.js" in css, "the legend gradient must point at STRESS_SCALE in studio.js"
 
 
-def test_transport_is_pause_and_restart_only():
-    # The Stop button duplicated Pause (halting) plus Restart (rewind); it
-    # is gone. Restart still rewinds and plays; the scrubber covers rewind
-    # without playing.
+def test_transport_is_pause_restart_and_a_stop_that_undoes_the_take():
+    """Stop came back, and for a reason the old one did not have.
+
+    The first Stop button was removed because it duplicated Pause
+    (halting) plus Restart (rewind), and a control that is two other
+    controls is worth less than the room it takes. Param, 2026-09-12,
+    asked for a different thing: "add in a stop button to the animation
+    running too. which takes us back to the state right before the
+    animation was run with the shell in the mode it was in."
+
+    That is not Pause and not Restart. Pause holds the take where it is,
+    mid-build, in timeline mode, with the camera part way round its
+    turn; Restart plays it again from zero. This one undoes the whole
+    excursion -- the mode he was looking at, the clock he was at, and
+    where he was standing.
+    """
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="stop-button"' not in html
-    assert 'getElementById("stop-button")' not in js
     assert 'id="play-button"' in html and 'id="restart-button"' in html
+    assert 'id="stop-button"' in html and 'id="shelf-stop"' in html
+
+    # NOTHING TO GO BACK TO, nothing to press: both faces start
+    # disabled, and are enabled only once a take has been entered.
+    for which in ('id="stop-button"', 'id="shelf-stop"'):
+        tag = html[html.index(which):]
+        tag = tag[:tag.index(">")]
+        assert "disabled" in tag, which
+    assert "#shelf-tabs .shelf-act:disabled" in (
+        STATIC / "studio.css").read_text(encoding="utf-8")
+
+    # CAPTURED ON THE WAY IN, and only on the way in: a resume after a
+    # pause is already in timeline mode, and overwriting the capture
+    # there would make Stop return to the middle of the paused take.
+    start = _function_body(js, "startPlaying")
+    assert 'if (state.showMode !== "timeline") {' in start
+    capture = start[start.index('if (state.showMode !== "timeline") {'):]
+    for field in ("showMode:", "t:", "camera: camera.position.toArray()",
+                  "target: controls.target.toArray()"):
+        assert field in capture, field
+    assert capture.index("beforeTheTake = {") < capture.index(
+        'state.showMode = "timeline";'), (
+        "captured before the take claims the mode, or it captures the take")
+
+    # PUT BACK, in an order that does not undo itself.
+    stop = _function_body(js, "stopTake")
+    assert "if (!state.timeline || !beforeTheTake) return;" in stop
+    assert "state.timeline.playing = false;" in stop
+    assert "state.timeline.t = was.t;" in stop, (
+        "set directly: applyTimeline would drive the camera round the "
+        "take's own orbit, which is the very thing being undone")
+    # The CALL, not the word: the comment beside it names the function
+    # it is deliberately not calling.
+    assert "applyTimeline(" not in stop
+    assert stop.index("state.timeline.t = was.t;") < stop.index(
+        "setShowMode(was.showMode);"), (
+        "the clock first, since setShowMode applies the scene at whatever "
+        "the clock reads")
+    assert stop.index("setShowMode(was.showMode);") < stop.index(
+        "camera.position.fromArray(was.camera);"), (
+        "and the camera last, so nothing writes over it")
+    assert "controls.target.fromArray(was.target);" in stop
+    assert "controls.update();" in stop
+    assert "updateHud();" in stop, "the scrubber reads the clock"
+    assert "beforeTheTake = null;" in stop, "one press, one undo"
     # Re-pinned 2026-09-04: both transport buttons go through startPlaying,
     # which also switches to the animation view and reads the framing off
     # the viewport, so a take can never begin in the wrong mode or from a
