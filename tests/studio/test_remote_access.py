@@ -1614,8 +1614,13 @@ def test_clicking_a_fixture_out_of_edit_mode_opens_its_own_panel():
     block = css[css.index("#fixture-panel { position: fixed;"):]
     block = block[block.index("{") + 1:block.index("}")]
     assert "z-index: 11;" in block, "the graphs' own height"
-    assert "background: var(--scrim);" in block
-    assert "backdrop-filter: blur(10px);" in block
+    # Thinner glass than an ordinary overlay since 2026-09-12: the
+    # card stands over the very fixture it is tuning, so what is
+    # behind it is the thing being looked at.
+    assert "background: var(--scrim-thin);" in block
+    # Raised with the thinner ground, or the glass would just read
+    # as a smeared viewport rather than as glass.
+    assert "backdrop-filter: blur(14px);" in block
     assert "border: 1px solid var(--line);" in block
     assert "#" not in block, "no hex outside :root"
     # ONE DIAL A ROW. The eight-column default puts two side by side,

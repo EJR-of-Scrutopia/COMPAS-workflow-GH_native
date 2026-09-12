@@ -156,6 +156,39 @@ export function paintScrub(input) {
   row.style.setProperty("--fill", (u * 100).toFixed(2) + "%");
 }
 
+// ---------- the bare sliders ----------
+// A .scrub row draws its own fill because upgradeSliders gave it one.
+// The sliders in the shelf drawers, the graphs column and the fixture
+// card are bare range inputs with no row to draw anything, so the fill
+// goes on the INPUT and its track's gradient reads it (studio.css).
+//
+// Only where the value has actually moved: a dozen handlers write a
+// slider without dispatching an event -- a restore, a preset, a scene,
+// a change of selection -- so this is settled from the frame rather
+// than from each of them, and the memo is what makes that free. A page
+// where nothing moved writes no style at all.
+const rangeFill = new WeakMap();
+
+export function paintRange(input) {
+  const min = +input.min || 0;
+  const max = input.max === "" ? 100 : +input.max;
+  const span = max - min;
+  const u = span > 0 ? (+input.value - min) / span : 0;
+  const fill = (Math.min(1, Math.max(0, u)) * 100).toFixed(2) + "%";
+  if (rangeFill.get(input) === fill) return false;
+  rangeFill.set(input, fill);
+  input.style.setProperty("--fill", fill);
+  return true;
+}
+
+export function settleRangeFills() {
+  let moved = 0;
+  for (const input of document.querySelectorAll("input[type=\"range\"]")) {
+    if (paintRange(input)) moved += 1;
+  }
+  return moved;
+}
+
 // A value written by a handler rather than by a drag still has to move the
 // fill, and there are a dozen handlers that write one. Rather than chase
 // them all, the rows repaint whenever the panel is touched at all.

@@ -28,6 +28,7 @@
 
   --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
   --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
+  --scrim-thin:rgba(16, 18, 22, 0.62); /* the same, for glass over its own subject */
   /* The live graphs' three inks, muted so the picture behind stays the
      picture: cables, the load, the columns. Charts read these at draw
      time, so they carry no hex of their own. */
@@ -81,6 +82,7 @@
   --accent-hover:#1c46c9;
 
   --scrim:    rgba(255, 255, 255, 0.88);
+  --scrim-thin:rgba(255, 255, 255, 0.66);
   --graph-a: #2f8c7e; --graph-a-fill: rgba(47, 140, 126, 0.16);
   --graph-b: #b0762a;
   --graph-c: #b84a5f; --graph-c-fill: rgba(184, 74, 95, 0.16);
@@ -615,6 +617,51 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
 .scrub:hover .scrub-name { color: var(--ink); }
 .scrub input[type="range"]:focus-visible + .fill { outline: 1px solid var(--accent);
   outline-offset: -1px; }
+
+/* ---------- every slider ----------
+   Param: "the sliders as with all sliders, matching with the grey
+   slider not necessarily the blue. but we can take a nice feature from
+   that with the circle node on the slider to indicate where it is, but
+   change it to something more modern."
+
+   What the browser's own control was: Chromium's accent blue, a fat
+   ball on a two-tone blue track, and the one loud thing in a page of
+   greys. What it got RIGHT is the node -- a mark that says where the
+   value stands without reading the number, which .scrub's underline
+   never had. So the node stays and everything else goes: a 3 px track
+   in the studio's own well grey, the travelled part in the metadata
+   grey, and the node an upright capsule rather than a ball. A ball
+   wide enough to grab covers the track it is marking; a capsule marks
+   a position exactly and is what the last few years of interface
+   design settled on.
+
+   The travelled part is a gradient stopped at --fill, which panel.js
+   writes from the value (settleRangeFills, once a frame at 6 Hz).
+   Firefox draws it with ::-moz-range-progress and needs no variable.
+
+   .scrub's own input is stretched over its row at opacity 0 and is
+   untouched by this: its row draws the fill, and its rules carry a
+   class so they outrank these. */
+input[type="range"] { -webkit-appearance: none; appearance: none;
+  height: 14px; background: transparent; cursor: ew-resize; }
+input[type="range"]::-webkit-slider-runnable-track { height: 3px;
+  border-radius: 2px; background: linear-gradient(to right,
+    var(--ink-3) 0 var(--fill, 0%), var(--well) var(--fill, 0%) 100%); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none;
+  appearance: none; width: 5px; height: 13px; margin-top: -5px; border: 0;
+  border-radius: 3px; background: var(--ink-2);
+  box-shadow: 0 0 0 1px var(--ground); }
+input[type="range"]:hover::-webkit-slider-thumb { background: var(--ink); }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--ground), 0 0 0 3px var(--accent-bg); }
+input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px;
+  background: var(--well); }
+input[type="range"]::-moz-range-progress { height: 3px; border-radius: 2px;
+  background: var(--ink-3); }
+input[type="range"]::-moz-range-thumb { width: 5px; height: 13px; border: 0;
+  border-radius: 3px; background: var(--ink-2); }
+input[type="range"]:hover::-moz-range-thumb { background: var(--ink); }
 
 /* A choice between three things is one control, not a dropdown that hides
    two of them. Equal segments, the chosen one filled, no caption above. */
@@ -1273,6 +1320,12 @@ body.panel-collapsed #event-log { right: var(--s4); }
 #shelf-tabs .shelf-act { width: 34px; padding: 5px 0; text-align: center;
   font-size: 13px; line-height: 1.2; }
 #shelf-play { margin-left: 10px; }
+/* THE GRAPHS TILE SAYS WHAT IT OPENS. Param: "maybe the graph icon on
+   the tile can be more telling that its for graphs". It was a sine
+   wave, which reads as a wave; three rising blocks read as a chart at a
+   glance and stay monochrome, which an emoji would not. Tightened so
+   the three sit as one mark rather than as three characters. */
+#shelf-graphs { letter-spacing: -1px; font-size: 12px; }
 #shelf-undo { margin-right: 10px; }
 #shelf-record { color: #d05548; }
 
@@ -1411,10 +1464,16 @@ body.recording #scale-bar { display: none; }
 
    It is placed by script, in page coordinates, and follows its
    fixture while the camera moves. */
+/* A SHADE MORE TRANSLUCENT THAN THE REST. Param: "make the settings
+   display that comes up for the lights slightly more translucent". It
+   stands over the scene beside the fixture it is tuning, so what is
+   behind it is the thing being tuned -- unlike a drawer, which stands
+   over scene it has nothing to do with. The blur is raised with it, or
+   thinner glass would just read as a smeared viewport. */
 #fixture-panel { position: fixed; z-index: 11; width: 256px;
   max-height: 70vh; overflow: auto;
-  background: var(--scrim);
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  background: var(--scrim-thin);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   color: var(--ink); font-size: 11px; }

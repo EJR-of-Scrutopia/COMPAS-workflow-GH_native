@@ -6,7 +6,8 @@ import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import {
-  upgradeSliders, paintScrub, repaintScrubs, buildSegmented, paintSegmented,
+  upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
+  buildSegmented, paintSegmented,
   buildGroups, paintGroupSummaries, setGroupSummaries,
 } from "/static/panel.js";
 import {
@@ -15968,12 +15969,26 @@ document.getElementById("timeline-speed").addEventListener("input", (e) => {
 });
 
 let lastTime = performance.now();
+// How often the sliders' fills are settled. Six times a second is below
+// what the eye reads as lag on a dial nobody is dragging, and a drag
+// repaints on its own input event long before this comes round.
+const RANGE_FILL_MS = 160;
+let lastRangeFill = 0;
 let playingFrameCount = 0;
 let dayCycleFrames = 0;
 function frame(now) {
   const delta = Math.min(0.1, (now - lastTime) / 1000);
   lastTime = now;
   resize();
+  // Every slider's node and travelled track, six times a second. Here
+  // rather than at each of the dozen handlers that write a value
+  // without dispatching an event -- a restore, a preset, a scene, a
+  // change of selection -- and free when nothing moved, because
+  // settleRangeFills writes only what changed.
+  if (now - lastRangeFill > RANGE_FILL_MS) {
+    lastRangeFill = now;
+    settleRangeFills();
+  }
   if (state.timeline && state.timeline.playing) {
     applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));
     if (state.timeline.t >= timelineDuration()) {

@@ -3116,3 +3116,157 @@ def test_the_fixture_tiles_are_small_icons_in_a_quiet_colour():
     assert "makeProp(key)" in built, (
         "makeProp builds fresh materials per call, so the preview owns "
         "what it recolours and no placed fixture can be reached by it")
+
+
+def test_every_slider_is_grey_and_carries_a_node():
+    """Param: "the sliders as with all sliders, matching with the grey
+    slider not necessarily the blue. but we can take a nice feature from
+    that with the circle node on the slider to indicate where it is, but
+    change it to something more modern."
+
+    The browser's own control was Chromium's accent blue, the one loud
+    thing in a page of greys. What it got right is the node, which
+    .scrub's underline never had. Measured in the live page after this
+    change: zero coloured pixels across a slider's whole box, and the
+    node standing at 0.737 of the travel for a value of 0.75.
+    """
+
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+
+    # The native control is given up entirely, or the thumb rule is
+    # ignored and Chromium goes on drawing its own blue pill.
+    # Anchored to the line, or "#panel input[type=range] { width: 100% }"
+    # matches this pattern and the whole test reads the wrong rule.
+    base = re.search(r'(?m)^input\[type="range"\] \{([^}]*)\}', css)
+    assert base, "the bare range input needs a rule of its own"
+    assert "appearance: none" in base.group(1)
+
+    # THE TRACK: the studio's own greys, and a fill a value can move.
+    track = re.search(
+        r'(?m)^input\[type="range"\]::-webkit-slider-runnable-track \{([^}]*)\}',
+        css)
+    assert track, "a track of our own, since the native one is given up"
+    assert "var(--fill, 0%)" in track.group(1), (
+        "the travelled part is a gradient stopped where the value stands")
+    assert "var(--ink-3)" in track.group(1) and "var(--well)" in track.group(1)
+
+    # THE NODE: a capsule, not a ball. Taller than it is wide is the
+    # whole difference; a ball wide enough to grab covers the track it
+    # is meant to be marking.
+    thumb = re.search(
+        r'(?m)^input\[type="range"\]::-webkit-slider-thumb \{([^}]*)\}', css)
+    assert thumb, "the node is the feature being kept"
+    width = int(re.search(r"width: (\d+)px", thumb.group(1)).group(1))
+    height = int(re.search(r"height: (\d+)px", thumb.group(1)).group(1))
+    assert height > width * 2, (
+        "{}x{} is a ball; the node is an upright capsule".format(width, height))
+    assert "border-radius:" in thumb.group(1), "rounded, not a hard bar"
+
+    # NOTHING BLUE. The accent is the studio's selection colour, and a
+    # slider is not a selection.
+    for block in (base.group(1), track.group(1), thumb.group(1)):
+        assert "--accent" not in block, "a slider is grey, not selected"
+        assert "accent-color" not in block
+
+    # Firefox draws the travelled part itself and needs no variable, but
+    # takes the same colours: a slider must not be ours on one engine
+    # and the browser's on the other.
+    for pseudo in ("-moz-range-track", "-moz-range-progress", "-moz-range-thumb"):
+        assert 'input[type="range"]::{} {{'.format(pseudo) in css, pseudo
+
+    # .scrub's own input is stretched over its row at opacity 0, and its
+    # rules carry a class, so they outrank these element-only rules and
+    # the panel's rows are untouched by all of it.
+    assert '.scrub input[type="range"] { position: absolute;' in css
+    assert "opacity: 0;" in css[css.index('.scrub input[type="range"]'):][:240]
+
+
+def test_a_slider_written_by_code_still_moves_its_node():
+    """The hard half. A dozen handlers write a slider's value without
+    dispatching an event -- a restore, a preset, a scene, a change of
+    selection -- so a fill driven by the input event alone goes stale the
+    moment anything but a drag moves a dial. It is settled from the frame
+    instead, and the memo is what makes that free.
+
+    Measured live: a value written straight onto the element, with no
+    event at all, had moved its fill from 20.00% to 25.00% within the
+    frame.
+    """
+
+    panel = (STATIC / "panel.js").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    paint = panel[panel.index("export function paintRange(input)"):]
+    paint = paint[:paint.index("\n}")]
+    assert "rangeFill.get(input) === fill" in paint, (
+        "only where the value actually moved, or this writes a style on "
+        "every slider six times a second for nothing")
+    assert "rangeFill.set(input, fill)" in paint
+    assert 'input.style.setProperty("--fill", fill)' in paint
+    assert "Math.min(1, Math.max(0, u))" in paint, (
+        "a value outside its own min and max still has to draw")
+
+    assert "const rangeFill = new WeakMap();" in panel, (
+        "a WeakMap, so a slider that leaves the page is not held by it")
+
+    # Settled from the frame, throttled, and imported in order to be.
+    assert "settleRangeFills" in js[:js.index('} from "/static/panel.js";')]
+    frame = _function_body(js, "frame")
+    assert "settleRangeFills();" in frame
+    assert "RANGE_FILL_MS" in frame, "throttled, not every frame"
+    every = int(re.search(r"const RANGE_FILL_MS = (\d+);", js).group(1))
+    assert 60 <= every <= 250, (
+        "{} ms is either a stutter the eye reads or a cost the frame "
+        "should not be carrying".format(every))
+
+
+def test_the_fixture_card_is_thinner_glass_and_the_graphs_tile_says_so():
+    """Param: "make the settings display that comes up for the lights
+    slightly more translucent ... apart from this maybe the graph icon on
+    the tile can be more telling that its for graphs".
+
+    The card stands over the very thing it is tuning, unlike a drawer,
+    which stands over scene it has nothing to do with. And the tile's
+    sine wave read as a wave rather than as a chart.
+    """
+
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    def alpha(token, where):
+        found = re.search(
+            re.escape(token) + r":\s*rgba\([^)]*?,\s*([0-9.]+)\)", where)
+        assert found, token
+        return float(found.group(1))
+
+    # A TOKEN, not a hard-coded colour: the light theme flips it with
+    # everything else, and a card that stayed dark there is a hole.
+    assert "background: var(--scrim-thin);" in css
+    dark = css[css.index(":root {"):css.index(':root[data-theme="light"]')]
+    light = css[css.index(':root[data-theme="light"]'):]
+    for theme, where in (("dark", dark), ("light", light)):
+        assert alpha("--scrim-thin", where) < alpha("--scrim", where), (
+            "the {} theme's card has to be thinner than an ordinary "
+            "overlay, which is the whole request".format(theme))
+        assert alpha("--scrim-thin", where) > 0.4, (
+            "thin enough to see through, not so thin that the readings "
+            "are unreadable over a bright scene")
+
+    # The blur rises with it, or thinner glass reads as a smeared
+    # viewport rather than as glass.
+    card = css[css.index("#fixture-panel { position: fixed;"):]
+    card = card[:card.index("}")]
+    assert "blur(14px)" in card
+    assert card.count("backdrop-filter") == 2, (
+        "the prefixed and unprefixed forms, once each: a leftover pair "
+        "from before would win on source order and undo this")
+
+    # THE TILE. Three rising blocks read as a chart at a glance and stay
+    # monochrome, which an emoji would not.
+    tile = re.search(r'<button id="shelf-graphs"[^>]*>(.*?)</button>', html)
+    assert tile, "the graphs tile"
+    assert tile.group(1) == "&#9601;&#9605;&#9608;", (
+        "a rising bar chart, not the sine wave that read as a wave")
+    assert "#shelf-graphs { letter-spacing:" in css, (
+        "tightened, so the three sit as one mark rather than as three "
+        "characters in a 34 px tile")
