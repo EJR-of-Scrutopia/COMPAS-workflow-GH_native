@@ -279,6 +279,9 @@ const state = {
   lampKelvin: 3000,      // warm white
   lampTint: "#ffffff",   // the gel the next fixture wears: white is none
   lampInvisible: false,  // whether the next fixture shows its body at all
+  // The next SPOT's beam. Its own object, because four loose fields
+  // beside three lamp ones is where a state block stops being readable.
+  spot: { aperture: 45, softness: 0.35, reach: 0, shadow: true },
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the SKIN index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
@@ -1704,6 +1707,15 @@ const LAMP_LUMENS = 4000;            // a small floodlight, in the units lamps a
 const LAMP_KELVIN = 3000;            // warm white
 const LAMP_TINT = "#ffffff";         // no gel at all: the warmth alone
 const KELVIN_MIN = 1800, KELVIN_MAX = 6500;
+// The spot's own four, and the range its aperture runs over. The
+// aperture is the WHOLE cone in degrees, which is how a spot is
+// specified on its own box; three wants the half angle in radians, and
+// layFixtureBeam is the one place that conversion happens.
+const SPOT_APERTURE = 45;            // degrees, the whole cone
+const SPOT_SOFTNESS = 0.35;          // 0 a hard edge, 1 all penumbra
+const SPOT_REACH = 0;                // metres; 0 is as far as it carries
+const SPOT_SHADOW = true;            // a spot with no shadow reads as a glow
+const APERTURE_MIN = 5, APERTURE_MAX = 150;
 
 // Colour temperature to RGB, the Tanner Helland approximation, which is
 // accurate enough over 1000-40000 K for anything anyone will look at.
@@ -1884,6 +1896,26 @@ function syncFixtureEmission(record) {
   if (!isLamp(record) || !record.object) return;
   const lumens = Math.max(0, +record.lumens || 0);
   layFixtureEmitters(record.object, lumens, fixtureColour(record));
+  layFixtureBeam(record);
+}
+
+// The spot's beam, written from the record's own four. Here rather than
+// beside them because a resize is also a change of beam: the housing
+// grows and the cone has to still come out of its mouth.
+function layFixtureBeam(record) {
+  const spot = record.object.children.find((child) => child.isSpotLight);
+  if (!spot) return;
+  const aperture = Math.min(APERTURE_MAX, Math.max(APERTURE_MIN,
+    +record.aperture || SPOT_APERTURE));
+  // three.js takes the HALF angle in radians; the dial is the whole
+  // cone in degrees, which is the number printed on a spot's box.
+  spot.angle = (aperture * Math.PI / 180) / 2;
+  spot.penumbra = record.softness === undefined
+    ? SPOT_SOFTNESS : Math.min(1, Math.max(0, +record.softness || 0));
+  // Zero is three's own word for no limit, and the dial says so.
+  spot.distance = Math.max(0, +record.reach || 0);
+  spot.castShadow = record.shadow === undefined ? SPOT_SHADOW
+    : record.shadow !== false;
 }
 
 // A sphere of light, hanging where he puts it. 0.25 m radius, so the
@@ -1903,6 +1935,82 @@ function lightCube() {
   return lightEmitter(new THREE.BoxGeometry(0.4, 0.4, 0.4), 0.2, BOX_FACES);
 }
 
+// A PANEL: the soft box a photograph wants. A flat slab that gives its
+// light out of ONE face, so it lights what it faces and leaves the wall
+// behind it alone -- which is the whole difference between a panel and a
+// cube of the same size. 1.2 by 0.8 is the size a real softbox is sold
+// at. It goes through the same face machinery the strip and the cube
+// use, with a list of one, so its rect light is laid, sized and shared
+// by the code that is already tested under node.
+//
+// Which face: -Z, its own underside, the same way the spot points. Both
+// are aimed by the gumball's rings, and two fixtures that point the same
+// way at rest are one thing to learn rather than two.
+function lightPanel() {
+  return lightEmitter(new THREE.BoxGeometry(1.2, 0.8, 0.04), 0.02, ["-z"]);
+}
+
+// A SPOT, and its aperture. Param: "can we add spot lights too where we
+// can vary the aperture etc".
+//
+// A cone of housing with a lit mouth, and a real THREE.SpotLight down
+// its own -Z. The target is a CHILD of the group, so the gumball's
+// rotation rings aim the beam: turn the fixture and the pool of light
+// turns with it. At rest it points straight down, which is what a spot
+// on a track is, and the Z arrow lifts it to where it belongs.
+//
+// It is the one fixture that casts a shadow by default, and deliberately
+// so: a spot with nothing to interrupt it reads as a glow rather than as
+// a beam. Every other fixture stays shadowless (the sun is what the
+// shadow study is for), and this one's shadow is a single map.
+const SPOT_LIFT = 0.14;
+
+function lightSpot() {
+  const group = new THREE.Group();
+  // The housing: a cone open at the mouth, apex up. ConeGeometry stands
+  // on +Y, so it is turned on to +Z once here rather than by a wrapper
+  // object whose rotation the emitter layout would then have to undo.
+  const shell = new THREE.Mesh(
+    new THREE.ConeGeometry(0.16, 0.26, 20, 1, true).rotateX(Math.PI / 2),
+    propMaterial(0x2c2f34));
+  shell.material.side = THREE.DoubleSide;   // it is seen from inside too
+  shell.position.z = SPOT_LIFT;
+  // The lit mouth, which is the source: unlit, double sided so it reads
+  // from below and from the side, and carrying the globe mark every
+  // other fixture's emitter carries, so applyPropLight colours it and
+  // layFixtureEmitters can find it.
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.15, 20),
+    new THREE.MeshBasicMaterial({ color: kelvinColour(LAMP_KELVIN),
+      toneMapped: false, side: THREE.DoubleSide }));
+  lens.position.z = SPOT_LIFT - 0.12;
+  lens.userData.lampGlobe = true;
+  lens.castShadow = lens.receiveShadow = false;
+  lens.geometry.computeBoundingBox();
+  const light = new THREE.SpotLight(0xffffff, 1, 0,
+    (SPOT_APERTURE * Math.PI / 180) / 2, SPOT_SOFTNESS, 2);
+  // SET, not nudged: three gives a new SpotLight the position (0, 1, 0)
+  // (Object3D.DEFAULT_UP), so writing z alone leaves it a metre to one
+  // side and the beam comes out at forty-five degrees. Caught by the
+  // node harness on the day this was written.
+  light.position.set(0, 0, SPOT_LIFT - 0.12);
+  light.userData.lampLight = true;
+  light.castShadow = true;
+  light.shadow.mapSize.set(1024, 1024);
+  // The near plane clears the housing, which sits behind the light: a
+  // shell inside the shadow frustum would draw its own mouth as a black
+  // ring on everything below it.
+  light.shadow.camera.near = 0.3;
+  light.shadow.bias = -0.0015;
+  // The target is a child, so the group's rotation carries it and the
+  // gumball aims the beam.
+  const target = new THREE.Object3D();
+  target.position.set(0, 0, -1);
+  light.target = target;
+  group.add(shell, lens, light, target);
+  layFixtureEmitters(group, LAMP_LUMENS, kelvinColour(LAMP_KELVIN));
+  return group;
+}
+
 // The old fixture, kept ONLY so a scene saved before 2026-09-09 still
 // opens: its props name "orb-light", and a type with no builder is drawn
 // as nothing at all. It builds the sphere now, without the stem and foot
@@ -1915,7 +2023,8 @@ const PROP_BUILDERS = {
   figure: propFigure, tree: propTree, pallets: propPallets,
   barrier: propBarrier, cone: propCone, "orb-light": propOrbLight,
   "light-sphere": lightSphere, "light-strip": lightStrip,
-  "light-cube": lightCube,
+  "light-cube": lightCube, "light-spot": lightSpot,
+  "light-panel": lightPanel,
 };
 
 // The fixtures the Lights tab offers. They are code, not files, so they
@@ -1927,6 +2036,8 @@ const LIGHT_KINDS = [
   { key: "light-sphere", label: "Sphere", sizeMetres: [0.5, 0.5, 0.5] },
   { key: "light-strip", label: "Strip", sizeMetres: [2.0, 0.06, 0.06] },
   { key: "light-cube", label: "Cube", sizeMetres: [0.4, 0.4, 0.4] },
+  { key: "light-spot", label: "Spot", sizeMetres: [0.32, 0.32, 0.26] },
+  { key: "light-panel", label: "Panel", sizeMetres: [1.2, 0.8, 0.04] },
 ];
 
 // Which prop types are lamps. A set rather than a name test, so a second
@@ -1935,7 +2046,15 @@ const LIGHT_KINDS = [
 // 2026-09-09 names it, and a type nothing recognises is drawn as
 // nothing. It builds the sphere now, without the stem and foot.
 const LAMP_TYPES = new Set(["orb-light", "light-sphere", "light-strip",
-  "light-cube"]);
+  "light-cube", "light-spot", "light-panel"]);
+
+// The spot is the only fixture with a beam, so it is the only one the
+// aperture, softness, reach and shadow controls reach. A name test
+// rather than a set, because there is one of it and a set of one reads
+// as though a second were coming.
+function isSpot(record) {
+  return !!record && record.type === "light-spot";
+}
 
 function isLamp(record) {
   return !!record && LAMP_TYPES.has(record.type);
@@ -2034,6 +2153,19 @@ function adoptLampSettings(record, entry) {
   record.tint = typeof entry.tint === "string" ? entry.tint : state.lampTint;
   record.invisible = typeof entry.invisible === "boolean" ? entry.invisible
     : !!state.lampInvisible;
+  // The spot's four, each falling back to the drawer's own default
+  // rather than to zero: a spot restored with a nought aperture is a
+  // spot that has gone out.
+  if (isSpot(record)) {
+    record.aperture = typeof entry.aperture === "number" ? entry.aperture
+      : state.spot.aperture;
+    record.softness = typeof entry.softness === "number" ? entry.softness
+      : state.spot.softness;
+    record.reach = typeof entry.reach === "number" ? entry.reach
+      : state.spot.reach;
+    record.shadow = typeof entry.shadow === "boolean" ? entry.shadow
+      : state.spot.shadow;
+  }
   applyPropLight(record);
 }
 
@@ -2219,7 +2351,11 @@ function encodeProps(props) {
     if (p.size || p.lumens !== undefined || p.kelvin !== undefined
         || p.tint !== undefined || p.invisible !== undefined) {
       extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin,
-        tint: p.tint, invisible: p.invisible };
+        tint: p.tint, invisible: p.invisible,
+        // A spot's beam. Undefined on every other fixture, and JSON
+        // drops an undefined key, so no other prop pays for these.
+        aperture: p.aperture, softness: p.softness, reach: p.reach,
+        shadow: p.shadow };
     }
   });
   return { stride: LAYOUT_STRIDE, types, rows, extras };
@@ -3241,6 +3377,9 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
     record.kelvin = state.lampKelvin;
     record.tint = state.lampTint;
     record.invisible = state.lampInvisible;
+    // A spot arrives with a beam as well: the same four the drawer is
+    // showing, so placing one by hand needs no second gesture.
+    if (isSpot(record)) Object.assign(record, state.spot);
     applyPropLight(record);
   }
   object.visible = layerVisible(record.layer);
@@ -4285,7 +4424,8 @@ function collectScene(options) {
     contrast: state.contrast,
     outline: state.outline,
     lamp: { lumens: state.lampLumens, kelvin: state.lampKelvin,
-            tint: state.lampTint, invisible: state.lampInvisible },
+            tint: state.lampTint, invisible: state.lampInvisible,
+            spot: Object.assign({}, state.spot) },
     hdri: {
       name: state.hdriName, projection: state.hdriProjection,
       scale: state.hdriScale, height: state.hdriHeight, rotation: state.hdriRotation,
@@ -4501,6 +4641,11 @@ async function applyScene(record) {
     if (typeof scene_.lamp.tint === "string") state.lampTint = scene_.lamp.tint;
     if (typeof scene_.lamp.invisible === "boolean") {
       state.lampInvisible = scene_.lamp.invisible;
+    }
+    // A scene saved before the spot existed carries no beam, and the
+    // drawer keeps the defaults rather than taking an undefined one.
+    if (scene_.lamp.spot) {
+      Object.assign(state.spot, scene_.lamp.spot);
     }
   }
   syncLightControls();
@@ -11645,10 +11790,41 @@ function syncLightControls() {
     const said = document.getElementById("lamp-invisible-value");
     if (said) said.textContent = hidden ? "yes" : "no";
   }
+  // THE SPOT'S OWN FOUR, offered only when a spot is what the dials
+  // are pointed at: a sphere has no aperture, and a control that does
+  // nothing in the current mode is hidden rather than shown dead.
+  const beam = isSpot(one) ? one : state.spot;
+  const offerBeam = isSpot(one) || (!one && state.props.some(isSpot));
+  for (const row of document.querySelectorAll("#lights-controls .spot-dial")) {
+    row.classList.toggle("hidden", !offerBeam);
+  }
+  if (offerBeam) {
+    const aperture = +beam.aperture || SPOT_APERTURE;
+    const softness = beam.softness === undefined ? SPOT_SOFTNESS
+      : +beam.softness || 0;
+    const reach = +beam.reach || 0;
+    write("lamp-aperture", aperture, Math.round(aperture));
+    write("lamp-softness", Math.round(softness * 100),
+      Math.round(softness * 100));
+    write("lamp-reach", reach, reach.toFixed(reach ? 1 : 0));
+    const cast = beam.shadow !== false;
+    const box = document.getElementById("lamp-shadow");
+    if (box) {
+      box.checked = cast;
+      const said = document.getElementById("lamp-shadow-value");
+      if (said) said.textContent = cast ? "on" : "off";
+    }
+  }
 }
 
+// The spot's four, which no other fixture has anything to do with: a
+// sphere handed an aperture would carry it through the layout and the
+// scene for ever and never use it.
+const SPOT_FIELDS = new Set(["aperture", "softness", "reach", "shadow"]);
+
 function writeLamps(field, value) {
-  const targets = lampTargets();
+  const targets = SPOT_FIELDS.has(field)
+    ? lampTargets().filter(isSpot) : lampTargets();
   for (const record of targets) {
     record[field] = value;
     applyPropLight(record);
@@ -11660,7 +11836,8 @@ function writeLamps(field, value) {
     if (field === "lumens") state.lampLumens = value;
     else if (field === "kelvin") state.lampKelvin = value;
     else if (field === "tint") state.lampTint = value;
-    else state.lampInvisible = value;
+    else if (field === "invisible") state.lampInvisible = value;
+    else state.spot[field] = value;
   }
   syncLightControls();
   return targets.length;
@@ -11682,7 +11859,24 @@ document.getElementById("lamp-invisible").addEventListener("change", (e) => {
 });
 // The layout is per study and lives in localStorage; writing it on every
 // pixel of a drag would be a hundred writes for one decision.
-for (const id of ["lamp-lumens", "lamp-kelvin", "lamp-tint"]) {
+// THE SPOT'S FOUR. Aperture, Softness and Reach are dials and write
+// as they move; Shadow is a toggle with no drag to wait out, so it
+// writes the layout at once, as Invisible does.
+document.getElementById("lamp-aperture").addEventListener("input", (e) => {
+  writeLamps("aperture", +e.target.value);
+});
+document.getElementById("lamp-softness").addEventListener("input", (e) => {
+  writeLamps("softness", Math.min(1, Math.max(0, +e.target.value / 100)));
+});
+document.getElementById("lamp-reach").addEventListener("input", (e) => {
+  writeLamps("reach", Math.max(0, +e.target.value));
+});
+document.getElementById("lamp-shadow").addEventListener("change", (e) => {
+  writeLamps("shadow", !!e.target.checked);
+  saveProps();
+});
+for (const id of ["lamp-lumens", "lamp-kelvin", "lamp-tint",
+                  "lamp-aperture", "lamp-softness", "lamp-reach"]) {
   document.getElementById(id).addEventListener("change", () => saveProps());
 }
 // Both read as percentages because that is how a grade is discussed,

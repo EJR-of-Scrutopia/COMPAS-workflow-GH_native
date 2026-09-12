@@ -1132,9 +1132,12 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # Both numbers survive a reload and a scene.
     # The layout and the scene share one encoder, which carries a lamp's
     # numbers beside its row, and one decoder, which puts them back.
-    assert ("extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin,\n"
-            "        tint: p.tint, invisible: p.invisible };") in js, (
-        "the study layout")
+    encoded = _js_function(js, "function encodeProps(props)")
+    for key in ("size: p.size", "lumens: p.lumens", "kelvin: p.kelvin",
+                "tint: p.tint", "invisible: p.invisible",
+                "aperture: p.aperture", "softness: p.softness",
+                "reach: p.reach", "shadow: p.shadow"):
+        assert key in encoded, "the study layout drops " + key
     assert "props: withProps ? encodeProps(state.props) : undefined," in js, "the scene"
     assert "if (extra) Object.assign(entry, extra);" in js
     assert js.count("adoptLampSettings(record, entry);") == 2, (
@@ -1224,9 +1227,8 @@ def test_every_fixture_carries_its_own_gel_and_the_dial_has_headroom():
     adopt = _js_function(js, "function adoptLampSettings(record, entry)")
     assert ('record.tint = typeof entry.tint === "string" ? entry.tint '
             ": state.lampTint;") in adopt
-    assert "tint: p.tint, invisible: p.invisible };" in js, (
-        "the layout's extras carry it")
-    assert "tint: state.lampTint, invisible: state.lampInvisible }," in js, (
+    assert "tint: p.tint," in js, "the layout's extras carry it"
+    assert "tint: state.lampTint, invisible: state.lampInvisible," in js, (
         "and the scene carries the defaults")
     restore = _js_function(js, "async function applyScene(record)")
     assert 'if (typeof scene_.lamp.tint === "string") state.lampTint = scene_.lamp.tint;' in restore
@@ -1321,8 +1323,8 @@ def test_a_fixture_can_be_made_invisible_and_still_picked_up():
     adopt = _js_function(js, "function adoptLampSettings(record, entry)")
     assert ('record.invisible = typeof entry.invisible === "boolean" '
             "? entry.invisible") in adopt
-    assert "invisible: p.invisible };" in js, "the layout's extras"
-    assert "invisible: state.lampInvisible }," in js, "the scene's default"
+    assert "invisible: p.invisible," in js, "the layout's extras"
+    assert "invisible: state.lampInvisible," in js, "the scene's default"
     restore = _js_function(js, "async function applyScene(record)")
     assert 'if (typeof scene_.lamp.invisible === "boolean") {' in restore
     assert "lampInvisible: false," in js, "off until he asks for it"
@@ -1349,8 +1351,155 @@ def test_a_fixture_can_be_made_invisible_and_still_picked_up():
     assert 'said.textContent = hidden ? "yes" : "no";' in sync
     assert 'writeLamps("invisible", !!e.target.checked);' in js
     aimed = _js_function(js, "function writeLamps(field, value)")
-    assert "else state.lampInvisible = value;" in aimed
+    assert 'else if (field === "invisible") state.lampInvisible = value;' in aimed
     assert '.dial-block label > input[type="checkbox"] { width: auto;' in css
+
+
+def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
+    """Param, 2026-09-12: "can we add spot lights too where we can vary
+    the aperture etc, and a larger selection of lights too."
+
+    Two fixtures join the three. A SPOT is a conical housing with a lit
+    mouth and a real THREE.SpotLight down its own -Z, its target a CHILD
+    of the fixture so the gumball's rotation rings aim the beam. Its own
+    four controls are the four a spot is specified by: the aperture (the
+    WHOLE cone in degrees, where three wants the half angle in radians),
+    how soft the edge is, how far it carries, and whether it casts. It
+    is the only fixture that casts by default, because a spot with
+    nothing to interrupt it reads as a glow rather than as a beam.
+
+    A PANEL is the soft box a photograph wants: a flat slab giving its
+    light out of ONE face, through the same face machinery the strip and
+    the cube use, with a list of one.
+
+    And a layout or a scene naming only the three old kinds still opens:
+    nothing was renamed and LAMP_TYPES only grew.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+
+    # The three lists a fixture must be in to exist at all: what builds
+    # it, what the tab offers, and what counts as a fixture.
+    assert '"light-spot": lightSpot,' in js
+    assert '"light-panel": lightPanel,' in js
+    assert 'key: "light-spot", label: "Spot"' in js
+    assert 'key: "light-panel", label: "Panel"' in js
+    assert ('const LAMP_TYPES = new Set(["orb-light", "light-sphere", '
+            '"light-strip",\n  "light-cube", "light-spot", "light-panel"]);') in js, (
+        "the old three keep their names, so every layout and scene "
+        "written before today still opens")
+
+    # THE PANEL: one face, through the machinery that is already tested
+    # under node. A list of one, not a new code path.
+    panel = _js_function(js, "function lightPanel()")
+    assert ('return lightEmitter(new THREE.BoxGeometry(1.2, 0.8, 0.04), '
+            '0.02, ["-z"]);') in panel, (
+        "one rect light, on the underside, at the size a real softbox "
+        "is sold at")
+
+    # THE SPOT.
+    spot = _js_function(js, "function lightSpot()")
+    assert "new THREE.ConeGeometry(0.16, 0.26, 20, 1, true).rotateX(Math.PI / 2)" in spot, (
+        "ConeGeometry stands on +Y and the fixture points down -Z, so "
+        "it is turned once in the geometry rather than by a wrapper "
+        "whose rotation the emitter layout would have to undo")
+    assert "lens.userData.lampGlobe = true;" in spot, (
+        "the mouth is the source, so applyPropLight colours it and "
+        "layFixtureEmitters can find it like any other fixture's")
+    assert "light.position.set(0, 0, SPOT_LIFT - 0.12);" in spot, (
+        "SET, not nudged: three gives a new SpotLight the position "
+        "(0, 1, 0), so writing z alone aims the beam at 45 degrees")
+    assert "light.target = target;" in spot and "group.add(shell, lens, light, target);" in spot, (
+        "the target is a CHILD of the fixture, so the gumball aims the beam")
+    assert "target.position.set(0, 0, -1);" in spot
+    assert "light.castShadow = true;" in spot
+    assert "light.shadow.mapSize.set(1024, 1024);" in spot, "one shadow map"
+    assert "light.shadow.camera.near = 0.3;" in spot, (
+        "the near plane clears the housing behind the light, or the "
+        "shell draws its own mouth as a black ring below it")
+
+    # THE BEAM, written by one function that every size change and every
+    # dial goes through.
+    beam = _js_function(js, "function layFixtureBeam(record)")
+    assert "spot.angle = (aperture * Math.PI / 180) / 2;" in beam, (
+        "the dial is the whole cone in degrees; three takes the half "
+        "angle in radians")
+    assert "const aperture = Math.min(APERTURE_MAX, Math.max(APERTURE_MIN," in beam
+    assert "spot.penumbra = record.softness === undefined" in beam
+    assert "spot.distance = Math.max(0, +record.reach || 0);" in beam
+    assert "spot.castShadow = record.shadow === undefined ? SPOT_SHADOW" in beam
+    assert "if (!spot) return;" in beam, (
+        "every fixture goes through it and only the spot has a beam")
+    assert "layFixtureBeam(record);" in _js_function(
+        js, "function syncFixtureEmission(record)"), (
+        "a resize is a change of beam too: the housing grows and the "
+        "cone still has to come out of its mouth")
+
+    # ITS OWN, so it travels with it: placed, saved, restored.
+    assert "const SPOT_APERTURE = 45;" in js
+    assert "const SPOT_SHADOW = true;" in js, (
+        "the only fixture that casts by default")
+    assert "const APERTURE_MIN = 5, APERTURE_MAX = 150;" in js
+    assert "spot: { aperture: 45, softness: 0.35, reach: 0, shadow: true }," in js
+    assert "if (isSpot(record)) Object.assign(record, state.spot);" in js, (
+        "a spot placed by hand arrives with the beam the drawer shows")
+    encoded = _js_function(js, "function encodeProps(props)")
+    for key in ("aperture: p.aperture", "softness: p.softness",
+                "reach: p.reach", "shadow: p.shadow"):
+        assert key in encoded, key
+    adopt = _js_function(js, "function adoptLampSettings(record, entry)")
+    assert "if (isSpot(record)) {" in adopt
+    assert ': state.spot.aperture;' in adopt, (
+        "a spot restored with a nought aperture is a spot that has gone out")
+    assert "spot: Object.assign({}, state.spot) }," in js, "the scene"
+    restore = _js_function(js, "async function applyScene(record)")
+    assert "if (scene_.lamp.spot) {" in restore, (
+        "a scene saved before the spot existed carries no beam, and the "
+        "drawer keeps its defaults rather than taking an undefined one")
+
+    # THE CONTROLS, in the Lights drawer, shown only while a spot is
+    # what the dials are pointed at (section 7 of the language).
+    drawer = html[html.index('<div id="lights-panel"'):]
+    drawer = drawer[:drawer.index('<div id="shelf-grid"')]
+    for control, unit in (("lamp-aperture", "&#176;"), ("lamp-softness", "%"),
+                          ("lamp-reach", "m")):
+        assert 'id="%s"' % control in drawer, control
+        assert '<b id="%s-value">' % control in drawer, control
+        assert unit in drawer, control
+    assert '<input id="lamp-shadow" type="checkbox" checked>' in drawer
+    assert '<b id="lamp-shadow-value">on</b><em></em>' in drawer
+    assert drawer.count('class="spot-dial hidden"') == 4, (
+        "all four are hidden until a spot is in hand")
+    assert 'data-unit="1"' in drawer[drawer.index('id="lamp-reach"') - 200:
+                                     drawer.index('id="lamp-reach"') + 80], (
+        "Reach rests at zero, where the typable reading cannot derive "
+        "its own factor")
+    assert "nought means no limit" in drawer, (
+        "and the title says what a nought reach means, because nothing "
+        "about a slider at its floor says it")
+    sync = _js_function(js, "function syncLightControls()")
+    assert 'row.classList.toggle("hidden", !offerBeam);' in sync
+    assert "const offerBeam = isSpot(one) || (!one && state.props.some(isSpot));" in sync, (
+        "the selected fixture, or any spot in the scene when nothing is "
+        "selected: the same rule the rest of the drawer follows")
+    assert 'write("lamp-aperture", aperture, Math.round(aperture));' in sync
+    assert 'said.textContent = cast ? "on" : "off";' in sync
+
+    # The four reach SPOTS alone. A sphere handed an aperture would
+    # carry it through the layout and the scene for ever and never use it.
+    assert ('const SPOT_FIELDS = new Set(["aperture", "softness", "reach", '
+            '"shadow"]);') in js
+    aimed = _js_function(js, "function writeLamps(field, value)")
+    assert "const targets = SPOT_FIELDS.has(field)" in aimed
+    assert "? lampTargets().filter(isSpot) : lampTargets();" in aimed
+    assert 'writeLamps("aperture", +e.target.value);' in js
+    assert 'writeLamps("softness", Math.min(1, Math.max(0, +e.target.value / 100)));' in js, (
+        "the dial reads percent and the record holds the fraction three "
+        "wants")
+    assert 'writeLamps("reach", Math.max(0, +e.target.value));' in js
+    assert 'writeLamps("shadow", !!e.target.checked);' in js
 
 
 def test_a_slider_that_rests_at_zero_declares_its_unit():
@@ -2798,6 +2947,86 @@ applyPropLight(unseen);
 let back = 0;
 unseen.object.traverse((c) => { if (c.isMesh && c.material.visible) back += 1; });
 expect(back === meshCount, "and every part of it comes back");
+
+// THE PANEL: the soft box, which is one rect light on the face it
+// points out of and nothing on the other five. That is the whole
+// difference between a panel and a cube of the same size.
+const panel = { type: "light-panel", object: lightPanel(), scale: 1,
+  lumens: 3000, kelvin: 4000 };
+applyPropSize(panel);
+checkFaces(panel, ["-z"], "panel");
+const panelLights = panel.object.children.filter((c) => c.isRectAreaLight);
+expect(panelLights.length === 1, "the panel gives light out of ONE face");
+expect(near(panelLights[0].power, 3000, 1e-6), "and all of its output");
+expect(near(panelLights[0].width, 1.2) && near(panelLights[0].height, 0.8),
+  "at the slab's own size in the world");
+expect(shaded(panelLights[0]).normal.z < -0.999,
+  "and it points out of its underside, the way the spot points");
+
+// THE SPOT. The dial is the WHOLE cone in degrees, which is the number
+// printed on a spot's box; three wants the half angle in radians.
+const beamed = { type: "light-spot", object: lightSpot(), scale: 1,
+  lumens: 5000, kelvin: 3000, aperture: 60, softness: 0.5, reach: 12,
+  shadow: true };
+applyPropLight(beamed);
+const beam = beamed.object.children.find((c) => c.isSpotLight);
+expect(beam, "the spot carries a real spot light");
+expect(near(beam.angle, (60 * Math.PI / 180) / 2), "the HALF angle, in radians");
+expect(near(beam.penumbra, 0.5), "softness is the penumbra");
+expect(near(beam.distance, 12), "reach is the distance");
+expect(beam.castShadow === true, "and it casts, because a spot with "
+  + "nothing to interrupt it reads as a glow");
+expect(near(beam.power, 5000, 1e-6), "carrying the whole output");
+expect(beam.color.equals(fixtureColour(beamed)), "in the fixture's colour");
+// A WIDER APERTURE IS A WIDER CONE, which is the whole of the control.
+const narrow = beam.angle;
+beamed.aperture = 120;
+applyPropLight(beamed);
+expect(beam.angle > narrow, "a wider aperture opens the cone");
+// Aimed down its own -Z, with the target a CHILD, so the gumball's
+// rotation rings aim the beam.
+expect(beam.target.parent === beamed.object,
+  "the target is a child of the fixture, so turning it turns the beam");
+const aimOf = () => {
+  beamed.object.updateMatrixWorld(true);
+  const from = new THREE.Vector3().setFromMatrixPosition(beam.matrixWorld);
+  const to = new THREE.Vector3().setFromMatrixPosition(beam.target.matrixWorld);
+  return to.sub(from).normalize();
+};
+const atRest = aimOf();
+expect(atRest.z < -0.999, "at rest the beam points straight down");
+beamed.object.rotation.set(Math.PI / 2, 0, 0);
+const turned = aimOf();
+expect(Math.abs(turned.z) < 1e-6 && Math.abs(turned.y) > 0.999,
+  "a quarter turn about X lays the beam flat along Y");
+// And it is the fixture's own -Z, whatever the rotation: worked out
+// here from the quaternion rather than read off the light.
+const own = new THREE.Vector3(0, 0, -1)
+  .applyQuaternion(beamed.object.quaternion);
+expect(turned.distanceTo(own) < 1e-6, "the beam IS the fixture's own -Z");
+beamed.object.rotation.set(0, 0, 0);
+beamed.object.updateMatrixWorld(true);
+// Nought reach is three's own no limit, and the shadow follows its own
+// toggle rather than being wired on.
+beamed.reach = 0;
+beamed.shadow = false;
+applyPropLight(beamed);
+expect(beam.distance === 0, "nought reach is no limit");
+expect(beam.castShadow === false, "and the shadow can be turned off");
+// Clamped, so no dial can make a cone of nothing or of everything.
+beamed.aperture = 500;
+applyPropLight(beamed);
+expect(near(beam.angle, (150 * Math.PI / 180) / 2), "clamped above");
+beamed.aperture = 1;
+applyPropLight(beamed);
+expect(near(beam.angle, (5 * Math.PI / 180) / 2), "clamped below");
+// A fixture with no beam is left alone: layFixtureBeam runs for every
+// fixture and must do nothing at all to a sphere.
+const plainSphere = { type: "light-sphere", object: lightSphere(), scale: 1,
+  lumens: 800, kelvin: 3000, aperture: 60 };
+applyPropLight(plainSphere);
+expect(plainSphere.object.children.filter((c) => c.isSpotLight).length === 0,
+  "a sphere has no beam to write");
 console.log("ok");
 """
 
@@ -2835,16 +3064,21 @@ def test_a_fixtures_emitters_are_laid_on_its_faces_and_shine_out_of_them(tmp_pat
     consts = "\n".join(_js_statement(js, head) for head in (
         "const LAMP_LUMENS", "const LAMP_KELVIN", "const LAMP_TINT",
         "const KELVIN_MIN",
+        "const SPOT_APERTURE", "const SPOT_SOFTNESS", "const SPOT_REACH",
+        "const SPOT_SHADOW", "const APERTURE_MIN", "const SPOT_LIFT",
         "const STRIP_FACES", "const BOX_FACES", "const LAMP_TYPES",
         "const tintScratch", "const faceAxes", "const faceBasis"))
     headers = ("function kelvinColour(kelvin)",
                "function fixtureColour(record)", "function isLamp(record)",
+               "function isSpot(record)", "function propMaterial(color)",
                "function lightEmitter(geometry, lift, faces)",
                "function layFixtureEmitters(object, lumens, colour)",
                "function syncFixtureEmission(record)",
+               "function layFixtureBeam(record)",
                "function applyFixtureBody(record)",
                "function lightSphere()", "function lightStrip()",
-               "function lightCube()", "function applyPropSize(record)",
+               "function lightCube()", "function lightPanel()",
+               "function lightSpot()", "function applyPropSize(record)",
                "function applyPropLight(record)")
     functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
     script = tmp_path / "emitters.mjs"

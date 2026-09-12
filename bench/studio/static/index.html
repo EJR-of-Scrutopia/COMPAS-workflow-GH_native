@@ -210,6 +210,23 @@
         <label title="Stop drawing the fixture's body: its light does not change, and you can still click it where it stands or pick it from the Layers tile"><span>Invisible</span>
           <input id="lamp-invisible" type="checkbox">
           <b id="lamp-invisible-value">no</b><em></em></label>
+        <!-- THE SPOT ALONE. Shown only while a spot is under the dials,
+             because a control that does nothing in the current mode is
+             hidden rather than shown dead (the interface language,
+             section 7). The class is on the LABEL, so each row leaves
+             the grid whole when it goes. -->
+        <label class="spot-dial hidden" title="How wide the cone opens, edge to edge: a narrow beam picks out one voussoir, a wide one washes a bay"><span>Aperture</span>
+          <input id="lamp-aperture" type="range" min="5" max="150" step="1" value="45">
+          <b id="lamp-aperture-value">45</b><em>&#176;</em></label>
+        <label class="spot-dial hidden" title="How soft the edge of the pool is: nought a cut edge, a hundred all falloff"><span>Softness</span>
+          <input id="lamp-softness" type="range" min="0" max="100" step="1" value="35">
+          <b id="lamp-softness-value">35</b><em>%</em></label>
+        <label class="spot-dial hidden" title="How far the beam carries before it is gone; nought means no limit, the way a real beam behaves"><span>Reach</span>
+          <input id="lamp-reach" type="range" data-unit="1" min="0" max="60" step="0.5" value="0">
+          <b id="lamp-reach-value">0</b><em>m</em></label>
+        <label class="spot-dial hidden" title="Let the beam be interrupted: a spot with nothing to stop it reads as a glow rather than a beam"><span>Shadow</span>
+          <input id="lamp-shadow" type="checkbox" checked>
+          <b id="lamp-shadow-value">on</b><em></em></label>
         <label><span>Size</span>
           <input id="light-size" type="range" min="0.1" max="6" step="0.05" value="1">
           <b id="light-size-value">1.00</b><em>x</em></label>

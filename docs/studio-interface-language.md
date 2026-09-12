@@ -282,7 +282,7 @@ reading "0.80 to 1.30".
 Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
-atmosphere's nine dials, so the count is now **45 of 51**: 45 visible
+atmosphere's nine dials, so the count is now **48 of 54**: 45 visible
 dials, every one of them in the language, out of 51 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
@@ -348,7 +348,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 51 sliders. Since then: `site-
+The inventory of section 10 is now 54 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, and the
@@ -468,3 +468,44 @@ Balanced.
 every placement draws a variant at random. The props drawer carries one;
 the scatter solver draws one from its own seeded stream before measuring
 a footprint, so a replay deals the same shapes.
+
+
+## 12. The fixtures, 2026-09-12
+
+Param: "can we add spot lights too where we can vary the aperture etc,
+and a larger selection of lights too. we need to make all the lights
+have individual controls and colours etc, more that any light we put in
+needs its own controls."
+
+There are five kinds now, and two of them are new.
+
+A **Spot** is a conical housing with a lit mouth and a real spot light
+down its own -Z. Its target is a CHILD of the fixture, so the gumball's
+rotation rings aim the beam: turn the fixture and the pool turns with
+it. At rest it points straight down, which is what a spot on a track
+is, and the Z arrow lifts it to where it belongs. Its four controls are
+the four a spot is specified by: **Aperture** is the WHOLE cone in
+degrees (three.js wants the half angle in radians, and `layFixtureBeam`
+is the one place that conversion happens), **Softness** is the
+penumbra, **Reach** is how far it carries with nought meaning no limit,
+and **Shadow** says whether it may be interrupted. It is the only
+fixture that casts by default: a spot with nothing to stop it reads as
+a glow rather than as a beam, and the sun is still what the shadow
+study is for.
+
+A **Panel** is the soft box a photograph wants: a flat slab, 1.2 by 0.8,
+giving its light out of ONE face, which is the whole difference between
+it and a cube of the same size. It goes through the face machinery the
+strip and the cube already use, with a list of one face, so nothing new
+had to be written to lay it.
+
+Both point out of their own -Z at rest. Two fixtures that point the
+same way are one thing to learn rather than two.
+
+**A control that belongs to one kind is hidden for the others.** The
+spot's four rows carry `.spot-dial` and are shown only while a spot is
+what the dials are pointed at, by the drawer's own rule: the selected
+fixture, or any spot in the scene when nothing is selected. A sphere
+never offers an aperture, and the four never reach a sphere's record
+either (`SPOT_FIELDS`), because a fixture carrying a setting it can
+never use carries it through the layout and every saved scene for ever.
