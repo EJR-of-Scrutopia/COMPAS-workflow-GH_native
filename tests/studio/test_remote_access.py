@@ -719,9 +719,10 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     # below, so a bare id-list assertion passes on the wrong loop.
     assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
         "    const button = document.getElementById(id);" in js
+    # Guarded since 2026-09-12: two of the three faces are gone
+    # from the page, so the loop must tolerate a missing one.
     assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
-        '  document.getElementById(id).addEventListener("click",\n'\
-        "    () => setPropEdit(!state.propEdit));" in js
+        "  const button = document.getElementById(id);" in js
     # And a freshly opened drawer shows the mode the scene is in.
     shelf = _js_function(js, "function renderShelf()")
     assert 'shelfEdit.classList.toggle("active", state.propEdit)' in shelf
@@ -771,16 +772,18 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     assert "refreshLayersShelf();" in clear
 
 
-def test_edit_is_a_tile_of_its_own_beside_the_drawers():
-    """Param: "can you make the edit button a tile also to the right of
-    the Scenes tile. Just a button you press it highlights and no pop up.
-    just runs the edit mode. i feel it more intuitive."
+def test_edit_mode_lives_in_the_layers_drawer_alone():
+    """Param, 2026-09-12: "we can then after this remove the edit mode
+    tile and just keep it in layers and this double click function."
 
-    So: a third face on the same mode, standing in the tab strip to the
-    right of Scenes, opening nothing. It carries no data-shelf, which is
-    what keeps openShelf and closeShelf from claiming it -- a tab-shaped
-    button that DID carry one would open a drawer named after itself and
-    have its light scrubbed off every time another tab was pressed."""
+    A reversal, and worth saying so. The tile in the tab strip was his
+    own earlier request ("can you make the edit button a tile also to
+    the right of the Scenes tile"), and so was the panel's button before
+    that. Both are gone, because the things they were needed for no
+    longer need a mode: a double click gives any prop handles, and the
+    hover badge answers Delete and the arrow keys. What is left is the
+    one face in the Layers drawer, where props are actually chosen.
+    """
 
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
         encoding="utf-8")
@@ -788,31 +791,108 @@ def test_edit_is_a_tile_of_its_own_beside_the_drawers():
         encoding="utf-8")
     js = STUDIO_JS.read_text(encoding="utf-8")
 
-    tabs = html[html.index('id="shelf-tabs"'):]
-    tabs = tabs[:tabs.index("</div>")]
-    assert 'id="shelf-edit-tile"' in tabs, "the tile stands in the tab strip"
-    assert tabs.index('data-shelf="scenes"') < tabs.index('id="shelf-edit-tile"'), (
-        "and to the RIGHT of Scenes, where he asked for it")
-    assert tabs.index('id="shelf-edit-tile"') < tabs.index('id="shelf-play"'), (
-        "before the take controls, so it reads with the drawers not the take")
+    # GONE, both of them, and from the page rather than merely hidden:
+    # a hidden button is still a button somebody finds.
+    assert 'id="shelf-edit-tile"' not in html
+    assert 'id="prop-edit"' not in html
+    assert html.count('id="shelf-prop-edit"') == 1, (
+        "one face left, in the drawer where props are chosen")
+    drawer = html[html.index('id="shelf-actions"'):]
+    assert 'id="shelf-prop-edit"' in drawer[:drawer.index("</div>")]
 
-    # No drawer. The whole no-pop-up promise rests on this one absence:
-    # the tab wiring is scoped to [data-shelf], so a tile without one is
-    # invisible to openShelf, to closeShelf, and to the click loop.
-    tile = tabs[tabs.index('id="shelf-edit-tile"'):]
-    tile = tile[:tile.index(">")]
-    assert "data-shelf" not in tile, (
-        "a data-shelf here would make the mode toggle open a drawer")
+    # THE WIRING TOLERATES A MISSING FACE. The id list is where a face
+    # is added or removed; an unguarded getElementById here would throw
+    # during boot and take every handler written after it down with it.
+    wiring = js[js.index('for (const id of ["prop-edit", "shelf-prop-edit", '
+                         '"shelf-edit-tile"]) {\n  const button'):]
+    wiring = wiring[:wiring.index("\n}")]
+    assert "if (button) {" in wiring, "guarded, since two of the three are gone"
+    assert "setPropEdit(!state.propEdit)" in wiring
 
-    # It lights by the same rule the other tiles light by, and by the one
-    # toggle that paints the other two Edit faces.
-    assert "#shelf-tabs button.active" in css
-    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
-        "    const button = document.getElementById(id);" in js
-    assert 'for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {\n'\
-        '  document.getElementById(id).addEventListener("click",\n'\
-        "    () => setPropEdit(!state.propEdit));" in js
+    # The painter was already guarded and stays that way.
+    paint = _js_function(js, "function setPropEdit(on, quietly = false)")
+    assert "if (button) button.classList.toggle(\"active\", on);" in paint
 
+    # And the panel's lit-button rule went with the button it painted.
+    assert "#props-row #prop-edit.active" not in css
+    # The BRACE is part of the claim: ".active" is a prefix of
+    # ".actives", so the loose form matched a rule that had stopped
+    # selecting anything at all.
+    assert "#shelf-actions #shelf-prop-edit.active {" in css, (
+        "the face that remains still lights when the mode is on")
+
+
+def test_escape_twice_leaves_edit_mode():
+    """Param: "also make esc pressed twice come out of edit mode."
+
+    Twice, because once is what drops whatever is in hand. A single
+    escape that left the mode would throw him out of it every time he
+    cancelled a selection, which is the opposite of useful; and the two
+    presses have to be a PAIR, or an escape now and another after a
+    minute's work would count as one gesture.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
+    keys = keys[:keys.index("\n});")]
+
+    assert 'if (event.key === "Escape" && state.propEdit) {' in keys
+    assert "const paired = escapeAt > 0 && now - escapeAt < ESCAPE_PAIR_MS;" in keys
+    assert "escapeAt = paired ? 0 : now;" in keys, (
+        "the pair consumes itself, so a third press begins a fresh one")
+    assert "if (paired) {" in keys and "setPropEdit(false);" in keys
+    assert "logStudio(\"escape again to leave edit mode\");" in keys, (
+        "the first press has to say what the second will do, or it "
+        "reads as a key that did nothing")
+
+    import re as _re
+    window = int(_re.search(r"const ESCAPE_PAIR_MS = (\d+);", js).group(1))
+    assert 800 <= window <= 4000, (
+        "{} ms is either a drum roll or not a pair at all".format(window))
+
+    # ORDER. Everything nearer to hand answers escape first: a stamp, an
+    # aim, a carry, a fixture card, an open drawer, then loose handles,
+    # and only then the mode itself.
+    for nearer in ('if (event.key === "Escape" && stampRig) {',
+                   'if (event.key === "Escape" && aimingLight) {',
+                   'if (event.key === "Escape" && state.carrying) {',
+                   'if (event.key === "Escape" && fixturePanelFor) {',
+                   'if (event.key === "Escape" && shelfKind) {',
+                   'if (event.key === "Escape" && gumballLoose) {'):
+        assert keys.index(nearer) < keys.index(
+            'if (event.key === "Escape" && state.propEdit) {'), nearer
+
+
+def test_the_first_click_in_edit_mode_selects_and_the_second_carries():
+    """Param, 2026-09-12: "can we make sure that edit mode when its
+    active and then i select an object the first click doesnt
+    immediately make me drag the object around, but a second click on
+    the object does".
+
+    A click used to pick the prop up at once, so every click meant to
+    CHOOSE a thing also moved it by whatever the hand did next. In edit
+    mode a click meant for the camera lands on a prop often enough that
+    this was the common case rather than the rare one.
+    """
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    down = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
+    down = down[:down.index('canvas.addEventListener("pointermove"')]
+
+    assert "if (state.selectedProp !== record) {" in down
+    chooses = down.index("if (state.selectedProp !== record) {")
+    carries = down.index("carryExistingProp(record);")
+    assert chooses < carries, "choosing comes first, and returns before it"
+    between = down[chooses:carries]
+    assert "selectProp(record);" in between and "return;" in between, (
+        "the first click selects AND STOPS: falling through would carry "
+        "the prop on the very click that chose it")
+
+    # A second click on the same prop still carries, and the capture
+    # that makes a drag work is still taken.
+    after = down[carries:]
+    assert "state.propDrag = true;" in after
+    assert "canvas.setPointerCapture(event.pointerId);" in after
 
 def test_the_skin_is_weighed_in_the_analysis():
     """Param's major fix: "the material applied to skin needs to be the

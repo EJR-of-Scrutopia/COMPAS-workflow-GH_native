@@ -12827,6 +12827,11 @@ document.getElementById("prop-browse").addEventListener("click", () => {
 // layer and move it, should be a one time placement"), so the drop that
 // ends the move puts the scene back to being all camera.
 let propEditOneShot = false;
+// How long the two presses of escape may be apart and still count as a
+// pair. Long enough not to demand a drum roll, short enough that an
+// escape now and another after a minute's work are two first presses.
+const ESCAPE_PAIR_MS = 2000;
+let escapeAt = 0;
 
 function setPropEdit(on, quietly = false) {
   const was = state.propEdit;
@@ -12835,10 +12840,12 @@ function setPropEdit(on, quietly = false) {
   if (!quietly) propEditOneShot = false;
   if (!on) propEditOneShot = false;
   state.propEdit = on;
-  // Three faces on one mode: the panel's, the Layers drawer's, and the
-  // tile in the tab strip (Param: "make the edit button a tile also to
-  // the right of the Scenes tile"). One toggle paints all three, so they
-  // cannot disagree about whether edit is on.
+  // ONE FACE now, in the Layers drawer. Param, 2026-09-12: "we can
+  // then after this remove the edit mode tile and just keep it in
+  // layers and this double click function." The tab strip's tile and
+  // the panel's button are gone; the loop stays, because the id list
+  // is where a face is added or removed and it has always tolerated a
+  // missing one.
   for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {
     const button = document.getElementById(id);
     if (button) button.classList.toggle("active", on);
@@ -12859,8 +12866,13 @@ function setPropEdit(on, quietly = false) {
 }
 
 for (const id of ["prop-edit", "shelf-prop-edit", "shelf-edit-tile"]) {
-  document.getElementById(id).addEventListener("click",
-    () => setPropEdit(!state.propEdit));
+  const button = document.getElementById(id);
+  // GUARDED. Two of these three are gone from the page, and an
+  // unguarded getElementById here would throw during boot and take
+  // every handler written after it down with it.
+  if (button) {
+    button.addEventListener("click", () => setPropEdit(!state.propEdit));
+  }
 }
 
 document.getElementById("props-clear").addEventListener("click", () => {
@@ -12958,9 +12970,22 @@ canvas.addEventListener("pointerdown", (event) => {
   // move the props around, scale them and rotate them").
   const record = state.propEdit ? propRecordAt(event) : null;
   if (record) {
-    // Clicking a prop picks it back up, which is the same gesture that
-    // placed it. Dragging still works for anyone who prefers to drag: the
-    // pointer capture below keeps it under the cursor until release.
+    // FIRST CLICK SELECTS, SECOND CARRIES. Param, 2026-09-12: "edit
+    // mode when its active and then i select an object the first click
+    // doesnt immediately make me drag the object around, but a second
+    // click on the object does."
+    //
+    // A click used to pick the prop up at once, which meant every
+    // click meant to CHOOSE a thing also moved it by whatever the hand
+    // did next -- and in edit mode a click meant for the camera landed
+    // on a prop often enough that this was the common case, not the
+    // rare one. Choosing and moving are two gestures now.
+    if (state.selectedProp !== record) {
+      selectProp(record);
+      return;
+    }
+    // Dragging still works for anyone who prefers it: the pointer
+    // capture keeps the prop under the cursor until release.
     carryExistingProp(record);
     state.propDrag = true;
     canvas.setPointerCapture(event.pointerId);
@@ -13165,6 +13190,30 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && shelfKind) {
     closeShelf();
+    return;
+  }
+  // Handles raised by a double click are the nearest thing in hand
+  // after those, so escape puts them away before it touches the mode.
+  if (event.key === "Escape" && gumballLoose) {
+    gumballLoose = null;
+    selectProp(null);
+    return;
+  }
+  // TWICE. Param: "make esc pressed twice come out of edit mode." The
+  // first press drops what is in hand -- the selection -- and the
+  // second leaves the mode, so a stray tap cannot throw him out of a
+  // mode he is working in. The pair has to be a pair: two presses a
+  // minute apart are two first presses.
+  if (event.key === "Escape" && state.propEdit) {
+    const now = performance.now();
+    const paired = escapeAt > 0 && now - escapeAt < ESCAPE_PAIR_MS;
+    escapeAt = paired ? 0 : now;
+    if (paired) {
+      setPropEdit(false);
+    } else {
+      if (state.selectedProp) selectProp(null);
+      logStudio("escape again to leave edit mode");
+    }
     return;
   }
   const tag = document.activeElement ? document.activeElement.tagName : "";

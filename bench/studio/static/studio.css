@@ -558,8 +558,6 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
 #props-row { grid-template-columns: auto auto auto auto; }
 /* The Edit toggle wears the accent while props are grabbable, the same
    dress as an active segment: one look for "this is the mode you are in". */
-#props-row #prop-edit.active { background: var(--accent-bg); color: var(--ink);
-  border-color: var(--accent); }
 #prop-library { margin: 4px 0 8px; }
 #prop-library .tile-grid { max-height: 320px; overflow-y: auto; }
 #prop-credit { color: var(--ink-3); margin-top: 4px; }

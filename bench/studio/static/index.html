@@ -271,11 +271,12 @@
     <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
     <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
     <button data-shelf="scenes" title="Save, restore and delete whole scenes">Scenes</button>
-    <!-- A mode, not a drawer (Param: "just a button you press it
-         highlights and no pop up"). It deliberately carries no
-         data-shelf, so openShelf and closeShelf leave it alone and it
-         keeps its own lit state while any drawer comes and goes. -->
-    <button id="shelf-edit-tile" title="Edit mode: click a prop to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
+    <!-- The Edit tile stood here until 2026-09-12. Param: "we can
+         then after this remove the edit mode tile and just keep it in
+         layers and this double click function." Edit mode is reached
+         from the Layers drawer now; a double click on any prop gives
+         it handles with no mode at all, and the hover badge answers
+         Delete and the arrow keys without one either. -->
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
@@ -764,7 +765,11 @@
     </div>
     <div id="props-row">
       <button id="prop-browse" title="Choose a prop and carry it">Library</button>
-      <button id="prop-edit" title="Move, rotate and scale the placed props: click one to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
+      <!-- The panel's Edit button is gone with the tab strip's tile
+           (Param: "remove the edit mode tile and just keep it in layers
+           and this double click function"). Edit mode is reached from
+           the Layers drawer, or not at all: a double click on a prop
+           gives it handles without any mode. -->
       <button id="props-clear" class="danger" title="Remove every placed prop">Clear</button>
     </div>
     <!-- How much detail distant props keep in the VIEWPORT. A tuft thirty
