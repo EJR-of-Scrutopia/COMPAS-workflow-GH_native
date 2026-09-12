@@ -68,7 +68,7 @@
         <option value="sky">Sky</option>
         <option value="hdri">HDRI</option>
       </select></label>
-      <button id="weather-picker" class="picker" type="button" aria-controls="weather-tiles"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
+      <button id="weather-picker" class="picker" type="button" aria-controls="weather-tiles" title="The sky itself: how clear or heavy the day is, and what colour the sun comes in at"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
       <!-- The atmosphere: a height fog in every setting, off until a
            preset is chosen. Its own picker beside the weather's, because
            the air and the sky are separate choices. -->
@@ -109,7 +109,7 @@
       <label id="hdri-height-row" title="Camera height above the ground in the source photograph"><span>Height</span>
         <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2">
         <b id="hdri-height-value">2.0</b><em>m</em></label>
-      <label title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
+      <label id="hdri-rotation-row" title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
         <input id="hdri-rotation" type="range" data-unit="1" min="0" max="360" step="1" value="0">
         <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
       <!-- The atmosphere's dials, shown only while a preset is chosen. -->

@@ -896,13 +896,17 @@ function setEnvironmentTexture(texture, target) {
 
 function paintSkyDials() {
   // A dial that does nothing in the current mode is hidden, not shown
-  // dead (Param's ruling, 2026-09-11). Projection tunes an HDRI
-  // photograph and nothing else, and Scale and Height tune only its
-  // grounded dome. Brightness and Rotation act in every mode, so they
-  // stay. Called wherever the mode, the projection or the drawer changes.
+  // dead (Param's ruling, 2026-09-11). Projection and Rotation tune an
+  // HDRI photograph and nothing else: in Sky mode the sky is a mesh and
+  // in Studio the background is a flat colour, so there is nothing for
+  // Rotation to turn, and the sun re-aim it drives on release returns at
+  // once without a photograph to read an azimuth from. Scale and Height
+  // tune only the grounded dome. Brightness acts in every mode, so it
+  // stays. Called wherever the mode, the projection or the drawer changes.
   const hdri = state.environmentMode === "hdri";
   const dome = hdri && state.hdriProjection === "projected";
   document.getElementById("hdri-projection-row").classList.toggle("hidden", !hdri);
+  document.getElementById("hdri-rotation-row").classList.toggle("hidden", !hdri);
   document.getElementById("hdri-scale-row").classList.toggle("hidden", !dome);
   document.getElementById("hdri-height-row").classList.toggle("hidden", !dome);
 }
@@ -2012,14 +2016,24 @@ function newLayer(name) {
 // it falls back to the first, and only with no layer at all is one made;
 // the caller owns that one, and its undo takes it away again. Placing
 // never changes which layer is open: only the tab strip, + and Group do.
-function placementLayer() {
+function resolvePlacementLayer() {
   let layer = layerById(state.activeLayer);
   if (!layer && state.propLayers.length) layer = state.propLayers[0];
   let minted = null;
   if (!layer) layer = minted = newLayer(null);
   state.activeLayer = layer.id;
-  showLayerForPlacing(layer);
   return { layer, minted };
+}
+
+// The same layer, and shown if it was hidden, for a placement that is
+// actually happening. Only a placement reveals: arming a tool asks
+// resolvePlacementLayer alone, because a reveal at the arm is a change
+// to the scene with no undo entry behind it, and pressing Area and then
+// Escape would leave a layer shown that the user had hidden by hand.
+function placementLayer() {
+  const target = resolvePlacementLayer();
+  showLayerForPlacing(target.layer);
+  return target;
 }
 
 // A placement onto a hidden layer would plant props nobody can see, which
@@ -6944,6 +6958,12 @@ function liveSkinWord(bundle, density) {
   const skin = state.appearance.skin;
   const entry = isLibraryKey(skin) ? libraryEntry(skin) : null;
   if (!entry) return "a library skin";
+  // The bundle was weighed with the skin worn when it was cut, and a
+  // swap within one structural class since (granite for limestone, both
+  // stone) re-cuts nothing. So when the skin worn now would weigh the
+  // vault differently, it is not the one this density came from: say a
+  // library skin and name none, rather than credit the wrong one.
+  if (Math.abs(skinDensity() - density) > 1) return "a library skin";
   let word = entry.family || entry.name;
   for (const [pattern] of NAME_DENSITIES) {
     if (pattern.test(entry.name)) { word = pattern.source; break; }
@@ -6999,7 +7019,8 @@ async function buildLiveGraphs() {
     const skinWord = liveSkinWord(bundle, density);
     if (study) study.textContent = bundle.export + ", " + bundle.material
       + (skinWord ? " cut in " + skinWord : "") + ", "
-      + Math.round(bundle.provenance.thickness * 1000) + " mm at " + Math.round(density) + " kg/m3";
+      + Math.round(bundle.provenance.thickness * 1000) + " mm, weighed at "
+      + Math.round(density) + " kg/m3";
     // Every card, and the notes line under them, is in place BEFORE any
     // plot is drawn: the cards share the column's height, and a card
     // appended after an earlier one was drawn left that one clipped to
@@ -7572,14 +7593,15 @@ async function runScatter(region, options) {
     paintScatter(solved);
     return;
   }
-  state.scatterRuns.push({ layer: home.id, records, minted: owns });
+  const run = { layer: home.id, records, minted: owns };
+  state.scatterRuns.push(run);
   // The redo names its layer outright. Replaying the first fill's own
   // settings, whose intoLayer was null, is what used to mint a second
   // "Scatter 1" and split one session across two layers.
   let at = -1;
   pushUndo("scattering " + records.length + " props", () => {
     removePropRecords(records);
-    state.scatterRuns = state.scatterRuns.filter((run) => run.records !== records);
+    state.scatterRuns = state.scatterRuns.filter((other) => other.records !== records);
     at = dropLayerIfEmpty(owns);
     paintScatter();
     refreshLayersShelf();
@@ -7587,6 +7609,9 @@ async function runScatter(region, options) {
     if (owns && at >= 0) reinstateLayer(owns, at);
     return runScatter(region, Object.assign({}, settings, { intoLayer: home.id, owns }));
   });
+  // The run holds the entry it has just pushed, so Remove last can take
+  // the two away together.
+  run.entry = undoHistory[undoHistory.length - 1];
   saveProps();
   renderShelf();
   logStudio("scattered " + records.length + " props onto " + home.name);
@@ -7946,8 +7971,10 @@ function armScatterBrush() {
   state.scatterArmed = "brush";
   // The session paints onto the layer open now. Opening any other drawer
   // (the Layers tabs included) puts the tool down, so it cannot change
-  // under the brush.
-  state.scatterBrushLayer = placementLayer().layer.id;
+  // under the brush. Resolved, not revealed: arming shows nothing, so
+  // taking the tool up and putting it down again leaves the layers as
+  // they were, and the first stroke is what shows a hidden one.
+  state.scatterBrushLayer = resolvePlacementLayer().layer.id;
   document.getElementById("scatter-brush").classList.add("active");
   document.getElementById("scatter-readout").textContent =
     "press and drag to paint onto " + placingOntoName()
@@ -8056,6 +8083,9 @@ function endBrushStroke(stroke) {
     }
     endBrushStroke(replay);
   });
+  // The stroke's run holds its history entry, so Remove last can take
+  // the two away together.
+  if (stroke.run) stroke.run.entry = undoHistory[undoHistory.length - 1];
   saveProps();
   const home = layerById(homeId);
   logStudio("painted " + records.length + " props onto "
@@ -8070,7 +8100,10 @@ function armScatterArea() {
     return;
   }
   state.scatterArmed = "area";
-  state.scatterBrushLayer = placementLayer().layer.id;
+  // Resolved, not revealed, as the brush does: the first fill shows a
+  // hidden layer and says so, and an Escape before then has changed
+  // nothing, so there is nothing to undo.
+  state.scatterBrushLayer = resolvePlacementLayer().layer.id;
   scatterDrag = null;
   areaPress = null;
   document.getElementById("scatter-area").classList.add("active");
@@ -8366,9 +8399,18 @@ document.getElementById("scatter-undo-last").addEventListener("click", () => {
   // A run that had to make its layer takes it away once it leaves it
   // empty, exactly as its undo does.
   dropLayerIfEmpty(run.minted);
+  // And the run's own history entry goes with it. Left standing, the
+  // next Ctrl+Z would announce that it had undone a scatter that is
+  // already gone and change nothing on screen, and the redo after that
+  // would plant back the very props Remove last took away.
+  const at = undoHistory.indexOf(run.entry);
+  if (at >= 0) undoHistory.splice(at, 1);
+  const back = redoHistory.indexOf(run.entry);
+  if (back >= 0) redoHistory.splice(back, 1);
   saveProps();
   renderShelf();
   paintScatter();
+  paintUndoButton();
   logStudio("removed the last scatter, " + run.records.length + " props");
 });
 
@@ -8774,8 +8816,9 @@ function buildWeatherTiles() {
 
 // The atmosphere presets, each drawn by its own fog: the same integral the
 // shader runs, per pixel, over an eye at head height, a low sun to the
-// right and three arches at 12, 35 and 90 metres (atmosphere.js). No
-// WebGL, so the tiles cost no context and look the same on every device.
+// right and three arches standing off at the distances atmosphere.js
+// sets. No WebGL, so the tiles cost no context and look the same on
+// every device.
 function paintAtmosphereTile(key, canvasEl) {
   const context = canvasEl.getContext("2d");
   const image = context.createImageData(canvasEl.width, canvasEl.height);

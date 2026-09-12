@@ -2848,8 +2848,21 @@ def test_every_placement_lands_on_the_open_layer():
     assert "if (owns && at >= 0) reinstateLayer(owns, at);" in end
     assert "let layer = null;" not in end, "a stroke's redo starts from its own layer"
     assert "intoLayer: homeId," in end
+    # DELIBERATE, 2026-09-12: arming RESOLVES the layer and does not show
+    # it. Revealing at the arm changed the scene, saved the layout that
+    # way and pushed no undo entry, so pressing Area and then Escape left
+    # a layer shown that he had hidden by hand, with nothing to undo. The
+    # reveal belongs to the placement: placementLayer is now
+    # resolvePlacementLayer plus showLayerForPlacing, and runScatter shows
+    # the layer at the first real fill.
     for header in ("function armScatterBrush()", "function armScatterArea()"):
-        assert "state.scatterBrushLayer = placementLayer().layer.id;" in _js_function(js, header)
+        assert ("state.scatterBrushLayer = resolvePlacementLayer().layer.id;"
+                in _js_function(js, header)), header
+    assert "showLayerForPlacing(" not in _js_function(
+        js, "function resolvePlacementLayer()"), (
+        "resolving the layer to place onto must not show it")
+    assert "showLayerForPlacing(target.layer);" in _js_function(
+        js, "function placementLayer()"), "a real placement still shows it"
     assert "placementLayer();" in _js_function(js, "function carryNewProp(type)"), (
         "a fixture or prop from a tile lands on the open layer, shown if hidden")
     remove_last = js[js.index('getElementById("scatter-undo-last").addEventListener'):][:700]
@@ -2882,6 +2895,10 @@ def _js_whole_function(source, header):
 LAYER_STUBS = r"""
 const logs = [];
 const undo = [];
+// The history itself, for the code that reaches back for the entry it
+// has just pushed: runScatter and endBrushStroke hand it to the run so
+// that Remove last can take the two away together.
+const undoHistory = [];
 const state = {
   propLayers: [{ id: 1, name: "Layer 1", visible: true },
     { id: 2, name: "Layer 2", visible: true }],
@@ -2896,7 +2913,11 @@ function renderShelf() {}
 function refreshLayersShelf() {}
 function paintScatter() {}
 function logStudio(message) { logs.push(message); }
-function pushUndo(label, undo_, redo) { undo.push({ label, undo: undo_, redo }); }
+function pushUndo(label, undo_, redo) {
+  const entry = { label, undo: undo_, redo };
+  undo.push(entry);
+  undoHistory.push(entry);
+}
 function familyMembers() { return []; }
 async function ensurePropTemplate() {}
 function scatterSolve(region, salt) {
@@ -3000,6 +3021,7 @@ def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
                "function showLayerForPlacing(layer)", "function placingOntoName()",
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function groupToNewLayer(again)",
+               "function resolvePlacementLayer()",
                "async function runScatter(region, options)")
     functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
     script = tmp_path / "layers.mjs"
@@ -3077,6 +3099,19 @@ const region = { kind: "rect", x0: 0, y0: 0, x1: 4, y1: 4 };
   out.naming = [placingOntoName()];
   state.activeLayer = 9; out.naming.push(placingOntoName());
   reset([], 9); out.naming.push(placingOntoName());
+  // Arming RESOLVES the layer and shows nothing. A reveal at the arm
+  // changed the scene, and saved the layout, with no undo entry behind
+  // it: pressing Area and then Escape left a layer he had hidden by
+  // hand shown again, with nothing to undo.
+  reset([L(1), L(2, false)], 2);
+  const armed = resolvePlacementLayer();
+  out.armed = { layer: armed.layer.id, minted: armed.minted,
+    visible: state.propLayers[1].visible, open: state.activeLayer,
+    said: logs.length };
+  // The fill is what shows it, and says so.
+  await runScatter(region, { salt: 7, intoLayer: 2 });
+  out.armed.afterFill = state.propLayers[1].visible;
+  out.armed.saidThen = said("Layer 2 was hidden, so it is shown again");
   // A layer hidden while the area tool is armed is shown by the fill.
   reset([L(1), L(2)], 2);
   state.propLayers[1].visible = false;
@@ -3155,6 +3190,7 @@ def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
                "function showLayerForPlacing(layer)", "function placingOntoName()",
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function groupToNewLayer(again)",
+               "function resolvePlacementLayer()",
                "async function runScatter(region, options)",
                "function carryNewProp(type)", "function beginStamp()",
                "function endBrushStroke(stroke)")
@@ -3180,6 +3216,89 @@ def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
     assert out["counter"] == {"layers": [1, 7, 2], "next": 8}
     assert out["stroke"] == {"afterUndo": [6], "afterRedo": [5, 6], "on": [5],
                              "afterSecondUndo": [6]}
+    assert out["armed"] == {"layer": 2, "minted": None, "visible": False,
+                            "open": 2, "said": 0, "afterFill": True,
+                            "saidThen": True}, (
+        "arming resolves the layer, shows nothing and says nothing; the "
+        "first fill is what shows it")
+
+
+REMOVE_LAST_HARNESS = LAYER_STUBS + r"""
+const redoHistory = [];
+let painted = 0;
+function paintUndoButton() { painted += 1; }
+%(handler)s
+const out = {};
+const region = { kind: "rect", x0: 0, y0: 0, x1: 4, y1: 4 };
+(async () => {
+  await runScatter(region, { salt: 1, intoLayer: 2 });
+  await runScatter(region, { salt: 2, intoLayer: 2 });
+  out.filled = { runs: state.scatterRuns.length, entries: undoHistory.length,
+    props: state.props.length };
+  // The second fill's entry is put on the redo stack by hand as well.
+  // Nothing in the page leaves it on both at once, and that is the
+  // point: the handler must take it off whichever stack holds it.
+  redoHistory.push(undoHistory[undoHistory.length - 1]);
+  removeLastScatter();
+  out.removed = { runs: state.scatterRuns.length, entries: undoHistory.length,
+    redos: redoHistory.length, props: state.props.length, painted,
+    labels: undoHistory.map((entry) => entry.label) };
+  // What is left is the FIRST fill, and undoing it takes that fill
+  // away: the history holds only what is still standing.
+  const entry = undoHistory[undoHistory.length - 1];
+  await entry.undo();
+  out.undone = { props: state.props.length, runs: state.scatterRuns.length };
+  // Nothing left to remove, and nothing said about it.
+  removeLastScatter();
+  out.empty = { entries: undoHistory.length, props: state.props.length,
+    painted };
+  console.log(JSON.stringify(out));
+})().catch((error) => { console.error(error.stack); process.exit(1); });
+"""
+
+
+def test_remove_last_takes_its_own_history_entry_with_it(tmp_path):
+    """Remove last popped the run and left its undo entry standing. The
+    next Ctrl+Z then said it had undone a scatter that was already gone
+    and changed nothing on screen, and the redo after that planted the
+    very props Remove last had taken away, on whatever layer happened to
+    be open. The handler is run here for real, over the layer stubs."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    headers = ("function layerById(id)", "function layerVisible(id)",
+               "function newLayer(name)", "function placementLayer()",
+               "function resolvePlacementLayer()",
+               "function showLayerForPlacing(layer)", "function placingOntoName()",
+               "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
+               "async function runScatter(region, options)")
+    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    # The handler is a listener rather than a function, so it is lifted
+    # out by its own text and given a name to be called by.
+    opens = 'document.getElementById("scatter-undo-last").addEventListener("click", () => {'
+    start = js.index(opens)
+    end = js.index("\n});", start)
+    handler = "function removeLastScatter() {" + js[start + len(opens):end] + "\n}"
+    script = tmp_path / "remove_last.mjs"
+    script.write_text(REMOVE_LAST_HARNESS % {"functions": functions,
+                                             "handler": handler}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["filled"] == {"runs": 2, "entries": 2, "props": 4}
+    assert out["removed"] == {"runs": 1, "entries": 1, "redos": 0, "props": 2,
+                              "painted": 1, "labels": ["scattering 2 props"]}, (
+        "the run and its entry go together, off both stacks, and the "
+        "Undo button is repainted so its title stops naming it")
+    assert out["undone"] == {"props": 0, "runs": 0}, (
+        "one Ctrl+Z then undoes the first fill, not a dead entry")
+    assert out["empty"] == {"entries": 1, "props": 0, "painted": 1}, (
+        "with no run left the handler does nothing at all")
 
 
 def test_one_escape_leaves_the_tool_and_brings_the_drawer_back():
@@ -3582,7 +3701,9 @@ def test_the_scatter_groups_are_chips_like_props_and_materials():
         encoding="utf-8")
     body = _js_function(js, "function renderShelfScatter()")
     assert 'let scatterCategory = "all";' in js
-    assert 'shelfChips(cats, ["all", ...groups], scatterCategory' in body
+    # The guard is the holder being absent, and nothing else: a guard
+    # that never holds leaves the drawer head with no chips at all.
+    assert 'if (cats) shelfChips(cats, ["all", ...groups], scatterCategory' in body
     # A chip click redraws, or the grid and the lit chip sit still until
     # some other click. "renderShelfScatter();" alone is in the body many
     # times over, so the whole callback is pinned as one piece.
@@ -3623,6 +3744,77 @@ def test_the_scatter_groups_are_chips_like_props_and_materials():
     chips = _js_function(js, "function shelfChips(holder, names, chosen, pick)")
     assert 'chip.title = name === "all" ? "Show every group" : "Show only " + name;' in chips
     assert 'offers them as chips in the drawer\n  head (`#shelf-cats`) through `shelfChips`, with "all" first.' in doc
+
+
+CHIPS_HARNESS = r"""
+%(chips)s
+// A document with just enough of one in it: a chip is a button with a
+// name, a title, a lit class and a click.
+function element() {
+  const node = { textContent: "", title: "", lit: null, children: [], handlers: {} };
+  node.classList = { toggle(name, force) {
+    if (name === "active") node.lit = Boolean(force); } };
+  node.addEventListener = (kind, handler) => { node.handlers[kind] = handler; };
+  node.appendChild = (child) => { node.children.push(child); };
+  Object.defineProperty(node, "innerHTML", { set(value) {
+    if (!value) node.children.length = 0; } });
+  return node;
+}
+const document = { createElement: () => element() };
+const holder = element();
+const picked = [];
+const names = ["all", "trees", "rocks"];
+shelfChips(holder, names, "trees", (name) => picked.push(name));
+// Drawn again, as every chip click and every redraw draws it: the
+// chips are replaced, not added to.
+shelfChips(holder, names, "trees", (name) => picked.push(name));
+const chips = holder.children;
+chips[chips.length - 1].handlers.click();
+console.log(JSON.stringify({
+  drawn: chips.length,
+  names: chips.map((chip) => chip.textContent),
+  titles: chips.map((chip) => chip.title),
+  lit: chips.map((chip) => chip.lit),
+  picked,
+}));
+"""
+
+
+def test_the_chips_are_one_per_group_and_only_the_open_one_is_lit(tmp_path):
+    """The pins above can all hold while the chips do nothing. Guarding
+    the call with a condition that never holds leaves the drawer head
+    empty and the grid unfiltered, and `chip.classList.toggle("active",
+    false)` puts the lit chip out in the Scatter, Props and Materials
+    drawers at once, since all three share this helper. Both mutations
+    were green against the text pins.
+
+    So the helper itself is run, under node, against a stub document:
+    one chip per name in the order given, each saying what it does,
+    exactly one lit and that one the chosen group, a click calling pick
+    with its own name, and a redraw replacing the chips rather than
+    adding to them."""
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    chips = _js_function(js, "function shelfChips(holder, names, chosen, pick)")
+    script = tmp_path / "chips.mjs"
+    script.write_text(CHIPS_HARNESS % {"chips": chips}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["drawn"] == 3, "one chip per name, and a redraw replaces them"
+    assert out["names"] == ["all", "trees", "rocks"], "in the order given"
+    assert out["titles"] == ["Show every group", "Show only trees",
+                             "Show only rocks"], "every chip says what it does"
+    assert out["lit"] == [False, True, False], (
+        "exactly one chip is lit, and it is the group that is open")
+    assert out["picked"] == ["rocks"], (
+        "a chip click picks its own name, not the chosen one")
 
 
 def _dial_blocks(html):
@@ -3831,6 +4023,40 @@ def test_the_interface_language_is_written_down():
     assert "\u2014" not in text, "no em dashes, in the interface or the source"
 
 
+# The three exemptions, each for a reason, not for convenience.
+#
+# timeline-scrubber is a TRANSPORT, not a dial: its position is the time
+# and it is read off the animation's own readout.
+# scatter-size-min and -max are one dial with two grips, sharing the
+# single reading "0.80 to 1.30".
+DIAL_EXEMPTIONS = {"timeline-scrubber", "scatter-size-min", "scatter-size-max"}
+
+
+def _range_inputs(html):
+    """Every range input on the page, sorted as the census sorts them:
+    the exemptions, the hidden inputs that are the model behind a custom
+    control (the sun dial drives three of them) rather than dials anyone
+    reads, and the visible dials the language is measured over. One
+    rule, shared by the ratchet and by the census, so the page and the
+    document are counted the same way."""
+
+    import re
+
+    out = {"visible": [], "hidden": [], "exempt": [], "nameless": []}
+    for match in re.finditer(r"<input([^>]*type=\"range\"[^>]*)>", html):
+        tag = match.group(1)
+        ident = re.search(r'id="([^"]+)"', tag)
+        if not ident:
+            out["nameless"].append(tag)
+        elif ident.group(1) in DIAL_EXEMPTIONS:
+            out["exempt"].append(ident.group(1))
+        elif 'class="hidden"' in tag:
+            out["hidden"].append(ident.group(1))
+        else:
+            out["visible"].append(ident.group(1))
+    return out
+
+
 def test_the_sweep_is_finished_and_stays_finished():
     """Param: "then do a sweep to check all the ui as it is to make sure
     that new standard is being used."
@@ -3846,28 +4072,12 @@ def test_the_sweep_is_finished_and_stays_finished():
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
         encoding="utf-8")
 
-    # The three exemptions, each for a reason, not for convenience.
-    #
-    # timeline-scrubber is a TRANSPORT, not a dial: its position is the
-    # time and it is read off the animation's own readout.
-    # scatter-size-min and -max are one dial with two grips, sharing the
-    # single reading "0.80 to 1.30".
-    exempt = {"timeline-scrubber", "scatter-size-min", "scatter-size-max"}
-
-    stragglers = []
-    for match in re.finditer(r"<input([^>]*type=\"range\"[^>]*)>", html):
-        tag = match.group(1)
-        ident = re.search(r'id="([^"]+)"', tag)
-        if not ident:
-            stragglers.append("a slider with no id at all")
-            continue
-        ident = ident.group(1)
-        if ident in exempt:
-            continue
-        # A hidden input is the model behind a custom control (the sun
-        # dial drives three of them), not a dial anyone reads.
-        if 'class="hidden"' in tag:
-            continue
+    # The exemptions and the hidden models are named, and reasoned
+    # about, in _range_inputs above; the census test below counts with
+    # the same rule, so the ratchet and the document cannot drift.
+    counted = _range_inputs(html)
+    stragglers = ["a slider with no id at all"] * len(counted["nameless"])
+    for ident in counted["visible"]:
         label = re.search(r"<label[^>]*>(?:(?!</label>).)*id=\"" + re.escape(ident)
                           + r"\"(?:(?!</label>).)*</label>", html, re.S)
         body = label.group(0) if label else ""
@@ -3877,6 +4087,40 @@ def test_the_sweep_is_finished_and_stays_finished():
     assert not stragglers, (
         "these sliders are not in the interface language: "
         + ", ".join(stragglers))
+
+
+def test_the_dial_census_is_the_page_s_own_tally():
+    """Section 10 offers one measurement: "the count is now **45 of
+    51**". It was written as "30 of 36" on a night whose own work had
+    taken the studio to 45 of 51, and nothing failed, because the only
+    reader of that sentence was a person. The figure is read out of the
+    document now and counted off the page, so the next dial added fails
+    the suite rather than quietly making the prose wrong."""
+
+    import re
+
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    doc = (REPO / "docs" / "studio-interface-language.md").read_text(
+        encoding="utf-8")
+    counted = _range_inputs(html)
+    assert not counted["nameless"], "a slider with no id is in no census"
+    visible = len(counted["visible"])
+    total = visible + len(counted["hidden"]) + len(counted["exempt"])
+
+    census = re.search(r"the count is now \*\*(\d+) of (\d+)\*\*", doc)
+    assert census, "section 10 states the count"
+    assert (int(census.group(1)), int(census.group(2))) == (visible, total), (
+        "the document says {} of {}; the page has {} visible dials of {} "
+        "range inputs".format(census.group(1), census.group(2), visible,
+                              total))
+    later = re.search(r"The inventory of section 10 is now (\d+) sliders", doc)
+    assert later and int(later.group(1)) == total, (
+        "the later inventory counts the same page")
+    # And the six that are not visible dials stay accounted for.
+    assert len(counted["hidden"]) == 3 and len(counted["exempt"]) == 3, (
+        "three hidden models and three exemptions, each named in the "
+        "document: " + repr(counted))
 
 
 def test_no_slider_keeps_the_old_reading_shape():
@@ -3917,6 +4161,14 @@ def test_the_setting_and_the_weather_live_in_the_skies_drawer():
     for control in ('id="environment-segments"', 'id="environment-mode"',
                     'id="weather-picker"', 'id="weather-preset"'):
         assert control in drawer, control
+
+    # Section 5 is unqualified: every button carries a title. The
+    # atmosphere picker beside it has carried one since it was written,
+    # and the pair read as one finished control and one unfinished one.
+    picker = drawer[drawer.index('<button id="weather-picker"'):]
+    picker = picker[:picker.index("</button>")]
+    assert 'title="The sky itself:' in picker, (
+        "the weather picker says what it does, like its twin")
 
     scene = html[html.index('<details id="scene-section">'):]
     scene = scene[:scene.index("</details>")]
@@ -4407,6 +4659,83 @@ def _specificity(selector):
     return (ids, classes, elements)
 
 
+def _compound_matches(compound, element):
+    """Does one compound of a rule land on one step of an element path?
+    Everything the rule asks for has to be there: `.tile` matches
+    `.tile`, and `.tile.active` does not."""
+
+    import re
+
+    parts = re.findall(r"[#.:]?[\w-]+", compound)
+    have = re.findall(r"[#.:]?[\w-]+", element)
+    return all(part in have for part in parts)
+
+
+def _lands_on(selector, path):
+    """Does a descendant selector match this element path? Its last
+    compound must match the element itself, and the rest must stand in
+    order among the ancestors. Descendant combinators only, which is all
+    this stylesheet uses."""
+
+    if not selector or not _compound_matches(selector[-1], path[-1]):
+        return False
+    at = 0
+    for want in selector[:-1]:
+        while at < len(path) - 1 and not _compound_matches(want, path[at]):
+            at += 1
+        if at >= len(path) - 1:
+            return False
+        at += 1
+    return True
+
+
+def _cascade(rules, path):
+    """Every declaration any rule makes for one element, each carrying
+    the rank the cascade gives it: important first, then specificity,
+    then where the rule stands in the sheet, then where the declaration
+    stands in the rule. Comments are already stripped by _css_rules, so
+    a rule commented out says nothing.
+
+    `path` is the element written as a descendant selector, ancestors
+    first: `#shelf-body #weather-tiles .tile canvas`. A rule counts when
+    it lands on that element -- written exactly, or ending in it after
+    ancestors the path does not name (`body #shelf`), or with its
+    compounds standing in order among the path's, which is how
+    `#shelf-body .tile canvas` reaches a weather tile's canvas.
+
+    Hoisted out of the drawer test on 2026-09-12 so the tile tests can
+    ask the same question rather than collect lists by hand."""
+
+    want = path.split()
+    out = []
+    for group, body, offset in rules:
+        for one in group.split(","):
+            one = " ".join(one.split())
+            if not (one == path or one.endswith(" " + path)
+                    or _lands_on(one.split(), want)):
+                continue
+            for at, part in enumerate(body.split(";")):
+                if ":" not in part:
+                    continue
+                name, value = part.split(":", 1)
+                value = " ".join(value.split())
+                out.append((name.strip().lower(), value,
+                            (value.endswith("!important"),
+                             _specificity(one), offset, at)))
+            break
+    return out
+
+
+def _said(rules, path):
+    """What the browser would use for each property on that element."""
+
+    best = {}
+    for name, value, rank in _cascade(rules, path):
+        if name not in best or rank > best[name][1]:
+            best[name] = (value, rank)
+    return {name: value for name, (value, _) in best.items()}
+
+
 def test_no_id_rule_undoes_a_dial_block_grid():
     """The Skies dials landed in the wrong cells, and every dial test
     passed while they did: they read the markup, and the markup was
@@ -4483,60 +4812,31 @@ def test_a_drawer_stays_on_screen_and_hides_what_it_hides():
         encoding="utf-8")
     rules = _css_rules(css)
 
-    def cascade(selector):
-        """Every declaration any rule makes for `selector`, from the
-        comment-stripped sheet: a rule commented out says nothing. A
-        grouped selector (`#shelf, #x { ... }`) counts, and so does a
-        longer one ending in it (`body #shelf`). Each declaration carries
-        the rank the cascade gives it: important first, then specificity,
-        then where it stands in the sheet."""
-        out = []
-        for group, body, offset in rules:
-            for one in group.split(","):
-                one = " ".join(one.split())
-                if one != selector and not one.endswith(" " + selector):
-                    continue
-                for at, part in enumerate(body.split(";")):
-                    if ":" not in part:
-                        continue
-                    name, value = part.split(":", 1)
-                    value = " ".join(value.split())
-                    out.append((name.strip().lower(), value,
-                                (value.endswith("!important"),
-                                 _specificity(one), offset, at)))
-                break
-        return out
-
-    def said(selector):
-        """What the browser would use for each property."""
-        best = {}
-        for name, value, rank in cascade(selector):
-            if name not in best or rank > best[name][1]:
-                best[name] = (value, rank)
-        return {name: value for name, (value, _) in best.items()}
-
-    assert said("#shelf .hidden").get("display") == "none !important", (
+    # _cascade and _said are at module scope (hoisted 2026-09-12), so the
+    # tile tests below can ask the same question this one asks: which
+    # declaration would a browser actually use.
+    assert _said(rules, "#shelf .hidden").get("display") == "none !important", (
         "without it a hidden dial row or the weather picker stays on "
         "screen in the drawer")
     plain = _specificity("#shelf")
-    heights = [value for name, value, rank in cascade("#shelf")
+    heights = [value for name, value, rank in _cascade(rules, "#shelf")
                if name == "max-height" and rank[1] == plain]
     assert heights[-2:] == ["calc(100vh - 28px)", "calc(100dvh - 28px)"], (
         "the vh fallback, then dvh: " + repr(heights))
-    assert said("#shelf").get("max-height") == "calc(100dvh - 28px)", (
+    assert _said(rules, "#shelf").get("max-height") == "calc(100dvh - 28px)", (
         "and nothing outranks it: not a later rule, not a longer "
         "selector such as `body #shelf`, not an important one")
-    body = said("#shelf-body")
+    body = _said(rules, "#shelf-body")
     assert body.get("overflow-y") == "auto", "the body scrolls"
     assert body.get("min-height") == "0", "or the flex child never shrinks"
     assert "overflow" not in body, (
         "overflow: hidden clipped the drawer instead of scrolling it")
-    head = said("#shelf-head")
+    head = _said(rules, "#shelf-head")
     assert head.get("position") == "sticky" and head.get("top") == "0"
     assert head.get("background") == "var(--panel)", (
         "an opaque, themed ground: the scrim would show tiles through it")
     assert int(head.get("z-index", "0")) >= 2, "above the tiles it covers"
-    assert said("#shelf-tabs").get("flex") == "0 0 auto", (
+    assert _said(rules, "#shelf-tabs").get("flex") == "0 0 auto", (
         "the tab strip keeps its height; the body is what gives way")
 
     doc = (REPO / "docs" / "studio-interface-language.md").read_text(
@@ -4554,25 +4854,24 @@ def test_the_weather_tiles_are_skies_not_squares():
     the 2:1 rule and later, so it won: 198 px squares, two rows of
     them, 454 px of drawer. The 2:1 rule must outrank the square one by
     the cascade, not by luck of order, and the five presets sit on one
-    row. The pinned four-column `#shelf-body .tile-grid` is untouched."""
+    row. The pinned four-column `#shelf-body .tile-grid` is untouched.
+
+    Asked as the browser asks it since 2026-09-12. Collecting the square
+    rules in one list and the 2:1 rules in another and comparing their
+    maxima was blind to any third rule: appending `#shelf-body
+    #weather-tiles .tile canvas { aspect-ratio: 1 }` after the 2:1 rule
+    brought the squares straight back with the whole suite green,
+    because it joined neither list. The atmosphere tiles, added the same
+    night, had no test at all."""
 
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
         encoding="utf-8")
     rules = _css_rules(css)
-    square, wide = [], []
-    for selector, body, at in rules:
-        said = _declarations(body)
-        for one in (s.strip() for s in selector.split(",")):
-            if one == "#shelf-body .tile canvas" \
-                    and said.get("aspect-ratio") == "1":
-                square.append((_specificity(one), at))
-            if one.endswith("#weather-tiles .tile canvas") \
-                    and said.get("aspect-ratio") == "2 / 1":
-                wide.append((_specificity(one), at))
-    assert square and wide
-    assert max(wide) > max(square), (
-        "the square thumbnail rule wins over the weather skies: "
-        + repr((max(wide), max(square))))
+    for tiles in ("#weather-tiles", "#atmosphere-tiles"):
+        path = "#shelf-body " + tiles + " .tile canvas"
+        assert _said(rules, path).get("aspect-ratio") == "2 / 1", (
+            "the skies in " + tiles + " are 2:1, whatever the square "
+            "thumbnail rule says: " + repr(_said(rules, path)))
 
     five = [(_specificity(s.strip()), at) for selector, body, at in rules
             for s in selector.split(",")
@@ -4592,7 +4891,13 @@ def test_the_hdri_dials_show_only_in_hdri_mode():
     """Param's ruling: a control that does nothing in the current mode is
     hidden, not shown dead. Projection tunes the HDRI photograph, and
     Scale and Height only its grounded dome, yet all three showed under
-    the Sky presets. Brightness and Rotation act in every mode and stay.
+    the Sky presets. Brightness acts in every mode and stays.
+
+    Rotation joined them on 2026-09-12. It turns the background texture
+    and re-aims the sun from the photograph's own azimuth estimate, and
+    outside HDRI there is neither: the sky is a mesh or a flat colour,
+    the change handler returns at once, and the next environment pass
+    zeroes the rotation while the dial goes on reading its old value.
 
     One painter, called wherever the mode (applyEnvironment), the
     projection (applyHdriBackdrop) or the drawer (renderShelf) changes."""
@@ -4605,6 +4910,10 @@ def test_the_hdri_dials_show_only_in_hdri_mode():
     row = row[:row.index("</label>")]
     assert 'id="hdri-projection"' in row, "the row is the Projection dial"
 
+    spin = html[html.index('<label id="hdri-rotation-row"'):]
+    spin = spin[:spin.index("</label>")]
+    assert 'id="hdri-rotation"' in spin, "the row is the Rotation dial"
+
     paint = _js_function(js, "function paintSkyDials()")
     assert 'const hdri = state.environmentMode === "hdri";' in paint
     assert 'const dome = hdri && state.hdriProjection === "projected";' in paint
@@ -4613,14 +4922,17 @@ def test_the_hdri_dials_show_only_in_hdri_mode():
     for name in ("scale", "height"):
         assert ('document.getElementById("hdri-' + name + '-row").classList'
                 '.toggle("hidden", !dome);') in paint, name
-    for kept in ("sky-brightness", "hdri-rotation"):
-        assert kept not in paint, kept + " acts in every mode"
+    assert ('document.getElementById("hdri-rotation-row").classList'
+            '.toggle("hidden", !hdri);') in paint, (
+        "Rotation turns an HDRI photograph and nothing else")
+    assert "sky-brightness" not in paint, "Brightness acts in every mode"
     for header in ("function applyEnvironment()", "function applyHdriBackdrop()",
                    "function renderShelf()"):
         assert "paintSkyDials();" in _js_function(js, header), header
     # One painter: nothing else decides these rows on its own terms.
     assert js.count('getElementById("hdri-scale-row")') == 1
     assert js.count('getElementById("hdri-height-row")') == 1
+    assert js.count('getElementById("hdri-rotation-row")') == 1
 
 
 def test_the_hdri_dials_follow_the_mode_when_painted(tmp_path):
@@ -4628,8 +4940,8 @@ def test_the_hdri_dials_follow_the_mode_when_painted(tmp_path):
     runs them (a `return;` at its top left every one in place). So the
     painter is run, under node, against a stub document, walking the
     modes and projections in an order where every step changes at least
-    one row: Projection shows only in HDRI, Scale and Height only in
-    HDRI with the projected dome, and nothing else is touched."""
+    one row: Projection and Rotation show only in HDRI, Scale and Height
+    only in HDRI with the projected dome, and nothing else is touched."""
 
     import json
     import shutil
@@ -4674,6 +4986,7 @@ console.log(JSON.stringify(out));
     for (mode, projection), rows in zip(steps, seen):
         dome = mode == "hdri" and projection == "projected"
         assert rows == {"hdri-projection-row": mode != "hdri",
+                        "hdri-rotation-row": mode != "hdri",
                         "hdri-scale-row": not dome,
                         "hdri-height-row": not dome}, (mode, projection, rows)
 

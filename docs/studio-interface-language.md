@@ -190,12 +190,14 @@ screen, and the only way out was to press the tile again.)
 
 Controls that do nothing in the current mode are hidden rather than
 shown dead. The Skies drawer shows the weather picker only in Sky mode,
-and Projection, Scale and Height only in HDRI mode, with Scale and
-Height only for the grounded dome. Brightness and Rotation act in every
-mode and always show. The HDRI tiles stay in every mode, because
-choosing one switches to HDRI. The atmosphere picker shows in every
-mode, because the fog works in all three, and its nine dials show only
-while a preset other than None is chosen.
+and Projection, Rotation, Scale and Height only in HDRI mode, with
+Scale and Height only for the grounded dome. Rotation turns the
+photograph and re-aims the sun from it, so outside HDRI there is
+nothing for it to turn. Brightness acts in every mode and always shows.
+The HDRI tiles stay in every mode, because choosing one switches to
+HDRI. The atmosphere picker shows in every mode, because the fog works
+in all three, and its nine dials show only while a preset other than
+None is chosen.
 
 The readout line is a full sentence in the second ink, and it says the
 state, not an instruction, once there is state to report: "18 placed,
@@ -260,8 +262,14 @@ rather than dials anyone reads. Three are exempt for stated reasons:
 reading "0.80 to 1.30".
 
 Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
-rather remove it"), so the count is now **30 of 36**, and the Lights
-row above is four dials. A fixture reads as a light by what it lights.
+rather remove it"), and the Lights row above is four dials. A fixture
+reads as a light by what it lights. The Skies drawer then took the
+atmosphere's nine dials, so the count is now **45 of 51**: 45 visible
+dials, every one of them in the language, out of 51 range inputs, the
+other six being the three hidden models and the three exemptions named
+above. The figure is measured rather than remembered, by
+`test_the_dial_census_is_the_page_s_own_tally`, which counts the page
+and fails when the page and this paragraph disagree.
 
 Two tests are the ratchet. `test_the_sweep_is_finished_and_stays_finished`
 fails on any new visible slider that is not in the language, and
@@ -322,10 +330,11 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 41 sliders. Since then: `site-
+The inventory of section 10 is now 51 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
-of Field of view), and the Output section's `still-size` segments.
+of Field of view), the Skies drawer's nine atmosphere dials, and the
+Output section's `still-size` segments.
 
 **Two gestures, written down.** A scatter tool never disables
 OrbitControls; it takes the LEFT button and leaves the camera the other

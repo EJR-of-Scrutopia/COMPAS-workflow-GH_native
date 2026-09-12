@@ -589,8 +589,15 @@ def test_the_header_says_when_a_skin_sets_the_weight():
     assert "bundle.provenance.density_from_skin" in word
     assert "(structural && Math.abs(density - structural) > 1)" in word
     assert "if (pattern.test(entry.name)) { word = pattern.source; break; }" in word
+    # A skin swapped in since the cut re-cuts nothing when it keeps the
+    # structural class, so the skin worn now need not be the one whose
+    # density the bundle was weighed with. It is not named then.
+    assert 'if (Math.abs(skinDensity() - density) > 1) return "a library skin";' in word
     build = _body(js, "async function buildLiveGraphs()")
     assert '(skinWord ? " cut in " + skinWord : "")' in build
+    assert '+ " mm, weighed at "' in build, (
+        "the header states the density the cut was weighed at, and does "
+        "not hand it to the material as its own")
 
 
 SKIN_WORD_HARNESS = r"""
@@ -601,13 +608,20 @@ const library = [
   { key: "stone/rough-ashlar", family: "stone", name: "rough-ashlar", label: "Rough ashlar" },
   { key: "stone/limestone-buff", family: "stone", name: "limestone-buff", label: "Limestone buff" },
   { key: "concrete/board-marked-grey", family: "concrete", name: "board-marked-grey", label: "Board marked grey" },
+  { key: "stone/granite-grey", family: "stone", name: "granite-grey", label: "Granite grey" },
 ];
 const state = { appearance: { skin: null } };
+// The cut's own material, as the page's material-select holds it:
+// structuralDensity reads that select, and skinDensity falls back to it.
+let cut = "concrete";
+const document = { getElementById: () => ({ value: cut }) };
 const isLibraryKey = (key) => typeof key === "string" && key.includes("/");
 const libraryEntry = (key) => library.find((entry) => entry.key === key) || null;
+%(weight)s
 %(word)s
 const said = (skin, material, density, fromSkin) => {
   state.appearance.skin = skin;
+  cut = material;
   return liveSkinWord({ material, provenance: { density_from_skin: fromSkin } }, density);
 };
 console.log(JSON.stringify({
@@ -617,6 +631,11 @@ console.log(JSON.stringify({
   limestone: said("stone/limestone-buff", "stone", 2400, true),
   concrete: said("concrete/board-marked-grey", "concrete", 2400, true),
   plain: said("concrete", "concrete", 2400, false),
+  // Granite worn over a cut weighed at limestone's 2400: the swap
+  // re-cut nothing, so this skin did not set that density.
+  swapped: said("stone/granite-grey", "stone", 2400, true),
+  // And the same skin over a cut weighed at its own 2700 is named.
+  worn: said("stone/granite-grey", "stone", 2700, true),
 }));
 """
 
@@ -627,7 +646,13 @@ def test_the_header_names_the_skin_not_its_own_class(tmp_path):
     stone's family figure is 2400 against 2500, so the line said "timber
     cut in a timber skin": a skin set the weight, but the words named the
     same material. When the family IS the cut's class, the skin itself
-    is named."""
+    is named.
+
+    And a skin the cut was NOT weighed with is not named at all. A swap
+    within one structural class (granite for limestone, both stone)
+    dispatches no material change, so nothing re-cuts the bundle: the
+    header would otherwise name the skin worn now beside the density the
+    one before it set."""
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     tables = []
@@ -639,8 +664,14 @@ def test_the_header_names_the_skin_not_its_own_class(tmp_path):
     tables.append(js[start:js.index("];", start) + 2])
     word = "function liveSkinWord(bundle, density)" + _body(js, "function liveSkinWord(bundle, density)")[
         len("function liveSkinWord(bundle, density)"):] + "\n}\n"
+    # The real weigher comes too: the word and the weight have to agree,
+    # and liveSkinWord names a skin only when skinDensity says that skin
+    # is the one the bundle was weighed with.
+    weight = "\n".join(_body(js, head) + "\n}\n" for head in (
+        "function structuralDensity()", "function skinDensity()"))
     script = tmp_path / "skin_word.mjs"
-    script.write_text(SKIN_WORD_HARNESS % {"tables": "\n".join(tables), "word": word},
+    script.write_text(SKIN_WORD_HARNESS % {"tables": "\n".join(tables), "word": word,
+                                           "weight": weight},
                       encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -651,3 +682,7 @@ def test_the_header_names_the_skin_not_its_own_class(tmp_path):
     assert said["limestone"] == "a limestone skin", "a name word that says more is kept"
     assert said["concrete"] == "a board marked grey skin"
     assert said["plain"] == ""
+    assert said["swapped"] == "a library skin", (
+        "granite worn over a cut weighed at limestone's 2400 did not set "
+        "that density, so the header must not name it beside it")
+    assert said["worn"] == "a granite skin", "the skin that did set it is named"
