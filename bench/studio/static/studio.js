@@ -25,7 +25,8 @@ import {
   boxUVs, segmentUVOffset, segmentWindow, sheetUVs, footprintSpan, uvQuarterTurn,
   smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
-  interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
+  interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
+  groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
   fixtureFaces,
 } from "/static/fields.js";
@@ -13480,6 +13481,12 @@ function skinMachine(group, mine) {
     logStudio("machine: wearing " + landed + " of " + wanted.size
       + " library materials"
       + (landed < wanted.size ? "; the rest kept the fallback grey" : ""));
+    // The worn skins are NEW materials, so the strike's fade has to be
+    // told about them; told nothing, the machine reversed out at full
+    // strength wearing the library's coats.
+    if (machineObjects && machineObjects.machineSkins) {
+      machineObjects.skins = machineObjects.machineSkins();
+    }
     renderView();
   });
 }
@@ -13810,29 +13817,19 @@ async function buildMachine() {
   const sides = instances.map(() => new THREE.Group());
   for (const side of sides) temporary.add(side);
 
-  // Backwards is OUTWARD: away from the middle of the rows. Taking the
-  // direction from the mean of the instance origins makes the two sides
-  // mirror each other without anything having to declare which side it is
-  // on, and it stays right for one row or three. Horizontal only, so the
-  // machine drives off across the floor rather than into it.
-  const middle = [0, 0];
-  for (const instance of instances) {
-    middle[0] += instance.matrix ? instance.matrix[12] : 0;
-    middle[1] += instance.matrix ? instance.matrix[13] : 0;
-  }
-  if (instances.length) {
-    middle[0] /= instances.length;
-    middle[1] /= instances.length;
-  }
-  const retreats = instances.map((instance) => {
-    const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];
-    const dy = (instance.matrix ? instance.matrix[13] : 0) - middle[1];
-    const d = Math.hypot(dx, dy);
-    // One machine, or one standing exactly on the middle, has no outward
-    // direction to take: it fades where it stands rather than being sent
-    // off in an arbitrary one.
-    return d > 1e-6 ? [dx / d, dy / d] : [0, 0];
-  });
+  // Backwards is taken per SIDE, not per machine: machineRetreats
+  // (fields.js) gives a row one direction, so a row reverses out together
+  // and the two rows mirror each other. Measured per machine, as it was,
+  // the ends of a row pointed along the row and the plant fanned apart
+  // sideways. The vault's own centre is the fallback for a document that
+  // carries a single row.
+  const works = state.centre && Number.isFinite(state.centre.x)
+    ? [state.centre.x, state.centre.y] : null;
+  const retreats = machineRetreats(instances.map((instance) => ({
+    side: instance.side,
+    x: instance.matrix ? instance.matrix[12] : 0,
+    y: instance.matrix ? instance.matrix[13] : 0,
+  })), works);
 
   for (const part of model.parts) {
     const geometry = geometryFromPart(part);
@@ -13971,8 +13968,22 @@ async function buildMachine() {
 
   if (mine !== machineBuild) return;      // a newer build owns the scene
   scene.add(group);
+  // Every skin the temporary plant wears, transparent from birth as the
+  // wires are, so the strike can fade the machine out while it reverses
+  // (Param: "move backwards on both sides and fade away"). The permanent
+  // works keep their own skins and stay at full strength.
+  const machineSkins = () => {
+    const skins = new Set();
+    temporary.traverse((object) => {
+      if (!object.isMesh || !object.material) return;
+      object.material.transparent = true;
+      skins.add(object.material);
+    });
+    return [...skins];
+  };
   machineObjects = { group, permanent, temporary, sides, retreats, spinners,
-    wires, model, wireMaterial, lift };
+    wires, model, wireMaterial, lift,
+    skins: machineSkins(), machineSkins };
   skinMachine(group, mine);
   const row = document.getElementById("machine-row");
   if (row) row.classList.remove("hidden");
@@ -14108,12 +14119,19 @@ function applyMachineAct(t, strikeU) {
   // because it is one machine leaving. It REVERSES OUT rather than
   // dropping: "have the mechanism go backwards from its position on each
   // side (backwards mirrored) ... instead of having it fall under the
-  // ground." The permanent works do not move -- they are cast in.
+  // ground." Each row goes back along ITS OWN direction, because taken
+  // per machine the ends of a row went sideways instead: "i would prefer
+  // that the machines all move backwards on both sides and fade away."
+  // The permanent works do not move -- they are cast in.
   for (let i = 0; i < machineObjects.sides.length; i++) {
     const away = machineObjects.retreats[i];
     machineObjects.sides[i].position.set(
       away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);
   }
+  // "and fade away": the plant thins as it reverses, so the strike ends
+  // on the vault standing alone rather than on a machine sliding off the
+  // edge of the plate.
+  for (const skin of machineObjects.skins) skin.opacity = 1 - struck;
   wireMaterial.opacity = 1 - struck;
 
   const doc = state.formwork;

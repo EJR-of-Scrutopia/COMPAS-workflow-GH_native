@@ -898,3 +898,83 @@ def test_the_clock_is_local_to_the_site_not_utc(tmp_path):
     finished = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert finished.returncode == 0, finished.stderr or finished.stdout
     assert "ok" in finished.stdout
+
+
+RETREAT_CHECK = textwrap.dedent("""
+    import { machineRetreats } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+    const unit = (v) => near(Math.hypot(v[0], v[1]), 1);
+
+    // Two rows of three facing each other across the work: side 0 stands
+    // at y -10 and side 1 at y 10, each row spread along x.
+    const rows = [
+      { side: 0, x: -6, y: -10 }, { side: 0, x: 0, y: -10 }, { side: 0, x: 6, y: -10 },
+      { side: 1, x: -6, y: 10 }, { side: 1, x: 0, y: 10 }, { side: 1, x: 6, y: 10 },
+    ];
+    const away = machineRetreats(rows, null);
+    for (const one of away) expect(unit(one), "every direction is a unit vector");
+    for (const i of [1, 2]) {
+      expect(near(away[0][0], away[i][0]) && near(away[0][1], away[i][1]),
+        "one row, one direction: the end of a row leaves with its middle");
+      expect(near(away[3][0], away[i + 3][0]) && near(away[3][1], away[i + 3][1]),
+        "and the far row too");
+    }
+    expect(near(away[0][1], -1) && near(away[3][1], 1),
+      "each row backs straight away from the work, mirrored");
+    for (const one of away) {
+      expect(near(one[0], 0), "and nothing travels sideways along its row");
+    }
+
+    // One row, with the work it stands around: it backs away from that.
+    const single = machineRetreats(
+      [{ side: 0, x: -4, y: -10 }, { side: 0, x: 4, y: -10 }], [0, 0]);
+    expect(near(single[0][0], single[1][0]) && near(single[0][1], single[1][1]),
+      "a single row still leaves as one");
+    expect(single[0][1] < -0.9, "away from the work at the centre");
+
+    // One row and nothing to measure against: each machine keeps the old
+    // outward direction rather than standing still.
+    const blind = machineRetreats(
+      [{ side: 0, x: -4, y: 0 }, { side: 0, x: 4, y: 0 }], null);
+    expect(near(blind[0][0], -1) && near(blind[1][0], 1),
+      "outward, as it was, when nothing else can be known");
+
+    // A machine standing on the middle has nowhere to go.
+    const alone = machineRetreats([{ side: 0, x: 0, y: 0 }], null);
+    expect(alone[0][0] === 0 && alone[0][1] === 0,
+      "it fades where it stands rather than taking a direction nothing chose");
+
+    // The middle is the ROWS' own, so a row of four and a row of one
+    // still face each other squarely.
+    const lopsided = machineRetreats([
+      { side: 0, x: -9, y: -10 }, { side: 0, x: -3, y: -10 },
+      { side: 0, x: 3, y: -10 }, { side: 0, x: 9, y: -10 },
+      { side: 1, x: 0, y: 10 },
+    ], null);
+    expect(near(lopsided[0][1], -1) && near(lopsided[4][1], 1),
+      "four against one, and both still back straight off");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_each_row_of_machines_reverses_out_along_one_direction(tmp_path):
+    """Param, watching the strike: "you can see in the animation the machine
+    is moving sideways. I would prefer that the machines all move backwards
+    on both sides and fade away." Taken per machine, from the middle of
+    everything, the machine at the end of a row points along its own row, so
+    a row fans apart as it leaves. The direction is taken per side instead:
+    one row, one direction, mirrored on the far side."""
+
+    script = tmp_path / "check_retreats.mjs"
+    script.write_text(
+        RETREAT_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

@@ -613,6 +613,62 @@ export function formworkVisibility({
 // at any radius, which is the difference between resizing a floor and
 // zooming a photograph of one. tileMetres is the physical size of ONE
 // image, not of one paver.
+// Which way each machine reverses out when the formwork is struck.
+// Param, watching the strike: "you can see in the animation the machine
+// is moving sideways. I would prefer that the machines all move backwards
+// on both sides and fade away."
+//
+// Sideways is what an outward direction taken per MACHINE gives: measured
+// from the middle of everything, the machine at the end of a row points
+// along its own row, so a row fans apart instead of backing off. So the
+// direction is taken per SIDE. Each row leaves along one direction, the
+// row's own mean measured against the middle of the rows, which mirrors
+// the two sides without either having to declare which it is. Horizontal
+// only: the plant drives off across the floor, never into it.
+//
+// places: [{ side, x, y }], one per machine. centre: [x, y] of the work
+// itself, used only where there is a single row and the rows' own middle
+// can say nothing.
+export function machineRetreats(places, centre) {
+  const unit = (dx, dy) => {
+    const d = Math.hypot(dx, dy);
+    return d > 1e-6 ? [dx / d, dy / d] : null;
+  };
+  const rows = new Map();
+  for (const place of places) {
+    const key = Number.isFinite(place.side) ? place.side : 0;
+    const row = rows.get(key) || { x: 0, y: 0, n: 0 };
+    row.x += place.x;
+    row.y += place.y;
+    row.n += 1;
+    rows.set(key, row);
+  }
+  for (const row of rows.values()) {
+    row.x /= row.n;
+    row.y /= row.n;
+  }
+  // The middle of the ROWS, not of the machines: a row of six and a row
+  // of two still face each other squarely.
+  const middle = { x: 0, y: 0 };
+  for (const row of rows.values()) {
+    middle.x += row.x / rows.size;
+    middle.y += row.y / rows.size;
+  }
+  const away = new Map();
+  for (const [key, row] of rows) {
+    away.set(key, unit(row.x - middle.x, row.y - middle.y)
+      // One row has no facing row to be measured against, so it backs
+      // away from the work it stands around.
+      || (centre ? unit(row.x - centre[0], row.y - centre[1]) : null));
+  }
+  return places.map((place) => {
+    const key = Number.isFinite(place.side) ? place.side : 0;
+    // A machine with nowhere to go fades where it stands rather than
+    // being sent off in a direction nothing chose.
+    return away.get(key) || unit(place.x - middle.x, place.y - middle.y) || [0, 0];
+  });
+}
+
 export function groundRepeat(radius, tileMetres) {
   const extent = Math.max(0, radius) * 2;
   return [extent / tileMetres[0], extent / tileMetres[1]];

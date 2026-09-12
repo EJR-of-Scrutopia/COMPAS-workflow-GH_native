@@ -1766,12 +1766,25 @@ def test_the_machine_draws_the_way_he_asked():
         "the machine no longer falls under the ground")
     assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
         "horizontal only: it drives off across the floor, not into it")
-    # MIRRORED WITHOUT BEING TOLD WHICH SIDE IT IS ON: the direction is
-    # taken outward from the mean of the instance origins, so two rows
-    # mirror by construction and one row or three still behave.
-    assert "    const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];" in build
-    assert "    return d > 1e-6 ? [dx / d, dy / d] : [0, 0];" in build, (
-        "a machine with no outward direction fades where it stands")
+    # A ROW LEAVES AS ONE ROW. Taken per machine, the direction at the end
+    # of a row pointed along the row, so the plant fanned apart. Param,
+    # watching it: "you can see in the animation the machine is moving
+    # sideways. I would prefer that the machines all move backwards on
+    # both sides and fade away." The direction is machineRetreats'
+    # (fields.js, tested on its own): one per side, mirrored, with the
+    # vault's own centre standing in for a document with a single row.
+    assert "  const retreats = machineRetreats(instances.map((instance) => ({" in build
+    assert "    side: instance.side," in build, (
+        "grouped by the side it stands on, not by where it stands")
+    assert "  })), works);" in build
+    assert "const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];"         not in build, "the per-machine outward direction is what went sideways"
+    # AND IT FADES AS IT GOES, so the strike ends on the vault alone.
+    assert "  for (const skin of machineObjects.skins) skin.opacity = 1 - struck;" in act
+    assert "      object.material.transparent = true;" in build, (
+        "transparent from birth, as the wires are, rather than a recompile "
+        "of every machine material in the middle of a take")
+    assert "      machineObjects.skins = machineObjects.machineSkins();" in js, (
+        "a re-skin makes new materials, so the fade has to be told")
     # The wires travel with the machine that pulls them, head and span
     # both, or they would be left stretched across the site.
     assert "  if (entry.side) into.add(entry.side.position);" in js
