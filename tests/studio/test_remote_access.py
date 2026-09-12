@@ -3436,7 +3436,11 @@ def test_undoing_a_delete_brings_a_fixture_back_as_it_was():
     neither the size nor the fixture's own two numbers."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    block = js[js.index('} else if (event.key === "Delete" || event.key === "Backspace") {'):]
+    # The deletion moved out of the keydown into a function of its own
+    # (2026-09-12), so that the hover badge's Delete and the
+    # selection's Delete are the SAME deletion. Named, not sliced from
+    # the key handler, which now reaches two of them.
+    block = js[js.index("function deletePropWithUndo(record) {"):]
     gone = block[:block.index("pushUndo(")]
     assert "size: Array.isArray(record.size) ? record.size.slice() : null," in gone
     assert "lumens: record.lumens, kelvin: record.kelvin };" in gone

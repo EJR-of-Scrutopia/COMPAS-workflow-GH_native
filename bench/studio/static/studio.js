@@ -3556,6 +3556,83 @@ function refreshPropOutline() {
   if (propOutline) propOutline.update();
 }
 
+// ---------- a gathered set is a real selection ----------
+// Param, 2026-09-12: "the select with the shift and click on layers
+// menu doesnt select all items, still only one at a time. so if i want
+// to do multiple operations like delete when selecting many then they
+// all delete. also if i select all those objects and press edit, then i
+// would like only one gumball between all objects where i can move them
+// all as a group."
+//
+// The gathering already existed -- shift-clicking the layer tiles filled
+// gatheredProps, and the tiles lit up -- but nothing except "Place
+// copies" and "Move to layer" ever read it. The viewport outlined one
+// prop, the gumball stood on one prop, and Delete took one prop, so a
+// set of four looked and behaved exactly like a set of one. Measured
+// before this change: four tiles lit, one outline, and Delete removing
+// a single prop.
+//
+// WHO A GESTURE ACTS ON: the gathered set when it holds more than one,
+// and the single selected prop otherwise. One answer, so Delete, the
+// gumball and the undo cannot disagree about what "the selection" is.
+function actingProps() {
+  const many = [...gatheredProps].filter((r) => state.props.includes(r));
+  if (many.length > 1) return many;
+  return state.selectedProp ? [state.selectedProp] : [];
+}
+
+// Where one gumball stands for many props: the middle of their feet.
+// Their FEET, not their bodies -- a prop's origin is where it meets the
+// ground (placeProp), and a group turned about the mean of its origins
+// stays on the ground, which is where groups of props live.
+function groupCentre(records) {
+  let x = 0, y = 0, z = 0;
+  for (const record of records) {
+    x += record.x;
+    y += record.y;
+    z += record.z || 0;
+  }
+  const n = records.length || 1;
+  return { x: x / n, y: y / n, z: z / n };
+}
+
+// An outline per member, so a set of four looks like a set of four.
+// The primary keeps its own (setPropOutline); these are the rest.
+//
+// CAPPED, because each is a draw call: the drawer already refuses to
+// picture a layer past LAYER_TILE_CAP, so a gathering is bounded in
+// practice, but a shift-click over a scattered field must not turn six
+// hundred props into six hundred line objects.
+const GROUP_OUTLINE_CAP = 200;
+let groupOutlines = [];
+
+function clearGroupOutlines() {
+  for (const outline of groupOutlines) {
+    propsGroup.remove(outline);
+    outline.geometry.dispose();
+    outline.material.dispose();
+  }
+  groupOutlines = [];
+}
+
+function refreshGroupOutlines() {
+  clearGroupOutlines();
+  const acting = actingProps();
+  if (acting.length < 2) return;
+  for (const record of acting.slice(0, GROUP_OUTLINE_CAP)) {
+    if (record === state.selectedProp || !record.object) continue;
+    const outline = new THREE.BoxHelper(record.object, 0x93a6bb);
+    outline.material.depthTest = false;
+    outline.material.fog = false;
+    outline.renderOrder = 2;
+    // As with every other helper in propsGroup: a line raycast has a
+    // one metre threshold and would hijack clicks near its edges.
+    outline.raycast = () => {};
+    propsGroup.add(outline);
+    groupOutlines.push(outline);
+  }
+}
+
 // ---------- the hover badge ----------
 // Param, 2026-09-12: "i would like a bounding box with the object type
 // and id so i can reference it in layers, that pops up when i hover
@@ -3804,6 +3881,7 @@ function gumballIsUpFor(record) {
 function setPropGumball(record) {
   clearPropGumball();
   if (!gumballIsUpFor(record)) return;
+  // ONE gumball for the whole gathering, standing at its centre.
   propGumball = new THREE.Group();
   const radius = 1;                       // sized on screen, not in metres
   const slim = radius * 0.02;
@@ -3884,7 +3962,9 @@ function setPropGumball(record) {
   origin.renderOrder = 3;
   propGumball.add(origin);
 
-  propGumball.position.set(record.x, record.y, (record.z || 0) + 0.02);
+  const acting = actingProps();
+  const stand = acting.length > 1 ? groupCentre(acting) : record;
+  propGumball.position.set(stand.x, stand.y, (stand.z || 0) + 0.02);
   propsGroup.add(propGumball);
   // Sized before it is ever seen or raycast: a click that lands between
   // the build and the next render must test the gumball at the size it
@@ -3899,8 +3979,14 @@ function refreshPropGumball() {
   if (!propGumball || !state.selectedProp) return;
   // Position only. The gumball is world-aligned by design, so a turning
   // prop must not carry it round (see setPropGumball).
-  propGumball.position.set(state.selectedProp.x, state.selectedProp.y,
-    (state.selectedProp.z || 0) + 0.02);
+  const acting = actingProps();
+  const stand = acting.length > 1 ? groupCentre(acting) : state.selectedProp;
+  propGumball.position.set(stand.x, stand.y, (stand.z || 0) + 0.02);
+}
+
+// Every outline the selection owns, moved to where its prop now is.
+function refreshGroupOutlinePositions() {
+  for (const outline of groupOutlines) outline.update();
 }
 
 function gumballHandleAt(event) {
@@ -3981,6 +4067,85 @@ function rotationAngleAt(event, record, index) {
   return Math.atan2(local.dot(v), local.dot(u));
 }
 
+// ---------- moving a gathering as one ----------
+// Every member is written from where it STOOD when the drag began, not
+// from where it is now: accumulating a delta per frame drifts, and a
+// drag that goes out and comes back would not land where it started.
+const groupRotation = new THREE.Quaternion();
+const groupAxis = new THREE.Vector3();
+const groupOffset = new THREE.Vector3();
+const groupEuler = new THREE.Euler();
+const groupStartQuaternion = new THREE.Quaternion();
+
+// What each member has to remember for the length of one drag.
+function captureGroup(records) {
+  return records.map((record) => ({ record,
+    x: record.x, y: record.y, z: record.z || 0,
+    rotation: record.rotation || 0, rotX: record.rotX || 0,
+    rotY: record.rotY || 0, scale: record.scale || 1 }));
+}
+
+// Slide the whole group by one vector.
+function moveGroup(captured, dx, dy, dz) {
+  for (const was of captured) {
+    was.record.x = was.x + dx;
+    was.record.y = was.y + dy;
+    was.record.z = was.z + dz;
+    was.record.object.position.set(was.record.x, was.record.y, was.record.z);
+  }
+}
+
+// Turn the whole group about one axis through a point. Each member's
+// POSITION swings round the centre and the member itself turns by the
+// same angle, which is what makes a group turn rather than a flock of
+// props each spinning on the spot.
+function turnGroup(captured, centre, index, angle) {
+  groupAxis.set(index === 0 ? 1 : 0, index === 1 ? 1 : 0, index === 2 ? 1 : 0);
+  groupRotation.setFromAxisAngle(groupAxis, angle);
+  for (const was of captured) {
+    groupOffset.set(was.x - centre.x, was.y - centre.y, was.z - centre.z);
+    groupOffset.applyQuaternion(groupRotation);
+    was.record.x = centre.x + groupOffset.x;
+    was.record.y = centre.y + groupOffset.y;
+    was.record.z = centre.z + groupOffset.z;
+    was.record.object.position.set(was.record.x, was.record.y, was.record.z);
+    groupStartQuaternion.setFromEuler(
+      groupEuler.set(was.rotX, was.rotY, was.rotation, "XYZ"));
+    groupStartQuaternion.premultiply(groupRotation);
+    groupEuler.setFromQuaternion(groupStartQuaternion, "XYZ");
+    was.record.rotX = groupEuler.x;
+    was.record.rotY = groupEuler.y;
+    was.record.rotation = groupEuler.z;
+    applyPropRotation(was.record);
+  }
+}
+
+// Grow or shrink the group about its centre: each member's distance
+// from the centre scales with its own size, so the arrangement keeps
+// its shape rather than the props merely getting bigger in place.
+function scaleGroup(captured, centre, factor) {
+  for (const was of captured) {
+    was.record.x = centre.x + (was.x - centre.x) * factor;
+    was.record.y = centre.y + (was.y - centre.y) * factor;
+    was.record.z = centre.z + (was.z - centre.z) * factor;
+    was.record.object.position.set(was.record.x, was.record.y, was.record.z);
+    was.record.scale = Math.min(5, Math.max(0.2, was.scale * factor));
+    applyPropSize(was.record);
+  }
+}
+
+// Put every member back exactly as it stood. One undo for one drag.
+function restoreGroup(captured) {
+  for (const was of captured) {
+    Object.assign(was.record, { x: was.x, y: was.y, z: was.z,
+      rotation: was.rotation, rotX: was.rotX, rotY: was.rotY,
+      scale: was.scale });
+    applyPropRotation(was.record);
+    applyPropSize(was.record);
+    was.record.object.position.set(was.x, was.y, was.z);
+  }
+}
+
 // Every rotation the record carries, written onto the object at once.
 // Z is the old `rotation`, kept under its own name so scenes and layouts
 // saved before tilt existed still read.
@@ -4002,6 +4167,9 @@ let propEditHinted = false;
 function selectProp(record) {
   state.selectedProp = record;
   setPropOutline(record);
+  // BEFORE the gumball, which asks where the group's centre is and
+  // therefore needs the group to be settled first.
+  refreshGroupOutlines();
   setPropGumball(record);
   // Selecting a lamp aims the Lights sliders at that lamp alone, so they
   // have to show its numbers rather than the last thing they showed.
@@ -7157,6 +7325,13 @@ function renderShelfLayers(grid) {
         const hi = Math.max(layersAnchor, index);
         for (let i = lo; i <= hi; i++) gatheredProps.add(members[i]);
         setPropEdit(true, true);
+        // THE VIEWPORT HAS TO SHOW IT. Before this, a shift-click lit
+        // four tiles and left the scene outlining one prop with its
+        // gumball on that prop alone, so a set of four looked exactly
+        // like a set of one -- which is what he was reporting.
+        // selectProp settles the group's outlines and stands the
+        // gumball at its centre.
+        selectProp(members[index]);
         renderShelf();
         return;
       }
@@ -12926,18 +13101,26 @@ canvas.addEventListener("pointerdown", (event) => {
       // serves all nine: "move-x", "rot-z", "scale-y".
       const [gesture, letter] = handle.split("-");
       const index = { x: 0, y: 1, z: 2 }[letter];
-      const start = { mode: gesture, index, record,
+      // THE WHOLE GATHERING, if there is one. The readings are taken
+      // about the point the gumball STANDS on, which for a group is
+      // its centre and not any one member -- axisDistanceAt and
+      // rotationAngleAt both pivot on whatever x, y, z they are
+      // handed, so the centre goes in as if it were a record.
+      const acting = actingProps();
+      const group = acting.length > 1 ? captureGroup(acting) : null;
+      const pivot = group ? groupCentre(acting) : record;
+      const start = { mode: gesture, index, record, group, pivot,
         startX: record.x, startY: record.y, startZ: record.z || 0,
         startRotation: record.rotation || 0,
         startRotX: record.rotX || 0, startRotY: record.rotY || 0,
         startScale: record.scale || 1 };
       let reading = null;
-      if (gesture === "move") reading = axisDistanceAt(event, record, index);
-      else if (gesture === "rot") reading = rotationAngleAt(event, record, index);
+      if (gesture === "move") reading = axisDistanceAt(event, pivot, index);
+      else if (gesture === "rot") reading = rotationAngleAt(event, pivot, index);
       else {
         const ground = groundPointAt(event);
         reading = ground ? Math.max(0.05,
-          Math.hypot(ground.x - record.x, ground.y - record.y)) : null;
+          Math.hypot(ground.x - pivot.x, ground.y - pivot.y)) : null;
       }
       if (reading !== null) {
         state.gumball = Object.assign(start, { startReading: reading });
@@ -12989,8 +13172,14 @@ canvas.addEventListener("pointerdown", (event) => {
     carryExistingProp(record);
     state.propDrag = true;
     canvas.setPointerCapture(event.pointerId);
-  } else if (state.selectedProp) {
+  } else if (state.selectedProp || gatheredProps.size) {
+    // Empty ground clears the whole gathering, not merely the primary:
+    // a set that survived a click on nothing would go on answering
+    // Delete long after it looked like it had been dismissed.
+    gatheredProps.clear();
+    layersAnchor = null;
     selectProp(null);
+    refreshLayersShelf();
   }
 });
 // A DOUBLE CLICK RAISES THE HANDLES, and another puts them away.
@@ -13062,6 +13251,31 @@ canvas.addEventListener("pointermove", (event) => {
   // A live gumball drag: the ring turns the prop, the square scales it,
   // both measured in plan about the prop's feet, the way Rhino reads a
   // gumball drag in top view.
+  if (state.gumball && state.gumball.group) {
+    // THE GATHERING, moved as one thing. Param: "only one gumball
+    // between all objects where i can move them all as a group."
+    const { mode, index, group, pivot, startReading } = state.gumball;
+    if (mode === "move") {
+      const now = axisDistanceAt(event, pivot, index);
+      if (now === null) return;
+      const travel = now - startReading;
+      moveGroup(group, index === 0 ? travel : 0, index === 1 ? travel : 0,
+        index === 2 ? travel : 0);
+    } else if (mode === "rot") {
+      const now = rotationAngleAt(event, pivot, index);
+      if (now === null) return;
+      turnGroup(group, pivot, index, now - startReading);
+    } else {
+      const ground = groundPointAt(event);
+      if (!ground) return;
+      const distance = Math.hypot(ground.x - pivot.x, ground.y - pivot.y);
+      scaleGroup(group, pivot, Math.max(0.05, distance / startReading));
+    }
+    refreshPropOutline();
+    refreshGroupOutlinePositions();
+    refreshPropGumball();
+    return;
+  }
   if (state.gumball) {
     const { mode, index, record, startReading, startX, startY, startZ,
       startRotation, startRotX, startRotY, startScale } = state.gumball;
@@ -13122,6 +13336,33 @@ canvas.addEventListener("pointermove", (event) => {
 function endPropDrag(event) {
   if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
     canvas.releasePointerCapture(event.pointerId);
+  }
+  if (state.gumball && state.gumball.group) {
+    const captured = state.gumball.group;
+    state.gumball = null;
+    controls.enabled = true;
+    const moved = captured.some((was) =>
+      Math.abs(was.record.x - was.x) > 1e-6
+      || Math.abs(was.record.y - was.y) > 1e-6
+      || Math.abs((was.record.z || 0) - was.z) > 1e-6
+      || Math.abs((was.record.rotation || 0) - was.rotation) > 1e-6
+      || Math.abs((was.record.scale || 1) - was.scale) > 1e-6);
+    if (moved) {
+      // ONE entry for the whole drag, however many props it moved:
+      // fifty entries for one gesture would flush the history and make
+      // undo a fifty-press job.
+      pushUndo("the group adjustment", () => {
+        restoreGroup(captured);
+        refreshPropOutline();
+        refreshGroupOutlines();
+        setPropGumball(state.selectedProp);
+        saveProps();
+      });
+    }
+    setPropGumball(state.selectedProp);
+    refreshGroupOutlines();
+    saveProps();
+    return;
   }
   if (state.gumball) {
     const record = state.gumball.record;
@@ -13228,9 +13469,16 @@ window.addEventListener("keydown", (event) => {
   // selected. No edit mode is required -- that is the point of it.
   if (hoveredProp && (event.key === "Delete" || event.key === "Backspace")) {
     event.preventDefault();
-    const going = hoveredProp;
+    // The pointer names ONE prop; a gathering names several. Hovering
+    // something outside the gathering deletes that one thing, which is
+    // what the badge under the cursor is promising. Hovering a MEMBER
+    // deletes the gathering, because that is the thing being pointed
+    // at -- deleting one prop out of four he had just selected would
+    // read as the gathering having been ignored.
+    const acting = actingProps();
+    const going = acting.includes(hoveredProp) ? acting : [hoveredProp];
     setHoveredProp(null);
-    deletePropWithUndo(going);
+    deletePropsWithUndo(going);
     return;
   }
   if (hoveredProp && nudgeHoveredProp(event.key)) {
@@ -13259,9 +13507,53 @@ window.addEventListener("keydown", (event) => {
     setPropGumball(state.selectedProp);  // the ring re-fits the new size
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
-    deletePropWithUndo(state.selectedProp);
+    // The whole gathering when there is one, so "select many, press
+    // Delete" means what it says.
+    deletePropsWithUndo(actingProps());
   }
 });
+
+// ---------- deleting a whole gathering, undoably ----------
+// Param: "so if i want to do multiple operations like delete when
+// selecting many then they all delete." One undo entry for the lot:
+// fifty entries for one keystroke would flush the history and make the
+// undo a fifty-press job.
+function deletePropsWithUndo(records) {
+  const going = records.filter((r) => r && state.props.includes(r));
+  if (!going.length) return;
+  if (going.length === 1) { deletePropWithUndo(going[0]); return; }
+  // Everything each one needs to come back as itself, taken before any
+  // of them is disposed.
+  const gone = going.map((record) => ({ type: record.type, x: record.x,
+    y: record.y, z: record.z || 0, rotX: record.rotX || 0,
+    rotY: record.rotY || 0, rotation: record.rotation, scale: record.scale,
+    layer: record.layer,
+    size: Array.isArray(record.size) ? record.size.slice() : null,
+    lumens: record.lumens, kelvin: record.kelvin, tint: record.tint,
+    invisible: record.invisible, aperture: record.aperture,
+    softness: record.softness, reach: record.reach, shadow: record.shadow }));
+  pushUndo("deleting " + gone.length + " props", async () => {
+    for (const one of gone) {
+      await ensurePropTemplate(one.type);
+      const again = placeProp(one.type, one.x, one.y, one.rotation, false,
+        one.scale, one.z || 0, one.rotX || 0, one.rotY || 0);
+      if (one.size) {
+        again.size = one.size.slice();
+        applyPropSize(again);
+      }
+      adoptLampSettings(again, one);
+      again.layer = layerById(one.layer) ? one.layer : state.activeLayer;
+      again.object.visible = layerVisible(again.layer);
+    }
+    saveProps();
+    refreshLayersShelf();
+  });
+  // ONE pass over state.props for all of them: the per-record call
+  // filters the whole list and rewrites the whole layout each time,
+  // which is quadratic over a gathering of any size.
+  removePropRecords(going);
+  if (propEditOneShot) setPropEdit(false);
+}
 
 // ---------- deleting one prop, undoably ----------
 // Lifted out of the edit-mode keys so that the hover badge's Delete and
@@ -16330,6 +16622,8 @@ function removePropRecords(records) {
   if (gone.has(state.selectedProp)) selectProp(null);
   // And a badge naming a prop that no longer exists is worse than none.
   if (gone.has(hoveredProp)) setHoveredProp(null);
+  for (const record of gone) gatheredProps.delete(record);
+  refreshGroupOutlines();
   // A lamp leaving changes what the Lights row is talking about, and it
   // may not have been the selected one (which would have said so above).
   if (lamps) syncLightControls();

@@ -3492,10 +3492,21 @@ def test_the_hover_badge_answers_delete_and_the_arrow_keys():
     assert keys.index("nudgeHoveredProp(event.key)") < guarded
 
     # ONE DELETION, shared with the selection's own Delete: two copies
-    # is how one of them grows a fault the other has not got.
+    # is how one of them grows a fault the other has not got. Both keys
+    # now go through the many-prop form, which falls through to the
+    # single one when only one prop is going.
     assert js.count("function deletePropWithUndo(record)") == 1
-    assert "deletePropWithUndo(state.selectedProp);" in js
-    assert "deletePropWithUndo(going);" in js
+    assert js.count("function deletePropsWithUndo(records)") == 1
+    assert "deletePropsWithUndo(actingProps());" in js
+    assert "deletePropsWithUndo(going);" in js
+    many = _function_body(js, "deletePropsWithUndo")
+    assert "if (going.length === 1) { deletePropWithUndo(going[0]); return; }" in many, (
+        "one prop takes the single path, so its undo keeps saying what "
+        "it is putting back by name")
+    assert "removePropRecords(going);" in many, (
+        "one pass over state.props: the per-record call filters the "
+        "whole list and rewrites the whole layout each time")
+    assert many.count("pushUndo(") == 1, "one entry for one keystroke"
     gone = _function_body(js, "deletePropWithUndo")
     assert 'pushUndo("deleting the "' in gone, "a delete is undoable"
     assert "await ensurePropTemplate(gone.type);" in gone, (
@@ -3584,3 +3595,166 @@ def test_a_double_click_raises_the_handles_without_edit_mode():
     # A prop that leaves takes its handles with it.
     assert "if (gone.has(gumballLoose)) gumballLoose = null;" in _function_body(
         js, "removePropRecords")
+
+
+def test_a_gathered_set_is_a_real_selection():
+    """Param: "the select with the shift and click on layers menu doesnt
+    select all items, still only one at a time. so if i want to do
+    multiple operations like delete when selecting many then they all
+    delete. also if i select all those objects and press edit, then i
+    would like only one gumball between all objects where i can move
+    them all as a group."
+
+    The gathering already existed: shift-clicking the tiles filled
+    gatheredProps and lit them up. Nothing except "Place copies" and
+    "Move to layer" ever read it, so the viewport outlined one prop, the
+    gumball stood on one prop, and Delete took one prop. Measured before
+    this change: four tiles lit, one outline, one prop deleted.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # ONE ANSWER to "what is selected", so Delete, the gumball and the
+    # undo cannot disagree about it.
+    acting = _function_body(js, "actingProps")
+    assert "[...gatheredProps].filter((r) => state.props.includes(r))" in acting, (
+        "a gathering can hold a prop that has since been deleted")
+    assert "if (many.length > 1) return many;" in acting
+    assert "return state.selectedProp ? [state.selectedProp] : [];" in acting
+
+    # THE VIEWPORT SHOWS IT: an outline per member, and the shift-click
+    # itself tells the viewport, which is the half that was missing.
+    outlines = _function_body(js, "refreshGroupOutlines")
+    assert "if (acting.length < 2) return;" in outlines
+    assert "GROUP_OUTLINE_CAP" in outlines, (
+        "each outline is a draw call; a shift-click over a scattered "
+        "field must not make six hundred line objects")
+    assert "outline.raycast = () => {};" in outlines
+    assert "refreshGroupOutlines();" in _function_body(js, "selectProp")
+    layers = _function_body(js, "renderShelfLayers")
+    shift = layers[layers.index("if (event.shiftKey"):]
+    assert "selectProp(members[index]);" in shift[:shift.index("renderShelf();")], (
+        "the shift-click has to reach the viewport, or four lit tiles "
+        "still look exactly like one")
+
+    # ONE GUMBALL, standing between them rather than on one of them.
+    centre = _function_body(js, "groupCentre")
+    assert "z += record.z || 0;" in centre
+    for where in ("setPropGumball", "refreshPropGumball"):
+        body = _function_body(js, where)
+        assert "acting.length > 1 ? groupCentre(acting)" in body, where
+
+    # AND THE READINGS PIVOT ON THAT CENTRE, not on one member: a drag
+    # measured about a corner prop would swing the group round it.
+    down = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
+    down = down[:down.index('canvas.addEventListener("pointermove"')]
+    assert "const pivot = group ? groupCentre(acting) : record;" in down
+    assert "axisDistanceAt(event, pivot, index)" in down
+    assert "rotationAngleAt(event, pivot, index)" in down
+    assert "Math.hypot(ground.x - pivot.x, ground.y - pivot.y)" in down
+
+
+def test_a_group_drag_writes_every_member_from_where_it_stood():
+    """Accumulating a delta per frame drifts, and a drag that goes out
+    and comes back would not land where it started. Every member is
+    written from the position it held when the drag began."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    captured = _function_body(js, "captureGroup")
+    for field in ("x: record.x", "rotation: record.rotation || 0",
+                  "scale: record.scale || 1"):
+        assert field in captured, field
+
+    move = _function_body(js, "moveGroup")
+    assert "was.record.x = was.x + dx;" in move, "from the START, not the current"
+
+    # A TURN swings each member round the centre AND turns it: without
+    # the second half a group would scatter into a flock of props each
+    # spinning on the spot.
+    turn = _function_body(js, "turnGroup")
+    assert "groupOffset.applyQuaternion(groupRotation);" in turn
+    assert "groupStartQuaternion.premultiply(groupRotation);" in turn, (
+        "premultiply, so the turn is applied in WORLD space on top of "
+        "the member's own rotation rather than in its local frame")
+    assert "applyPropRotation(was.record);" in turn
+
+    # A SCALE moves each member's distance from the centre with its own
+    # size, so the arrangement keeps its shape.
+    scale = _function_body(js, "scaleGroup")
+    assert "centre.x + (was.x - centre.x) * factor" in scale
+    assert "Math.min(5, Math.max(0.2, was.scale * factor))" in scale, (
+        "the same clamp a single prop's scale takes")
+
+    # ONE UNDO for one drag, and it puts every member back.
+    restore = _function_body(js, "restoreGroup")
+    assert "applyPropRotation(was.record);" in restore
+    assert "applyPropSize(was.record);" in restore
+    release = _function_body(js, "endPropDrag")
+    group_arm = release[release.index("if (state.gumball && state.gumball.group) {"):]
+    group_arm = group_arm[:group_arm.index("if (state.gumball) {")]
+    assert group_arm.count("pushUndo(") == 1, (
+        "fifty entries for one gesture would flush the history and make "
+        "the undo a fifty-press job")
+    assert "restoreGroup(captured);" in group_arm
+    # The WHOLE assignment: "captured.some(" alone was satisfied by
+    # `const moved = true || captured.some(...)`, which records an undo
+    # for every press whether it moved anything or not.
+    assert "const moved = captured.some((was) =>" in group_arm, (
+        "a press that moved nothing records nothing")
+
+    # The group branch is read BEFORE the single-prop one in both the
+    # drag and the release, since a group drag has both fields set.
+    down = js[js.index('canvas.addEventListener("pointermove", (event) => {'):]
+    assert down.index("if (state.gumball && state.gumball.group) {") < down.index(
+        "if (state.gumball) {\n    const { mode, index, record, startReading")
+    assert release.index("if (state.gumball && state.gumball.group) {") < release.index(
+        "if (state.gumball) {\n    const record = state.gumball.record;")
+
+
+def test_delete_takes_the_whole_gathering_in_one_undo():
+    """"so if i want to do multiple operations like delete when selecting
+    many then they all delete". Measured before: six props, four
+    gathered, Delete pressed, one prop gone."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    many = _function_body(js, "deletePropsWithUndo")
+
+    assert "records.filter((r) => r && state.props.includes(r))" in many
+    assert "if (going.length === 1) { deletePropWithUndo(going[0]); return; }" in many
+    assert many.count("pushUndo(") == 1, "one entry for one keystroke"
+    assert "removePropRecords(going);" in many, (
+        "one pass over state.props: the per-record call filters the "
+        "whole list and rewrites the whole layout each time, which is "
+        "quadratic over a gathering of any size")
+
+    # EVERY MEMBER COMES BACK AS ITSELF, fixtures included, and the
+    # record of what it was is taken BEFORE anything is disposed.
+    fields = many[:many.index("pushUndo(")]
+    for field in ("size:", "lumens:", "kelvin:", "tint:", "invisible:",
+                  "aperture:", "softness:", "reach:", "shadow:", "layer:"):
+        assert field in fields, field
+    assert many.index("const gone = going.map") < many.index("removePropRecords(going);")
+    undo = many[many.index("pushUndo("):]
+    assert "await ensurePropTemplate(one.type);" in undo
+    assert "adoptLampSettings(again, one);" in undo
+    assert "layerById(one.layer) ? one.layer : state.activeLayer" in undo, (
+        "back onto its old layer, or onto the open one if that has been "
+        "deleted since: an id with no tab could never be hidden again")
+
+    # THE POINTER NAMES ONE, A GATHERING NAMES SEVERAL.
+    keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
+    keys = keys[:keys.index("\n});")]
+    assert "const going = acting.includes(hoveredProp) ? acting : [hoveredProp];" in keys, (
+        "hovering something outside the gathering deletes that one "
+        "thing, which is what the badge under the cursor promises; "
+        "hovering a member deletes the gathering")
+    assert "deletePropsWithUndo(actingProps());" in keys
+
+    # Empty ground lets the whole gathering go, not merely the primary:
+    # a set that survived a click on nothing would go on answering
+    # Delete long after it looked dismissed.
+    down = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
+    down = down[:down.index('canvas.addEventListener("pointermove"')]
+    assert "} else if (state.selectedProp || gatheredProps.size) {" in down
+    assert "gatheredProps.clear();" in down
