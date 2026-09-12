@@ -198,12 +198,18 @@
     <div id="lights-panel" class="hidden">
       <div id="lights-kinds" class="tile-grid"></div>
       <div class="dial-block" id="lights-controls">
-        <label><span>Output</span>
-          <input id="lamp-lumens" type="range" min="0" max="6000" step="50" value="1600">
-          <b id="lamp-lumens-value">1600</b><em>lm</em></label>
-        <label><span>Warmth</span>
+        <label title="How much light the fixture gives, in the lumens printed on a lamp's box"><span>Output</span>
+          <input id="lamp-lumens" type="range" min="0" max="20000" step="50" value="4000">
+          <b id="lamp-lumens-value">4000</b><em>lm</em></label>
+        <label title="Candlelight at one end of the dial, overcast noon at the other"><span>Warmth</span>
           <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
           <b id="lamp-kelvin-value">3000</b><em>K</em></label>
+        <label title="A gel held over the fixture's own warmth: white is no gel at all"><span>Colour</span>
+          <input id="lamp-tint" type="color" value="#ffffff">
+          <b id="lamp-tint-value">#ffffff</b><em>gel</em></label>
+        <label title="Stop drawing the fixture's body: its light does not change, and you can still click it where it stands or pick it from the Layers tile"><span>Invisible</span>
+          <input id="lamp-invisible" type="checkbox">
+          <b id="lamp-invisible-value">no</b><em></em></label>
         <label><span>Size</span>
           <input id="light-size" type="range" min="0.1" max="6" step="0.05" value="1">
           <b id="light-size-value">1.00</b><em>x</em></label>

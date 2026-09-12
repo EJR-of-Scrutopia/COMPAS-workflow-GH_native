@@ -1099,8 +1099,9 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     assert "light.color.copy(colour);" in laid
     assert "light.power = lumens;" in laid, "three.js takes lumens directly"
     # The globe is the source: unlit, and pushed above 1 so it reads as
-    # brighter than white rather than as a pale ball.
-    assert "1.2 + 1.8 * Math.min(1, lumens / 3000)" in lit
+    # brighter than white rather than as a pale ball. The curve spans the
+    # whole dial since 2026-09-12; see the brightness test below.
+    assert "1.2 + 2.8 * Math.min(1, lumens / 12000)" in lit
 
     # A source casting a hard sun shadow of ITSELF reads as plastic.
     made = _js_function(js, "function makeProp(type)")
@@ -1131,7 +1132,8 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # Both numbers survive a reload and a scene.
     # The layout and the scene share one encoder, which carries a lamp's
     # numbers beside its row, and one decoder, which puts them back.
-    assert "extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin };" in js, (
+    assert ("extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin,\n"
+            "        tint: p.tint, invisible: p.invisible };") in js, (
         "the study layout")
     assert "props: withProps ? encodeProps(state.props) : undefined," in js, "the scene"
     assert "if (extra) Object.assign(entry, extra);" in js
@@ -1178,6 +1180,177 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     assert "if (entry.builtIn) return Promise.resolve(null);" in ensure, (
         "a built-in has no file to fetch, and fetching one would log a "
         "load failure for a prop that works")
+
+
+def test_every_fixture_carries_its_own_gel_and_the_dial_has_headroom():
+    """Param, 2026-09-12: "we need to make all the lights have individual
+    controls and colours etc, more that any light we put in needs its own
+    controls" and "also can we make them brighter".
+
+    So a fixture's colour is two numbers of its own, not one: kelvin puts
+    it on the line from candlelight to overcast noon, and the tint is a
+    gel held over that. White is no gel, so a scene saved before the
+    control existed opens unchanged. And the Output dial, which stopped
+    at 6000 lm with a default of 1600, runs to 20000 with a default of
+    4000: 6000 lm is a bright domestic bulb, and a studio fixture wants
+    headroom."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+
+    # THE GEL. One writer for the fixture's colour, so the globe and
+    # every emitter cannot disagree about what colour the fixture is.
+    assert 'const LAMP_TINT = "#ffffff";' in js
+    tinted = _js_function(js, "function fixtureColour(record)")
+    assert "if (tint === LAMP_TINT) return colour;" in tinted, (
+        "white is no gel at all, and a fixture that has never been "
+        "tinted must come out exactly as it did")
+    assert "tintScratch.setStyle(tint, THREE.SRGBColorSpace);" in tinted, (
+        "a swatch hands back a gamma-encoded hex; read as linear a mid "
+        "tint comes out far darker than the square he picked")
+    assert "return colour.multiply(tintScratch);" in tinted
+    lit = _js_function(js, "function applyPropLight(record)")
+    assert "const colour = fixtureColour(record);" in lit, "the globe"
+    sync = _js_function(js, "function syncFixtureEmission(record)")
+    assert "fixtureColour(record)" in sync, "and every emitter"
+    assert "kelvinColour(kelvin)" not in lit and "kelvinColour(kelvin)" not in sync, (
+        "neither may reach past the tint to the warmth alone")
+
+    # It is the FIXTURE's, so it travels with the fixture: through the
+    # layout's extras, through a scene, and back on both restores.
+    adopt = _js_function(js, "function adoptLampSettings(record, entry)")
+    assert ('record.tint = typeof entry.tint === "string" ? entry.tint '
+            ": state.lampTint;") in adopt
+    assert "tint: p.tint, invisible: p.invisible };" in js, (
+        "the layout's extras carry it")
+    assert "tint: state.lampTint, invisible: state.lampInvisible }," in js, (
+        "and the scene carries the defaults")
+    restore = _js_function(js, "async function applyScene(record)")
+    assert 'if (typeof scene_.lamp.tint === "string") state.lampTint = scene_.lamp.tint;' in restore
+    assert "record.tint = state.lampTint;" in _js_function(
+        js, "function placeProp(type, x, y, rotation, save, scale = 1, z = 0,"), (
+        "a newly placed fixture wears the gel the drawer is showing")
+
+    # THE SWATCH, in the Lights drawer beside the dials it qualifies, in
+    # the four-part shape with its reading named for it.
+    drawer = html[html.index('<div id="lights-panel"'):]
+    drawer = drawer[:drawer.index('<div id="shelf-grid"')]
+    assert '<input id="lamp-tint" type="color" value="#ffffff">' in drawer
+    assert '<b id="lamp-tint-value">#ffffff</b>' in drawer
+    assert "<span>Colour</span>" in drawer
+    written = _js_function(js, "function syncLightControls()")
+    assert 'const reading = document.getElementById("lamp-tint-value");' in written, (
+        "a reading with no writer is the Glow bug")
+    # It goes through the one writer, so it obeys the drawer's own rule:
+    # the selected fixture, or every fixture when none is selected.
+    assert 'writeLamps("tint", e.target.value);' in js
+    aimed = _js_function(js, "function writeLamps(field, value)")
+    assert 'else if (field === "kelvin") state.lampKelvin = value;' in aimed
+    assert 'else if (field === "tint") state.lampTint = value;' in aimed
+    assert '"lamp-lumens", "lamp-kelvin", "lamp-tint"' in js, (
+        "and the layout is written when the gesture ends, not per pixel")
+    # The browser's own swatch belongs to no theme; a drawer sits outside
+    # #panel, whose rules dressed the sun's colour and reached no further.
+    assert '.dial-block label > input[type="color"] { width: 100%;' in css
+    assert "background: var(--well); border: 1px solid var(--line);" in css
+
+    # BRIGHTER, measured in the two numbers that decide it.
+    assert "const LAMP_LUMENS = 4000;" in js
+    assert "lampLumens: 4000," in js
+    assert '<input id="lamp-lumens" type="range" min="0" max="20000" step="50" value="4000">' in drawer
+    assert '<b id="lamp-lumens-value">4000</b>' in drawer, (
+        "the reading rests where the slider does")
+    # And the globe's own punch spans the new dial rather than saturating
+    # a fifth of the way along it.
+    assert "1.2 + 2.8 * Math.min(1, lumens / 12000)" in lit
+
+
+def test_a_fixture_can_be_made_invisible_and_still_picked_up():
+    """Param, 2026-09-12: "Can you also add an invisible button to the
+    menu so the light shape itself doesnt show but its glow is there. If
+    i then want to click it again to edit the menu and turn off the
+    invisible function, i can still click the object where it is or use
+    the layer tile to select the object."
+
+    So the MATERIAL is hidden, never the object. Object3D.visible =
+    false takes a fixture out of the raycast along with the picture, and
+    a fixture that can never be clicked again is a fixture he has lost:
+    being able to click it where it stands is the thing he asked for by
+    name. three's Raycaster tests neither object.visible nor
+    material.visible, so a hidden material is skipped by the renderer
+    and still picked by propRecordAt; three's WebGLShadowMap renders a
+    mesh only `else if (material.visible)`, so the shadow goes with the
+    body rather than hanging in the air. Both read out of the vendored
+    build below and both measured live."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    vendor = REPO / "bench" / "studio" / "static" / "vendor"
+    core = (vendor / "three.core.js").read_text(encoding="utf-8")
+    module = (vendor / "three.module.js").read_text(encoding="utf-8")
+
+    body = _js_function(js, "function applyFixtureBody(record)")
+    assert "if (child.isMesh) child.material.visible = shown;" in body, (
+        "the material, never the object")
+    assert "object.visible" not in body and "child.visible" not in body, (
+        "touching Object3D.visible would take the fixture out of the "
+        "raycast and he could never click it again")
+    # Every write to a fixture comes through applyPropLight, so the body
+    # is decided there rather than in a pass a restore could miss.
+    assert "applyFixtureBody(record);" in _js_function(
+        js, "function applyPropLight(record)")
+
+    # THE TWO CLAIMS THE VENDORED BUILD HAS TO SUPPORT. Pinned here
+    # because an upgrade that changed either would break this silently:
+    # nothing would throw, the fixture would simply stop being clickable
+    # or start throwing a shadow of a body that is not drawn.
+    assert "const result = object.raycast( raycaster, intersects );" in core, (
+        "the raycaster calls raycast on every child, testing neither "
+        "object.visible nor material.visible")
+    assert "} else if ( material.visible ) {" in module, (
+        "the shadow pass skips a hidden material, so the shadow goes "
+        "with the body")
+
+    # It is the fixture's own, so it travels with the fixture.
+    adopt = _js_function(js, "function adoptLampSettings(record, entry)")
+    assert ('record.invisible = typeof entry.invisible === "boolean" '
+            "? entry.invisible") in adopt
+    assert "invisible: p.invisible };" in js, "the layout's extras"
+    assert "invisible: state.lampInvisible }," in js, "the scene's default"
+    restore = _js_function(js, "async function applyScene(record)")
+    assert 'if (typeof scene_.lamp.invisible === "boolean") {' in restore
+    assert "lampInvisible: false," in js, "off until he asks for it"
+    assert "record.invisible = state.lampInvisible;" in js, (
+        "a newly placed fixture wears whatever the drawer is showing, "
+        "the same rule Output and Warmth follow")
+
+    # THE CONTROL, in his word, in the four-part shape, with a title
+    # that says what it does and what it does not.
+    drawer = html[html.index('<div id="lights-panel"'):]
+    drawer = drawer[:drawer.index('<div id="shelf-grid"')]
+    assert "<span>Invisible</span>" in drawer
+    assert '<input id="lamp-invisible" type="checkbox">' in drawer
+    assert '<b id="lamp-invisible-value">no</b><em></em>' in drawer, (
+        "a toggle has no unit, and an empty cell keeps the four-cell "
+        "grid the block is read down")
+    row = drawer[:drawer.index("<span>Invisible</span>")]
+    row = row[row.rindex("<label "):]
+    assert "its light does not change" in row, (
+        "the title says what it does NOT do as well; a control that "
+        "looked like it turned the light off would be read as one")
+    sync = _js_function(js, "function syncLightControls()")
+    assert 'const said = document.getElementById("lamp-invisible-value");' in sync
+    assert 'said.textContent = hidden ? "yes" : "no";' in sync
+    assert 'writeLamps("invisible", !!e.target.checked);' in js
+    aimed = _js_function(js, "function writeLamps(field, value)")
+    assert "else state.lampInvisible = value;" in aimed
+    assert '.dial-block label > input[type="checkbox"] { width: auto;' in css
 
 
 def test_a_slider_that_rests_at_zero_declares_its_unit():
@@ -1764,7 +1937,7 @@ def test_the_machine_draws_the_way_he_asked():
         "the parts ride with their own side, not with the whole machine")
     assert "temporary.position.z = -1.5 * struck;" not in act, (
         "the machine no longer falls under the ground")
-    assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
+    assert "      away[0] * MACHINE_RETREAT * struck, away[1] * MACHINE_RETREAT * struck, 0);" in act, (
         "horizontal only: it drives off across the floor, not into it")
     assert "const MACHINE_RETREAT = 3;" in js, (
         "three metres in all, his measure: it is gone by the time it "
@@ -2413,7 +2586,9 @@ def test_a_fixture_emits_from_its_shape_and_every_resize_relays_it():
         "three divides power by the area, so the size goes on first")
     assert laid.index("light.height = face.height;") < power
     sync = _js_function(js, "function syncFixtureEmission(record)")
-    assert "layFixtureEmitters(record.object, lumens, kelvinColour(kelvin));" in sync
+    assert "layFixtureEmitters(record.object, lumens, fixtureColour(record));" in sync, (
+        "one colour for the whole fixture, warmth through tint, and the "
+        "same one the globe wears")
 
     # Every writer of a fixture's shape goes through applyPropSize, and
     # applyPropSize re-lays the light. The gumball, the keys and the undo
@@ -2501,7 +2676,7 @@ function checkFaces(record, faces, label) {
       expect(near(2 * half_.length(), extent(along)),
         label + " " + faces[n] + ": each side at its world size");
     }
-    expect(light.color.equals(kelvinColour(record.kelvin)), label + ": its colour");
+    expect(light.color.equals(fixtureColour(record)), label + ": its colour");
     power += light.power;
     radiance.push(light.intensity);
   });
@@ -2544,6 +2719,85 @@ applyPropLight(sphere);
 const points = sphere.object.children.filter((c) => c.isLight);
 expect(points.length === 1 && points[0].isPointLight, "the sphere: one point light");
 expect(near(points[0].power, 700, 1e-6), "the sphere: all of its output");
+
+// THE TINT, a gel over the warmth rather than a replacement for it.
+// White is no gel at all: the fixture comes out exactly as it did before
+// the control existed, which is what lets every scene saved without one
+// open unchanged.
+const plain = fixtureColour({ kelvin: 3000 });
+expect(fixtureColour({ kelvin: 3000, tint: "#ffffff" }).equals(plain),
+  "white is no gel");
+// A gel MULTIPLIES: a pure blue one takes the warm lamp's red out
+// altogether and leaves its blue where it was.
+const warm = kelvinColour(3000);
+const blue = fixtureColour({ kelvin: 3000, tint: "#0000ff" });
+expect(near(blue.r, 0) && near(blue.g, 0), "a blue gel stops red and green");
+expect(near(blue.b, warm.b), "and passes the lamp's own blue");
+// A mid grey gel is a fifth of the light, not a half: the swatch is
+// picked in sRGB and the multiply happens in linear.
+const grey = fixtureColour({ kelvin: 6500, tint: "#808080" });
+const white = kelvinColour(6500);
+const linear = new THREE.Color().setStyle("#808080", THREE.SRGBColorSpace);
+expect(linear.r > 0.2 && linear.r < 0.24, "mid grey is a fifth in linear");
+expect(near(grey.r, white.r * linear.r), "the gel multiplies in linear");
+
+// And it reaches every emitter of every fixture, not only the globe.
+const gelled = { type: "light-cube", object: lightCube(), scale: 1,
+  lumens: 1200, kelvin: 4000, tint: "#ff8040" };
+applyPropLight(gelled);
+checkFaces(gelled, BOX_FACES, "a gelled cube");
+const gelledPoint = { type: "light-sphere", object: lightSphere(), scale: 1,
+  lumens: 700, kelvin: 3000, tint: "#40ff80" };
+applyPropLight(gelledPoint);
+const lit = gelledPoint.object.children.find((c) => c.isPointLight);
+expect(lit.color.equals(fixtureColour(gelledPoint)),
+  "the sphere's point light wears the gel too");
+const globe = gelledPoint.object.children.find((c) => c.userData.lampGlobe);
+const punch = 1.2 + 2.8 * Math.min(1, 700 / 12000);
+expect(near(globe.material.color.r,
+  fixtureColour(gelledPoint).r * punch, 1e-5), "and so does the globe");
+
+// BRIGHTER. The globe's punch used to saturate at 3000 lm while the dial
+// ran to 6000, so the top half of it moved the room and never the
+// source. It spans the dial now: the new ceiling reads far brighter than
+// the new default, which was the whole complaint.
+const punchAt = (lumens) => (lumens > 0
+  ? 1.2 + 2.8 * Math.min(1, lumens / 12000) : 0.25);
+expect(punchAt(20000) > punchAt(LAMP_LUMENS) * 1.5,
+  "the top of the dial reads far brighter than the default");
+expect(Math.abs(punchAt(LAMP_LUMENS) - (1.2 + 1.8 * 1600 / 3000)) < 0.05,
+  "and the new default sits where the old one did, so nothing already "
+  + "placed changes character");
+
+// INVISIBLE. The body stops being drawn and the light does not change
+// at all: same emitters, same output, same colour. And the OBJECT stays
+// exactly where it was in the graph, because that is what keeps it
+// clickable.
+const unseen = { type: "light-cube", object: lightCube(), scale: 1,
+  lumens: 1500, kelvin: 3000 };
+applyPropLight(unseen);
+const emitters = () => unseen.object.children.filter((c) => c.isLight);
+const outputBefore = emitters().map((c) => c.power);
+const colourBefore = emitters().map((c) => c.color.getHex());
+let meshCount = 0;
+unseen.object.traverse((c) => { if (c.isMesh) meshCount += 1; });
+expect(meshCount > 0, "the cube has a body to hide");
+unseen.invisible = true;
+applyPropLight(unseen);
+expect(outputBefore.every((p, i) => near(p, emitters()[i].power, 1e-9)),
+  "invisible changes no emitter's output");
+expect(colourBefore.every((c, i) => c === emitters()[i].color.getHex()),
+  "nor any emitter's colour");
+let drawn = 0;
+unseen.object.traverse((c) => { if (c.isMesh && c.material.visible) drawn += 1; });
+expect(drawn === 0, "and no mesh of it is drawn");
+expect(unseen.object.visible !== false,
+  "the OBJECT is untouched, which is what keeps it in the raycast");
+unseen.invisible = false;
+applyPropLight(unseen);
+let back = 0;
+unseen.object.traverse((c) => { if (c.isMesh && c.material.visible) back += 1; });
+expect(back === meshCount, "and every part of it comes back");
 console.log("ok");
 """
 
@@ -2579,13 +2833,16 @@ def test_a_fixtures_emitters_are_laid_on_its_faces_and_shine_out_of_them(tmp_pat
     js = STUDIO_JS.read_text(encoding="utf-8")
     static = REPO / "bench" / "studio" / "static"
     consts = "\n".join(_js_statement(js, head) for head in (
-        "const LAMP_LUMENS", "const LAMP_KELVIN", "const KELVIN_MIN",
+        "const LAMP_LUMENS", "const LAMP_KELVIN", "const LAMP_TINT",
+        "const KELVIN_MIN",
         "const STRIP_FACES", "const BOX_FACES", "const LAMP_TYPES",
-        "const faceAxes", "const faceBasis"))
-    headers = ("function kelvinColour(kelvin)", "function isLamp(record)",
+        "const tintScratch", "const faceAxes", "const faceBasis"))
+    headers = ("function kelvinColour(kelvin)",
+               "function fixtureColour(record)", "function isLamp(record)",
                "function lightEmitter(geometry, lift, faces)",
                "function layFixtureEmitters(object, lumens, colour)",
                "function syncFixtureEmission(record)",
+               "function applyFixtureBody(record)",
                "function lightSphere()", "function lightStrip()",
                "function lightCube()", "function applyPropSize(record)",
                "function applyPropLight(record)")
@@ -2705,7 +2962,8 @@ def test_a_fixture_can_be_stretched_along_one_axis_and_it_survives():
     # Saved both ways, and read back both ways.
     # One encoder for both memories carries it beside the row, and one
     # decoder hands it back to both readers.
-    assert "if (p.size || p.lumens !== undefined || p.kelvin !== undefined) {" in js
+    assert ("if (p.size || p.lumens !== undefined || p.kelvin !== undefined\n"
+            "        || p.tint !== undefined || p.invisible !== undefined) {") in js
     assert "const extra = extras[entries.length];" in js
     assert js.count("record.size = entry.size.map(Number);") == 2, (
         "the layout restore and the scene restore both read it")

@@ -1176,6 +1176,25 @@ body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
   width: 100%; margin: 0; font-size: 11px; }
 .dial-block label > button { width: auto; margin: 0; padding: 2px 8px;
   font-size: 11px; }
+/* A COLOUR SWATCH IS ONE CELL, like the dial it sits beside. The
+   browser's own input[type=color] is a white rectangle in a chrome
+   border that belongs to no theme at all, so it is given the studio's
+   own well, line and corner. The #panel rules further up do this for the
+   sun's colour; a drawer is outside #panel and had nothing. */
+.dial-block label > input[type="color"] { width: 100%; min-width: 44px;
+  height: var(--h-small); margin: 0; padding: 0;
+  background: var(--well); border: 1px solid var(--line);
+  border-radius: var(--radius-s); cursor: pointer; }
+.dial-block label > input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px; }
+.dial-block label > input[type="color"]::-webkit-color-swatch {
+  border: none; border-radius: 2px; }
+/* A TOGGLE IS A DIAL'S SECOND CELL TOO. It has no track to fill and
+   no unit to name, so it sits at its own width at the left of the
+   cell and leaves the unit column empty rather than breaking the
+   four-cell grid the whole block is read down. */
+.dial-block label > input[type="checkbox"] { width: auto; margin: 0;
+  justify-self: start; accent-color: var(--accent); cursor: pointer; }
 #scatter-deselect { width: auto; margin: 0; padding: 3px 10px;
   font-size: 11px; background: var(--raised); color: var(--ink-2);
   border: 1px solid var(--line); border-radius: 12px; }

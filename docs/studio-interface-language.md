@@ -103,6 +103,24 @@ Note that "can rest at zero" is about the RANGE, not the floor:
 ratio does -- is one dial with two grips. One reading between them is
 the shape, not a missing one.
 
+**A colour swatch is a dial's second cell like any other.** The Lights
+drawer's Colour is `<span>Colour</span>`, an `input[type="color"]`, a
+`<b id="lamp-tint-value">` holding the hex, and a `<em>` naming the
+thing: four cells, the same four. The browser's own swatch is a white
+rectangle in a chrome border belonging to no theme, so
+`.dial-block label > input[type="color"]` gives it the studio's own
+well, line and corner. The `#panel` rules that dressed the sun's colour
+stop at the panel and reach no drawer.
+
+**So is a toggle, and its unit cell stays empty.** Invisible is
+`<span>Invisible</span>`, a checkbox, a `<b id="lamp-invisible-value">`
+reading yes or no, and an empty `<em></em>`. A toggle has no unit, and
+inventing one ("body", "state") is worse than a blank column: the four
+cells are what the whole block is read down, and the blank is the
+honest fourth. The box sits at its own width at the left of its cell
+(`justify-self: start`) rather than stretching a track it does not
+have.
+
 A dial's `title` says what it changes in one sentence, in Param's own
 terms. "The clear gap between items, as a multiple of each one's own
 width" is right; "spacing factor" is not.

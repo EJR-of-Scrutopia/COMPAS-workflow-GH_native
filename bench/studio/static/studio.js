@@ -275,8 +275,10 @@ const state = {
   // to when no single lamp is selected. The literals are LAMP_LUMENS and
   // LAMP_KELVIN, which are declared with the lamp itself far below: a
   // reference here would be reading them before they exist.
-  lampLumens: 1600,      // a 100 W bulb, in the units lamps are sold in
+  lampLumens: 4000,      // a small floodlight, in the units lamps are sold in
   lampKelvin: 3000,      // warm white
+  lampTint: "#ffffff",   // the gel the next fixture wears: white is none
+  lampInvisible: false,  // whether the next fixture shows its body at all
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the SKIN index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
@@ -1693,8 +1695,14 @@ function propCone() {
 // numbers describe it, and they are the two an architect actually
 // specifies: how much light (lumens, the number on the box) and what
 // colour that light is (kelvin, the other number on the box).
-const LAMP_LUMENS = 1600;            // a 100 W bulb, in the units lamps are sold in
+// Param, 2026-09-12: "also can we make them brighter." 1600 lm was both
+// the default AND most of the way to the dial's old 6000 ceiling, so a
+// fixture asked to light a dark pavilion had a reading light's output and
+// nowhere to go. The dial runs to 20000 lm now and a new fixture arrives
+// at 4000.
+const LAMP_LUMENS = 4000;            // a small floodlight, in the units lamps are sold in
 const LAMP_KELVIN = 3000;            // warm white
+const LAMP_TINT = "#ffffff";         // no gel at all: the warmth alone
 const KELVIN_MIN = 1800, KELVIN_MAX = 6500;
 
 // Colour temperature to RGB, the Tanner Helland approximation, which is
@@ -1720,6 +1728,32 @@ function kelvinColour(kelvin) {
   // bytes: read as linear they come out washed and far too pale.
   return new THREE.Color().setRGB(clamp(r), clamp(g), clamp(b),
     THREE.SRGBColorSpace);
+}
+
+// A fixture's own colour: its warmth, through its own gel.
+// Param, 2026-09-12: "we need to make all the lights have individual
+// controls and colours etc, more that any light we put in needs its own
+// controls."
+//
+// Warmth and tint are two different controls and both are his. Kelvin
+// puts the fixture somewhere on the one line from candlelight to overcast
+// noon, which is where a real lamp lives; the tint is a gel held over it,
+// which is where a theatre lamp lives. White is no gel at all, so a
+// fixture that has never been tinted comes out exactly as it did before
+// the control existed.
+const tintScratch = new THREE.Color();
+
+function fixtureColour(record) {
+  const kelvin = Math.min(KELVIN_MAX, Math.max(KELVIN_MIN,
+    +record.kelvin || LAMP_KELVIN));
+  const colour = kelvinColour(kelvin);   // a fresh Color, safe to multiply
+  const tint = typeof record.tint === "string" ? record.tint : LAMP_TINT;
+  if (tint === LAMP_TINT) return colour;
+  // Through SRGBColorSpace for the same reason kelvinColour is: a swatch
+  // hands back a gamma-encoded hex, and read as linear a mid tint comes
+  // out far darker than the square he picked.
+  tintScratch.setStyle(tint, THREE.SRGBColorSpace);
+  return colour.multiply(tintScratch);
 }
 
 // The three fixtures. Param: "i didnt want the orb light with a lamp end.
@@ -1848,10 +1882,8 @@ function layFixtureEmitters(object, lumens, colour) {
 // restore. No path can leave the light the size the fixture used to be.
 function syncFixtureEmission(record) {
   if (!isLamp(record) || !record.object) return;
-  const kelvin = Math.min(KELVIN_MAX, Math.max(KELVIN_MIN,
-    +record.kelvin || LAMP_KELVIN));
   const lumens = Math.max(0, +record.lumens || 0);
-  layFixtureEmitters(record.object, lumens, kelvinColour(kelvin));
+  layFixtureEmitters(record.object, lumens, fixtureColour(record));
 }
 
 // A sphere of light, hanging where he puts it. 0.25 m radius, so the
@@ -1930,21 +1962,62 @@ function applyPropSize(record) {
 // Called on placement, on restore, and whenever the sliders move.
 function applyPropLight(record) {
   if (!isLamp(record)) return;
-  const kelvin = Math.min(KELVIN_MAX, Math.max(KELVIN_MIN,
-    +record.kelvin || LAMP_KELVIN));
   const lumens = Math.max(0, +record.lumens || 0);
-  const colour = kelvinColour(kelvin);
+  const colour = fixtureColour(record);
   record.object.traverse((child) => {
     if (child.isMesh && child.userData.lampGlobe) {
       // Pushed above 1 so the source reads as brighter than white rather
       // than as a pale ball, and brighter with the fixture's output. Off
       // entirely reads as a globe that is simply off.
-      const punch = lumens > 0 ? 1.2 + 1.8 * Math.min(1, lumens / 3000) : 0.25;
+      //
+      // The curve saturated at 3000 lm while the dial stopped at 6000, so
+      // the top half of the dial moved the room and never the globe: a
+      // fixture at its brightest read exactly like one at half. It spans
+      // the new range instead, and 4000 lm (the new default) lands within
+      // a hair of where 1600 lm used to, so nothing already placed
+      // changes character.
+      const punch = lumens > 0 ? 1.2 + 2.8 * Math.min(1, lumens / 12000) : 0.25;
       child.material.color.copy(colour).multiplyScalar(punch);
     }
   });
   // And the light itself, from every face that gives it.
   syncFixtureEmission(record);
+  // Body shown or not. Here rather than in its own pass because every
+  // write to a fixture already comes through this function: a dial, a
+  // placement, a restore, a scene.
+  applyFixtureBody(record);
+}
+
+// SHOWN OR NOT, with the light unchanged either way.
+// Param, 2026-09-12: "Can you also add an invisible button to the menu
+// so the light shape itself doesnt show but its glow is there. If i then
+// want to click it again to edit the menu and turn off the invisible
+// function, i can still click the object where it is or use the layer
+// tile to select the object."
+//
+// The MATERIAL is hidden, never the object. Object3D.visible = false
+// would take the fixture out of the raycast along with the picture, and
+// a fixture that can never be clicked again is a fixture he has lost --
+// which is the one thing he asked for by name. three's Raycaster tests
+// neither object.visible nor material.visible (it calls raycast on
+// every child and Mesh.raycast gives up only on a missing material), so
+// a hidden material is skipped by the renderer and still picked by
+// propRecordAt. The gumball, the outline, the layer tiles and the whole
+// record are untouched.
+//
+// The shadow pass needs no separate handling: WebGLShadowMap renders a
+// mesh only `else if (material.visible)`, so the body's shadow goes with
+// the body rather than hanging in the air. Verified live rather than
+// read: see the probe note in the Invisible test.
+//
+// The emitters are lights, not meshes, so nothing here touches them:
+// same lumens, same colour, same pool on the floor.
+function applyFixtureBody(record) {
+  if (!isLamp(record) || !record.object) return;
+  const shown = !record.invisible;
+  record.object.traverse((child) => {
+    if (child.isMesh) child.material.visible = shown;
+  });
 }
 
 // A restore hands back both numbers. An entry saved before lamps existed
@@ -1956,6 +2029,11 @@ function adoptLampSettings(record, entry) {
     : state.lampLumens;
   record.kelvin = typeof entry.kelvin === "number" ? entry.kelvin
     : state.lampKelvin;
+  // A fixture saved before the tint existed has none, and white is the
+  // right answer for it: white is no gel, which is what it was wearing.
+  record.tint = typeof entry.tint === "string" ? entry.tint : state.lampTint;
+  record.invisible = typeof entry.invisible === "boolean" ? entry.invisible
+    : !!state.lampInvisible;
   applyPropLight(record);
 }
 
@@ -2137,9 +2215,11 @@ function encodeProps(props) {
     if (t === undefined) { t = types.length; types.push(p.type); typeIndex.set(p.type, t); }
     rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), roundTurn(p.rotation),
       roundTurn(p.rotX || 0), roundTurn(p.rotY || 0), roundMm(p.scale || 1), p.layer || 1);
-    // Only a fixture carries these three, and a fixture always does.
-    if (p.size || p.lumens !== undefined || p.kelvin !== undefined) {
-      extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin };
+    // Only a fixture carries these, and a fixture always does.
+    if (p.size || p.lumens !== undefined || p.kelvin !== undefined
+        || p.tint !== undefined || p.invisible !== undefined) {
+      extras[i] = { size: p.size, lumens: p.lumens, kelvin: p.kelvin,
+        tint: p.tint, invisible: p.invisible };
     }
   });
   return { stride: LAYOUT_STRIDE, types, rows, extras };
@@ -3159,6 +3239,8 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   if (isLamp(record)) {
     record.lumens = state.lampLumens;
     record.kelvin = state.lampKelvin;
+    record.tint = state.lampTint;
+    record.invisible = state.lampInvisible;
     applyPropLight(record);
   }
   object.visible = layerVisible(record.layer);
@@ -4202,7 +4284,8 @@ function collectScene(options) {
     brightness: state.brightness,
     contrast: state.contrast,
     outline: state.outline,
-    lamp: { lumens: state.lampLumens, kelvin: state.lampKelvin },
+    lamp: { lumens: state.lampLumens, kelvin: state.lampKelvin,
+            tint: state.lampTint, invisible: state.lampInvisible },
     hdri: {
       name: state.hdriName, projection: state.hdriProjection,
       scale: state.hdriScale, height: state.hdriHeight, rotation: state.hdriRotation,
@@ -4415,6 +4498,10 @@ async function applyScene(record) {
   if (scene_.lamp) {
     if (typeof scene_.lamp.lumens === "number") state.lampLumens = scene_.lamp.lumens;
     if (typeof scene_.lamp.kelvin === "number") state.lampKelvin = scene_.lamp.kelvin;
+    if (typeof scene_.lamp.tint === "string") state.lampTint = scene_.lamp.tint;
+    if (typeof scene_.lamp.invisible === "boolean") {
+      state.lampInvisible = scene_.lamp.invisible;
+    }
   }
   syncLightControls();
   const hdri = scene_.hdri || {};
@@ -11540,6 +11627,24 @@ function syncLightControls() {
   };
   write("lamp-lumens", lumens, Math.round(lumens));
   write("lamp-kelvin", kelvin, Math.round(kelvin));
+  // The gel, which is a swatch rather than a dial but keeps the same
+  // reading pairing so it can be read at a glance beside the numbers.
+  const tint = (one ? one.tint : state.lampTint) || LAMP_TINT;
+  const swatch = document.getElementById("lamp-tint");
+  if (swatch) {
+    swatch.value = tint;
+    const reading = document.getElementById("lamp-tint-value");
+    if (reading) reading.textContent = tint;
+  }
+  // Invisible: a toggle rather than a dial, but it keeps the same
+  // reading cell so the block can still be read straight down.
+  const hidden = one ? !!one.invisible : !!state.lampInvisible;
+  const box = document.getElementById("lamp-invisible");
+  if (box) {
+    box.checked = hidden;
+    const said = document.getElementById("lamp-invisible-value");
+    if (said) said.textContent = hidden ? "yes" : "no";
+  }
 }
 
 function writeLamps(field, value) {
@@ -11553,7 +11658,9 @@ function writeLamps(field, value) {
   // another" behave the way anyone would expect.
   if (!isLamp(state.selectedProp)) {
     if (field === "lumens") state.lampLumens = value;
-    else state.lampKelvin = value;
+    else if (field === "kelvin") state.lampKelvin = value;
+    else if (field === "tint") state.lampTint = value;
+    else state.lampInvisible = value;
   }
   syncLightControls();
   return targets.length;
@@ -11565,9 +11672,17 @@ document.getElementById("lamp-lumens").addEventListener("input", (e) => {
 document.getElementById("lamp-kelvin").addEventListener("input", (e) => {
   writeLamps("kelvin", +e.target.value);
 });
+document.getElementById("lamp-tint").addEventListener("input", (e) => {
+  writeLamps("tint", e.target.value);
+});
+// A toggle has no drag to wait out, so it writes the layout at once.
+document.getElementById("lamp-invisible").addEventListener("change", (e) => {
+  writeLamps("invisible", !!e.target.checked);
+  saveProps();
+});
 // The layout is per study and lives in localStorage; writing it on every
 // pixel of a drag would be a hundred writes for one decision.
-for (const id of ["lamp-lumens", "lamp-kelvin"]) {
+for (const id of ["lamp-lumens", "lamp-kelvin", "lamp-tint"]) {
   document.getElementById(id).addEventListener("change", () => saveProps());
 }
 // Both read as percentages because that is how a grade is discussed,
