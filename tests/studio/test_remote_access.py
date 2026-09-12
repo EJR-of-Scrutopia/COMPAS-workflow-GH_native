@@ -1773,11 +1773,19 @@ def test_the_machine_draws_the_way_he_asked():
     # both sides and fade away." The direction is machineRetreats'
     # (fields.js, tested on its own): one per side, mirrored, with the
     # vault's own centre standing in for a document with a single row.
-    assert "  const retreats = machineRetreats(instances.map((instance) => ({" in build
-    assert "    side: instance.side," in build, (
-        "grouped by the side it stands on, not by where it stands")
-    assert "  })), works);" in build
-    assert "const dx = (instance.matrix ? instance.matrix[12] : 0) - middle[0];"         not in build, "the per-machine outward direction is what went sideways"
+    assert "  const retreats = machineRetreats(places, works);" in build
+    assert "      standing.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrix);" in build, (
+        "where a machine STANDS is measured off its own parts, through "
+        "their own matrices: the placement is in the geometry and the "
+        "far row is a mirror, so the instance translations alone put "
+        "all six machines on one spot")
+    assert "      ? { side: instances[index].side, x: (minX + maxX) / 2, y: (minY + maxY) / 2 }" in build
+    assert "standing.setFromObject(side)" not in build, (
+        "Box3 has no world matrices to read at build time, so it gave "
+        "back the body's own authored box for every side")
+    assert ("const dx = (instance.matrix ? instance.matrix[12] : 0) "
+            "- middle[0];") not in build, (
+        "the per-machine outward direction is what went sideways")
     # AND IT FADES AS IT GOES, so the strike ends on the vault alone.
     assert "  for (const skin of machineObjects.skins) skin.opacity = 1 - struck;" in act
     assert "      object.material.transparent = true;" in build, (

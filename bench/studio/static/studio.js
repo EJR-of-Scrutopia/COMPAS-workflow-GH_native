@@ -13817,19 +13817,6 @@ async function buildMachine() {
   const sides = instances.map(() => new THREE.Group());
   for (const side of sides) temporary.add(side);
 
-  // Backwards is taken per SIDE, not per machine: machineRetreats
-  // (fields.js) gives a row one direction, so a row reverses out together
-  // and the two rows mirror each other. Measured per machine, as it was,
-  // the ends of a row pointed along the row and the plant fanned apart
-  // sideways. The vault's own centre is the fallback for a document that
-  // carries a single row.
-  const works = state.centre && Number.isFinite(state.centre.x)
-    ? [state.centre.x, state.centre.y] : null;
-  const retreats = machineRetreats(instances.map((instance) => ({
-    side: instance.side,
-    x: instance.matrix ? instance.matrix[12] : 0,
-    y: instance.matrix ? instance.matrix[13] : 0,
-  })), works);
 
   for (const part of model.parts) {
     const geometry = geometryFromPart(part);
@@ -13968,6 +13955,45 @@ async function buildMachine() {
 
   if (mine !== machineBuild) return;      // a newer build owns the scene
   scene.add(group);
+  // WHERE EACH MACHINE ACTUALLY STANDS, measured off its own parts once
+  // they are placed. The instance matrix cannot say: on his export both
+  // rows carry the SAME translation, (0, 0), (0, 1.05) and (0, 2.1), and
+  // the far row is a reflection of a body authored off to one side. Read
+  // from those origins the three machines of a row sat on one spot, so
+  // the outward direction ran along the row and the plant left sideways
+  // (Param: "you can see in the animation the machine is moving
+  // sideways"). A bounding box over the side's own meshes is where it
+  // stands however the document places it.
+  // Measured off each mesh's OWN matrix rather than through Box3, whose
+  // world matrices are not composed until the first render: asked at
+  // build time it handed back the body's authored box for every side, so
+  // all six machines came out standing on one spot. A side's parts are
+  // its direct children and the side itself sits at the origin until the
+  // strike moves it, so the local matrix IS the world placement here.
+  const standing = new THREE.Box3();
+  const places = sides.map((side, index) => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const mesh of side.children) {
+      if (!mesh.isMesh || !mesh.geometry) continue;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      standing.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrix);
+      minX = Math.min(minX, standing.min.x);
+      maxX = Math.max(maxX, standing.max.x);
+      minY = Math.min(minY, standing.min.y);
+      maxY = Math.max(maxY, standing.max.y);
+    }
+    return Number.isFinite(minX)
+      ? { side: instances[index].side, x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+      : { side: instances[index].side, x: 0, y: 0 };
+  });
+  // Backwards is taken per SIDE, not per machine: machineRetreats
+  // (fields.js) gives a row one direction, so a row reverses out together
+  // and the two rows mirror each other. The vault's own centre is the
+  // fallback for a document that carries a single row.
+  const works = state.centre && Number.isFinite(state.centre.x)
+    ? [state.centre.x, state.centre.y] : null;
+  const retreats = machineRetreats(places, works);
+
   // Every skin the temporary plant wears, transparent from birth as the
   // wires are, so the strike can fade the machine out while it reverses
   // (Param: "move backwards on both sides and fade away"). The permanent
@@ -13981,7 +14007,7 @@ async function buildMachine() {
     });
     return [...skins];
   };
-  machineObjects = { group, permanent, temporary, sides, retreats, spinners,
+  machineObjects = { group, permanent, temporary, sides, retreats, places, spinners,
     wires, model, wireMaterial, lift,
     skins: machineSkins(), machineSkins };
   skinMachine(group, mine);
