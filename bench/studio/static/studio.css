@@ -1389,3 +1389,44 @@ body.recording #scale-bar { display: none; }
 #shelf-sky-modes #atmosphere-tiles { flex: 1 0 100%; }
 #shelf-body #atmosphere-tiles .tile canvas { aspect-ratio: 2 / 1; }
 #shelf-body #atmosphere-tiles { grid-template-columns: repeat(5, 1fr); }
+
+/* THE PANEL BESIDE THE LIGHT. Param: "if we click them when not in
+   edit mode, then a translucent setting pops up next to it where we
+   can control the sliders and options for each type of light".
+
+   The graphs' own ground and blur, at the graphs' own height (z 11),
+   and written AFTER them in the document so it paints over them where
+   the two meet. Under the stilling cover (z 12) and the data sheet
+   (z 20) by the same reckoning -- and it is closed outright before a
+   plate or a take, so it can never reach a picture at all.
+
+   It is placed by script, in page coordinates, and follows its
+   fixture while the camera moves. */
+#fixture-panel { position: fixed; z-index: 11; width: 256px;
+  max-height: 70vh; overflow: auto;
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: var(--ink); font-size: 11px; }
+#fixture-panel.hidden { display: none; }
+/* THE SAME TRAP AS #panel AND #shelf, a third time. A bare .hidden is
+   one class; `.dial-block label { display: contents }` is a class and
+   an element, and it wins. Photographed on the first run: the spot's
+   four rows and Length were all marked hidden on a sphere's card and
+   all five were on the screen. Anything the block styles by element
+   has to be beaten inside the card by name. */
+#fixture-panel .hidden { display: none !important; }
+body.stilling #fixture-panel { display: none; }
+#fixture-name { padding: 8px 10px 0; color: var(--ink);
+  font-size: 12px; }
+#fixture-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-3); }
+/* ONE DIAL A ROW. The eight-column default puts two dials side by
+   side, which a 256 px card has no room for: photographed on the
+   first run, Warmth showed a sliver of track and no reading at all
+   while Size, Invisible, Softness and Shadow were cut off past the
+   right edge. The four-column form is the other shape the language
+   allows (#graphs-dials is the precedent), and it keeps the four
+   cells and their alignment while taking the whole width. */
+#fixture-dials { grid-template-columns: auto 1fr auto auto; }

@@ -6310,6 +6310,9 @@ async function renderStill() {
   const across = Math.ceil(frame.width / STILL_TILE);
   const down = Math.ceil(frame.height / STILL_TILE);
   const button = document.getElementById("still-render");
+  // A fixture's card is an overlay, and a plate is a picture: it goes
+  // before the first tile rather than being hidden and remembered.
+  closeFixturePanel();
   state.stillRendering = true;
   if (button) button.disabled = true;
 
@@ -11879,6 +11882,220 @@ for (const id of ["lamp-lumens", "lamp-kelvin", "lamp-tint",
                   "lamp-aperture", "lamp-softness", "lamp-reach"]) {
   document.getElementById(id).addEventListener("change", () => saveProps());
 }
+
+// ---------- the panel beside the light ----------
+// Param, 2026-09-12: "I have an idea only in edit mode we can move them
+// around, but if we click them when not in edit mode, then a translucent
+// setting pops up next to it where we can control the sliders and
+// options for each type of light, then when we click anywhere not on the
+// light or the menu it disappears."
+//
+// His idea exactly. Out of edit mode a left click on a fixture opens a
+// card beside it holding THAT fixture's own controls and nothing else;
+// every write goes to that fixture alone, never to the selection and
+// never to all of them, which is what makes it different from the Lights
+// drawer. In edit mode the click still picks the fixture up as it always
+// did, and this never opens.
+//
+// A record, not an id: a fixture has no id, and the record is what every
+// writer here already takes.
+let fixturePanelFor = null;
+const fixtureAnchor = new THREE.Vector3();
+
+// Length is offered where a fixture's light is actually laid on its
+// faces, which is the same question as "does stretching it change the
+// light". A sphere's point light and a spot's cone do not move when the
+// body is stretched, so the dial would be a control that does nothing.
+function fixtureStretches(record) {
+  return !!record && !!record.object
+    && record.object.children.some((child) => child.isRectAreaLight);
+}
+
+function fixtureKindLabel(record) {
+  const kind = LIGHT_KINDS.find((one) => one.key === record.type);
+  return kind ? kind.label : "Fixture";
+}
+
+function openFixturePanel(record) {
+  fixturePanelFor = record;
+  const card = document.getElementById("fixture-panel");
+  if (!card) return;
+  card.classList.remove("hidden");
+  syncFixturePanel();
+  placeFixturePanel();
+}
+
+function closeFixturePanel() {
+  if (!fixturePanelFor) return;
+  fixturePanelFor = null;
+  const card = document.getElementById("fixture-panel");
+  if (card) card.classList.add("hidden");
+}
+
+// Every control, from the one fixture. The same four-part dials the
+// drawer uses, so the readings are written by the same id pairing.
+function syncFixturePanel() {
+  const record = fixturePanelFor;
+  if (!record) return;
+  const name = document.getElementById("fixture-name");
+  if (name) name.textContent = fixtureKindLabel(record);
+  const write = (id, value, reading) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.value = value;
+    paintScrub(input);
+    const span = document.getElementById(id + "-value");
+    if (span) span.textContent = reading;
+  };
+  const lumens = Math.max(0, +record.lumens || 0);
+  const kelvin = +record.kelvin || LAMP_KELVIN;
+  write("fixture-lumens", lumens, Math.round(lumens));
+  write("fixture-kelvin", kelvin, Math.round(kelvin));
+  const tint = record.tint || LAMP_TINT;
+  const swatch = document.getElementById("fixture-tint");
+  if (swatch) {
+    swatch.value = tint;
+    const reading = document.getElementById("fixture-tint-value");
+    if (reading) reading.textContent = tint;
+  }
+  const scale = +record.scale || 1;
+  const along = Array.isArray(record.size) ? +record.size[0] || 1 : 1;
+  write("fixture-size", scale, scale.toFixed(2));
+  write("fixture-length", along, along.toFixed(1));
+  const lengthRow = document.getElementById("fixture-length-row");
+  if (lengthRow) lengthRow.classList.toggle("hidden", !fixtureStretches(record));
+  const hidden = !!record.invisible;
+  const body = document.getElementById("fixture-invisible");
+  if (body) {
+    body.checked = hidden;
+    const said = document.getElementById("fixture-invisible-value");
+    if (said) said.textContent = hidden ? "yes" : "no";
+  }
+  // The spot's four, and only for a spot.
+  const beamed = isSpot(record);
+  for (const row of document.querySelectorAll("#fixture-dials .fixture-spot")) {
+    row.classList.toggle("hidden", !beamed);
+  }
+  if (beamed) {
+    const aperture = +record.aperture || SPOT_APERTURE;
+    const softness = record.softness === undefined ? SPOT_SOFTNESS
+      : +record.softness || 0;
+    const reach = +record.reach || 0;
+    write("fixture-aperture", aperture, Math.round(aperture));
+    write("fixture-softness", Math.round(softness * 100),
+      Math.round(softness * 100));
+    write("fixture-reach", reach, reach.toFixed(reach ? 1 : 0));
+    const cast = record.shadow !== false;
+    const box = document.getElementById("fixture-shadow");
+    if (box) {
+      box.checked = cast;
+      const said = document.getElementById("fixture-shadow-value");
+      if (said) said.textContent = cast ? "on" : "off";
+    }
+  }
+}
+
+// ONE fixture, never the selection and never all of them. That is the
+// whole difference between this card and the drawer.
+function writeFixture(field, value) {
+  const record = fixturePanelFor;
+  if (!record) return;
+  record[field] = value;
+  applyPropLight(record);
+  syncFixturePanel();
+  // The drawer may be open on the same fixture, and two controls over
+  // one piece of state that disagree is worse than one control.
+  syncLightControls();
+  saveProps();
+}
+
+function writeFixtureSize() {
+  const record = fixturePanelFor;
+  if (!record) return;
+  record.scale = +document.getElementById("fixture-size").value;
+  record.size = [+document.getElementById("fixture-length").value, 1, 1];
+  applyPropSize(record);
+  syncFixturePanel();
+  syncLightSize();
+  if (state.selectedProp === record) {
+    refreshPropOutline();
+    refreshPropGumball();
+  }
+  saveProps();
+}
+
+// It follows its fixture while the camera moves, and it closes itself if
+// the fixture goes: a delete, a scene, a study reload. The test is the
+// object's own parent, which is O(1); state.props.includes would be a
+// walk of a scattered field every frame.
+function placeFixturePanel() {
+  const record = fixturePanelFor;
+  if (!record) return;
+  if (!record.object || !record.object.parent) { closeFixturePanel(); return; }
+  const card = document.getElementById("fixture-panel");
+  if (!card) return;
+  record.object.updateMatrixWorld(true);
+  // The top of the fixture, so the card sits beside the thing rather
+  // than over its own light.
+  const box = new THREE.Box3().setFromObject(record.object);
+  fixtureAnchor.set((box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2,
+    box.max.z);
+  fixtureAnchor.project(camera);
+  const rect = canvas.getBoundingClientRect();
+  // Behind the camera: there is nowhere on the screen to put it.
+  if (fixtureAnchor.z > 1) { card.style.visibility = "hidden"; return; }
+  card.style.visibility = "";
+  const x = rect.left + (fixtureAnchor.x * 0.5 + 0.5) * rect.width;
+  const y = rect.top + (-fixtureAnchor.y * 0.5 + 0.5) * rect.height;
+  // Kept whole on the screen: a card half off the right edge is a card
+  // whose dials cannot be reached.
+  const width = card.offsetWidth || 256;
+  const height = card.offsetHeight || 200;
+  const left = Math.min(window.innerWidth - width - 12, Math.max(12, x + 18));
+  const top = Math.min(window.innerHeight - height - 12, Math.max(12, y - 24));
+  card.style.left = Math.round(left) + "px";
+  card.style.top = Math.round(top) + "px";
+}
+
+document.getElementById("fixture-lumens").addEventListener("input", (e) => {
+  writeFixture("lumens", Math.max(0, +e.target.value));
+});
+document.getElementById("fixture-kelvin").addEventListener("input", (e) => {
+  writeFixture("kelvin", +e.target.value);
+});
+document.getElementById("fixture-tint").addEventListener("input", (e) => {
+  writeFixture("tint", e.target.value);
+});
+document.getElementById("fixture-invisible").addEventListener("change", (e) => {
+  writeFixture("invisible", !!e.target.checked);
+});
+document.getElementById("fixture-aperture").addEventListener("input", (e) => {
+  writeFixture("aperture", +e.target.value);
+});
+document.getElementById("fixture-softness").addEventListener("input", (e) => {
+  writeFixture("softness", Math.min(1, Math.max(0, +e.target.value / 100)));
+});
+document.getElementById("fixture-reach").addEventListener("input", (e) => {
+  writeFixture("reach", Math.max(0, +e.target.value));
+});
+document.getElementById("fixture-shadow").addEventListener("change", (e) => {
+  writeFixture("shadow", !!e.target.checked);
+});
+for (const id of ["fixture-size", "fixture-length"]) {
+  document.getElementById(id).addEventListener("input", writeFixtureSize);
+}
+
+// "when we click anywhere not on the light or the menu it disappears".
+// The viewport decides its own clicks (the pointerdown handler above
+// opens the card on a fixture and closes it on anything else), so this
+// only has to answer for the rest of the page. BUBBLE phase, so the
+// scatter tools' capture-phase handler is untouched.
+document.addEventListener("pointerdown", (event) => {
+  if (!fixturePanelFor) return;
+  if (event.target === canvas) return;
+  if (event.target.closest && event.target.closest("#fixture-panel")) return;
+  closeFixturePanel();
+});
 // Both read as percentages because that is how a grade is discussed,
 // and both are held as multipliers. Contrast declares its factor: its
 // range SPANS zero, and at zero the derivation gives up.
@@ -12283,6 +12500,23 @@ canvas.addEventListener("pointerdown", (event) => {
       return;
     }
   }
+  // OUT OF EDIT MODE, a click on a fixture opens that fixture's own
+  // card beside it. Param: "if we click them when not in edit mode,
+  // then a translucent setting pops up next to it where we can control
+  // the sliders and options for each type of light, then when we click
+  // anywhere not on the light or the menu it disappears".
+  //
+  // A click on anything else in the viewport closes it, which is the
+  // second half of the same sentence. In edit mode neither happens:
+  // there the click picks the fixture up, as it always has.
+  if (!state.propEdit) {
+    const fixture = propRecordAt(event);
+    if (isLamp(fixture)) {
+      openFixturePanel(fixture);
+      return;
+    }
+    closeFixturePanel();
+  }
   // Placed props are furniture until the Edit button says otherwise: a
   // click on a tree while composing the camera must never yank the tree
   // (Param: "when an object is placed we can only click the edit mode to
@@ -12418,6 +12652,13 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && state.carrying) {
     cancelCarry();
+    return;
+  }
+  // The fixture's own card closes BEFORE the drawer: it is the nearer
+  // thing on the screen, and closing the drawer under an open card
+  // would leave the card floating over nothing he asked for.
+  if (event.key === "Escape" && fixturePanelFor) {
+    closeFixturePanel();
     return;
   }
   if (event.key === "Escape" && shelfKind) {
@@ -14984,6 +15225,7 @@ async function recordAnimation() {
   // which of the three is eating it rather than leaving us to reason.
   const spent = { render: 0, encode: 0, upload: 0 };
   const began = performance.now();
+  closeFixturePanel();      // an overlay is not part of the take
   state.recording = true;   // resize() must skip while this is set
   state.recordStop = false;
   paintRecordButton();
@@ -15450,6 +15692,9 @@ function removePropRecords(records) {
   // A lamp leaving changes what the Lights row is talking about, and it
   // may not have been the selected one (which would have said so above).
   if (lamps) syncLightControls();
+  // And it takes its own card with it rather than leaving one hanging
+  // over the space where it stood.
+  if (gone.has(fixturePanelFor)) closeFixturePanel();
   saveProps();
   // The drawer is a picture of state.props, so a prop leaving has to
   // reach it: deleting one in the viewport used to leave its tile behind
@@ -15528,6 +15773,10 @@ function frame(now) {
     playingFrameCount += 1;
     if (playingFrameCount % 15 === 0) updateHud();
   }
+  // The fixture's own card rides its fixture across the screen, and
+  // closes itself if the fixture has gone (a delete, a scene, a
+  // reload). One projection a frame, and only while it is open.
+  if (fixturePanelFor) placeFixturePanel();
   // Playing or scrubbed, the graphs follow the clock from here, never
   // from applyTimeline, which stays pure in t.
   tickLiveGraphs(false);

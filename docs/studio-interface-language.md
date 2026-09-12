@@ -245,6 +245,17 @@ state, not an instruction, once there is state to report: "18 placed,
   rather than a clean miss. Overlays go in `scene` with a no-op
   `raycast`.
 - Anything drawn over the viewport hides itself during a take.
+- **Hiding a thing must never stop it being clicked.** Param asked for
+  a fixture whose body is not drawn but whose light still shines, and
+  said in the same breath that he must still be able to click it where
+  it stands. `Object3D.visible = false` would take it out of the
+  raycast along with the picture, and an object that cannot be clicked
+  again is an object he has lost. Hide the MATERIAL instead:
+  three's Raycaster tests neither flag, so the renderer skips it and
+  `propRecordAt` still finds it, and the shadow pass renders a mesh
+  only `else if (material.visible)`, so the shadow goes with the body.
+  The rule generalises: anything hidden stays selectable, by the
+  viewport and by the Layers tile both.
 - `renderer.info.autoReset` stays off, with a per-frame reset. Left on it
   clears the counters on every render call, and the composer ends a frame
   with a fullscreen copy pass, so a reading taken afterwards reports that
@@ -282,7 +293,7 @@ reading "0.80 to 1.30".
 Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
-atmosphere's nine dials, so the count is now **48 of 54**: 45 visible
+atmosphere's nine dials, so the count is now **55 of 61**: 45 visible
 dials, every one of them in the language, out of 51 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
@@ -348,7 +359,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 54 sliders. Since then: `site-
+The inventory of section 10 is now 61 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, and the
@@ -509,3 +520,53 @@ fixture, or any spot in the scene when nothing is selected. A sphere
 never offers an aperture, and the four never reach a sphere's record
 either (`SPOT_FIELDS`), because a fixture carrying a setting it can
 never use carries it through the layout and every saved scene for ever.
+
+**A panel beside the thing it tunes.** Param: "I have an idea only in
+edit mode we can move them around, but if we click them when not in
+edit mode, then a translucent setting pops up next to it where we can
+control the sliders and options for each type of light, then when we
+click anywhere not on the light or the menu it disappears."
+
+`#fixture-panel` is the first of these, and the rules it sets are the
+rules the next one follows.
+
+- **It belongs to ONE object.** Every control writes to the record the
+  card is standing beside, never to the selection and never to all of
+  them. That is the whole difference between it and the drawer, and
+  the drawer is re-synced on every write so the two can never disagree
+  about the fixture they are both showing.
+- **It is the same language inside.** An id-carrying `.dial-block`,
+  four parts to every control, readings named `<slider-id>-value`, a
+  `title` on each one in Param's own terms, themed tokens only.
+- **It shows only what applies.** The spot's four rows are hidden for
+  every other kind, and Length is hidden where stretching the body
+  would not move the light (`fixtureStretches`: a fixture whose light
+  is laid on its faces). A control that cannot do anything here is not
+  shown dead, it is not shown.
+- **It opens and closes by his sentence.** Out of edit mode a left
+  click on the fixture opens it; a click on anything that is not the
+  fixture and not the card closes it, in the viewport and out of it;
+  Escape closes it BEFORE the drawer's Escape, because it is the
+  nearer thing on the screen. The outside-click listener is in the
+  BUBBLE phase, so the scatter tools' capture-phase handler, which
+  takes the press first and stops it, is untouched. In edit mode the
+  click still picks the fixture up and the card never opens.
+- **It follows its object and dies with it.** One projection a frame
+  while it is open, kept whole inside the window, and closed the
+  moment its object leaves `propsGroup` (a delete, a scene, a study
+  reload). The test is the object's own parent, not a walk of
+  `state.props`, which on a scattered field would be tens of thousands
+  of comparisons a frame.
+- **It is never in a picture.** Both captures read the canvas back, so
+  no DOM overlay could reach the pixels anyway, but it is closed
+  outright before a plate and before a take: an overlay left up over a
+  take is a thing he then has to notice. It sits at the graphs' own
+  height (z 11) and after them in the document, so it paints over them
+  and under the stilling cover (12), the stats tile (15) and the data
+  sheet (20).
+
+One thing found while writing it, and left alone: `body.recording
+#stats-overlay { display: none }` is inert, because nothing puts
+`recording` on the body -- the class only ever goes on the two record
+buttons. The readout stays out of takes only because a take is read
+back off the canvas. Worth fixing on its own day, not on this one.

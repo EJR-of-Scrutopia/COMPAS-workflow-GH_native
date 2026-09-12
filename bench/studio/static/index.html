@@ -198,7 +198,7 @@
     <div id="lights-panel" class="hidden">
       <div id="lights-kinds" class="tile-grid"></div>
       <div class="dial-block" id="lights-controls">
-        <label title="How much light the fixture gives, in the lumens printed on a lamp's box"><span>Output</span>
+        <label title="How much light the fixture gives, in the lumens printed on the box"><span>Output</span>
           <input id="lamp-lumens" type="range" min="0" max="20000" step="50" value="4000">
           <b id="lamp-lumens-value">4000</b><em>lm</em></label>
         <label title="Candlelight at one end of the dial, overcast noon at the other"><span>Warmth</span>
@@ -293,6 +293,58 @@
   <div id="graphs-notes"></div>
   <!-- Tucks the column to the side and brings it back, remembered. -->
   <button id="graphs-collapse" title="Tuck the graphs to the side">&#8249;</button>
+</div>
+<!-- THE PANEL BESIDE THE LIGHT. Param, 2026-09-12: "I have an idea only
+     in edit mode we can move them around, but if we click them when not
+     in edit mode, then a translucent setting pops up next to it where
+     we can control the sliders and options for each type of light, then
+     when we click anywhere not on the light or the menu it disappears."
+
+     So: out of edit mode a left click on a fixture opens this beside it
+     on the screen, holding THAT fixture's own controls and nothing
+     else, and every write goes to that fixture alone. A click anywhere
+     that is not the fixture and not this panel closes it, and so does
+     Escape, before the drawer's own Escape. In edit mode a click still
+     picks the fixture up as it always did and this never opens.
+
+     It sits at the graphs' own height and after them in the document,
+     so it paints over them; it is closed outright for a plate or a
+     take, so it can never be in a picture. -->
+<div id="fixture-panel" class="hidden">
+  <div id="fixture-name">Fixture</div>
+  <div class="dial-block" id="fixture-dials">
+    <label title="How much light this fixture gives, in the lumens printed on the box"><span>Output</span>
+      <input id="fixture-lumens" type="range" min="0" max="20000" step="50" value="4000">
+      <b id="fixture-lumens-value">4000</b><em>lm</em></label>
+    <label title="Candlelight at one end of the dial, overcast noon at the other"><span>Warmth</span>
+      <input id="fixture-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
+      <b id="fixture-kelvin-value">3000</b><em>K</em></label>
+    <label title="A gel held over this fixture's own warmth: white is no gel at all"><span>Colour</span>
+      <input id="fixture-tint" type="color" value="#ffffff">
+      <b id="fixture-tint-value">#ffffff</b><em>gel</em></label>
+    <label title="How big this fixture is, all three axes together"><span>Size</span>
+      <input id="fixture-size" type="range" min="0.1" max="6" step="0.05" value="1">
+      <b id="fixture-size-value">1.00</b><em>x</em></label>
+    <label id="fixture-length-row" title="Stretches the long axis alone, which is what makes a strip a strip"><span>Length</span>
+      <input id="fixture-length" type="range" min="0.1" max="12" step="0.1" value="1">
+      <b id="fixture-length-value">1.0</b><em>x</em></label>
+    <label title="Stop drawing this fixture's body: its light does not change, and you can still click it where it stands or pick it from the Layers tile"><span>Invisible</span>
+      <input id="fixture-invisible" type="checkbox">
+      <b id="fixture-invisible-value">no</b><em></em></label>
+    <label class="fixture-spot hidden" title="How wide the cone opens, edge to edge: a narrow beam picks out one voussoir, a wide one washes a bay"><span>Aperture</span>
+      <input id="fixture-aperture" type="range" min="5" max="150" step="1" value="45">
+      <b id="fixture-aperture-value">45</b><em>&#176;</em></label>
+    <label class="fixture-spot hidden" title="How soft the edge of the pool is: nought a cut edge, a hundred all falloff"><span>Softness</span>
+      <input id="fixture-softness" type="range" min="0" max="100" step="1" value="35">
+      <b id="fixture-softness-value">35</b><em>%</em></label>
+    <label class="fixture-spot hidden" title="How far the beam carries before it is gone; nought means no limit, the way a real beam behaves"><span>Reach</span>
+      <input id="fixture-reach" type="range" data-unit="1" min="0" max="60" step="0.5" value="0">
+      <b id="fixture-reach-value">0</b><em>m</em></label>
+    <label class="fixture-spot hidden" title="Let the beam be interrupted: a spot with nothing to stop it reads as a glow rather than a beam"><span>Shadow</span>
+      <input id="fixture-shadow" type="checkbox" checked>
+      <b id="fixture-shadow-value">on</b><em></em></label>
+  </div>
+  <div id="fixture-readout">click anywhere else to close</div>
 </div>
 <div id="legend" class="hidden">
   <div id="legend-title"></div>

@@ -1502,6 +1502,164 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
     assert 'writeLamps("shadow", !!e.target.checked);' in js
 
 
+def test_clicking_a_fixture_out_of_edit_mode_opens_its_own_panel():
+    """Param, 2026-09-12: "I have an idea only in edit mode we can move
+    them around, but if we click them when not in edit mode, then a
+    translucent setting pops up next to it where we can control the
+    sliders and options for each type of light, then when we click
+    anywhere not on the light or the menu it disappears."
+
+    His idea, exactly as he put it. Out of edit mode a left click on a
+    fixture opens a card beside it holding THAT fixture's own controls
+    and nothing else, and every write goes to that fixture alone, which
+    is the whole difference between this and the Lights drawer. A click
+    on anything that is not the fixture and not the card closes it, and
+    so does Escape, before the drawer's Escape. In edit mode the click
+    still picks the fixture up, and the card never opens."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(
+        encoding="utf-8")
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+
+    # THE GESTURE. Out of edit mode only, and a click on anything else
+    # in the viewport closes it: the two halves of his one sentence.
+    press = js[js.index('canvas.addEventListener("pointerdown", (event) => {'):]
+    press = press[:press.index('canvas.addEventListener("pointermove", (event) => {')]
+    opening = press.index("if (!state.propEdit) {")
+    picking = press.index("const record = state.propEdit ? propRecordAt(event) : null;")
+    assert opening < picking, (
+        "the card is decided before the edit-mode pick, or the two "
+        "would fight over the same click")
+    assert "if (isLamp(fixture)) {" in press
+    assert "openFixturePanel(fixture);" in press
+    assert "closeFixturePanel();" in press
+    # In edit mode neither branch runs: the click still carries the prop.
+    assert "carryExistingProp(record);" in press
+
+    # ESCAPE, before the drawer's. The scatter tools keep their
+    # capture-phase handler: nothing here is in the capture phase.
+    keys = js[js.index('window.addEventListener("keydown", (event) => {'):]
+    keys = keys[:keys.index("\n});")]
+    card = keys.index('if (event.key === "Escape" && fixturePanelFor) {')
+    drawer = keys.index('if (event.key === "Escape" && shelfKind) {')
+    assert card < drawer, (
+        "the nearer thing on the screen closes first, or Escape would "
+        "take the drawer out from under an open card")
+    outside = js[js.index('document.addEventListener("pointerdown", (event) => {'):]
+    outside = outside[:outside.index("\n});") + 4]
+    assert "if (event.target === canvas) return;" in outside, (
+        "the viewport decides its own clicks; without this the document "
+        "listener would close the card in the same gesture that opened it")
+    assert 'event.target.closest("#fixture-panel")' in outside
+    assert outside.rstrip().endswith("});") and "}, true);" not in outside, (
+        "BUBBLE phase, so the scatter tools' capture-phase handler, "
+        "which takes the press first and stops it, is untouched")
+
+    # ONE FIXTURE. Not the selection, not all of them.
+    write = _js_function(js, "function writeFixture(field, value)")
+    assert "const record = fixturePanelFor;" in write
+    assert "record[field] = value;" in write and "applyPropLight(record);" in write
+    assert "lampTargets" not in write, (
+        "the drawer writes to the selection or to every fixture; this "
+        "card writes to the one it is standing beside")
+    assert "syncLightControls();" in write, (
+        "and the drawer may be open on the same fixture: two controls "
+        "over one piece of state that disagree is worse than one")
+    assert "saveProps();" in write
+    sized = _js_function(js, "function writeFixtureSize()")
+    assert "const record = fixturePanelFor;" in sized
+    assert "applyPropSize(record);" in sized
+    assert "lightsUnderTheDials" not in sized
+
+    # IT FOLLOWS ITS FIXTURE, and closes itself when the fixture goes.
+    place = _js_function(js, "function placeFixturePanel()")
+    assert "fixtureAnchor.project(camera);" in place
+    assert "if (!record.object || !record.object.parent) { closeFixturePanel(); return; }" in place, (
+        "a delete, a scene or a study reload all take the object out of "
+        "propsGroup, and the parent test is O(1) where walking "
+        "state.props would be a walk of a scattered field every frame")
+    # frame() is the LAST top-level function in the file, so it is sliced
+    # by hand: _js_function looks for the next one and finds none.
+    loop = js[js.index("function frame(now) {"):]
+    loop = loop[:loop.index("\n}")]
+    assert "if (fixturePanelFor) placeFixturePanel();" in loop, (
+        "it rides the camera, and only while it is open")
+    assert "if (gone.has(fixturePanelFor)) closeFixturePanel();" in _js_function(
+        js, "function removePropRecords(records)")
+
+    # NEVER IN A PICTURE. Both captures read the canvas back, so a DOM
+    # overlay could not reach the pixels anyway; it is closed outright
+    # all the same, because an overlay left up over a take is a thing he
+    # then has to notice.
+    assert "closeFixturePanel();" in _js_function(js, "async function renderStill()")
+    assert "closeFixturePanel();      // an overlay is not part of the take" in js
+    assert "body.stilling #fixture-panel { display: none; }" in css
+
+    # WHERE IT SITS: the graphs' own height and ground, written after
+    # them so it paints over them, under the stilling cover and the
+    # sheet. Themed tokens only, no hex of its own.
+    block = css[css.index("#fixture-panel { position: fixed;"):]
+    block = block[block.index("{") + 1:block.index("}")]
+    assert "z-index: 11;" in block, "the graphs' own height"
+    assert "background: var(--scrim);" in block
+    assert "backdrop-filter: blur(10px);" in block
+    assert "border: 1px solid var(--line);" in block
+    assert "#" not in block, "no hex outside :root"
+    # ONE DIAL A ROW. The eight-column default puts two side by side,
+    # which a 256 px card has no room for: photographed on the first
+    # run, Warmth showed a sliver of track and no reading while Size,
+    # Invisible, Softness and Shadow were cut off past the right edge.
+    assert "#fixture-dials { grid-template-columns: auto 1fr auto auto; }" in css, (
+        "the four-column form is the other shape the language allows, "
+        "and it is the one a narrow card needs")
+    assert html.index('<div id="graphs-panel"') < html.index('<div id="fixture-panel"'), (
+        "after the graphs in the document, so at equal z it paints over "
+        "them where the two meet")
+
+    # THE CONTROLS, in the language: an id-carrying .dial-block, four
+    # parts each, readings named for their dial, a title on every one.
+    panel = html[html.index('<div id="fixture-panel"'):]
+    panel = panel[:panel.index('<div id="legend"')]
+    assert '<div class="dial-block" id="fixture-dials">' in panel
+    for control in ("fixture-lumens", "fixture-kelvin", "fixture-tint",
+                    "fixture-size", "fixture-length", "fixture-invisible",
+                    "fixture-aperture", "fixture-softness", "fixture-reach",
+                    "fixture-shadow"):
+        assert 'id="%s"' % control in panel, control
+        assert '<b id="%s-value">' % control in panel, control
+    import re as _re
+    for label in _re.findall(r"<label[^>]*>", panel):
+        assert "title=" in label, "every control says what it does: " + label
+    # AND .hidden HAS TO BEAT display: contents, the same trap #panel
+    # and #shelf each carry a line for. Photographed on the first run:
+    # the spot's four rows and Length were all marked hidden on a
+    # sphere's card and all five were still on the screen.
+    assert "#fixture-panel .hidden { display: none !important; }" in css, (
+        "a bare .hidden is one class; .dial-block label is a class and "
+        "an element, and it wins")
+    assert panel.count('class="fixture-spot hidden"') == 4, (
+        "the spot's four are hidden for every other kind")
+    assert 'id="fixture-length-row"' in panel, (
+        "Length is hidden where stretching the body does not move the "
+        "light")
+    sync = _js_function(js, "function syncFixturePanel()")
+    assert 'lengthRow.classList.toggle("hidden", !fixtureStretches(record));' in sync
+    stretch = _js_function(js, "function fixtureStretches(record)")
+    assert "child.isRectAreaLight" in stretch, (
+        "a sphere's point light and a spot's cone do not move when the "
+        "body is stretched, so the dial would do nothing there")
+    assert 'row.classList.toggle("hidden", !beamed);' in sync
+    assert "const name = document.getElementById(\"fixture-name\");" in sync
+    assert "name.textContent = fixtureKindLabel(record);" in sync, (
+        "it says which kind it is standing beside")
+    # "fixture", not "lamp", everywhere he can read it.
+    for word in ("Lamp", "lamp"):
+        assert word not in panel, (
+            "the user-facing word is fixture: " + word)
+
+
 def test_a_slider_that_rests_at_zero_declares_its_unit():
     """The typable reading works out its unit by dividing what is shown by
     what the slider holds -- which is exactly the one thing a slider
