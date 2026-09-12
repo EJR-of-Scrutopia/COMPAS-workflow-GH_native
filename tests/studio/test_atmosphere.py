@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[2]
 STATIC = REPO / "bench" / "studio" / "static"
 ATMOSPHERE = STATIC / "atmosphere.js"
 FIELDS = STATIC / "fields.js"
+THREE_JS = STATIC / "vendor" / "three.module.js"
 STUDIO_JS = STATIC / "studio.js"
 INDEX = STATIC / "index.html"
 
@@ -31,7 +32,8 @@ def _run_node(tmp_path, source):
     script = tmp_path / "check.mjs"
     script.write_text(
         source.replace("%ATMOSPHERE%", json.dumps(ATMOSPHERE.as_uri()))
-        .replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        .replace("%FIELDS%", json.dumps(FIELDS.as_uri()))
+        .replace("%THREE%", json.dumps(THREE_JS.as_uri())),
         encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
@@ -161,7 +163,8 @@ def test_the_height_fog_integral_meets_its_limits_and_brute_force(tmp_path):
 # over seeded random rays, so the two cannot quietly drift apart.
 GLSL_TWIN_CHECK = textwrap.dedent(r"""
     import {
-      ATMOSPHERE_SKY_GLSL, layerOpticalDepth, atmosphereOpticalDepth, atmosphereAmounts,
+      ATMOSPHERE_SKY_GLSL, FOG_CHUNKS, layerOpticalDepth, atmosphereOpticalDepth,
+      atmosphereAmounts,
     } from %ATMOSPHERE%;
 
     function expect(condition, message) {
@@ -274,6 +277,98 @@ GLSL_TWIN_CHECK = textwrap.dedent(r"""
     expect(taylor >= 20, "the Taylor branch was reached " + taylor + " times");
     expect(pastEnd >= 20, "a start past the ray's end was reached " + pastEnd + " times");
     expect(capped >= 20, "the exponent cap was reached " + capped + " times");
+
+    // ---------- the fog chunks ----------
+    // That GLSL reaches every fogged material through four chunk
+    // overrides, and they were held as text alone: dropping
+    // ATMOSPHERE_GLSL from fog_pars_fragment, so that atmosphereApply is
+    // declared nowhere and every fogged program fails to compile, left
+    // the whole file green. So the pair is read, assembled and run.
+    const DEFINED = new Set(["USE_FOG"]);
+    function preprocess(chunk) {
+      const out = [], stack = [];
+      for (const line of chunk.split("\n")) {
+        const word = line.trim();
+        if (word.startsWith("#ifdef ")) { stack.push(DEFINED.has(word.slice(7).trim())); continue; }
+        if (word === "#else") { stack.push(!stack.pop()); continue; }
+        if (word === "#endif") { stack.pop(); continue; }
+        if (stack.every(Boolean)) out.push(line);
+      }
+      expect(stack.length === 0, "the chunk's #ifdef branches balance");
+      return out.join("\n");
+    }
+    const pars = preprocess(FOG_CHUNKS.fog_pars_fragment);
+    const statements = preprocess(FOG_CHUNKS.fog_fragment);
+    // Every name the statements use is their own, three's, or declared
+    // beside them by fog_pars_fragment.
+    const GIVEN = new Set(["float", "vec2", "vec3", "vec4", "gl_FragColor",
+      "viewMatrix", "mix", "smoothstep", "exp", "length", "max"]);
+    const own = new Set([...statements.matchAll(/\b(?:float|vec[234])\s+(\w+)\s*=/g)]
+      .map((match) => match[1]));
+    const declared = new Set(pars.match(/[A-Za-z_]\w*/g));
+    for (const name of statements.match(/(?<![\w.])[A-Za-z_]\w*/g)) {
+      if (GIVEN.has(name) || own.has(name)) continue;
+      expect(declared.has(name), name + " is declared where fog_fragment names it");
+    }
+    // And the two are translated and run together, so the arithmetic is
+    // exercised rather than the text: an unnormalised ray would scale
+    // the sun's lobe and the height term by the distance.
+    function translateFragment(glsl) {
+      let js = glsl.replace(/\( vec4\( vFogView, 0\.0 \) \* viewMatrix \)\.xyz/g,
+        "glslWorld( vFogView )");
+      js = js.replace(/gl_FragColor\.rgb/g, "pixel");
+      js = js.replace(/\b(?:float|vec3)\s+(\w+)\s*=/g, "let $1 =");
+      js = js.replace(/(?<![\w.])(exp|max)\s*\(/g, "Math.$1(");
+      js = js.replace(/(?<![\w.])length\s*\(/g, "glslLength(");
+      js = js.replace(/(?<![\w.])mix\s*\(/g, "glslMix(");
+      js = js.replace(/(?<![\w.])smoothstep\s*\(/g, "glslStep(");
+      js = js.replace(/(\w+) \/ Math\.max\( (\w+), 1e-6 \)/g,
+        "glslScale( $1, 1.0 / Math.max( $2, 1e-6 ) )");
+      const left = js.match(/\b(float|vec2|vec3|vec4|uniform|varying|mix|clamp)\b/);
+      expect(!left, "the fragment translation left GLSL behind: " + (left && left[0]));
+      return js;
+    }
+    const HELPERS = ["glslVec2", "glslDot", "glslWorld", "glslLength", "glslMix",
+      "glslStep", "glslScale"];
+    const fogged = new Function(...UNIFORMS, "fogColor", "fogNear", "fogFar", ...HELPERS,
+      translate(pars.split("\n").filter((line) => !/^\s*varying\s/.test(line)).join("\n"))
+      + "\nreturn function fogFragment( pixel, vFogView, vFogDepth ) {\n"
+      + translateFragment(statements) + "\n  return pixel;\n};");
+    const glslWorld = (v) => v;     // the ray a camera with no rotation gives
+    const glslLength = (v) => Math.hypot(v.x, v.y, v.z);
+    const glslMix = (a, b, t) => a * (1 - t) + b * t;
+    const glslStep = (low, high, v) => {
+      const t = Math.min(1, Math.max(0, (v - low) / (high - low)));
+      return t * t * (3 - 2 * t);
+    };
+    const glslScale = (v, s) => ({ x: v.x * s, y: v.y * s, z: v.z * s });
+    const view = { x: 12, y: -5, z: -30 };
+    const fogLayers = { density: [0.004, 0.03], falloff: [1 / 40, 1 / 1.5], base: 0.5,
+      start: 5, maxOpacity: 0.9, sunStart: 2, sunExponent: 8 };
+    const eyeZ = 1.7, fogNear = 10, fogFar = 400, fogDepth = 30;
+    const rayLength = glslLength(view);
+    const along = glslScale(view, 1 / rayLength);
+    const fogSun = unit(0.35, -0.15, -0.9);   // near enough the ray to light the lobe
+    const fogColour = [0.4, 0.45, 0.5], surface = [0.8, 0.2, 0.1], lit = [2.2, 1.75, 1.2];
+    const [fogVeil, fogGlow] = atmosphereAmounts(fogLayers, eyeZ, along.z, rayLength);
+    const fogLobe = Math.pow(Math.max(glslDot(along, fogSun), 0), fogLayers.sunExponent);
+    expect(fogVeil > 0.01 && fogGlow > 0.01 && fogLobe > 0.01,
+      "the case has fog and a lobe in it to get wrong");
+    for (let channel = 0; channel < 3; channel++) {
+      const fragment = fogged(
+        { x: fogLayers.density[0], y: fogLayers.density[1] },
+        { x: fogLayers.falloff[0], y: fogLayers.falloff[1] },
+        fogLayers.base, fogLayers.start, fogLayers.maxOpacity, fogLayers.sunStart,
+        fogLayers.sunExponent, lit[channel], fogSun, 0, 2000, { z: eyeZ },
+        fogColour[channel], fogNear, fogFar,
+        glslVec2, glslDot, glslWorld, glslLength, glslMix, glslStep, glslScale);
+      const linear = glslMix(surface[channel], fogColour[channel],
+        glslStep(fogNear, fogFar, fogDepth));
+      const want = linear * (1 - fogVeil) + fogColour[channel] * fogVeil
+        + lit[channel] * fogLobe * fogGlow;
+      expect(near(fragment(surface[channel], view, fogDepth), want),
+        "the assembled fog chunks, channel " + channel);
+    }
     console.log("ok " + JSON.stringify({ taylor, pastEnd, capped }));
 """)
 
@@ -528,3 +623,160 @@ def test_the_atmosphere_lives_in_the_skies_drawer():
     sync = _body(js, "function syncAtmosphereControls()")
     assert 'label.classList.toggle("hidden", !on);' in sync
     assert 'document.getElementById(id + "-value").textContent' in sync
+
+
+UNIFORM_CHECK = textwrap.dedent(r"""
+    import {
+      createAtmosphere, writeAtmosphere, atmosphereFromPreset, atmosphereLayers,
+      ATMOSPHERE_SKY_GLSL,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    // As much of three as the uniforms ask for.
+    class V2 { constructor(x, y) { this.x = x; this.y = y; }
+      set(x, y) { this.x = x; this.y = y; return this; } }
+    class V3 { constructor(x, y, z) { this.x = x; this.y = y; this.z = z; } }
+    class C { constructor(r, g, b) { this.r = r; this.g = g; this.b = b; } }
+    const atmosphere = createAtmosphere({ Vector2: V2, Vector3: V3, Color: C });
+    // The uniform table and the GLSL are one list, both ways round.
+    const named = [...ATMOSPHERE_SKY_GLSL.matchAll(/uniform\s+\w+\s+(\w+);/g)]
+      .map((match) => match[1]);
+    expect(named.length === 11, "the GLSL declares eleven uniforms, not " + named.length);
+    for (const name of named) {
+      expect(Object.prototype.hasOwnProperty.call(atmosphere.uniforms, name),
+        name + " is declared by the GLSL and held in the uniform bag");
+    }
+    for (const name of Object.keys(atmosphere.uniforms)) {
+      expect(named.includes(name), name + " is in the bag and declared in no GLSL");
+    }
+    // Injection is the only road from the bag to a program.
+    const shader = { uniforms: { fogColor: { value: 7 } } };
+    atmosphere.inject(shader);
+    for (const name of named) {
+      expect(shader.uniforms[name] === atmosphere.uniforms[name],
+        name + " reaches the shader, and by reference");
+    }
+    expect(shader.uniforms.fogColor.value === 7, "three's own uniforms are left alone");
+    // By reference, so one write moves every program that took them.
+    writeAtmosphere(atmosphere.uniforms, atmosphereLayers(atmosphereFromPreset("haze"), 0));
+    expect(shader.uniforms.atmoMaxOpacity.value === 0.8,
+      "a write after the injection reaches the shader too");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_every_uniform_the_glsl_names_reaches_a_fogged_program(tmp_path):
+    """inject is the only path by which atmoDensity and the rest reach a
+    fogged program: the prototype's onBeforeCompile calls it for every
+    material, and the outline ribbon calls it itself. Making it a no-op
+    left every fogged program compiling with three's defaults, the
+    height fog silently doing nothing in every mode with no error, and
+    the suite green: no test mentioned createAtmosphere at all."""
+
+    assert "ok" in _run_node(tmp_path, UNIFORM_CHECK)
+
+
+WRITE_CHECK = textwrap.dedent(r"""
+    import {
+      writeAtmosphere, atmosphereFromPreset, atmosphereLayers, ATMOSPHERE_PRESETS,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const bag = () => ({
+      atmoDensity: { value: { x: -1, y: -1, set(x, y) { this.x = x; this.y = y; } } },
+      atmoFalloff: { value: { x: -1, y: -1, set(x, y) { this.x = x; this.y = y; } } },
+      atmoBase: { value: -1 }, atmoStart: { value: -1 }, atmoMaxOpacity: { value: -1 },
+      atmoSunStart: { value: -1 }, atmoSunExponent: { value: -1 },
+    });
+    const layers = atmosphereLayers(atmosphereFromPreset("valley-fog"), 3);
+    const uniforms = bag();
+    writeAtmosphere(uniforms, layers);
+    // Field by field, by name. The main layer is x and the ground mist
+    // is y, or the Ground mist dial drives the main layer and Density
+    // drives the mist, which no test would have noticed.
+    expect(uniforms.atmoDensity.value.x === layers.density[0], "density x is the main layer");
+    expect(uniforms.atmoDensity.value.y === layers.density[1], "density y is the mist");
+    expect(layers.density[0] !== layers.density[1], "and this preset tells them apart");
+    expect(uniforms.atmoFalloff.value.x === layers.falloff[0], "falloff x is the main layer");
+    expect(uniforms.atmoFalloff.value.y === layers.falloff[1], "falloff y is the mist");
+    expect(layers.falloff[0] !== layers.falloff[1], "and these two differ as well");
+    expect(uniforms.atmoBase.value === layers.base, "the base, the floor included");
+    expect(layers.base === 3 + ATMOSPHERE_PRESETS["valley-fog"].base, "the floor lifts it");
+    expect(uniforms.atmoStart.value === layers.start, "the start");
+    expect(uniforms.atmoMaxOpacity.value === layers.maxOpacity, "the cap");
+    expect(layers.maxOpacity < 1, "a cap that a pinned 1 would pass through");
+    expect(uniforms.atmoSunStart.value === layers.sunStart, "the glow's own start");
+    expect(uniforms.atmoSunExponent.value === layers.sunExponent, "the lobe");
+    // None, a plan, an elevation: null switches the fog off, which is
+    // the density and the cap at zero and nothing else.
+    const off = bag();
+    writeAtmosphere(off, atmosphereLayers(atmosphereFromPreset("haze"), 0));
+    writeAtmosphere(off, null);
+    expect(off.atmoDensity.value.x === 0 && off.atmoDensity.value.y === 0,
+      "null zeroes both densities");
+    expect(off.atmoMaxOpacity.value === 0, "and the cap, so nothing can be hidden");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_dials_reach_the_uniforms_and_none_switches_them_off(tmp_path):
+    """writeAtmosphere is the one writer of the uniforms the shader
+    reads, called on every dial tick, every mode change and every switch
+    to a plan or an elevation, and no test named it. Deleting the two
+    zeroing lines left the last chosen fog standing over a plan;
+    swapping the two densities handed the Ground mist dial the main
+    layer; pinning the cap at 1 made Max opacity do nothing."""
+
+    assert "ok" in _run_node(tmp_path, WRITE_CHECK)
+
+
+INSTALL_CHECK = textwrap.dedent(r"""
+    import * as THREE from %THREE%;
+    import { installAtmosphere, FOG_CHUNKS } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const vendored = { fog_fragment: THREE.ShaderChunk.fog_fragment,
+      fog_vertex: THREE.ShaderChunk.fog_vertex };
+    expect(typeof vendored.fog_fragment === "string" && vendored.fog_fragment.length > 0,
+      "the vendored three still ships the fog chunks");
+    const stub = (chunks) => ({ ShaderChunk: { ...chunks }, Material: { prototype: {} } });
+    // The shape this replaces, as the vendored three writes it today.
+    let injected = 0;
+    const known = stub(vendored);
+    expect(installAtmosphere(known, () => { injected += 1; }) === true,
+      "the vendored chunks are the ones the override is written against");
+    // The loop really ran, and the prototype really hands its shader on.
+    for (const [name, source] of Object.entries(FOG_CHUNKS)) {
+      expect(known.ShaderChunk[name] === source, name + " was replaced");
+    }
+    expect(known.ShaderChunk.fog_fragment.includes("atmosphereApply("),
+      "the installed fog calls the atmosphere");
+    known.Material.prototype.onBeforeCompile({ uniforms: {} });
+    expect(injected === 1, "every material's shader goes through the injector");
+    // A three upgrade that moves the fog is loud, not quietly stock.
+    const moved = stub({ ...vendored, fog_fragment: vendored.fog_fragment.replace(
+      "smoothstep( fogNear, fogFar, vFogDepth )", "smoothstep( fogNear, fogFar, vDepth )") });
+    expect(installAtmosphere(moved, () => {}) === false, "an edited fog_fragment is unknown");
+    const gone = stub({ ...vendored, fog_vertex: "// moved somewhere else" });
+    expect(installAtmosphere(gone, () => {}) === false, "and so is an edited fog_vertex");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_a_moved_vendored_chunk_is_loud_rather_than_quietly_stock(tmp_path):
+    """installAtmosphere answers false when the vendored chunks no
+    longer have the shape it replaces, and studio.js raises the banner
+    on that answer. Nothing called it, so making the guard unconditional
+    left the next three upgrade shipping a page whose atmosphere dials
+    do nothing, with no banner and no diagnostics entry."""
+
+    assert "ok" in _run_node(tmp_path, INSTALL_CHECK)
