@@ -570,3 +570,94 @@ One thing found while writing it, and left alone: `body.recording
 `recording` on the body -- the class only ever goes on the two record
 buttons. The readout stays out of takes only because a take is read
 back off the canvas. Worth fixing on its own day, not on this one.
+
+
+## 13. Selection, the corner, and the slider's node, 2026-09-12
+
+A round about how the scene is TOUCHED, rather than about how it looks.
+Five rules join the language, and one is a reversal.
+
+**A slider has a node.** Until today every bare range input was the
+browser's own control -- on Chromium an accent-blue pill on a two-tone
+blue track, and the one loud thing in a page of greys. Param: "the
+sliders as with all sliders, matching with the grey slider not
+necessarily the blue. but we can take a nice feature from that with the
+circle node on the slider to indicate where it is, but change it to
+something more modern."
+
+What that control got right is the node: a mark saying where the value
+stands without reading the number, which section 3's underlined `.scrub`
+rows never had. So the node stays and the rest goes.
+
+| part | is |
+|---|---|
+| track | 3 px, `--well`, rounded |
+| travelled | the same bar in `--ink-3`, stopped at the value |
+| node | a 5 x 13 upright capsule in `--ink-2`, `--ink` under the pointer |
+
+An upright capsule, not a ball: a ball wide enough to grab covers the
+track it is marking. Nothing on a slider may use `--accent` -- the
+accent means selection, and a slider is not a selection.
+
+The travelled part needs the value in CSS, and a dozen handlers write a
+slider without dispatching an event -- a restore, a preset, a scene, a
+change of selection. Chasing them all is how the `.scrub` rows went
+stale before `repaintScrubs` existed; this is settled from the frame at
+6 Hz instead, and a memo makes it free (`settleRangeFills` writes only
+what actually moved). Measured: zero coloured pixels across a slider's
+whole box, the node at 0.737 of the travel for a value of 0.75.
+
+**A hover names what it is over.** Param: "i would like a bounding box
+with the object type and id so i can reference it in layers, that pops
+up when i hover over items with the mouse." A box round the prop and a
+small card reading its kind, its number and its layer -- "Beech #7 .
+Layer 2" -- and the same words on that prop's tile in the Layers drawer,
+which is what makes the number a reference rather than a label pointing
+at nothing.
+
+THE BOX IS AMBER (`0xd9a441`), never the selection's blue-grey
+(`0x93a6bb`). The pointer being over a thing is not the thing being
+selected, and one colour for both would say otherwise. Like every other
+helper in `propsGroup` it must answer no raycast: a line has a one metre
+default threshold, and the selection box hijacked clicks near its own
+edges once already.
+
+**A gathering is a selection.** Shift-clicking the layer tiles has
+filled `gatheredProps` for a long time, but nothing except two buttons
+ever read it, so four lit tiles behaved exactly like one selected prop.
+There is now one answer to "what is selected" -- `actingProps()`, the
+gathering when it holds more than one and the selected prop otherwise --
+and the outlines, the gumball, Delete and the undo all read it. One
+gumball stands at the middle of the members' feet and every reading
+pivots on that centre.
+
+**A mode you can leave without finding a button.** Two of the three Edit
+faces are gone, which reverses two of Param's own earlier requests --
+the tab-strip tile and the panel's button, both asked for by name. They
+went because what they were needed for no longer needs a mode: a double
+click gives any prop handles, and the hover badge answers Delete and the
+arrow keys. One face remains, in the Layers drawer, where props are
+chosen. Escape twice leaves the mode; once drops what is in hand.
+
+A REVERSAL IS WORTH WRITING DOWN. A control removed because the work it
+did moved elsewhere is a different thing from a control removed because
+it was wrong, and the next person to read this should be able to tell
+which happened.
+
+**The corner is for looking.** The overlay, graphs and fullscreen tiles
+moved out of the strip beside the drawers to the top left, because they
+are about looking at the scene rather than about the take. The two
+panels that shared that corner -- the data sheet and the graphs column
+-- open below them: a sheet that buried the very buttons it was opened
+from would be a worse fault than the one it fixes.
+
+**Stop is not Pause and not Restart.** A Stop button existed once and
+was removed for being those two together. This one undoes the whole
+excursion instead: the mode he was looking at, the clock he was at and
+where he was standing. Both faces stay disabled until a take has been
+entered, because with nothing captured there is nowhere to go back to.
+
+**What this round did not change.** No dial was added or removed, so
+section 10's census stands. The `body.recording #stats-overlay` rule
+noted at the end of section 12 is still inert, and still worth its own
+day.
