@@ -38,6 +38,9 @@ import {
   applyTiling, LATTICE_SCALE, BLEND_SHARPNESS, TILED_CHUNKS,
 } from "/static/tiling.js";
 import {
+  applyWind, windParameters, windUniformsFrom, adoptWind, WIND_DEFAULTS,
+} from "/static/wind.js";
+import {
   ATMOSPHERE_PRESETS, ATMOSPHERE_SKY_GLSL, ATMOSPHERE_LINEAR_OFF,
   atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
   atmospherePreviewPixels, createAtmosphere, installAtmosphere, writeAtmosphere,
@@ -182,6 +185,8 @@ const state = {
   // The atmosphere (atmosphere.js): a preset key and its dials. None until
   // he picks one, in every environment mode, so nothing changes unasked.
   atmosphere: atmosphereFromPreset("none"),
+  // Calm until he turns it up (wind.js), so nothing already made moves.
+  wind: { ...WIND_DEFAULTS },
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
   // The floor texture's own dials: per-axis scale multipliers over the
@@ -369,6 +374,52 @@ const EXPOSURE_GAIN = 1 / 0.6;
 // these up. Nothing is fogged at boot, so this line is early enough; it
 // sits up here so nothing that renders ever can come before it.
 const atmosphere = createAtmosphere(THREE);
+
+// ---------- the wind's shared air ----------
+// One set of uniform objects every swaying material holds by reference, the
+// prop's own and its shadow's alike, so one write moves both (wind.js says
+// why that is the whole of it). windTime runs with the live view while there
+// is any wind at all, stands still for a still, and is the take's own clock
+// in a take, frame by frame, so a take is reproducible.
+const windAir = {
+  windTime: { value: 0 },
+  windStrength: { value: 0 },
+  windGusts: { value: 0.5 },
+  windDirection: { value: new THREE.Vector2(1, 0) },
+};
+let windWarned = false;
+
+// The one onBeforeCompile every swaying material wears. A named function
+// shared by all of them, so three builds one program per variant and every
+// material keeps its own model's numbers (this.userData.windModel). It
+// calls the atmosphere's injector itself, because a material's own hook
+// shadows the one on the prototype.
+function windCompile(shader) {
+  atmosphere.inject(shader);
+  const reached = applyWind(shader, THREE.ShaderChunk,
+    Object.assign({}, windAir, this.userData.windModel));
+  if (!reached && !windWarned) {
+    windWarned = true;
+    reportProblem("the vendored vertex chunks no longer have the shape wind.js "
+      + "splices into; placed props will stand still in the wind until it is "
+      + "checked against three 0.185.0's project_vertex and worldpos_vertex");
+  }
+}
+
+// Every material that sways wears it the same way.
+function wearWind(material, windModel) {
+  material.userData.windModel = windModel;
+  material.onBeforeCompile = windCompile;
+  material.needsUpdate = true;
+  return material;
+}
+
+function applyWindState() {
+  const air = windUniformsFrom(state.wind);
+  windAir.windStrength.value = air.strength;
+  windAir.windGusts.value = air.gusts;
+  windAir.windDirection.value.set(air.direction[0], air.direction[1]);
+}
 if (!installAtmosphere(THREE, atmosphere.inject)) {
   reportProblem("the vendored fog chunks no longer have the shape the "
     + "atmosphere replaces; the height fog may be wrong until atmosphere.js "
@@ -668,6 +719,8 @@ function shaftsChanged() {
   put(shaftsPass.width); put(shaftsPass.height);
   put(shaftsRevision);
   put(renderer.info.render.triangles);
+  put(windAir.windTime.value);
+  put(windAir.windStrength.value);
   return changed;
 }
 
@@ -3565,10 +3618,34 @@ function propBatch(type, template) {
     [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z], 3));
   bounds.computeBoundingBox();
   const near = bakeTier(template, null);
+  // THE MODEL'S OWN WIND, from how tall it actually stands once scaled.
+  const model = windParameters(box.max.z - box.min.z);
+  const windModel = {
+    windHeight: { value: model.height },
+    windBend: { value: model.bend },
+    windFrequency: { value: model.frequency },
+  };
+  for (const part of near.parts) {
+    for (const material of [].concat(part.material)) {
+      if (!material || material.userData.windModel) continue;
+      wearWind(material, windModel);
+    }
+  }
+  // AND ITS SHADOW'S. three draws a mesh's shadow with its
+  // customDepthMaterial when it has one, copying each part's map and alpha
+  // test onto it per draw, so the leaf cards cut their shadows as they move.
+  // The distance material is the point lights' equivalent.
+  const shadowOf = (made) => wearWind(made, windModel);
   batch = {
     type, proxies: [], tiers: [near], dirty: true, bounds,
     radius: sphere.radius, centre: sphere.center.clone(),
     casts: near.parts.some((part) => part.castShadow),
+    windDepth: shadowOf(new THREE.MeshDepthMaterial()),
+    windDistance: shadowOf(new THREE.MeshDistanceMaterial()),
+    // How far a tip can travel at full strength, for the cull: a cluster
+    // whose sphere did not allow for it would pop out while still leaning
+    // into view. Scaled props reach a little further, hence the margin.
+    windReach: model.bend * model.height * 1.6,
     // Cut into a spatial grid the first time it is settled, and re-cut
     // whenever the props themselves change. The camera moving never
     // touches this.
@@ -3817,6 +3894,8 @@ function sizeCluster(batch, cluster) {
     mesh.instanceMatrix = cluster.buffer;
     mesh.castShadow = part.castShadow;
     mesh.receiveShadow = part.receiveShadow;
+    mesh.customDepthMaterial = batch.windDepth;
+    mesh.customDistanceMaterial = batch.windDistance;
     // Culled per CLUSTER below, not per mesh by three: a cluster's own
     // sphere is measured here and is the honest one, and three's would
     // be recomputed off an instance buffer it cannot see change.
@@ -3989,7 +4068,7 @@ function settleClusters(batch, reach, height) {
     // camera still throws its shadow across the frame.
     if (!batch.casts) {
       propCullSphere.center.set(x, y, z);
-      propCullSphere.radius = cluster.radius;
+      propCullSphere.radius = cluster.radius + batch.windReach * windAir.windStrength.value;
       if (!propCull.intersectsSphere(propCullSphere)) { showCluster(batch, cluster, -1); continue; }
     }
     let t = 0;
@@ -5902,6 +5981,7 @@ function collectScene(options) {
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
     atmosphere: { ...state.atmosphere },
+    wind: { ...state.wind },
     backgroundTone: +control("background-tone").value,
     brightness: state.brightness,
     contrast: state.contrast,
@@ -6107,6 +6187,10 @@ async function applyScene(record) {
   state.atmosphere = adoptAtmosphere(scene_.atmosphere);
   control("atmosphere-preset").value = state.atmosphere.preset;
   syncAtmosphereControls();
+  // A scene from before the wind is a calm.
+  state.wind = adoptWind(scene_.wind);
+  syncWindControls();
+  applyWindState();
   if (typeof scene_.backgroundTone === "number") {
     control("background-tone").value = scene_.backgroundTone;
   }
@@ -14114,6 +14198,33 @@ const ATMOSPHERE_DIALS = [
 // The dials show only while a preset is chosen (a dial that does nothing
 // is hidden, not shown dead), and wear the state's numbers, readings
 // included: a restored scene moves the numbers with the sliders.
+// ---------- the wind's dials ----------
+const WIND_DIALS = [
+  ["wind-strength", "strength", 0],
+  ["wind-from", "from", 0],
+  ["wind-gusts", "gusts", 0],
+];
+
+function syncWindControls() {
+  for (const [id, key, digits] of WIND_DIALS) {
+    const input = document.getElementById(id);
+    input.value = state.wind[key];
+    paintScrub(input);
+    document.getElementById(id + "-value").textContent = (+state.wind[key]).toFixed(digits);
+  }
+}
+
+for (const [id, key, digits] of WIND_DIALS) {
+  const input = document.getElementById(id);
+  // Every tick moves the air: the strength, the gusts and the direction are
+  // uniforms every swaying material holds by reference, so nothing recompiles.
+  input.addEventListener("input", () => {
+    state.wind[key] = +input.value;
+    document.getElementById(id + "-value").textContent = (+input.value).toFixed(digits);
+    applyWindState();
+  });
+}
+
 function syncAtmosphereControls() {
   const on = atmosphereIsOn(state.atmosphere);
   for (const label of document.querySelectorAll("#shelf-sky-settings .atmosphere-dial")) {
@@ -17595,6 +17706,7 @@ async function recordAnimation() {
   closeFixturePanel();      // an overlay is not part of the take
   state.recording = true;   // resize() must skip while this is set
   const restoreHelpers = hideHelpersForPicture();
+  const windWas = windAir.windTime.value;
   // One capture for the take, as it begins; none while it runs.
   captureReflections();
   state.recordStop = false;
@@ -17630,6 +17742,8 @@ async function recordAnimation() {
         if (state.environmentMode === "sky" && frameIndex % 30 === 0) regenerateEnvironment();
       }
       let at = performance.now();
+      // The take's own clock, so the same take blows the same way twice.
+      windAir.windTime.value = frameIndex / fps;
       applyTimeline(frameIndex * speed / fps);
       renderView();
       spent.render += performance.now() - at;
@@ -17703,6 +17817,7 @@ async function recordAnimation() {
     state.recordStop = false;
     paintRecordButton();
     restoreHelpers();
+    windAir.windTime.value = windWas;
     renderer.setPixelRatio(wasPixelRatio);
     composer.setPixelRatio(wasPixelRatio);
     setShaftResolution(false);
@@ -18331,6 +18446,9 @@ function frame(now) {
   // the canvas until the take ends.
   // Before the controls settle, so the orbit follows the eye this frame.
   flyCamera(delta);
+  // The wind's clock runs while there is wind, and never in renderView,
+  // which reads no clock; a still stands the air still for all its tiles.
+  if (!state.recording && windAir.windStrength.value > 0) windAir.windTime.value += delta;
   const turntableOwns = state.timeline
     && (state.timeline.playing || state.recording)
     && state.timeline.orbitBase && state.timeline.autoSpin
@@ -18481,6 +18599,9 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // pointer say it is over -- without driving the mouse.
   scatterKeepOut, keepOutClear, keepOutAdd, setHoveredProp, propBaseRadius, runScatter,
   captureReflections, reflectionWearers, get reflectionsTaken() { return reflectionsTaken; },
+  // The wind's air and the one render entry, so a probe can hold the wind's
+  // clock at an instant and photograph it, shadows included.
+  windAir, renderView,
   reflectionTarget,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,

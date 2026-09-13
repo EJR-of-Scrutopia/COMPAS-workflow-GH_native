@@ -293,7 +293,7 @@ reading "0.80 to 1.30".
 Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
-atmosphere's nine dials, and Light rays made them ten on 2026-09-13, so the count is now **56 of 62**: 45 visible
+atmosphere's nine dials, and Light rays made them ten on 2026-09-13, with Wind, Wind from and Gusts added the same day, so the count is now **59 of 65**: 45 visible
 dials, every one of them in the language, out of 51 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
@@ -359,7 +359,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 62 sliders. Since then: `site-
+The inventory of section 10 is now 65 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, and the
@@ -799,3 +799,23 @@ right-button drag turn the look about the eye, which does not move; the
 orbit point swings round in front of it at the distance it stood.
 Measured: five notches took a 29 mm lens to 47 mm with the eye where it
 was, and a 200 px drag turned the view 46 degrees right.
+
+**Wind, three dials beside the atmosphere.** Param: "add in wind and
+movement of the objects ... getting shadows right with that is the key to
+sell it." Wind (how hard, resting at nought, so nothing already made
+moves), Wind from (measured the way the sun's azimuth is) and Gusts (how
+much it comes and goes). Everything placed leans downwind by a share of
+its own height -- a blade of grass a fifth of itself, a thirty metre beech
+a fiftieth -- and sways about that lean at its own pace, out of step with
+its neighbours, while fronts of stronger air sweep across the site and the
+leaf and blade cards flutter. The feet never move.
+
+THE SHADOW SWAYS WITH THE THING. The movement is written once (wind.js)
+and worn by both the prop's materials and the depth material its shadow is
+drawn with, so a shadow cannot stand still under a moving tree. Measured
+with the ground cover cleared: ground in the beeches' shade changed
+between two instants of the wind only with the wind on and the shadow
+materials in place. A take blows on the take's own clock, so the same take
+blows the same way twice; a still stands the air still for all its tiles.
+While there is wind the light rays keep re-marching rather than settling,
+because the shadows they march through keep moving.
