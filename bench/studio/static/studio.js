@@ -3939,17 +3939,38 @@ function refreshGroupOutlines() {
   clearGroupOutlines();
   const acting = actingProps();
   if (acting.length < 2) return;
-  for (const record of acting.slice(0, GROUP_OUTLINE_CAP)) {
-    if (record === state.selectedProp || !record.object) continue;
-    const outline = new THREE.BoxHelper(record.object, 0x93a6bb);
-    outline.material.depthTest = false;
-    outline.material.fog = false;
-    outline.renderOrder = 2;
+  const outline = (helper) => {
+    helper.material.depthTest = false;
+    helper.material.fog = false;
+    helper.renderOrder = 2;
     // As with every other helper in propsGroup: a line raycast has a
     // one metre threshold and would hijack clicks near its edges.
-    outline.raycast = () => {};
-    propsGroup.add(outline);
-    groupOutlines.push(outline);
+    helper.raycast = () => {};
+    propsGroup.add(helper);
+    groupOutlines.push(helper);
+  };
+  // A WHOLE SCATTER IN THE SELECTION is drawn as the scatter's own box, in
+  // the selection's colour. Two hundred outlines round two hundred of its
+  // four hundred and forty-six trees said nothing about the rest.
+  const counted = new Map();   // planting -> how many of it are acting
+  for (const record of acting) {
+    const planting = plantingOf(record);
+    if (planting) counted.set(planting, (counted.get(planting) || 0) + 1);
+  }
+  const whole = new Set();
+  for (const [planting, n] of counted) {
+    const bounds = plantingBounds(planting);
+    if (!bounds || n < planting.members) continue;
+    whole.add(planting);
+    outline(new THREE.Box3Helper(bounds, new THREE.Color(0x93a6bb)));
+  }
+  let drawn = 0;
+  for (const record of acting) {
+    if (drawn >= GROUP_OUTLINE_CAP) break;
+    if (record === state.selectedProp || !record.object) continue;
+    if (whole.has(plantingOf(record))) continue;
+    outline(new THREE.BoxHelper(record.object, 0x93a6bb));
+    drawn += 1;
   }
 }
 
@@ -4201,6 +4222,7 @@ function setHoveredProp(record) {
   const badge = document.getElementById("hover-badge");
   if (!record || !record.object) {
     if (badge) badge.classList.add("hidden");
+    paintLayerPointer();
     return;
   }
   // A SCATTERED PROP ANSWERS FOR ITS RUN. One box round the whole
@@ -4236,6 +4258,7 @@ function setHoveredProp(record) {
     badge.classList.remove("hidden");
   }
   placeHoverBadge();
+  paintLayerPointer();
 }
 
 // The badge follows its prop as the camera moves, which is one
@@ -4725,6 +4748,7 @@ function selectProp(record) {
   // therefore needs the group to be settled first.
   refreshGroupOutlines();
   setPropGumball(record);
+  paintLayerChosen();
   // Selecting a lamp aims the Lights sliders at that lamp alone, so they
   // have to show its numbers rather than the last thing they showed.
   syncLightControls();
@@ -7746,6 +7770,11 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "layers");
   document.getElementById("layer-group").classList
     .toggle("hidden", shelfKind !== "layers");
+  document.getElementById("layer-delete-chosen").classList
+    .toggle("hidden", shelfKind !== "layers");
+  // The Layers grid is smaller tiles, like the fixtures: it is a list of
+  // things to find, not a catalogue to choose from.
+  grid.classList.toggle("layers", shelfKind === "layers");
   document.getElementById("layer-tabs").classList
     .toggle("hidden", shelfKind !== "layers");
   document.getElementById("scene-list").classList
@@ -7784,10 +7813,12 @@ function renderShelf() {
 // click to select and unselect several. The layers themselves are tabs
 // along the drawer's bottom edge; the open tab is where newly placed
 // props land, and its eye hides the whole set.
-// Above this many props on a layer the drawer stops drawing a picture of
-// each one. 40 is two screens of tiles, and forty offscreen renders is
-// already the most anyone should pay to look at a list.
-const LAYER_TILE_CAP = 40;
+// Above this many props PLACED BY HAND on a layer the drawer stops giving
+// each its own tile. A scatter is one tile however big it is, and every
+// picture is the .thumb.png beside its model (section 6), so a tile costs
+// an image the browser already holds rather than an offscreen render;
+// the cap only keeps a drawer of hand-placed things to a few screens.
+const LAYER_TILE_CAP = 300;
 
 function layerName(id) {
   const layer = layerById(id);
@@ -7798,6 +7829,9 @@ const gatheredProps = new Set();
 // The index a shift-click measures its run from, in the layer's own
 // member order. Reset whenever the drawer is rebuilt for a new layer.
 let layersAnchor = null;
+// The tiles as last drawn, one item each, in the order they are shown:
+// what a shift-click runs over, and what the selection repaints.
+let layerItems = [];
 
 function propLabel(record) {
   const entry = (state.propLibrary || []).find((e) => e.key === record.type);
@@ -7829,10 +7863,21 @@ function paintStampButton() {
   stamp.disabled = !count;
   stamp.textContent = count ? "Place copies of " + count : "Place copies";
   document.getElementById("layer-group").disabled = !count;
+  // Delete takes what a gesture acts on (actingProps): a whole scatter
+  // picked from its tile, a run shift-clicked, or the one prop selected.
+  const going = actingProps().length;
+  const del = document.getElementById("layer-delete-chosen");
+  del.disabled = !going;
+  del.textContent = going > 1 ? "Delete " + going.toLocaleString() : "Delete";
+  del.title = going
+    ? "Delete the " + (going > 1 ? going.toLocaleString() + " selected props" : "selected prop")
+      + "; Ctrl+Z brings them back"
+    : "Nothing selected to delete: pick a tile here, or a prop in the viewport";
 }
 
 function renderShelfLayers(grid) {
   grid.innerHTML = "";
+  layerItems = [];
   const kept = new Set(stillPlaced([...gatheredProps]));
   for (const record of [...gatheredProps]) {
     if (!kept.has(record)) gatheredProps.delete(record);
@@ -7844,85 +7889,186 @@ function renderShelfLayers(grid) {
     empty.textContent = "nothing on this layer yet -- placed props land here";
     grid.appendChild(empty);
   }
-  // A LAYER CAN NOW HOLD HUNDREDS. Each tile here clones its template
-  // and runs a full offscreen WebGL render, and refreshLayersShelf
-  // re-runs the whole drawer after every placement -- so a scatter layer
-  // of six hundred would try six hundred renders and hang the tab he was
-  // told to use. Above the cap the drawer says what is on the layer
-  // instead of drawing it, and the tab strip, the eye and the cross all
-  // keep working, which is what he opens Layers for on a scatter anyway.
-  if (members.length > LAYER_TILE_CAP) {
-    const kinds = [...new Set(members.map((r) => r.type))];
-    const summary = document.createElement("div");
-    summary.className = "tile-family";
-    summary.textContent = layerName(state.activeLayer) + " -- "
-      + members.length + " props, "
-      + kinds.length + (kinds.length === 1 ? " kind" : " kinds")
-      + ". Too many to picture; use the viewport to pick one.";
-    grid.appendChild(summary);
-    renderLayerTabs();
-    paintStampButton();
-    return;
+  // WHAT IS ON THE LAYER, AS HE PLACED IT. Param, 2026-09-13, over a
+  // drawer that said only "53 props, 4 kinds. Too many to picture": "we
+  // also must find a way to display the objects in layers whether
+  // thumbnail or not, perhaps when i select an object it highlights the
+  // prop placed so we can confer that way. this means i can easily
+  // delete many items that are placed."
+  //
+  // A scatter is one tile, because it is one thing he placed (section 14),
+  // and a prop placed by hand is one tile each. Pointing at a tile puts
+  // the amber box over what it names in the viewport; clicking selects it
+  // there; Delete, or the Delete button, takes the selection.
+  const scatters = new Map();   // planting -> { planting, first, kinds, chosen }
+  const byHand = [];
+  for (const record of members) {
+    const planting = plantingOf(record);
+    if (!planting) { byHand.push(record); continue; }
+    let entry = scatters.get(planting);
+    if (!entry) {
+      entry = { planting, first: record, kinds: new Map(), chosen: 0 };
+      scatters.set(planting, entry);
+    }
+    entry.kinds.set(record.type, (entry.kinds.get(record.type) || 0) + 1);
+    if (gatheredProps.has(record)) entry.chosen += 1;
   }
-  members.forEach((record, index) => {
-    const template = propTemplates.get(record.type);
+  const heading = (text) => {
+    const span = document.createElement("span");
+    span.className = "tile-family";
+    span.textContent = text;
+    grid.appendChild(span);
+  };
+  const ordered = [...scatters.values()]
+    .sort((a, b) => a.planting.scatter - b.planting.scatter);
+  if (ordered.length) heading("scattered");
+  for (const entry of ordered) {
+    const { planting, first, kinds } = entry;
+    plantingBounds(planting);
+    const common = [...kinds].sort((a, b) => b[1] - a[1]);
+    // Pictured by the kind most of it is, and named in the badge's words.
+    const tile = previewTile("scatter#" + planting.scatter, "Scatter #" + planting.scatter,
+      (canvasEl) => paintPropThumb(canvasEl, common[0][0]));
+    tile.title = plantingName(planting) + ": "
+      + common.slice(0, 5).map(([type, n]) =>
+        propDisplayName({ type }) + " " + n.toLocaleString()).join(", ")
+      + (common.length > 5 ? " and " + (common.length - 5) + " more kinds" : "")
+      + " -- click to select all of it, Delete removes it";
+    tile.classList.toggle("active", entry.chosen === planting.members);
+    layerItems.push({ tile, first, records: () => plantingRecords(planting),
+      chosenIn: (acting) => plantingRecords(planting).every((r) => acting.has(r)) });
+    grid.appendChild(tile);
+  }
+  const shown = byHand.slice(0, LAYER_TILE_CAP);
+  if (byHand.length && ordered.length) heading("placed by hand");
+  for (const record of shown) {
     // THE SAME WORDS THE BADGE SHOWS. Hovering a prop in the viewport
     // names it "Beech #7"; the tile has to say "Beech #7" too, or the
     // number is a label pointing at nothing.
-    const tile = previewTile(record.type + "#" + index, propTag(record),
-      (canvasEl) => {
-        if (template) renderObjectPreview(template, canvasEl);
-      });
-    tile.classList.toggle("active", gatheredProps.has(record));
+    const tile = previewTile("prop#" + record.id, propTag(record),
+      (canvasEl) => paintPropThumb(canvasEl, record.type));
     tile.title = propTag(record)
       + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
       + " -- click to select: drag it in the viewport, Delete removes";
-    tile.addEventListener("click", (event) => {
-      // Shift takes the whole run from the last plain click to this one,
-      // over the members as they are shown.
-      if (event.shiftKey && layersAnchor !== null
-          && layersAnchor < members.length) {
-        const lo = Math.min(layersAnchor, index);
-        const hi = Math.max(layersAnchor, index);
-        for (let i = lo; i <= hi; i++) gatheredProps.add(members[i]);
-        setPropEdit(true, true);
-        // THE VIEWPORT HAS TO SHOW IT. Before this, a shift-click lit
-        // four tiles and left the scene outlining one prop with its
-        // gumball on that prop alone, so a set of four looked exactly
-        // like a set of one -- which is what he was reporting.
-        // selectProp settles the group's outlines and stands the
-        // gumball at its centre.
-        selectProp(members[index]);
-        renderShelf();
-        return;
-      }
-      layersAnchor = index;
-      // A tile toggles membership of the working selection; the last one
-      // picked is also the viewport's selected object.
-      if (gatheredProps.has(record)) {
-        gatheredProps.delete(record);
-        if (state.selectedProp === record) selectProp(null);
-      } else {
-        gatheredProps.add(record);
-        // Picking a prop here IS asking to work on it (Param: "I should
-        // be able to select delete and move any of the props ... instead
-        // of having to find the edit button and press it"), so edit mode
-        // comes on with the selection rather than being hunted for.
-        // Quietly, because the mode change is a consequence of the click
-        // and not a thing he asked for in its own right -- and as a LOAN
-        // worth one placement, not a mode he now has to notice and undo.
-        const granted = !state.propEdit;
-        setPropEdit(true, true);
-        if (granted) propEditOneShot = true;
-        selectProp(record);
-      }
-      tile.classList.toggle("active", gatheredProps.has(record));
-      paintStampButton();
-    });
+    tile.classList.toggle("active", gatheredProps.has(record));
+    layerItems.push({ tile, first: record, records: () => [record],
+      chosenIn: (acting) => acting.has(record) });
     grid.appendChild(tile);
-  });
+  }
+  if (byHand.length > shown.length) {
+    heading("and " + (byHand.length - shown.length).toLocaleString()
+      + " more placed by hand -- pick them in the viewport");
+  }
+  layerItems.forEach((item, index) => wireLayerTile(item, index));
   renderLayerTabs();
   paintStampButton();
+  paintLayerPointer();
+}
+
+// One tile's gestures, the same for a scatter and for one prop.
+function wireLayerTile(item, index) {
+  const { tile, first } = item;
+  // Pointing at a tile points at what it names: the amber box and the
+  // badge stand over it in the viewport, so the drawer and the scene can
+  // be read against each other without clicking either. Delete then takes
+  // what is pointed at, exactly as it does over the viewport.
+  tile.addEventListener("pointerenter", () => setHoveredProp(first));
+  tile.addEventListener("pointerleave", () => {
+    if (hoveredProp === first) setHoveredProp(null);
+  });
+  tile.addEventListener("click", (event) => {
+    // Shift takes the whole run from the last plain click to this one,
+    // over the tiles as they are shown.
+    if (event.shiftKey && layersAnchor !== null
+        && layersAnchor < layerItems.length) {
+      const lo = Math.min(layersAnchor, index);
+      const hi = Math.max(layersAnchor, index);
+      for (let i = lo; i <= hi; i++) {
+        for (const record of layerItems[i].records()) gatheredProps.add(record);
+      }
+      setPropEdit(true, true);
+      // THE VIEWPORT HAS TO SHOW IT. Before this, a shift-click lit
+      // four tiles and left the scene outlining one prop with its
+      // gumball on that prop alone, so a set of four looked exactly
+      // like a set of one -- which is what he was reporting.
+      // selectProp settles the group's outlines and stands the
+      // gumball at its centre.
+      selectProp(first);
+      return;
+    }
+    layersAnchor = index;
+    // A tile toggles membership of the working selection; the last one
+    // picked is also the viewport's selected object.
+    const records = item.records();
+    if (records.every((record) => gatheredProps.has(record))) {
+      for (const record of records) gatheredProps.delete(record);
+      selectProp(records.includes(state.selectedProp) ? null : state.selectedProp);
+      return;
+    }
+    for (const record of records) gatheredProps.add(record);
+    // Picking a prop here IS asking to work on it (Param: "I should
+    // be able to select delete and move any of the props ... instead
+    // of having to find the edit button and press it"), so edit mode
+    // comes on with the selection rather than being hunted for.
+    // Quietly, because the mode change is a consequence of the click
+    // and not a thing he asked for in its own right -- and as a LOAN
+    // worth one placement, not a mode he now has to notice and undo.
+    const granted = !state.propEdit;
+    setPropEdit(true, true);
+    if (granted) propEditOneShot = true;
+    selectProp(first);
+  });
+}
+
+// The tiles follow the selection wherever it was made: a prop clicked in
+// the viewport lights its tile as surely as a tile lights its prop.
+function paintLayerChosen() {
+  if (shelfKind !== "layers" || !layerItems.length) return;
+  const acting = new Set(actingProps());
+  for (const item of layerItems) {
+    item.tile.classList.toggle("active", item.chosenIn(acting));
+  }
+  paintStampButton();
+}
+
+// And the tile of whatever the pointer is over in the viewport wears the
+// hover box's amber, brought into view if the drawer has scrolled past it.
+function paintLayerPointer() {
+  if (shelfKind !== "layers" || !layerItems.length) return;
+  const planting = plantingOf(hoveredProp);
+  for (const item of layerItems) {
+    const pointed = !!hoveredProp && (planting
+      ? plantingOf(item.first) === planting
+      : item.first === hoveredProp);
+    item.tile.classList.toggle("pointed", pointed);
+    // Not when the pointer is on the tile itself: scrolling the grid out
+    // from under it would hand the hover to the next tile along.
+    if (pointed && !item.tile.matches(":hover")) {
+      item.tile.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+// A placed prop's picture: the .thumb.png beside its model (section 6), a
+// live render only for a model with no snapshot yet, and a built-in's own
+// handful of primitives.
+function paintPropThumb(canvasEl, type) {
+  fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+  const entry = propLibraryEntry(type);
+  if (entry && entry.builtIn) {
+    renderObjectPreview(builtInPreview(entry.key), canvasEl);
+    return;
+  }
+  const template = propTemplates.get(type);
+  if (!entry || !entry.file) {
+    if (template) renderObjectPreview(template, canvasEl);
+    return;
+  }
+  const picture = new Image();
+  picture.onload = () => canvasEl.getContext("2d")
+    .drawImage(picture, 0, 0, canvasEl.width, canvasEl.height);
+  picture.onerror = () => { if (template) renderObjectPreview(template, canvasEl); };
+  picture.src = "/api/props/" + encodeURIComponent(entry.file + ".thumb.png");
 }
 
 // The tab strip: one tab per layer, a + for a fresh one, and the open
@@ -8020,6 +8166,8 @@ function groupToNewLayer(again) {
 }
 
 document.getElementById("layer-group").addEventListener("click", () => groupToNewLayer());
+document.getElementById("layer-delete-chosen").addEventListener("click",
+  () => deletePropsWithUndo(actingProps()));
 
 function deleteLayer(id) {
   const layer = layerById(id);

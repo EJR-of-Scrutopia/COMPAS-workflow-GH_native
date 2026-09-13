@@ -27,6 +27,7 @@
   --accent-hover:#5b80ff; /* the filled button under the pointer */
 
   --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
+  --pointed:  #d9a441;   /* what the pointer is over: the hover box's amber */
   --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
   --scrim-thin:rgba(16, 18, 22, 0.62); /* the same, for glass over its own subject */
   /* The live graphs' three inks, muted so the picture behind stays the
@@ -1111,6 +1112,19 @@ input[type="range"]:hover::-moz-range-thumb { background: var(--ink); }
   overflow: hidden; text-overflow: ellipsis; text-align: left; }
 #shelf-body .tile:hover { border-color: var(--ink-3); color: var(--ink); }
 #shelf-body .tile.active { border-color: var(--accent); color: var(--ink); }
+/* THE LAYERS DRAWER is a list of what is placed, to be found rather than
+   chosen from, so its tiles are small like the fixtures'. A tile whose
+   prop the pointer is over in the viewport wears the hover box's amber,
+   after .active so that pointing reads over selecting. */
+#shelf-body #shelf-grid.layers { grid-template-columns: repeat(auto-fill, 96px);
+  gap: 8px; padding: 10px 12px; }
+#shelf-body .tile.pointed { border-color: var(--pointed); color: var(--ink); }
+/* The number is the reference, so a layer tile's label wraps to a second
+   line rather than cutting "Small boulder #98813" off before its number. */
+#shelf-body #shelf-grid.layers .tile span { white-space: normal;
+  overflow-wrap: anywhere; line-height: 1.25; }
+#shelf-actions button.danger:hover:not(:disabled) { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
 #shelf-body #prop-credit { padding: 4px 12px 8px; color: var(--ink-3);
   font-size: 11px; }
 /* Outside the panel, so the panel's control styling does not reach them:

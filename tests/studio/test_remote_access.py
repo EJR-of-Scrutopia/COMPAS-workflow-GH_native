@@ -17,6 +17,7 @@ be tested without binding a port.
 from __future__ import annotations
 
 import inspect
+import re
 import sys
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -731,11 +732,13 @@ def test_the_layers_drawer_edits_props_and_never_shows_a_ghost():
     # worth one placement, not a mode he then has to notice and undo
     # (Param: "dont auto turn on edit if i move a prop around via the
     # select prop in layer and move it, should be a one time placement").
-    tiles = _js_function(js, "function renderShelfLayers(grid)")
+    # (A tile's gestures moved into wireLayerTile on 2026-09-13, when a
+    # scatter became one tile beside the props placed by hand.)
+    tiles = _js_function(js, "function wireLayerTile(item, index)")
     assert "const granted = !state.propEdit;" in tiles
     assert "setPropEdit(true, true);" in tiles
     assert "if (granted) propEditOneShot = true;" in tiles
-    assert "selectProp(record);" in tiles
+    assert "selectProp(first);" in tiles
     # Spent by the placement that ends the move, and by a delete, since
     # the prop it was loaned for is then gone.
     assert "    if (propEditOneShot) setPropEdit(false);" in js
@@ -4524,7 +4527,7 @@ def test_shift_takes_the_whole_run_between_two_clicks():
     assert "let scatterAnchor = null;" in js
     assert "let layersAnchor = null;" in js
     assert "if (event.shiftKey && scatterAnchor && keys.includes(scatterAnchor))" in js
-    assert "for (let i = lo; i <= hi; i++) gatheredProps.add(members[i]);" in js
+    assert "for (const record of layerItems[i].records()) gatheredProps.add(record);" in js
     # The anchor is the last click WITHOUT shift, or a run cannot be widened.
     assert "scatterAnchor = here;" in js
     assert "layersAnchor = index;" in js
@@ -5038,19 +5041,27 @@ def test_a_scatter_layer_does_not_hang_the_layers_drawer():
     which is what Layers is for on a scattered field anyway. Measured at
     300 props: the drawer opens in a millisecond."""
 
+    # REVISED 2026-09-13. The cap refused to picture a layer of more than
+    # forty, and Param met the refusal: "Layer 1 -- 53 props, 4 kinds.
+    # Too many to picture", over his beeches. Both costs it guarded are
+    # gone. A scatter is ONE tile however many props it holds, and every
+    # picture is the .thumb.png beside its model rather than a render.
+    # Measured over his 98,812-prop layer with three props by hand: the
+    # drawer opens in 25 ms.
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert "const LAYER_TILE_CAP = 40;" in js
+    cap = int(re.search(r"const LAYER_TILE_CAP = (\d+);", js).group(1))
+    assert 100 <= cap <= 1000, cap
     body = _js_function(js, "function renderShelfLayers(grid)")
-    assert "if (members.length > LAYER_TILE_CAP) {" in body
-    # The guard must come BEFORE the loop that renders, or it guards
-    # nothing at all.
-    assert body.index("LAYER_TILE_CAP") < body.index("members.forEach")
-    # And it leaves the parts of the drawer that still work.
-    guard = body[body.index("if (members.length > LAYER_TILE_CAP) {"):]
-    guard = guard[:guard.index("members.forEach")]
-    assert "renderLayerTabs();" in guard
-    assert "paintStampButton();" in guard
-    assert "return;" in guard
+    assert "if (!planting) { byHand.push(record); continue; }" in body, (
+        "a scattered prop never counts against the cap: its scatter is "
+        "one tile")
+    assert "const shown = byHand.slice(0, LAYER_TILE_CAP);" in body
+    assert "renderObjectPreview(" not in body, (
+        "pictures are files; paintPropThumb renders only a model that has "
+        "no snapshot")
+    assert "renderLayerTabs();" in body
+    assert "paintStampButton();" in body
+    assert "use the viewport to pick one" not in js, "the refusal is gone"
 
 
 def test_a_decal_is_a_prop_that_lies_on_the_floor():

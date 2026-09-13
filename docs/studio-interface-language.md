@@ -702,3 +702,37 @@ whole field once for every prop in it; it is a set now, and the same
 Delete takes 0.64 s. Any code asking "is this prop still placed" of more
 than a handful goes through `stillPlaced`, because a selection can now be
 a whole scatter.
+
+**The Layers drawer lists what is placed.** Above forty props it used to
+refuse: "Layer 1 -- 53 props, 4 kinds. Too many to picture". Param:
+"we also must find a way to display the objects in layers whether
+thumbnail or not, perhaps when i select an object it highlights the prop
+placed so we can confer that way. this means i can easily delete many
+items that are placed."
+
+A scatter is one tile, under the heading "scattered", pictured by the
+kind most of it is and named as the badge names it. A prop placed by
+hand is one tile each, under "placed by hand", as before. The pictures
+are the `.thumb.png` files of section 6, so the refusal's reason is
+gone; a cap of 300 still holds for props placed by hand, past which the
+drawer says how many more there are. Its tiles are 96 px, like the
+fixtures', because it is a list of things to find, and a label wraps to
+a second line rather than cutting a prop's number off.
+
+READ BOTH WAYS. Pointing at a tile puts the amber box and badge over what
+it names in the viewport; pointing at a prop in the viewport lights its
+tile in `--pointed`, the same amber, and scrolls it into view. A click
+selects in both, and a prop selected in the viewport lights its tile
+blue. A whole scatter in the selection is drawn as one box in the
+selection's colour, not as two hundred outlines round part of it.
+
+**Delete is a word beside Place copies and Group.** It takes what a
+gesture acts on -- a scatter from its tile, a shift-clicked run, or the
+one prop selected -- says how many ("Delete 446"), turns `--danger`
+under the pointer and never at rest, and when there is nothing to take
+its title says why. The Delete key does the same over a tile or a prop.
+Measured on his layer of 98,815: the drawer opened in 25 ms, a click on
+the beeches selected all 446, and the button took them in 68 ms.
+
+**What this round did not change.** No dial was added or removed. One
+button was added, with its title, and one colour token, `--pointed`.

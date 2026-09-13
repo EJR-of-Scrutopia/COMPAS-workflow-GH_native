@@ -3040,7 +3040,7 @@ def test_gathered_objects_stamp_until_escape():
     # Escape ends the stamp before anything else hears it.
     assert 'if (event.key === "Escape" && stampRig)' in js
     # Clicking an object row selects it in the viewport.
-    assert "selectProp(record);" in _function_body(js, "renderShelfLayers")
+    assert "selectProp(first);" in _function_body(js, "wireLayerTile")
 
 
 def test_no_more_spots_cast_shadows_than_the_card_can_link():
@@ -3412,7 +3412,7 @@ def test_hovering_a_prop_names_it_and_the_layer_tile_says_the_same():
     tag = _function_body(js, "propTag")
     assert 'propDisplayName(record) + " #" + (record.id || 0)' in tag
     layers = _function_body(js, "renderShelfLayers")
-    assert 'previewTile(record.type + "#" + index, propTag(record),' in layers, (
+    assert 'previewTile("prop#" + record.id, propTag(record),' in layers, (
         "the tile's VISIBLE label, not just its tooltip: a drawer of "
         "tiles all reading 'Beech' is what the number is there to fix")
     hover = _function_body(js, "setHoveredProp")
@@ -3629,11 +3629,11 @@ def test_a_gathered_set_is_a_real_selection():
     assert "GROUP_OUTLINE_CAP" in outlines, (
         "each outline is a draw call; a shift-click over a scattered "
         "field must not make six hundred line objects")
-    assert "outline.raycast = () => {};" in outlines
+    assert "helper.raycast = () => {};" in outlines
     assert "refreshGroupOutlines();" in _function_body(js, "selectProp")
-    layers = _function_body(js, "renderShelfLayers")
+    layers = _function_body(js, "wireLayerTile")
     shift = layers[layers.index("if (event.shiftKey"):]
-    assert "selectProp(members[index]);" in shift[:shift.index("renderShelf();")], (
+    assert "selectProp(first);" in shift[:shift.index("return;")], (
         "the shift-click has to reach the viewport, or four lit tiles "
         "still look exactly like one")
 
@@ -4062,3 +4062,82 @@ def test_a_planting_delete_does_not_walk_the_field_once_per_prop():
     for name in ("paintStampButton", "beginStamp", "groupToNewLayer",
                  "renderShelfLayers"):
         assert "stillPlaced(" in _function_body(js, name), name
+
+
+def test_the_layers_drawer_lists_what_is_placed():
+    """Param, 2026-09-13, over a drawer that said only "Layer 1 -- 53
+    props, 4 kinds. Too many to picture": "we also must find a way to
+    display the objects in layers whether thumbnail or not, perhaps when i
+    select an object it highlights the prop placed so we can confer that
+    way. this means i can easily delete many items that are placed."
+
+    A scatter is one tile and a prop placed by hand is one tile each.
+    Pointing at a tile puts the amber box over what it names; pointing at
+    a prop in the viewport lights its tile; a click selects in both.
+
+    Measured on his 98,812-prop layer with three boulders placed by hand:
+    the drawer opened in 25 ms with two scatter tiles and three prop tiles;
+    pointing at Scatter #2 raised its badge; a click selected all 446
+    beeches under one box and the button read "Delete 446"; hovering a
+    boulder in the viewport lit its tile; the button then took exactly the
+    446 in 68 ms.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+
+    # ONE TILE A SCATTER, in the badge's words.
+    layers = _function_body(js, "renderShelfLayers")
+    assert "const planting = plantingOf(record);" in layers
+    assert 'previewTile("scatter#" + planting.scatter, "Scatter #" + planting.scatter,' in layers
+    assert 'tile.title = plantingName(planting) + ": "' in layers
+    assert "(canvasEl) => paintPropThumb(canvasEl, common[0][0]));" in layers
+    assert "(canvasEl) => paintPropThumb(canvasEl, record.type));" in layers
+    thumb = _function_body(js, "paintPropThumb")
+    assert '"/api/props/" + encodeURIComponent(entry.file + ".thumb.png");' in thumb
+
+    # POINTING AT A TILE points at its prop, and lets go when it leaves.
+    wire = _function_body(js, "wireLayerTile")
+    assert 'tile.addEventListener("pointerenter", () => setHoveredProp(first));' in wire
+    assert "if (hoveredProp === first) setHoveredProp(null);" in wire
+    # A scatter tile toggles the whole scatter, not its first member.
+    assert "const records = item.records();" in wire
+    assert "for (const record of records) gatheredProps.add(record);" in wire
+    assert "records: () => plantingRecords(planting)," in layers
+
+    # AND THE OTHER WAY ROUND: the viewport's hover and selection reach
+    # the tiles, whichever way out of setHoveredProp they leave.
+    assert _function_body(js, "setHoveredProp").count("paintLayerPointer();") == 2
+    assert "paintLayerChosen();" in _function_body(js, "selectProp")
+    pointer = _function_body(js, "paintLayerPointer")
+    assert 'item.tile.classList.toggle("pointed", pointed);' in pointer
+    assert '!item.tile.matches(":hover")' in pointer, (
+        "scrolling the grid out from under the pointer would hand the "
+        "hover to the next tile along")
+    assert 'item.tile.classList.toggle("active", item.chosenIn(acting));' in _function_body(
+        js, "paintLayerChosen")
+
+    # THE AMBER IS THE HOVER BOX'S OWN, and pointing reads over selecting.
+    amber = re.search(r"const HOVER_COLOUR = 0x([0-9a-f]{6});", js).group(1)
+    assert "--pointed:  #" + amber + ";" in css
+    assert css.index("#shelf-body .tile.active {") < css.index("#shelf-body .tile.pointed {")
+    assert "#shelf-body #shelf-grid.layers { grid-template-columns: repeat(auto-fill, 96px);" in css
+    assert "#shelf-body #shelf-grid.layers .tile span { white-space: normal;" in css, (
+        "the number is the reference, so the label may not be cut off")
+
+    # DELETE, in words, beside Place copies and Group.
+    button = re.search(r'<button id="layer-delete-chosen"[^>]*>', html).group(0)
+    assert 'class="hidden danger"' in button and "title=" in button and "disabled" in button
+    stamp = _function_body(js, "paintStampButton")
+    assert "const going = actingProps().length;" in stamp
+    assert '"Nothing selected to delete: pick a tile here, or a prop in the viewport"' in stamp
+    assert "() => deletePropsWithUndo(actingProps()));" in js
+    assert 'document.getElementById("layer-delete-chosen").classList' in _function_body(js, "renderShelf")
+    assert "#shelf-actions button.danger:hover:not(:disabled) { background: var(--danger);" in css
+
+    # A WHOLE SCATTER SELECTED IS ONE BOX, not two hundred outlines.
+    outlines = _function_body(js, "refreshGroupOutlines")
+    assert "if (!bounds || n < planting.members) continue;" in outlines
+    assert "outline(new THREE.Box3Helper(bounds, new THREE.Color(0x93a6bb)));" in outlines
+    assert "if (whole.has(plantingOf(record))) continue;" in outlines
