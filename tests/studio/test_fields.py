@@ -1201,7 +1201,16 @@ FLY_CHECK = textwrap.dedent("""
     expect(near(length(flyStep(held("w"), forward, right, 5, -1)), 0), "time never runs backwards");
 
     // The keys and the four speeds, slowest first.
-    expect(FLY_KEYS.join("") === "wasd", "the keys");
+    expect(FLY_KEYS.join("") === "wasdqe", "the keys");
+
+    // Q RAISES AND E LOWERS, along the world's z whatever the look.
+    const q = flyStep(held("q"), [0, 0.6, -0.8], right, 5, 1);
+    expect(near(q[2], 5) && near(q[0], 0) && near(q[1], 0), "Q goes straight up: " + q);
+    const e = flyStep(held("e"), [0, 0, -1], [0, -1, 0], 5, 1);
+    expect(near(e[2], -5) && near(length(e), 5), "E goes straight down, even in a plan view");
+    expect(flyStep(held("q", "e"), forward, right, 5, 1) === null, "Q and E cancel");
+    // Rising while flying forward is no faster than either.
+    expect(near(length(flyStep(held("w", "q"), forward, right, 5, 1)), 5), "W and Q together go 5");
     const speeds = [1, 2, 3, 4].map((k) => FLY_SPEEDS[k]);
     expect(speeds.every((s, i) => i === 0 || s > speeds[i - 1]), "1 to 4 get faster");
     expect(speeds[0] >= 1 && speeds[0] <= 2, "1 is a walk: " + speeds[0]);

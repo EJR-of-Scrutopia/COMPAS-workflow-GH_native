@@ -746,7 +746,9 @@ faster than a straight, and the log says the speed when it changes. The
 keys stand down while anything with a caret has focus, while Ctrl, Alt
 or Cmd is held, and while a take or a plate owns the camera. Measured:
 held for a second at 2 the eye travelled 5.08 m, and at 4, 24.2 m in
-0.56 s; with a text box focused, nothing.
+0.56 s; with a text box focused, nothing. Q raises the eye and E lowers
+it, straight along the world's z, in the order he named them ("add q and
+e as raise and lower camera z"); Unreal has them the other way round.
 
 **Ground cover grows to the bark, and under the arch.** Param: "around
 every tree with a circle radius no grass or plants can be placed near it
