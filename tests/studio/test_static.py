@@ -3861,3 +3861,173 @@ def test_a_scatter_is_one_thing_to_hover_and_to_delete():
     assert '"Planting of " + planting.members.toLocaleString() + " props"' in hover, (
         "the badge says how many, which is also the warning before "
         "Delete takes them")
+
+
+def test_the_camera_moving_writes_no_instance_matrix():
+    """Param, 2026-09-13, with his stats readout: "we are running at 2fps,
+    and its extremely slow ... we need to drastically speed this up, to
+    retain in 40-60 fps range."
+
+    MEASURED FIRST, and the triangle count was a red herring. The frame
+    was never waiting on the GPU: settling the instances cost 408 ms of
+    JavaScript, of which 212 ms was writing all 930,429 instance matrices
+    into their buffers, every frame, while the camera moved. With the
+    camera perfectly still it still cost 160 ms.
+
+    Nearly all of it was wasted, because AN INSTANCE MATRIX DOES NOT
+    CHANGE WHEN THE CAMERA MOVES. What changes is which LOD tier each
+    instance is in and whether it is in view. The instances are grouped
+    once into a spatial grid now, each cluster's matrices are written
+    once, and a frame walks the clusters -- hundreds, not a million.
+
+    Measured after: 0.1 ms with the camera moving, 0 with it still.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # THE WRITE HAPPENS IN ONE PLACE, and that place is not the frame.
+    write = _function_body(js, "writeCluster")
+    assert "array.set(m, i * 16);" in write, "the one matrix write"
+    assert js.count("array.set(m, i * 16);") == 1, (
+        "one writer; a second would be a second chance to do it per frame")
+    settle = _function_body(js, "settleClusters")
+    assert "array.set(" not in settle, (
+        "the per-frame pass must not write a single matrix: that was the "
+        "212 ms")
+    assert "instanceMatrix" not in settle
+
+    # WHAT THE FRAME DOES INSTEAD: a sphere test and a division per
+    # cluster, and a geometry swap only where the answer changed.
+    assert "propCull.intersectsSphere(propCullSphere)" in settle
+    assert "showCluster(batch, cluster," in settle
+    show = _function_body(js, "showCluster")
+    assert "if (cluster.shown === tier) return;" in show, (
+        "a cluster that has not changed its mind costs nothing at all")
+    assert "if (mesh.geometry !== part.geometry) mesh.geometry = part.geometry;" in show, (
+        "a tier change swaps the geometry under one mesh rather than "
+        "hiding one mesh and showing another; every tier of a batch "
+        "already shares its materials, so nothing else about the draw "
+        "changes")
+
+    # THE GATE. A frame in which nothing moved and the camera held still
+    # does nothing whatever.
+    whole = _function_body(js, "settlePropInstances")
+    assert "if (!moved && !stale) return;" in whole
+    assert "if (batch.dirty || !batch.grouped) { stale = true; break; }" in whole, (
+        "the gate asks the forty batches, not the million proxies")
+    # AND IT ASKS THE BATCHES, not a counter. A counter was tried and was
+    # wrong within the hour: a far LOD tier arriving from the network
+    # sets batch.dirty without going through notePropsMoved, the counter
+    # never moved, and every cluster drew at full detail for ever.
+    assert "propsTouched" not in js, (
+        "no counter: batch.dirty is set from places that never call "
+        "notePropsMoved, and the gate has to see those too")
+
+    # THE OLD PER-PROXY SCAN IS GONE, not merely unused: leaving it would
+    # invite it back.
+    assert "function proxyMoved(" not in js
+    assert "proxy.seen" not in js
+
+
+def test_every_prop_that_moves_says_so():
+    """Nothing walks a million proxies asking whether they moved any
+    more, so the movers have to say. The list is short and each entry is
+    a place that writes a prop's transform; a new one that forgets this
+    leaves its prop drawn where it used to be."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    note = _function_body(js, "notePropsMoved")
+    assert "const batch = record.object && record.object.instancedIn;" in note
+    assert "if (batch) batch.dirty = true;" in note
+    assert "for (const batch of propBatches.values()) batch.dirty = true;" in note, (
+        "called with nothing, every batch is stale -- right for a "
+        "deletion or a hidden layer")
+
+    # A CENSUS, so a new writer of a position cannot be added without
+    # meeting this rule. Thirteen places write a prop's position; every
+    # one of them is either placeProp, whose batch join marks it, or is
+    # followed by a mark.
+    writes = js.count("object.position.set(")
+    assert writes == 13, (
+        "{} places write a prop's position now. Each new one has to call "
+        "notePropsMoved(record) or its prop will go on being drawn where "
+        "it used to be, and this number has to come here and say "
+        "so.".format(writes))
+    assert js.count("notePropsMoved(") >= writes, (
+        "one mark per writer, at least")
+
+    # The two funnels every rotation and resize go through.
+    assert "notePropsMoved(record);" in _function_body(js, "applyPropRotation")
+
+    # A GROUP GESTURE IS ONE GESTURE. Marking per member would re-cut the
+    # batch's grid once for every prop in it.
+    for name in ("moveGroup", "turnGroup", "scaleGroup", "restoreGroup"):
+        body = _function_body(js, name)
+        assert "for (const was of captured) notePropsMoved(was.record);" in body, name
+
+
+def test_a_prop_too_small_to_see_is_not_drawn():
+    """A blade of grass seventy metres off covers 0.95 of a pixel --
+    measured in his own scene -- and half a million of them were being
+    rasterised to contribute a shimmer the ground texture already
+    carries. This is Unreal's cull distance for foliage, expressed the
+    way the tiers are: in how much of the screen one prop covers, so it
+    follows the lens and the window rather than being a number of metres
+    that is wrong at every other focal length.
+
+    Measured against the uncut frame at 0.75 px: the mean difference over
+    the whole picture is 0.026 of a luminance level out of 255, and 0.24
+    per cent of pixels differ by more than 2. The triangle saving is only
+    2 per cent, because the bulk of them are in near grass rather than
+    far; what it is really buying is the overdraw of half a million
+    sub-pixel alpha-tested quads, which a software rasteriser cannot
+    measure and a card feels.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    cull = float(re.search(r"let PROP_CULL_PIXELS = ([0-9.]+);", js).group(1))
+    assert 0.4 <= cull <= 1.5, (
+        "{} px is either so small it saves nothing or big enough to take "
+        "grass a viewer can see".format(cull))
+
+    settle = _function_body(js, "settleClusters")
+    assert "if (pixels < PROP_CULL_PIXELS * reach)" in settle
+    assert settle.index("PROP_CULL_PIXELS") < settle.index("PROP_TIER_PIXELS[1]"), (
+        "culled before it is tiered, or the cull never runs")
+    # UNDER THE DETAIL DIAL, like the tiers: "full" has reach 0 and draws
+    # every blade however far off it stands, which is what a plate needs.
+    assert "if (reach > 0) {" in settle
+    assert "const reach = state.recording ? 0" in _function_body(
+        js, "settlePropInstances"), "a still and a take draw everything"
+
+
+def test_the_clusters_are_cut_to_a_measured_size():
+    """The grid's fineness trades draw calls against culling and LOD
+    accuracy, and WebGL pays for a draw call on the CPU. Swept over his
+    own scene at four sizes: from 4 to 64 clusters a batch the triangles
+    moved only from 333 M to 291 M, while the draw calls climbed from
+    1,167 to 3,927. Eight is the knee."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    target = int(re.search(r"let CLUSTER_TARGET = (\d+);", js).group(1))
+    assert 4 <= target <= 16, (
+        "{} clusters a batch is off the measured knee: finer buys almost "
+        "no triangles and costs draw calls in proportion".format(target))
+
+    size = _function_body(js, "clusterSizeFor")
+    assert "span / Math.sqrt(CLUSTER_TARGET)" in size, (
+        "the grid is cut from the ground the batch actually covers, so a "
+        "scatter over a whole site and a handful of props in one corner "
+        "both come out around the target")
+    assert "Math.max(CLUSTER_MIN_METRES," in size, (
+        "a batch standing in one spot must not ask for a grid of zero")
+
+    # ONE BUFFER PER CLUSTER, shared by every part, because every part of
+    # a model stands in the same places.
+    write = _function_body(js, "writeCluster")
+    assert "for (const mesh of cluster.meshes) mesh.instanceMatrix = cluster.buffer;" in write, (
+        "the meshes hold the old buffer by reference and have to be "
+        "pointed at a new one when the cluster outgrows it")
+    assert "cluster.buffer.setUsage(THREE.StaticDrawUsage);" in write, (
+        "written once and then left alone, which is the whole point")

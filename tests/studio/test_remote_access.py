@@ -4169,15 +4169,20 @@ def test_a_library_prop_is_one_instance_of_its_variants_batch():
         "the shadow fit measures the batches, so they are settled first")
     pick = _js_function(js, "function propRecordAt(event, fallback = true)")
     assert "const mine = hit.object.propSlots[hit.instanceId];" in pick
-    moved = _js_function(js, "function proxyMoved(proxy)")
-    assert "seen[10] === shown) return false;" in moved, (
+    # Per-instance culling and refilling became per-CLUSTER on
+    # 2026-09-13 (settleClusters), because deciding a million times a
+    # frame cost 408 ms of it. A hidden layer still has to reach the
+    # batch, the shadow rule still holds, and the picking still finds a
+    # record from an instance -- through the cluster that holds it.
+    assert "notePropsMoved();" in _js_function(js, "function applyLayerVisibility()"), (
         "a hidden layer is a change the batch must hear about")
-    fill = _js_function(js, "function fillBatch(batch, reach, height)")
+    fill = _js_function(js, "function settleClusters(batch, reach, height)")
     assert "if (!batch.casts) {" in fill, (
         "a tree behind the camera still throws its shadow across the frame")
-    assert "tier.slots[tier.count] = proxy.record;" in fill
-    size = _js_function(js, "function sizeTier(tier, needed)")
-    assert "mesh.instanceMatrix = places;" in size
+    assert "cluster.slots[i] = proxy.record;" in _js_function(
+        js, "function writeCluster(batch, cluster)")
+    size = _js_function(js, "function sizeCluster(batch, cluster)")
+    assert "mesh.instanceMatrix = cluster.buffer;" in size
     assert "mesh.frustumCulled = false;" in size
     settle = _js_function(js, "function settlePropInstances()")
     assert "const reach = state.recording ? 0" in settle, (
@@ -4203,9 +4208,9 @@ def test_the_far_tiers_borrow_the_near_materials_and_the_viewport_picks_the_deta
     assert "side.rotation.copy(model.rotation);" in lods
     assert "const PROP_TIER_PIXELS = [48, 14];" in js
     assert "const DETAIL_REACH = { draft: 2.5, balanced: 1, full: 0 };" in js
-    fill = _js_function(js, "function fillBatch(batch, reach, height)")
+    fill = _js_function(js, "function settleClusters(batch, reach, height)")
     assert "if (pixels < PROP_TIER_PIXELS[1] * reach) t = 2;" in fill
-    assert "while (t > 0 && !tiers[t]) t -= 1;" in fill, (
+    assert "while (t > 0 && !batch.tiers[t]) t -= 1;" in fill, (
         "a tier still loading falls back to the nearer one, never to nothing")
     html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
     assert 'id="prop-detail"' in html and 'id="prop-detail-segments"' in html
@@ -4265,7 +4270,7 @@ def test_the_review_of_the_batched_field_held():
     the whole field to throw it away."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    size = _js_function(js, "function sizeTier(tier, needed)")
+    size = _js_function(js, "function sizeCluster(batch, cluster)")
     assert 'if (state.section.mode === "plane") applySection();' in size
     end = _js_function(js, "function endBrushStroke(stroke)")
     assert end.index("stroke.keepOut = null;") < end.index("pushUndo(")

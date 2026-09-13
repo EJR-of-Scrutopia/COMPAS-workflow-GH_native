@@ -2364,6 +2364,8 @@ function applyLayerVisibility() {
   for (const record of state.props) {
     record.object.visible = layerVisible(record.layer);
   }
+  // A hidden prop leaves its cluster's buffer, so the grouping is stale.
+  notePropsMoved();
   // A hidden spot is not drawn and so spends no shadow slot: hiding a
   // layer gives its shadows back to the layer being worked on.
   noteSpotShadowsChanged();
@@ -3055,6 +3057,20 @@ async function loadPropTemplate(entry) {
 // still and a take always render at Full, whatever the viewport is set
 // to: detail traded for speed while composing must never reach a plate.
 const PROP_TIER_PIXELS = [48, 14];
+// Below this many pixels across, a prop is not drawn at all.
+//
+// A blade of grass seventy metres off covers 0.95 of a pixel -- measured
+// in his own scene -- and half a million of them were being rasterised
+// to contribute a shimmer the ground texture already carries. This is
+// Unreal's cull distance for foliage, expressed the way the tiers are:
+// in how much of the screen one prop actually covers, so it follows the
+// lens and the window rather than being a number of metres that is
+// wrong at every other focal length.
+//
+// A probe's handle sits beside it (setCullPixels) so the figure can be
+// argued from a measured picture rather than from taste.
+let PROP_CULL_PIXELS = 0.75;
+function setCullPixels(n) { PROP_CULL_PIXELS = n; }
 const DETAIL_REACH = { draft: 2.5, balanced: 1, full: 0 };
 const DETAIL_KEY = "vaulted-prop-detail";
 
@@ -3065,7 +3081,6 @@ function propInstance(type, template) {
   proxy.geometry = batch.bounds;       // for Box3.setFromObject only
   proxy.instancedIn = batch;
   proxy.batchIndex = batch.proxies.length;
-  proxy.seen = new Float64Array(11).fill(NaN);
   batch.proxies.push(proxy);
   batch.dirty = true;
   return proxy;
@@ -3101,6 +3116,10 @@ function propBatch(type, template) {
     type, proxies: [], tiers: [near], dirty: true, bounds,
     radius: sphere.radius, centre: sphere.center.clone(),
     casts: near.parts.some((part) => part.castShadow),
+    // Cut into a spatial grid the first time it is settled, and re-cut
+    // whenever the props themselves change. The camera moving never
+    // touches this.
+    clusters: new Map(), clusterSize: 0, grouped: false,
   };
   propBatches.set(type, batch);
   const entry = propLibraryEntry(type);
@@ -3175,47 +3194,247 @@ function loadPropLods(batch, entry, template) {
   });
 }
 
-// A tier's meshes, one per part, sharing ONE instance buffer: every mesh
-// of a model stands in the same places. Rebuilt rather than resized when
-// the batch outgrows them, because an instance buffer's length is fixed
-// when it is made.
-function sizeTier(tier, needed) {
-  if (tier.meshes.length && tier.capacity >= needed) return;
-  for (const mesh of tier.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
-  let capacity = 64;
-  while (capacity < needed) capacity *= 2;
-  const places = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
-  places.setUsage(THREE.DynamicDrawUsage);
-  tier.meshes = tier.parts.map((part) => {
+// ---------- clustered instancing ----------
+// Param, 2026-09-13, with his stats readout: "we are running at 2fps,
+// and its extremely slow ... we need to drastically speed this up, to
+// retain in 40-60 fps range. how we do that we will have to understand
+// the inner working of unreal engine, because clearly they have
+// optimised for this."
+//
+// MEASURED FIRST, and the triangle count was a red herring. The frame
+// was not waiting on the GPU at all: settling the instances cost 408 ms
+// of JavaScript, of which 212 ms was writing all 930,429 instance
+// matrices into their buffers -- every frame, while the camera moved.
+// With the camera perfectly still it still cost 160 ms. At 438
+// nanoseconds a prop, a million props is two frames a second before the
+// GPU is asked for anything.
+//
+// And nearly all of that work was wasted, because AN INSTANCE MATRIX
+// DOES NOT CHANGE WHEN THE CAMERA MOVES. What changes is which LOD tier
+// each instance belongs to, and whether it is in view -- and the old
+// code expressed that by re-packing every tier's buffer from scratch,
+// since a tier is a densely packed list and one instance crossing a
+// threshold moves everything after it.
+//
+// This is the problem Unreal solves with hierarchical instancing, and
+// the answer is the same one: stop deciding per instance and start
+// deciding per CLUSTER. The instances are grouped once into a spatial
+// grid; each cluster's matrices are written once and then left alone;
+// and a frame walks the clusters -- hundreds, not a million -- culling
+// each and choosing its tier. A cluster whose answer has not changed
+// costs nothing whatever.
+//
+// ONE MESH PER PART PER CLUSTER, and a tier change swaps that mesh's
+// GEOMETRY rather than hiding one mesh and showing another. Every tier
+// of a batch already shares its materials (bakeTier borrows them), so
+// the swap changes no shader, no material and no buffer: it points an
+// existing draw at a different, already-resident set of triangles.
+
+// How many clusters a batch is cut into, about. Fewer and a cluster
+// spans too much ground for one tier to be right across it; more and
+// the draw calls climb, which in WebGL is a real cost paid on the CPU.
+// Sixteen puts a scatter of a hundred thousand into clusters of a few
+// thousand each, and a scene of forty species into a few hundred draws.
+let CLUSTER_TARGET = 8;
+// A probe's handle on the grid, so the size can be chosen by
+// measurement rather than by taste. Nothing in the studio calls it.
+function setClusterTarget(n) { CLUSTER_TARGET = n; }
+const CLUSTER_MIN_METRES = 2;
+
+function clusterKey(ix, iy) {
+  // Two 21-bit halves in one double, the same trick the keep-out grid
+  // uses, so a cluster's key is a number and its map is a fast one.
+  return (ix + 1048576) * 2097152 + (iy + 1048576);
+}
+
+// Which grid a batch's instances are cut on. Taken from the ground they
+// actually cover, so a scatter over a whole site and a handful of props
+// in one corner both come out around CLUSTER_TARGET clusters.
+function clusterSizeFor(batch) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const proxy of batch.proxies) {
+    const p = proxy.position;
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  if (!isFinite(minX)) return CLUSTER_MIN_METRES;
+  const span = Math.max(maxX - minX, maxY - minY);
+  return Math.max(CLUSTER_MIN_METRES, span / Math.sqrt(CLUSTER_TARGET));
+}
+
+function newCluster(key) {
+  return { key, proxies: [], meshes: [], buffer: null, capacity: 0, count: 0,
+    slots: [], cx: 0, cy: 0, cz: 0, radius: 0, shown: -2, dirty: true };
+}
+
+// Cut a batch into clusters and write every matrix, ONCE. Everything
+// expensive lives here, and here runs only when the props themselves
+// change -- a placement, a move, a deletion, a layer hidden -- never
+// because the camera moved.
+function groupBatch(batch) {
+  const size = clusterSizeFor(batch);
+  batch.clusterSize = size;
+  for (const cluster of batch.clusters.values()) {
+    cluster.proxies.length = 0;
+    cluster.dirty = true;
+  }
+  for (const proxy of batch.proxies) {
+    if (!proxy.visible) continue;
+    const p = proxy.position;
+    const key = clusterKey(Math.floor(p.x / size), Math.floor(p.y / size));
+    let cluster = batch.clusters.get(key);
+    if (!cluster) { cluster = newCluster(key); batch.clusters.set(key, cluster); }
+    cluster.proxies.push(proxy);
+  }
+  for (const [key, cluster] of [...batch.clusters]) {
+    if (!cluster.proxies.length) { disposeCluster(batch, cluster); batch.clusters.delete(key); }
+    else writeCluster(batch, cluster);
+  }
+  batch.grouped = true;
+}
+
+// One cluster's matrices and its bounding sphere. The sphere is grown
+// from the instances' own positions plus the model's radius, which is
+// what the frustum test and the tier both read.
+function writeCluster(batch, cluster) {
+  const needed = cluster.proxies.length;
+  if (!cluster.buffer || cluster.capacity < needed) {
+    let capacity = 64;
+    while (capacity < needed) capacity *= 2;
+    cluster.buffer = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity * 16), 16);
+    cluster.buffer.setUsage(THREE.StaticDrawUsage);
+    cluster.capacity = capacity;
+    // The meshes hold the old buffer by reference, so they have to be
+    // pointed at the new one.
+    for (const mesh of cluster.meshes) mesh.instanceMatrix = cluster.buffer;
+  }
+  const array = cluster.buffer.array;
+  const c = batch.centre;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let biggest = 0;
+  for (let i = 0; i < needed; i++) {
+    const proxy = cluster.proxies[i];
+    const m = proxy.matrix.elements;
+    array.set(m, i * 16);
+    cluster.slots[i] = proxy.record;
+    const x = m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12];
+    const y = m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13];
+    const z = m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14];
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+    const scale = Math.max(Math.abs(proxy.scale.x), Math.abs(proxy.scale.y),
+      Math.abs(proxy.scale.z));
+    if (scale > biggest) biggest = scale;
+  }
+  cluster.slots.length = needed;
+  cluster.count = needed;
+  cluster.cx = (minX + maxX) / 2;
+  cluster.cy = (minY + maxY) / 2;
+  cluster.cz = (minZ + maxZ) / 2;
+  cluster.radius = 0.5 * Math.hypot(maxX - minX, maxY - minY, maxZ - minZ)
+    + batch.radius * biggest;
+  cluster.buffer.addUpdateRange(0, needed * 16);
+  cluster.buffer.needsUpdate = true;
+  sizeCluster(batch, cluster);
+  cluster.dirty = false;
+  // The tier it was showing was chosen for a cluster that no longer
+  // stands where this one does.
+  cluster.shown = -2;
+}
+
+// One InstancedMesh per part, made once and kept. A tier change swaps
+// the geometry underneath it; nothing else about the draw changes.
+function sizeCluster(batch, cluster) {
+  const parts = batch.tiers[0].parts;
+  if (cluster.meshes.length === parts.length) {
+    for (const mesh of cluster.meshes) mesh.count = cluster.count;
+    return;
+  }
+  for (const mesh of cluster.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
+  cluster.meshes = parts.map((part) => {
     const mesh = new THREE.InstancedMesh(part.geometry, part.material, 0);
-    mesh.instanceMatrix = places;
+    mesh.instanceMatrix = cluster.buffer;
     mesh.castShadow = part.castShadow;
     mesh.receiveShadow = part.receiveShadow;
-    // Culled per INSTANCE in fillBatch, not per mesh by three.js: a
-    // batch's bounding sphere is the whole field, which is nearly always
-    // in view, and one left stale by a moved prop would cull a tile of a
-    // still (the rule rebuildFormworkObjects learned for the net).
+    // Culled per CLUSTER below, not per mesh by three: a cluster's own
+    // sphere is measured here and is the honest one, and three's would
+    // be recomputed off an instance buffer it cannot see change.
     mesh.frustumCulled = false;
-    mesh.propSlots = tier.slots;
+    mesh.propSlots = cluster.slots;
+    mesh.count = cluster.count;
+    mesh.visible = false;
     propsGroup.add(mesh);
     return mesh;
   });
-  tier.capacity = capacity;
   // Clipping planes live on MATERIALS, and applySection only reaches the
-  // ones worn by meshes already in the scene. A clone was in the scene the
-  // moment it was placed; a batch's meshes arrive a frame later, so a
-  // scene restored with its section on drew its new batches uncut.
+  // ones worn by meshes already in the scene.
   if (state.section.mode === "plane") applySection();
+}
+
+function disposeCluster(batch, cluster) {
+  for (const mesh of cluster.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
+  cluster.meshes.length = 0;
+  cluster.buffer = null;
+  cluster.capacity = 0;
+}
+
+// Point a cluster's meshes at one tier's geometry, or hide them. The
+// whole per-frame cost of a cluster that has changed its mind.
+function showCluster(batch, cluster, tier) {
+  if (cluster.shown === tier) return;
+  cluster.shown = tier;
+  if (tier < 0) {
+    for (const mesh of cluster.meshes) mesh.visible = false;
+    return;
+  }
+  const parts = batch.tiers[tier].parts;
+  for (let i = 0; i < cluster.meshes.length; i++) {
+    const mesh = cluster.meshes[i];
+    const part = parts[i] || parts[0];
+    if (mesh.geometry !== part.geometry) mesh.geometry = part.geometry;
+    mesh.count = cluster.count;
+    mesh.visible = cluster.count > 0;
+  }
 }
 
 const propViewSeen = new Float64Array(34).fill(NaN);
 const propCull = new THREE.Frustum();
 const propViewMatrix = new THREE.Matrix4();
 const propCullSphere = new THREE.Sphere();
+// `record` names the ONE batch whose grouping has gone stale. Called
+// with nothing, every batch is stale, which is right for a deletion or
+// a hidden layer and would be ruinous for one prop being dragged: a
+// bare call re-cuts nine hundred thousand instances into their grid.
+//
+// THERE IS NO COUNTER BESIDE THIS, and there was: a first attempt gated
+// the settle on one, and it was wrong within the hour. A far LOD tier
+// arriving from the network sets batch.dirty without coming through
+// here, the counter never moved, and every cluster in the scene went on
+// drawing at full detail for ever -- measured, 1.6 billion triangles
+// against the 198 million the same scene drew before. The gate asks the
+// batches themselves instead, which is forty questions a frame and
+// cannot be forgotten by whoever next writes to dirty.
+function notePropsMoved(record) {
+  if (record) {
+    const batch = record.object && record.object.instancedIn;
+    // A prop that is not instanced -- a fixture, a decal -- is its own
+    // object in the scene and needs nothing settled.
+    if (batch) batch.dirty = true;
+    return;
+  }
+  for (const batch of propBatches.values()) batch.dirty = true;
+}
 
 // Once a frame, from renderView, so the recorder and the still export
-// inherit it. A proxy that has not moved costs eleven comparisons; a
-// batch nothing touched, under a view that did not move, writes nothing.
+// inherit it.
 function settlePropInstances() {
   if (!propBatches.size) return;
   camera.updateMatrixWorld();
@@ -3231,26 +3450,34 @@ function settlePropInstances() {
   }
   if (propViewSeen[32] !== reach) { propViewSeen[32] = reach; moved = true; }
   if (propViewSeen[33] !== height) { propViewSeen[33] = height; moved = true; }
+  // Forty questions, not nine hundred thousand: has anything at all
+  // changed since the last frame? A frame in which the camera held
+  // still and no prop was touched returns here, having done nothing.
+  let stale = false;
+  for (const batch of propBatches.values()) {
+    if (batch.dirty || !batch.grouped) { stale = true; break; }
+  }
+  if (!moved && !stale) return;
   if (moved) {
     propViewMatrix.copy(camera.matrixWorld).invert().premultiply(camera.projectionMatrix);
     propCull.setFromProjectionMatrix(propViewMatrix);
   }
   propsGroup.updateWorldMatrix(true, false);
   for (const batch of propBatches.values()) {
-    let changed = batch.dirty;
-    for (const proxy of batch.proxies) {
-      if (proxyMoved(proxy)) changed = true;
+    if (!batch.tiers[0].parts.length) continue;
+    if (batch.dirty || !batch.grouped) {
+      // A proxy's own matrix is composed from its position, rotation and
+      // scale here rather than by three, because a proxy is not in the
+      // scene graph (see propInstance).
+      for (const proxy of batch.proxies) proxy.updateMatrix();
+      groupBatch(batch);
+      if (batch.casts) noteCastersChanged();
+      batch.dirty = false;
     }
-    if (changed || moved) fillBatch(batch, reach, height);
-    // Only a change of WHAT stands where re-fits the sun's shadow map. A
-    // moving camera changes tiers, never places, and casters are never
-    // culled, so the fit it would make is the one already made.
-    if (changed && batch.casts) noteCastersChanged();
-    batch.dirty = false;
+    settleClusters(batch, reach, height);
     if (batch.retired && !batch.proxies.length) disposePropBatch(batch);
   }
 }
-
 // A prop folder swapped under a standing field: each batch is filed
 // under a name no placement will ask for, goes on drawing what already
 // stands, and is freed by the settle above once the last of it has gone.
@@ -3273,40 +3500,23 @@ function disposePropBatch(batch) {
   for (const [key, held] of propBatches) {
     if (held === batch) { propBatches.delete(key); break; }
   }
+  for (const cluster of batch.clusters.values()) disposeCluster(batch, cluster);
+  batch.clusters.clear();
   for (const tier of batch.tiers) {
     if (!tier) continue;
-    for (const mesh of tier.meshes) { propsGroup.remove(mesh); mesh.dispose(); }
     for (const part of tier.parts) part.geometry.dispose();
   }
   batch.bounds.dispose();
 }
 
-function proxyMoved(proxy) {
-  const seen = proxy.seen;
-  const p = proxy.position, q = proxy.quaternion, s = proxy.scale;
-  const shown = proxy.visible ? 1 : 0;
-  if (seen[0] === p.x && seen[1] === p.y && seen[2] === p.z
-      && seen[3] === q.x && seen[4] === q.y && seen[5] === q.z && seen[6] === q.w
-      && seen[7] === s.x && seen[8] === s.y && seen[9] === s.z
-      && seen[10] === shown) return false;
-  seen[0] = p.x; seen[1] = p.y; seen[2] = p.z;
-  seen[3] = q.x; seen[4] = q.y; seen[5] = q.z; seen[6] = q.w;
-  seen[7] = s.x; seen[8] = s.y; seen[9] = s.z; seen[10] = shown;
-  proxy.updateMatrix();
-  return true;
-}
-
 // Every visible instance of a batch, sorted into its tier by how many
 // pixels its model covers from here. Written from scratch each time: a
 // tier is a packed list, and a moving camera re-deals most of it anyway.
-function fillBatch(batch, reach, height) {
-  const tiers = batch.tiers;
-  if (!tiers[0].parts.length) return;
-  for (const tier of tiers) {
-    if (!tier) continue;
-    sizeTier(tier, batch.proxies.length);
-    tier.count = 0;
-  }
+// Every cluster of a batch, culled and given its tier. This is the whole
+// of what a moving camera costs now: a sphere test and a division per
+// cluster, and nothing at all for a cluster that has not changed its
+// mind since the last frame.
+function settleClusters(batch, reach, height) {
   const lift = propsGroup.matrixWorld.elements;
   const eye = camera.matrixWorld.elements;
   // The lens is read off the camera that HAS one, by name: an orthographic
@@ -3317,56 +3527,38 @@ function fillBatch(batch, reach, height) {
       / Math.max(1e-6, orthographicCamera.top - orthographicCamera.bottom)
     : height / (2 * Math.max(1e-6, Math.tan(THREE.MathUtils.degToRad(
       perspectiveCamera.fov) / 2) / (perspectiveCamera.zoom || 1)));
-  const c = batch.centre;
-  for (const proxy of batch.proxies) {
-    if (!proxy.visible) continue;
-    const m = proxy.matrix.elements;
-    const x = m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12] + lift[12];
-    const y = m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13] + lift[13];
-    const z = m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14] + lift[14];
-    const radius = batch.radius * Math.max(Math.abs(proxy.scale.x),
-      Math.abs(proxy.scale.y), Math.abs(proxy.scale.z));
+  for (const cluster of batch.clusters.values()) {
+    if (cluster.dirty) writeCluster(batch, cluster);
+    const x = cluster.cx + lift[12];
+    const y = cluster.cy + lift[13];
+    const z = cluster.cz + lift[14];
     // Only what casts nothing is culled by the view. A tree behind the
     // camera still throws its shadow across the frame.
     if (!batch.casts) {
       propCullSphere.center.set(x, y, z);
-      propCullSphere.radius = radius;
-      if (!propCull.intersectsSphere(propCullSphere)) continue;
+      propCullSphere.radius = cluster.radius;
+      if (!propCull.intersectsSphere(propCullSphere)) { showCluster(batch, cluster, -1); continue; }
     }
     let t = 0;
     if (reach > 0) {
       const distance = ortho ? 1 : Math.max(1e-3,
         Math.hypot(x - eye[12], y - eye[13], z - eye[14]));
-      const pixels = radius * perMetre / distance;
+      // The MODEL's own radius, not the cluster's: what decides a tier is
+      // how many pixels one prop covers, and a cluster of a thousand
+      // tufts covers a great many however small each of them is.
+      const pixels = batch.radius * perMetre / distance;
+      // Too small to be seen at all: nothing is drawn. Only where the
+      // detail dial allows tiers in the first place, so "full" still
+      // draws every blade however far off it stands.
+      if (pixels < PROP_CULL_PIXELS * reach) { showCluster(batch, cluster, -1); continue; }
       if (pixels < PROP_TIER_PIXELS[1] * reach) t = 2;
       else if (pixels < PROP_TIER_PIXELS[0] * reach) t = 1;
-      while (t > 0 && !tiers[t]) t -= 1;
+      while (t > 0 && !batch.tiers[t]) t -= 1;
     }
-    const tier = tiers[t];
-    tier.meshes[0].instanceMatrix.array.set(m, tier.count * 16);
-    tier.slots[tier.count] = proxy.record;
-    tier.count += 1;
-  }
-  for (const tier of tiers) {
-    if (!tier) continue;
-    tier.slots.length = tier.count;
-    for (const mesh of tier.meshes) {
-      mesh.count = tier.count;
-      mesh.visible = tier.count > 0;
-      // Measured again when asked: the shadow fit reads these.
-      mesh.boundingBox = null;
-      mesh.boundingSphere = null;
-    }
-    // Only the packed front of the buffer goes up. A zero-length range
-    // would not be a no-op: WebGL2 reads a length of 0 as "to the end".
-    if (tier.count) {
-      const places = tier.meshes[0].instanceMatrix;
-      places.clearUpdateRanges();
-      places.addUpdateRange(0, tier.count * 16);
-      places.needsUpdate = true;
-    }
+    showCluster(batch, cluster, t);
   }
 }
+
 
 function buildPropTiles() {
   const holder = document.getElementById("prop-tiles");
@@ -3589,6 +3781,7 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   // The layer this landed on has a prop more, which can make a type
   // bulk there that was not, and always changes the planting's extent.
   clearPlantings();
+  notePropsMoved();
   // One more caster. A scatter is hundreds of these in a row, which is
   // why this marks rather than measures. (It sat after the return for a
   // while, and no placed prop ever told the shadow fit it had arrived.)
@@ -3949,6 +4142,7 @@ function nudgeHoveredProp(key) {
       record.x = from.x;
       record.y = from.y;
       record.object.position.set(from.x, from.y, record.z || 0);
+      notePropsMoved(record);
       if (state.selectedProp === record) {
         refreshPropOutline();
         refreshPropGumball();
@@ -3961,6 +4155,7 @@ function nudgeHoveredProp(key) {
   record.x += step[0];
   record.y += step[1];
   record.object.position.set(record.x, record.y, record.z || 0);
+  notePropsMoved(record);
   if (hoverBox) hoverBox.update();
   hoverAnchor.x += step[0];
   hoverAnchor.y += step[1];
@@ -4291,6 +4486,10 @@ function moveGroup(captured, dx, dy, dz) {
     was.record.z = was.z + dz;
     was.record.object.position.set(was.record.x, was.record.y, was.record.z);
   }
+  // ONE mark for the whole pass: a group gesture is one
+  // gesture over one batch, and marking per member would re-cut
+  // its grid once for every prop in it.
+  for (const was of captured) notePropsMoved(was.record);
 }
 
 // Turn the whole group about one axis through a point. Each member's
@@ -4316,6 +4515,10 @@ function turnGroup(captured, centre, index, angle) {
     was.record.rotation = groupEuler.z;
     applyPropRotation(was.record);
   }
+  // ONE mark for the whole pass: a group gesture is one
+  // gesture over one batch, and marking per member would re-cut
+  // its grid once for every prop in it.
+  for (const was of captured) notePropsMoved(was.record);
 }
 
 // Grow or shrink the group about its centre: each member's distance
@@ -4330,6 +4533,10 @@ function scaleGroup(captured, centre, factor) {
     was.record.scale = Math.min(5, Math.max(0.2, was.scale * factor));
     applyPropSize(was.record);
   }
+  // ONE mark for the whole pass: a group gesture is one
+  // gesture over one batch, and marking per member would re-cut
+  // its grid once for every prop in it.
+  for (const was of captured) notePropsMoved(was.record);
 }
 
 // Put every member back exactly as it stood. One undo for one drag.
@@ -4342,6 +4549,10 @@ function restoreGroup(captured) {
     applyPropSize(was.record);
     was.record.object.position.set(was.x, was.y, was.z);
   }
+  // ONE mark for the whole pass: a group gesture is one
+  // gesture over one batch, and marking per member would re-cut
+  // its grid once for every prop in it.
+  for (const was of captured) notePropsMoved(was.record);
 }
 
 // Every rotation the record carries, written onto the object at once.
@@ -4350,6 +4561,7 @@ function restoreGroup(captured) {
 function applyPropRotation(record) {
   record.object.rotation.set(record.rotX || 0, record.rotY || 0,
     record.rotation || 0);
+  notePropsMoved(record);
 }
 
 // How tall this prop stands, for bounding the lift. Measured from the
@@ -9265,6 +9477,7 @@ function moveStamp(hit) {
     record.x = hit.x + def.dx;
     record.y = hit.y + def.dy;
     record.object.position.set(record.x, record.y, record.z || 0);
+    notePropsMoved(record);
   }
 }
 
@@ -13195,6 +13408,7 @@ function dropCarriedProp() {
       record.x = before.x;
       record.y = before.y;
       record.object.position.set(before.x, before.y, 0);
+      notePropsMoved(record);
       if (state.selectedProp === record) {
         refreshPropOutline();
         setPropGumball(record);
@@ -13229,6 +13443,7 @@ function cancelCarry() {
     record.x = from.x;
     record.y = from.y;
     record.object.position.set(from.x, from.y, 0);
+    notePropsMoved(record);
   } else {
     // It was new: it never really arrived.
     disposeProp(record.object);
@@ -13546,6 +13761,7 @@ canvas.addEventListener("pointermove", (event) => {
         record.z = Math.min(reach, Math.max(-reach, startZ + travel));
       }
       record.object.position.set(record.x, record.y, record.z || 0);
+      notePropsMoved(record);
     } else if (mode === "rot") {
       const now = rotationAngleAt(event, record, index);
       if (now === null) return;
@@ -13583,6 +13799,7 @@ canvas.addEventListener("pointermove", (event) => {
   carried.x = hit.x;
   carried.y = hit.y;
   carried.object.position.set(hit.x, hit.y, carried.z || 0);
+  notePropsMoved(carried);
   refreshPropOutline();
   refreshPropGumball();
 });
@@ -13635,6 +13852,7 @@ function endPropDrag(event) {
         applyPropRotation(record);
         applyPropSize(record);
         record.object.position.set(before.x, before.y, before.z);
+        notePropsMoved(record);
         if (state.selectedProp === record) {
           refreshPropOutline();
           setPropGumball(record);
@@ -16879,6 +17097,7 @@ function removePropRecords(records) {
   // And a spot leaving hands its shadow slot to the next one waiting.
   noteSpotShadowsChanged();
   state.props = state.props.filter((p) => !gone.has(p));
+  notePropsMoved();
   if (gone.has(state.selectedProp)) selectProp(null);
   // And a badge naming a prop that no longer exists is worse than none.
   if (gone.has(hoveredProp)) setHoveredProp(null);
@@ -17173,7 +17392,8 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // probe can count what the frame is actually asked to draw -- how many
   // instances, which LOD tier each is in, and how long the settle takes
   // -- rather than inferring it from the frame rate.
-  propBatches, settlePropInstances,
+  propBatches, settlePropInstances, setClusterTarget, setCullPixels,
+  notePropsMoved, applyLayerVisibility, propRecordAt,
   // The keep-out index and the hover, so a probe can ask the two
   // questions a placement asks -- can this land here, and what does the
   // pointer say it is over -- without driving the mouse.
