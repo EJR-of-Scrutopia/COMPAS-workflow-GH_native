@@ -3617,7 +3617,7 @@ def test_a_gathered_set_is_a_real_selection():
     # ONE ANSWER to "what is selected", so Delete, the gumball and the
     # undo cannot disagree about it.
     acting = _function_body(js, "actingProps")
-    assert "[...gatheredProps].filter((r) => state.props.includes(r))" in acting, (
+    assert "const many = stillPlaced([...gatheredProps]);" in acting, (
         "a gathering can hold a prop that has since been deleted")
     assert "if (many.length > 1) return many;" in acting
     assert "return state.selectedProp ? [state.selectedProp] : [];" in acting
@@ -3720,7 +3720,7 @@ def test_delete_takes_the_whole_gathering_in_one_undo():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     many = _function_body(js, "deletePropsWithUndo")
 
-    assert "records.filter((r) => r && state.props.includes(r))" in many
+    assert "const going = stillPlaced(records);" in many
     assert "if (going.length === 1) { deletePropWithUndo(going[0]); return; }" in many
     assert many.count("pushUndo(") == 1, "one entry for one keystroke"
     assert "removePropRecords(going);" in many, (
@@ -4031,3 +4031,42 @@ def test_the_clusters_are_cut_to_a_measured_size():
         "pointed at a new one when the cluster outgrows it")
     assert "cluster.buffer.setUsage(THREE.StaticDrawUsage);" in write, (
         "written once and then left alone, which is the whole point")
+
+
+def test_a_planting_delete_does_not_walk_the_field_once_per_prop():
+    """Param, 2026-09-13, deleting his grass: the tab stopped answering
+    and the browser offered to close it ("While i deleted the scatter
+    though it took a long time to run").
+
+    MEASURED, with the real Delete key over a planting: 0.3 s at 100,000
+    props, 1.4 s at 200,000, 5.2 s at 400,000 and 27.8 s at 930,000 --
+    four times as long for twice the field. Of the 5,142 ms at 400,000,
+    5,066 was one line, records.filter((r) => state.props.includes(r)),
+    which walks the whole list once for every record in it. Asked of a
+    Set the same question took 23 ms and gave the same answer.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    placed = _function_body(js, "stillPlaced")
+    assert "const placed = new Set(state.props);" in placed
+    assert "return records.filter((r) => r && placed.has(r));" in placed
+    # A handful is cheaper to look for than a set of a million is to build.
+    assert "if (records.length < STILL_PLACED_BY_SCAN)" in placed
+    scan = int(re.search(r"const STILL_PLACED_BY_SCAN = (\d+);", js).group(1))
+    assert 4 <= scan <= 64, (
+        "{} records by scanning is either no saving or a million-long "
+        "walk repeated too often".format(scan))
+
+    # EVERY ASKER GOES THROUGH IT. The selection's own checks were
+    # harmless while a selection was a few props picked by hand; a layer
+    # row that gathers a whole scatter would make each of them this bug.
+    assert js.count("state.props.includes(") == 1, (
+        "one scan, inside stillPlaced, for the handful only")
+    assert "const going = stillPlaced(records);" in _function_body(
+        js, "deletePropsWithUndo")
+    assert "const many = stillPlaced([...gatheredProps]);" in _function_body(
+        js, "actingProps")
+    for name in ("paintStampButton", "beginStamp", "groupToNewLayer",
+                 "renderShelfLayers"):
+        assert "stillPlaced(" in _function_body(js, name), name

@@ -3833,10 +3833,15 @@ def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
                "function showLayerForPlacing(layer)", "function placingOntoName()",
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function groupToNewLayer(again)",
+               "function stillPlaced(records)",
                "function resolvePlacementLayer()",
                "function markScatterRun(run, only)",
                "async function runScatter(region, options)")
-    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    # stillPlaced reads its threshold from a constant beside it.
+    scan = js[js.index("const STILL_PLACED_BY_SCAN = "):]
+    scan = scan[:scan.index(";") + 1]
+    functions = scan + "\n\n" + "\n\n".join(
+        _js_whole_function(js, header) for header in headers)
     script = tmp_path / "layers.mjs"
     script.write_text(LAYER_HARNESS % {"functions": functions}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
@@ -4007,8 +4012,12 @@ def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
                "function markScatterRun(run, only)",
                "async function runScatter(region, options)",
                "function carryNewProp(type)", "function beginStamp()",
-               "function endBrushStroke(stroke)")
-    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+               "function endBrushStroke(stroke)", "function stillPlaced(records)")
+    # stillPlaced reads its threshold from a constant beside it.
+    scan = js[js.index("const STILL_PLACED_BY_SCAN = "):]
+    scan = scan[:scan.index(";") + 1]
+    functions = scan + "\n\n" + "\n\n".join(
+        _js_whole_function(js, header) for header in headers)
     script = tmp_path / "guards.mjs"
     script.write_text(LAYER_GUARD_HARNESS % {"functions": functions}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)

@@ -3848,9 +3848,30 @@ function refreshPropOutline() {
 // and the single selected prop otherwise. One answer, so Delete, the
 // gumball and the undo cannot disagree about what "the selection" is.
 function actingProps() {
-  const many = [...gatheredProps].filter((r) => state.props.includes(r));
+  const many = stillPlaced([...gatheredProps]);
   if (many.length > 1) return many;
   return state.selectedProp ? [state.selectedProp] : [];
+}
+
+// ---------- is it still in the scene? ----------
+// Asked of a whole planting at once, so it cannot walk the list for each
+// record: state.props.includes over each of 930,000 blades is a walk of
+// 930,000 for every one of them, and the Delete that asked it held the
+// tab for 27.8 s (measured, 2026-09-13; 5.2 s at 400,000, of which the
+// walk was 5.07). One set built per ask takes 23 ms at 400,000.
+//
+// Built fresh each time rather than kept up to date: a kept set would
+// hold every deleted prop alive until the next ask, and after a planting
+// has gone that is the whole field.
+const STILL_PLACED_BY_SCAN = 32;
+
+function stillPlaced(records) {
+  // A handful is cheaper to look for than a set of a million is to build.
+  if (records.length < STILL_PLACED_BY_SCAN) {
+    return records.filter((r) => r && state.props.includes(r));
+  }
+  const placed = new Set(state.props);
+  return records.filter((r) => r && placed.has(r));
 }
 
 // Where one gumball stands for many props: the middle of their feet.
@@ -7678,8 +7699,7 @@ function propTag(record) {
 }
 
 function paintStampButton() {
-  const count = [...gatheredProps]
-    .filter((record) => state.props.includes(record)).length;
+  const count = stillPlaced([...gatheredProps]).length;
   const stamp = document.getElementById("stamp-group");
   stamp.disabled = !count;
   stamp.textContent = count ? "Place copies of " + count : "Place copies";
@@ -7688,8 +7708,9 @@ function paintStampButton() {
 
 function renderShelfLayers(grid) {
   grid.innerHTML = "";
+  const kept = new Set(stillPlaced([...gatheredProps]));
   for (const record of [...gatheredProps]) {
-    if (!state.props.includes(record)) gatheredProps.delete(record);
+    if (!kept.has(record)) gatheredProps.delete(record);
   }
   const members = state.props.filter((r) => r.layer === state.activeLayer);
   if (!members.length) {
@@ -7841,8 +7862,7 @@ function renderLayerTabs() {
 // it is empty (Ctrl+Z after a Group used to undo whatever came before it);
 // the redo brings the SAME layer back and moves them again.
 function groupToNewLayer(again) {
-  const chosen = (again ? again.chosen : [...gatheredProps])
-    .filter((record) => state.props.includes(record));
+  const chosen = stillPlaced(again ? again.chosen : [...gatheredProps]);
   if (!chosen.length) return;
   const openBefore = again ? again.openBefore : state.activeLayer;
   let home;
@@ -9448,8 +9468,7 @@ function spawnStampInstance(x, y) {
 }
 
 function beginStamp() {
-  const chosen = [...gatheredProps]
-    .filter((record) => state.props.includes(record));
+  const chosen = stillPlaced([...gatheredProps]);
   if (!chosen.length) return;
   // The copies land on the open layer, shown if it was hidden.
   placementLayer();
@@ -13997,7 +14016,7 @@ window.addEventListener("keydown", (event) => {
 // fifty entries for one keystroke would flush the history and make the
 // undo a fifty-press job.
 function deletePropsWithUndo(records) {
-  const going = records.filter((r) => r && state.props.includes(r));
+  const going = stillPlaced(records);
   if (!going.length) return;
   if (going.length === 1) { deletePropWithUndo(going[0]); return; }
   // Everything each one needs to come back as itself, taken before any
