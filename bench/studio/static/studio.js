@@ -12855,6 +12855,15 @@ document.getElementById("props-folder-choose").addEventListener("click", () =>
 
 document.getElementById("render-skin").addEventListener("change", async (e) => {
   state.appearance.skin = e.target.value;
+  // THE NEW MATERIAL WEARS ITS OWN TINT. Param, 2026-09-13: "when i
+  // change material the previous tint stays we need to not do that. use
+  // the tint of the actual material." The tint was one value on the
+  // appearance, so a colour chosen for one material rode onto the next.
+  // It belongs to the material it was chosen for: the one being put on
+  // gets whatever was chosen for IT, which is nothing until he chooses.
+  // Undo replays this handler, so going back puts the old tint back too.
+  state.appearance.tint = skinTints()[state.appearance.skin] || null;
+  paintTintSwatch();
   persistAppearance();
   // The skin now decides the structural material (the weight system): a
   // brick skin cuts and weighs as brick, a limestone one as stone. The
@@ -12882,9 +12891,12 @@ document.getElementById("render-skin").addEventListener("change", async (e) => {
     }
   }
   rebuildAppearance();
+  // The library set has landed by now, so its own colour is known.
+  paintTintSwatch();
 });
 document.getElementById("material-tint").addEventListener("change", (e) => {
   state.appearance.tint = e.target.value;
+  skinTints()[state.appearance.skin] = e.target.value;
   persistAppearance();
   rebuildAppearance();
 });
@@ -12921,7 +12933,7 @@ document.getElementById("material-finish").addEventListener("change", (e) => {
   rebuildAppearance();
 });
 document.getElementById("material-reset").addEventListener("click", () => {
-  state.appearance = { tint: null, finish: null, skin: "none" };
+  state.appearance = { tint: null, finish: null, skin: "none", tints: {} };
   localStorage.removeItem(appearanceStorageKey(document.getElementById("material-select").value));
   syncAppearanceControls();
   rebuildAppearance();
@@ -15339,9 +15351,28 @@ function persistAppearance() {
   localStorage.setItem(appearanceStorageKey(material), JSON.stringify(state.appearance));
 }
 
+// Which tint each material has been given, by skin key. A reset, a scene
+// or a layout from before this existed carries none.
+function skinTints() {
+  if (!state.appearance.tints || typeof state.appearance.tints !== "object") {
+    state.appearance.tints = {};
+  }
+  return state.appearance.tints;
+}
+
+// The swatch shows the colour the vault is actually wearing: the tint
+// chosen for this material, or the material's own when none has been.
+// White was shown for "no tint" whatever the material, which read as a
+// white tint laid over it.
+function paintTintSwatch() {
+  let own = "#ffffff";
+  if (state.bundle) own = "#" + appearanceMaterialBase().color.getHexString();
+  document.getElementById("material-tint").value = state.appearance.tint || own;
+}
+
 function syncAppearanceControls() {
   document.getElementById("render-skin").value = state.appearance.skin;
-  document.getElementById("material-tint").value = state.appearance.tint || "#ffffff";
+  paintTintSwatch();
   const finish = state.appearance.finish !== null ? state.appearance.finish : 0.5;
   document.getElementById("material-finish").value = finish;
   document.getElementById("material-finish-value").textContent = Math.round(finish * 100);
@@ -15357,7 +15388,7 @@ function syncAppearanceControls() {
 // pieceMaterial first reads it for the material being switched to.
 function restoreAppearance(material) {
   let appearance = { tint: null, finish: null, skin: "none",
-    variation: 1, uvSeed: 0, grain: false };
+    variation: 1, uvSeed: 0, grain: false, tints: {} };
   const stored = localStorage.getItem(appearanceStorageKey(material));
   if (stored) {
     try {
@@ -15369,7 +15400,18 @@ function restoreAppearance(material) {
         variation: typeof parsed.variation === "number" ? parsed.variation : 1,
         uvSeed: typeof parsed.uvSeed === "number" ? parsed.uvSeed : 0,
         grain: parsed.grain === true,
+        tints: {},
       };
+      if (parsed.tints && typeof parsed.tints === "object") {
+        for (const [skin, hex] of Object.entries(parsed.tints)) {
+          if (typeof hex === "string") appearance.tints[skin] = hex;
+        }
+      }
+      // Saved before tints were kept per material: the one tint there was
+      // belonged to the material it was saved with.
+      if (appearance.tint && !appearance.tints[appearance.skin]) {
+        appearance.tints[appearance.skin] = appearance.tint;
+      }
     } catch (error) { /* corrupt localStorage entry: fall back to the defaults above */ }
   }
   state.appearance = appearance;

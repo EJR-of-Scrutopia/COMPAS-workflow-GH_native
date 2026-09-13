@@ -4225,3 +4225,42 @@ def test_the_polished_steel_reflects_the_scene_it_stands_in():
     for name in ("renderStill", "recordAnimation"):
         body = _function_body(js, name)
         assert body.index("state.recording = true;") < body.index("captureReflections();"), name
+
+
+def test_a_new_material_wears_its_own_tint():
+    """Param, 2026-09-13: "when i change material the previous tint stays
+    we need to not do that. use the tint of the actual material."
+
+    The tint was one value on the appearance, so a colour chosen for one
+    material rode onto the next. It belongs to the material it was chosen
+    for. Measured in the browser: engineering brick tinted #ff2020 drew its
+    pieces at #f40000; switched to pigmented sand they drew at #f9f9f9, the
+    sand's own, with the swatch showing the same; Ctrl+Z put the brick back
+    at #f40000."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    skin = js[js.index('document.getElementById("render-skin").addEventListener("change", async (e) => {'):]
+    skin = skin[:skin.index("\n});")]
+    put_on = skin.index("state.appearance.tint = skinTints()[state.appearance.skin] || null;")
+    assert put_on < skin.index("persistAppearance();"), (
+        "decided before the appearance is saved, or the old tint is saved "
+        "as the new material's")
+    assert "paintTintSwatch();" in skin
+
+    tint = js[js.index('document.getElementById("material-tint").addEventListener("change", (e) => {'):]
+    tint = tint[:tint.index("\n});")]
+    assert "skinTints()[state.appearance.skin] = e.target.value;" in tint
+
+    # The swatch shows what the vault wears: the tint, or the material's own.
+    swatch = _function_body(js, "paintTintSwatch")
+    assert 'if (state.bundle) own = "#" + appearanceMaterialBase().color.getHexString();' in swatch
+    assert 'document.getElementById("material-tint").value = state.appearance.tint || own;' in swatch
+    assert "paintTintSwatch();" in _function_body(js, "syncAppearanceControls")
+
+    # Kept with the appearance, read back, and a saved single tint is
+    # given to the material it was saved with.
+    restore = _function_body(js, "restoreAppearance")
+    assert "if (typeof hex === \"string\") appearance.tints[skin] = hex;" in restore
+    assert "appearance.tints[appearance.skin] = appearance.tint;" in restore
+    assert 'state.appearance = { tint: null, finish: null, skin: "none", tints: {} };' in js
