@@ -293,7 +293,7 @@ reading "0.80 to 1.30".
 Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
-atmosphere's nine dials, so the count is now **55 of 61**: 45 visible
+atmosphere's nine dials, and Light rays made them ten on 2026-09-13, so the count is now **56 of 62**: 45 visible
 dials, every one of them in the language, out of 51 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
@@ -359,7 +359,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 61 sliders. Since then: `site-
+The inventory of section 10 is now 62 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, and the
@@ -761,3 +761,19 @@ springings, column feet, the anchor and the tie -- keeps out the ground
 cover. Measured with the real scatter round one beech: the nearest blade
 stood 2.35 m from the trunk and now stands 1.02 m, against a measured
 base of 1.01 m; over the vault 0 blades were placed and now 2,954.
+
+**Light rays, a dial of their own.** Param, over a golden-hour beech wood
+he had built for rendering: "I think we are just missing light rays from
+this." A pass for them was withdrawn on 11 September because it only
+added lit air over the fog's own glow, which made it a second Sun glow
+dial, and because rays need the air lit harder than the analytic fog
+lights it, which would have re-lit every saved scene. So it returns as a
+dial, Light rays, in the atmosphere's block, resting at nought in every
+preset and in every scene saved before it: nothing already made changes
+until he turns it up. It splits the glow rather than adding to it -- the
+air the sun reaches and the air it does not are summed in one march,
+the shaded share is taken away and 48 times the lit share laid on -- so
+shadowed air loses exactly the glow the fog gave it and no more. Measured
+in his wood under Haze, looking toward a sun 2.5 degrees up: at a gain of
+4 and of 16 the wood only glowed; at 48, beams stood between the trunks.
+Desktop only, as before: the iPad has no pass and no dial.

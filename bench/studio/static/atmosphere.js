@@ -29,18 +29,22 @@ export const ATMOSPHERE_PRESETS = {
   "clear-air": {
     label: "Clear air", density: 1.5, height: 60, base: 0, start: 30,
     maxOpacity: 50, sunGlow: 40, sunLobe: 8, sunStart: 30, mist: 0, mistHeight: 2,
+    shafts: 0,
   },
   "morning-mist": {
     label: "Morning mist", density: 0.8, height: 40, base: 0, start: 0,
     maxOpacity: 95, sunGlow: 120, sunLobe: 6, sunStart: 0, mist: 20, mistHeight: 1.7,
+    shafts: 0,
   },
   haze: {
     label: "Haze", density: 6, height: 25, base: 0, start: 0,
     maxOpacity: 80, sunGlow: 150, sunLobe: 12, sunStart: 10, mist: 0, mistHeight: 2,
+    shafts: 0,
   },
   "valley-fog": {
     label: "Valley fog", density: 1.2, height: 30, base: 0, start: 0,
     maxOpacity: 97, sunGlow: 80, sunLobe: 8, sunStart: 0, mist: 50, mistHeight: 1.5,
+    shafts: 0,
   },
 };
 
@@ -58,6 +62,7 @@ export const ATMOSPHERE_RANGES = {
   sunStart: [0, 200],     // m from the eye before the sun's glow begins
   mist: [0, 100],         // /km, the ground mist at its base
   mistHeight: [0.2, 20],  // m, the ground mist's e-fold height
+  shafts: [0, 100],       // per cent, the light shafts through the fog (desktop only)
 };
 
 export const ATMOSPHERE_KEYS = Object.keys(ATMOSPHERE_RANGES);
@@ -383,3 +388,250 @@ export function writeAtmosphere(uniforms, layers) {
   uniforms.atmoSunStart.value = layers.sunStart;
   uniforms.atmoSunExponent.value = layers.sunExponent;
 }
+// ---------- the light shafts ----------
+// The volumetric half of the look. The height fog above is analytic: it
+// answers "how much air is between the eye and this pixel" in closed
+// form, and it cannot know that the vault stands between that air and the
+// sun. So air in the vault's shadow glows exactly as brightly as air
+// beside it, and a low sun through a cable net reads as a flat wash.
+//
+// This marches. From the eye toward each pixel's own depth it takes
+// SHAFT_STEPS samples, asks the sun's shadow map at each whether the sun
+// reaches THAT point, and weights the answer by the same two-layer height
+// fog and the same sun lobe the analytic fog uses, so the shafts are made
+// of the same air.
+//
+// IT SPLITS THE GLOW, and that is what the first version, withdrawn on
+// 11 September (ec7fe73), did not do. It only ever added the lit air on
+// top of the analytic glow, which the analytic fog had already put there,
+// so on every pixel the sun reached it was a second Sun glow dial: 97 per
+// cent of what it did was blind to shadow. Now one loop sums the air the
+// sun reaches and the air it does not, in the same steps, and the two
+// sums PARTITION the analytic glow exactly. The pass takes the shaded
+// share away and lays SHAFT_GAIN times the lit share on, so shadowed air
+// loses precisely the glow the fog gave it -- never more, so no black
+// fringe at a silhouette -- and lit air carries the sun.
+//
+// Param, 2026-09-13, over a golden-hour beech wood of his own: "I think we
+// are just missing light rays from this." The withdrawal left the look to
+// him because rays need the air lit harder than the analytic fog lights
+// it; that is this dial, and every preset and every saved scene rests at
+// nought, so nothing already made changes until he turns it up.
+//
+// THE ACCUMULATION TELESCOPES, and that is what makes it testable. Each
+// step adds transmittance * (1 - exp(-tau)) and then multiplies the
+// transmittance by exp(-tau), so the lit and shaded sums together
+// collapse to 1 - exp(-sum of tau), which is exactly the analytic glow
+// (atmosphereAmounts' second answer) for ANY number of steps and ANY
+// shadow. A test holds the marcher to that identity, so a wrong h0, a
+// wrong segment length or a dropped transmittance cannot hide behind
+// "it is a coarse approximation anyway".
+export const SHAFT_STEPS = 32;
+// How far the march reaches, in metres. The camera's far plane is 500 m
+// and a sky pixel reconstructs to it; marching that with 32 steps gives
+// 15 m between samples, which steps straight over a vault. The fog is
+// saturated long before this in every preset that shows shafts at all.
+export const SHAFT_MAX_DISTANCE = 240;
+// How hard the lit air is driven at a hundred per cent, as a multiple of
+// the glow the analytic fog gives it. MEASURED, in his own beech wood at
+// golden hour under Haze, looking toward a sun 2.5 degrees up: at 4 (the
+// withdrawn value) and at 16 the wood only glowed a little more; at 48
+// distinct beams stood between the trunks. atmoSunColour is the sun
+// through ATMOSPHERE_SUN_GAIN, about 0.054, tuned for a glow spread over
+// the whole sky, which is why the rays need this much authority of their
+// own; the withdrawal measured that ten times was the first multiple to
+// read as a shaft at all.
+export const SHAFT_GAIN = 48;
+
+// The march, in JS: the twin of the GLSL below. visibility answers how
+// much of the sun reaches a point that many metres along the ray (the
+// shadow map's job in the shader), and jitter is where inside each
+// segment that question is asked, which the shader dithers per pixel.
+// Answers the air the sun reaches and the air it does not, separately.
+export function shaftSums(layers, cameraZ, dirZ, length, visibility, jitter = 0.5) {
+  const reach = Math.min(length, SHAFT_MAX_DISTANCE);
+  const begin = Math.min(layers.sunStart, reach);
+  const span = reach - begin;
+  if (span <= 0) return { lit: 0, shade: 0 };
+  const ds = span / SHAFT_STEPS;
+  let transmittance = 1;
+  let lit = 0;
+  let shade = 0;
+  for (let step = 0; step < SHAFT_STEPS; step++) {
+    const at = begin + step * ds;
+    const h0 = cameraZ + dirZ * at - layers.base;
+    // The segment's own optical depth, from its START, which is what
+    // makes the sum exact: the jitter moves only where the SUN is asked
+    // about, never how much air the segment holds.
+    const tau = layerOpticalDepth(layers.density[0], layers.falloff[0], h0, dirZ, ds)
+      + layerOpticalDepth(layers.density[1], layers.falloff[1], h0, dirZ, ds);
+    const through = Math.exp(-tau);
+    const reached = visibility(at + jitter * ds);
+    lit += transmittance * (1 - through) * reached;
+    shade += transmittance * (1 - through) * (1 - reached);
+    transmittance *= through;
+  }
+  return { lit, shade };
+}
+
+// What the pass lays on one pixel, before the sun's colour, its lobe and
+// the dial: the glow, capped as the analytic fog caps it, split by how
+// much of it the sun reaches -- the lit share raised by SHAFT_GAIN and the
+// shaded share taken away. Between minus the glow (all in shadow) and
+// SHAFT_GAIN times the glow (all lit), whatever the shadow does.
+export function shaftLight(layers, cameraZ, dirZ, length, visibility, jitter = 0.5) {
+  const { lit, shade } = shaftSums(layers, cameraZ, dirZ, length, visibility, jitter);
+  const total = lit + shade;
+  if (total <= 0) return 0;
+  const glow = Math.min(total, layers.maxOpacity);
+  const share = lit / total;
+  return glow * (SHAFT_GAIN * share - (1 - share));
+}
+
+// The dial as a fraction, and the one place that says shafts need fog:
+// with the atmosphere at None there is no air to light, so the pass does
+// not run whatever the dial says.
+export function shaftsStrength(settings) {
+  if (!atmosphereIsOn(settings)) return 0;
+  const per = typeof settings.shafts === "number" && Number.isFinite(settings.shafts)
+    ? settings.shafts : 0;
+  return Math.max(0, Math.min(1, per / 100));
+}
+
+// The march, in GLSL: the twin of shaftInscatter above, on the same
+// atmosphere functions (ATMOSPHERE_GLSL is prepended, so atmosphereLayer
+// here IS layerOpticalDepth there). SHAFT_STEPS arrives as a define.
+//
+// The shadow map is r185's directional PCF map, which is a DepthTexture
+// carrying a compare function, so it is sampled as a sampler2DShadow
+// through the shadow camera's own matrix. Outside that camera's slab the
+// answer is 1: the slab is fitted to the casters, so there is nothing out
+// there to block the sun, and clamping to the edge instead would smear
+// the vault's silhouette across the whole horizon.
+export const SHAFTS_GLSL = ATMOSPHERE_GLSL + `
+uniform sampler2D tDepth;
+uniform sampler2DShadow shaftShadowMap;
+uniform mat4 shaftShadowMatrix;
+uniform mat4 shaftProjectionInverse;
+uniform mat4 shaftCameraWorld;
+uniform vec3 shaftEye;
+uniform float shaftStrength;
+uniform float shaftBias;
+uniform float shaftMaxDistance;
+uniform vec2 shaftPixelOrigin;
+varying vec2 vUv;
+vec3 shaftWorld( vec2 uv, float depth ) {
+  vec4 clip = vec4( uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0 );
+  vec4 view = shaftProjectionInverse * clip;
+  return ( shaftCameraWorld * vec4( view.xyz / view.w, 1.0 ) ).xyz;
+}
+float shaftVisibility( vec3 at ) {
+  vec4 coord = shaftShadowMatrix * vec4( at, 1.0 );
+  coord.xyz /= coord.w;
+  if ( coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z > 1.0 ) return 1.0;
+  return texture( shaftShadowMap, vec3( coord.xy, coord.z - shaftBias ) );
+}
+// Interleaved gradient noise, the same hash r185's own PCF uses, over the
+// pixel's place in the WHOLE frame. Seeded by the pixel and by nothing
+// else: no wall clock, so a take is reproducible frame for frame, and no
+// take clock either, so a still rendered in tiles gets the identical
+// dither in a tile that it would have had in the whole plate.
+float shaftDither( vec2 pixel ) {
+  return fract( 52.9829189 * fract( dot( pixel, vec2( 0.06711056, 0.00583715 ) ) ) );
+}
+vec3 shaftLight( vec2 uv, vec2 pixel ) {
+  float depth = texture2D( tDepth, uv ).x;
+  vec3 ray = shaftWorld( uv, depth ) - shaftEye;
+  float travel = length( ray );
+  vec3 dir = ray / max( travel, 1e-6 );
+  float reach = min( travel, shaftMaxDistance );
+  float begin = min( atmoSunStart, reach );
+  float span = reach - begin;
+  if ( span <= 0.0 ) return vec3( 0.0 );
+  float ds = span / float( SHAFT_STEPS );
+  float jitter = shaftDither( pixel );
+  float transmittance = 1.0;
+  float lit = 0.0;
+  float shade = 0.0;
+  for ( int stepIndex = 0; stepIndex < SHAFT_STEPS; stepIndex ++ ) {
+    float at = begin + float( stepIndex ) * ds;
+    float h0 = shaftEye.z + dir.z * at - atmoBase;
+    float tau = atmosphereLayer( atmoDensity.x, atmoFalloff.x, h0, dir.z, ds )
+      + atmosphereLayer( atmoDensity.y, atmoFalloff.y, h0, dir.z, ds );
+    float through = exp( - tau );
+    float reached = shaftVisibility( shaftEye + dir * ( at + jitter * ds ) );
+    lit += transmittance * ( 1.0 - through ) * reached;
+    shade += transmittance * ( 1.0 - through ) * ( 1.0 - reached );
+    transmittance *= through;
+  }
+  float total = lit + shade;
+  if ( total <= 0.0 ) return vec3( 0.0 );
+  float glow = min( total, atmoMaxOpacity );
+  float share = lit / total;
+  float lobe = pow( max( dot( dir, atmoSunDir ), 0.0 ), atmoSunExponent );
+  return atmoSunColour * ( lobe * shaftStrength * glow
+    * ( float( SHAFT_GAIN ) * share - ( 1.0 - share ) ) );
+}
+void main() {
+  gl_FragColor = vec4( shaftLight( vUv, gl_FragCoord.xy + shaftPixelOrigin ), 1.0 );
+}
+`;
+
+// Laying the marched light over the frame. At full resolution the shaft
+// buffer is the frame's own size and each pixel takes its own texel, by
+// texelFetch, so a still rendered in tiles gets bit for bit what the
+// whole plate would have given it. At half resolution (the live view
+// only) the four nearest texels are blended by distance as well as by
+// position: a plain bilinear upsample drags the bright fog in front of a
+// pier across the pier's edge, and a halo around every silhouette is
+// exactly what a half-resolution effect is accused of.
+export const SHAFTS_COMPOSITE_GLSL = `
+uniform sampler2D tDiffuse;
+uniform sampler2D tShafts;
+uniform sampler2D tDepth;
+uniform mat4 shaftProjectionInverse;
+uniform vec2 shaftLowResolution;
+uniform float shaftUpsample;
+varying vec2 vUv;
+float shaftViewDistance( vec2 uv ) {
+  float depth = texture2D( tDepth, uv ).x;
+  vec4 clip = vec4( uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0 );
+  vec4 view = shaftProjectionInverse * clip;
+  return length( view.xyz / view.w );
+}
+vec3 shaftUpsampled() {
+  if ( shaftUpsample < 0.5 ) return texelFetch( tShafts, ivec2( gl_FragCoord.xy ), 0 ).rgb;
+  vec2 texel = 1.0 / shaftLowResolution;
+  vec2 at = vUv * shaftLowResolution - 0.5;
+  vec2 base = floor( at );
+  vec2 part = at - base;
+  float here = shaftViewDistance( vUv );
+  vec3 sum = vec3( 0.0 );
+  float weightSum = 0.0;
+  for ( int y = 0; y < 2; y ++ ) {
+    for ( int x = 0; x < 2; x ++ ) {
+      vec2 uv = ( base + vec2( float( x ), float( y ) ) + 0.5 ) * texel;
+      float bilinear = ( x == 0 ? 1.0 - part.x : part.x ) * ( y == 0 ? 1.0 - part.y : part.y );
+      float apart = abs( shaftViewDistance( uv ) - here );
+      float weight = bilinear / ( 0.05 + apart );
+      sum += texture2D( tShafts, uv ).rgb * weight;
+      weightSum += weight;
+    }
+  }
+  return sum / max( weightSum, 1e-6 );
+}
+void main() {
+  vec4 base = texture2D( tDiffuse, vUv );
+  gl_FragColor = vec4( base.rgb + shaftUpsampled(), base.a );
+}
+`;
+
+// Both passes draw the one full-screen triangle, so they share a vertex
+// shader; vUv is what the fragment shaders above read.
+export const SHAFTS_VERTEX = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}
+`;

@@ -436,7 +436,10 @@ def test_the_presets_are_sane_and_the_page_offers_exactly_them(tmp_path):
     # Each dial's range is the module's, so a clamped scene and a dragged
     # dial agree about what is allowed.
     dials = re.findall(r'\["(atmosphere-[a-z-]+)", "([A-Za-z]+)", \d\]', js)
-    assert len(dials) == 9
+    # Ten since the light rays joined them (a per cent, desktop only).
+    # Counted rather than merely scanned, so a dial added to the page and
+    # forgotten in the table is caught here.
+    assert len(dials) == 10
     for ident, key in dials:
         tag = re.search(r'<input id="' + ident + r'" type="range"([^>]*)>', html)
         assert tag, ident + " is a range on the page"
@@ -618,10 +621,12 @@ def test_the_atmosphere_lives_in_the_skies_drawer():
         assert ident in modes
     settings = html[html.index('<div id="shelf-sky-settings"'):]
     settings = settings[:settings.index('<div id="prop-tiles"')]
-    assert settings.count('class="atmosphere-dial hidden"') == 9, "hidden until a preset is chosen"
+    assert settings.count('class="atmosphere-dial hidden"') == 10, "hidden until a preset is chosen"
     js = STUDIO_JS.read_text(encoding="utf-8")
     sync = _body(js, "function syncAtmosphereControls()")
-    assert 'label.classList.toggle("hidden", !on);' in sync
+    # The one exception: the light rays have no pass behind them on a
+    # constrained device, so that row stays away there even with a preset.
+    assert 'label.classList.toggle("hidden", !on || (desktopOnly && CONSTRAINED_DEVICE));' in sync
     assert 'document.getElementById(id + "-value").textContent' in sync
 
 
@@ -780,3 +785,268 @@ def test_a_moved_vendored_chunk_is_loud_rather_than_quietly_stock(tmp_path):
     do nothing, with no banner and no diagnostics entry."""
 
     assert "ok" in _run_node(tmp_path, INSTALL_CHECK)
+
+
+# ---------- the light rays ----------
+# The volumetric half of the atmosphere: a raymarch of the sun's shadow map
+# through the same height fog, before tone mapping. Withdrawn once
+# (ec7fe73) for being a second Sun glow dial; back on 2026-09-13 splitting
+# the glow by shadow instead of adding over it. The march is pure, so node
+# holds it to the analytic integral; the wiring, the gate and the two
+# resolutions are pinned against the page.
+
+RAYS_CHECK = textwrap.dedent("""
+    import {
+      ATMOSPHERE_PRESETS, ATMOSPHERE_RANGES, atmosphereFromPreset, adoptAtmosphere,
+      atmosphereLayers, atmosphereAmounts, shaftSums, shaftLight, shaftsStrength,
+      SHAFT_STEPS, SHAFT_MAX_DISTANCE, SHAFT_GAIN,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b, rel) { return Math.abs(a - b) <= rel * Math.max(1e-12, Math.abs(b)); }
+
+    const lit = () => 1;
+    const dark = () => 0;
+    // A shadow with no structure a test could have been written around.
+    const dappled = (at) => (Math.sin(at * 1.7) * Math.sin(at * 0.31) > 0.1 ? 1 : 0);
+
+    // THE PARTITION. Each step adds transmittance * (1 - exp(-tau)) to the
+    // lit sum or the shaded sum and then multiplies the transmittance by
+    // exp(-tau), so the two together collapse to 1 - exp(-sum of tau) --
+    // exactly the analytic glow -- for any step count and ANY shadow. It
+    // pins the segment length, the height at each step and the
+    // transmittance together.
+    const rays = [
+      ["clear-air", 1.7, -0.02, 200], ["haze", 1.7, 0.0, 120],
+      ["morning-mist", 0.6, -0.3, 60], ["valley-fog", 12, 0.4, 230],
+      ["haze", 30, -0.9, 40], ["clear-air", 1.7, 0.25, 5],
+    ];
+    for (const [key, eye, dz, L] of rays) {
+      const layers = atmosphereLayers(atmosphereFromPreset(key), 0);
+      const analytic = atmosphereAmounts(layers, eye, dz, L)[1];
+      for (const [name, sun] of [["lit", lit], ["dark", dark], ["dappled", dappled]]) {
+        const sums = shaftSums(layers, eye, dz, L, sun);
+        // The analytic glow is capped at Max opacity, so the two sums are
+        // held to it under the same cap.
+        expect(near(Math.min(sums.lit + sums.shade, layers.maxOpacity), analytic, 1e-9),
+          "lit and shaded air together are the analytic glow (" + name + "): "
+          + (sums.lit + sums.shade) + " against " + analytic + " for " + [key, eye, dz, L]);
+      }
+      expect(shaftSums(layers, eye, dz, L, lit).shade === 0, "a fully lit ray has no shade");
+      expect(shaftSums(layers, eye, dz, L, dark).lit === 0, "a dark ray has no light");
+    }
+    // And whatever the jitter does, because the jitter moves only where the
+    // SUN is asked about, never how much air a segment holds.
+    const haze = atmosphereLayers(atmosphereFromPreset("haze"), 0);
+    const hazeGlow = atmosphereAmounts(haze, 1.7, -0.02, 150)[1];
+    for (const jitter of [0, 0.25, 0.5, 0.99]) {
+      const s = shaftSums(haze, 1.7, -0.02, 150, dappled, jitter);
+      expect(near(s.lit + s.shade, hazeGlow, 1e-9), "the jitter moves no energy (" + jitter + ")");
+    }
+
+    // WHAT THE PASS LAYS ON. All lit: SHAFT_GAIN times the glow. All in
+    // shadow: exactly minus the glow, so the shadowed air loses what the
+    // fog gave it and not a jot more -- no black fringe at a silhouette.
+    const glow = atmosphereAmounts(haze, 1.7, 0, 150)[1];
+    expect(near(shaftLight(haze, 1.7, 0, 150, lit), SHAFT_GAIN * glow, 1e-9), "lit air carries the sun");
+    expect(near(shaftLight(haze, 1.7, 0, 150, dark), -glow, 1e-9), "shadowed air loses exactly its glow");
+    for (let seed = 1; seed <= 40; seed++) {
+      const sun = (at) => (Math.sin(at * seed * 0.37 + seed) > 0 ? 1 : 0);
+      const light = shaftLight(haze, 1.7, 0.05, 20 + seed * 5, sun);
+      const g = atmosphereAmounts(haze, 1.7, 0.05, 20 + seed * 5)[1];
+      expect(light >= -g - 1e-12 && light <= SHAFT_GAIN * g + 1e-12,
+        "never below minus the glow nor above gain times it (seed " + seed + ")");
+    }
+    // More of the ray in sun is more light, strictly.
+    const half = shaftLight(haze, 1.7, 0, 150, (at) => (at > 75 ? 1 : 0));
+    expect(half > -glow && half < SHAFT_GAIN * glow, "a half lit ray is between the two");
+    // The near half carries more than the far half: the fog in front has
+    // already taken the far half's light.
+    const front = shaftLight(haze, 1.7, 0, 150, (at) => (at < 75 ? 1 : 0));
+    expect(front > half, "the near half of a ray carries more than the far half");
+
+    // Nothing before the sun glow's own start, where the analytic glow
+    // starts too.
+    const late = atmosphereLayers({ ...atmosphereFromPreset("haze"), sunStart: 80 }, 0);
+    expect(shaftLight(late, 1.7, 0, 60, lit) === 0, "nothing before the sun start");
+    // The march stops at its own reach.
+    const reach = shaftLight(haze, 1.7, 0, SHAFT_MAX_DISTANCE, lit);
+    expect(shaftLight(haze, 1.7, 0, 4000, lit) === reach, "the march stops at its reach");
+    expect(SHAFT_STEPS >= 16 && SHAFT_MAX_DISTANCE > 0, "the march has steps and a reach");
+    // The cap the rest of the atmosphere obeys.
+    const thick = atmosphereLayers({ ...atmosphereFromPreset("valley-fog"), maxOpacity: 40 }, 0);
+    expect(near(shaftLight(thick, 0.5, 0, 200, lit), SHAFT_GAIN * 0.4, 1e-12), "max opacity caps the glow split");
+    expect(near(shaftLight(thick, 0.5, 0, 200, dark), -0.4, 1e-12), "and what shadow may take");
+
+    // THE GAIN, measured in his wood: 4 and 16 only glowed; 48 made beams.
+    expect(SHAFT_GAIN >= 24 && SHAFT_GAIN <= 96, "a gain that reads as rays: " + SHAFT_GAIN);
+
+    // THE DIAL. Rays need air: with the atmosphere at None the pass does
+    // not run whatever the dial says.
+    expect(shaftsStrength(atmosphereFromPreset("none")) === 0, "no atmosphere, no rays");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: 60 }) === 0.6, "sixty per cent");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: 400 }) === 1, "clamped high");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: -5 }) === 0, "clamped low");
+    expect(shaftsStrength({ ...atmosphereFromPreset("haze"), shafts: undefined }) === 0,
+      "a setting with no rays in it is no rays");
+
+    // EVERY PRESET RESTS AT ZERO, and a scene saved before the rays existed
+    // loads at nought: nothing he has already made changes until he turns
+    // the dial up, which is why this is a dial and not a new default.
+    for (const key of Object.keys(ATMOSPHERE_PRESETS)) {
+      if (key === "none") continue;
+      expect(ATMOSPHERE_PRESETS[key].shafts === 0, key + " rests with the rays off");
+    }
+    expect(ATMOSPHERE_RANGES.shafts[0] === 0 && ATMOSPHERE_RANGES.shafts[1] === 100,
+      "the dial runs nought to a hundred");
+    expect(adoptAtmosphere({ preset: "haze" }).shafts === 0, "an older scene loads at 0");
+    expect(adoptAtmosphere({ preset: "haze", shafts: 60 }).shafts === 60, "a saved 60 comes back");
+    expect(adoptAtmosphere({ preset: "haze", shafts: 999 }).shafts === 100, "a saved 999 is clamped");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_rays_split_the_glow_by_shadow_and_never_carve_past_it(tmp_path):
+    """Param, 2026-09-13, over a golden-hour beech wood: "I think we are
+    just missing light rays from this."
+
+    The withdrawn pass added lit air over the analytic glow, and so was a
+    second Sun glow dial. This one sums the lit and the shaded air in one
+    march, and those two partition the glow exactly; the shaded share is
+    taken away and SHAFT_GAIN times the lit share laid on. Measured in his
+    wood under Haze, sun 2.5 degrees up: beams stood between the trunks at
+    a gain of 48, where 4 and 16 only glowed."""
+
+    assert "ok" in _run_node(tmp_path, RAYS_CHECK)
+
+
+def test_the_rays_march_between_the_render_and_the_tone_map():
+    """Order is the whole argument. After the RenderPass, what the rays
+    add is linear HDR and the OutputPass tone maps it, so an inscatter
+    above 1 comes back as a highlight; after the OutputPass it would be
+    added to display-space sRGB and clip flat. The grade stays last."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+    order = [js.index(line) for line in (
+        "composer.addPass(renderPass);",
+        "  composer.addPass(shaftsPass);",
+        "composer.addPass(new OutputPass());",
+        "composer.addPass(gradePass);")]
+    assert order == sorted(order), "render, rays, tone map, grade, in that order"
+
+    # The depth it marches against: a texture on the composer's own target,
+    # resolved out of the 4x MSAA one, measured on this GPU before it was
+    # relied on; off until the rays are on.
+    assert "depthTexture: new THREE.DepthTexture(1, 1)," in js
+    assert "samples: 4, type: THREE.HalfFloatType," in js
+    assert "composerTarget.resolveDepthBuffer = false;" in js
+    apply_ = _body(js, "function applyShafts()")
+    assert "composerTarget.resolveDepthBuffer = strength > 0;" in apply_
+    assert "composer.renderTarget2.resolveDepthBuffer = strength > 0;" in apply_
+
+    # The pass reads the depth of the buffer it was HANDED.
+    body = _body(js, "class ShaftsPass extends Pass")
+    assert "this.march.uniforms.tDepth.value = readBuffer.depthTexture;" in body
+    assert "this.composite.uniforms.tDiffuse.value = readBuffer.texture;" in body
+
+    # At nought the pass does not run at all, rather than running at zero.
+    arm = _body(js, "function armShafts()")
+    assert "shaftsPass.enabled = shaftsPass.march.uniforms.shaftStrength.value > 0" in arm
+    assert "armShafts();" in _body(js, "function renderView()")
+
+    # The shader splits the glow as the JS twin does.
+    assert "defines: { SHAFT_STEPS, SHAFT_GAIN }," in js
+    shader = module[module.index("export const SHAFTS_GLSL"):]
+    assert "lit += transmittance * ( 1.0 - through ) * reached;" in shader
+    assert "shade += transmittance * ( 1.0 - through ) * ( 1.0 - reached );" in shader
+    assert "float glow = min( total, atmoMaxOpacity );" in shader
+    assert "* ( float( SHAFT_GAIN ) * share - ( 1.0 - share ) ) );" in shader
+
+    # The matrices are written from INSIDE the pass, because the shadow map
+    # and its matrix are made by the RenderPass one pass earlier.
+    assert "shaftsPass.settle = settleShafts;" in js
+    settle = _body(js, "function settleShafts()")
+    assert "uniforms.shaftShadowMatrix.value.copy(sun.shadow.matrix);" in settle
+    assert "if (this.settle) this.settle();" in body
+
+
+def test_the_rays_are_not_built_at_all_on_a_constrained_device():
+    """A raymarch of the shadow map per pixel is the one effect the iPad
+    path cannot afford. There is no pass there, not a pass held at zero,
+    and the dial is hidden rather than sitting dead among the dials that
+    work."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    assert ("const shaftsPass = CONSTRAINED_DEVICE ? null : new ShaftsPass(atmosphere.uniforms);"
+            in js)
+    sync = _body(js, "function syncAtmosphereControls()")
+    assert 'const desktopOnly = label.id === "atmosphere-shafts-row";' in sync
+    for owner in ("function applyShafts()", "function armShafts()",
+                  "function setShaftResolution(full)"):
+        assert "if (!shaftsPass) return;" in _body(js, owner), owner
+
+
+def test_a_still_and_a_take_march_the_rays_at_full_resolution():
+    """renderStill draws a plate in tiles through camera.setViewOffset, and
+    a tile's neighbours are not the plate's. So the half resolution march
+    and its depth-aware upsample are the LIVE VIEW only; at full
+    resolution each pixel takes its own texel by texelFetch."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+
+    size = _body(js, "  setSize(width, height) {")
+    assert "const scale = this.fullResolution ? 1 : 0.5;" in size
+    assert "this.composite.uniforms.shaftUpsample.value = this.fullResolution ? 0 : 1;" in size
+    assert "texelFetch( tShafts, ivec2( gl_FragCoord.xy ), 0 )" in module
+
+    still = _body(js, "async function renderStill()")
+    assert "setShaftResolution(true);" in still
+    assert still.index("setShaftResolution(true);") < still.index("camera.setViewOffset("), (
+        "the resolution is settled before the first tile is drawn")
+    assert "setShaftResolution(false);" in still, "and put back afterwards"
+
+    take = _body(js, "async function recordAnimation()")
+    assert "setShaftResolution(true);" in take
+    assert "setShaftResolution(false);" in take
+
+
+def test_the_rays_read_no_clock_at_all():
+    """The only stochastic thing in the rays is a dither seeded from the
+    pixel's place in the whole frame, so a take is reproducible frame for
+    frame AND a tile of a still gets the dither it would have had in the
+    whole plate."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+    shafts = module[module.index("export const SHAFTS_GLSL"):]
+    for banned in ("uTime", "iTime", "shaftTime", "performance.now", "Date.now", "deltaTime"):
+        assert banned not in shafts, "the march reads " + banned
+    assert "float shaftDither( vec2 pixel ) {" in shafts
+    assert "shaftLight( vUv, gl_FragCoord.xy + shaftPixelOrigin )" in shafts
+    settle = _body(js, "function settleShafts()")
+    for banned in ("performance.now", "Date.now", "state.timeline", "Math.random"):
+        assert banned not in settle, "the rays read " + banned
+    assert "view.offsetX, view.fullHeight - view.offsetY - view.height);" in settle
+
+
+def test_the_light_rays_dial_wears_the_four_part_shape_and_saves_with_the_scene():
+    """Four parts, a reading that something writes, a declared unit
+    because it rests at zero, and his word for it."""
+
+    html = INDEX.read_text(encoding="utf-8")
+    js = STUDIO_JS.read_text(encoding="utf-8")
+
+    label = html[html.index('<label id="atmosphere-shafts-row"'):]
+    label = label[:label.index("</label>") + len("</label>")]
+    assert "<span>Light rays</span>" in label
+    assert '<input id="atmosphere-shafts" type="range" data-unit="1" min="0" max="100"' in label
+    assert '<b id="atmosphere-shafts-value">0</b>' in label
+    assert "<em>%</em>" in label
+    assert 'class="atmosphere-dial hidden"' in label, "hidden until a preset is chosen"
+    assert '["atmosphere-shafts", "shafts", 0],' in js, "the dial table drives it"
+    assert "atmosphere: { ...state.atmosphere }," in _body(js, "function collectScene(options)")
