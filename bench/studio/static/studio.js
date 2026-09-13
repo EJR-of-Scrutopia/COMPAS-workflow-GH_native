@@ -403,6 +403,47 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
 
+// ---------- the reflection capture ----------
+// Param, 2026-09-13, over a dark olive block under the arch: "I really
+// need the anchor to be a better material. use the steel polished dark
+// material we have."
+//
+// IT ALREADY WORE IT, and measured, it had loaded whole: Metal036's
+// colour, normal and roughness maps, metalness 1. What it could not do
+// was look like steel, because a polished metal shows almost nothing but
+// its surroundings -- and its surroundings, to three, are the ENVIRONMENT
+// MAP, which is the HDRI. His sides of dark steel were faithfully
+// mirroring the green meadow on the horizon of evening_meadow, a meadow
+// that is nowhere in a scene he has filled with beech wood, and the
+// colour map's 0.28 average (reflecting 6.5 per cent) left the olive as
+// the only thing to see. No finish fixes that; the reflection is of the
+// wrong world.
+//
+// So, as Unreal does with a reflection capture: a cube photograph of the
+// ACTUAL scene, taken where the steel stands, and handed to the parts
+// that wear the polished steel in place of the HDRI. Measured in his own
+// setup: the anchor went from olive to dark steel grey, and the capture
+// took 108 ms on a software rasteriser.
+//
+// It is taken when the scene has settled after a change, never per
+// frame, and never during a take (the sun moving would ask for six extra
+// renders a frame); a still and a take each take one as they begin.
+const REFLECTION_SIZE = 256;
+const REFLECTION_SETTLE_MS = 400;
+// A person's eye above the lowest part that wears it: the anchor sits on
+// the ground, and a capture on the ground would see only the floor.
+const REFLECTION_EYE = 0.8;
+const reflectionTarget = new THREE.WebGLCubeRenderTarget(REFLECTION_SIZE, {
+  type: THREE.HalfFloatType, generateMipmaps: true,
+  minFilter: THREE.LinearMipmapLinearFilter });
+const reflectionCamera = new THREE.CubeCamera(0.05, 2000, reflectionTarget);
+// When the scene last changed in a way the capture would see, or 0 once
+// it has been taken since.
+let reflectionDirtyAt = 1;
+let reflectionsTaken = 0;
+
+function noteReflectionsChanged() { reflectionDirtyAt = performance.now(); }
+
 // How bright the environment is, as the MODE'S OWN base times his dial.
 // Param: "if i want to darken the hdri so that its dark enough for the
 // lights to work well, we dont have that option". There was none: each
@@ -694,7 +735,49 @@ let shadowFitPending = true;
 const shadowBox = new THREE.Box3();
 const shadowSphere = new THREE.Sphere();
 
-function noteCastersChanged() { shadowFitPending = true; }
+function noteCastersChanged() { shadowFitPending = true; noteReflectionsChanged(); }
+
+// The parts that wear the capture: the permanent works, which are the
+// anchor and the tension tie, and the principal bars, which wear the same
+// polished dark steel.
+function reflectionWearers() {
+  const worn = [];
+  if (machineObjects) {
+    machineObjects.permanent.traverse((object) => { if (object.isMesh) worn.push(object); });
+  }
+  if (state.objects.principal) worn.push(state.objects.principal);
+  return worn;
+}
+
+function captureReflections() {
+  reflectionDirtyAt = 0;
+  const wearers = reflectionWearers();
+  if (!wearers.length) return;
+  const box = new THREE.Box3();
+  for (const mesh of wearers) box.expandByObject(mesh);
+  if (box.isEmpty()) return;
+  // NOT IN ITS OWN PHOTOGRAPH: a part that could see itself would carry a
+  // black hole where the camera stood inside it.
+  const shown = wearers.map((mesh) => mesh.visible);
+  for (const mesh of wearers) mesh.visible = false;
+  reflectionCamera.position.set((box.min.x + box.max.x) / 2,
+    (box.min.y + box.max.y) / 2, box.min.z + REFLECTION_EYE);
+  reflectionCamera.update(renderer, scene);
+  wearers.forEach((mesh, i) => { mesh.visible = shown[i]; });
+  for (const mesh of wearers) wearReflection(mesh.material);
+  reflectionsTaken += 1;
+}
+
+// Handed only to what is metal: a capture on a matte material would change
+// nothing but its shader.
+function wearReflection(material) {
+  for (const one of Array.isArray(material) ? material : [material]) {
+    if (!one || !one.isMeshStandardMaterial || one.metalness < 0.5) continue;
+    if (one.envMap === reflectionTarget.texture) continue;
+    one.envMap = reflectionTarget.texture;
+    one.needsUpdate = true;
+  }
+}
 
 // A bounding SPHERE, not a box, because the shadow camera looks down the
 // sun's own axis: a box measured in world axes would need re-measuring
@@ -857,6 +940,7 @@ function applySunAt(azimuthDeg, elevationDeg) {
   const r = SUN_DISTANCE;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
+  noteReflectionsChanged();
 }
 
 // Kept for the day cycle and the HDRI estimate, both of which speak in
@@ -909,6 +993,7 @@ function setEnvironmentTexture(texture, target) {
   if (environmentTarget) environmentTarget.dispose();
   environmentTarget = target || null;
   scene.environment = texture;
+  noteReflectionsChanged();
 }
 
 function paintSkyDials() {
@@ -5129,6 +5214,8 @@ function buildPrincipalBars() {
     mesh.material = worn;
     mesh.userData.libraryMaterial = true;
     syncNetShadow(mesh);
+    // A new coat, so it has to be handed the capture afresh.
+    noteReflectionsChanged();
   });
   if (state.timeline) applySceneAtTime(state.timeline.t);
 }
@@ -7389,6 +7476,9 @@ async function renderStill() {
   const wasWidth = canvas.width, wasHeight = canvas.height;
   document.body.classList.add("stilling");
   state.recording = true;          // resize() must keep its hands off
+  // The plate is framed now and will not change: its reflections are
+  // photographed once, for it.
+  captureReflections();
   const began = performance.now();
   let sent = 0;
   try {
@@ -15701,6 +15791,9 @@ function skinMachine(group, mine) {
     if (machineObjects && machineObjects.machineSkins) {
       machineObjects.skins = machineObjects.machineSkins();
     }
+    // The anchor and the tie wear new coats too, which the capture has not
+    // been handed yet.
+    noteReflectionsChanged();
     renderView();
   });
 }
@@ -16889,6 +16982,8 @@ async function recordAnimation() {
   const began = performance.now();
   closeFixturePanel();      // an overlay is not part of the take
   state.recording = true;   // resize() must skip while this is set
+  // One capture for the take, as it begins; none while it runs.
+  captureReflections();
   state.recordStop = false;
   paintRecordButton();
   let stopped = -1;
@@ -17573,6 +17668,14 @@ function frame(now) {
     && state.timeline.orbitBase && state.timeline.autoSpin
     && !state.userDragging;
   if (!turntableOwns) controls.update();
+  // HERE, in the live loop, and not in renderView: renderView reads no
+  // clock, so that a take draws the same frames however long it takes,
+  // and waiting for the scene to hold still is a question of the clock.
+  // The recorder never runs this loop, so no capture lands mid-take.
+  if (reflectionDirtyAt && !state.recording
+      && performance.now() - reflectionDirtyAt > REFLECTION_SETTLE_MS) {
+    captureReflections();
+  }
   if (!state.recording) renderView();
   noteFrame();
   requestAnimationFrame(frame);
@@ -17709,6 +17812,8 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // questions a placement asks -- can this land here, and what does the
   // pointer say it is over -- without driving the mouse.
   scatterKeepOut, keepOutClear, keepOutAdd, setHoveredProp,
+  captureReflections, reflectionWearers, get reflectionsTaken() { return reflectionsTaken; },
+  reflectionTarget,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,
   // A GETTER, because `camera` is now a binding that moves between two

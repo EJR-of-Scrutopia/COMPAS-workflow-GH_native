@@ -4154,3 +4154,74 @@ def test_one_output_folder_sits_above_the_still_and_the_take():
     assert row < html.index('<span class="row-heading">Still</span>') < html.index(
         '<span class="row-heading">Take</span>')
     assert 'title="Pick where finished stills and recordings are saved"' in html
+
+
+def test_the_polished_steel_reflects_the_scene_it_stands_in():
+    """Param, 2026-09-13, over a dark olive block under the arch: "I really
+    need the anchor to be a better material. use the steel polished dark
+    material we have."
+
+    It already wore it, whole. What made it olive was that a polished
+    metal shows almost nothing but its surroundings, and to three its
+    surroundings are the environment map -- the HDRI -- so his steel was
+    mirroring the meadow on evening_meadow's horizon, in a scene he had
+    filled with beech wood. A reflection capture of the actual scene, as
+    Unreal takes, is handed to the parts that wear the polished steel.
+
+    Measured under evening_meadow, on the anchor's outward face: without
+    the capture RGB (18.5, 34.5, 14.2), green standing 18.2 above the
+    other two; with it (10.1, 20.8, 23.2), 4.2. It was taken by itself
+    once the scene held still, and cost 111 ms on a software rasteriser.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    mechanism = (STATIC / "mechanism.js").read_text(encoding="utf-8")
+
+    # HIS RULING STANDS: the anchor and the tie wear the polished dark steel.
+    assert '{ key: "anchor", kind: "anchor", material: "metal/steel-polished-dark",' in mechanism
+    assert '{ key: "tensionTie", kind: "tie", material: "metal/steel-polished-dark",' in mechanism
+
+    # A cube of the scene, in linear light, filtered for roughness.
+    assert "const reflectionTarget = new THREE.WebGLCubeRenderTarget(REFLECTION_SIZE, {" in js
+    assert "type: THREE.HalfFloatType, generateMipmaps: true," in js
+    eye = float(re.search(r"const REFLECTION_EYE = ([0-9.]+);", js).group(1))
+    assert 0.3 <= eye <= 2.0, "a capture on the ground sees only the floor"
+
+    # Who wears it: the permanent works and the principal bars, metal only.
+    wearers = _function_body(js, "reflectionWearers")
+    assert "machineObjects.permanent.traverse(" in wearers
+    assert "if (state.objects.principal) worn.push(state.objects.principal);" in wearers
+    wear = _function_body(js, "wearReflection")
+    assert "if (!one || !one.isMeshStandardMaterial || one.metalness < 0.5) continue;" in wear
+    assert "one.envMap = reflectionTarget.texture;" in wear
+
+    # NOT IN ITS OWN PHOTOGRAPH, and put back afterwards.
+    capture = _function_body(js, "captureReflections")
+    hide = capture.index("for (const mesh of wearers) mesh.visible = false;")
+    shoot = capture.index("reflectionCamera.update(renderer, scene);")
+    back = capture.index("wearers.forEach((mesh, i) => { mesh.visible = shown[i]; });")
+    assert hide < shoot < back
+    assert "box.min.z + REFLECTION_EYE" in capture
+
+    # TAKEN WHEN THE SCENE HOLDS STILL, in the live loop: renderView reads
+    # no clock (test_brightness_and_contrast_grade_every_render), and the
+    # recorder never runs this loop, so nothing is taken mid-take.
+    assert "captureReflections" not in _function_body(js, "renderView")
+    loop = _function_body(js, "frame")
+    wait = loop.index("performance.now() - reflectionDirtyAt > REFLECTION_SETTLE_MS")
+    assert "if (reflectionDirtyAt && !state.recording" in loop
+    assert ("      && performance.now() - reflectionDirtyAt > REFLECTION_SETTLE_MS) {\n"
+            "    captureReflections();\n  }") in loop, "and it is TAKEN, not merely waited for"
+    assert wait < loop.index("if (!state.recording) renderView();")
+
+    # WHAT THE CAPTURE WOULD SEE CHANGING says so.
+    assert "noteReflectionsChanged();" in _function_body(js, "applySunAt")
+    assert "noteReflectionsChanged();" in _function_body(js, "setEnvironmentTexture")
+    assert "function noteCastersChanged() { shadowFitPending = true; noteReflectionsChanged(); }" in js
+    assert "noteReflectionsChanged();" in _function_body(js, "skinMachine")
+    assert "noteReflectionsChanged();" in _function_body(js, "buildPrincipalBars")
+
+    # A STILL AND A TAKE each take one as they begin, once framed.
+    for name in ("renderStill", "recordAnimation"):
+        body = _function_body(js, name)
+        assert body.index("state.recording = true;") < body.index("captureReflections();"), name
