@@ -314,7 +314,7 @@ FOLDER_TITLES = {
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
     "mechanism_folder": "Choose your mechanism library folder",
-    "recordings_folder": "Choose where finished recordings are saved",
+    "recordings_folder": "Choose where finished stills and recordings are saved",
 }
 
 
@@ -451,17 +451,52 @@ def deliver_recording(run_id: str, video: Path) -> Path:
     returned instead.
     """
 
-    stored = read_settings().get("recordings_folder")
-    destination = Path(stored) if stored else RECORDINGS_DIR
     slug = run_id[len("study-"):] if run_id.startswith("study-") else run_id
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    return deliver_output(video, "{}-{}.mp4".format(slug, stamp))
+
+
+def deliver_still(run_id: str, plate: Path, width: int, height: int) -> Path:
+    """The plate lands in the SAME folder as the takes, stamped and named.
+
+    Param, 2026-09-13: "the output folder for the image still is not taking
+    the output folder we set, its got its own random location? the video
+    and the stills should use the same output folder the one we select."
+    The still was written to studio/still.png inside the study and nowhere
+    else, three levels into the repo, while the take beside it on the same
+    panel went where he had pointed it. Its size is in the name, because a
+    2K proof and an A2 plate of the same view are different files.
+    """
+
+    slug = run_id[len("study-"):] if run_id.startswith("study-") else run_id
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return deliver_output(
+        plate, "{}-still-{}x{}-{}.png".format(slug, width, height, stamp))
+
+
+def deliver_output(source: Path, name: str) -> Path:
+    """Copy a finished still or take into the chosen output folder.
+
+    Never over another file: two plates rendered inside one second would
+    otherwise share a stamp, and the second would silently replace the
+    first. A delivery that fails (folder unreachable, OneDrive offline)
+    returns the copy that exists rather than a path that was never written.
+    """
+
+    stored = read_settings().get("recordings_folder")
+    destination = Path(stored) if stored else RECORDINGS_DIR
     try:
         destination.mkdir(parents=True, exist_ok=True)
-        named = destination / "{}-{}.mp4".format(slug, stamp)
-        shutil.copy2(video, named)
+        named = destination / name
+        stem, suffix = named.stem, named.suffix
+        again = 2
+        while named.exists():
+            named = destination / "{}-{}{}".format(stem, again, suffix)
+            again += 1
+        shutil.copy2(source, named)
         return named
     except OSError:
-        return video
+        return source
 
 
 RESTART_DELAY = 0.5
@@ -2477,7 +2512,15 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         out = directory.parent / "still.png"
         plate.save(out)
         plate.close()
-        return {"still": str(out), "width": width, "height": height,
+        # THE PLATE IS WHOLE AND ON DISK, so the tiles have done their work.
+        # Left behind they sat in a folder of their own looking like the
+        # output: Param opened it, found tile-000 and tile-001, and took his
+        # 4K still for "2 un stitched images". A stitch that fails keeps
+        # them, because then they are the evidence.
+        for path in tiles:
+            path.unlink(missing_ok=True)
+        delivered = deliver_still(run_id, out, width, height)
+        return {"still": str(delivered), "width": width, "height": height,
                 "tiles": len(tiles)}
 
     @app.get("/")

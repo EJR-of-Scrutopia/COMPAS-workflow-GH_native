@@ -1456,8 +1456,15 @@ def test_a_stitch_takes_its_size_from_the_tiles_and_refuses_to_be_told_otherwise
         assert plate.getpixel((0, 14))[0] == 120
         assert plate.getpixel((20, 14))[0] == 180
 
-    # A missing tile is a hole, and a plate with a hole is refused.
-    (studies / "tiny" / "studio" / "still" / "tile-002-000000-000012.png").unlink()
+    # A missing tile is a hole, and a plate with a hole is refused. (The
+    # plate above was whole, so its tiles are already gone; this one is
+    # sent again without its third.)
+    for index, (x, y, w, h) in enumerate(
+            [(0, 0, 16, 12), (16, 0, 8, 12), (0, 12, 16, 4), (16, 12, 8, 4)]):
+        if index == 2:
+            continue
+        client.post("/api/still/study-tiny?tile={}&x={}&y={}".format(index, x, y),
+                    content=_png(w, h, (index * 60, 80, 90, 255)))
     holed = client.post("/api/still/study-tiny/stitch?width=24&height=16")
     assert holed.status_code == 500
     assert "never arrived" in holed.json()["detail"]
@@ -1691,3 +1698,55 @@ def test_the_atmosphere_module_is_remapped_to_its_versioned_address(
     assert re.search(
         r'"/static/atmosphere\.js": "/static/atmosphere\.js\?v=[0-9a-f]{6,}"',
         page), "atmosphere.js must be remapped to its versioned address"
+
+
+def test_a_still_goes_to_the_output_folder_and_leaves_no_tiles(tmp_path, monkeypatch):
+    """Param, 2026-09-13: "the output folder for the image still is not
+    taking the output folder we set, its got its own random location? the
+    video and the stills should use the same output folder the one we
+    select." And of the tiles left behind: "the still gave 2 un stitched
+    images? This always must be one image no matter the resolution".
+
+    The stitch was sound -- one 3840 by 1718 plate -- but it was written
+    only into the study's studio folder, and its two tiles stayed in a
+    folder beside it looking like the output."""
+
+    import sys
+    from PIL import Image
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    # One stamp for every delivery here, so two plates DO share a second.
+    monkeypatch.setattr(app_module.time, "strftime", lambda fmt: "20260913-120000")
+    chosen = tmp_path / "captures"
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"recordings_folder": str(chosen)}), encoding="utf-8")
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    for index, (x, y, w, h) in enumerate([(0, 0, 16, 16), (16, 0, 8, 16)]):
+        client.post("/api/still/study-tiny?tile={}&x={}&y={}".format(index, x, y),
+                    content=_png(w, h, (index * 90, 80, 90, 255)))
+
+    done = client.post("/api/still/study-tiny/stitch?width=24&height=16")
+    assert done.status_code == 200, done.text
+    delivered = Path(done.json()["still"])
+    assert delivered.parent == chosen, (
+        "the still goes where the takes go, and the readout names it there")
+    assert delivered.name.startswith("tiny-still-24x16-") and delivered.suffix == ".png"
+    with Image.open(delivered) as plate:
+        assert plate.size == (24, 16), "ONE image, at the size asked for"
+    assert not list((studies / "tiny" / "studio" / "still").glob("tile-*.png")), (
+        "no tile outlives a whole plate")
+    assert (studies / "tiny" / "studio" / "still.png").is_file(), (
+        "the study keeps its own copy, as the takes do")
+
+    # A second plate in the same second does not overwrite the first.
+    for index, (x, y, w, h) in enumerate([(0, 0, 16, 16), (16, 0, 8, 16)]):
+        client.post("/api/still/study-tiny?tile={}&x={}&y={}".format(index, x, y),
+                    content=_png(w, h, (index * 90, 80, 90, 255)))
+    again = Path(client.post("/api/still/study-tiny/stitch?width=24&height=16").json()["still"])
+    assert again != delivered and delivered.is_file() and again.is_file()
+
+    # And the folder button says it is for both.
+    assert app_module.FOLDER_TITLES["recordings_folder"] == (
+        "Choose where finished stills and recordings are saved")

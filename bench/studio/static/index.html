@@ -820,6 +820,13 @@
          means something and "8K" does not.
          The shape comes from the Camera frame ratio; these decide only
          how many pixels that shape gets. -->
+    <!-- ONE FOLDER FOR BOTH, above both, because it is both's: a still
+         and a take land side by side in it. It sat under Take, and the
+         still went somewhere else entirely. -->
+    <div id="recordings-folder-row" class="folder-line">
+      <button id="recordings-folder-choose" title="Pick where finished stills and recordings are saved">Output folder</button>
+      <span id="recordings-folder-path" title="">no folder chosen</span>
+    </div>
     <span class="row-heading">Still</span>
     <select id="still-size" class="hidden" title="How many pixels the composed frame gets. A3 and A2 are those sheets at 300 dpi.">
       <option value="2k">2K</option>
@@ -833,10 +840,6 @@
     <div id="still-readout"></div>
     <!-- And the take, which shares the folder and the frame with it. -->
     <span class="row-heading">Take</span>
-    <div id="recordings-folder-row" class="folder-line">
-      <button id="recordings-folder-choose" title="Pick where finished recordings are saved">Output folder</button>
-      <span id="recordings-folder-path" title="">no folder chosen</span>
-    </div>
     <button id="record-button" class="primary">Record 1080p</button>
     <div id="record-status"></div>
   </details>

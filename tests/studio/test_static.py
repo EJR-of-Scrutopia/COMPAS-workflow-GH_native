@@ -4141,3 +4141,16 @@ def test_the_layers_drawer_lists_what_is_placed():
     assert "if (!bounds || n < planting.members) continue;" in outlines
     assert "outline(new THREE.Box3Helper(bounds, new THREE.Color(0x93a6bb)));" in outlines
     assert "if (whole.has(plantingOf(record))) continue;" in outlines
+
+
+def test_one_output_folder_sits_above_the_still_and_the_take():
+    """The folder row sat under "Take", so it read as the take's alone,
+    and the still went somewhere else. It is both's, so it sits above
+    both."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert html.count('id="recordings-folder-row"') == 1
+    row = html.index('id="recordings-folder-row"')
+    assert row < html.index('<span class="row-heading">Still</span>') < html.index(
+        '<span class="row-heading">Take</span>')
+    assert 'title="Pick where finished stills and recordings are saved"' in html
