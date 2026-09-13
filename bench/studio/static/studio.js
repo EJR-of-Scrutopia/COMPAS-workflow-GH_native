@@ -30,7 +30,7 @@ import {
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
   groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
-  FLY_SPEEDS, FLY_KEYS, flyStep,
+  FLY_SPEEDS, FLY_KEYS, flyStep, lensStep, lookTurn,
   fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
@@ -8072,6 +8072,65 @@ document.getElementById("camera-aspect").addEventListener("change", (e) => {
   rememberSession();
 });
 window.addEventListener("resize", applyCameraAspect);
+
+// ---------- Ctrl and the wheel: the lens; Ctrl and the right button: the look ----------
+// Both are taken in the capture phase on the window, before the orbit
+// controls on the canvas can hear them: Ctrl and the wheel would otherwise
+// dolly the camera AND zoom the whole page, and Ctrl and the right button
+// would pan. Only over the viewport, and never while a take or a plate owns
+// the camera.
+let lensSaveTimer = null;
+window.addEventListener("wheel", (event) => {
+  if (!event.ctrlKey || event.target !== canvas) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (state.recording || !camera.isPerspectiveCamera) return;
+  const slider = document.getElementById("camera-fov");
+  perspectiveCamera.fov = lensStep(perspectiveCamera.fov, event.deltaY,
+    +slider.min, +slider.max);
+  perspectiveCamera.updateProjectionMatrix();
+  syncCameraControls();
+  paintScrub(slider);
+  // Remembered once the wheel has stopped, not on every notch.
+  clearTimeout(lensSaveTimer);
+  lensSaveTimer = setTimeout(rememberSession, 400);
+}, { capture: true, passive: false });
+
+let lookDrag = null;
+const lookDirection = new THREE.Vector3();
+window.addEventListener("pointerdown", (event) => {
+  if (event.button !== 2 || !event.ctrlKey || event.target !== canvas) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (state.recording) return;
+  canvas.setPointerCapture(event.pointerId);
+  lookDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+    // The orbit point stays as far in front of the eye as it was, so an
+    // orbit after the look swings round what is now in front of it.
+    distance: Math.max(0.5, camera.position.distanceTo(controls.target)) };
+}, true);
+window.addEventListener("pointermove", (event) => {
+  if (!lookDrag || event.pointerId !== lookDrag.pointerId) return;
+  event.stopImmediatePropagation();
+  const dx = event.clientX - lookDrag.x;
+  const dy = event.clientY - lookDrag.y;
+  lookDrag.x = event.clientX;
+  lookDrag.y = event.clientY;
+  lookDirection.subVectors(controls.target, camera.position);
+  const turned = lookTurn(lookDirection.toArray(), dx, dy);
+  controls.target.set(camera.position.x + turned[0] * lookDrag.distance,
+    camera.position.y + turned[1] * lookDrag.distance,
+    camera.position.z + turned[2] * lookDrag.distance);
+  camera.lookAt(controls.target);
+}, true);
+const endLook = (event) => {
+  if (!lookDrag || event.pointerId !== lookDrag.pointerId) return;
+  event.stopImmediatePropagation();
+  lookDrag = null;
+  rememberSession();
+};
+window.addEventListener("pointerup", endLook, true);
+window.addEventListener("pointercancel", endLook, true);
 // The section. Mode and axis rebuild the cap, the offset only moves the
 // plane, and every one of them re-walks the scene because a material
 // added since the last call (a prop just placed, a course just cut)

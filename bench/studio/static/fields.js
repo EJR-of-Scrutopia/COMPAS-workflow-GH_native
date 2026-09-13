@@ -1040,3 +1040,39 @@ export function flyStep(held, forward, right, speed, seconds) {
   const distance = speed * Math.max(0, seconds) / length;
   return [x * distance, y * distance, z * distance];
 }
+
+// ---------- the lens under Ctrl and the wheel ----------
+// Param, 2026-09-13: "ctrl + scroll should alter the camera lens length".
+// One notch of the wheel (100 in deltaY) is a tenth longer or shorter a
+// lens, in millimetres, so a notch feels the same at 18 mm as at 85 mm;
+// rolling forward (deltaY below 0) is a longer lens. Answered as the
+// vertical field of view three reads, and held inside the dial's range so
+// the Field of view slider always tells the truth about it.
+export const LENS_NOTCH = 1.1;
+
+export function lensStep(fovDegrees, deltaY, minDegrees, maxDegrees) {
+  const half = (fovDegrees * Math.PI / 180) / 2;
+  const millimetres = 12 / Math.tan(half);
+  const longer = millimetres * Math.pow(LENS_NOTCH, -deltaY / 100);
+  const fov = 2 * Math.atan(12 / longer) * 180 / Math.PI;
+  return Math.max(minDegrees, Math.min(maxDegrees, fov));
+}
+
+// ---------- looking round from where the camera stands ----------
+// Param, 2026-09-13: "cntrl + right click should control where the camera
+// is looking, while staying stationary in its poition, just rotates around
+// the position." A drag turns the look: across about the world's up, and
+// up and down about the camera's own right, stopping short of straight up
+// or down, where "across" would stop meaning anything.
+export const LOOK_RADIANS_PER_PIXEL = 0.004;
+export const LOOK_PITCH_LIMIT = 85 * Math.PI / 180;
+
+export function lookTurn(direction, dx, dy, radiansPerPixel = LOOK_RADIANS_PER_PIXEL) {
+  const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+  const x = direction[0] / length, y = direction[1] / length, z = direction[2] / length;
+  // Dragging right turns the view right, dragging up looks up.
+  const yaw = Math.atan2(y, x) - dx * radiansPerPixel;
+  const pitch = Math.max(-LOOK_PITCH_LIMIT, Math.min(LOOK_PITCH_LIMIT,
+    Math.asin(Math.max(-1, Math.min(1, z))) - dy * radiansPerPixel));
+  return [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch)];
+}

@@ -4443,3 +4443,27 @@ def test_a_still_and_a_take_are_clean_and_the_wait_is_shown():
     assert "#still-spinner {" in css and "animation: cut-spin 0.9s linear infinite;" in css
     assert "if (cover && document.body.classList.contains(\"stilling\")) cover.textContent = text;" in _function_body(
         js, "paintStillReadout")
+
+
+def test_ctrl_takes_the_wheel_and_the_right_button_before_the_orbit_does():
+    """Taken in the capture phase on the window, so the orbit controls on
+    the canvas never hear them: Ctrl and the wheel would otherwise dolly AND
+    zoom the whole page, and Ctrl and the right button would pan."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    wheel = js[js.index('window.addEventListener("wheel", (event) => {'):]
+    wheel = wheel[:wheel.index("}, { capture: true, passive: false });")]
+    assert "if (!event.ctrlKey || event.target !== canvas) return;" in wheel
+    assert "event.preventDefault();" in wheel and "event.stopImmediatePropagation();" in wheel
+    assert "perspectiveCamera.fov = lensStep(perspectiveCamera.fov, event.deltaY," in wheel
+    assert "syncCameraControls();" in wheel, "the dial shows the new lens"
+    assert "if (state.recording || !camera.isPerspectiveCamera) return;" in wheel
+
+    down = js[js.index("let lookDrag = null;"):js.index("const endLook = (event) => {")]
+    assert "if (event.button !== 2 || !event.ctrlKey || event.target !== canvas) return;" in down
+    assert "event.stopImmediatePropagation();" in down
+    assert "const turned = lookTurn(lookDirection.toArray(), dx, dy);" in down
+    # The eye stays where it is: only the point it looks at moves.
+    assert "controls.target.set(camera.position.x + turned[0] * lookDrag.distance," in down
+    assert "camera.position.set(" not in down and "camera.position.x +=" not in down
+    assert js.count('}, true);') >= 2

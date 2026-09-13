@@ -788,3 +788,14 @@ after which it marches nothing until something changes. So a moving
 camera shows a cheaper picture for the moment it moves, and a still one
 shows the plate. The lattice Param saw over the lit haze was the old
 dither's own pattern; its replacement has none.
+
+**Ctrl changes what the wheel and the right button mean.** Param: "ctrl +
+scroll should alter the camera lens length, and cntrl + right click should
+control where the camera is looking, while staying stationary in its
+poition". Ctrl and the wheel lengthen or shorten the lens a tenth a notch,
+rolling forward for a longer lens, and the Field of view dial follows,
+held inside its own range; the page itself no longer zooms. Ctrl and a
+right-button drag turn the look about the eye, which does not move; the
+orbit point swings round in front of it at the distance it stood.
+Measured: five notches took a 29 mm lens to 47 mm with the eye where it
+was, and a 200 px drag turned the view 46 degrees right.

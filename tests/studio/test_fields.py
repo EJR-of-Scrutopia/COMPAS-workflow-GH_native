@@ -1231,3 +1231,55 @@ def test_wasd_fly_the_camera_at_four_speeds(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+LENS_LOOK_CHECK = textwrap.dedent("""
+    import { lensStep, LENS_NOTCH, lookTurn, LOOK_PITCH_LIMIT } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const near = (a, b, tol = 1e-9) => Math.abs(a - b) < tol;
+    const mm = (fov) => 12 / Math.tan((fov * Math.PI / 180) / 2);
+
+    // A notch forward is a tenth longer a lens, whatever the lens.
+    for (const fov of [20, 45, 80]) {
+      const longer = lensStep(fov, -100, 1, 179);
+      expect(near(mm(longer) / mm(fov), LENS_NOTCH, 1e-9), "a notch is a tenth longer at " + fov);
+      expect(longer < fov, "a longer lens is a narrower view");
+      const back = lensStep(longer, 100, 1, 179);
+      expect(near(back, fov, 1e-9), "a notch back undoes it");
+    }
+    expect(LENS_NOTCH > 1.02 && LENS_NOTCH < 1.3, "a notch is a gentle step");
+    // Held inside the dial's range.
+    expect(lensStep(16, -2000, 15, 100) === 15, "no longer than the dial allows");
+    expect(lensStep(95, 2000, 15, 100) === 100, "no wider than the dial allows");
+
+    // THE LOOK. From a camera looking along +x, level.
+    const right = lookTurn([1, 0, 0], 100, 0, 0.004);
+    expect(right[1] < 0 && near(right[2], 0), "dragging right turns the view right (toward -y)");
+    const up = lookTurn([1, 0, 0], 0, -100, 0.004);
+    expect(up[2] > 0, "dragging up looks up");
+    expect(near(Math.hypot(...lookTurn([3, 4, 1], 37, -12)), 1), "the look stays a unit direction");
+    // It stops short of straight up or down.
+    const top = lookTurn([1, 0, 0], 0, -100000, 0.004);
+    expect(near(Math.asin(top[2]), LOOK_PITCH_LIMIT, 1e-9), "never past the pitch limit");
+    expect(LOOK_PITCH_LIMIT < Math.PI / 2, "the limit is short of vertical");
+    // Across keeps the height of the look.
+    const turned = lookTurn([0.6, 0, 0.8], 250, 0, 0.004);
+    expect(near(turned[2], 0.8, 1e-9), "turning across does not change how far up it looks");
+    console.log("ok");
+""")
+
+
+def test_ctrl_wheel_sets_the_lens_and_ctrl_drag_looks_round(tmp_path):
+    """Param, 2026-09-13: "ctrl + scroll should alter the camera lens
+    length, and cntrl + right click should control where the camera is
+    looking, while staying stationary in its poition"."""
+
+    script = tmp_path / "check_lens_look.mjs"
+    script.write_text(LENS_LOOK_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+                      encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
