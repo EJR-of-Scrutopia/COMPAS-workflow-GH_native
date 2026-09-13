@@ -4401,3 +4401,45 @@ def test_the_ground_cover_grows_to_the_bark_and_under_the_arch(tmp_path):
     assert "file(child, instance.premultiply(child.matrixWorld));" in contact
     solve = _function_body(js, "scatterSolve")
     assert "if (!keepOutClear(keepOut, x, y, radius, own)) { refused += 1; continue; }" in solve
+
+
+def test_a_still_and_a_take_are_clean_and_the_wait_is_shown():
+    """Param, 2026-09-13, over an 8K plate with an amber line across it:
+    "we also must not have any object selection box, it always wants to be
+    a clean still. We should also make sure when it captures a still it had
+    a little center loading animation while it does it instead of a white
+    screen."
+
+    The hover box stayed up because nothing clears it until the pointer
+    moves, and in the light theme the cover is --ground, #f8f8f8. Measured:
+    with a scatter hovered, one box was shown before the still and none at
+    the moment its tile was sent, the cover stood with its spinner turning
+    and its text reading, and it was gone afterwards.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+
+    helpers = _function_body(js, "pictureHelpers")
+    for name in ("propOutline", "hoverBox", "propGumball", "scatterOutline", "...groupOutlines"):
+        assert name in helpers, name
+    hide = _function_body(js, "hideHelpersForPicture")
+    assert "setHoveredProp(null);" in hide
+    assert "for (const helper of helpers) helper.visible = false;" in hide
+    assert "helper.visible = shown[i];" in hide, "each put back as it was"
+
+    for name in ("renderStill", "recordAnimation"):
+        body = _function_body(js, name)
+        assert "const restoreHelpers = hideHelpersForPicture();" in body, name
+        assert body.index("const restoreHelpers = hideHelpersForPicture();") < body.index(
+            "captureReflections();"), name + ": hidden before anything is drawn"
+        assert "restoreHelpers();" in body[body.index("} finally {"):], name + ": and restored"
+    assert "|| aimingLight || state.recording" in _function_body(js, "hoverPick"), (
+        "a take keeps the canvas on screen, and the pointer must not raise a box mid-take")
+
+    assert '<div id="still-cover"><div id="still-spinner"></div><div id="still-cover-text"></div></div>' in html
+    assert "body.stilling #still-cover { display: flex;" in css
+    assert "#still-spinner {" in css and "animation: cut-spin 0.9s linear infinite;" in css
+    assert "if (cover && document.body.classList.contains(\"stilling\")) cover.textContent = text;" in _function_body(
+        js, "paintStillReadout")

@@ -4644,7 +4644,7 @@ function nudgeHoveredProp(key) {
 // during a drag is noise. Nor during a still, where it would reach the
 // picture.
 function hoverPick(event) {
-  if (state.carrying || state.gumball || stampRig || aimingLight
+  if (state.carrying || state.gumball || stampRig || aimingLight || state.recording
       || document.body.classList.contains("stilling")) {
     setHoveredProp(null);
     return;
@@ -7631,6 +7631,29 @@ function stillFrame() {
 function paintStillReadout(text) {
   const line = document.getElementById("still-readout");
   if (line) line.textContent = text;
+  // And on the cover, while one is up, so the wait says what it is doing.
+  const cover = document.getElementById("still-cover-text");
+  if (cover && document.body.classList.contains("stilling")) cover.textContent = text;
+}
+
+// ---------- a picture has no helpers in it ----------
+// Param, 2026-09-13, over an 8K plate with an amber line across it: "we
+// also must not have any object selection box, it always wants to be a
+// clean still." The hover box stayed up because nothing clears it until
+// the pointer moves, and a still is rendered with the pointer still. So
+// every helper the studio draws over the scene is put away for a still
+// and for a take, and each is put back exactly as it was afterwards.
+function pictureHelpers() {
+  return [propOutline, hoverBox, propGumball, scatterOutline, ...groupOutlines]
+    .filter(Boolean);
+}
+
+function hideHelpersForPicture() {
+  setHoveredProp(null);
+  const helpers = pictureHelpers();
+  const shown = helpers.map((helper) => helper.visible);
+  for (const helper of helpers) helper.visible = false;
+  return () => helpers.forEach((helper, i) => { helper.visible = shown[i]; });
 }
 
 function paintStillControls() {
@@ -7692,7 +7715,9 @@ async function renderStill() {
   const wasPixelRatio = renderer.getPixelRatio();
   const wasWidth = canvas.width, wasHeight = canvas.height;
   document.body.classList.add("stilling");
+  paintStillReadout("framing the plate");
   state.recording = true;          // resize() must keep its hands off
+  const restoreHelpers = hideHelpersForPicture();
   // The plate is framed now and will not change: its reflections are
   // photographed once, for it.
   captureReflections();
@@ -7755,6 +7780,7 @@ async function renderStill() {
     composer.setSize(wasWidth, wasHeight);
     setShaftResolution(false);
     state.recording = false;       // resize() picks the canvas back up
+    restoreHelpers();
     document.body.classList.remove("stilling");
     state.stillRendering = false;
     applyCameraFrustum(viewportAspect());
@@ -17382,6 +17408,7 @@ async function recordAnimation() {
   const began = performance.now();
   closeFixturePanel();      // an overlay is not part of the take
   state.recording = true;   // resize() must skip while this is set
+  const restoreHelpers = hideHelpersForPicture();
   // One capture for the take, as it begins; none while it runs.
   captureReflections();
   state.recordStop = false;
@@ -17489,6 +17516,7 @@ async function recordAnimation() {
     state.recording = false;
     state.recordStop = false;
     paintRecordButton();
+    restoreHelpers();
     renderer.setPixelRatio(wasPixelRatio);
     composer.setPixelRatio(wasPixelRatio);
     setShaftResolution(false);

@@ -323,6 +323,20 @@ body.panel-collapsed #legend { right: var(--s4); }
 body.stilling #view { visibility: hidden; }
 body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
   background: var(--ground); pointer-events: none; }
+/* AND IT SAYS WHAT IT IS DOING. Param: "when it captures a still it had a
+   little center loading animation while it does it instead of a white
+   screen" -- in the light theme the cover is --ground, #f8f8f8, which is a
+   blank sheet for as long as an 8K plate takes. A spinner and the tile
+   count in the middle of it, on the cut overlay's own ring. */
+#still-cover { display: none; }
+body.stilling #still-cover { display: flex; position: fixed; left: 50%; top: 45%;
+  transform: translate(-50%, -50%); z-index: 13; flex-direction: column;
+  align-items: center; gap: var(--s2); padding: var(--s4) var(--s6);
+  background: var(--scrim); color: var(--ink); border: 1px solid var(--line);
+  border-radius: var(--radius); font-size: var(--t-2); pointer-events: none; }
+#still-spinner { width: var(--h-small); height: var(--h-small); border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--ink-2);
+  animation: cut-spin 0.9s linear infinite; }
 #cut-spinner { width: var(--h-small); height: var(--h-small); border-radius: 50%;
                border: 3px solid var(--line); border-top-color: var(--ink-2);
                animation: cut-spin 0.9s linear infinite; }
