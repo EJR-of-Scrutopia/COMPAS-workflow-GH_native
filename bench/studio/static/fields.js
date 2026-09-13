@@ -1000,3 +1000,38 @@ export function arrowStep(key, axes, step) {
   const [axis, sign] = chosen;
   return [axis[0] * step * sign, axis[1] * step * sign];
 }
+
+// ---------- flying the camera with the keys ----------
+// Param, 2026-09-13: "can we add movement with wsad and 1-4 for moevement
+// speeds". Unreal's viewport keys: W and S along the way the camera looks,
+// A and D across it, and the number row choosing how fast.
+//
+// Metres a second. 1 walks round the vault, 2 looks along a row, 3 crosses
+// the site in a couple of seconds, 4 covers a whole scattered field.
+export const FLY_SPEEDS = { 1: 1.5, 2: 5, 3: 15, 4: 45 };
+export const FLY_KEYS = ["w", "a", "s", "d"];
+
+// One frame's move for the keys held, as [x, y, z] in metres, or null when
+// nothing is held or the held keys cancel. `right` is the camera's OWN
+// screen-right, taken from its matrix, not forward crossed with up: looking
+// straight down those two are parallel and A and D would do nothing.
+// Diagonals are normalised, or W and D together would go 41 per cent
+// faster than either alone.
+export function flyStep(held, forward, right, speed, seconds) {
+  const along = (held.has("w") ? 1 : 0) - (held.has("s") ? 1 : 0);
+  const across = (held.has("d") ? 1 : 0) - (held.has("a") ? 1 : 0);
+  if (!along && !across) return null;
+  const unit = (v) => {
+    const length = Math.hypot(v[0], v[1], v[2]);
+    return length > 1e-9 ? [v[0] / length, v[1] / length, v[2] / length] : [0, 0, 0];
+  };
+  const f = unit(forward);
+  const r = unit(right);
+  const x = f[0] * along + r[0] * across;
+  const y = f[1] * along + r[1] * across;
+  const z = f[2] * along + r[2] * across;
+  const length = Math.hypot(x, y, z);
+  if (length < 1e-9) return null;
+  const distance = speed * Math.max(0, seconds) / length;
+  return [x * distance, y * distance, z * distance];
+}

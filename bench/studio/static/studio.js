@@ -29,6 +29,7 @@ import {
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
   groundRepeat,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
+  FLY_SPEEDS, FLY_KEYS, flyStep,
   fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
@@ -17623,6 +17624,57 @@ document.getElementById("timeline-speed").addEventListener("input", (e) => {
 });
 
 let lastTime = performance.now();
+
+// ---------- flying with the keys ----------
+// W A S D move the camera and the point it orbits together, so letting go
+// leaves the orbit where the eye now is; 1 to 4 choose the speed (flyStep,
+// fields.js). Not while a take or a plate is being made, which own the
+// camera, and not while anything with a caret has the keys.
+const flyHeld = new Set();
+let flySpeed = FLY_SPEEDS[2];
+const flyForward = new THREE.Vector3();
+const flyRight = new THREE.Vector3();
+
+function typingHasTheKeys() {
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+}
+
+window.addEventListener("keydown", (event) => {
+  // Ctrl+S, Ctrl+D and Ctrl+Z belong to the browser and the undo.
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (typingHasTheKeys()) return;
+  const key = event.key.toLowerCase();
+  if (FLY_SPEEDS[key]) {
+    flySpeed = FLY_SPEEDS[key];
+    logStudio("moving at " + flySpeed + " m/s (" + key + " of 4)");
+    return;
+  }
+  if (FLY_KEYS.includes(key)) {
+    flyHeld.add(key);
+    event.preventDefault();
+  }
+});
+window.addEventListener("keyup", (event) => { flyHeld.delete(event.key.toLowerCase()); });
+// A key let go while the window was away never sends its keyup, and the
+// camera would drive on for ever.
+window.addEventListener("blur", () => flyHeld.clear());
+
+function flyCamera(seconds) {
+  if (!flyHeld.size || state.recording || state.stillRendering) return;
+  if (typingHasTheKeys()) { flyHeld.clear(); return; }
+  camera.updateMatrixWorld();
+  camera.getWorldDirection(flyForward);
+  flyRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const step = flyStep(flyHeld, flyForward.toArray(), flyRight.toArray(), flySpeed, seconds);
+  if (!step) return;
+  camera.position.x += step[0];
+  camera.position.y += step[1];
+  camera.position.z += step[2];
+  controls.target.x += step[0];
+  controls.target.y += step[1];
+  controls.target.z += step[2];
+}
 // How often the sliders' fills are settled. Six times a second is below
 // what the eye reads as lag on a dial nobody is dragging, and a drag
 // repaints on its own input event long before this comes round.
@@ -17705,6 +17757,8 @@ function frame(now) {
   // read -- so the file could receive a picture nobody asked for. The
   // recorder renders every frame itself; the loop must keep its hands off
   // the canvas until the take ends.
+  // Before the controls settle, so the orbit follows the eye this frame.
+  flyCamera(delta);
   const turntableOwns = state.timeline
     && (state.timeline.playing || state.recording)
     && state.timeline.orbitBase && state.timeline.autoSpin

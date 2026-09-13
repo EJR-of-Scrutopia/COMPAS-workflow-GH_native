@@ -736,3 +736,14 @@ the beeches selected all 446, and the button took them in 68 ms.
 
 **What this round did not change.** No dial was added or removed. One
 button was added, with its title, and one colour token, `--pointed`.
+
+**W A S D fly the camera, and 1 to 4 choose how fast.** Param: "can we
+add movement with wsad and 1-4 for moevement speeds". Unreal's viewport
+keys: W and S along the look, A and D across it, the orbit point moving
+with the eye so that letting go leaves the orbit where he now stands.
+1 walks at 1.5 m/s, 2 goes 5, 3 goes 15, 4 goes 45; a diagonal is no
+faster than a straight, and the log says the speed when it changes. The
+keys stand down while anything with a caret has focus, while Ctrl, Alt
+or Cmd is held, and while a take or a plate owns the camera. Measured:
+held for a second at 2 the eye travelled 5.08 m, and at 4, 24.2 m in
+0.56 s; with a text box focused, nothing.

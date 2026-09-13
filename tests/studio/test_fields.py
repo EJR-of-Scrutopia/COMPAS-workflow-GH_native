@@ -1159,3 +1159,66 @@ def test_the_arrow_keys_push_a_prop_the_way_the_screen_faces(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+FLY_CHECK = textwrap.dedent("""
+    import { FLY_SPEEDS, FLY_KEYS, flyStep } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    const held = (...keys) => new Set(keys);
+    const length = (v) => Math.hypot(v[0], v[1], v[2]);
+
+    // A camera looking along +y, level, with +x to its right.
+    const forward = [0, 1, 0], right = [1, 0, 0];
+    expect(flyStep(held(), forward, right, 5, 1) === null, "nothing held, no move");
+    expect(flyStep(held("w", "s"), forward, right, 5, 1) === null, "W and S cancel");
+    const w = flyStep(held("w"), forward, right, 5, 0.5);
+    expect(near(w[1], 2.5) && near(w[0], 0) && near(w[2], 0), "W goes forward, speed times time");
+    expect(near(flyStep(held("s"), forward, right, 5, 0.5)[1], -2.5), "S goes back");
+    expect(near(flyStep(held("d"), forward, right, 5, 1)[0], 5), "D goes right");
+    expect(near(flyStep(held("a"), forward, right, 5, 1)[0], -5), "A goes left");
+
+    // A diagonal travels no faster than a straight.
+    const diagonal = flyStep(held("w", "d"), forward, right, 5, 1);
+    expect(near(length(diagonal), 5), "W and D together go 5, not 7.07: " + length(diagonal));
+
+    // W follows the look, up and down included, as Unreal's does.
+    const tilted = flyStep(held("w"), [0, 0.6, -0.8], right, 10, 1);
+    expect(near(tilted[2], -8) && near(tilted[1], 6), "W along a downward look descends");
+
+    // LOOKING STRAIGHT DOWN, where forward crossed with up is nothing: the
+    // camera's own right still strafes.
+    const down = flyStep(held("d"), [0, 0, -1], [0, -1, 0], 5, 1);
+    expect(near(length(down), 5) && near(down[1], -5), "A plan view still strafes");
+
+    // Unnormalised inputs do not change the speed.
+    expect(near(length(flyStep(held("w"), [0, 7, 0], right, 5, 1)), 5), "forward is normalised");
+
+    // A negative frame time moves nothing backwards.
+    expect(near(length(flyStep(held("w"), forward, right, 5, -1)), 0), "time never runs backwards");
+
+    // The keys and the four speeds, slowest first.
+    expect(FLY_KEYS.join("") === "wasd", "the keys");
+    const speeds = [1, 2, 3, 4].map((k) => FLY_SPEEDS[k]);
+    expect(speeds.every((s, i) => i === 0 || s > speeds[i - 1]), "1 to 4 get faster");
+    expect(speeds[0] >= 1 && speeds[0] <= 2, "1 is a walk: " + speeds[0]);
+    expect(speeds[3] >= 30 && speeds[3] <= 80, "4 covers a field: " + speeds[3]);
+    console.log("ok");
+""")
+
+
+def test_wasd_fly_the_camera_at_four_speeds(tmp_path):
+    """Param, 2026-09-13: "can we add movement with wsad and 1-4 for
+    moevement speeds". W and S along the look, A and D across it, the
+    number row choosing how fast, and a diagonal no faster than a
+    straight."""
+
+    script = tmp_path / "check_fly.mjs"
+    script.write_text(FLY_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+                      encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

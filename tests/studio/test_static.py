@@ -4264,3 +4264,31 @@ def test_a_new_material_wears_its_own_tint():
     assert "if (typeof hex === \"string\") appearance.tints[skin] = hex;" in restore
     assert "appearance.tints[appearance.skin] = appearance.tint;" in restore
     assert 'state.appearance = { tint: null, finish: null, skin: "none", tints: {} };' in js
+
+
+def test_the_fly_keys_move_the_eye_and_its_orbit_together():
+    """WASD moves the camera and the point it orbits by the same step, so
+    letting go leaves the orbit where the eye is rather than swinging back
+    round the old centre. The step itself is tested under node
+    (test_fields.test_wasd_fly_the_camera_at_four_speeds)."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    fly = _function_body(js, "flyCamera")
+    assert "if (!flyHeld.size || state.recording || state.stillRendering) return;" in fly
+    assert "flyRight.setFromMatrixColumn(camera.matrixWorld, 0);" in fly, (
+        "the camera's own screen-right, or a plan view cannot strafe")
+    for axis, i in (("x", 0), ("y", 1), ("z", 2)):
+        assert "camera.position.{} += step[{}];".format(axis, i) in fly
+        assert "controls.target.{} += step[{}];".format(axis, i) in fly
+
+    loop = _function_body(js, "frame")
+    assert loop.index("flyCamera(delta);") < loop.index("if (!turntableOwns) controls.update();")
+
+    down = js[js.index("function typingHasTheKeys()"):]
+    down = down[:down.index('window.addEventListener("keyup"')]
+    assert "if (event.ctrlKey || event.metaKey || event.altKey) return;" in down, (
+        "Ctrl+D and Ctrl+S are not moves")
+    assert "if (typingHasTheKeys()) return;" in down
+    assert "flySpeed = FLY_SPEEDS[key];" in down
+    assert 'window.addEventListener("blur", () => flyHeld.clear());' in js, (
+        "a key let go while the window was away would drive on for ever")
