@@ -427,6 +427,34 @@ export function writeAtmosphere(uniforms, layers) {
 // wrong segment length or a dropped transmittance cannot hide behind
 // "it is a coarse approximation anyway".
 export const SHAFT_STEPS = 32;
+// A STILL AND A TAKE march 256 steps a pixel at full resolution; the live
+// view marches 32 at half while it moves and refines once it holds still
+// (SHAFT_ACCUMULATE). Measured against a 512-step full-resolution truth in
+// his wood under Haze: 32 at half resolution, the shipped live view, was
+// 3.32 of 255 out where the rays lit the air; 128 at half was still 2.65,
+// because half a resolution cannot be marched away; 32 at full was 1.66;
+// 128 at full 0.17; 256 at full 0.08.
+export const SHAFT_PLATE_STEPS = 256;
+export const SHAFT_MAX_STEPS = 256;
+// Frames of 32 steps the live view adds together once it has held still:
+// eight is 256 samples a pixel, the plate's own count, after which it stops
+// marching altogether until something changes.
+export const SHAFT_ACCUMULATE = 8;
+// Each refining frame asks the sun about a different place in every
+// segment: the golden ratio's fractional part, so eight frames spread their
+// samples evenly through the segment rather than bunching.
+export const SHAFT_GOLDEN = 0.6180339887498949;
+
+// The per-pixel offset, in JS: the twin of shaftHash below (Dave Hoskins'
+// hash without sine), so a test can hold the dither to having no lattice.
+export function shaftHash(x, y) {
+  let p0 = (x * 0.1031) % 1, p1 = (y * 0.1031) % 1, p2 = (x * 0.1031) % 1;
+  if (p0 < 0) p0 += 1; if (p1 < 0) p1 += 1; if (p2 < 0) p2 += 1;
+  const d = p0 * (p1 + 33.33) + p1 * (p2 + 33.33) + p2 * (p0 + 33.33);
+  p0 += d; p1 += d; p2 += d;
+  const v = ((p0 + p1) * p2) % 1;
+  return v < 0 ? v + 1 : v;
+}
 // How far the march reaches, in metres. The camera's far plane is 500 m
 // and a sky pixel reconstructs to it; marching that with 32 steps gives
 // 15 m between samples, which steps straight over a vault. The fog is
@@ -448,16 +476,17 @@ export const SHAFT_GAIN = 48;
 // shadow map's job in the shader), and jitter is where inside each
 // segment that question is asked, which the shader dithers per pixel.
 // Answers the air the sun reaches and the air it does not, separately.
-export function shaftSums(layers, cameraZ, dirZ, length, visibility, jitter = 0.5) {
+export function shaftSums(layers, cameraZ, dirZ, length, visibility, jitter = 0.5,
+  steps = SHAFT_STEPS) {
   const reach = Math.min(length, SHAFT_MAX_DISTANCE);
   const begin = Math.min(layers.sunStart, reach);
   const span = reach - begin;
   if (span <= 0) return { lit: 0, shade: 0 };
-  const ds = span / SHAFT_STEPS;
+  const ds = span / steps;
   let transmittance = 1;
   let lit = 0;
   let shade = 0;
-  for (let step = 0; step < SHAFT_STEPS; step++) {
+  for (let step = 0; step < steps; step++) {
     const at = begin + step * ds;
     const h0 = cameraZ + dirZ * at - layers.base;
     // The segment's own optical depth, from its START, which is what
@@ -479,8 +508,9 @@ export function shaftSums(layers, cameraZ, dirZ, length, visibility, jitter = 0.
 // much of it the sun reaches -- the lit share raised by SHAFT_GAIN and the
 // shaded share taken away. Between minus the glow (all in shadow) and
 // SHAFT_GAIN times the glow (all lit), whatever the shadow does.
-export function shaftLight(layers, cameraZ, dirZ, length, visibility, jitter = 0.5) {
-  const { lit, shade } = shaftSums(layers, cameraZ, dirZ, length, visibility, jitter);
+export function shaftLight(layers, cameraZ, dirZ, length, visibility, jitter = 0.5,
+  steps = SHAFT_STEPS) {
+  const { lit, shade } = shaftSums(layers, cameraZ, dirZ, length, visibility, jitter, steps);
   const total = lit + shade;
   if (total <= 0) return 0;
   const glow = Math.min(total, layers.maxOpacity);
@@ -519,6 +549,8 @@ uniform float shaftStrength;
 uniform float shaftBias;
 uniform float shaftMaxDistance;
 uniform vec2 shaftPixelOrigin;
+uniform float shaftSteps;
+uniform float shaftSeed;
 varying vec2 vUv;
 vec3 shaftWorld( vec2 uv, float depth ) {
   vec4 clip = vec4( uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0 );
@@ -531,13 +563,26 @@ float shaftVisibility( vec3 at ) {
   if ( coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z > 1.0 ) return 1.0;
   return texture( shaftShadowMap, vec3( coord.xy, coord.z - shaftBias ) );
 }
-// Interleaved gradient noise, the same hash r185's own PCF uses, over the
-// pixel's place in the WHOLE frame. Seeded by the pixel and by nothing
-// else: no wall clock, so a take is reproducible frame for frame, and no
-// take clock either, so a still rendered in tiles gets the identical
-// dither in a tile that it would have had in the whole plate.
+// Where in each segment the sun is asked, per pixel, over the pixel's
+// place in the WHOLE frame. Seeded by the pixel and the refining frame's
+// number and by nothing else: no wall clock, so a take is reproducible
+// frame for frame, and no take clock either, so a still rendered in tiles
+// gets the identical dither in a tile that it would have had in the whole
+// plate.
+//
+// NOT INTERLEAVED GRADIENT NOISE, which it was until 2026-09-13. That hash
+// is built to be averaged away over frames by a temporal filter, and alone
+// its structure shows: Param saw a diamond lattice over the lit haze behind
+// the arch ("strange artefacting ... when we apply the light rays").
+// Measured, the error it left had a correlation of 0.21 one pixel along the
+// anti-diagonal; this hash leaves the same amount of error with none.
+float shaftHash( vec2 p ) {
+  vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
+  p3 += dot( p3, p3.yzx + 33.33 );
+  return fract( ( p3.x + p3.y ) * p3.z );
+}
 float shaftDither( vec2 pixel ) {
-  return fract( 52.9829189 * fract( dot( pixel, vec2( 0.06711056, 0.00583715 ) ) ) );
+  return fract( shaftHash( pixel ) + shaftSeed );
 }
 vec3 shaftLight( vec2 uv, vec2 pixel ) {
   float depth = texture2D( tDepth, uv ).x;
@@ -548,12 +593,13 @@ vec3 shaftLight( vec2 uv, vec2 pixel ) {
   float begin = min( atmoSunStart, reach );
   float span = reach - begin;
   if ( span <= 0.0 ) return vec3( 0.0 );
-  float ds = span / float( SHAFT_STEPS );
+  float ds = span / shaftSteps;
   float jitter = shaftDither( pixel );
   float transmittance = 1.0;
   float lit = 0.0;
   float shade = 0.0;
-  for ( int stepIndex = 0; stepIndex < SHAFT_STEPS; stepIndex ++ ) {
+  for ( int stepIndex = 0; stepIndex < SHAFT_MAX_STEPS; stepIndex ++ ) {
+    if ( float( stepIndex ) >= shaftSteps ) break;
     float at = begin + float( stepIndex ) * ds;
     float h0 = shaftEye.z + dir.z * at - atmoBase;
     float tau = atmosphereLayer( atmoDensity.x, atmoFalloff.x, h0, dir.z, ds )
@@ -623,6 +669,22 @@ vec3 shaftUpsampled() {
 void main() {
   vec4 base = texture2D( tDiffuse, vUv );
   gl_FragColor = vec4( base.rgb + shaftUpsampled(), base.a );
+}
+`;
+
+// Adding a refining frame to the ones before it: the running mean, so after
+// k frames each holds 1 / k of the picture. A first frame takes the new
+// march alone, whatever the history target held.
+export const SHAFTS_ACCUMULATE_GLSL = `
+uniform sampler2D tHistory;
+uniform sampler2D tCurrent;
+uniform float weight;
+varying vec2 vUv;
+void main() {
+  ivec2 at = ivec2( gl_FragCoord.xy );
+  vec3 current = texelFetch( tCurrent, at, 0 ).rgb;
+  vec3 history = weight >= 1.0 ? current : texelFetch( tHistory, at, 0 ).rgb;
+  gl_FragColor = vec4( mix( history, current, weight ), 1.0 );
 }
 `;
 

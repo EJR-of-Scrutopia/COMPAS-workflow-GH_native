@@ -779,3 +779,12 @@ shadowed air loses exactly the glow the fog gave it and no more. Measured
 in his wood under Haze, looking toward a sun 2.5 degrees up: at a gain of
 4 and of 16 the wood only glowed; at 48, beams stood between the trunks.
 Desktop only, as before: the iPad has no pass and no dial.
+
+A still and a take march the rays at full resolution, 256 steps a
+pixel. The live view marches 32 at half resolution while it moves, and
+once it has held still for a frame it refines: eight more frames at full
+resolution, each asking the sun about different places, added together,
+after which it marches nothing until something changes. So a moving
+camera shows a cheaper picture for the moment it moves, and a still one
+shows the plate. The lattice Param saw over the lit haze was the old
+dither's own pattern; its replacement has none.

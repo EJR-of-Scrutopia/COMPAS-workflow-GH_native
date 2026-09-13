@@ -42,6 +42,7 @@ import {
   atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
   atmospherePreviewPixels, createAtmosphere, installAtmosphere, writeAtmosphere,
   SHAFT_STEPS, SHAFT_MAX_DISTANCE, SHAFT_GAIN, SHAFTS_GLSL, SHAFTS_COMPOSITE_GLSL,
+  SHAFT_PLATE_STEPS, SHAFT_MAX_STEPS, SHAFT_ACCUMULATE, SHAFT_GOLDEN, SHAFTS_ACCUMULATE_GLSL,
   SHAFTS_VERTEX, shaftsStrength,
 } from "/static/atmosphere.js";
 import {
@@ -444,9 +445,13 @@ const reflectionCamera = new THREE.CubeCamera(0.05, 2000, reflectionTarget);
 // When the scene last changed in a way the capture would see, or 0 once
 // it has been taken since.
 let reflectionDirtyAt = 1;
+// Bumped by anything that changes what the light rays would draw without
+// moving the camera, the sun or the fog, which the rays' own signature
+// already watches (shaftsChanged). Declared here, above its first caller.
+let shaftsRevision = 0;
 let reflectionsTaken = 0;
 
-function noteReflectionsChanged() { reflectionDirtyAt = performance.now(); }
+function noteReflectionsChanged() { reflectionDirtyAt = performance.now(); shaftsRevision += 1; }
 
 // How bright the environment is, as the MODE'S OWN base times his dial.
 // Param: "if i want to darken the hdri so that its dark enough for the
@@ -633,11 +638,56 @@ function armShafts() {
     && !!(map && map.depthTexture);
 }
 
+// WHETHER THE VIEW HAS HELD STILL since the last frame, for the rays' live
+// refinement: everything the march reads that is not in the depth buffer,
+// and the revision the rest of the studio bumps. The triangles drawn so far
+// this frame stand in for what the depth buffer holds: a layer hidden, a
+// study loaded or a prop tier swapped changes them. A gesture of any kind
+// on the page bumps the revision, so a prop dragged at constant triangles
+// is seen too.
+const shaftSignature = new Float64Array(80);
+
+function shaftsChanged() {
+  let i = 0;
+  let changed = false;
+  const put = (value) => {
+    if (shaftSignature[i] !== value) { shaftSignature[i] = value; changed = true; }
+    i += 1;
+  };
+  for (const e of camera.matrixWorld.elements) put(e);
+  for (const e of camera.projectionMatrix.elements) put(e);
+  for (const e of sun.shadow.matrix.elements) put(e);
+  const u = atmosphere.uniforms;
+  put(u.atmoDensity.value.x); put(u.atmoDensity.value.y);
+  put(u.atmoFalloff.value.x); put(u.atmoFalloff.value.y);
+  put(u.atmoBase.value); put(u.atmoSunStart.value); put(u.atmoMaxOpacity.value);
+  put(u.atmoSunExponent.value);
+  put(u.atmoSunDir.value.x); put(u.atmoSunDir.value.y); put(u.atmoSunDir.value.z);
+  put(u.atmoSunColour.value.r); put(u.atmoSunColour.value.g); put(u.atmoSunColour.value.b);
+  put(shaftsPass.march.uniforms.shaftStrength.value);
+  put(shaftsPass.width); put(shaftsPass.height);
+  put(shaftsRevision);
+  put(renderer.info.render.triangles);
+  return changed;
+}
+
+// Any gesture on the page may have changed the scene without changing
+// anything the signature reads.
+for (const kind of ["pointerdown", "pointerup", "wheel", "keydown", "input", "change"]) {
+  window.addEventListener(kind, () => { shaftsRevision += 1; }, true);
+}
+window.addEventListener("pointermove", (event) => {
+  if (event.buttons) shaftsRevision += 1;
+}, true);
+
 // This frame's matrices, written from inside the pass (see settle).
 function settleShafts() {
   const uniforms = shaftsPass.march.uniforms;
   const map = sun.shadow.map;
   if (!map || !map.depthTexture) return;
+  // Settled now, while the matrices are this frame's: the view refines only
+  // on a frame that matches the one before it.
+  shaftsPass.still = !shaftsChanged();
   uniforms.shaftShadowMap.value = map.depthTexture;
   uniforms.shaftShadowMatrix.value.copy(sun.shadow.matrix);
   uniforms.shaftEye.value.copy(camera.position);
@@ -670,6 +720,10 @@ function setShaftResolution(full) {
   if (!shaftsPass) return;
   shaftsPass.fullResolution = full;
   shaftsPass.setSize(shaftsPass.width, shaftsPass.height);
+  // A plate's frames are not the live view's, and a live view coming back
+  // from a plate refines afresh.
+  shaftsPass.accumulated = 0;
+  shaftsRevision += 1;
 }
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
@@ -730,7 +784,7 @@ class ShaftsPass extends Pass {
     super();
     this.march = new THREE.ShaderMaterial({
       name: "shafts.march",
-      defines: { SHAFT_STEPS, SHAFT_GAIN },
+      defines: { SHAFT_MAX_STEPS, SHAFT_GAIN },
       // The atmosphere's own uniform objects, by reference, so the fog
       // the shafts are made of is the same fog the surfaces wear: one
       // write of a density moves both.
@@ -745,6 +799,8 @@ class ShaftsPass extends Pass {
         shaftBias: { value: 0 },
         shaftMaxDistance: { value: SHAFT_MAX_DISTANCE },
         shaftPixelOrigin: { value: new THREE.Vector2() },
+        shaftSteps: { value: SHAFT_STEPS },
+        shaftSeed: { value: 0 },
       }, shared),
       vertexShader: SHAFTS_VERTEX,
       fragmentShader: SHAFTS_GLSL,
@@ -764,8 +820,25 @@ class ShaftsPass extends Pass {
       vertexShader: SHAFTS_VERTEX,
       fragmentShader: SHAFTS_COMPOSITE_GLSL,
     });
-    this.target = new THREE.WebGLRenderTarget(1, 1, {
+    this.accumulate = new THREE.ShaderMaterial({
+      name: "shafts.accumulate",
+      uniforms: { tHistory: { value: null }, tCurrent: { value: null }, weight: { value: 1 } },
+      vertexShader: SHAFTS_VERTEX,
+      fragmentShader: SHAFTS_ACCUMULATE_GLSL,
+    });
+    const buffer = () => new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType, depthBuffer: false });
+    // Half resolution for the live view while it moves; full resolution for
+    // a plate, and for the live view once it holds still, which adds its
+    // frames together in `history` through `scratch`.
+    this.target = buffer();
+    this.full = buffer();
+    this.history = buffer();
+    this.scratch = buffer();
+    // How many refining frames `history` holds, and whether the view has
+    // held still since the last frame (settleShafts decides).
+    this.accumulated = 0;
+    this.still = false;
     this.fullResolution = false;
     this.width = 1;
     this.height = 1;
@@ -786,8 +859,18 @@ class ShaftsPass extends Pass {
     const wide = Math.max(1, Math.round(width * scale));
     const tall = Math.max(1, Math.round(height * scale));
     this.target.setSize(wide, tall);
+    this.full.setSize(width, height);
+    this.history.setSize(width, height);
+    this.scratch.setSize(width, height);
     this.composite.uniforms.shaftLowResolution.value.set(wide, tall);
     this.composite.uniforms.shaftUpsample.value = this.fullResolution ? 0 : 1;
+    this.accumulated = 0;
+  }
+
+  draw(renderer_, target, material) {
+    renderer_.setRenderTarget(target);
+    this._quad.material = material;
+    this._quad.render(renderer_);
   }
 
   render(renderer_, writeBuffer, readBuffer) {
@@ -797,10 +880,47 @@ class ShaftsPass extends Pass {
     this.march.uniforms.tDepth.value = readBuffer.depthTexture;
     this.composite.uniforms.tDepth.value = readBuffer.depthTexture;
     this.composite.uniforms.tDiffuse.value = readBuffer.texture;
-    this.composite.uniforms.tShafts.value = this.target.texture;
-    renderer_.setRenderTarget(this.target);
-    this._quad.material = this.march;
-    this._quad.render(renderer_);
+    const march = this.march.uniforms;
+    let source = this.target;
+    let upsample = 1;
+    if (this.fullResolution) {
+      // A PLATE: a still's tile or a take's frame, full resolution, the
+      // plate's own step count, one pass and no history, so a tile is the
+      // piece of the whole plate it stands for and a take is reproducible.
+      march.shaftSteps.value = SHAFT_PLATE_STEPS;
+      march.shaftSeed.value = 0;
+      this.draw(renderer_, this.full, this.march);
+      source = this.full;
+      upsample = 0;
+    } else if (this.still) {
+      // THE LIVE VIEW, HELD STILL: another 32 steps a pixel at full
+      // resolution, each frame asking the sun about a different place in
+      // every segment, added into the running mean -- until eight frames
+      // hold 256 samples, after which it marches nothing at all.
+      if (this.accumulated < SHAFT_ACCUMULATE) {
+        march.shaftSteps.value = SHAFT_STEPS;
+        march.shaftSeed.value = (this.accumulated * SHAFT_GOLDEN) % 1;
+        this.draw(renderer_, this.full, this.march);
+        const mean = this.accumulate.uniforms;
+        mean.tHistory.value = this.history.texture;
+        mean.tCurrent.value = this.full.texture;
+        mean.weight.value = 1 / (this.accumulated + 1);
+        this.draw(renderer_, this.scratch, this.accumulate);
+        [this.history, this.scratch] = [this.scratch, this.history];
+        this.accumulated += 1;
+      }
+      source = this.history;
+      upsample = 0;
+    } else {
+      // THE LIVE VIEW, MOVING: cheap, at half resolution, and the history
+      // starts again the moment it stops.
+      march.shaftSteps.value = SHAFT_STEPS;
+      march.shaftSeed.value = 0;
+      this.draw(renderer_, this.target, this.march);
+      this.accumulated = 0;
+    }
+    this.composite.uniforms.tShafts.value = source.texture;
+    this.composite.uniforms.shaftUpsample.value = upsample;
     renderer_.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this._quad.material = this.composite;
     this._quad.render(renderer_);
@@ -809,7 +929,11 @@ class ShaftsPass extends Pass {
   dispose() {
     this.march.dispose();
     this.composite.dispose();
+    this.accumulate.dispose();
     this.target.dispose();
+    this.full.dispose();
+    this.history.dispose();
+    this.scratch.dispose();
     this._quad.dispose();
   }
 }
@@ -17160,6 +17284,7 @@ function applySceneAtTime(t) {
 // choice of net and shell. Falsework stays with its own select, except
 // framework mode, which is the bare net by definition.
 function applyShowMode() {
+  shaftsRevision += 1;
   // Guarded like applySceneAtTime guards shell/falsework, above: an
   // unguarded read of nodes or bundle throws out of frame() before the
   // frame is rescheduled, which kills the render loop until the page is
@@ -17304,6 +17429,8 @@ function captureOrbitBase(atT) {
 }
 
 function applyTimeline(t) {
+  // The net, the machine and the pieces move with the clock.
+  shaftsRevision += 1;
   applySceneAtTime(t);
   const base = state.timeline.orbitBase;
   if (base && state.timeline.autoSpin && !state.userDragging) {

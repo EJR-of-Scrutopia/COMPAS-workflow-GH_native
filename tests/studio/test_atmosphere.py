@@ -959,7 +959,7 @@ def test_the_rays_march_between_the_render_and_the_tone_map():
     assert "armShafts();" in _body(js, "function renderView()")
 
     # The shader splits the glow as the JS twin does.
-    assert "defines: { SHAFT_STEPS, SHAFT_GAIN }," in js
+    assert "defines: { SHAFT_MAX_STEPS, SHAFT_GAIN }," in js
     shader = module[module.index("export const SHAFTS_GLSL"):]
     assert "lit += transmittance * ( 1.0 - through ) * reached;" in shader
     assert "shade += transmittance * ( 1.0 - through ) * ( 1.0 - reached );" in shader
@@ -1050,3 +1050,119 @@ def test_the_light_rays_dial_wears_the_four_part_shape_and_saves_with_the_scene(
     assert 'class="atmosphere-dial hidden"' in label, "hidden until a preset is chosen"
     assert '["atmosphere-shafts", "shafts", 0],' in js, "the dial table drives it"
     assert "atmosphere: { ...state.atmosphere }," in _body(js, "function collectScene(options)")
+
+
+REFINE_CHECK = textwrap.dedent("""
+    import {
+      atmosphereFromPreset, atmosphereLayers, shaftLight, shaftHash,
+      SHAFT_STEPS, SHAFT_PLATE_STEPS, SHAFT_MAX_STEPS, SHAFT_ACCUMULATE, SHAFT_GOLDEN,
+    } from %ATMOSPHERE%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+
+    // EIGHT REFINING FRAMES ARE A 256-STEP MARCH. Each frame asks the sun
+    // about a different place in every segment, offset by the golden ratio,
+    // and their mean is what the live view shows once it holds still.
+    const layers = atmosphereLayers(atmosphereFromPreset("haze"), 0);
+    const sun = (at) => (Math.sin(at * 1.7) * Math.sin(at * 0.31) > 0.1 ? 1 : 0);
+    let single = 0, refined = 0;
+    for (let px = 0; px < 400; px++) {
+      const h = shaftHash((px * 7) % 1340, Math.floor(px / 3));
+      const L = 60 + (px % 170);
+      const truth = shaftLight(layers, 1.7, 0.02, L, sun, 0.5, 4096);
+      let sum = 0;
+      for (let k = 0; k < SHAFT_ACCUMULATE; k++) {
+        sum += shaftLight(layers, 1.7, 0.02, L, sun, (h + k * SHAFT_GOLDEN) % 1, SHAFT_STEPS);
+      }
+      single += Math.abs(shaftLight(layers, 1.7, 0.02, L, sun, h, SHAFT_STEPS) - truth);
+      refined += Math.abs(sum / SHAFT_ACCUMULATE - truth);
+    }
+    expect(single / refined > 4, "refining is several times closer: " + single / refined);
+    expect(SHAFT_ACCUMULATE * SHAFT_STEPS === SHAFT_PLATE_STEPS,
+      "a refined view holds the plate's own count of samples");
+    expect(SHAFT_PLATE_STEPS <= SHAFT_MAX_STEPS, "the shader's loop reaches the plate's count");
+
+    // THE DITHER HAS NO LATTICE. The interleaved gradient noise it replaced
+    // correlates with its own neighbours by up to 0.48; this by under 0.02.
+    const G = 256, v = new Float64Array(G * G);
+    let mean = 0;
+    for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) {
+      const h = shaftHash(x, y);
+      expect(h >= 0 && h < 1, "the hash is a fraction");
+      v[y * G + x] = h; mean += h;
+    }
+    mean /= G * G;
+    const corr = (ox, oy) => {
+      let a = 0, b = 0;
+      for (let y = 2; y < G - 2; y++) for (let x = 2; x < G - 2; x++) {
+        const i = y * G + x;
+        a += (v[i] - mean) * (v[i + oy * G + ox] - mean); b += (v[i] - mean) ** 2;
+      }
+      return a / b;
+    };
+    for (const [ox, oy] of [[1, 0], [0, 1], [1, 1], [1, -1], [2, 0], [0, 2], [2, 2]]) {
+      expect(Math.abs(corr(ox, oy)) < 0.02, "no structure at " + [ox, oy] + ": " + corr(ox, oy));
+    }
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_rays_refine_to_a_plate_and_leave_no_lattice(tmp_path):
+    """Param, 2026-09-13, over a diamond lattice in the lit haze behind the
+    arch: "theres just a bit of strange artefacting on the hdri we need to
+    fix when we apply the light rays. how will we solve this".
+
+    Two causes, measured against a 512-step full-resolution truth in his
+    wood: the interleaved gradient noise dither, which is built to be
+    averaged away by a temporal filter and alone draws a lattice; and 32
+    steps at half resolution, 3.32 of 255 out where the rays light the air.
+    A hash dither, a plate at 256 steps, and a live view that refines
+    itself to 256 samples once it holds still: 0.12 of 255 from the plate,
+    with no lattice left in it."""
+
+    assert "ok" in _run_node(tmp_path, REFINE_CHECK)
+
+
+def test_the_live_rays_refine_while_still_and_stop_marching_when_done():
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    module = ATMOSPHERE.read_text(encoding="utf-8")
+
+    shader = module[module.index("export const SHAFTS_GLSL"):]
+    assert "return fract( shaftHash( pixel ) + shaftSeed );" in shader
+    assert "52.9829189" not in module, "the lattice-drawing hash is gone"
+    assert "if ( float( stepIndex ) >= shaftSteps ) break;" in shader
+    assert "float ds = span / shaftSteps;" in shader
+    accumulate = module[module.index("export const SHAFTS_ACCUMULATE_GLSL"):]
+    assert "vec3 history = weight >= 1.0 ? current : texelFetch( tHistory, at, 0 ).rgb;" in accumulate
+
+    body = _body(js, "class ShaftsPass extends Pass")
+    plate = body[body.index("if (this.fullResolution) {"):body.index("} else if (this.still) {")]
+    assert "march.shaftSteps.value = SHAFT_PLATE_STEPS;" in plate
+    assert "march.shaftSeed.value = 0;" in plate, "a plate is reproducible"
+    still = body[body.index("} else if (this.still) {"):]
+    still = still[:still.index("} else {")]
+    assert "if (this.accumulated < SHAFT_ACCUMULATE) {" in still, "and stops once refined"
+    assert "march.shaftSeed.value = (this.accumulated * SHAFT_GOLDEN) % 1;" in still
+    assert "mean.weight.value = 1 / (this.accumulated + 1);" in still
+    assert "[this.history, this.scratch] = [this.scratch, this.history];" in still
+    moving = body[body.index("      // THE LIVE VIEW, MOVING"):]
+    moving = moving[:moving.index("this.composite.uniforms.tShafts.value = source.texture;")]
+    assert "this.accumulated = 0;" in moving, "moving throws the history away"
+
+    # Still means nothing the march reads has changed since the last frame.
+    changed = _body(js, "function shaftsChanged()")
+    for piece in ("camera.matrixWorld.elements", "camera.projectionMatrix.elements",
+                  "sun.shadow.matrix.elements", "u.atmoDensity.value.x", "u.atmoSunColour.value.b",
+                  "shaftsPass.march.uniforms.shaftStrength.value", "put(shaftsRevision);",
+                  "put(renderer.info.render.triangles);"):
+        assert piece in changed, piece
+    assert "shaftsPass.still = !shaftsChanged();" in _body(js, "function settleShafts()")
+    assert "shaftsRevision += 1;" in _body(js, "function applyTimeline(t)")
+    assert "shaftsRevision += 1;" in _body(js, "function applyShowMode()")
+    assert "function noteReflectionsChanged() { reflectionDirtyAt = performance.now(); shaftsRevision += 1; }" in js
+    assert 'for (const kind of ["pointerdown", "pointerup", "wheel", "keydown", "input", "change"]) {' in js
+    # Declared above the first function that bumps it, or the boot throws.
+    assert js.index("let shaftsRevision = 0;") < js.index("function noteReflectionsChanged()")
