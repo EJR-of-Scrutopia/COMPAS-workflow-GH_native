@@ -3781,10 +3781,9 @@ def test_ground_cover_is_stepped_over_rather_than_walked_around():
     # A disc carries the size of the thing that filed it, which is what
     # decides whether it may keep a bigger thing out.
     add = _function_body(js, "keepOutAdd")
-    assert "index.discs.push([x, y, r, own]);" in add
-    assert "function keepOutAdd(index, x, y, r, own = r)" in js, (
-        "defaulting to the disc's own radius keeps the works' behaviour: "
-        "a vault keeps out everything")
+    assert "index.discs.push([x, y, r, own, role]);" in add
+    assert "function keepOutAdd(index, x, y, r, own = r, role = KEEP_ALL)" in js, (
+        "defaulting to the disc's own radius and to keeping out everything")
 
     clear = _function_body(js, "keepOutClear")
     assert "if (d[3] * STEP_OVER_RATIO < radius) continue;" in clear
@@ -3794,17 +3793,17 @@ def test_ground_cover_is_stepped_over_rather_than_walked_around():
         "leaves a tree dodging blades of grass".format(ratio))
 
     keep = _function_body(js, "scatterKeepOut")
-    assert "const own = propFootprint(record.type) * (record.scale || 1);" in keep
-    assert "keepOutAdd(index, record.x, record.y, own * gap, own);" in keep, (
-        "the spacing dial still widens the disc, and the prop's own size "
+    assert "keepOutAddProp(index, record.x, record.y, record.type, record.scale || 1, gap);" in keep, (
+        "the spacing dial still widens the crown, and the prop's own size "
         "is filed beside it rather than instead of it")
 
-    # THE WORKS STILL KEEP EVERYTHING OUT. Nothing may be planted through
-    # the vault, whatever its size, so those discs file no smaller `own`.
+    # THE WORKS' PLAN KEEPS OUT WHAT IS TOO BIG TO STAND UNDER THEM, and
+    # their `own` is the capsule's radius, so a tree meets the capsule.
+    # REVISED the same day: the capsule used to keep out a blade of grass
+    # too, and nothing grew under the arch at all
+    # (test_the_ground_cover_grows_to_the_bark_and_under_the_arch).
     works = keep[:keep.index("const gap =")]
-    assert "keepOutAdd(index, cx, cy, r);" in works, (
-        "four arguments, so `own` defaults to the disc's own radius and "
-        "the vault keeps out a blade of grass as surely as a tree")
+    assert "keepOutAdd(index, cx, cy, r, r, KEEP_CROWN);" in works
 
 
 def test_a_scatter_is_one_thing_to_hover_and_to_delete():
@@ -4292,3 +4291,113 @@ def test_the_fly_keys_move_the_eye_and_its_orbit_together():
     assert "flySpeed = FLY_SPEEDS[key];" in down
     assert 'window.addEventListener("blur", () => flyHeld.clear());' in js, (
         "a key let go while the window was away would drive on for ever")
+
+
+KEEP_OUT_HARNESS = r"""
+__FUNCTIONS__
+
+const index = keepOutIndex();
+// A beech at the origin: 8 m of footprint, a crown disc at spacing 0.3,
+// and a trunk base of 1 m, as propBaseRadius measured forest_04.
+keepOutAdd(index, 0, 0, 2.4, 8, KEEP_CROWN);
+keepOutAdd(index, 0, 0, 1.0, 8, KEEP_BASE);
+// A blade of grass at (10, 0), one disc for everything.
+keepOutAdd(index, 10, 0, 0.015, 0.05);
+// The vault's plan capsule at (30, 0), radius 3.5, and where it meets the
+// floor, a contact disc at (33, 0).
+keepOutAdd(index, 30, 0, 3.5, 3.5, KEEP_CROWN);
+keepOutAdd(index, 33, 0, 0.45, 3.5, KEEP_BASE);
+// A contact standing OUTSIDE the plan capsule, as a long tie's end can.
+keepOutAdd(index, 36, 0, 0.45, 3.5, KEEP_BASE);
+
+const grass = (x, y) => keepOutClear(index, x, y, 0.015, 0.05);
+const sapling = (x, y) => keepOutClear(index, x, y, 0.5, 1.6);
+const tree = (x, y) => keepOutClear(index, x, y, 2.4, 8);
+console.log(JSON.stringify({
+  grassUnderTheCrown: grass(1.5, 0),
+  grassAtTheBark: grass(0.9, 0),
+  saplingUnderTheCrown: sapling(2.0, 0),
+  treeBesideTheTree: tree(4.0, 0),
+  treeClearOfTheTree: tree(5.0, 0),
+  grassOnGrass: grass(10.01, 0),
+  grassBesideGrass: grass(10.05, 0),
+  treeOverGrass: tree(10, 0),
+  grassUnderTheArch: grass(30, 0),
+  grassOnTheSpringing: grass(33.2, 0),
+  treeUnderTheArch: tree(30, 0),
+  treeBesideAContact: tree(38.2, 0),
+}));
+"""
+
+
+def test_the_ground_cover_grows_to_the_bark_and_under_the_arch(tmp_path):
+    """Param, 2026-09-13: "we still are placing objects around other
+    objects, so around every tree with a circle radius no grass or plants
+    can be placed near it ... it might be that only the grass can be placed
+    anywhere under or much closer to any collision geometry".
+
+    A tree kept out ground cover by its CROWN, so a bare ring stood round
+    every trunk, and the vault's plan capsule kept it out from under the
+    arch entirely. Now a thing much smaller than a disc's owner meets its
+    base, and a thing of a size with it meets its crown.
+
+    Measured with the real scatter, one beech in cleared ground and grass
+    over 12 m round it: the nearest blade stood 2.35 m from the trunk, and
+    none within 2 m; now 1.02 m, 424 within 2 m, against a base of 1.01 m
+    measured from the tree's own lowest vertices. Over the vault, 0 blades
+    were placed; now 2,954.
+    """
+
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    line = lambda head: js[js.index(head):js.index("\n", js.index(head))]
+    pieces = [line("const KEEP_OUT_CELL = "), line("const STEP_OVER_RATIO = "),
+              line("const KEEP_ALL = "), line("const KEEP_CROWN = "), line("const KEEP_BASE = "),
+              _function_body(js, "keepOutIndex") + "\n}",
+              _function_body(js, "keepOutKey") + "\n}",
+              _function_body(js, "keepOutAdd") + "\n}",
+              _function_body(js, "keepOutClear") + "\n}"]
+    script = tmp_path / "keep_out.mjs"
+    script.write_text(KEEP_OUT_HARNESS.replace("__FUNCTIONS__", "\n\n".join(pieces)),
+                      encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+
+    assert out["grassUnderTheCrown"] is True, "grass grows under a crown"
+    assert out["grassAtTheBark"] is False, "and stops at the trunk"
+    assert out["saplingUnderTheCrown"] is True, "an understory stands under a beech"
+    assert out["treeBesideTheTree"] is False, "a tree keeps its distance from a tree"
+    assert out["treeClearOfTheTree"] is True
+    assert out["grassOnGrass"] is False and out["grassBesideGrass"] is True
+    assert out["treeOverGrass"] is True, "a tree is still planted over grass"
+    assert out["grassUnderTheArch"] is True, "grass runs under the arch"
+    assert out["grassOnTheSpringing"] is False, "but not through where it meets the floor"
+    assert out["treeUnderTheArch"] is False, "and no tree stands under it"
+    assert out["treeBesideAContact"] is True, (
+        "a base keeps out only what is much smaller: a tree meets the plan")
+
+    # What files the two discs, and what measures the base.
+    prop = _function_body(js, "keepOutAddProp")
+    assert "const base = propBaseRadius(type) * scale;" in prop
+    assert "if (base >= crown) {" in prop, "grass files the one disc it always did"
+    base = _function_body(js, "propBaseRadius")
+    assert "if (point.z > slice) continue;" in base
+    assert "Math.min(reach, footprint)" in base
+    assert "if (!template) return footprint;" in base, (
+        "before its model arrives a type keeps out by its whole footprint, "
+        "and that answer is not kept")
+    keep = _function_body(js, "scatterKeepOut")
+    assert "for (const [ix, iy] of worksContact(part)) {" in keep
+    assert "reach, r, KEEP_BASE);" in keep
+    assert "machineObjects && machineObjects.permanent" in keep, (
+        "the anchor and the tie are ground contact as well")
+    contact = _function_body(js, "worksContact")
+    assert "file(child, instance.premultiply(child.matrixWorld));" in contact
+    solve = _function_body(js, "scatterSolve")
+    assert "if (!keepOutClear(keepOut, x, y, radius, own)) { refused += 1; continue; }" in solve

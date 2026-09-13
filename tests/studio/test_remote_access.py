@@ -3524,8 +3524,10 @@ def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
     keep = _js_function(js, "function scatterKeepOut(clearance, spacing)")
     assert "const r = short / 2 + clearance;" in keep
     assert "const steps = Math.max(1, Math.ceil((long - short) / Math.max(0.5, short / 2)));" in keep
-    assert "const own = propFootprint(record.type) * (record.scale || 1);" in keep
-    assert "keepOutAdd(index, record.x, record.y, own * gap, own);" in keep, (
+    assert "keepOutAddProp(index, record.x, record.y, record.type, record.scale || 1, gap);" in keep
+    prop = _js_function(js, "function keepOutAddProp(index, x, y, type, scale, spacing)")
+    assert "const own = propFootprint(type) * scale;" in prop
+    assert "const crown = own * spacing;" in prop, (
         "a disc carries the size of the thing that filed it, which is "
         "what decides whether it is entitled to keep a bigger thing out")
     assert "* 0.6" not in keep
@@ -3534,7 +3536,7 @@ def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
     # anything whose centre came near it, whatever the two sizes were,
     # and 930,429 blades of grass tile the whole site: nothing larger
     # could be planted anywhere at all.
-    clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
+    clear = _js_function(js, "function keepOutClear(index, x, y, radius, own = radius)")
     assert "if (d[3] * STEP_OVER_RATIO < radius) continue;" in clear
     import re as _re
     ratio = int(_re.search(r"const STEP_OVER_RATIO = (\d+);", js).group(1))
@@ -3556,14 +3558,14 @@ def test_the_keep_out_is_a_grid_and_not_a_list():
     js = STUDIO_JS.read_text(encoding="utf-8")
     assert "const KEEP_OUT_CELL = 1;   // metres" in js
     assert "function clearOf(" not in js
-    add = _js_function(js, "function keepOutAdd(index, x, y, r, own = r)")
+    add = _js_function(js, "function keepOutAdd(index, x, y, r, own = r, role = KEEP_ALL)")
     assert "if (bucket) bucket.push(id); else index.cells.set(key, [id]);" in add
-    clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
+    clear = _js_function(js, "function keepOutClear(index, x, y, radius, own = radius)")
     assert "if (index.seen[id] === pass) continue;" in clear
     assert "if (dx * dx + dy * dy < reach * reach) return false;" in clear
     solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
-    assert "if (!keepOutClear(keepOut, x, y, radius)) { refused += 1; continue; }" in solve
-    assert "keepOutAdd(keepOut, x, y, radius);" in solve
+    assert "if (!keepOutClear(keepOut, x, y, radius, own)) { refused += 1; continue; }" in solve
+    assert "keepOutAddProp(keepOut, x, y, type, scale, rules.spacing);" in solve
 
 
 def test_the_brush_is_a_stroke_and_the_stroke_is_one_undo():

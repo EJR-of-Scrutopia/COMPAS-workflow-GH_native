@@ -8913,6 +8913,27 @@ const KEEP_OUT_CELL = 1;   // metres
 // interpenetration the keep-out exists to prevent.
 const STEP_OVER_RATIO = 3;
 
+// WHAT A THING KEEPS OUT DEPENDS ON HOW BIG THE NEWCOMER IS. Param,
+// 2026-09-13: "we still are placing objects around other objects, so
+// around every tree with a circle radius no grass or plants can be placed
+// near it ... it might be that only the grass can be placed anywhere under
+// or much closer to any collision geometry, or we redefine the collision
+// geometry to be more dramatic."
+//
+// A tree filed one disc the size of its CROWN, and a blade of grass was
+// refused anywhere inside it: a bare circle two and a half metres across
+// under every beech, which is what he saw. What stands on the ground under
+// a tree is its trunk. So a thing files two discs when its base is
+// narrower than its crown: the crown, for anything of a size with it, and
+// the base, for anything much smaller (by the same third that decides a
+// step-over). Grass grows up to the bark; a tree still keeps its distance
+// from a tree. The works do the same: their plan capsule keeps out trees,
+// and only where they meet the floor keeps out the ground cover, so grass
+// runs under the arch up to the springings and the column feet.
+const KEEP_ALL = 0;     // one disc for everything: most things, and grass
+const KEEP_CROWN = 1;   // tested only by things not much smaller
+const KEEP_BASE = 2;    // tested only by things much smaller
+
 function keepOutIndex() {
   return { cells: new Map(), discs: [], seen: [], pass: 0 };
 }
@@ -8925,9 +8946,9 @@ function keepOutKey(ix, iy) {
 // `own` is how big the thing that filed the disc actually is, which
 // decides what it is entitled to keep out. Defaults to the disc's own
 // radius, which is right for the works: a vault keeps out everything.
-function keepOutAdd(index, x, y, r, own = r) {
+function keepOutAdd(index, x, y, r, own = r, role = KEEP_ALL) {
   const id = index.discs.length;
-  index.discs.push([x, y, r, own]);
+  index.discs.push([x, y, r, own, role]);
   index.seen.push(0);
   const x0 = Math.floor((x - r) / KEEP_OUT_CELL);
   const x1 = Math.floor((x + r) / KEEP_OUT_CELL);
@@ -8944,7 +8965,7 @@ function keepOutAdd(index, x, y, r, own = r) {
 
 // True when a disc of the given radius at (x, y) touches nothing filed.
 // A disc filed in several cells is tested once: the pass number marks it.
-function keepOutClear(index, x, y, radius) {
+function keepOutClear(index, x, y, radius, own = radius) {
   const pass = ++index.pass;
   const x0 = Math.floor((x - radius) / KEEP_OUT_CELL);
   const x1 = Math.floor((x + radius) / KEEP_OUT_CELL);
@@ -8974,6 +8995,12 @@ function keepOutClear(index, x, y, radius) {
         // still keeps out a tree, because those are of a size with one
         // another.
         if (d[3] * STEP_OVER_RATIO < radius) continue;
+        // UNDER A CANOPY: a newcomer much smaller than the disc's owner
+        // meets its base and not its crown, and one of a size with it
+        // meets its crown, which holds the base inside it anyway.
+        const under = own * STEP_OVER_RATIO < d[3];
+        if (d[4] === KEEP_CROWN && under) continue;
+        if (d[4] === KEEP_BASE && !under) continue;
         const dx = x - d[0];
         const dy = y - d[1];
         const reach = d[2] + radius;
@@ -8984,11 +9011,111 @@ function keepOutClear(index, x, y, radius) {
   return true;
 }
 
+// A prop's keep-out: its crown at the spacing the dial asks for, and its
+// base where the base is narrower. Grass, whose base is its whole
+// footprint, files the one disc it always did.
+function keepOutAddProp(index, x, y, type, scale, spacing) {
+  const own = propFootprint(type) * scale;
+  const crown = own * spacing;
+  const base = propBaseRadius(type) * scale;
+  if (base >= crown) {
+    keepOutAdd(index, x, y, crown, own);
+    return;
+  }
+  keepOutAdd(index, x, y, crown, own, KEEP_CROWN);
+  keepOutAdd(index, x, y, base, own, KEEP_BASE);
+}
+
+// How wide a model stands where it meets the ground: the furthest any of
+// its vertices in the lowest slice reaches from its origin. The slice is
+// 0.3 m, or a tenth of the model's height for anything under three metres,
+// so a trunk's flare is measured and a sapling's lowest leaves are not.
+// Measured once per model and kept. Before its model has arrived a type
+// answers with its whole footprint, which is the old, cautious disc.
+const BASE_SLICE_METRES = 0.3;
+const BASE_SLICE_SHARE = 0.1;
+const propBaseRadii = new Map();
+
+function propBaseRadius(type) {
+  if (propBaseRadii.has(type)) return propBaseRadii.get(type);
+  const footprint = propFootprint(type);
+  const template = propTemplates.get(type);
+  if (!template) return footprint;
+  template.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(template);
+  if (box.isEmpty()) return footprint;
+  const slice = box.min.z + Math.min(BASE_SLICE_METRES,
+    (box.max.z - box.min.z) * BASE_SLICE_SHARE);
+  const point = new THREE.Vector3();
+  let reach = 0;
+  template.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+    const position = child.geometry.getAttribute("position");
+    if (!position) return;
+    for (let i = 0; i < position.count; i++) {
+      point.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld);
+      if (point.z > slice) continue;
+      const r = Math.hypot(point.x, point.y);
+      if (r > reach) reach = r;
+    }
+  });
+  const radius = reach > 0 ? Math.min(reach, footprint) : footprint;
+  propBaseRadii.set(type, radius);
+  return radius;
+}
+
+// Where the works meet the floor, as small discs on a half-metre grid: a
+// cell holds one wherever a vertex stands within the lowest slice. The
+// plan capsule above keeps out what is too big to stand under the works;
+// these keep the ground cover off the springings, the column feet and the
+// anchors, and nowhere else.
+const WORKS_CONTACT_CELL = 0.5;
+const WORKS_CONTACT_SLICE = 0.3;
+const WORKS_CONTACT_MARGIN = 0.1;
+const worksContactCells = new WeakMap();
+
+function worksContact(part) {
+  if (worksContactCells.has(part)) return worksContactCells.get(part);
+  part.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(part);
+  const cells = new Map();
+  if (!box.isEmpty()) {
+    const floor = box.min.z + WORKS_CONTACT_SLICE;
+    const point = new THREE.Vector3();
+    const instance = new THREE.Matrix4();
+    const file = (mesh, matrix) => {
+      const position = mesh.geometry.getAttribute("position");
+      if (!position) return;
+      for (let i = 0; i < position.count; i++) {
+        point.fromBufferAttribute(position, i).applyMatrix4(matrix);
+        if (point.z > floor) continue;
+        const ix = Math.floor(point.x / WORKS_CONTACT_CELL);
+        const iy = Math.floor(point.y / WORKS_CONTACT_CELL);
+        cells.set(ix + "," + iy, [ix, iy]);
+      }
+    };
+    part.traverse((child) => {
+      if (!child.isMesh || !child.geometry) return;
+      if (child.isInstancedMesh) {
+        for (let k = 0; k < child.count; k++) {
+          child.getMatrixAt(k, instance);
+          file(child, instance.premultiply(child.matrixWorld));
+        }
+      } else {
+        file(child, child.matrixWorld);
+      }
+    });
+  }
+  const contact = [...cells.values()];
+  worksContactCells.set(part, contact);
+  return contact;
+}
+
 function scatterKeepOut(clearance, spacing) {
   const index = keepOutIndex();
   const box = new THREE.Box3();
   const parts = [state.objects.shell, state.objects.columns,
-    state.objects.falsework].filter(Boolean);
+    state.objects.falsework, machineObjects && machineObjects.permanent].filter(Boolean);
   for (const part of parts) {
     box.setFromObject(part);
     if (!isFinite(box.min.x)) continue;
@@ -9010,7 +9137,13 @@ function scatterKeepOut(clearance, spacing) {
         ? box.min.x + short / 2 + t * (long - short) : (box.min.x + box.max.x) / 2;
       const cy = along === "y"
         ? box.min.y + short / 2 + t * (long - short) : (box.min.y + box.max.y) / 2;
-      keepOutAdd(index, cx, cy, r);
+      keepOutAdd(index, cx, cy, r, r, KEEP_CROWN);
+    }
+    // And where it meets the floor, for what can grow under it.
+    const reach = WORKS_CONTACT_CELL * Math.SQRT1_2 + WORKS_CONTACT_MARGIN;
+    for (const [ix, iy] of worksContact(part)) {
+      keepOutAdd(index, (ix + 0.5) * WORKS_CONTACT_CELL, (iy + 0.5) * WORKS_CONTACT_CELL,
+        reach, r, KEEP_BASE);
     }
   }
   // A placed prop keeps out by ITS OWN size and the CURRENT spacing. It
@@ -9019,8 +9152,7 @@ function scatterKeepOut(clearance, spacing) {
   // one however low the spacing was set.
   const gap = spacing || 1;
   for (const record of state.props) {
-    const own = propFootprint(record.type) * (record.scale || 1);
-    keepOutAdd(index, record.x, record.y, own * gap, own);
+    keepOutAddProp(index, record.x, record.y, record.type, record.scale || 1, gap);
   }
   return index;
 }
@@ -9095,9 +9227,10 @@ function scatterSolve(region, salt, strokeKeepOut) {
     // same shapes.
     const type = pickVariant(pick(), random);
     const scale = rules.sizeMin + random() * (rules.sizeMax - rules.sizeMin);
-    const radius = propFootprint(type) * scale * rules.spacing;
-    if (!keepOutClear(keepOut, x, y, radius)) { refused += 1; continue; }
-    keepOutAdd(keepOut, x, y, radius);
+    const own = propFootprint(type) * scale;
+    const radius = own * rules.spacing;
+    if (!keepOutClear(keepOut, x, y, radius, own)) { refused += 1; continue; }
+    keepOutAddProp(keepOut, x, y, type, scale, rules.spacing);
     placed.push({ type, x, y, scale,
       rotation: rules.turn ? random() * Math.PI * 2 : 0 });
     triangles += propTriangles(type);
@@ -17907,7 +18040,7 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // The keep-out index and the hover, so a probe can ask the two
   // questions a placement asks -- can this land here, and what does the
   // pointer say it is over -- without driving the mouse.
-  scatterKeepOut, keepOutClear, keepOutAdd, setHoveredProp,
+  scatterKeepOut, keepOutClear, keepOutAdd, setHoveredProp, propBaseRadius, runScatter,
   captureReflections, reflectionWearers, get reflectionsTaken() { return reflectionsTaken; },
   reflectionTarget,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,

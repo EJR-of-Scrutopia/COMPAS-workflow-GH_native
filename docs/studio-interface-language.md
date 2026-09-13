@@ -747,3 +747,17 @@ keys stand down while anything with a caret has focus, while Ctrl, Alt
 or Cmd is held, and while a take or a plate owns the camera. Measured:
 held for a second at 2 the eye travelled 5.08 m, and at 4, 24.2 m in
 0.56 s; with a text box focused, nothing.
+
+**Ground cover grows to the bark, and under the arch.** Param: "around
+every tree with a circle radius no grass or plants can be placed near it
+... it might be that only the grass can be placed anywhere under or much
+closer to any collision geometry". A tree kept everything out to the
+edge of its crown. Now what a thing keeps out depends on how big the
+newcomer is: something of a size with it meets its crown, and something
+much smaller (a third, the step-over ratio) meets only its base, measured
+from the model's own vertices in its lowest 0.3 m. The works do the
+same: their plan keeps out trees, and only where they meet the floor --
+springings, column feet, the anchor and the tie -- keeps out the ground
+cover. Measured with the real scatter round one beech: the nearest blade
+stood 2.35 m from the trunk and now stands 1.02 m, against a measured
+base of 1.01 m; over the vault 0 blades were placed and now 2,954.
