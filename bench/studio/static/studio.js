@@ -33,6 +33,9 @@ import {
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
 import {
+  applyTiling, LATTICE_SCALE, BLEND_SHARPNESS, TILED_CHUNKS,
+} from "/static/tiling.js";
+import {
   ATMOSPHERE_PRESETS, ATMOSPHERE_SKY_GLSL, ATMOSPHERE_LINEAR_OFF,
   atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
   atmospherePreviewPixels, createAtmosphere, installAtmosphere, writeAtmosphere,
@@ -179,7 +182,10 @@ const state = {
   // The floor texture's own dials: per-axis scale multipliers over the
   // real-world repeat, its own relief depth, and a slid offset from the
   // Randomise button (rebuildGround applies all four).
-  ground: { scaleX: 1, scaleY: 1, relief: 1, offset: [0, 0], rotation: 0 },
+  // `breakup` is the per-tile randomising (tiling.js); `seed` is which
+  // arrangement of it, so Randomise can hand him a different one.
+  ground: { scaleX: 1, scaleY: 1, relief: 1, offset: [0, 0], rotation: 0,
+    breakup: false, seed: [0, 0] },
   props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
   carrying: null,      // { record, from } while a prop follows the cursor (see carryNewProp)
   armedPropType: null,  // kept for the older arming path used by nothing in the panel now
@@ -1539,6 +1545,74 @@ async function loadGroundMaterial(key) {
   rebuildGround();
 }
 
+// ---------- the floor's per-tile randomising ----------
+// The shared uniforms, held once and written in place, so changing the
+// seed moves every tap on the next frame with no recompile. Turning the
+// effect ON or OFF does recompile, because it is a different shader:
+// that is what customProgramCacheKey below is for.
+const tilingUniforms = {
+  tileSeed: { value: new THREE.Vector2(0, 0) },
+  tileLattice: { value: LATTICE_SCALE },
+  tileSharpness: { value: BLEND_SHARPNESS },
+};
+
+function writeTilingUniforms() {
+  tilingUniforms.tileSeed.value.set(state.ground.seed[0], state.ground.seed[1]);
+}
+
+let tilingSaidChunks = false;
+let tilingSaidBump = false;
+
+// Give one material the lattice. The hook REPLACES the one atmosphere.js
+// put on Material.prototype, so it has to do that job too or this floor
+// alone would lose its fog uniforms and stand clear in a fogged scene.
+function installGroundTiling(material) {
+  if (!material || material.userData.tilingInstalled) return;
+  material.userData.tilingInstalled = true;
+  material.onBeforeCompile = function tiledFloor(shader) {
+    // FIRST. atmosphere.js hangs the fog's uniforms on the prototype,
+    // and a material with its own hook shadows it (its own comment says
+    // so). Without this line the floor would be the one surface in the
+    // scene with no height fog on it.
+    atmosphere.inject(shader);
+    if (!state.ground.breakup) return;
+    const rewritten = applyTiling(shader, THREE.ShaderChunk, tilingUniforms);
+    if (rewritten < 1 && !tilingSaidChunks) {
+      tilingSaidChunks = true;
+      reportProblem("the floor's per-tile randomising found none of the "
+        + "map chunks it rewrites; three's shader chunks have moved and "
+        + "tiling.js needs checking against three 0.185.0");
+    }
+  };
+  // The shader DIFFERS by whether the lattice is in it, so the cache key
+  // has to say so. Without this, three hands back the program it built
+  // the first time and the toggle does nothing at all.
+  material.customProgramCacheKey = () => (state.ground.breakup ? "tiled" : "plain");
+  // A floor whose relief is a height map keeps its repeat in the relief:
+  // three reads a bump map three times to take its own finite
+  // difference, and a difference taken across a lattice edge would draw
+  // a ridge along every edge. Said once, rather than quietly looking
+  // half-done.
+  if (material.bumpMap && !material.normalMap && !tilingSaidBump) {
+    tilingSaidBump = true;
+    logStudio("this floor's relief is a height map, which the per-tile "
+      + "randomising leaves alone: its colour will vary and its bumps "
+      + "will still repeat");
+  }
+}
+
+// Both faces of the toggle, and the rebuild that a change of shader
+// needs. The material is cached and shared, so needsUpdate is what makes
+// three throw the old program away.
+function setGroundBreakup(on) {
+  state.ground.breakup = !!on;
+  const box = document.getElementById("ground-breakup");
+  if (box) box.checked = state.ground.breakup;
+  const material = groundLibrarySet ? groundLibrarySet.material
+    : (state.objects.ground ? state.objects.ground.material : null);
+  if (material) material.needsUpdate = true;
+}
+
 // The plane everything stands on, and the reason it is not zero.
 //
 // The analysis surface is the vault's MID-surface, so the built vault's
@@ -1578,6 +1652,8 @@ function rebuildGround() {
     state.objects.ground = null;
   }
   const material = groundMaterial(state.groundPreset);
+  installGroundTiling(material);
+  writeTilingUniforms();
   if (groundLibrarySet && material === groundLibrarySet.material) {
     // The library knows how much of the world one picture shows, so the
     // repeat is arithmetic rather than a number tuned by eye. Every map,
@@ -4946,7 +5022,8 @@ function collectScene(options) {
     ground: { preset: state.groundPreset, radius: state.groundRadius,
       scaleX: state.ground.scaleX, scaleY: state.ground.scaleY,
       relief: state.ground.relief, offset: state.ground.offset.slice(),
-      rotation: state.ground.rotation },
+      rotation: state.ground.rotation,
+      breakup: state.ground.breakup, seed: state.ground.seed.slice() },
     // Rows, not objects: see "the layout, and where it is kept". A scene
     // of a 25,000-prop field was five megabytes as objects, over the
     // server's four-megabyte scene limit.
@@ -5012,6 +5089,10 @@ async function applyScene(record) {
     if (typeof scene_.ground.relief === "number") state.ground.relief = scene_.ground.relief;
     if (Array.isArray(scene_.ground.offset)) state.ground.offset = scene_.ground.offset.slice(0, 2);
     if (typeof scene_.ground.rotation === "number") state.ground.rotation = scene_.ground.rotation;
+    if (Array.isArray(scene_.ground.seed)) state.ground.seed = scene_.ground.seed.slice(0, 2);
+    // Through the setter, so the checkbox and the material's own program
+    // follow a restored scene rather than showing the last one's answer.
+    setGroundBreakup(!!scene_.ground.breakup);
     syncGroundControls();
   }
   if (scene_.layers) state.layers = Object.assign({}, state.layers, scene_.layers);
@@ -12800,13 +12881,34 @@ document.getElementById("ground-relief").addEventListener("input", (e) => {
   setSurface(groundLibrarySet, state.ground.relief, state.occlusion);
 });
 document.getElementById("ground-randomise").addEventListener("click", () => {
-  // The slide alone was invisible -- shifting a periodic pattern by a
-  // fraction of one tile lands the grid back on itself. The random LAY
-  // ANGLE is what the eye actually sees change.
+  // WHAT RANDOMISE MEANS. Param, 2026-09-12: "at the moment randomise
+  // uv just rotates all uv to a random orientation. but what it should
+  // mean is every instance randomises, so that the repeating is
+  // different throughout".
+  //
+  // It used to turn and slide the whole sheet, which re-lays the floor
+  // and leaves every repeat within it identical. It now also picks a
+  // fresh arrangement of the per-tile randomising and switches that on,
+  // because that is the thing he was asking the button to do.
   state.ground.offset = [Math.random(), Math.random()];
   state.ground.rotation = Math.random() * Math.PI * 2;
+  state.ground.seed = [Math.random() * 64, Math.random() * 64];
+  const was = state.ground.breakup;
+  setGroundBreakup(true);
   if (state.objects.ground) rebuildGround();
-  logStudio("floor pattern turned and slid to a fresh lay");
+  logStudio(was
+    ? "floor re-laid, and every tile reads from a fresh place in the picture"
+    : "floor re-laid, and every tile now reads from its own place in the "
+      + "picture rather than repeating");
+});
+
+document.getElementById("ground-breakup").addEventListener("change", (e) => {
+  setGroundBreakup(e.target.checked);
+  if (state.objects.ground) rebuildGround();
+  logStudio(state.ground.breakup
+    ? "per-tile randomising on: three reads a map instead of one, on the "
+      + "floor alone"
+    : "per-tile randomising off: the floor repeats its picture as laid");
 });
 
 document.getElementById("ground-preset").addEventListener("change", async (e) => {

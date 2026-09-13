@@ -762,7 +762,14 @@
       <input id="ground-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1">
       <b id="ground-relief-value">10</b><em>mm</em></label>
     </div>
-    <button id="ground-randomise" title="Turn and slide the floor pattern to a fresh lay angle">Randomise floor</button>
+    <!-- Param, 2026-09-12: "what it should mean is every instance
+         randomises, so that the repeating is different throughout and
+         it helps to hide some of the errors where repetition is too
+         noticable on surfaces". A checkbox rather than a dial: it is on
+         or it is not, and a dial would join section 10's census for a
+         setting with two states. -->
+    <label title="Read every tile of the floor from a different place in its picture, so a large floor stops showing the same pebble in rows. Costs three reads of each map instead of one, on the floor alone. Leave it off for a floor whose pattern is meant to read as a regular grid."><input id="ground-breakup" type="checkbox"> Break up the repeat</label>
+    <button id="ground-randomise" title="Re-lay the floor, and give every tile a fresh place to read its picture from">Randomise floor</button>
 
     <span class="row-heading">Props</span>
     <div id="props-folder-row" class="folder-line">
