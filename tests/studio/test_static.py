@@ -3746,7 +3746,7 @@ def test_delete_takes_the_whole_gathering_in_one_undo():
     keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
     keys = keys[:keys.index("\n});")]
     assert ("const going = planting\n"
-            "      ? plantingRecords(planting, hoveredProp.layer)\n"
+            "      ? plantingRecords(planting)\n"
             "      : (acting.includes(hoveredProp) ? acting : [hoveredProp]);") in keys, (
         "the badge names the PLANTING over a scattered prop, so Delete "
         "takes what the badge names; otherwise hovering something "
@@ -3815,27 +3815,19 @@ def test_a_scatter_is_one_thing_to_hover_and_to_delete():
     A box round one blade of grass out of nine hundred thousand names
     nothing anybody wants to refer to. What he placed was a planting.
 
-    GROUPED BY THE LAYER, not by the run that placed it. The run was the
-    obvious answer and is wrong for the case that matters:
-    state.scatterRuns is a session's own history and a saved layout does
-    not carry it, so his grass -- scattered in an earlier session and
-    reopened -- belongs to no run at all. Measured before this was
-    written: runs 0, and every blade still getting its own box. What
-    survives a reload is the layer and the type.
+    GROUPED BY THE SCATTER THAT PLACED IT, which every scattered prop
+    now carries and the layout keeps (test_scatter_identity). For a day
+    it was grouped by layer and type -- every type there sixty-four times
+    or more -- because the session's runs were not saved; that left his
+    sparse beeches boxing one tree at a time.
     """
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
 
-    # A type in bulk on a layer was scattered; a type with three members
-    # was placed by hand.
-    bulk = int(re.search(r"const BULK_ON_A_LAYER = (\d+);", js).group(1))
-    assert 8 <= bulk <= 500, (
-        "{} is either so low that three hand-placed bollards read as a "
-        "planting, or so high that a modest scatter does not".format(bulk))
     of = _function_body(js, "plantingOf")
-    assert "planting.types.has(record.type) ? planting : null" in of, (
-        "a lone tree standing on the same layer as the grass keeps its "
-        "own box")
+    assert "if (!record || !record.scatter) return null;" in of, (
+        "a prop placed by hand keeps its own box")
+    assert 'const key = record.layer + ":" + record.scatter;' in of
 
     # MEASURED ONCE. Over three quarters of a million records a walk is
     # worth not repeating sixty times a second.
@@ -3844,7 +3836,7 @@ def test_a_scatter_is_one_thing_to_hover_and_to_delete():
     assert "new THREE.Box3(" in bounds
     # Built from the records' own numbers rather than from their objects:
     # setFromObject on a million props is a different order of cost.
-    assert "propFootprint(record.type) * (record.scale || 1)" in bounds
+    assert "const reach = propFootprint(record.type) * scale;" in bounds
     assert "setFromObject" not in bounds
 
     # AND THROWN AWAY whenever what is on a layer changes, or the box
@@ -3855,10 +3847,10 @@ def test_a_scatter_is_one_thing_to_hover_and_to_delete():
     # THE HOVER shows one box and names the planting.
     hover = _function_body(js, "setHoveredProp")
     assert "const planting = plantingOf(record);" in hover
-    assert "plantingBounds(planting, record.layer)" in hover
+    assert "plantingBounds(planting)" in hover
     assert "new THREE.Box3Helper(bounds, new THREE.Color(HOVER_COLOUR))" in hover, (
         "one box round the planting, not a BoxHelper round one prop")
-    assert '"Planting of " + planting.members.toLocaleString() + " props"' in hover, (
+    assert "plantingName(planting)" in hover, (
         "the badge says how many, which is also the warning before "
         "Delete takes them")
 

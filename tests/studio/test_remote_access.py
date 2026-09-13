@@ -3443,7 +3443,7 @@ def test_undoing_a_delete_brings_a_fixture_back_as_it_was():
     block = js[js.index("function deletePropWithUndo(record) {"):]
     gone = block[:block.index("pushUndo(")]
     assert "size: Array.isArray(record.size) ? record.size.slice() : null," in gone
-    assert "lumens: record.lumens, kelvin: record.kelvin };" in gone
+    assert "lumens: record.lumens, kelvin: record.kelvin," in gone
     undo = block[block.index("pushUndo("):block.index("removePropRecord(record);")]
     # Guard and all: a condition that can never hold brought the two metre
     # strip back, with every pinned line still standing where it was.
@@ -3650,7 +3650,7 @@ def test_every_placement_lands_on_the_open_layer():
     fill = run[run.index('pushUndo("scattering "'):]
     assert "at = dropLayerIfEmpty(owns);" in fill
     assert "if (owns && at >= 0) reinstateLayer(owns, at);" in fill
-    assert "Object.assign({}, settings, { intoLayer: home.id, owns })" in fill, (
+    assert "{ intoLayer: home.id, owns, scatterId }" in fill, (
         "the fill's redo names its layer, never the first fill's null")
     end = _js_function(js, "function endBrushStroke(stroke)")
     assert "at = dropLayerIfEmpty(owns);" in end
@@ -3699,6 +3699,20 @@ def _js_whole_function(source, header):
 
     start = source.index(header)
     return source[start:source.index("\n}", start) + 2]
+
+
+def _scatter_naming(js):
+    """runScatter names what it places (scatterIdFor, 2026-09-13), so a
+    harness that lifts runScatter out needs the naming lifted beside it:
+    the ceiling, the plantings cache and its one-line clear."""
+
+    lines = []
+    for head in ("let scatterIdCeiling = ", "const plantings = new Map();",
+                 "function clearPlantings()"):
+        start = js.index(head)
+        lines.append(js[start:js.index("\n", start)])
+    return "\n".join(lines) + "\n\n" + _js_whole_function(
+        js, "function scatterIdFor(layerId)")
 
 
 LAYER_STUBS = r"""
@@ -3840,7 +3854,7 @@ def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
     # stillPlaced reads its threshold from a constant beside it.
     scan = js[js.index("const STILL_PLACED_BY_SCAN = "):]
     scan = scan[:scan.index(";") + 1]
-    functions = scan + "\n\n" + "\n\n".join(
+    functions = scan + "\n\n" + _scatter_naming(js) + "\n\n" + "\n\n".join(
         _js_whole_function(js, header) for header in headers)
     script = tmp_path / "layers.mjs"
     script.write_text(LAYER_HARNESS % {"functions": functions}, encoding="utf-8")
@@ -4016,7 +4030,7 @@ def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
     # stillPlaced reads its threshold from a constant beside it.
     scan = js[js.index("const STILL_PLACED_BY_SCAN = "):]
     scan = scan[:scan.index(";") + 1]
-    functions = scan + "\n\n" + "\n\n".join(
+    functions = scan + "\n\n" + _scatter_naming(js) + "\n\n" + "\n\n".join(
         _js_whole_function(js, header) for header in headers)
     script = tmp_path / "guards.mjs"
     script.write_text(LAYER_GUARD_HARNESS % {"functions": functions}, encoding="utf-8")
@@ -4101,7 +4115,8 @@ def test_remove_last_takes_its_own_history_entry_with_it(tmp_path):
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function markScatterRun(run, only)",
                "async function runScatter(region, options)")
-    functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
+    functions = _scatter_naming(js) + "\n\n" + "\n\n".join(
+        _js_whole_function(js, header) for header in headers)
     # The handler is a listener rather than a function, so it is lifted
     # out by its own text and given a name to be called by.
     opens = 'document.getElementById("scatter-undo-last").addEventListener("click", () => {'

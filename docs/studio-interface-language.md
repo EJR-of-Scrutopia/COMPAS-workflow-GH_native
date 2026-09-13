@@ -661,3 +661,44 @@ entered, because with nothing captured there is nowhere to go back to.
 section 10's census stands. The `body.recording #stats-overlay` rule
 noted at the end of section 12 is still inert, and still worth its own
 day.
+
+## 14. A scatter is a thing with a name, 2026-09-13
+
+**A scatter is what he placed, so it is what the pointer names.** The
+hover badge already put one box round a scattered field rather than one
+round each blade (section 13), but which props made up "a field" was
+guessed from what stood on a layer: every kind there sixty-four times or
+more. Trees are scattered sparsely by nature, and his beeches came to
+50, 36, 26 and 15 of four kinds, so every tree boxed alone. Param: "It
+also should have been that these trees should be one scatter".
+
+A count cannot tell a sparse scatter from props placed by hand; the
+scatter that placed them can. Every prop a scatter places now carries
+its scatter's number, the layout keeps it beside the rows (as runs of
+number and count, so a field of a million is a short list), and the
+badge reads "Scatter #2 of 446 props . Layer 1". The Layers drawer uses
+the same words.
+
+ONE SCATTER IS ONE MIX ON ONE LAYER, however many strokes painted it. A
+stroke is how the brush was moved, not a thing he placed, so a stroke
+joins the newest scatter on its layer whose every kind the chosen
+species could have made, and starts a new one otherwise. More beeches
+join the beeches; switching the mix to grass starts the grass.
+
+A LAYOUT FROM BEFORE is read once and named on the way in, and the names
+are written back with the next save. Its rows cannot be the guide -- his
+beeches and his ground cover are interleaved from row 139 to row 1,969
+-- so a kind counts as scattered when it is there in bulk or stands at
+more than one size (the scatter draws every size from its range; a prop
+placed by hand arrives at exactly 1), and what was scattered is split
+into the cover and what stands above two metres. Measured on his own
+field: 446 beeches as Scatter #2, 98,366 of ground cover as Scatter #1,
+and Delete over any beech took the 446 and nothing else.
+
+**Deleting a scatter is one gesture of well under a second.** Deleting
+his 930,000 blades held the tab for 27.8 s, long enough for the browser
+to offer to close it. The cost was a membership check that walked the
+whole field once for every prop in it; it is a set now, and the same
+Delete takes 0.64 s. Any code asking "is this prop still placed" of more
+than a handful goes through `stillPlaced`, because a selection can now be
+a whole scatter.

@@ -2506,7 +2506,14 @@ function encodeProps(props) {
   const typeIndex = new Map();
   const rows = [];
   const extras = {};
+  // Which scatter each row belongs to, as runs of [id, how many], 0 for a
+  // prop placed by hand. A scatter's rows mostly sit together, so a field
+  // of a million is a short list here rather than a million numbers.
+  const scatter = [];
   props.forEach((p, i) => {
+    const id = p.scatter || 0;
+    if (scatter.length && scatter[scatter.length - 2] === id) scatter[scatter.length - 1] += 1;
+    else scatter.push(id, 1);
     let t = typeIndex.get(p.type);
     if (t === undefined) { t = types.length; types.push(p.type); typeIndex.set(p.type, t); }
     rows.push(t, roundMm(p.x), roundMm(p.y), roundMm(p.z || 0), roundTurn(p.rotation),
@@ -2522,7 +2529,13 @@ function encodeProps(props) {
         shadow: p.shadow };
     }
   });
-  return { stride: LAYOUT_STRIDE, types, rows, extras };
+  return { stride: LAYOUT_STRIDE, types, rows, extras, scatter };
+}
+
+// A layout written before scatters were named has no runs at all, and its
+// plantings are worked out on the way in (adoptLegacyScatters).
+function layoutKnowsScatters(block) {
+  return !!block && !Array.isArray(block) && Array.isArray(block.scatter);
 }
 
 // Both shapes a layout or a scene has ever held: the list of objects
@@ -2541,6 +2554,16 @@ function decodeProps(block) {
     const extra = extras[entries.length];
     if (extra) Object.assign(entry, extra);
     entries.push(entry);
+  }
+  if (Array.isArray(block.scatter)) {
+    let at = 0;
+    for (let r = 0; r + 1 < block.scatter.length; r += 2) {
+      const id = +block.scatter[r] || 0;
+      const count = +block.scatter[r + 1] || 0;
+      for (let k = 0; k < count && at < entries.length; k += 1, at += 1) {
+        if (id) entries[at].scatter = id;
+      }
+    }
   }
   return entries;
 }
@@ -2773,6 +2796,8 @@ function restoreProps(given) {
   // {layers, props} that replaced it, and the same with its props as
   // rows (decodeProps). All restore.
   let entries = layout;
+  const knowsScatters = !Array.isArray(layout) && !!layout
+    && layoutKnowsScatters(layout.props);
   if (!Array.isArray(layout) && layout && layout.props) {
     adoptLayers(layout.layers);
     adoptScatter(layout.scatter);
@@ -2809,8 +2834,10 @@ function restoreProps(given) {
       applyPropSize(record);
     }
     record.layer = +entry.layer || 1;
+    if (entry.scatter) record.scatter = +entry.scatter;
     adoptLampSettings(record, entry);
   }
+  settleRestoredScatters(knowsScatters);
   applyLayerVisibility();
   // A failed load resolves null rather than rejecting, so one bad model
   // cannot hold the rest of the field back for ever.
@@ -3952,68 +3979,77 @@ function markScatterRun(run, only) {
   run.bounds = null;
 }
 
-// THE PLANTING A PROP BELONGS TO, worked out from what is on its layer
-// rather than from the run that placed it.
+// THE PLANTING A PROP BELONGS TO: the scatter that placed it, carried on
+// the record as record.scatter and written into the layout beside it.
 //
-// The run would have been the obvious answer, and it is wrong for the
-// case that matters: state.scatterRuns is a session's own history and a
-// saved layout does not carry it, so his 930,429 blades of grass --
-// scattered in an earlier session and reopened -- belong to no run at
-// all. Measured before this was written: runs 0, and every blade still
-// getting a box of its own.
+// It used to be worked out from what was on the layer -- every type there
+// in bulk, sixty-four or more -- because nothing a layout kept said which
+// props had been scattered. That was wrong for the case Param met next:
+// trees are scattered sparsely by nature, his beeches came to 50, 36, 26
+// and 15 of four kinds, none of them bulk, and every tree boxed alone
+// ("It also should have been that these trees should be one scatter").
+// A count cannot tell a sparse scatter from props placed by hand; the
+// scatter that placed them can.
 //
-// What survives a reload is the layer and the type. A type with
-// hundreds of members on one layer was scattered, whatever session did
-// it; a type with three was placed by hand. So a planting is every
-// prop on a layer whose type is there in bulk, which puts one box round
-// the grass however many species it was mixed from, and leaves a lone
-// tree standing on the same layer as itself.
-const BULK_ON_A_LAYER = 64;
-const plantings = new Map();          // layer id -> { types, records, bounds }
+// ONE SCATTER IS ONE MIX ON ONE LAYER, however many strokes painted it:
+// a stroke is how the brush was moved, not a thing he placed. A new
+// stroke joins the newest planting on its layer whose kinds its species
+// could all have made, and starts a new one otherwise (scatterIdFor).
+const plantings = new Map();   // "layer:scatter" -> { layer, scatter, bounds, members }
+// The highest id handed out since the field was last restored, so a new
+// scatter never takes the number of one already standing.
+let scatterIdCeiling = 0;
 
 function clearPlantings() { plantings.clear(); }
 
-function plantingFor(layerId) {
-  const held = plantings.get(layerId);
-  if (held) return held;
-  const counts = new Map();
-  for (const record of state.props) {
-    if (record.layer !== layerId) continue;
-    counts.set(record.type, (counts.get(record.type) || 0) + 1);
+// Null for anything placed by hand, which keeps its own box.
+function plantingOf(record) {
+  if (!record || !record.scatter) return null;
+  const key = record.layer + ":" + record.scatter;
+  let planting = plantings.get(key);
+  if (!planting) {
+    planting = { layer: record.layer, scatter: record.scatter, bounds: null, members: 0 };
+    plantings.set(key, planting);
   }
-  const types = new Set();
-  for (const [type, n] of counts) if (n >= BULK_ON_A_LAYER) types.add(type);
-  const planting = { types, records: null, bounds: null };
-  plantings.set(layerId, planting);
   return planting;
 }
 
-// Null for anything placed by hand, which keeps its own box.
-function plantingOf(record) {
-  if (!record) return null;
-  const planting = plantingFor(record.layer);
-  return planting.types.has(record.type) ? planting : null;
+// A planting is its scatter ON ITS LAYER: props grouped onto a layer of
+// their own keep their scatter's number and become a planting there.
+function inPlanting(record, planting) {
+  return record.scatter === planting.scatter && record.layer === planting.layer;
+}
+
+// What the badge and the Layers drawer call it, in the same words, so the
+// one in the viewport can be found in the drawer.
+function plantingName(planting) {
+  return "Scatter #" + planting.scatter + " of "
+    + planting.members.toLocaleString() + " props";
 }
 
 // Measured once and kept: over three quarters of a million records that
 // is a walk worth not repeating sixty times a second, and a planting
 // does not move on its own.
-function plantingBounds(planting, layerId) {
+function plantingBounds(planting) {
   if (planting.bounds) return planting.bounds;
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   let members = 0;
   for (const record of state.props) {
-    if (record.layer !== layerId || !planting.types.has(record.type)) continue;
+    if (!inPlanting(record, planting)) continue;
     members += 1;
-    const reach = propFootprint(record.type) * (record.scale || 1);
+    const scale = record.scale || 1;
+    const reach = propFootprint(record.type) * scale;
     const z = record.z || 0;
     if (record.x - reach < minX) minX = record.x - reach;
     if (record.y - reach < minY) minY = record.y - reach;
     if (z < minZ) minZ = z;
     if (record.x + reach > maxX) maxX = record.x + reach;
     if (record.y + reach > maxY) maxY = record.y + reach;
-    if (z + reach * 2 > maxZ) maxZ = z + reach * 2;
+    // Its own height, not twice its spread: a beech is 31 m tall on a
+    // 16 m crown, and a box of twice the crown stopped at its middle.
+    const top = z + propStature(record.type) * scale;
+    if (top > maxZ) maxZ = top;
   }
   planting.members = members;
   planting.bounds = members
@@ -4025,9 +4061,96 @@ function plantingBounds(planting, layerId) {
 
 // Every member of a planting, gathered only when something is actually
 // going to be done to them: the hover itself never needs the list.
-function plantingRecords(planting, layerId) {
-  return state.props.filter((record) => record.layer === layerId
-    && planting.types.has(record.type));
+function plantingRecords(planting) {
+  return state.props.filter((record) => inPlanting(record, planting));
+}
+
+// The scatter a new stroke or fill belongs to: the newest planting on its
+// layer whose every kind the species now chosen could have made, or a new
+// one. So painting more beeches joins the beeches, and switching the mix
+// to grass starts the grass. Walked once per stroke, not per stamp.
+function scatterIdFor(layerId) {
+  const mayPlace = new Set();
+  for (const one of state.scatter.species) {
+    const members = familyMembers(one.type);
+    if (!members.length) mayPlace.add(one.type);
+    for (const member of members) mayPlace.add(member.key);
+  }
+  const fits = new Map();   // scatter id -> could this mix have made all of it
+  for (const record of state.props) {
+    if (!record.scatter || record.layer !== layerId) continue;
+    if (fits.get(record.scatter) === false) continue;
+    fits.set(record.scatter, mayPlace.has(record.type));
+  }
+  let join = 0;
+  for (const [id, fit] of fits) if (fit && id > join) join = id;
+  if (join) return join;
+  scatterIdCeiling += 1;
+  return scatterIdCeiling;
+}
+
+// ---------- plantings in a layout saved before scatters were named ----------
+// Everything written before 2026-09-13 carries no scatter id, his own
+// field included, and nothing it kept says which strokes placed what: the
+// rows of his beeches and his ground cover are interleaved (measured,
+// rows 139 to 1,969 of 98,812). So it is worked out once, on the way in,
+// and written back with the next save, after which it is never guessed.
+//
+// A kind on a layer was scattered if it is there in bulk, or if its
+// members stand at different sizes: the scatter draws every size from its
+// range, and a prop placed by hand arrives at exactly 1. What was
+// scattered is split by stature -- the ground cover, and what stands
+// above a person -- because that is the line between the field painted
+// underneath and the trees painted over it.
+const LEGACY_BULK = 64;
+const LEGACY_SIZE_SPREAD = 0.02;
+const LEGACY_TALL_METRES = 2;
+
+function adoptLegacyScatters() {
+  const kinds = new Map();
+  for (const record of state.props) {
+    if (record.scatter) continue;
+    const key = record.layer + "|" + record.type;
+    let kind = kinds.get(key);
+    if (!kind) {
+      kind = { layer: record.layer, type: record.type, records: [],
+        low: Infinity, high: -Infinity };
+      kinds.set(key, kind);
+    }
+    kind.records.push(record);
+    const scale = record.scale || 1;
+    if (scale < kind.low) kind.low = scale;
+    if (scale > kind.high) kind.high = scale;
+  }
+  const groups = new Map();   // "layer|tall" -> { layer, tall, kinds }
+  for (const kind of kinds.values()) {
+    const scattered = kind.records.length >= LEGACY_BULK
+      || (kind.records.length > 1 && kind.high - kind.low >= LEGACY_SIZE_SPREAD);
+    if (!scattered) continue;
+    const tall = propStature(kind.type) >= LEGACY_TALL_METRES ? 1 : 0;
+    const key = kind.layer + "|" + tall;
+    if (!groups.has(key)) groups.set(key, { layer: kind.layer, tall, kinds: [] });
+    groups.get(key).kinds.push(kind);
+  }
+  // In a fixed order, so the same layout names its scatters the same way
+  // every time it is opened until the names are saved.
+  const ordered = [...groups.values()].sort((a, b) => a.layer - b.layer || a.tall - b.tall);
+  for (const group of ordered) {
+    scatterIdCeiling += 1;
+    for (const kind of group.kinds) {
+      for (const record of kind.records) record.scatter = scatterIdCeiling;
+    }
+  }
+}
+
+// After a field is restored: the ceiling is the highest name it came back
+// with, and a layout too old to carry names has them worked out.
+function settleRestoredScatters(knowsScatters) {
+  let top = 0;
+  for (const record of state.props) if (record.scatter > top) top = record.scatter;
+  scatterIdCeiling = top;
+  if (!knowsScatters) adoptLegacyScatters();
+  clearPlantings();
 }
 
 // ---------- the hover badge ----------
@@ -4083,7 +4206,7 @@ function setHoveredProp(record) {
   // A SCATTERED PROP ANSWERS FOR ITS RUN. One box round the whole
   // planting, and a name for the thing he actually placed.
   const planting = plantingOf(record);
-  const bounds = planting ? plantingBounds(planting, record.layer) : null;
+  const bounds = planting ? plantingBounds(planting) : null;
   if (bounds) {
     hoverBox = new THREE.Box3Helper(bounds, new THREE.Color(HOVER_COLOUR));
     hoverAnchor.set((bounds.min.x + bounds.max.x) / 2,
@@ -4108,7 +4231,7 @@ function setHoveredProp(record) {
   propsGroup.add(hoverBox);
   if (badge) {
     badge.textContent = (bounds
-      ? "Planting of " + planting.members.toLocaleString() + " props"
+      ? plantingName(planting)
       : propTag(record)) + "  \u00b7  " + layerName(record.layer);
     badge.classList.remove("hidden");
   }
@@ -5514,8 +5637,10 @@ async function applyScene(record) {
         applyPropSize(record);
       }
       record.layer = +entry.layer || 1;
+      if (entry.scatter) record.scatter = +entry.scatter;
       adoptLampSettings(record, entry);
     }
+    settleRestoredScatters(layoutKnowsScatters(scene_.props));
     applyLayerVisibility();
   }
 
@@ -8517,6 +8642,13 @@ function propFootprint(type) {
   return Math.max(entry.sizeMetres[0], entry.sizeMetres[2]) / 2 || 0.5;
 }
 
+// How tall one item stands, from the same bounds: y is its height.
+function propStature(type) {
+  const entry = propEntry(type);
+  if (!entry || !entry.sizeMetres) return 1;
+  return entry.sizeMetres[1] || 1;
+}
+
 function propTriangles(type) {
   const entry = propEntry(type);
   return (entry && entry.triangles) || 20000;
@@ -8777,11 +8909,18 @@ async function runScatter(region, options) {
   const owns = target.minted || settings.owns || null;
   const records = solved.items.map((item) => placeProp(
     item.type, item.x, item.y, item.rotation, false, item.scale));
+  // Which scatter these belong to: decided once per stroke, and handed
+  // back to a redo so it paints into the same one it painted before.
+  const stroke = settings.stroke || null;
+  if (stroke && !stroke.scatterId) stroke.scatterId = settings.scatterId || scatterIdFor(home.id);
+  const scatterId = stroke ? stroke.scatterId : (settings.scatterId || scatterIdFor(home.id));
   // placeProp stamps the open layer; a redo aimed at another re-stamps.
   for (const record of records) {
     record.layer = home.id;
+    record.scatter = scatterId;
     record.object.visible = layerVisible(home.id);
   }
+  clearPlantings();
   solved.home = home;
   if (settings.stroke) {
     // One stamp of a brush stroke. The stroke owns the undo entry, the
@@ -8815,7 +8954,8 @@ async function runScatter(region, options) {
     refreshLayersShelf();
   }, () => {
     if (owns && at >= 0) reinstateLayer(owns, at);
-    return runScatter(region, Object.assign({}, settings, { intoLayer: home.id, owns }));
+    return runScatter(region, Object.assign({}, settings,
+      { intoLayer: home.id, owns, scatterId }));
   });
   // The run holds the entry it has just pushed, so Remove last can take
   // the two away together.
@@ -9283,7 +9423,7 @@ function endBrushStroke(stroke) {
   }, async () => {
     if (owns && at >= 0) reinstateLayer(owns, at);
     const replay = { pointerId: null, last: null, stamps: [], records: [],
-      run: null, busy: Promise.resolve() };
+      run: null, busy: Promise.resolve(), scatterId: records[0].scatter || 0 };
     for (const stamp of stamps) {
       replay.stamps.push(stamp);
       await runScatter(stamp.region, { salt: stamp.salt, intoLayer: homeId,
@@ -13972,7 +14112,7 @@ window.addEventListener("keydown", (event) => {
     // how many before he presses it, and why it is one undo.
     const planting = plantingOf(hoveredProp);
     const going = planting
-      ? plantingRecords(planting, hoveredProp.layer)
+      ? plantingRecords(planting)
       : (acting.includes(hoveredProp) ? acting : [hoveredProp]);
     setHoveredProp(null);
     deletePropsWithUndo(going);
@@ -14028,7 +14168,8 @@ function deletePropsWithUndo(records) {
     size: Array.isArray(record.size) ? record.size.slice() : null,
     lumens: record.lumens, kelvin: record.kelvin, tint: record.tint,
     invisible: record.invisible, aperture: record.aperture,
-    softness: record.softness, reach: record.reach, shadow: record.shadow }));
+    softness: record.softness, reach: record.reach, shadow: record.shadow,
+    scatter: record.scatter }));
   pushUndo("deleting " + gone.length + " props", async () => {
     for (const one of gone) {
       await ensurePropTemplate(one.type);
@@ -14039,6 +14180,7 @@ function deletePropsWithUndo(records) {
         applyPropSize(again);
       }
       adoptLampSettings(again, one);
+      if (one.scatter) again.scatter = one.scatter;
       again.layer = layerById(one.layer) ? one.layer : state.activeLayer;
       again.object.visible = layerVisible(again.layer);
     }
@@ -14069,7 +14211,8 @@ function deletePropWithUndo(record) {
                    // fixture at its own output and warmth, not at whatever
                    // the Lights sliders happen to say by the time of the undo.
                    size: Array.isArray(record.size) ? record.size.slice() : null,
-                   lumens: record.lumens, kelvin: record.kelvin };
+                   lumens: record.lumens, kelvin: record.kelvin,
+                   scatter: record.scatter };
     pushUndo("deleting the " + gone.type, async () => {
       await ensurePropTemplate(gone.type);
       const again = placeProp(gone.type, gone.x, gone.y, gone.rotation,
@@ -14079,6 +14222,7 @@ function deletePropWithUndo(record) {
         applyPropSize(again);
       }
       adoptLampSettings(again, gone);
+      if (gone.scatter) again.scatter = gone.scatter;
       // Back onto its old layer, or onto the open one if that has been
       // deleted since: an id with no tab could never be hidden again.
       again.layer = layerById(gone.layer) ? gone.layer : state.activeLayer;
