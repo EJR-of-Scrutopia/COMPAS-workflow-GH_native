@@ -3745,10 +3745,13 @@ def test_delete_takes_the_whole_gathering_in_one_undo():
     # THE POINTER NAMES ONE, A GATHERING NAMES SEVERAL.
     keys = js[js.index('if (event.key === "Escape" && stampRig) {'):]
     keys = keys[:keys.index("\n});")]
-    assert "const going = acting.includes(hoveredProp) ? acting : [hoveredProp];" in keys, (
-        "hovering something outside the gathering deletes that one "
-        "thing, which is what the badge under the cursor promises; "
-        "hovering a member deletes the gathering")
+    assert ("const going = planting\n"
+            "      ? plantingRecords(planting, hoveredProp.layer)\n"
+            "      : (acting.includes(hoveredProp) ? acting : [hoveredProp]);") in keys, (
+        "the badge names the PLANTING over a scattered prop, so Delete "
+        "takes what the badge names; otherwise hovering something "
+        "outside the gathering deletes that one thing and hovering a "
+        "member deletes the gathering")
     assert "deletePropsWithUndo(actingProps());" in keys
 
     # Empty ground lets the whole gathering go, not merely the primary:
@@ -3758,3 +3761,103 @@ def test_delete_takes_the_whole_gathering_in_one_undo():
     down = down[:down.index('canvas.addEventListener("pointermove"')]
     assert "} else if (state.selectedProp || gatheredProps.size) {" in down
     assert "gatheredProps.clear();" in down
+
+
+def test_ground_cover_is_stepped_over_rather_than_walked_around():
+    """Param, 2026-09-13: "the scatter objects doesnt allow me to place
+    other objects on top. I understand the logic, but it means i cant
+    place trees into a space ive filled with grass."
+
+    Every placed prop filed a keep-out disc that stopped anything whose
+    centre came near it, whatever the two sizes were. With 930,429
+    blades of grass on the ground -- his own scene, measured -- those
+    discs tile the whole site and nothing larger can be planted
+    anywhere. A tree is not planted between blades of grass; it is
+    planted over them.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # A disc carries the size of the thing that filed it, which is what
+    # decides whether it may keep a bigger thing out.
+    add = _function_body(js, "keepOutAdd")
+    assert "index.discs.push([x, y, r, own]);" in add
+    assert "function keepOutAdd(index, x, y, r, own = r)" in js, (
+        "defaulting to the disc's own radius keeps the works' behaviour: "
+        "a vault keeps out everything")
+
+    clear = _function_body(js, "keepOutClear")
+    assert "if (d[3] * STEP_OVER_RATIO < radius) continue;" in clear
+    ratio = int(re.search(r"const STEP_OVER_RATIO = (\d+);", js).group(1))
+    assert 2 <= ratio <= 6, (
+        "{} either lets props of a size grow through one another or "
+        "leaves a tree dodging blades of grass".format(ratio))
+
+    keep = _function_body(js, "scatterKeepOut")
+    assert "const own = propFootprint(record.type) * (record.scale || 1);" in keep
+    assert "keepOutAdd(index, record.x, record.y, own * gap, own);" in keep, (
+        "the spacing dial still widens the disc, and the prop's own size "
+        "is filed beside it rather than instead of it")
+
+    # THE WORKS STILL KEEP EVERYTHING OUT. Nothing may be planted through
+    # the vault, whatever its size, so those discs file no smaller `own`.
+    works = keep[:keep.index("const gap =")]
+    assert "keepOutAdd(index, cx, cy, r);" in works, (
+        "four arguments, so `own` defaults to the disc's own radius and "
+        "the vault keeps out a blade of grass as surely as a tree")
+
+
+def test_a_scatter_is_one_thing_to_hover_and_to_delete():
+    """Param, 2026-09-12: "instead of doing individual bounding boxes for
+    each scatter element with the hover over mouse funciton, turn it into
+    a scatter bounding box only".
+
+    A box round one blade of grass out of nine hundred thousand names
+    nothing anybody wants to refer to. What he placed was a planting.
+
+    GROUPED BY THE LAYER, not by the run that placed it. The run was the
+    obvious answer and is wrong for the case that matters:
+    state.scatterRuns is a session's own history and a saved layout does
+    not carry it, so his grass -- scattered in an earlier session and
+    reopened -- belongs to no run at all. Measured before this was
+    written: runs 0, and every blade still getting its own box. What
+    survives a reload is the layer and the type.
+    """
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+
+    # A type in bulk on a layer was scattered; a type with three members
+    # was placed by hand.
+    bulk = int(re.search(r"const BULK_ON_A_LAYER = (\d+);", js).group(1))
+    assert 8 <= bulk <= 500, (
+        "{} is either so low that three hand-placed bollards read as a "
+        "planting, or so high that a modest scatter does not".format(bulk))
+    of = _function_body(js, "plantingOf")
+    assert "planting.types.has(record.type) ? planting : null" in of, (
+        "a lone tree standing on the same layer as the grass keeps its "
+        "own box")
+
+    # MEASURED ONCE. Over three quarters of a million records a walk is
+    # worth not repeating sixty times a second.
+    bounds = _function_body(js, "plantingBounds")
+    assert "if (planting.bounds) return planting.bounds;" in bounds
+    assert "new THREE.Box3(" in bounds
+    # Built from the records' own numbers rather than from their objects:
+    # setFromObject on a million props is a different order of cost.
+    assert "propFootprint(record.type) * (record.scale || 1)" in bounds
+    assert "setFromObject" not in bounds
+
+    # AND THROWN AWAY whenever what is on a layer changes, or the box
+    # stands where the planting used to be.
+    assert "clearPlantings();" in _function_body(js, "removePropRecords")
+    assert "clearPlantings();" in _function_body(js, "placeProp")
+
+    # THE HOVER shows one box and names the planting.
+    hover = _function_body(js, "setHoveredProp")
+    assert "const planting = plantingOf(record);" in hover
+    assert "plantingBounds(planting, record.layer)" in hover
+    assert "new THREE.Box3Helper(bounds, new THREE.Color(HOVER_COLOUR))" in hover, (
+        "one box round the planting, not a BoxHelper round one prop")
+    assert '"Planting of " + planting.members.toLocaleString() + " props"' in hover, (
+        "the badge says how many, which is also the warning before "
+        "Delete takes them")

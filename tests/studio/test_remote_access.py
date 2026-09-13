@@ -3521,8 +3521,23 @@ def test_the_keep_out_hugs_the_works_and_reads_the_spacing_dial():
     keep = _js_function(js, "function scatterKeepOut(clearance, spacing)")
     assert "const r = short / 2 + clearance;" in keep
     assert "const steps = Math.max(1, Math.ceil((long - short) / Math.max(0.5, short / 2)));" in keep
-    assert "propFootprint(record.type) * (record.scale || 1) * gap" in keep
+    assert "const own = propFootprint(record.type) * (record.scale || 1);" in keep
+    assert "keepOutAdd(index, record.x, record.y, own * gap, own);" in keep, (
+        "a disc carries the size of the thing that filed it, which is "
+        "what decides whether it is entitled to keep a bigger thing out")
     assert "* 0.6" not in keep
+
+    # GROUND COVER IS STEPPED OVER. Every placed prop used to keep out
+    # anything whose centre came near it, whatever the two sizes were,
+    # and 930,429 blades of grass tile the whole site: nothing larger
+    # could be planted anywhere at all.
+    clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
+    assert "if (d[3] * STEP_OVER_RATIO < radius) continue;" in clear
+    import re as _re
+    ratio = int(_re.search(r"const STEP_OVER_RATIO = (\d+);", js).group(1))
+    assert 2 <= ratio <= 6, (
+        "{} either lets props grow through one another or leaves a tree "
+        "dodging blades of grass".format(ratio))
     solve = _js_function(js, "function scatterSolve(region, salt, strokeKeepOut)")
     assert "scatterKeepOut(rules.clearance, rules.spacing)" in solve
 
@@ -3538,7 +3553,7 @@ def test_the_keep_out_is_a_grid_and_not_a_list():
     js = STUDIO_JS.read_text(encoding="utf-8")
     assert "const KEEP_OUT_CELL = 1;   // metres" in js
     assert "function clearOf(" not in js
-    add = _js_function(js, "function keepOutAdd(index, x, y, r)")
+    add = _js_function(js, "function keepOutAdd(index, x, y, r, own = r)")
     assert "if (bucket) bucket.push(id); else index.cells.set(key, [id]);" in add
     clear = _js_function(js, "function keepOutClear(index, x, y, radius)")
     assert "if (index.seen[id] === pass) continue;" in clear
@@ -3687,6 +3702,9 @@ def _js_whole_function(source, header):
 
 
 LAYER_STUBS = r"""
+// markScatterRun mints a number per run, and the real one lives beside
+// it in studio.js.
+let scatterRunCount = 0;
 const logs = [];
 const undo = [];
 // The history itself, for the code that reaches back for the entry it
@@ -3816,6 +3834,7 @@ def test_scatter_undo_redo_and_group_keep_the_layer_list_honest(tmp_path):
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function groupToNewLayer(again)",
                "function resolvePlacementLayer()",
+               "function markScatterRun(run, only)",
                "async function runScatter(region, options)")
     functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
     script = tmp_path / "layers.mjs"
@@ -3985,6 +4004,7 @@ def test_the_layer_guards_hold_through_undo_redo_and_every_placement(tmp_path):
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
                "function groupToNewLayer(again)",
                "function resolvePlacementLayer()",
+               "function markScatterRun(run, only)",
                "async function runScatter(region, options)",
                "function carryNewProp(type)", "function beginStamp()",
                "function endBrushStroke(stroke)")
@@ -4070,6 +4090,7 @@ def test_remove_last_takes_its_own_history_entry_with_it(tmp_path):
                "function resolvePlacementLayer()",
                "function showLayerForPlacing(layer)", "function placingOntoName()",
                "function dropLayerIfEmpty(layer)", "function reinstateLayer(layer, index)",
+               "function markScatterRun(run, only)",
                "async function runScatter(region, options)")
     functions = "\n\n".join(_js_whole_function(js, header) for header in headers)
     # The handler is a listener rather than a function, so it is lifted

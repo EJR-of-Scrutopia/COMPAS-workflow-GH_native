@@ -3586,6 +3586,9 @@ function placeProp(type, x, y, rotation, save, scale = 1, z = 0,
   }
   object.visible = layerVisible(record.layer);
   state.props.push(record);
+  // The layer this landed on has a prop more, which can make a type
+  // bulk there that was not, and always changes the planting's extent.
+  clearPlantings();
   // One more caster. A scatter is hundreds of these in a row, which is
   // why this marks rather than measures. (It sat after the return for a
   // while, and no placed prop ever told the shadow fit it had arrived.)
@@ -3709,6 +3712,110 @@ function refreshGroupOutlines() {
   }
 }
 
+// ---------- a scatter is one thing ----------
+// Param, 2026-09-12: "instead of doing individual bounding boxes for
+// each scatter element with the hover over mouse funciton, turn it into
+// a scatter bounding box only".
+//
+// He is right: a box round one blade of grass out of a hundred thousand
+// names nothing anybody wants to refer to, and the badge over it reads
+// "Grass #431029", which is not a thing he placed. What he placed was a
+// scatter. So a scattered prop answers for its whole run.
+//
+// Each member carries its run, stamped as it lands, because searching
+// the runs for a record would be a walk over every prop in every run on
+// every hover -- 930,429 of them in his own scene.
+let scatterRunCount = 0;
+
+function markScatterRun(run, only) {
+  if (!run.id) {
+    scatterRunCount += 1;
+    run.id = scatterRunCount;
+  }
+  for (const record of (only || run.records)) record.run = run;
+  // The bounds are measured once, when they are first wanted, and thrown
+  // away whenever the run changes.
+  run.bounds = null;
+}
+
+// THE PLANTING A PROP BELONGS TO, worked out from what is on its layer
+// rather than from the run that placed it.
+//
+// The run would have been the obvious answer, and it is wrong for the
+// case that matters: state.scatterRuns is a session's own history and a
+// saved layout does not carry it, so his 930,429 blades of grass --
+// scattered in an earlier session and reopened -- belong to no run at
+// all. Measured before this was written: runs 0, and every blade still
+// getting a box of its own.
+//
+// What survives a reload is the layer and the type. A type with
+// hundreds of members on one layer was scattered, whatever session did
+// it; a type with three was placed by hand. So a planting is every
+// prop on a layer whose type is there in bulk, which puts one box round
+// the grass however many species it was mixed from, and leaves a lone
+// tree standing on the same layer as itself.
+const BULK_ON_A_LAYER = 64;
+const plantings = new Map();          // layer id -> { types, records, bounds }
+
+function clearPlantings() { plantings.clear(); }
+
+function plantingFor(layerId) {
+  const held = plantings.get(layerId);
+  if (held) return held;
+  const counts = new Map();
+  for (const record of state.props) {
+    if (record.layer !== layerId) continue;
+    counts.set(record.type, (counts.get(record.type) || 0) + 1);
+  }
+  const types = new Set();
+  for (const [type, n] of counts) if (n >= BULK_ON_A_LAYER) types.add(type);
+  const planting = { types, records: null, bounds: null };
+  plantings.set(layerId, planting);
+  return planting;
+}
+
+// Null for anything placed by hand, which keeps its own box.
+function plantingOf(record) {
+  if (!record) return null;
+  const planting = plantingFor(record.layer);
+  return planting.types.has(record.type) ? planting : null;
+}
+
+// Measured once and kept: over three quarters of a million records that
+// is a walk worth not repeating sixty times a second, and a planting
+// does not move on its own.
+function plantingBounds(planting, layerId) {
+  if (planting.bounds) return planting.bounds;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let members = 0;
+  for (const record of state.props) {
+    if (record.layer !== layerId || !planting.types.has(record.type)) continue;
+    members += 1;
+    const reach = propFootprint(record.type) * (record.scale || 1);
+    const z = record.z || 0;
+    if (record.x - reach < minX) minX = record.x - reach;
+    if (record.y - reach < minY) minY = record.y - reach;
+    if (z < minZ) minZ = z;
+    if (record.x + reach > maxX) maxX = record.x + reach;
+    if (record.y + reach > maxY) maxY = record.y + reach;
+    if (z + reach * 2 > maxZ) maxZ = z + reach * 2;
+  }
+  planting.members = members;
+  planting.bounds = members
+    ? new THREE.Box3(new THREE.Vector3(minX, minY, minZ),
+      new THREE.Vector3(maxX, maxY, maxZ))
+    : null;
+  return planting.bounds;
+}
+
+// Every member of a planting, gathered only when something is actually
+// going to be done to them: the hover itself never needs the list.
+function plantingRecords(planting, layerId) {
+  return state.props.filter((record) => record.layer === layerId
+    && planting.types.has(record.type));
+}
+
 // ---------- the hover badge ----------
 // Param, 2026-09-12: "i would like a bounding box with the object type
 // and id so i can reference it in layers, that pops up when i hover
@@ -3759,21 +3866,36 @@ function setHoveredProp(record) {
     if (badge) badge.classList.add("hidden");
     return;
   }
-  hoverBox = new THREE.BoxHelper(record.object, HOVER_COLOUR);
+  // A SCATTERED PROP ANSWERS FOR ITS RUN. One box round the whole
+  // planting, and a name for the thing he actually placed.
+  const planting = plantingOf(record);
+  const bounds = planting ? plantingBounds(planting, record.layer) : null;
+  if (bounds) {
+    hoverBox = new THREE.Box3Helper(bounds, new THREE.Color(HOVER_COLOUR));
+    hoverAnchor.set((bounds.min.x + bounds.max.x) / 2,
+      (bounds.min.y + bounds.max.y) / 2, bounds.max.z);
+  } else {
+    hoverBox = new THREE.BoxHelper(record.object, HOVER_COLOUR);
+    hoverBounds.setFromObject(record.object);
+    if (hoverBounds.isEmpty()) {
+      hoverAnchor.set(record.x, record.y, record.z || 0);
+    } else {
+      hoverAnchor.set((hoverBounds.min.x + hoverBounds.max.x) / 2,
+        (hoverBounds.min.y + hoverBounds.max.y) / 2, hoverBounds.max.z);
+    }
+  }
   hoverBox.material.depthTest = false;
   hoverBox.material.fog = false;
   hoverBox.renderOrder = 2;
   hoverBox.raycast = () => {};
+  // The box is in propsGroup's own space, and a run's bounds are
+  // measured in it too (a record's x and y are group coordinates), so
+  // the two agree without a conversion.
   propsGroup.add(hoverBox);
-  hoverBounds.setFromObject(record.object);
-  if (hoverBounds.isEmpty()) {
-    hoverAnchor.set(record.x, record.y, record.z || 0);
-  } else {
-    hoverAnchor.set((hoverBounds.min.x + hoverBounds.max.x) / 2,
-      (hoverBounds.min.y + hoverBounds.max.y) / 2, hoverBounds.max.z);
-  }
   if (badge) {
-    badge.textContent = propTag(record) + "  \u00b7  " + layerName(record.layer);
+    badge.textContent = (bounds
+      ? "Planting of " + planting.members.toLocaleString() + " props"
+      : propTag(record)) + "  \u00b7  " + layerName(record.layer);
     badge.classList.remove("hidden");
   }
   placeHoverBadge();
@@ -8181,6 +8303,12 @@ function propTriangles(type) {
 // dart asks every cell its own disc overlaps, so the answer is exact
 // whatever the sizes; a 15 m tree files itself in 900 cells, once.
 const KEEP_OUT_CELL = 1;   // metres
+// How much smaller than what is being planted a thing has to be before
+// it is simply stepped over. A third: grass at 0.1 m does not keep out a
+// tree at 3 m, and does keep out another blade of grass. Generous enough
+// that two props of roughly a size still avoid one another, which is the
+// interpenetration the keep-out exists to prevent.
+const STEP_OVER_RATIO = 3;
 
 function keepOutIndex() {
   return { cells: new Map(), discs: [], seen: [], pass: 0 };
@@ -8191,9 +8319,12 @@ function keepOutKey(ix, iy) {
   return (ix + 1048576) * 2097152 + (iy + 1048576);
 }
 
-function keepOutAdd(index, x, y, r) {
+// `own` is how big the thing that filed the disc actually is, which
+// decides what it is entitled to keep out. Defaults to the disc's own
+// radius, which is right for the works: a vault keeps out everything.
+function keepOutAdd(index, x, y, r, own = r) {
   const id = index.discs.length;
-  index.discs.push([x, y, r]);
+  index.discs.push([x, y, r, own]);
   index.seen.push(0);
   const x0 = Math.floor((x - r) / KEEP_OUT_CELL);
   const x1 = Math.floor((x + r) / KEEP_OUT_CELL);
@@ -8225,6 +8356,21 @@ function keepOutClear(index, x, y, radius) {
         if (index.seen[id] === pass) continue;
         index.seen[id] = pass;
         const d = index.discs[id];
+        // GROUND COVER IS STEPPED OVER. Param, 2026-09-13: "the scatter
+        // objects doesnt allow me to place other objects on top. I
+        // understand the logic, but it means i cant place trees into a
+        // space ive filled with grass."
+        //
+        // Every placed prop used to file a disc that kept out anything
+        // whose centre came near it, whatever the two sizes were. With
+        // 930,429 blades of grass on the ground -- his own scene,
+        // measured -- the discs tile the whole site and nothing larger
+        // can be planted anywhere at all. A tree is not planted BETWEEN
+        // blades of grass; it is planted over them, which is what this
+        // one comparison says. Grass still keeps out grass, and a tree
+        // still keeps out a tree, because those are of a size with one
+        // another.
+        if (d[3] * STEP_OVER_RATIO < radius) continue;
         const dx = x - d[0];
         const dy = y - d[1];
         const reach = d[2] + radius;
@@ -8270,8 +8416,8 @@ function scatterKeepOut(clearance, spacing) {
   // one however low the spacing was set.
   const gap = spacing || 1;
   for (const record of state.props) {
-    keepOutAdd(index, record.x, record.y,
-      propFootprint(record.type) * (record.scale || 1) * gap);
+    const own = propFootprint(record.type) * (record.scale || 1);
+    keepOutAdd(index, record.x, record.y, own * gap, own);
   }
   return index;
 }
@@ -8414,11 +8560,16 @@ async function runScatter(region, options) {
       stroke.run = { layer: home.id, records: stroke.records };
       state.scatterRuns.push(stroke.run);
     }
+    // Every stamp of the stroke, as it lands: the run grows while the
+    // pointer is down and its members have to know their run the whole
+    // time, not only once it lifts.
+    markScatterRun(stroke.run, records);
     if (owns) stroke.run.minted = owns;
     paintScatter(solved);
     return;
   }
   const run = { layer: home.id, records, minted: owns };
+  markScatterRun(run);
   state.scatterRuns.push(run);
   // The redo names its layer outright. Replaying the first fill's own
   // settings, whose intoLayer was null, is what used to mint a second
@@ -13578,7 +13729,14 @@ window.addEventListener("keydown", (event) => {
     // at -- deleting one prop out of four he had just selected would
     // read as the gathering having been ignored.
     const acting = actingProps();
-    const going = acting.includes(hoveredProp) ? acting : [hoveredProp];
+    // The badge names the RUN over a scattered prop, so Delete takes
+    // what the badge names. One keystroke removing a hundred thousand
+    // props is a great deal to do at once, which is why the badge says
+    // how many before he presses it, and why it is one undo.
+    const planting = plantingOf(hoveredProp);
+    const going = planting
+      ? plantingRecords(planting, hoveredProp.layer)
+      : (acting.includes(hoveredProp) ? acting : [hoveredProp]);
     setHoveredProp(null);
     deletePropsWithUndo(going);
     return;
@@ -16725,6 +16883,9 @@ function removePropRecords(records) {
   // And a badge naming a prop that no longer exists is worse than none.
   if (gone.has(hoveredProp)) setHoveredProp(null);
   for (const record of gone) gatheredProps.delete(record);
+  // What is on a layer has changed, so what counts as a planting there
+  // and how big it is have both to be worked out again.
+  clearPlantings();
   refreshGroupOutlines();
   // A lamp leaving changes what the Lights row is talking about, and it
   // may not have been the selected one (which would have said so above).
@@ -17008,6 +17169,15 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // The live graphs' series, so a probe can read the model's numbers at
   // an instant rather than a card's rounded text.
   liveGraphs,
+  // The instanced batches and the per-frame settle that fills them, so a
+  // probe can count what the frame is actually asked to draw -- how many
+  // instances, which LOD tier each is in, and how long the settle takes
+  // -- rather than inferring it from the frame rate.
+  propBatches, settlePropInstances,
+  // The keep-out index and the hover, so a probe can ask the two
+  // questions a placement asks -- can this land here, and what does the
+  // pointer say it is over -- without driving the mouse.
+  scatterKeepOut, keepOutClear, keepOutAdd, setHoveredProp,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,
   // A GETTER, because `camera` is now a binding that moves between two
