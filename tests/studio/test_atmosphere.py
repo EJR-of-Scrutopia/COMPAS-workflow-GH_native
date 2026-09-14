@@ -614,20 +614,122 @@ def test_a_scene_carries_its_atmosphere_and_an_old_one_loads_as_none():
     assert 'return atmosphereFromPreset("none");' in adopt_body
 
 
-def test_the_atmosphere_lives_in_the_skies_drawer():
+def test_the_atmosphere_is_chosen_in_the_skies_drawer_and_tuned_in_the_scene_section():
+    """REVISED 2026-09-14. Param: "The wind the light rays etc and some of
+    these additional controls need to move to the scene banner menu. We
+    need to do a swap around so we dont repeat many inputs". The choice is
+    a picture, so it stays in the Skies drawer; the dials that tune it are
+    settings, so they moved to the Scene section. Moved, not copied."""
+
     html = INDEX.read_text(encoding="utf-8")
     modes = html[html.index('<div id="shelf-sky-modes"'):html.index('<div id="shelf-sky-settings"')]
     for ident in ('id="atmosphere-picker"', 'id="atmosphere-tiles"', 'id="atmosphere-preset"'):
         assert ident in modes
-    settings = html[html.index('<div id="shelf-sky-settings"'):]
-    settings = settings[:settings.index('<div id="prop-tiles"')]
-    assert settings.count('class="atmosphere-dial hidden"') == 10, "hidden until a preset is chosen"
+    drawer = html[html.index('<div id="shelf-sky-settings"'):]
+    drawer = drawer[:drawer.index('<div id="prop-tiles"')]
+    assert "atmosphere-dial" not in drawer, "no fog dial left in the drawer"
+    scene = html[html.index('<details id="scene-section">'):html.index('<details id="output-section">')]
+    block = scene[scene.index('<div class="dial-block" id="scene-atmosphere-dials">'):]
+    block = block[:block.index("</div>")]
+    assert block.count('class="atmosphere-dial hidden"') == 10, "hidden until a preset is chosen"
+    assert html.count('id="atmosphere-density"') == 1 and html.count('id="atmosphere-shafts"') == 1
+    assert scene.index('<span class="row-heading">Atmosphere</span>') < scene.index('id="scene-atmosphere-dials"')
+    assert 'id="atmosphere-hint"' in scene
     js = STUDIO_JS.read_text(encoding="utf-8")
     sync = _body(js, "function syncAtmosphereControls()")
+    assert 'document.getElementById("atmosphere-hint").classList.toggle("hidden", on);' in sync
+    assert '#scene-atmosphere-dials .atmosphere-dial' in sync
     # The one exception: the light rays have no pass behind them on a
     # constrained device, so that row stays away there even with a preset.
     assert 'label.classList.toggle("hidden", !on || (desktopOnly && CONSTRAINED_DEVICE));' in sync
     assert 'document.getElementById(id + "-value").textContent' in sync
+
+
+def test_the_sky_and_the_wind_are_settings_in_the_scene_section():
+    """The same move for the rest of the drawer's settings (2026-09-14).
+    Brightness joined the backdrop under a Sky heading and the wind has a
+    heading of its own; what the drawer keeps tunes the photograph and
+    nothing else. Moved, not copied."""
+
+    html = INDEX.read_text(encoding="utf-8")
+    drawer = html[html.index('<div id="shelf-sky-settings"'):]
+    drawer = drawer[:drawer.index('<div id="prop-tiles"')]
+    for ident in ('id="sky-brightness"', 'id="wind-strength"', 'id="wind-from"', 'id="wind-gusts"'):
+        assert html.count(ident) == 1, ident
+        assert ident not in drawer, ident
+    for ident in ('id="hdri-projection-row"', 'id="hdri-scale-row"',
+                  'id="hdri-height-row"', 'id="hdri-rotation-row"'):
+        assert ident in drawer, ident
+    assert drawer.count("<label") == 4, "the photograph's four and nothing else"
+
+    scene = html[html.index('<details id="scene-section">'):html.index('<details id="output-section">')]
+    sky = scene[scene.index('<span class="row-heading">Sky</span>'):
+                scene.index('<span class="row-heading">Atmosphere</span>')]
+    background = sky[sky.index('<div class="dial-block" id="scene-background-dials">'):]
+    assert (background.index('id="sky-brightness"') < background.index('id="background-tone"')
+            < background.index("</div>")), "Brightness first, in the backdrop's block"
+    wind = scene[scene.index('<span class="row-heading">Wind</span>'):
+                 scene.index('<span class="row-heading">Ground</span>')]
+    block = wind[wind.index('<div class="dial-block" id="scene-wind-dials">'):]
+    block = block[:block.index("</div>")]
+    for ident in ('id="wind-strength"', 'id="wind-from"', 'id="wind-gusts"'):
+        assert ident in block, ident
+
+
+@needs_node
+def test_a_folded_sky_atmosphere_or_wind_heading_says_what_it_holds(tmp_path):
+    """A group folds to its heading, and the heading then reads its
+    settings back (panel.js paintGroupSummaries). The three new headings
+    have readers, keyed by the heading's own words, and they are run."""
+
+    html = INDEX.read_text(encoding="utf-8")
+    scene = html[html.index('<details id="scene-section">'):html.index('<details id="output-section">')]
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    table = js[js.index("const GROUP_SUMMARIES = {"):]
+    chunk = table[table.index('  "Sky": () =>'):table.index('  "Image": () =>')]
+    for heading in ("Sky", "Atmosphere", "Wind"):
+        assert '<span class="row-heading">' + heading + '</span>' in scene, heading
+        assert '  "' + heading + '": () =>' in chunk, heading
+    printed = _run_node(tmp_path, """
+        const state = { skyBrightness: 0.4, atmosphere: { shafts: 0 },
+          wind: { strength: 0, from: 225 } };
+        const select = { selectedIndex: 1,
+          options: [{ textContent: "None" }, { textContent: "Haze" }] };
+        const document = { getElementById(id) {
+          return id === "atmosphere-preset" ? select : null; } };
+        const table = new Function("state", "document",
+          "return ({" + %CHUNK% + "});")(state, document);
+        const read = {};
+        read.sky = table.Sky();
+        read.fog = table.Atmosphere();
+        state.atmosphere.shafts = 30;
+        read.rays = table.Atmosphere();
+        read.calm = table.Wind();
+        state.wind.strength = 10;
+        read.breeze = table.Wind();
+        // The degree sign as its code: the console's own code page would
+        // garble the character on its way back to Python.
+        read.degree = read.breeze.charCodeAt(read.breeze.length - 1);
+        read.breeze = read.breeze.slice(0, -1);
+        console.log(JSON.stringify(read));
+    """.replace("%CHUNK%", json.dumps(chunk)))
+    out = json.loads(printed.strip().splitlines()[-1])
+    assert out == {"sky": "40%", "fog": "Haze", "rays": "Haze, rays 30%",
+                   "calm": "calm", "breeze": "10% from 225", "degree": 176}, out
+
+
+def test_a_row_hidden_at_boot_still_becomes_a_row():
+    """The atmosphere's dials are hidden until a preset is chosen, so the
+    panel met them hidden, skipped them, and showed them later as bare
+    sliders with no reading to type into. Measured in the browser once
+    fixed: ten rows in the Scene section's block and no raw slider."""
+
+    panel = (STATIC / "panel.js").read_text(encoding="utf-8")
+    upgrade = _body(panel, "export function upgradeSliders(root)")
+    assert 'label.classList.contains("hidden")' not in upgrade, "a hidden label is upgraded too"
+    assert "if (!label) continue;" in upgrade
+    assert 'if (label.className) row.className = "scrub " + label.className;' in upgrade, (
+        "and the row keeps the hidden class, so it is still hidden until shown")
 
 
 UNIFORM_CHECK = textwrap.dedent(r"""

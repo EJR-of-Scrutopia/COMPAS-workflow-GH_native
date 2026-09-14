@@ -211,11 +211,14 @@ shown dead. The Skies drawer shows the weather picker only in Sky mode,
 and Projection, Rotation, Scale and Height only in HDRI mode, with
 Scale and Height only for the grounded dome. Rotation turns the
 photograph and re-aims the sun from it, so outside HDRI there is
-nothing for it to turn. Brightness acts in every mode and always shows.
-The HDRI tiles stay in every mode, because choosing one switches to
-HDRI. The atmosphere picker shows in every mode, because the fog works
-in all three, and its nine dials show only while a preset other than
-None is chosen.
+nothing for it to turn, and there the block of four stands aside
+altogether rather than leave an empty strip. Brightness acts in every
+mode and always shows, in the Scene section's Sky group since
+2026-09-14. The HDRI tiles stay in every mode, because choosing one
+switches to HDRI. The atmosphere picker shows in every mode, because the
+fog works in all three; its ten dials, in the Scene section's Atmosphere
+group, show only while a preset other than None is chosen, and until
+then the group says where the choice is made.
 
 The readout line is a full sentence in the second ink, and it says the
 state, not an instruction, once there is state to report: "18 placed,
@@ -802,8 +805,8 @@ was, and a 200 px drag turned the view 46 degrees right.
 
 **Wind, three dials beside the atmosphere.** Param: "add in wind and
 movement of the objects ... getting shadows right with that is the key to
-sell it." Wind (how hard, resting at nought, so nothing already made
-moves), Wind from (measured the way the sun's azimuth is) and Gusts (how
+sell it." Wind (how hard, resting at a light breeze of 10 per cent:
+"have the wind on as default set to like 10%"), Wind from (measured the way the sun's azimuth is) and Gusts (how
 much it comes and goes). Everything placed leans downwind by a share of
 its own height -- a blade of grass a fifth of itself, a thirty metre beech
 a fiftieth -- and sways about that lean at its own pace, out of step with
@@ -819,3 +822,34 @@ materials in place. A take blows on the take's own clock, so the same take
 blows the same way twice; a still stands the air still for all its tiles.
 While there is wind the light rays keep re-marching rather than settling,
 because the shadows they march through keep moving.
+
+**The settings of the air are dials in the Scene section; the pictures
+stay on the shelf.** Param: "The wind the light rays etc and some of
+these additional controls need to move to the scene banner menu. We
+need to do a swap around so we dont repeat many inputs, if theres banner
+menu items which are captured in the tiles then we dont need them in the
+menu etc". The rule it makes: a thing chosen by its picture (a mode, a
+weather, an atmosphere, a sky, a skin, a ground) is chosen on the shelf,
+and a setting that holds whatever was chosen is a dial in the panel.
+
+The Skies drawer kept its mode tabs, its weathers, its atmospheres, its
+skies and the four dials that tune the photograph it shows (Projection,
+Scale, Height, Rotation). Brightness moved to the Scene section under a
+new Sky heading, first in the backdrop's block beside Background. The
+atmosphere's ten dials, Light rays among them, moved under Atmosphere,
+which says "No atmosphere: choose one from the Skies tile" while there
+is none. Wind, Wind from and Gusts moved under Wind. Folded, each heading
+reads its settings back: the sky's brightness as a percentage, the
+atmosphere by name with its rays when they are on, and the wind's
+strength and bearing, or "calm". MOVED, not copied: every id is on the
+page once.
+
+THE PANEL MET THEM HIDDEN. `upgradeSliders` skipped a label that was
+hidden at boot, so the atmosphere's dials (and Deflection, in Analysis)
+came out as bare sliders the first time anything showed them, with no
+reading to type into. It upgrades a hidden label now, and the row keeps
+the hidden class until it is shown. Measured with Haze chosen: ten rows
+in the Atmosphere block and no raw slider anywhere in the panel.
+
+**What this round did not change.** No dial was added or removed, so the
+census stands at 59 of 65.

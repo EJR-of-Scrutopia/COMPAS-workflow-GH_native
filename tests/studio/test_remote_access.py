@@ -5818,7 +5818,8 @@ const document = { getElementById(id) {
   if (!rows[id]) {
     const row = { hidden: null };
     row.classList = { toggle(name, force) {
-      if (name === "hidden") row.hidden = Boolean(force); } };
+      if (name === "hidden") row.hidden = Boolean(force); },
+      contains(name) { return name === "hidden" && row.hidden === true; } };
     rows[id] = row;
   }
   return rows[id];
@@ -5835,17 +5836,30 @@ for (const [mode, projection] of %s) {
   for (const id of Object.keys(rows)) seen[id] = rows[id].hidden;
   out.push(seen);
 }
+// The drawer shut: its dial block stays away whatever the mode.
+rows["shelf-sky-modes"].hidden = true;
+state.environmentMode = "hdri";
+state.hdriProjection = "projected";
+paintSkyDials();
+out.push({ closed: rows["shelf-sky-settings"].hidden });
 console.log(JSON.stringify(out));
 """ % (json.dumps(paint), json.dumps(steps)), encoding="utf-8")
     run = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     seen = json.loads(run.stdout)
+    assert seen.pop() == {"closed": True}, "a shut drawer shows no strip, even in HDRI"
+    assert len(seen) == len(steps)
     for (mode, projection), rows in zip(steps, seen):
         dome = mode == "hdri" and projection == "projected"
+        # The Skies drawer open (its mode row shown): the dial block stands
+        # aside outside HDRI, where it would be an empty strip now that the
+        # settings of the air live in the Scene section (2026-09-14).
         assert rows == {"hdri-projection-row": mode != "hdri",
                         "hdri-rotation-row": mode != "hdri",
                         "hdri-scale-row": not dome,
-                        "hdri-height-row": not dome}, (mode, projection, rows)
+                        "hdri-height-row": not dome,
+                        "shelf-sky-modes": None,
+                        "shelf-sky-settings": mode != "hdri"}, (mode, projection, rows)
 
 
 def test_a_restored_orthographic_scene_keeps_the_framing_it_was_saved_with():
@@ -5961,9 +5975,10 @@ def test_the_lens_gives_way_to_a_frame_width_in_orthographic():
 
     # Two rows, one row's worth of space, swapped by the projection.
     assert 'id="camera-fov-row"' in html and 'id="camera-width-row"' in html
-    # NEITHER carries .hidden in the markup, and that is load-bearing:
-    # upgradeSliders skips a label already hidden, so a row hidden before
-    # it runs stays a bare slider for ever, never typable.
+    # NEITHER carries .hidden in the markup. Until 2026-09-14 that was
+    # load-bearing, because upgradeSliders skipped a label already hidden
+    # and a row hidden before it ran stayed a bare slider for ever. It
+    # upgrades them now; the markup stays plain and the painter decides.
     for row in ("camera-fov-row", "camera-width-row"):
         line = [ln for ln in html.splitlines() if 'id="' + row + '"' in ln][0]
         assert "hidden" not in line, row
@@ -5993,8 +6008,8 @@ def test_the_lens_gives_way_to_a_frame_width_in_orthographic():
     boot = js[js.index('guarded("the slider rows"'):]
     boot = boot[:boot.index("guarded(\"the panel groups\"")]
     assert "paintFrameWidth" in boot, (
-        "hiding a row before upgradeSliders runs leaves that dial "
-        "unupgraded and untypable for the whole session")
+        "the rows are painted once the dials are rows, so the first "
+        "picture shows the one the camera is")
 
     # And it follows a wheel, which in orthographic changes zoom and
     # moves nothing else.

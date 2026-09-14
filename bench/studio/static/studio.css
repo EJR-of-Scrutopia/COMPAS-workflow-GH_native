@@ -1578,3 +1578,8 @@ body.stilling #fixture-panel { display: none; }
 /* The one control that fixes a stale server, lit while the server is stale. */
 #restart-studio.attention { border-color: var(--danger); color: var(--ink);
   background: var(--danger); }
+
+/* Where the atmosphere's dials stand aside, the line that says why and
+   where the choice is made: the readout's own register. */
+#atmosphere-hint { color: var(--ink-3); font-size: var(--t-meta);
+  padding: 0 0 var(--s2); }

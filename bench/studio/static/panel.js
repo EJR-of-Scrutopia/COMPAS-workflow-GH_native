@@ -20,7 +20,11 @@ export function upgradeSliders(root) {
   if (!scope) return;
   for (const input of scope.querySelectorAll('input[type="range"]')) {
     const label = input.closest("label");
-    if (!label || label.classList.contains("hidden")) continue;
+    // A row hidden at boot is upgraded all the same, and keeps its hidden
+    // class (carried below), so it becomes a row when it is shown. Skipped,
+    // it came out as a bare slider the moment something showed it: the
+    // atmosphere's dials in the Scene section, and Deflection in Analysis.
+    if (!label) continue;
     if (label.parentElement && label.parentElement.classList.contains("scrub")) continue;
     const row = document.createElement("div");
     row.className = "scrub";

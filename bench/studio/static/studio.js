@@ -1402,6 +1402,12 @@ function paintSkyDials() {
   // stays. Called wherever the mode, the projection or the drawer changes.
   const hdri = state.environmentMode === "hdri";
   const dome = hdri && state.hdriProjection === "projected";
+  // The drawer's dials tune the photograph and nothing else now that the
+  // settings of the air live in the Scene section, so outside HDRI the
+  // block would be an empty strip: it stands aside with them. Read off the
+  // drawer's own row, which shows only while the Skies drawer is open.
+  const drawerOpen = !document.getElementById("shelf-sky-modes").classList.contains("hidden");
+  document.getElementById("shelf-sky-settings").classList.toggle("hidden", !drawerOpen || !hdri);
   document.getElementById("hdri-projection-row").classList.toggle("hidden", !hdri);
   document.getElementById("hdri-rotation-row").classList.toggle("hidden", !hdri);
   document.getElementById("hdri-scale-row").classList.toggle("hidden", !dome);
@@ -7133,6 +7139,15 @@ const GROUP_SUMMARIES = {
   "Props": () => state.props.length
     ? state.props.length + " placed" : "none placed",
   "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
+  "Sky": () => Math.round(state.skyBrightness * 100) + "%",
+  "Atmosphere": () => {
+    const select = document.getElementById("atmosphere-preset");
+    const label = select.options[select.selectedIndex];
+    const rays = state.atmosphere.shafts ? ", rays " + state.atmosphere.shafts + "%" : "";
+    return (label ? label.textContent : "") + rays;
+  },
+  "Wind": () => state.wind.strength
+    ? state.wind.strength + "% from " + Math.round(state.wind.from) + "\u00b0" : "calm",
   "Image": () => state.brightness.toFixed(2) + " / "
     + (state.contrast >= 0 ? "+" : "") + state.contrast.toFixed(2),
 };
@@ -14317,7 +14332,9 @@ for (const [id, key, digits] of WIND_DIALS) {
 
 function syncAtmosphereControls() {
   const on = atmosphereIsOn(state.atmosphere);
-  for (const label of document.querySelectorAll("#shelf-sky-settings .atmosphere-dial")) {
+  // With none chosen the block stands aside and says where the choice is.
+  document.getElementById("atmosphere-hint").classList.toggle("hidden", on);
+  for (const label of document.querySelectorAll("#scene-atmosphere-dials .atmosphere-dial")) {
     // The shafts are the one atmosphere dial the iPad never gets: there
     // is no pass behind it there, so it stays away rather than sitting
     // dead among the dials that do work.

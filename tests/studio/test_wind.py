@@ -288,8 +288,13 @@ def test_the_wind_dials_and_the_scene():
     js = STUDIO_JS.read_text(encoding="utf-8")
     html = INDEX.read_text(encoding="utf-8")
 
-    settings = html[html.index('<div id="shelf-sky-settings"'):]
-    settings = settings[:settings.index('<div id="prop-tiles"')]
+    # In the Scene section since 2026-09-14 (Param: "The wind the light rays
+    # etc ... need to move to the scene banner menu"), and nowhere else.
+    settings = html[html.index('<div class="dial-block" id="scene-wind-dials">'):]
+    settings = settings[:settings.index("</div>")]
+    scene = html[html.index('<details id="scene-section">'):html.index('<details id="output-section">')]
+    assert 'id="scene-wind-dials"' in scene
+    assert html.count('id="wind-strength"') == 1
     for ident, unit, rest in (("wind-strength", "%", "10"), ("wind-from", "&deg;", "225"),
                               ("wind-gusts", "%", "50")):
         tag = re.search(r'<input id="' + ident + r'" type="range"([^>]*)>', settings)

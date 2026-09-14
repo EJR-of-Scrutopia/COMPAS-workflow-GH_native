@@ -120,9 +120,6 @@
           <option value="projected" selected>Projected</option>
           <option value="infinite">Infinite</option>
         </select></label>
-      <label title="How bright the day is: the sky, the sun, the sky light and the backdrop together. Turn it down to let the fixtures read; the clock past dusk is a night of its own."><span>Brightness</span>
-        <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100">
-        <b id="sky-brightness-value">100</b><em>%</em></label>
       <label id="hdri-scale-row" title="The dome&#39;s radius: how far away the photographed world sits"><span>Scale</span>
         <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60">
         <b id="hdri-scale-value">60</b><em>m</em></label>
@@ -132,51 +129,6 @@
       <label id="hdri-rotation-row" title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
         <input id="hdri-rotation" type="range" data-unit="1" min="0" max="360" step="1" value="0">
         <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
-      <!-- The atmosphere's dials, shown only while a preset is chosen. -->
-      <label class="atmosphere-dial hidden" title="How thick the fog is at its base: the share of each kilometre of view it takes"><span>Density</span>
-        <input id="atmosphere-density" type="range" min="0" max="50" step="0.1" value="1.5">
-        <b id="atmosphere-density-value">1.5</b><em>/km</em></label>
-      <label class="atmosphere-dial hidden" title="How high the fog reaches: every this many metres up it thins to about a third, so a crown can stand clear of a fogged floor"><span>Fog height</span>
-        <input id="atmosphere-height" type="range" min="0.5" max="200" step="0.5" value="60">
-        <b id="atmosphere-height-value">60.0</b><em>m</em></label>
-      <label class="atmosphere-dial hidden" title="Where the fog lies, in metres above the floor: it is densest here and thins upward"><span>Base</span>
-        <input id="atmosphere-base" type="range" data-unit="1" min="-5" max="50" step="0.5" value="0">
-        <b id="atmosphere-base-value">0.0</b><em>m</em></label>
-      <label class="atmosphere-dial hidden" title="How far from the eye the fog begins, so what stands close stays crisp"><span>Start</span>
-        <input id="atmosphere-start" type="range" min="0" max="100" step="1" value="30">
-        <b id="atmosphere-start-value">30</b><em>m</em></label>
-      <label class="atmosphere-dial hidden" title="The most the fog may ever hide, so the far distance never vanishes entirely"><span>Max opacity</span>
-        <input id="atmosphere-opacity" type="range" min="0" max="100" step="1" value="50">
-        <b id="atmosphere-opacity-value">50</b><em>%</em></label>
-      <label class="atmosphere-dial hidden" title="How much of the sun&#39;s light the fog throws toward the eye when you look toward the sun; the moon&#39;s at night"><span>Sun glow</span>
-        <input id="atmosphere-glow" type="range" min="0" max="200" step="5" value="40">
-        <b id="atmosphere-glow-value">40</b><em>%</em></label>
-      <label class="atmosphere-dial hidden" title="How tight the glow around the sun is: low spreads it across the sky, high keeps it close about the sun"><span>Sun lobe</span>
-        <input id="atmosphere-lobe" type="range" min="1" max="64" step="1" value="8">
-        <b id="atmosphere-lobe-value">8</b><em>x</em></label>
-      <label class="atmosphere-dial hidden" title="A second layer, of mist lying on the ground, at its base"><span>Ground mist</span>
-        <input id="atmosphere-mist" type="range" data-unit="1" min="0" max="100" step="0.5" value="0">
-        <b id="atmosphere-mist-value">0.0</b><em>/km</em></label>
-      <label class="atmosphere-dial hidden" title="How high the ground mist reaches: every this many metres up it thins to about a third"><span>Mist height</span>
-        <input id="atmosphere-mist-height" type="range" min="0.2" max="20" step="0.1" value="2">
-        <b id="atmosphere-mist-height-value">2.0</b><em>m</em></label>
-      <!-- Desktop only: the pass behind it is a raymarch per pixel, and
-           on the iPad path there is no pass to drive, so studio.js keeps
-           this row hidden there. -->
-      <label id="atmosphere-shafts-row" class="atmosphere-dial hidden" title="Light rays: how strongly the sun lights the air itself -- beams where it gets through the trees, the vault and the net, and darker air where they stand in its way. At nought the frame is exactly as it was"><span>Light rays</span>
-        <input id="atmosphere-shafts" type="range" data-unit="1" min="0" max="100" step="5" value="0">
-        <b id="atmosphere-shafts-value">0</b><em>%</em></label>
-      <!-- THE WIND moves what is placed, and every shadow with it
-           (wind.js). Shown in every mode: the air blows whatever the sky. -->
-      <label title="How hard the wind blows through everything placed: grass and leaves flutter, trees lean and sway, and their shadows move with them. At nought nothing moves"><span>Wind</span>
-        <input id="wind-strength" type="range" min="0" max="100" step="5" value="10">
-        <b id="wind-strength-value">10</b><em>%</em></label>
-      <label title="Where the wind comes from, measured the way the sun's azimuth is"><span>Wind from</span>
-        <input id="wind-from" type="range" min="0" max="360" step="5" value="225">
-        <b id="wind-from-value">225</b><em>&deg;</em></label>
-      <label title="How much the wind comes and goes: fronts of stronger air sweeping across the site, so a field moves in waves"><span>Gusts</span>
-        <input id="wind-gusts" type="range" min="0" max="100" step="5" value="50">
-        <b id="wind-gusts-value">50</b><em>%</em></label>
     </div>
     <div id="prop-tiles" class="tile-grid hidden"></div>
     <!-- The scatter drawer. Param: "we should have a scatter tile next to
@@ -724,6 +676,15 @@
         <b id="site-north-value">0</b><em>&deg;</em></label>
     </div>
 
+    <!-- THE SETTINGS OF THE AIR AND THE LIGHT, moved here from the Skies
+         drawer on 2026-09-14. Param: "The wind the light rays etc and some
+         of these additional controls need to move to the scene banner menu.
+         We need to do a swap around so we dont repeat many inputs". The
+         drawer keeps what is chosen by picture (the modes, the weathers,
+         the atmospheres, the skies) and the dials that tune the photograph
+         it shows; the settings that hold whatever the picture live here.
+         MOVED, not copied. -->
+    <span class="row-heading">Sky</span>
     <!-- Studio / Sky / HDRI and the weather moved to the shelf's Skies
          drawer on Param's word: "in skies tile lets also put the tab to
          studio and sky modes and choose from the options they have too".
@@ -742,6 +703,9 @@
            Skies drawer: they belong beside the pictures they tune. -->
     </div>
     <div class="dial-block" id="scene-background-dials">
+    <label title="How bright the day is: the sky, the sun, the sky light and the backdrop together. Turn it down to let the fixtures read; the clock past dusk is a night of its own."><span>Brightness</span>
+      <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100">
+      <b id="sky-brightness-value">100</b><em>%</em></label>
     <label id="background-row" title="How light the studio backdrop sits behind the vault"><span>Background</span>
       <input id="background-tone" type="range" min="0" max="100" step="1" value="85">
       <b id="background-tone-value">85</b><em>%</em></label>
@@ -756,6 +720,62 @@
          fixtures they tune: "the light settings should find itself
          somewhere else, maybe we need to make a light tile and put all the
          lights there and not in props". -->
+
+    <span class="row-heading">Atmosphere</span>
+    <!-- The picker is the Skies tile's: with no atmosphere chosen these
+         dials have nothing to tune, so they stand aside and say where the
+         choice is made. -->
+    <div id="atmosphere-hint">No atmosphere: choose one from the Skies tile</div>
+    <div class="dial-block" id="scene-atmosphere-dials">
+    <label class="atmosphere-dial hidden" title="How thick the fog is at its base: the share of each kilometre of view it takes"><span>Density</span>
+      <input id="atmosphere-density" type="range" min="0" max="50" step="0.1" value="1.5">
+      <b id="atmosphere-density-value">1.5</b><em>/km</em></label>
+    <label class="atmosphere-dial hidden" title="How high the fog reaches: every this many metres up it thins to about a third, so a crown can stand clear of a fogged floor"><span>Fog height</span>
+      <input id="atmosphere-height" type="range" min="0.5" max="200" step="0.5" value="60">
+      <b id="atmosphere-height-value">60.0</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="Where the fog lies, in metres above the floor: it is densest here and thins upward"><span>Base</span>
+      <input id="atmosphere-base" type="range" data-unit="1" min="-5" max="50" step="0.5" value="0">
+      <b id="atmosphere-base-value">0.0</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="How far from the eye the fog begins, so what stands close stays crisp"><span>Start</span>
+      <input id="atmosphere-start" type="range" min="0" max="100" step="1" value="30">
+      <b id="atmosphere-start-value">30</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="The most the fog may ever hide, so the far distance never vanishes entirely"><span>Max opacity</span>
+      <input id="atmosphere-opacity" type="range" min="0" max="100" step="1" value="50">
+      <b id="atmosphere-opacity-value">50</b><em>%</em></label>
+    <label class="atmosphere-dial hidden" title="How much of the sun&#39;s light the fog throws toward the eye when you look toward the sun; the moon&#39;s at night"><span>Sun glow</span>
+      <input id="atmosphere-glow" type="range" min="0" max="200" step="5" value="40">
+      <b id="atmosphere-glow-value">40</b><em>%</em></label>
+    <label class="atmosphere-dial hidden" title="How tight the glow around the sun is: low spreads it across the sky, high keeps it close about the sun"><span>Sun lobe</span>
+      <input id="atmosphere-lobe" type="range" min="1" max="64" step="1" value="8">
+      <b id="atmosphere-lobe-value">8</b><em>x</em></label>
+    <label class="atmosphere-dial hidden" title="A second layer, of mist lying on the ground, at its base"><span>Ground mist</span>
+      <input id="atmosphere-mist" type="range" data-unit="1" min="0" max="100" step="0.5" value="0">
+      <b id="atmosphere-mist-value">0.0</b><em>/km</em></label>
+    <label class="atmosphere-dial hidden" title="How high the ground mist reaches: every this many metres up it thins to about a third"><span>Mist height</span>
+      <input id="atmosphere-mist-height" type="range" min="0.2" max="20" step="0.1" value="2">
+      <b id="atmosphere-mist-height-value">2.0</b><em>m</em></label>
+    <!-- Desktop only: the pass behind it is a raymarch per pixel, and
+         on the iPad path there is no pass to drive, so studio.js keeps
+         this row hidden there. -->
+    <label id="atmosphere-shafts-row" class="atmosphere-dial hidden" title="Light rays: how strongly the sun lights the air itself -- beams where it gets through the trees, the vault and the net, and darker air where they stand in its way. At nought the frame is exactly as it was"><span>Light rays</span>
+      <input id="atmosphere-shafts" type="range" data-unit="1" min="0" max="100" step="5" value="0">
+      <b id="atmosphere-shafts-value">0</b><em>%</em></label>
+    </div>
+
+    <span class="row-heading">Wind</span>
+    <!-- The wind moves what is placed, and every shadow with it (wind.js),
+         whatever the sky. -->
+    <div class="dial-block" id="scene-wind-dials">
+    <label title="How hard the wind blows through everything placed: grass and leaves flutter, trees lean and sway, and their shadows move with them. At nought nothing moves"><span>Wind</span>
+      <input id="wind-strength" type="range" min="0" max="100" step="5" value="10">
+      <b id="wind-strength-value">10</b><em>%</em></label>
+    <label title="Where the wind comes from, measured the way the sun's azimuth is"><span>Wind from</span>
+      <input id="wind-from" type="range" min="0" max="360" step="5" value="225">
+      <b id="wind-from-value">225</b><em>&deg;</em></label>
+    <label title="How much the wind comes and goes: fronts of stronger air sweeping across the site, so a field moves in waves"><span>Gusts</span>
+      <input id="wind-gusts" type="range" min="0" max="100" step="5" value="50">
+      <b id="wind-gusts-value">50</b><em>%</em></label>
+    </div>
 
     <span class="row-heading">Ground</span>
     <div id="ground-folder-row" class="folder-line">
