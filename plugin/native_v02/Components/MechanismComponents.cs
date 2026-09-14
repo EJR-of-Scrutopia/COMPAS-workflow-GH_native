@@ -134,7 +134,25 @@ internal sealed record MechanismAssetInput(
     // face on the z=0 plane and it sits on the ground wherever the net meets
     // it.
     MechanismMesh? Anchor,
-    bool AnchorFromBrep);
+    bool AnchorFromBrep)
+{
+    /// <summary>
+    /// THE CABLES AS HE MODELLED THEM (2026-09-14): one joined mesh, carried
+    /// for DISPLAY only. Every measurement of a wire, its net node, its
+    /// winding radius, its wraps and the reeve check, still reads Routing,
+    /// because a mesh tube has no order along it and no net end.
+    /// </summary>
+    public MechanismMesh? Cables { get; init; }
+
+    /// <summary>
+    /// THE TIE ARRIVES ALREADY PLACED (2026-09-14). When the mechanism is
+    /// placed by his own orient lists he places the fused anchor and tie
+    /// himself, once, in world space, and it is never oriented here. Its tie
+    /// entry then says placement "world", so a reader draws it where it is
+    /// instead of stamping it once per mechanism.
+    /// </summary>
+    public bool TensionTiePlaced { get; init; }
+}
 
 /// <summary>
 /// ONE OF THE SEVEN WIRES the one authored mechanism routes, indexed by
@@ -256,6 +274,116 @@ internal static class MechanismCollector
     public const double MinimumAnchorTieTolerance = 1.0e-6;
 
     public const double MinimumSpoolRadius = 1.0e-6;
+
+    /// <summary>
+    /// PLACEMENT FROM HIS TWO ORIENT LISTS (2026-09-14): his own method, run
+    /// behind the scenes. On his canvas one mechanism is grouped and put
+    /// through two clusters. Each takes a flat list of planes, orients the
+    /// group from the list's FIRST plane to every other plane, and puts the
+    /// untouched original back at index 0. The first takes his "orient
+    /// machine plane" list, the row along a side; the second his "Orient
+    /// Planes", the sides. So mechanism m on side s is Orient(S0 to Ss)
+    /// applied after Orient(M0 to Mm), mechanism 0 on side 0 is where it was
+    /// built, and each list's length is its copy count.
+    ///
+    /// The result is the same seven world target planes Placement (PL)
+    /// carries, plane i being wire i's first frame moved, so everything
+    /// downstream (the fitted transform, its residual against all seven
+    /// wires, the net-vertex matching and its guards) runs unchanged and
+    /// checks this placement exactly as it checks an authored one. The
+    /// orient order matters: the two do not commute, and the harness pins
+    /// it on a fixture where the other order lands over 0.01 m away.
+    ///
+    /// An empty list is one copy along it. Both empty is no placement. Only
+    /// the mechanism is oriented: the anchor and the tie he places himself.
+    /// A wire with no route still gets a slot, holding wire 0's moved frame,
+    /// so the seven stay aligned with their wires; nothing measures a slot
+    /// whose wire has no route, and the build names that wire anyway.
+    /// </summary>
+    public static List<MechanismPlacementBranch> PlacementsFromOrientPlanes(
+        IReadOnlyList<MechanismRoutingWire> routing,
+        IReadOnlyList<MechanismPlacementPlane> machinePlanes,
+        IReadOnlyList<MechanismPlacementPlane> sidePlanes,
+        List<string> warnings)
+    {
+        var branches = new List<MechanismPlacementBranch>();
+        if (machinePlanes.Count == 0 && sidePlanes.Count == 0)
+            return branches;
+
+        var first = new MechanismFrame?[PlacementGroupSize];
+        foreach (MechanismRoutingWire wire in routing)
+        {
+            if (wire.Wire >= 0 && wire.Wire < PlacementGroupSize && wire.Route.Count > 0)
+                first[wire.Wire] = wire.Route[0];
+        }
+        if (first[0] is null)
+        {
+            warnings.Add(
+                "Machine Planes (MP) / Side Planes (SP): wire 0 has no " +
+                "routing, so there is no first frame to orient and no " +
+                "mechanism is placed.");
+            return branches;
+        }
+
+        int perSide = Math.Max(1, machinePlanes.Count);
+        int sideCount = Math.Max(1, sidePlanes.Count);
+        for (int s = 0; s < sideCount; s++)
+        {
+            for (int m = 0; m < perSide; m++)
+            {
+                var planes = new List<MechanismPlacementPlane>(PlacementGroupSize);
+                for (int w = 0; w < PlacementGroupSize; w++)
+                {
+                    MechanismFrame moved = first[w] ?? first[0]!;
+                    if (machinePlanes.Count > 0)
+                        moved = OrientFrame(machinePlanes[0], machinePlanes[m], moved);
+                    if (sidePlanes.Count > 0)
+                        moved = OrientFrame(sidePlanes[0], sidePlanes[s], moved);
+                    planes.Add(new MechanismPlacementPlane(
+                        moved.Origin, moved.XAxis, moved.YAxis, moved.ZAxis));
+                }
+                branches.Add(new MechanismPlacementBranch(new MechanismInstanceId(s, m), planes));
+            }
+        }
+        return branches;
+    }
+
+    /// <summary>
+    /// Grasshopper's Orient, <c>Transform.PlaneToPlane(from, to)</c>, on one
+    /// frame, written out so the harness can run it without Rhino's native
+    /// core: a point keeps its coordinates in FROM's axes and takes them up in
+    /// TO's; an axis does the same without the origins.
+    /// </summary>
+    internal static MechanismFrame OrientFrame(
+        MechanismPlacementPlane from, MechanismPlacementPlane to, MechanismFrame frame)
+    {
+        double[] offset =
+        {
+            frame.Origin[0] - from.Origin[0],
+            frame.Origin[1] - from.Origin[1],
+            frame.Origin[2] - from.Origin[2],
+        };
+        double[] origin = OrientVector(from, to, offset);
+        return new MechanismFrame(
+            new[] { to.Origin[0] + origin[0], to.Origin[1] + origin[1], to.Origin[2] + origin[2] },
+            OrientVector(from, to, frame.XAxis),
+            OrientVector(from, to, frame.YAxis),
+            OrientVector(from, to, frame.ZAxis));
+    }
+
+    private static double[] OrientVector(
+        MechanismPlacementPlane from, MechanismPlacementPlane to, double[] v)
+    {
+        double u = (v[0] * from.XAxis[0]) + (v[1] * from.XAxis[1]) + (v[2] * from.XAxis[2]);
+        double w = (v[0] * from.YAxis[0]) + (v[1] * from.YAxis[1]) + (v[2] * from.YAxis[2]);
+        double n = (v[0] * from.ZAxis[0]) + (v[1] * from.ZAxis[1]) + (v[2] * from.ZAxis[2]);
+        return new[]
+        {
+            (u * to.XAxis[0]) + (w * to.YAxis[0]) + (n * to.ZAxis[0]),
+            (u * to.XAxis[1]) + (w * to.YAxis[1]) + (n * to.ZAxis[1]),
+            (u * to.XAxis[2]) + (w * to.YAxis[2]) + (n * to.ZAxis[2]),
+        };
+    }
 
     /// <summary>
     /// ROUTING FRAME OWNERSHIP, his ruling confirmed 2026-09-08: "it is
@@ -766,6 +894,15 @@ internal static class MechanismCollector
             else
             {
                 mechanismOut["motors"] = null;
+            }
+
+            // THE CABLES (2026-09-14): display only, a temporary part like the
+            // frames. No cables means no key, the rule the tie keeps below.
+            if (asset.Cables is not null)
+            {
+                Dictionary<string, object?> cables = MeshPayload(asset.Cables);
+                cables[PermanenceField] = Temporary;
+                mechanismOut["cables"] = cables;
             }
 
             if (asset.TensionTie is not null)
@@ -2046,14 +2183,7 @@ internal static class MechanismCollector
             // a place to find the tie's tag without knowing to look inside
             // "mechanism".
             ["tensionTies"] = asset.TensionTie is not null
-                ? new List<Dictionary<string, object?>>
-                  {
-                      new(StringComparer.Ordinal)
-                      {
-                          ["ref"] = "mechanism.tensionTie",
-                          [PermanenceField] = Permanent,
-                      },
-                  }
+                ? new List<Dictionary<string, object?>> { TensionTieEntry(asset.TensionTiePlaced) }
                 : new List<Dictionary<string, object?>>(),
         };
         // NO CITATION MEANS NO KEY, not a key carrying null: the reader
@@ -2072,6 +2202,23 @@ internal static class MechanismCollector
             ["vertices"] = mesh.Vertices,
             ["faces"] = mesh.Faces,
         };
+
+    /// <summary>
+    /// The tie's lightweight entry. Placed means he placed it himself in world
+    /// space (2026-09-14): "world" tells a reader to draw it once where it
+    /// is. Unplaced keeps the entry exactly as it was, with no placement key.
+    /// </summary>
+    private static Dictionary<string, object?> TensionTieEntry(bool placed)
+    {
+        var entry = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["ref"] = "mechanism.tensionTie",
+            [PermanenceField] = Permanent,
+        };
+        if (placed)
+            entry["placement"] = "world";
+        return entry;
+    }
 
     internal static Dictionary<string, object?> FramePayload(MechanismFrame frame) =>
         new(StringComparer.Ordinal)
@@ -4515,6 +4662,15 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// </summary>
     internal const int WireStartPort = 9;
 
+    /// <summary>
+    /// WHERE his two orient lists sit (2026-09-14), declared once so the
+    /// registration and the reader index the same ports. Appended, never
+    /// inserted: Grasshopper archives a wire by index.
+    /// </summary>
+    internal const int MachinePlanesPort = 14;
+
+    internal const int SidePlanesPort = 15;
+
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
         parameters.AddParameter(
@@ -4722,6 +4878,31 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "wire or the document as a whole.",
             GH_ParamAccess.tree);
         parameters[13].Optional = true;
+
+        parameters.AddPlaneParameter(
+            "Machine Planes", "MP",
+            "OPTIONAL, a flat list: your 'orient machine plane' list, exactly as " +
+            "your first orient cluster takes it. Plane 0 is where the one " +
+            "mechanism was built, and every plane, plane 0 included, is one " +
+            "mechanism along a side, so three planes are three mechanisms. " +
+            "Applied FIRST. Wired with Side Planes (SP), the placement is your " +
+            "own orient method computed here, and Placement (PL) and the " +
+            "placement derived from the net are both set aside. Only the " +
+            "mechanism is oriented: the Tension Tie (TT) is taken as already " +
+            "placed and never moved.",
+            GH_ParamAccess.list);
+        parameters[MachinePlanesPort].Optional = true;
+
+        parameters.AddPlaneParameter(
+            "Side Planes", "SP",
+            "OPTIONAL, a flat list: your 'Orient Planes' list, exactly as your " +
+            "second orient cluster takes it. Plane 0 is the side the mechanism " +
+            "was built on, and every plane is one side. Applied AFTER Machine " +
+            "Planes (MP): mechanism m on side s is Orient(S0 to Ss) after " +
+            "Orient(M0 to Mm), and mechanism 0 on side 0 stays exactly where it " +
+            "was built.",
+            GH_ParamAccess.list);
+        parameters[SidePlanesPort].Optional = true;
     }
 
     private static readonly ComponentValueListSpec[] MeaningValueLists =
@@ -4790,6 +4971,32 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             routing = MechanismCollector.PrependWireStarts(routing, wireStarts, notes);
             List<MechanismPlacementBranch> placements = ReadPlacements(data, warnings);
 
+            // HIS ORIENT METHOD, when either list is wired (2026-09-14). It
+            // replaces PL and the derivation outright, and says so if PL was
+            // wired too. Only the mechanism moves; the tie he placed himself.
+            List<MechanismPlacementPlane> machinePlanes = ReadPlaneList(data, MachinePlanesPort);
+            List<MechanismPlacementPlane> sidePlanes = ReadPlaneList(data, SidePlanesPort);
+            bool oriented = machinePlanes.Count > 0 || sidePlanes.Count > 0;
+            if (oriented)
+            {
+                if (placements.Count > 0)
+                {
+                    warnings.Add(
+                        "Placement (PL) is wired as well as Machine Planes (MP) / " +
+                        "Side Planes (SP). The orient lists win and PL is ignored; " +
+                        "wire one placement, not two.");
+                }
+                placements = MechanismCollector.PlacementsFromOrientPlanes(
+                    routing, machinePlanes, sidePlanes, warnings);
+                asset = asset with { TensionTiePlaced = true };
+                notes.Add(
+                    $"placement: your orient method, {Math.Max(1, machinePlanes.Count)} " +
+                    $"mechanism(s) per side by {Math.Max(1, sidePlanes.Count)} side(s), " +
+                    $"{placements.Count} placement(s); machine planes first, then " +
+                    "side planes, each list's plane 0 where it was built. The " +
+                    "Tension Tie (TT) is taken as already placed and not oriented.");
+            }
+
             string meaning = string.Empty;
             data.GetData(10, ref meaning);
 
@@ -4842,8 +5049,12 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
                     "the timing all stay correct, so nothing looks broken.");
             }
 
+            // An orient placement that produced nothing must not fall back to
+            // the derivation from the net: that would place copies he did not
+            // ask for, silently. The build is handed no Result in that one case.
             string? payload = MechanismCollector.BuildWithResult(
-                asset, routing, placements, warnings, notes, solved, meaning,
+                asset, routing, placements, warnings, notes,
+                oriented && placements.Count == 0 ? null : solved, meaning,
                 reevePerWire, citation);
 
             int routedWireCount = routing.Count(w => w.Route.Count > 0);
@@ -5308,6 +5519,23 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     }
 
     /// <summary>
+    /// A flat plane list, as his orient clusters take one, read into the
+    /// placement plane shape with Z taken true off the Rhino plane.
+    /// </summary>
+    private static List<MechanismPlacementPlane> ReadPlaneList(IGH_DataAccess data, int at)
+    {
+        var planes = new List<Plane>();
+        data.GetDataList(at, planes);
+        return planes
+            .Select(p => new MechanismPlacementPlane(
+                new[] { p.Origin.X, p.Origin.Y, p.Origin.Z },
+                new[] { p.XAxis.X, p.XAxis.Y, p.XAxis.Z },
+                new[] { p.YAxis.X, p.YAxis.Y, p.YAxis.Z },
+                new[] { p.ZAxis.X, p.ZAxis.Y, p.ZAxis.Z }))
+            .ToList();
+    }
+
+    /// <summary>
     /// Reads Placement (PL) as a tree, path {side}{group}: the world
     /// TARGET planes the placement maths derives every instance transform
     /// from. Z is read TRUE off the Rhino plane, never re-derived --
@@ -5484,6 +5712,10 @@ public sealed class MachineComponent : NativeComponentBase
     /// </summary>
     internal const int WireStartPort = 12;
 
+    /// <summary>WHERE Cables (CB) sits (2026-09-14), declared once for the
+    /// registration and the reader. Appended, never inserted.</summary>
+    internal const int CablesPort = 15;
+
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
         parameters.AddTextParameter(
@@ -5637,6 +5869,15 @@ public sealed class MachineComponent : NativeComponentBase
             "all stay correct, so nothing looks broken.",
             GH_ParamAccess.item, MechanismCollector.DefaultReeveFactor);
         parameters[14].Optional = true;
+
+        parameters.AddGenericParameter(
+            "Cables", "CB",
+            "OPTIONAL: the cables as you modelled them, one piece; several " +
+            "objects are joined. For DISPLAY: every measurement of a wire, its " +
+            "net node, winding radius, wraps and reeve check, still reads " +
+            "Routing (RT), because a mesh tube has no order along it.",
+            GH_ParamAccess.list);
+        parameters[CablesPort].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
@@ -5893,9 +6134,16 @@ public sealed class MachineComponent : NativeComponentBase
         // footprint literals it pins were never inflated by them and stay
         // unchanged; what changes is that THIS reader can no longer be the
         // one that inflates them (spec 3.4).
+        MechanismMesh? cables = ReadOnePiece(
+            data, CablesPort, "Cables (CB)", warnings, notes, out bool cablesBrep);
+        if (cables is not null && cablesBrep)
+            notes.Add($"Cables (CB) {MechanismCollector.BrepMeshingNote}");
         return new MechanismAssetInput(
             f1, f1Brep, f2, f2Brep, mo, moBrep, null, false,
-            reels, null, false);
+            reels, null, false)
+        {
+            Cables = cables,
+        };
     }
 
     /// <summary>

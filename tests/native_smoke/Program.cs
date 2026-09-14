@@ -3765,8 +3765,8 @@ internal static partial class Program
                 + "port that casts from almost anything, or an item port "
                 + "that solves once per item of a list and keeps only the "
                 + "last. Pinned name, nickname, index AND GH_ParamAccess "
-                + "for all fifteen of the Machine component's inputs and "
-                + "all fourteen of the Mechanism component's -- access "
+                + "for all sixteen of the Machine component's inputs and "
+                + "all sixteen of the Mechanism component's -- access "
                 + "decides what an archived wire delivers, and a tree "
                 + "flattened into a list port is exactly the legacy reel "
                 + "shape spec 4.7 refuses.");
@@ -3774,6 +3774,26 @@ internal static partial class Program
         catch (Exception exception)
         {
             failures.Add($"MechanismPortRule: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMechanismOrientPlacement(plugin);
+            Console.WriteLine(
+                "PASS  Placement from his two orient lists (2026-09-14): "
+                + "three machine planes by five side planes give fifteen "
+                + "placements, each wire's first frame moved by "
+                + "Orient(S0->Ss) after Orient(M0->Mm) to 1e-9 on a fixture "
+                + "where the other order lands over 0.01 m away; copy (0, 0) "
+                + "is the mechanism as authored; an empty list is one copy "
+                + "along it. A tie flagged as placed says placement \"world\" "
+                + "and is never oriented; the Cables mesh reaches the "
+                + "mechanism block as a temporary part; each new port's index "
+                + "is one named constant.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Mechanism orient placement: {DescribeException(exception)}");
         }
 
         try
@@ -43759,6 +43779,7 @@ internal static partial class Program
             (10, "RT", "Routing", "tree"),
             (11, "FM", "Frame Meaning", "item"), (12, "WS", "Wire Start", "tree"),
             (13, "ID", "Machine Id", "item"), (14, "RV", "Reeve", "item"),
+            (15, "CB", "Cables", "list"),
         });
         Ports("MechanismCollectorComponent", new (int, string, string, string)[]
         {
@@ -43774,7 +43795,326 @@ internal static partial class Program
             (8, "PL", "Placement", "tree"), (9, "WS", "Wire Start", "tree"),
             (10, "FM", "Frame Meaning", "item"), (11, "AN", "Anchor", "list"),
             (12, "MA", "Machine", "item"), (13, "RW", "Reeve Per Wire", "tree"),
+            (14, "MP", "Machine Planes", "list"), (15, "SP", "Side Planes", "list"),
         });
+    }
+
+    /// <summary>
+    /// PLACEMENT FROM HIS TWO ORIENT LISTS (2026-09-14).
+    ///
+    /// His method, shown on his own canvas: one mechanism, grouped, run
+    /// through two clusters. Each cluster takes a flat list of planes, orients
+    /// the group from the list's FIRST plane to every other plane, and puts
+    /// the untouched original back at index 0. The first cluster takes
+    /// "orient machine plane" (the row along a side), the second "Orient
+    /// Planes" (the sides), in that order. So copy (m, s) is
+    /// Orient(S0 -> Ss) applied after Orient(M0 -> Mm), copy (0, 0) is the
+    /// original, and the list lengths ARE the copy counts. His anchors and
+    /// the tension tie he places himself: they are never oriented here.
+    ///
+    /// What is measured, each able to fail on its own rule:
+    /// 1. Three machine planes by five side planes give FIFTEEN placement
+    ///    branches, one per (side, mechanism), seven planes each, plane i
+    ///    being wire i's first frame moved exactly as his clusters move it,
+    ///    origin and all three axes, to 1e-9. The fixture's planes are tilted
+    ///    and offset so the two orients do not commute, and that premise is
+    ///    checked first: applied the other way round, some copy lands more
+    ///    than 0.01 m from where his method puts it, so an implementation
+    ///    that orients by the sides first cannot pass.
+    /// 2. Copy (side 0, mechanism 0) is the mechanism exactly where it was
+    ///    authored, because his cluster keeps the original at index 0.
+    /// 3. An empty machine list is one mechanism per side, an empty side list
+    ///    is one side, and both empty is no placement at all.
+    /// 4. The Tension Tie arrives placed: flagged so, its tie entry says
+    ///    placement "world", which is what stops a reader stamping it once
+    ///    per mechanism. Unflagged, the entry carries no placement key, as
+    ///    before.
+    /// 5. The Cables mesh reaches the mechanism block as a temporary part,
+    ///    whole, and is absent when none was wired.
+    /// 6. Each new port's index is ONE named constant, and the port
+    ///    registered at it carries the expected nickname. Wire Start stood
+    ///    registered and read by nothing once; a constant shared by the
+    ///    registration and the reader is what makes that impossible here.
+    /// </summary>
+    private static void ValidateMechanismOrientPlacement(Assembly plugin)
+    {
+        Type frameType = RequireComponentType(plugin, "MechanismFrame");
+        Type planeType = RequireComponentType(plugin, "MechanismPlacementPlane");
+        Type routingWireType = RequireComponentType(plugin, "MechanismRoutingWire");
+        Type collectorType = RequireComponentType(plugin, "MechanismCollector");
+        MethodInfo orient = RequirePublicStatic(collectorType, "PlacementsFromOrientPlanes");
+        var failures = new List<string>();
+
+        static double[] Rotate(double[] v, double yaw, double pitch)
+        {
+            double x = v[0];
+            double y = (v[1] * Math.Cos(pitch)) - (v[2] * Math.Sin(pitch));
+            double z = (v[1] * Math.Sin(pitch)) + (v[2] * Math.Cos(pitch));
+            return new[]
+            {
+                (x * Math.Cos(yaw)) - (y * Math.Sin(yaw)),
+                (x * Math.Sin(yaw)) + (y * Math.Cos(yaw)),
+                z,
+            };
+        }
+        static double[][] Plane(double[] origin, double yaw, double pitch) => new[]
+        {
+            origin,
+            Rotate(new[] { 1.0, 0.0, 0.0 }, yaw, pitch),
+            Rotate(new[] { 0.0, 1.0, 0.0 }, yaw, pitch),
+            Rotate(new[] { 0.0, 0.0, 1.0 }, yaw, pitch),
+        };
+        static double Dot(double[] a, double[] b) => (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
+
+        // Grasshopper's Orient, Transform.PlaneToPlane(A, B), written out: a
+        // point keeps its coordinates in A's axes and takes them up in B's.
+        static double[] MovePoint(double[][] a, double[][] b, double[] p)
+        {
+            double[] d = { p[0] - a[0][0], p[1] - a[0][1], p[2] - a[0][2] };
+            double u = Dot(d, a[1]), v = Dot(d, a[2]), w = Dot(d, a[3]);
+            return new[]
+            {
+                b[0][0] + (u * b[1][0]) + (v * b[2][0]) + (w * b[3][0]),
+                b[0][1] + (u * b[1][1]) + (v * b[2][1]) + (w * b[3][1]),
+                b[0][2] + (u * b[1][2]) + (v * b[2][2]) + (w * b[3][2]),
+            };
+        }
+        static double[] MoveVector(double[][] a, double[][] b, double[] vector)
+        {
+            double u = Dot(vector, a[1]), v = Dot(vector, a[2]), w = Dot(vector, a[3]);
+            return new[]
+            {
+                (u * b[1][0]) + (v * b[2][0]) + (w * b[3][0]),
+                (u * b[1][1]) + (v * b[2][1]) + (w * b[3][1]),
+                (u * b[1][2]) + (v * b[2][2]) + (w * b[3][2]),
+            };
+        }
+        static double[][] MoveFrame(double[][] a, double[][] b, double[][] f) => new[]
+        {
+            MovePoint(a, b, f[0]), MoveVector(a, b, f[1]),
+            MoveVector(a, b, f[2]), MoveVector(a, b, f[3]),
+        };
+        static double Gap(double[][] x, double[][] y)
+        {
+            double worst = 0.0;
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 3; c++)
+                    worst = Math.Max(worst, Math.Abs(x[r][c] - y[r][c]));
+            return worst;
+        }
+
+        // Seven wires, each first frame tilted differently; a second frame
+        // follows each, as a real route has.
+        var firstFrames = new List<double[][]>();
+        object[] wires = new object[7];
+        for (int k = 0; k < 7; k++)
+        {
+            double[][] first = Plane(
+                new[] { 0.1 + (0.25 * k), -0.3 + (0.05 * k), 0.4 + (0.02 * k) },
+                0.3 + (0.1 * k),
+                0.2);
+            firstFrames.Add(first);
+            object frame = Activator.CreateInstance(frameType, first[0], first[1], first[2], first[3])!;
+            object next = Activator.CreateInstance(
+                frameType,
+                new[] { first[0][0], first[0][1], first[0][2] + 1.0 },
+                first[1], first[2], first[3])!;
+            wires[k] = Activator.CreateInstance(
+                routingWireType, k, MechanismListOf(frameType, frame, next))!;
+        }
+        object routing = MechanismListOf(routingWireType, wires);
+
+        double[][][] machine =
+        {
+            Plane(new[] { 1.0, 2.0, 0.0 }, 0.26, 0.0),
+            Plane(new[] { 1.0, 4.0, 0.0 }, 0.70, 0.17),
+            Plane(new[] { 1.5, 6.0, 0.5 }, 1.22, -0.10),
+        };
+        var sides = new List<double[][]>();
+        for (int s = 0; s < 5; s++)
+        {
+            double angle = 0.087 + (2.0 * Math.PI * s / 5.0);
+            sides.Add(Plane(
+                new[] { 10.0 * Math.Cos(angle), 10.0 * Math.Sin(angle), 0.2 * s },
+                angle + (Math.PI / 2.0),
+                0.05));
+        }
+
+        object Planes(IEnumerable<double[][]> list) => MechanismListOf(
+            planeType,
+            list.Select(p => Activator.CreateInstance(planeType, p[0], p[1], p[2], p[3])).ToArray());
+
+        List<(int Side, int Group, List<double[][]> Planes)> Run(
+            IEnumerable<double[][]> machinePlanes, IEnumerable<double[][]> sidePlanes)
+        {
+            var warnings = new List<string>();
+            object returned = orient.Invoke(
+                null, new object?[] { routing, Planes(machinePlanes), Planes(sidePlanes), warnings })!;
+            var branches = new List<(int, int, List<double[][]>)>();
+            foreach (object branch in (IEnumerable)returned)
+            {
+                object id = branch.GetType().GetProperty("Id")!.GetValue(branch)!;
+                int side = (int)id.GetType().GetProperty("Side")!.GetValue(id)!;
+                int group = (int)id.GetType().GetProperty("Group")!.GetValue(id)!;
+                var planes = new List<double[][]>();
+                foreach (object plane in (IEnumerable)branch.GetType().GetProperty("Planes")!.GetValue(branch)!)
+                {
+                    double[] Read(string name) => (double[])planeType.GetProperty(name)!.GetValue(plane)!;
+                    planes.Add(new[] { Read("Origin"), Read("XAxis"), Read("YAxis"), Read("ZAxis") });
+                }
+                branches.Add((side, group, planes));
+            }
+            return branches;
+        }
+
+        double[][] Expected(int m, int s, int wire) =>
+            MoveFrame(sides[0], sides[s], MoveFrame(machine[0], machine[m], firstFrames[wire]));
+
+        // THE FIXTURE'S PREMISE: the two orients do not commute here.
+        double orderGap = 0.0;
+        for (int m = 0; m < 3; m++)
+            for (int s = 0; s < 5; s++)
+                orderGap = Math.Max(orderGap, Gap(
+                    Expected(m, s, 3),
+                    MoveFrame(machine[0], machine[m], MoveFrame(sides[0], sides[s], firstFrames[3]))));
+        if (orderGap < 0.01)
+        {
+            throw new InvalidOperationException(
+                $"The fixture cannot tell the orient order apart (worst gap {orderGap:G3} m); it would pass an implementation that orients by the sides first.");
+        }
+
+        var full = Run(machine, sides);
+        if (full.Count != 15)
+            failures.Add($"three machine planes by five side planes must give 15 placements; got {full.Count}");
+        var seen = new HashSet<(int, int)>();
+        foreach ((int side, int group, List<double[][]> planes) in full)
+        {
+            if (side < 0 || side > 4 || group < 0 || group > 2 || !seen.Add((side, group)))
+            {
+                failures.Add($"placement (side {side}, mechanism {group}) is out of range or repeated");
+                continue;
+            }
+            if (planes.Count != 7)
+            {
+                failures.Add($"placement (side {side}, mechanism {group}) carries {planes.Count} planes, not one per wire");
+                continue;
+            }
+            for (int w = 0; w < 7; w++)
+            {
+                double gap = Gap(planes[w], Expected(group, side, w));
+                if (gap > 1.0e-9)
+                {
+                    failures.Add(
+                        $"placement (side {side}, mechanism {group}) wire {w} sits {gap:G3} from Orient(S0->S{side}) after Orient(M0->M{group})");
+                    break;
+                }
+            }
+            if (side == 0 && group == 0 &&
+                Enumerable.Range(0, 7).Any(w => Gap(planes[w], firstFrames[w]) > 1.0e-12))
+            {
+                failures.Add("copy (side 0, mechanism 0) must be the mechanism exactly where it was authored");
+            }
+        }
+
+        var perSide = Run(Array.Empty<double[][]>(), sides);
+        if (perSide.Count != 5 || perSide.Any(b => b.Group != 0 ||
+                Enumerable.Range(0, 7).Any(w => Gap(b.Planes[w], MoveFrame(sides[0], sides[b.Side], firstFrames[w])) > 1.0e-9)))
+        {
+            failures.Add($"an empty machine list is one mechanism per side, oriented by the sides alone; got {perSide.Count} placement(s)");
+        }
+        var oneSide = Run(machine, Array.Empty<double[][]>());
+        if (oneSide.Count != 3 || oneSide.Any(b => b.Side != 0 ||
+                Enumerable.Range(0, 7).Any(w => Gap(b.Planes[w], MoveFrame(machine[0], machine[b.Group], firstFrames[w])) > 1.0e-9)))
+        {
+            failures.Add($"an empty side list is one side, oriented by the machine planes alone; got {oneSide.Count} placement(s)");
+        }
+        if (Run(Array.Empty<double[][]>(), Array.Empty<double[][]>()).Count != 0)
+            failures.Add("no machine planes and no side planes is no placement at all");
+
+        // THE TIE AND THE CABLES, through the shared build.
+        Type meshType = RequireComponentType(plugin, "MechanismMesh");
+        Type assetType = RequireComponentType(plugin, "MechanismAssetInput");
+        Type placementBranchType = RequireComponentType(plugin, "MechanismPlacementBranch");
+        MethodInfo build = RequirePublicStatic(collectorType, "BuildWithResult");
+        object Mesh(int count) => Activator.CreateInstance(
+            meshType,
+            (object)Enumerable.Range(0, count).Select(i => new[] { (double)i, 0.5 * i, 0.0 }).ToArray(),
+            (object)Array.Empty<int[]>())!;
+        PropertyInfo? placedFlag = assetType.GetProperty("TensionTiePlaced");
+        PropertyInfo? cablesPart = assetType.GetProperty("Cables");
+        if (placedFlag is null || cablesPart is null)
+        {
+            failures.Add("MechanismAssetInput must carry TensionTiePlaced and Cables");
+        }
+        else
+        {
+            JsonElement Build(bool placed, bool withCables, out JsonDocument owner)
+            {
+                object asset = Activator.CreateInstance(
+                    assetType,
+                    Mesh(3), false,
+                    MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+                    null, false,
+                    Mesh(5), false,
+                    MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+                    null, false)!;
+                placedFlag.SetValue(asset, placed);
+                if (withCables)
+                    cablesPart.SetValue(asset, Mesh(4));
+                object? payload = build.Invoke(null, new object?[]
+                {
+                    asset, routing, MechanismListOf(placementBranchType),
+                    new List<string>(), new List<string>(), null, null, null, null,
+                });
+                owner = JsonDocument.Parse((string)payload!);
+                return owner.RootElement;
+            }
+
+            JsonElement placedRoot = Build(true, true, out JsonDocument placedDoc);
+            using (placedDoc)
+            {
+                JsonElement tie = placedRoot.GetProperty("tensionTies")[0];
+                if (!tie.TryGetProperty("placement", out JsonElement placement) || placement.GetString() != "world")
+                    failures.Add("a Tension Tie flagged as placed must say placement \"world\" on its tie entry; got " + tie.GetRawText());
+                JsonElement block = placedRoot.GetProperty("mechanism");
+                if (!block.TryGetProperty("cables", out JsonElement cables) ||
+                    cables.ValueKind != JsonValueKind.Object ||
+                    cables.GetProperty("vertices").GetArrayLength() != 4 ||
+                    cables.GetProperty("permanence").GetString() != "temporary")
+                {
+                    failures.Add("the Cables mesh must reach the mechanism block whole (4 vertices) as a temporary part");
+                }
+            }
+            JsonElement plainRoot = Build(false, false, out JsonDocument plainDoc);
+            using (plainDoc)
+            {
+                if (plainRoot.GetProperty("tensionTies")[0].TryGetProperty("placement", out _))
+                    failures.Add("an unflagged Tension Tie entry must carry no placement key");
+                if (plainRoot.GetProperty("mechanism").TryGetProperty("cables", out _))
+                    failures.Add("no Cables wired must mean no cables key");
+            }
+        }
+
+        // THE PORTS, BY ONE CONSTANT EACH.
+        (string Type, string Constant, int At, string Nick)[] ports =
+        {
+            ("MechanismCollectorComponent", "MachinePlanesPort", 14, "MP"),
+            ("MechanismCollectorComponent", "SidePlanesPort", 15, "SP"),
+            ("MachineComponent", "CablesPort", 15, "CB"),
+        };
+        foreach ((string typeName, string constant, int at, string nick) in ports)
+        {
+            Type type = RequireComponentType(plugin, typeName);
+            FieldInfo? field = type.GetField(constant, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            if (field is null || (int)field.GetRawConstantValue()! != at)
+                failures.Add($"{typeName}.{constant} must be the constant {at}");
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{failures.Count} orient placement rule(s) wrong: " + string.Join(" | ", failures));
+        }
     }
 
     /// <summary>
