@@ -147,8 +147,10 @@ MOTION_CHECK = textwrap.dedent("""
     expect(near(from0.direction[0], -1) && near(from0.direction[1], 0), "from +x blows toward -x");
     const from90 = windUniformsFrom({ strength: 50, from: 90, gusts: 0 });
     expect(near(from90.direction[1], -1, 1e-9) && from90.strength === 0.5 && from90.gusts === 0, "fractions");
-    expect(WIND_DEFAULTS.strength === 0, "calm until he turns it up");
-    expect(adoptWind(null).strength === 0 && adoptWind({}).from === WIND_DEFAULTS.from, "an old scene is a calm");
+    // A light breeze by default (Param, 2026-09-14: "have the wind on as
+    // default set to like 10%"), and an old scene comes back in it.
+    expect(WIND_DEFAULTS.strength === 10, "a tenth by default");
+    expect(adoptWind(null).strength === 10 && adoptWind({}).from === WIND_DEFAULTS.from, "an old scene is the default breeze");
     expect(adoptWind({ strength: 400, from: -20, gusts: 30 }).strength === 100, "clamped high");
     expect(adoptWind({ strength: 400, from: -20, gusts: 30 }).from === 0, "clamped low");
     expect(adoptWind({ strength: 40, from: 90, gusts: 30 }).gusts === 30, "kept");
@@ -288,19 +290,22 @@ def test_the_wind_dials_and_the_scene():
 
     settings = html[html.index('<div id="shelf-sky-settings"'):]
     settings = settings[:settings.index('<div id="prop-tiles"')]
-    for ident, unit, rest in (("wind-strength", "%", "0"), ("wind-from", "&deg;", "225"),
+    for ident, unit, rest in (("wind-strength", "%", "10"), ("wind-from", "&deg;", "225"),
                               ("wind-gusts", "%", "50")):
         tag = re.search(r'<input id="' + ident + r'" type="range"([^>]*)>', settings)
         assert tag, ident
         assert 'value="' + rest + '"' in tag.group(1), ident
         assert '<b id="' + ident + '-value">' + rest + "</b><em>" + unit + "</em>" in settings, ident
-    # Only the one that rests at nought declares its unit (section 3).
-    assert 'id="wind-strength" type="range" data-unit="1"' in settings
-    assert 'id="wind-gusts" type="range" data-unit' not in settings
+    # None rests at nought, so none declares its unit (section 3).
+    for ident in ("wind-strength", "wind-from", "wind-gusts"):
+        assert 'id="' + ident + '" type="range" data-unit' not in settings, ident
 
     assert '["wind-strength", "strength", 0],' in js
     apply_ = _body(js, "function applyWindState()")
     assert "windAir.windDirection.value.set(air.direction[0], air.direction[1]);" in apply_
     assert "wind: { ...state.wind }," in js, "a scene carries its wind"
     assert "state.wind = adoptWind(scene_.wind);" in js
-    assert "wind: { ...WIND_DEFAULTS }," in js, "and the studio starts calm"
+    assert "wind: { ...WIND_DEFAULTS }," in js, "and the studio starts in the default breeze"
+    boot = js[js.index("applyWindState();", js.index("function syncWindControls()")):]
+    assert boot.index("applyWindState();") < boot.index("for (const [id, key, digits] of WIND_DIALS)"), (
+        "with the air set before the first frame")

@@ -40,6 +40,7 @@ import {
 import {
   applyWind, windParameters, windUniformsFrom, adoptWind, WIND_DEFAULTS,
 } from "/static/wind.js";
+import { completeScene, SCENE_VERSION } from "/static/scene_defaults.js";
 import {
   ATMOSPHERE_PRESETS, ATMOSPHERE_SKY_GLSL, ATMOSPHERE_LINEAR_OFF,
   atmosphereFromPreset, adoptAtmosphere, atmosphereIsOn, atmosphereLayers,
@@ -5975,9 +5976,16 @@ function collectScene(options) {
   const withProps = !options || options.props !== false;
   const control = (id) => document.getElementById(id);
   return {
+    sceneVersion: SCENE_VERSION,
     camera: { position: camera.position.toArray(), target: controls.target.toArray(),
       fov: perspectiveCamera.fov, frame: state.cameraAspect },
     showMode: state.showMode,
+    // Never saved until 2026-09-14, so a scene came back in the last
+    // picture's sky brightness, surface depth and machine.
+    skyBrightness: state.skyBrightness,
+    relief: state.relief,
+    occlusion: state.occlusion,
+    showMachine: state.showMachine !== false,
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
     atmosphere: { ...state.atmosphere },
@@ -6066,7 +6074,9 @@ function collectScene(options) {
 //      rebuilt afterwards.
 //   3. The camera goes LAST, after everything that moves it.
 async function applyScene(record) {
-  const scene_ = record.state || {};
+  // COMPLETED BEFORE IT IS READ (scene_defaults.js): a setting the scene
+  // does not carry is the studio's own default, never the last picture's.
+  const scene_ = completeScene(record.state);
   const control = (id) => document.getElementById(id);
   const cut = scene_.cut || {};
   if (cut.material) control("material-select").value = cut.material;
@@ -6193,7 +6203,28 @@ async function applyScene(record) {
   applyWindState();
   if (typeof scene_.backgroundTone === "number") {
     control("background-tone").value = scene_.backgroundTone;
+    control("background-tone-value").textContent = Math.round(scene_.backgroundTone);
   }
+  // The sky's own brightness, applied with the sun below.
+  state.skyBrightness = scene_.skyBrightness;
+  control("sky-brightness").value = Math.round(scene_.skyBrightness * 100);
+  control("sky-brightness-value").textContent = Math.round(scene_.skyBrightness * 100);
+  paintScrub(control("sky-brightness"));
+  // The skin's surface depth and crevice shading.
+  state.relief = scene_.relief;
+  state.occlusion = scene_.occlusion;
+  control("material-relief").value = scene_.relief;
+  control("material-occlusion").value = scene_.occlusion;
+  applySurfaceControls();
+  // The machine, shown or put away.
+  state.showMachine = scene_.showMachine;
+  control("show-machine").checked = scene_.showMachine;
+  // The day cycle's length, its peak and whether a take carries it.
+  state.dayCycle.seconds = scene_.dayCycle.seconds;
+  state.dayCycle.peakElevation = scene_.dayCycle.peakElevation;
+  state.dayCycle.record = scene_.dayCycle.record;
+  control("day-cycle-seconds").value = scene_.dayCycle.seconds;
+  control("day-cycle-record").checked = scene_.dayCycle.record;
   if (typeof scene_.brightness === "number") {
     state.brightness = scene_.brightness; control("brightness").value = scene_.brightness;
   }
@@ -14270,6 +14301,9 @@ function syncWindControls() {
   }
 }
 
+// The studio starts in a breeze, so the air is set before the first frame.
+applyWindState();
+
 for (const [id, key, digits] of WIND_DIALS) {
   const input = document.getElementById(id);
   // Every tick moves the air: the strength, the gusts and the direction are
@@ -18658,6 +18692,9 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   // The wind's air and the one render entry, so a probe can hold the wind's
   // clock at an instant and photograph it, shadows included.
   windAir, renderView,
+  // A scene restored straight from a record, so a probe can hand it one
+  // that is missing settings and see what comes back.
+  applyScene, collectScene,
   reflectionTarget,
   ensurePropTemplate, renderObjectPreview, composer, buildMachine,
   machine: () => machineObjects,

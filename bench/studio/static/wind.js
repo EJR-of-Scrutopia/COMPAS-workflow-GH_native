@@ -71,7 +71,10 @@ export function windUniformsFrom(settings) {
   return { strength, gusts, direction: [-Math.cos(from), -Math.sin(from)] };
 }
 
-export const WIND_DEFAULTS = { strength: 0, from: 225, gusts: 50 };
+// A light breeze by default. Param, 2026-09-14: "have the wind on as
+// default set to like 10%". A scene saved before the wind existed comes back
+// in the same breeze.
+export const WIND_DEFAULTS = { strength: 10, from: 225, gusts: 50 };
 export const WIND_RANGES = { strength: [0, 100], from: [0, 360], gusts: [0, 100] };
 
 // A saved scene's wind, clamped, and still a calm for a scene from before.
