@@ -156,7 +156,15 @@ public sealed record ExportInputs(
     string Studio,
     double Radius,
     string Mechanism,
-    string MachineFolder);
+    string MachineFolder)
+{
+    /// <summary>The machine Placed Mechanism carried inside Mechanism, split
+    /// off before the study is built (2026-09-14); null when none rode.</summary>
+    public string? MachineDocument { get; init; }
+
+    /// <summary>The id the study cites the carried machine by.</summary>
+    public string? MachineId { get; init; }
+}
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -715,13 +723,11 @@ public sealed class ExportComponent : NativeComponentBase
                 built = uploader.BuildNow(pending);
                 if (built is not null)
                 {
+                    string mechanismFolder = string.IsNullOrWhiteSpace(inputs.MachineFolder)
+                        ? MechanismFolderUnder(folder!)
+                        : inputs.MachineFolder.Trim();
                     ExportSetWrite outcome = WriteSetInto(
-                        folder!,
-                        string.IsNullOrWhiteSpace(inputs.MachineFolder)
-                            ? MechanismFolderUnder(folder!)
-                            : inputs.MachineFolder.Trim(),
-                        name,
-                        built.Payloads);
+                        folder!, mechanismFolder, name, built.Payloads);
                     if (outcome.Error is not null)
                     {
                         AddRuntimeMessage(
@@ -734,8 +740,23 @@ public sealed class ExportComponent : NativeComponentBase
                     // leave the previous solve's list standing under an
                     // Error saying the write had failed, which reads as
                     // files that are there and are not.
-                    _lastWritten = outcome.Written;
-                    wroteThisSolve = outcome.Written.Count > 0;
+                    // THE CARRIED MACHINE, saved beside the study's mechanism
+                    // file (2026-09-14), only once the set itself wrote.
+                    var writtenNow = new List<string>(outcome.Written);
+                    if (outcome.Error is null &&
+                        inputs.MachineDocument is not null &&
+                        inputs.MachineId is not null)
+                    {
+                        var machineWarnings = new List<string>();
+                        string? machinePath = MechanismCollector.WriteCarriedMachine(
+                            mechanismFolder, inputs.MachineId, inputs.MachineDocument, machineWarnings);
+                        if (machinePath is not null)
+                            writtenNow.Add(machinePath);
+                        foreach (string machineWarning in machineWarnings)
+                            AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, machineWarning);
+                    }
+                    _lastWritten = writtenNow;
+                    wroteThisSolve = writtenNow.Count > 0;
                 }
                 else
                 {
@@ -1209,8 +1230,15 @@ public sealed class ExportComponent : NativeComponentBase
             liveInput,
             studio,
             radius,
-            mechanismInput ?? string.Empty,
-            machineFolderInput ?? string.Empty);
+            MechanismCollector.SplitCarriedMachine(
+                mechanismInput ?? string.Empty,
+                out string? carriedMachine,
+                out string? carriedMachineId),
+            machineFolderInput ?? string.Empty)
+        {
+            MachineDocument = carriedMachine,
+            MachineId = carriedMachineId,
+        };
         return true;
     }
 

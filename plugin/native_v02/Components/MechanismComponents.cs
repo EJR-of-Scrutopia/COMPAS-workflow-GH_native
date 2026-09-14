@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
@@ -274,6 +275,79 @@ internal static class MechanismCollector
     public const double MinimumAnchorTieTolerance = 1.0e-6;
 
     public const double MinimumSpoolRadius = 1.0e-6;
+
+    /// <summary>
+    /// THE MACHINE RIDES TO EXPORT INSIDE THE STUDY PAYLOAD (2026-09-14).
+    /// Placed Mechanism builds the machine but writes no file: Export already
+    /// knows where the mechanism document goes, and saves the machine there
+    /// too, as &lt;id&gt;-machine.json, so the one component needs no folder
+    /// of its own. Export splits the machine off before the study document
+    /// is built, so the study never carries machine bodies.
+    /// </summary>
+    public const string CarriedMachineKey = "machineDocument";
+
+    public static string CarryMachine(string payload, string machineDocument)
+    {
+        JsonObject rootNode = JsonNode.Parse(payload)!.AsObject();
+        rootNode[CarriedMachineKey] = JsonNode.Parse(machineDocument);
+        return rootNode.ToJsonString();
+    }
+
+    /// <summary>
+    /// The study payload without the carried machine, plus the machine and
+    /// the id the study cites it by. A payload carrying no machine comes
+    /// back untouched, which is every payload the older Mechanism component
+    /// makes.
+    /// </summary>
+    public static string SplitCarriedMachine(
+        string payload, out string? machineDocument, out string? machineId)
+    {
+        machineDocument = null;
+        machineId = null;
+        if (string.IsNullOrWhiteSpace(payload) ||
+            !payload.Contains("\"" + CarriedMachineKey + "\"", StringComparison.Ordinal))
+        {
+            return payload;
+        }
+        JsonObject rootNode = JsonNode.Parse(payload)!.AsObject();
+        if (rootNode[CarriedMachineKey] is not JsonNode carried)
+            return payload;
+        machineDocument = carried.ToJsonString();
+        machineId = rootNode["machine"]?["id"]?.GetValue<string>();
+        rootNode.Remove(CarriedMachineKey);
+        return rootNode.ToJsonString();
+    }
+
+    /// <summary>
+    /// Saves a carried machine as &lt;id&gt;-machine.json in the folder, only
+    /// when its content changed, and never over another machine's file.
+    /// Returns the path when the file is there afterwards, else null with
+    /// the reason in <paramref name="warnings"/>.
+    /// </summary>
+    public static string? WriteCarriedMachine(
+        string folder, string machineId, string machineDocument, List<string> warnings)
+    {
+        string id = (machineId ?? string.Empty).Trim();
+        if (!ExportPlan.NameIsOneSegment(id))
+        {
+            warnings.Add(
+                $"machine: id \"{id}\" cannot name a file (it is not one path " +
+                "segment), so the machine was not saved.");
+            return null;
+        }
+        Directory.CreateDirectory(folder);
+        string target = Path.Combine(folder, $"{id}-machine.json");
+        if (File.Exists(target) && File.ReadAllText(target) == machineDocument)
+            return target;
+        string? refusal = RefuseOverwritingAnotherMachine(target, id);
+        if (refusal is not null)
+        {
+            warnings.Add(refusal);
+            return null;
+        }
+        AtomicFile.Write(target, machineDocument);
+        return target;
+    }
 
     /// <summary>
     /// PLACEMENT FROM HIS TWO ORIENT LISTS (2026-09-14): his own method, run
@@ -6367,9 +6441,9 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             "PM",
             "One mechanism as you built it, oriented by your own two plane " +
             "lists (machine planes first, then side planes), with the tension " +
-            "tie you placed yourself. Writes the machine to its library " +
-            "folder and hands the study to Export's Mechanism input. Only your " +
-            "inputs, none optional.",
+            "tie you placed yourself. Hands the study, with the machine riding " +
+            "inside it, to Export's Mechanism input; Export saves both. Only " +
+            "your inputs, none optional.",
             ComponentCategories.Deliver,
             "placed_mechanism")
     {
@@ -6390,7 +6464,6 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
     internal const int MachinePlanesPort = 10;
     internal const int SidePlanesPort = 11;
     internal const int MachineIdPort = 12;
-    internal const int FolderPort = 13;
 
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
@@ -6452,11 +6525,6 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             "The machine's minted code, which the study cites and the machine " +
             "file is named by. Never change it for the same machine.",
             GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Folder", "F",
-            "The machine library folder. The machine is written here when its " +
-            "content changes, and left alone when it has not.",
-            GH_ParamAccess.item);
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
@@ -6484,9 +6552,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
 
             bool hasResult = MechanismCollectorComponent.TryReadResult(data, out ResultDto? solved);
             string machineId = string.Empty;
-            string folder = string.Empty;
             data.GetData(MachineIdPort, ref machineId);
-            data.GetData(FolderPort, ref folder);
             machineId = machineId.Trim();
 
             MechanismAssetInput parts = MachineComponent.ReadAsset(data, Ports, false, warnings, notes);
@@ -6499,48 +6565,11 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
                 MechanismCollector.DefaultReeveFactor, null, warnings, notes);
 
             var status = new List<string>();
-            if (machine.Length > 0)
+            if (machine.Length > 0 && !ExportPlan.NameIsOneSegment(machineId))
             {
-                if (!ExportPlan.NameIsOneSegment(machineId))
-                {
-                    warnings.Add(
-                        $"Machine Id \"{machineId}\" cannot name a file (it is not " +
-                        "one path segment), so the machine was not written.");
-                }
-                else if (string.IsNullOrWhiteSpace(folder))
-                {
-                    warnings.Add("Folder is empty, so the machine was not written.");
-                }
-                else
-                {
-                    try
-                    {
-                        Directory.CreateDirectory(folder);
-                        string target = Path.Combine(folder, $"{machineId}-machine.json");
-                        if (File.Exists(target) && File.ReadAllText(target) == machine)
-                        {
-                            status.Add($"machine unchanged: {target}");
-                        }
-                        else
-                        {
-                            string? refusal =
-                                MechanismCollector.RefuseOverwritingAnotherMachine(target, machineId);
-                            if (refusal is not null)
-                            {
-                                warnings.Add(refusal);
-                            }
-                            else
-                            {
-                                AtomicFile.Write(target, machine);
-                                status.Add($"machine written: {target}");
-                            }
-                        }
-                    }
-                    catch (Exception writeError)
-                    {
-                        warnings.Add("The machine could not be written: " + writeError.Message);
-                    }
-                }
+                warnings.Add(
+                    $"Machine Id \"{machineId}\" cannot name a file (it is not " +
+                    "one path segment), so Export will not save the machine.");
             }
 
             MechanismMachineCitation? citation = machine.Length > 0
@@ -6572,6 +6601,13 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             string? payload = MechanismCollector.BuildWithResult(
                 study, routing, placements, warnings, notes,
                 placements.Count == 0 ? null : solved, null, null, citation);
+            if (payload is not null && machine.Length > 0)
+            {
+                payload = MechanismCollector.CarryMachine(payload, machine);
+                status.Add(
+                    $"machine carried to Export, which saves it as {machineId}-machine.json " +
+                    "beside the study's mechanism file.");
+            }
 
             status.Insert(0,
                 $"received: machine \"{machineId}\" " +

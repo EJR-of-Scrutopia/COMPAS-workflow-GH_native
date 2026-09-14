@@ -43810,7 +43810,7 @@ internal static partial class Program
             (6, "RP", "Reel Rotation Planes", "tree"), (7, "RT", "Wire Frames", "tree"),
             (8, "WS", "Wire Start", "tree"), (9, "CB", "Cables", "list"),
             (10, "MP", "Machine Planes", "list"), (11, "SP", "Side Planes", "list"),
-            (12, "ID", "Machine Id", "item"), (13, "F", "Folder", "item"),
+            (12, "ID", "Machine Id", "item"),
         });
     }
 
@@ -44141,6 +44141,49 @@ internal static partial class Program
             string got = type.GetProperty("Exposure")!.GetValue(component)!.ToString()!;
             if (got != exposure)
                 failures.Add($"{typeName} must be exposed as {exposure} on the toolbar; it is {got}");
+        }
+
+        // ONLY HIS INPUTS: thirteen, no folder (Export saves the machine).
+        {
+            Type placed = RequireComponentType(plugin, "PlacedMechanismComponent");
+            object component = Activator.CreateInstance(placed)!;
+            object paramsObject = placed.BaseType!.GetProperty("Params")!.GetValue(component)!;
+            int inputCount = ((IList)paramsObject.GetType().GetProperty("Input")!.GetValue(paramsObject)!).Count;
+            if (inputCount != 13)
+                failures.Add($"Placed Mechanism must carry exactly his thirteen inputs; it has {inputCount}");
+        }
+
+        // THE MACHINE RIDES TO EXPORT: carried, split back off whole, and saved
+        // as <id>-machine.json with exactly its own text.
+        {
+            MethodInfo carry = RequirePublicStatic(collectorType, "CarryMachine");
+            MethodInfo split = RequirePublicStatic(collectorType, "SplitCarriedMachine");
+            MethodInfo save = RequirePublicStatic(collectorType, "WriteCarriedMachine");
+            const string study = "{\"schema\":\"study\",\"machine\":{\"id\":\"winch-7\"}}";
+            const string machineDoc = "{\"schema\":\"bench.machine/1\",\"id\":\"winch-7\",\"parts\":[1,2,3]}";
+            string carried = (string)carry.Invoke(null, new object?[] { study, machineDoc })!;
+            object?[] splitArgs = { carried, null, null };
+            string back = (string)split.Invoke(null, splitArgs)!;
+            if (back.Contains("machineDocument", StringComparison.Ordinal) || !back.Contains("winch-7", StringComparison.Ordinal))
+                failures.Add("the study payload must come back without the machine and still citing it: " + back);
+            if ((string?)splitArgs[1] != machineDoc || (string?)splitArgs[2] != "winch-7")
+                failures.Add($"the carried machine must split back off whole with its id; got id {splitArgs[2]} and {splitArgs[1]}");
+            object?[] plainArgs = { study, null, null };
+            if ((string)split.Invoke(null, plainArgs)! != study || plainArgs[1] is not null)
+                failures.Add("a payload carrying no machine must come back untouched");
+            string folder = Path.Combine(Path.GetTempPath(), "ananke-carry-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                string? path = (string?)save.Invoke(null, new object?[] { folder, "winch-7", machineDoc, new List<string>() });
+                string expected = Path.Combine(folder, "winch-7-machine.json");
+                if (path != expected || !File.Exists(expected) || File.ReadAllText(expected) != machineDoc)
+                    failures.Add($"the machine must be saved as winch-7-machine.json with its own text; got {path}");
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                    Directory.Delete(folder, true);
+            }
         }
 
         // EVERY PART POSITION a reader carries, on BOTH components that read
