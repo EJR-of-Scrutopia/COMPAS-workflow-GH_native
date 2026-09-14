@@ -20,9 +20,10 @@ namespace Ananke.COMPAS.Native.Components
     /// Resolving the principal lines, the notched bars a reconfigurable mould
     /// holds rigid, into runs of vertex indices on the pattern.
     ///
-    /// ONE way in. An author draws the bars as curves over the pattern and
-    /// each is matched to the run of pattern vertices lying along it.
-    /// Matching is done in plan, so a bar drawn flat still finds its nodes.
+    /// ONE way in. An author draws the bars as curves along the pattern's
+    /// own edges and each takes ONLY the edges it lies on, never the run
+    /// nearest it. Matching is done in plan, so a bar drawn flat still finds
+    /// its nodes.
     /// A principal line is a decision, and nothing here makes it for the
     /// author: the derivation from the anchors that used to stand in when no
     /// curves were drawn is gone, because a definition that forgot its curves
@@ -37,7 +38,7 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// One bar, however many times it was traced.
         ///
-        /// Two curves laid near the same run of nodes both snap to it. The
+        /// Two curves drawn on the same run of edges both take it. The
         /// duplicate is invisible in the viewport, because the second bar
         /// draws exactly on top of the first, and it is ruinous downstream:
         /// each bar is given its OWN full set of columns, each mirrored about
@@ -75,28 +76,22 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Runs matched from drawn curves. Matching is in plan, so a bar drawn
-        /// on the flat pattern still finds its nodes on a surface that rises.
+        /// Runs matched from drawn curves, each the pattern edges that curve
+        /// lies on (<see cref="MouldGeometry.SnapSampledLineToNodes"/>).
+        /// Matching is in plan, so a bar drawn on the flat pattern still finds
+        /// its nodes on a surface that rises.
         ///
-        /// <paramref name="worstOffset"/> and <paramref name="gauge"/> come
-        /// back so the caller can tell the author when a line was drawn where
-        /// no run of nodes goes: the offset is how far the furthest matched bar
-        /// sits from the curve that asked for it, the gauge the mesh's own
-        /// median edge length to measure that against.
-        /// <paramref name="unmatched"/> is how many curves caught fewer than
-        /// two nodes and were dropped, so the caller can tell a DROPPED curve
-        /// from two curves MERGED onto one run by <see cref="Deduplicate"/>.
+        /// <paramref name="unmatched"/> is how many curves did not lie along
+        /// one unbroken chain of edges and were dropped, so the caller can
+        /// tell a DROPPED curve from two curves MERGED onto one run by
+        /// <see cref="Deduplicate"/>.
         /// </summary>
         public static List<List<int>> FromCurves(
             IReadOnlyList<Curve> curves,
             IReadOnlyList<Point3d> vertices,
             IReadOnlyList<EdgeDto> edges,
-            out double worstOffset,
-            out double gauge,
             out int unmatched)
         {
-            worstOffset = 0.0;
-            gauge = 0.0;
             unmatched = 0;
             var runs = new List<List<int>>();
             if (curves.Count == 0 || vertices.Count == 0)
@@ -115,28 +110,27 @@ namespace Ananke.COMPAS.Native.Components
                 return runs;
             }
 
-            gauge = MouldGeometry.MedianEdgeLength(nodes, pairs);
             foreach (Curve curve in curves)
             {
                 if (curve is null)
                     continue;
                 List<int> run = MouldGeometry.SnapCurveToNodes(
-                    curve, nodes, pairs, out double offset);
+                    curve, nodes, pairs);
                 if (run.Count < 2)
                 {
                     unmatched++;
                     continue;
                 }
                 runs.Add(run);
-                worstOffset = Math.Max(worstOffset, offset);
             }
             return Deduplicate(runs);
         }
 
         /// <summary>
         /// What Pattern says about the curves it was handed, from three
-        /// counts: how many curves were supplied, how many caught fewer than
-        /// two nodes, and how many runs survived deduplication.
+        /// counts: how many curves were supplied, how many did not lie along
+        /// one unbroken chain of edges, and how many runs survived
+        /// deduplication.
         ///
         /// No curves is silence, because the FD path never draws any. Curves
         /// with no run at all is an ERROR, and Pattern emits nothing on it: a
@@ -156,25 +150,27 @@ namespace Ananke.COMPAS.Native.Components
                 return new PrincipalOutcome(
                     "error",
                     $"{supplied} principal line(s) were wired into Pattern and "
-                    + "none of them lie over a run of pattern nodes in plan. A "
-                    + "bar can only stand on nodes: draw each line through at "
-                    + "least two connected pattern nodes. No Pattern is emitted "
-                    + "until one does.");
+                    + "none of them lies along an unbroken chain of pattern "
+                    + "edges in plan. A bar stands only on the edges it is drawn "
+                    + "on: draw each line along the net's own edges, node to "
+                    + "node. No Pattern is emitted until one does.");
             }
             if (unmatched > 0)
             {
                 return new PrincipalOutcome(
                     "warning",
-                    $"{unmatched} of {supplied} principal lines caught fewer "
-                    + "than two pattern vertices and were dropped. They must "
-                    + "lie over the pattern in plan.");
+                    $"{unmatched} of {supplied} principal lines do not lie along "
+                    + "one unbroken chain of pattern edges and were dropped. A "
+                    + "line that follows no edge, crosses a cell or has a gap "
+                    + "in its chain is not a bar: draw it along the net's own "
+                    + "edges.");
             }
             int merged = supplied - kept;
             if (merged > 0)
             {
                 return new PrincipalOutcome(
                     "remark",
-                    $"{supplied} principal lines snapped to {kept} distinct "
+                    $"{supplied} principal lines lie on {kept} distinct "
                     + $"run(s) of nodes; {merged} duplicate(s) merged into the "
                     + "bar they share. Two curves on one run of nodes are one "
                     + "bar.");

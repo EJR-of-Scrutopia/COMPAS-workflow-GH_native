@@ -97,13 +97,14 @@ public sealed class PatternComponent : NativePreviewComponentBase
             "Principal Lines",
             "P",
             "Optional. The notched bars a reconfigurable mould holds rigid, " +
-            "drawn as curves over this pattern. They are matched HERE, in " +
-            "plan, to runs of pattern vertices and carried downstream as " +
-            "indices, because once the surface rises the curves no longer sit " +
-            "on it and cannot find their own nodes. This is the ONLY way a " +
-            "principal line enters the chain: nothing derives one for you. " +
-            "Wired curves that match no run of nodes are an error and no " +
-            "Pattern is emitted.",
+            "drawn along this pattern's own edges. Only the edges each curve " +
+            "lies ON are taken, in plan, and carried downstream as indices, " +
+            "because once the surface rises the curves no longer sit on it. " +
+            "A curve that follows no edge, crosses a cell or has a gap in its " +
+            "chain is dropped, never snapped to the nearest run. This is the " +
+            "ONLY way a principal line enters the chain: nothing derives one " +
+            "for you. Wired curves none of which lie along the edges are an " +
+            "error and no Pattern is emitted.",
             GH_ParamAccess.list);
         parameters[4].Optional = true;
         parameters[4].DataMapping = GH_DataMapping.Flatten;
@@ -211,8 +212,6 @@ public sealed class PatternComponent : NativePreviewComponentBase
                 principalCurves,
                 patternVertices,
                 patternEdges,
-                out double principalOffset,
-                out double principalGauge,
                 out int unmatchedCurves);
             PrincipalOutcome outcome = PrincipalRunFinder.Outcome(
                 principalCurves.Count, unmatchedCurves, principalRuns.Count);
@@ -229,24 +228,6 @@ public sealed class PatternComponent : NativePreviewComponentBase
                         GH_RuntimeMessageLevel.Remark, outcome.Message);
                     break;
             }
-            // A bar can only stand on nodes. A line drawn down the middle of a
-            // bay has no run of nodes to sit on, so the nearest one is taken
-            // and it lands half a cell off. That is a real offset in the built
-            // thing, not a drawing artefact, so it is named rather than left
-            // to be noticed in the viewport.
-            if (principalRuns.Count > 0 &&
-                principalGauge > 0.0 &&
-                principalOffset > 0.25 * principalGauge)
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Remark,
-                    $"A principal line sits {principalOffset:G3} off the " +
-                    "curve that asked for it, against a mesh spacing of " +
-                    $"{principalGauge:G3}. A bar can only stand on nodes, so " +
-                    "the nearest run of them was taken. Draw the line " +
-                    "through a run of pattern nodes to place it exactly.");
-            }
-
             TopologyDto topology = TopologyDto.Create(
                 registered.Kind,
                 patternPoints,

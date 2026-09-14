@@ -2610,19 +2610,47 @@ internal static partial class Program
         {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
-                "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
-                + "middle of a bay, with the node column either side of it "
-                + "inside the catch radius, matches ONE connected column end "
-                + "to end (9 nodes, every consecutive pair joined by a mesh "
-                + "edge, x constant, y strictly increasing) and reports its "
-                + "0.5 offset; a line drawn on a column matches that column "
-                + "at zero offset. The zigzag regression is MEASURED, not "
-                + "inspected.");
+                "PASS  MouldGeometry.SnapSampledLineToNodes: a principal line "
+                + "takes ONLY the pattern edges lying on the line drawn "
+                + "(Param's rule of 2026-09-14). On a unit grid a line on a "
+                + "column takes that column end to end although it runs off "
+                + "the net; a line down a bay takes nothing; a line stopping "
+                + "halfway along an edge takes the five nodes on it and no "
+                + "sixth; a line with a cell diagonal between two columns, and "
+                + "a line leaving a column across the cells, are both refused. "
+                + "On a 72 degree star arm whose neighbouring chain lay inside "
+                + "the old catch radius, the eleven centreline nodes come back "
+                + "in order, where the old walk hairpinned to seventeen.");
         }
         catch (Exception exception)
         {
             failures.Add(
                 $"MouldGeometry.SnapSampledLineToNodes: "
+                + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidatePrincipalLinesOnHisStar(plugin);
+            Console.WriteLine(
+                "PASS  Principal lines on his five-armed star (5 sided vault): "
+                + "five straight lines from the degree-ten centre node to the "
+                + "node at each arm's tip each come back as the eleven nodes on "
+                + "that arm, starting on the centre, ending on the tip, every "
+                + "step an edge of his net and every node on the line. Four of "
+                + "the five came back as twenty-node hairpins before "
+                + "2026-09-14.");
+        }
+        catch (HisNetsUnavailableException unavailable)
+        {
+            Console.WriteLine(
+                "SKIP  Principal lines on his five-armed star: "
+                + unavailable.Message);
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Principal lines on his five-armed star: "
                 + $"{DescribeException(exception)}");
         }
 
@@ -2774,7 +2802,9 @@ internal static partial class Program
                 + "and 3; the crown stands on exactly ONE column filed Bar -1 "
                 + "and Span -1, its foot fixed at the origin on the ground and "
                 + "its trunk vertical to a part in 1e9; and the catcher stays "
-                + "silent, the owner rule having already answered.");
+                + "silent, the owner rule having already answered. Every "
+                + "notch any tree holds is a node of a principal line, never "
+                + "one beside it.");
         }
         catch (Exception exception)
         {
@@ -6605,34 +6635,35 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// <c>MouldGeometry.SnapCurveToNodes</c>: a drawn principal line must
-    /// match a CONNECTED run of net nodes, not merely the set of nodes near
-    /// it.
+    /// <c>MouldGeometry.SnapSampledLineToNodes</c>: a principal line takes
+    /// ONLY the pattern edges lying on the line Param drew.
     ///
-    /// The regression this pins, found in the viewport 2026-08-26: the obvious
-    /// implementation collects every node inside a catch radius of the curve
-    /// and sorts them by how far along the curve they lie. A line drawn down
-    /// the middle of a bay catches the column of nodes EITHER SIDE of it, and
-    /// the two columns' positions along the curve interleave, so the sorted
-    /// run crosses the bay on every step. It draws as a zigzag, and it is
-    /// worse than a drawing fault: Animate pins that run and Column Finder
-    /// solves it as a beam, so the bar has notches on both sides of a bay and
-    /// is reported at roughly twice its true length.
+    /// His rule, 2026-09-14: "we should only take the lines i provide.
+    /// therefore the mesh edge / wire that is direct on the wire is what
+    /// needs to be selected." It replaces the nearest-run walk of 2026-08-26,
+    /// whose end-finishing pass put a HAIRPIN on four of the five bars of his
+    /// five-armed star: at the tip of each rotated arm it turned onto the
+    /// neighbouring chain (rounding made that right angle's cosine 3e-6, not
+    /// zero, and the pass took anything above zero) and walked nine nodes back
+    /// inside its catch radius of 0.6 of the median edge. Each bar came back
+    /// as twenty nodes on two chains, with columns on both. The arm at 0
+    /// degrees, whose coordinates are exact, was the only one right.
     ///
-    /// The fixture is that exact case. A five-by-nine unit grid; the line
-    /// drawn at x = 1.5, halfway between the columns at x = 1 and x = 2, so
-    /// both sit 0.5 from it and the catch radius (0.6 of the unit median edge)
-    /// takes in both. A correct match picks ONE column and walks it end to
-    /// end. The sorted implementation returns 18 nodes alternating between
-    /// the two columns; the walk returns 9 on one.
+    /// Six cases, each able to fail on its own rule. On a five-by-nine unit
+    /// grid: a line on a column running off the net at both ends takes the
+    /// column; a line down a bay takes NOTHING, where the walk took the
+    /// nearest column; a line stopping halfway along an edge takes the five
+    /// nodes on it and not a sixth past its end; a line crossing a cell on its
+    /// diagonal between two columns is refused, because two pieces are not
+    /// one bar; a line leaving a column across the cells is refused although
+    /// the part on the column is one chain, because a line that cuts the net
+    /// does not lie on its edges. On an arm built like the tip of his star,
+    /// rotated to 72 degrees with its neighbouring chain inside the old catch
+    /// radius for six nodes back from the tip: the eleven centreline nodes, in
+    /// order, where the walk returned seventeen.
     ///
-    /// A second case draws the line ON the column at x = 2, where only that
-    /// column is inside the radius, and asserts the offset comes back at zero
-    /// so the reported offset is not merely always the same number.
-    ///
-    /// Reflection-only, in this harness's usual manner: no Rhino document and
-    /// no SolveInstance, only the static geometry method and the RhinoCommon
-    /// types it already has loaded.
+    /// Reflection-only, in this harness's usual manner: the static geometry
+    /// method and the RhinoCommon Point3d it already has loaded.
     /// </summary>
     private static void ValidatePrincipalLineSnapping(Assembly plugin)
     {
@@ -6642,142 +6673,322 @@ internal static partial class Program
             BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 "MouldGeometry.SnapSampledLineToNodes was not found.");
-
-        // Take the Rhino types off the method's own signature rather than
-        // naming an assembly: whatever RhinoCommon the plugin was loaded
-        // against is by definition the one these arguments must satisfy.
-        // Point3d is a plain struct and needs no native core; a Curve would,
-        // which is exactly why the walk takes sampled points instead.
         ParameterInfo[] parameters = snap.GetParameters();
         Type point3d = parameters[0].ParameterType.GetElementType()
             ?? throw new InvalidOperationException(
                 "SnapSampledLineToNodes' first parameter is not an array.");
 
-        const int columns = 5;
-        const int rows = 9;
-        Array nodes = Array.CreateInstance(point3d, columns * rows);
-        for (int row = 0; row < rows; row++)
-        for (int column = 0; column < columns; column++)
+        Array Points(IReadOnlyList<(double X, double Y)> points)
         {
-            nodes.SetValue(
-                Activator.CreateInstance(
-                    point3d, (double)column, (double)row, 0.0),
-                (row * columns) + column);
+            Array array = Array.CreateInstance(point3d, points.Count);
+            for (int i = 0; i < points.Count; i++)
+            {
+                array.SetValue(
+                    Activator.CreateInstance(
+                        point3d, points[i].X, points[i].Y, 0.0),
+                    i);
+            }
+            return array;
         }
 
-        var edges = new List<(int, int)>();
+        // The line as the component samples a curve, 512 steps a segment
+        // with every corner kept exactly.
+        Array Drawn(params (double X, double Y)[] corners)
+        {
+            const int perSegment = 512;
+            var points = new List<(double X, double Y)>();
+            for (int c = 0; c + 1 < corners.Length; c++)
+            {
+                for (int s = 0; s < perSegment; s++)
+                {
+                    double f = (double)s / perSegment;
+                    points.Add((
+                        corners[c].X + ((corners[c + 1].X - corners[c].X) * f),
+                        corners[c].Y + ((corners[c + 1].Y - corners[c].Y) * f)));
+                }
+            }
+            points.Add(corners[corners.Length - 1]);
+            return Points(points);
+        }
+
+        var failures = new List<string>();
+        void Expect(
+            string label,
+            Array nodes,
+            (int, int)[] edges,
+            Array line,
+            int[] expected,
+            string why)
+        {
+            object?[] arguments = { line, nodes, edges };
+            List<int> run = ((IEnumerable)(snap.Invoke(null, arguments)
+                ?? throw new InvalidOperationException(
+                    $"{label}: SnapSampledLineToNodes returned null.")))
+                .Cast<int>()
+                .ToList();
+            if (!run.SequenceEqual(expected))
+            {
+                failures.Add(
+                    $"{label}: expected [{string.Join(", ", expected)}], got "
+                    + $"[{string.Join(", ", run)}]. {why}");
+            }
+        }
+
+        // Five by nine at unit spacing, node id = row * 5 + column.
+        const int columns = 5;
+        const int rows = 9;
+        var gridPoints = new List<(double X, double Y)>();
+        for (int row = 0; row < rows; row++)
+        for (int column = 0; column < columns; column++)
+            gridPoints.Add((column, row));
+        var gridEdges = new List<(int, int)>();
         for (int row = 0; row < rows; row++)
         for (int column = 0; column < columns; column++)
         {
             int id = (row * columns) + column;
             if (column + 1 < columns)
-                edges.Add((id, id + 1));
+                gridEdges.Add((id, id + 1));
             if (row + 1 < rows)
-                edges.Add((id, id + columns));
+                gridEdges.Add((id, id + columns));
         }
-        var adjacency = new HashSet<(int, int)>();
-        foreach ((int u, int v) in edges)
-        {
-            adjacency.Add((u, v));
-            adjacency.Add((v, u));
-        }
-        (int, int)[] edgeArray = edges.ToArray();
+        Array grid = Points(gridPoints);
+        (int, int)[] gridEdgeArray = gridEdges.ToArray();
+        int[] ColumnTwo(int lastRow) => Enumerable.Range(0, lastRow + 1)
+            .Select(row => (row * columns) + 2)
+            .ToArray();
 
-        CheckOneSnap(
-            snap, point3d, nodes, edgeArray, adjacency,
-            drawnAt: 1.5, expectedOffset: 0.5, label: "drawn down a bay");
-        CheckOneSnap(
-            snap, point3d, nodes, edgeArray, adjacency,
-            drawnAt: 2.0, expectedOffset: 0.0, label: "drawn on a column");
+        Expect(
+            "on a column, running off the net at both ends",
+            grid, gridEdgeArray, Drawn((2, -1), (2, 9)), ColumnTwo(8),
+            "A line lying on a column is that column end to end, and running "
+            + "past the net is no reason to refuse it.");
+        Expect(
+            "down the middle of a bay",
+            grid, gridEdgeArray, Drawn((1.5, -1), (1.5, 9)), Array.Empty<int>(),
+            "No edge lies on this line, so nothing is taken. The walk took the "
+            + "nearest column 0.5 away, a bar Param did not draw.");
+        Expect(
+            "stopping halfway along an edge",
+            grid, gridEdgeArray, Drawn((2, -1), (2, 4.5)), ColumnTwo(4),
+            "Only nodes ON the line are notches; the node at y = 5 lies 0.5 "
+            + "past its end, and the walk's end pass added it.");
+        Expect(
+            "a column, a cell diagonal, then a column",
+            grid, gridEdgeArray, Drawn((2, -1), (2, 4), (3, 5), (3, 9)),
+            Array.Empty<int>(),
+            "The edges on this line are two pieces with a cell crossed between "
+            + "them, and two pieces are not one bar.");
+        Expect(
+            "a column, then off across the cells",
+            grid, gridEdgeArray, Drawn((2, -1), (2, 4), (2.5, 6)),
+            Array.Empty<int>(),
+            "The part on the column is one chain, but the line goes on to cut "
+            + "edges of the net, so it does not lie on the net's edges and is "
+            + "refused rather than cut short.");
+
+        // The tip of an arm of his star. The centreline runs out at 72
+        // degrees in ten steps of 0.8. The chains beside it sit 0.30 off it at
+        // the tip and spread by 0.03 a row inward, so the first stays inside
+        // the old catch radius (0.6 of the 0.8 median, 0.48) for six nodes
+        // back from the tip and the second never enters it. The tip row leans
+        // by 0.005 a chain, so the turn onto the neighbour is just under a
+        // right angle, which is what rounding did on his rotated arms.
+        const int armRows = 10;
+        const int half = 2;
+        double theta = 72.0 * Math.PI / 180.0;
+        double ux = Math.Cos(theta);
+        double uy = Math.Sin(theta);
+        int ArmId(int row, int chain) => (row * ((2 * half) + 1)) + chain + half;
+        var armPoints = new List<(double X, double Y)>();
+        for (int row = 0; row <= armRows; row++)
+        {
+            double spacing = 0.30 + (0.03 * (armRows - row));
+            for (int chain = -half; chain <= half; chain++)
+            {
+                double along = (0.8 * row) + (row == armRows ? 0.005 * chain : 0.0);
+                double off = chain * spacing;
+                armPoints.Add(((along * ux) - (off * uy), (along * uy) + (off * ux)));
+            }
+        }
+        var armEdges = new List<(int, int)>();
+        for (int row = 0; row <= armRows; row++)
+        for (int chain = -half; chain < half; chain++)
+            armEdges.Add((ArmId(row, chain), ArmId(row, chain + 1)));
+        for (int row = 0; row < armRows; row++)
+        for (int chain = -half; chain <= half; chain++)
+            armEdges.Add((ArmId(row, chain), ArmId(row + 1, chain)));
+        int[] centreline = Enumerable.Range(0, armRows + 1)
+            .Select(row => ArmId(row, 0))
+            .ToArray();
+        Expect(
+            "an arm of the star, root to tip",
+            Points(armPoints), armEdges.ToArray(),
+            Drawn(armPoints[ArmId(0, 0)], armPoints[ArmId(armRows, 0)]),
+            centreline,
+            "The bar is the eleven centreline nodes in order. The walk's end "
+            + "pass turned at the tip onto the chain beside it and came back "
+            + "six nodes, the hairpin on four of the five arms of his star.");
+
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{failures.Count} of 6 principal line cases wrong: "
+                + string.Join(" | ", failures));
+        }
     }
 
-    private static void CheckOneSnap(
-        MethodInfo snap,
-        Type point3d,
-        Array nodes,
-        (int, int)[] edges,
-        HashSet<(int, int)> adjacency,
-        double drawnAt,
-        double expectedOffset,
-        string label)
+    /// <summary>
+    /// His five-armed star, the net the hairpins were found on (5 sided
+    /// vault, exported 2026-09-09). Five straight lines from the centre node
+    /// to the tip of each arm, as he draws them, must each come back as the
+    /// eleven nodes on that arm and nothing else: starting on the centre,
+    /// ending on the tip, every step an edge of the net and every node on the
+    /// line. Before 2026-09-14 four of the five came back as twenty, out
+    /// along the arm and back down the chain beside it.
+    ///
+    /// The lines are rebuilt from the net itself, from its degree-ten centre
+    /// and the node nearest radius 8 on each of the five 72 degree
+    /// directions, and that premise is pinned first, so the check cannot
+    /// quietly measure some other net.
+    /// </summary>
+    private static void ValidatePrincipalLinesOnHisStar(Assembly plugin)
     {
-        const int columns = 5;
-        const int rows = 9;
-
-        // The line the author drew, sampled the way the component samples it:
-        // straight down the grid at x = drawnAt, running past both ends.
-        const int samples = 512;
-        Array sampled = Array.CreateInstance(point3d, samples + 1);
-        for (int index = 0; index <= samples; index++)
+        if (!Directory.Exists(HisExportsRoot))
         {
-            double y = -1.0 + (10.0 * index / samples);
-            sampled.SetValue(
-                Activator.CreateInstance(point3d, drawnAt, y, 0.0),
-                index);
+            throw new HisNetsUnavailableException(
+                $"COMPAS Exports folder not found at '{HisExportsRoot}'.");
+        }
+        string path = Path.Combine(HisExportsRoot, "5 sided vault-form.json");
+        if (!File.Exists(path))
+        {
+            throw new HisNetsUnavailableException(
+                $"'5 sided vault-form.json' is not on disk under "
+                + $"'{HisExportsRoot}'.");
         }
 
-        object?[] arguments = { sampled, nodes, edges, 0.0 };
-        object? returned = snap.Invoke(null, arguments);
-        double offset = (double)arguments[3]!;
-        List<int> run = (returned as IEnumerable
+        Type mouldGeometry = RequireComponentType(plugin, "MouldGeometry");
+        MethodInfo snap = mouldGeometry.GetMethod(
+            "SnapSampledLineToNodes",
+            BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException(
-                $"SnapCurveToNodes ({label}) returned no run."))
-            .Cast<int>()
-            .ToList();
+                "MouldGeometry.SnapSampledLineToNodes was not found.");
+        ParameterInfo[] parameters = snap.GetParameters();
+        Type point3d = parameters[0].ParameterType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "SnapSampledLineToNodes' first parameter is not an array.");
 
-        if (run.Count != rows)
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+        JsonElement topology = document.RootElement
+            .GetProperty("problem").GetProperty("anchored")
+            .GetProperty("pattern").GetProperty("topology");
+        (double X, double Y)[] points = topology.GetProperty("vertices")
+            .EnumerateArray()
+            .Select(v => (v.GetProperty("x").GetDouble(), v.GetProperty("y").GetDouble()))
+            .ToArray();
+        (int, int)[] edges = topology.GetProperty("edges")
+            .EnumerateArray()
+            .Select(e => (e.GetProperty("u").GetInt32(), e.GetProperty("v").GetInt32()))
+            .Where(e => e.Item1 != e.Item2)
+            .ToArray();
+        var neighbours = new Dictionary<int, HashSet<int>>();
+        foreach ((int u, int v) in edges)
         {
-            throw new InvalidOperationException(
-                $"A principal line {label} must match one node per row, "
-                + $"{rows} in all; it matched {run.Count}. "
-                + (run.Count > rows
-                    ? "More than one per row is the zigzag: the run is "
-                      + "crossing the bay instead of following it."
-                    : "Fewer means the walk stopped short of the far side."));
+            if (!neighbours.TryGetValue(u, out HashSet<int>? fromU))
+                neighbours[u] = fromU = new HashSet<int>();
+            if (!neighbours.TryGetValue(v, out HashSet<int>? fromV))
+                neighbours[v] = fromV = new HashSet<int>();
+            fromU.Add(v);
+            fromV.Add(u);
         }
 
-        int first = run[0];
-        int firstColumn = first % columns;
-        for (int step = 0; step < run.Count; step++)
+        double Distance(int i, double x, double y) => Math.Sqrt(
+            ((points[i].X - x) * (points[i].X - x))
+            + ((points[i].Y - y) * (points[i].Y - y)));
+        int Nearest(double x, double y) => Enumerable.Range(0, points.Length)
+            .OrderBy(i => Distance(i, x, y))
+            .First();
+        Array Points(IReadOnlyList<(double X, double Y)> list)
         {
-            int node = run[step];
-            if (node % columns != firstColumn)
+            Array array = Array.CreateInstance(point3d, list.Count);
+            for (int i = 0; i < list.Count; i++)
             {
-                throw new InvalidOperationException(
-                    $"A principal line {label} left its column at step "
-                    + $"{step}: node {node} is in column {node % columns}, "
-                    + $"the run started in column {firstColumn}. A bar "
-                    + "cannot cross the bay it runs down.");
+                array.SetValue(
+                    Activator.CreateInstance(point3d, list[i].X, list[i].Y, 0.0),
+                    i);
             }
-            if (node / columns != step)
-            {
-                throw new InvalidOperationException(
-                    $"A principal line {label} is out of order at step "
-                    + $"{step}: node {node} is in row {node / columns}. The "
-                    + "run must advance one row per step, end to end.");
-            }
-            if (step > 0 && !adjacency.Contains((run[step - 1], node)))
-            {
-                throw new InvalidOperationException(
-                    $"A principal line {label} jumped at step {step}: nodes "
-                    + $"{run[step - 1]} and {node} share no mesh edge. A bar "
-                    + "is a connected chain of notches.");
-            }
+            return array;
         }
 
-        // The offset is measured to the nearest SAMPLE, not perpendicular to
-        // the line, so half a sample spacing is the tightest it can honestly
-        // be pinned. Derived from the sampling rather than hardcoded, because
-        // a hardcoded number would quietly become wrong if the density
-        // changed. It still separates the two cases by fifty to one, which is
-        // the whole point: half a bay off reads as half a bay off.
-        double tolerance = (0.5 * 10.0 / samples) + 1.0e-9;
-        if (Math.Abs(offset - expectedOffset) > tolerance)
+        // THE NET'S OWN PREMISE, before anything is judged.
+        int centre = Nearest(0.0, 0.0);
+        int centreDegree = neighbours.TryGetValue(centre, out HashSet<int>? around)
+            ? around.Count
+            : 0;
+        if (points.Length != 1101 || Distance(centre, 0.0, 0.0) > 1.0e-6
+            || centreDegree != 10)
         {
             throw new InvalidOperationException(
-                $"A principal line {label} must report an offset of "
-                + $"{expectedOffset:G3} from the curve that asked for it; it "
-                + $"reported {offset:G6}.");
+                "This is his five-armed star: 1101 vertices and a centre node "
+                + "at the origin joined to ten others. It reads "
+                + $"{points.Length} vertices and a nearest node "
+                + $"{Distance(centre, 0.0, 0.0):G3} from the origin with "
+                + $"{centreDegree} neighbours.");
+        }
+
+        Array net = Points(points);
+        var failures = new List<string>();
+        for (int arm = 0; arm < 5; arm++)
+        {
+            double angle = arm * 72.0 * Math.PI / 180.0;
+            double tipX = 8.0 * Math.Cos(angle);
+            double tipY = 8.0 * Math.Sin(angle);
+            int tip = Nearest(tipX, tipY);
+            if (Distance(tip, tipX, tipY) > 1.0e-3)
+            {
+                throw new InvalidOperationException(
+                    $"Arm {arm} of his star ends on a node at radius 8, "
+                    + $"{arm * 72} degrees; the nearest node is "
+                    + $"{Distance(tip, tipX, tipY):G3} from there.");
+            }
+
+            (double X, double Y) from = points[centre];
+            (double X, double Y) to = points[tip];
+            const int samples = 512;
+            var line = new List<(double X, double Y)>();
+            for (int s = 0; s <= samples; s++)
+            {
+                double f = (double)s / samples;
+                line.Add((from.X + ((to.X - from.X) * f), from.Y + ((to.Y - from.Y) * f)));
+            }
+            object?[] arguments = { Points(line), net, edges };
+            List<int> run = ((IEnumerable)snap.Invoke(null, arguments)!)
+                .Cast<int>()
+                .ToList();
+
+            double length = Math.Sqrt(
+                ((to.X - from.X) * (to.X - from.X)) + ((to.Y - from.Y) * (to.Y - from.Y)));
+            double Off(int i) => Math.Abs(
+                ((points[i].X - from.X) * (to.Y - from.Y))
+                - ((points[i].Y - from.Y) * (to.X - from.X))) / length;
+            bool connected = run.Zip(run.Skip(1)).All(pair =>
+                neighbours.TryGetValue(pair.First, out HashSet<int>? next)
+                && next.Contains(pair.Second));
+            if (run.Count != 11 || run[0] != centre || run[run.Count - 1] != tip
+                || !connected || run.Any(i => Off(i) > 1.0e-3))
+            {
+                failures.Add(
+                    $"arm {arm} ({arm * 72} degrees) came back as {run.Count} "
+                    + $"nodes [{string.Join(", ", run)}], furthest "
+                    + $"{(run.Count > 0 ? run.Max(Off) : 0.0):G3} off the line; "
+                    + $"it must be the eleven nodes from the centre {centre} to "
+                    + $"the tip {tip}, each on the line and each step an edge");
+            }
+        }
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{failures.Count} of his 5 principal lines wrong: "
+                + string.Join(" | ", failures));
         }
     }
 
@@ -9300,6 +9511,7 @@ internal static partial class Program
             .Select(l => ((IEnumerable)l).Cast<int>().ToArray())
             .ToArray();
 
+        var barNodes = new HashSet<int>(bars.SelectMany(bar => bar));
         var report = new List<string>();
         foreach (int branching in new[] { 1, 2, 3 })
         {
@@ -9312,6 +9524,22 @@ internal static partial class Program
                 })!;
                 string where = $"Param's exported crown arch, Branching {branching}, Type {type}";
                 var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+
+                // PARAM'S RULE, 2026-09-14: only the nodes on a principal line
+                // have column connections. Every notch a tree holds, the ring
+                // tree's included, is a node of a bar, never a node beside one.
+                object? ringTree = placed.GetType().GetField("RingTree")?.GetValue(placed);
+                foreach (object tree in ringTree is null ? trees : trees.Append(ringTree))
+                {
+                    foreach (int notch in ((IEnumerable)Get<object>(tree, "Nodes")).Cast<int>())
+                    {
+                        if (!barNodes.Contains(notch))
+                        {
+                            throw new InvalidOperationException(
+                                $"{where}: a tree holds node {notch}, which lies on no principal line. Only the nodes on a principal line have column connections (Param, 2026-09-14).");
+                        }
+                    }
+                }
                 object built = Get<object>(placed, "Built");
                 var builtNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
                 var memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();

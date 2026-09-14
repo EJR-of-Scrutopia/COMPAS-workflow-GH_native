@@ -1175,50 +1175,51 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Match one drawn bar to the run of net nodes along it, as a WALK on
-        /// the mesh rather than a sort along the curve.
+        /// How close to a drawn line a node must lie to be ON it, as a
+        /// fraction of the net's median plan edge. One per cent: 4.5 mm on
+        /// Param's five-armed star, where the chain beside a line sits 150 mm
+        /// away, so a node is either on the line or plainly not.
+        /// </summary>
+        public const double OnLineFraction = 0.01;
+
+        /// <summary>
+        /// Match one drawn bar to the pattern edges lying ON it, and to
+        /// nothing beside it.
         ///
-        /// The sort is the obvious implementation and it is wrong. A line
-        /// drawn down a bay catches the column of nodes either side of it, and
-        /// their positions along the curve interleave, so ordering the caught
-        /// nodes by how far along they lie hands back a run that crosses the
-        /// bay on every step: a zigzag, not a bar. It looks like a drawing
-        /// fault and is not one. Downstream that run is pinned by Animate and
-        /// solved as a beam by Column Finder, so the zigzag is load-bearing
-        /// nonsense: notches on both sides of a bay, and a bar reported twice
-        /// its true length.
+        /// Param's rule, 2026-09-14: "we should only take the lines i provide.
+        /// therefore the mesh edge / wire that is direct on the wire is what
+        /// needs to be selected", and only the nodes on those lines have
+        /// column connections. A principal line is his decision, drawn along
+        /// the net's own edges, so this takes the edges the line lies on and
+        /// nothing else: no catch radius, no nearest run, and no carrying on
+        /// past either end.
         ///
-        /// A bar is a CONNECTED CHAIN OF NOTCHES, so only a neighbour may
-        /// follow a node. From each node the walk takes the neighbour that
-        /// advances furthest along the curve, closest to the line where two
-        /// advance equally. A sideways step advances nothing, so it is never
-        /// preferred to a real one, and the run cannot double back. On a line
-        /// drawn at an angle to the mesh the two directions advance together
-        /// and the walk staircases, which is the honest discrete answer.
-        ///
-        /// <paramref name="meanOffset"/> reports how far the matched run sits
-        /// from the curve that asked for it, in plan. It is not zero when the
-        /// author drew between two columns of nodes: no bar can be there, the
-        /// nearest run of nodes was taken instead, and the caller can say so
-        /// rather than let the offset pass unremarked.
+        /// It replaces a walk that took the nearest run inside 0.6 of the
+        /// median edge and then finished each end by the straightest
+        /// continuation. On his star that end pass turned at the tip of every
+        /// rotated arm onto the neighbouring chain, because rounding made the
+        /// right angle's cosine 3e-6 where the test took anything above zero,
+        /// and walked back down it nine nodes inside the radius. Four bars of
+        /// five came back as twenty-node hairpins with columns on both chains;
+        /// the arm at 0 degrees, whose coordinates are exact, was the only one
+        /// right.
         /// </summary>
         public static List<int> SnapCurveToNodes(
             Curve curve,
             Point3d[] nodes,
             (int, int)[] edges,
-            out double meanOffset,
             int samples = 512)
         {
             // Sample the curve once and compare in plain arithmetic, rather
-            // than asking Rhino for a closest point per node. ClosestPoint on a
-            // NURBS curve is not cheap, and this runs for every node of every
-            // bar on every solve, which an animation does on every frame.
+            // than asking Rhino for a closest point per node: ClosestPoint on
+            // a NURBS curve is not cheap, and every node of the net is
+            // measured against every line.
             //
             // Sampling is the ONLY part of this that needs Rhino, so it is the
             // only part that lives here. Everything below the sampling is
             // arithmetic on arrays, and keeping it that way is what lets the
             // smoke harness measure it: that harness never launches Rhino's
-            // native core, so a walk that asked a Curve anything could only
+            // native core, so a match that asked a Curve anything could only
             // ever be read, not run.
             double[]? ts = curve.DivideByCount(samples, true);
             Point3d[] sampled;
@@ -1232,171 +1233,213 @@ namespace Ananke.COMPAS.Native.Components
                 for (int s = 0; s < ts.Length; s++)
                     sampled[s] = curve.PointAt(ts[s]);
             }
-            return SnapSampledLineToNodes(
-                sampled, nodes, edges, out meanOffset);
+            return SnapSampledLineToNodes(sampled, nodes, edges);
         }
 
         /// <summary>
-        /// The walk itself, over a line already reduced to points. See
-        /// <see cref="SnapCurveToNodes"/> for why it is a walk and not a sort.
+        /// The match itself, over a line already reduced to points. See
+        /// <see cref="SnapCurveToNodes"/> for the rule it serves.
+        ///
+        /// A node is on the line when it lies within
+        /// <see cref="OnLineFraction"/> of the median plan edge of the
+        /// polyline through the samples, measured square to each segment and
+        /// not to the nearest sample: on an 8 m line cut into 512 steps a node
+        /// exactly on the line can sit 7.8 mm from every sample, more than the
+        /// tolerance. An edge is on the line when both its ends are.
+        ///
+        /// The line is a bar only when those edges form ONE unbroken chain,
+        /// open or closed, holding every node on the line, and the line cuts
+        /// no other edge of the net away from that edge's ends. Anything else
+        /// comes back EMPTY, whole, never cut down to the part that fitted: a
+        /// line that follows no edge, a line with a gap in its chain, and a
+        /// line that crosses the cells are not the bar that was drawn, and a
+        /// shorter bar nobody asked for is the silent wrong answer this rule
+        /// exists to stop. The run is ordered from the end nearer the line's
+        /// start.
         /// </summary>
         public static List<int> SnapSampledLineToNodes(
             Point3d[] sampled,
             Point3d[] nodes,
-            (int, int)[] edges,
-            out double meanOffset)
+            (int, int)[] edges)
         {
-            meanOffset = 0.0;
             var run = new List<int>();
             if (nodes.Length == 0 || edges.Length == 0 || sampled.Length == 0)
                 return run;
+            double tolerance = OnLineFraction * MedianEdgeLength(nodes, edges);
 
-            double catchRadius = 0.6 * MedianEdgeLength(nodes, edges);
-            double catchSquared = catchRadius * catchRadius;
+            // The polyline through the samples, repeats dropped so no segment
+            // has zero length.
+            var corners = new List<Point3d> { sampled[0] };
+            for (int s = 1; s < sampled.Length; s++)
+            {
+                if (PlanDistanceSquared(sampled[s], corners[corners.Count - 1]) > 0.0)
+                    corners.Add(sampled[s]);
+            }
 
-            // Project every node onto the sampled curve once: which station it
-            // stands at, and how far off the line it sits. Neither changes
-            // during the walk, so neither is recomputed inside it.
-            var station = new int[nodes.Length];
-            var offset = new double[nodes.Length];
+            // Every node: whether it is on the line, and how far along the
+            // line its nearest point lies, which orders the run.
+            var onLine = new bool[nodes.Length];
+            var along = new double[nodes.Length];
             for (int i = 0; i < nodes.Length; i++)
             {
-                int best = -1;
-                double bestDistance = double.MaxValue;
-                for (int s = 0; s < sampled.Length; s++)
+                double best = corners.Count == 1
+                    ? PlanDistanceSquared(nodes[i], corners[0])
+                    : double.MaxValue;
+                double travelled = 0.0;
+                for (int c = 0; c + 1 < corners.Count; c++)
                 {
-                    double d = PlanDistanceSquared(nodes[i], sampled[s]);
-                    if (d < bestDistance)
+                    double dx = corners[c + 1].X - corners[c].X;
+                    double dy = corners[c + 1].Y - corners[c].Y;
+                    double lengthSquared = (dx * dx) + (dy * dy);
+                    double t = (((nodes[i].X - corners[c].X) * dx)
+                        + ((nodes[i].Y - corners[c].Y) * dy)) / lengthSquared;
+                    t = Math.Max(0.0, Math.Min(1.0, t));
+                    double ex = nodes[i].X - (corners[c].X + (t * dx));
+                    double ey = nodes[i].Y - (corners[c].Y + (t * dy));
+                    double squared = (ex * ex) + (ey * ey);
+                    double length = Math.Sqrt(lengthSquared);
+                    if (squared < best)
                     {
-                        bestDistance = d;
-                        best = s;
+                        best = squared;
+                        along[i] = travelled + (t * length);
                     }
+                    travelled += length;
                 }
-                station[i] = best;
-                offset[i] = bestDistance;
+                onLine[i] = best <= tolerance * tolerance;
             }
 
-            // Start at the node standing at the curve's beginning: of every
-            // node inside the catch radius, the earliest station, and of those
-            // the one nearest the line.
-            int at = -1;
+            // The edges on the line, as each on-line node's neighbours along
+            // it.
+            List<int>[] neighbours = BuildAdjacency(nodes.Length, edges);
+            var chain = new Dictionary<int, List<int>>();
             for (int i = 0; i < nodes.Length; i++)
             {
-                if (offset[i] >= catchSquared)
-                    continue;
-                if (at < 0 ||
-                    station[i] < station[at] ||
-                    (station[i] == station[at] && offset[i] < offset[at]))
-                {
-                    at = i;
-                }
+                if (onLine[i])
+                    chain[i] = neighbours[i].Where(j => j != i && onLine[j]).ToList();
             }
-            if (at < 0)
+            if (chain.Count < 2)
                 return run;
 
-            List<int>[] neighbours = BuildAdjacency(nodes.Length, edges);
-            var used = new HashSet<int> { at };
+            // ONE unbroken chain: no node on the line without an edge along
+            // it (the line crosses the net there), no branch, one piece.
+            if (chain.Values.Any(next => next.Count == 0 || next.Count > 2))
+                return run;
+            int seed = chain.Keys.First();
+            var reached = new HashSet<int> { seed };
+            var pending = new Stack<int>();
+            pending.Push(seed);
+            while (pending.Count > 0)
+            {
+                foreach (int next in chain[pending.Pop()])
+                {
+                    if (reached.Add(next))
+                        pending.Push(next);
+                }
+            }
+            if (reached.Count != chain.Count)
+                return run;
+
+            // And the line cuts no other edge. The part on the edges can be
+            // one chain while the line goes on across the cells, and that
+            // line does not lie on the net's edges either.
+            if (CutsAnEdge(corners, nodes, edges, onLine, tolerance))
+                return run;
+
+            // Open chains start at the end nearer the line's start. A closed
+            // one starts at its node nearest the start and heads the way the
+            // line runs, which is toward its lower-along neighbour, the other
+            // lying at the far end of the line.
+            int[] ends = chain.Where(pair => pair.Value.Count == 1)
+                .Select(pair => pair.Key)
+                .ToArray();
+            int at = ends.Length == 2
+                ? (along[ends[0]] <= along[ends[1]] ? ends[0] : ends[1])
+                : chain.Keys.OrderBy(i => along[i]).First();
+            var visited = new HashSet<int> { at };
             run.Add(at);
             while (true)
             {
-                int next = -1;
-                int bestAdvance = 0;
-                foreach (int candidate in neighbours[at])
-                {
-                    if (used.Contains(candidate))
-                        continue;
-                    if (offset[candidate] >= catchSquared)
-                        continue;
-                    int advance = station[candidate] - station[at];
-                    if (advance <= 0)
-                        continue;
-                    if (next < 0 ||
-                        advance > bestAdvance ||
-                        (advance == bestAdvance &&
-                            offset[candidate] < offset[next]))
-                    {
-                        next = candidate;
-                        bestAdvance = advance;
-                    }
-                }
+                int next = chain[at]
+                    .Where(j => !visited.Contains(j))
+                    .OrderBy(j => along[j])
+                    .DefaultIfEmpty(-1)
+                    .First();
                 if (next < 0)
                     break;
                 run.Add(next);
-                used.Add(next);
+                visited.Add(next);
                 at = next;
             }
-
-            // FINISH BOTH ENDS. The walk above needs a STRICT advance
-            // along the curve, and at the end of one several nodes share the
-            // last sample, so nothing advances and the run stops short. One
-            // side of a symmetric bar then comes back a notch shorter than the
-            // other, which makes the beam under it asymmetric, which puts the
-            // arms in different places on the two halves and drags the shared
-            // foot off centre with them. A whole family of asymmetries from one
-            // missing node.
-            //
-            // Past the last station there is no ordering left to use, so finish
-            // by the straightest continuation instead, while still inside the
-            // catch radius. Applied at both ends, because the same thing can
-            // happen at the start.
-            Continue(run, neighbours, nodes, offset, catchSquared, used);
-            run.Reverse();
-            Continue(run, neighbours, nodes, offset, catchSquared, used);
-            run.Reverse();
-
-            meanOffset = run.Average(i => Math.Sqrt(offset[i]));
             return run;
         }
 
         /// <summary>
-        /// Carry a run on past its last ordered node, by whichever unused
-        /// neighbour continues straightest and still lies on the line.
+        /// Whether the polyline crosses any edge not lying on it, at a point
+        /// further than <paramref name="tolerance"/> from both of that edge's
+        /// ends. Touching an edge at one of its ends is where a line meets the
+        /// net at a node, which every bar does; crossing one in its middle is
+        /// cutting a cell.
         /// </summary>
-        private static void Continue(
-            List<int> run,
-            List<int>[] neighbours,
+        private static bool CutsAnEdge(
+            List<Point3d> corners,
             Point3d[] nodes,
-            double[] offset,
-            double catchSquared,
-            HashSet<int> used)
+            (int, int)[] edges,
+            bool[] onLine,
+            double tolerance)
         {
-            while (run.Count >= 2)
+            if (corners.Count < 2)
+                return false;
+            double minX = corners.Min(p => p.X) - tolerance;
+            double maxX = corners.Max(p => p.X) + tolerance;
+            double minY = corners.Min(p => p.Y) - tolerance;
+            double maxY = corners.Max(p => p.Y) + tolerance;
+            foreach ((int u, int v) in edges)
             {
-                int at = run[run.Count - 1];
-                Vector3d heading = nodes[at] - nodes[run[run.Count - 2]];
-                double length = heading.Length;
-                if (length <= 1.0e-12)
-                    return;
-                heading = new Vector3d(
-                    heading.X / length, heading.Y / length, heading.Z / length);
-
-                int best = -1;
-                double bestScore = 0.0;
-                foreach (int candidate in neighbours[at])
+                if (u == v || u < 0 || v < 0 || u >= nodes.Length || v >= nodes.Length)
+                    continue;
+                if (onLine[u] && onLine[v])
+                    continue;
+                Point3d a = nodes[u];
+                Point3d b = nodes[v];
+                if (Math.Max(a.X, b.X) < minX || Math.Min(a.X, b.X) > maxX ||
+                    Math.Max(a.Y, b.Y) < minY || Math.Min(a.Y, b.Y) > maxY)
                 {
-                    if (used.Contains(candidate))
-                        continue;
-                    if (offset[candidate] >= catchSquared)
-                        continue;
-                    Vector3d step = nodes[candidate] - nodes[at];
-                    double stepLength = step.Length;
-                    if (stepLength <= 1.0e-12)
-                        continue;
-                    double score =
-                        ((heading.X * step.X) + (heading.Y * step.Y) +
-                         (heading.Z * step.Z)) / stepLength;
-                    if (score > bestScore)
+                    continue;
+                }
+                double sx = b.X - a.X;
+                double sy = b.Y - a.Y;
+                for (int c = 0; c + 1 < corners.Count; c++)
+                {
+                    Point3d p = corners[c];
+                    Point3d q = corners[c + 1];
+                    if (Math.Max(p.X, q.X) < Math.Min(a.X, b.X) ||
+                        Math.Min(p.X, q.X) > Math.Max(a.X, b.X) ||
+                        Math.Max(p.Y, q.Y) < Math.Min(a.Y, b.Y) ||
+                        Math.Min(p.Y, q.Y) > Math.Max(a.Y, b.Y))
                     {
-                        bestScore = score;
-                        best = candidate;
+                        continue;
+                    }
+                    double rx = q.X - p.X;
+                    double ry = q.Y - p.Y;
+                    double denominator = (rx * sy) - (ry * sx);
+                    if (Math.Abs(denominator) <= 1.0e-15)
+                        continue;
+                    double wx = a.X - p.X;
+                    double wy = a.Y - p.Y;
+                    double t = ((wx * sy) - (wy * sx)) / denominator;
+                    double s = ((wx * ry) - (wy * rx)) / denominator;
+                    if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0)
+                        continue;
+                    var hit = new Point3d(p.X + (t * rx), p.Y + (t * ry), 0.0);
+                    double toleranceSquared = tolerance * tolerance;
+                    if (PlanDistanceSquared(hit, a) > toleranceSquared &&
+                        PlanDistanceSquared(hit, b) > toleranceSquared)
+                    {
+                        return true;
                     }
                 }
-                // A turn of more than a right angle is not a continuation.
-                if (best < 0)
-                    return;
-                run.Add(best);
-                used.Add(best);
             }
+            return false;
         }
 
         /// <summary>
