@@ -251,7 +251,7 @@
     <button id="shelf-play" class="shelf-act" title="Play the animation">&#9654;</button>
     <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
     <button id="shelf-stop" class="shelf-act" title="Stop, and put the scene back as it stood before the take" disabled>&#9632;</button>
-    <button id="shelf-record" class="shelf-act" title="Record the animation">&#9679;</button>
+    <button id="shelf-record" class="shelf-act" title="Record the animation at 1080p">&#9679;</button>
   </div>
 </div>
 <!-- THE LIVE GRAPHS. Param: "3 tiled graphs to the left in a mostly
@@ -412,16 +412,17 @@
       <option value="tile">Fired clay tile</option>
       <option value="stone">Limestone</option>
     </select>
-    <button id="skin-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Render skin</span><span class="chevron"></span></button>
-    <!-- The folder feeds the render-skin library below it, not the built-in
-         structural materials above: source row above the grid it fills,
-         the same order the sky and prop folders already follow. -->
+    <!-- THE SKIN IS CHOSEN IN THE SHELF'S MATERIALS TILE, by Assign to
+         skin. Param, 2026-09-14: "if theres banner menu items which are captured
+         in the tiles then we dont need them in the menu".
+         The picker here only ever opened that tile, and the grid hidden
+         under it was built, and its built-ins rendered, to lend the picker
+         a swatch. Both are gone. The folder stays: which library the tile
+         shows is a setting, not a picture. -->
     <div id="material-folder-row" class="folder-line">
       <button id="material-folder-choose" title="Pick your material library folder">Material folder</button>
       <span id="material-folder-path" title="">no folder chosen</span>
     </div>
-    <input id="skin-search" type="search" class="hidden" placeholder="Search materials">
-    <div id="skin-tiles" class="tile-grid hidden"></div>
     <!-- The three procedural presets (white presentation, basalt, ply) are
          gone on Param's word: the library is the skin catalogue now, and
          "None (material)" is the one built-in -- the structural material's
@@ -503,13 +504,11 @@
   </details>
   <details id="animation-section" open>
     <summary>Animation</summary>
-    <button id="play-button">Play</button>
-    <button id="restart-button">Restart</button>
-    <!-- Param: "add in a stop button to the animation running too.
-         which takes us back to the state right before the animation was
-         run with the shell in the mode it was in." Pause holds the take
-         where it is; this leaves it altogether. -->
-    <button id="stop-button" title="Stop, and put the scene back as it stood before the take" disabled>Stop</button>
+    <!-- Play, Restart and Stop are the shelf's icons beside the drawer
+         tabs, and only those since 2026-09-14. Param, 2026-09-14: "if theres banner menu items which are captured
+         in the tiles then we dont need them in the menu".
+         The icons clicked these buttons; they call the take's own
+         functions now. -->
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
     <div class="dial-block" id="animation-dials">
     <label title="How fast the build plays back"><span>Timeline speed</span>
@@ -695,8 +694,8 @@
         <button id="hdri-folder-choose" title="Pick the folder your HDRIs are in">Sky folder</button>
         <span id="hdri-folder-path" title="">no folder chosen</span>
       </div>
-      <button id="hdri-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Sky</span><span class="chevron"></span></button>
-    <div id="hdri-tiles" class="tile-grid hidden"></div>
+      <!-- The sky itself is chosen in the shelf's Skies tile; the picker
+           that opened it went on 2026-09-14, with the other openers. -->
       <label class="hidden">HDRI <select id="hdri-select"></select></label>
       <div id="hdri-status"></div>
       <!-- Projection, scale, height and rotation moved to the shelf's
@@ -782,9 +781,8 @@
       <button id="ground-folder-choose" title="Pick your ground material folder">Ground folder</button>
       <span id="ground-folder-path" title="">no folder chosen</span>
     </div>
-    <button id="ground-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Surface</span><span class="chevron"></span></button>
-    <input id="ground-search" type="search" class="hidden" placeholder="Search surfaces">
-    <div id="ground-tiles" class="tile-grid hidden"></div>
+    <!-- The floor is chosen in the shelf's Materials tile, by Assign to
+         ground; the picker that opened it went on 2026-09-14. -->
     <!-- Only the neutral studio floor remains built in; every real surface
          comes from the ground library folder. -->
     <label class="hidden">Surface <select id="ground-preset">
@@ -816,7 +814,8 @@
       <span id="props-folder-path" title="">no folder chosen</span>
     </div>
     <div id="props-row">
-      <button id="prop-browse" title="Choose a prop and carry it">Library</button>
+      <!-- Library opened the Props tile and did nothing else, so it went
+           with the other openers on 2026-09-14. -->
       <!-- The panel's Edit button is gone with the tab strip's tile
            (Param: "remove the edit mode tile and just keep it in layers
            and this double click function"). Edit mode is reached from
@@ -878,8 +877,9 @@
     <div id="still-readout"></div>
     <!-- And the take, which shares the folder and the frame with it. -->
     <span class="row-heading">Take</span>
-    <button id="record-button" class="primary">Record 1080p</button>
-    <div id="record-status"></div>
+    <!-- Record is the shelf's icon beside Play, and only that since
+         2026-09-14; the take reports here. -->
+    <div id="record-status">Takes record at 1080p, from the record icon beside Play.</div>
   </details>
   <div id="mode-row">
     <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>

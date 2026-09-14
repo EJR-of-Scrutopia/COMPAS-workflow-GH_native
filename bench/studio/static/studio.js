@@ -1749,10 +1749,8 @@ async function refreshHdriList(selectName) {
   }
   const stored = selectName || localStorage.getItem("bench-studio-hdri");
   if (stored && files.includes(stored)) select.value = stored;
-  // The tiles are built from the same list and read the same select, so
-  // the picture and the choice cannot disagree. The picker face gets the
-  // same courtesy: the value above was set without a change event.
-  buildHdriTiles(files);
+  // The value above was set without a change event, so the faces that read
+  // it are told. The shelf's Skies tile draws from this same select.
   repaintSettingControls();
   return files;
 }
@@ -7510,11 +7508,9 @@ async function refreshMaterialLibrary() {
       rebuildGround();
     }
   }
-  buildSkinTiles();
-  buildGroundTiles();
-  // The restore above set the selects without change events; the picker
-  // faces need telling (his floor wore pebbles while the picker still
-  // said Dark studio).
+  // The restore above set the selects without change events; the faces
+  // that read them need telling (his floor wore pebbles while a picker,
+  // since removed, still said Dark studio).
   repaintSettingControls();
   logStudio("material library: " + state.materialLibrary.length
     + " skin materials, " + state.groundLibrary.length + " ground materials");
@@ -7577,15 +7573,13 @@ function borrowTileImage(swatch, holderId, value) {
 }
 
 function wireAllPickers() {
-  // The asset pickers open the SHELF now: the inline grids stay built
-  // and hidden purely so the trigger swatches have tiles to borrow.
+  // The skin, floor and sky pickers are gone (2026-09-14): each only
+  // opened a shelf tile, which is where those are chosen. What remains
+  // are the pickers whose grids are their own.
   for (const [trigger, holder, select, openInstead] of [
     ["material-picker", "material-tiles", "material-select"],
-    ["skin-picker", "skin-tiles", "render-skin", () => openShelf("materials")],
-    ["ground-picker", "ground-tiles", "ground-preset", () => openShelf("materials")],
     ["weather-picker", "weather-tiles", "weather-preset"],
     ["atmosphere-picker", "atmosphere-tiles", "atmosphere-preset"],
-    ["hdri-picker", "hdri-tiles", "hdri-select", () => openShelf("skies")],
   ]) {
     wirePicker(trigger, holder, select,
       (swatch, value) => borrowTileImage(swatch, holder, value), openInstead);
@@ -8355,11 +8349,8 @@ function repaintSettingControls() {
   paintSegmented("environment-segments", "environment-mode");
   for (const [trigger, holder, select] of [
     ["material-picker", "material-tiles", "material-select"],
-    ["skin-picker", "skin-tiles", "render-skin"],
-    ["ground-picker", "ground-tiles", "ground-preset"],
     ["weather-picker", "weather-tiles", "weather-preset"],
     ["atmosphere-picker", "atmosphere-tiles", "atmosphere-preset"],
-    ["hdri-picker", "hdri-tiles", "hdri-select"],
   ]) {
     paintPicker(trigger, select,
       (swatch, value) => borrowTileImage(swatch, holder, value));
@@ -10999,46 +10990,6 @@ function buildTileGrid(holderId, selectId, materialFor) {
   paintTileSelection(holder, select.value);
 }
 
-// A floor previewed on a floor. The plane is tilted away from the camera so
-// the joint spacing reads, which a sphere cannot show: the whole reason for
-// choosing paving over concrete is the size of the pieces.
-function renderGroundPreview(preset, canvasEl) {
-  if (!previewRig) {
-    fillFlat(canvasEl, new THREE.Color(0x2a2e34));
-    return;
-  }
-  const material = groundMaterial(preset);
-  const tile = material.userData.groundTileMetres;
-  if (tile && material.map) {
-    // Six metres of ground in the preview, so the joints are the size they
-    // would be under a person rather than under a vault. Squared up for
-    // the tile: the floor's random lay angle belongs to the floor.
-    const [u, v] = groundRepeat(3, tile);
-    material.map.repeat.set(u, v);
-    material.map.rotation = 0;
-  }
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), material);
-  previewRig.holder.add(plane);
-  previewRig.ball.visible = false;
-  previewRig.camera.position.set(0, -3.4, 2.2);
-  previewRig.camera.lookAt(0, 0.4, 0);
-  drawPreview(canvasEl);
-  previewRig.holder.remove(plane);
-  plane.geometry.dispose();
-  previewRig.ball.visible = true;
-  previewRig.camera.position.set(0, -3.05, 1.02);
-  previewRig.camera.lookAt(0, 0, 0);
-  // Put the repeat back where the scene wants it, since the material is the
-  // same object the floor itself is drawn with -- INCLUDING the scale
-  // dials and the lay angle, or painting one picker tile would silently
-  // reset the floor.
-  if (tile && material.map) {
-    const [u, v] = groundRepeat(state.groundRadius, tile);
-    material.map.repeat.set(u * state.ground.scaleX, v * state.ground.scaleY);
-    material.map.rotation = state.ground.rotation || 0;
-  }
-}
-
 // The weather presets, each rendered as its own sky. The preview rig gets
 // its own Sky mesh, because the scene's one belongs to the scene and a
 // preview must not touch the uniforms the viewport is drawing from.
@@ -11156,44 +11107,9 @@ function buildAtmosphereTiles() {
   paintTileSelection(holder, select.value);
 }
 
-// The sky list, as skies. The thumbnails are decoded by the server the
-// first time they are asked for, because the files run to hundreds of
-// megabytes and nothing in a browser should touch one to draw an inch of it.
-function buildHdriTiles(names) {
-  const holder = document.getElementById("hdri-tiles");
-  const select = document.getElementById("hdri-select");
-  if (!holder || !select) return;
-  holder.innerHTML = "";
-  for (const name of names) {
-    const tile = document.createElement("button");
-    tile.className = "tile";
-    tile.dataset.value = name;
-    tile.title = name;
-    const image = document.createElement("img");
-    image.loading = "lazy";
-    image.src = "/api/hdri/" + encodeURIComponent(name) + "/thumbnail";
-    image.alt = "";
-    tile.appendChild(image);
-    const label = document.createElement("span");
-    // The name without its extension and its resolution suffix: the file
-    // is called what it is called, but the tile is a picture of a place.
-    label.textContent = name.replace(/\.hdr$/i, "").replace(/_(\d+k)$/i, "");
-    tile.appendChild(label);
-    tile.addEventListener("click", () => {
-      if (select.value === name) return;
-      select.value = name;
-      select.dispatchEvent(new Event("change"));
-      paintTileSelection(holder, name);
-    });
-    holder.appendChild(tile);
-  }
-  paintTileSelection(holder, select.value);
-}
-
 function buildMaterialTiles() {
   buildTileGrid("material-tiles", "material-select",
     (value) => materials[value] || null);
-  buildSkinTiles();
 }
 
 // A tile whose picture is a file rather than a render. The library's own
@@ -11219,105 +11135,10 @@ function imageTile(value, label, source) {
   return tile;
 }
 
-function chooseSkin(value) {
-  const select = document.getElementById("render-skin");
-  if (select.value === value) return;
-  select.value = value;
-  select.dispatchEvent(new Event("change"));
-  paintTileSelection(document.getElementById("skin-tiles"), value);
-}
-
-// One grid for both places a library material can be worn: the vault and
-// the ground it stands on. The built-in presets come first and are rendered
-// on the preview object, because there are a handful of them and they have
-// no picture of their own; the library follows as pictures, in families.
-function buildLibraryGrid(holderId, selectId, searchId, paintBuiltin,
-                          list, base) {
-  const holder = document.getElementById(holderId);
-  const select = document.getElementById(selectId);
-  if (!holder || !select) return;
-  const entries = list || state.materialLibrary;
-  const query = ((document.getElementById(searchId) || {}).value || "")
-    .trim().toLowerCase();
-  holder.innerHTML = "";
-
-  const choose = (value) => {
-    if (select.value === value) return;
-    select.value = value;
-    select.dispatchEvent(new Event("change"));
-    paintTileSelection(holder, value);
-  };
-
-  if (!query) {
-    for (const option of select.options) {
-      if (isLibraryKey(option.value)) continue;
-      const tile = previewTile(option.value, option.textContent,
-        (canvasEl) => paintBuiltin(option.value, canvasEl));
-      tile.addEventListener("click", () => choose(option.value));
-      holder.appendChild(tile);
-    }
-  }
-
-  // The library in families, because a search across a hundred and fifty
-  // near-identical bricks is the difference between adjusting a choice and
-  // making a new one.
-  let family = null;
-  for (const entry of entries) {
-    if (query && !(entry.key + " " + entry.label).toLowerCase().includes(query)) continue;
-    if (entry.family !== family) {
-      family = entry.family;
-      const heading = document.createElement("span");
-      heading.className = "tile-family";
-      heading.textContent = family;
-      holder.appendChild(heading);
-    }
-    const tile = imageTile(entry.key, entry.label, tileUrl(entry, base));
-    // The size is what an architect wants to know about a picture of a
-    // brick, and it is the number that decides how it lays on.
-    if (entry.tileMetres) {
-      tile.title = entry.label + "  "
-        + Math.round(entry.tileMetres[0] * 1000) + " x "
-        + Math.round(entry.tileMetres[1] * 1000) + " mm";
-    }
-    tile.addEventListener("click", () => choose(entry.key));
-    holder.appendChild(tile);
-  }
-  paintTileSelection(holder, select.value);
-}
-
-function buildSkinTiles() {
-  buildLibraryGrid("skin-tiles", "render-skin", "skin-search",
-    (value, canvasEl) => {
-      const material = value === "none"
-        ? (materials[document.getElementById("material-select").value]
-          || materials.concrete)
-        : (skinMaterialCache[value]
-          || (SKINS[value] && (skinMaterialCache[value] = SKINS[value]())));
-      if (material) renderMaterialPreview(material, canvasEl);
-    });
-}
-
-function buildGroundTiles() {
-  // A floor previewed on a floor: the plane is tilted away from the camera
-  // so the joint spacing reads, which a sphere cannot show, and the size of
-  // the pieces is the whole reason for choosing paving over concrete. The
-  // ground grid draws from its OWN library and its own routes.
-  buildLibraryGrid("ground-tiles", "ground-preset", "ground-search",
-    (value, canvasEl) => renderGroundPreview(value, canvasEl),
-    state.groundLibrary, GROUND_BASE);
-}
-
 function paintMaterialSwatches() {
   const material = document.getElementById("material-select");
-  const skin = document.getElementById("render-skin");
   const materialHolder = document.getElementById("material-tiles");
-  const skinHolder = document.getElementById("skin-tiles");
   if (materialHolder) paintTileSelection(materialHolder, material.value);
-  if (skinHolder) paintTileSelection(skinHolder, skin.value);
-  // The "no skin" tile shows the material it would fall back to, so the two
-  // grids never disagree about what the vault is wearing.
-  const none = skinHolder && skinHolder.querySelector('.tile[data-value="none"] canvas');
-  if (none) renderMaterialPreview(materials[material.value] || materials.concrete, none);
 }
 
 // Built once the module has finished declaring the skins it previews: the
@@ -13229,13 +13050,6 @@ document.getElementById("material-select").addEventListener("change", (e) => {
   const select = document.getElementById("study-select");
   if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
 });
-// The search filters the grid as it is typed. It matches "family/name" as
-// one string, which is how the QS picker does it and is what a person means
-// when they type "brick stock".
-{
-  const search = document.getElementById("skin-search");
-  if (search) search.addEventListener("input", () => buildSkinTiles());
-}
 
 // One handler for every library folder. The vault folder proved the shape
 // and it is copied rather than reinvented: browse without setting, so the
@@ -14476,10 +14290,6 @@ document.getElementById("ground-preset").addEventListener("change", async (e) =>
   if (state.objects.ground) rebuildGround();
 });
 
-{
-  const search = document.getElementById("ground-search");
-  if (search) search.addEventListener("input", () => buildGroundTiles());
-}
 // ---------- carrying a prop ----------
 // One idea in place of two. A prop being carried is a real prop in the
 // scene that happens to be following the cursor: it can be looked at from
@@ -14646,10 +14456,6 @@ function cancelCarry() {
   }
   saveProps();
 }
-
-document.getElementById("prop-browse").addEventListener("click", () => {
-  openShelf("props");
-});
 
 // Edit mode has two buttons now, one on the panel and one in the layers
 // drawer where the props are actually being chosen. Both drive this, so
@@ -17935,41 +17741,34 @@ async function recordAnimation() {
     applyShowMode();
   }
 }
-// The one button is both: Record at rest, Stop while a take runs. A
-// separate stop button would be dead nine tenths of the time, and the
-// press he reaches for when he wants out is the one he just pressed.
+// The one control is both: Record at rest, Stop while a take runs. A
+// separate stop would be dead nine tenths of the time, and the press he
+// reaches for when he wants out is the one he just pressed. Param: "the
+// stop record needs to happen on the record tile too not just in the
+// banner menu. show a stop icon when the recording is going." The tile is
+// the only face since 2026-09-14, when the panel's Record 1080p went.
 function paintRecordButton() {
-  const button = document.getElementById("record-button");
-  if (button) {
-    button.textContent = state.recording ? "Stop recording" : "Record 1080p";
-    button.classList.toggle("recording", state.recording);
-  }
-  // The shelf tile is the one under his hand while a take runs -- the
-  // panel may not even be open. Param: "the stop record needs to happen
-  // on the record tile too not just in the banner menu. show a stop icon
-  // when the recording is going." It already delegates its click to the
-  // button above, so it stops the take; what it lacked was saying so.
   const tile = document.getElementById("shelf-record");
   if (tile) {
     tile.textContent = state.recording ? "\u25a0" : "\u25cf";
-    tile.title = state.recording ? "Stop the recording" : "Record the animation";
+    tile.title = state.recording ? "Stop the recording" : "Record the animation at 1080p";
     tile.classList.toggle("recording", state.recording);
   }
 }
 
-document.getElementById("record-button").addEventListener("click", () => {
+function toggleRecording() {
   if (state.recording) {
     state.recordStop = true;
     document.getElementById("record-status").textContent = "stopping...";
     return;
   }
   recordAnimation();
-});
+}
 
 // ---------- day cycle ----------
 // S5: frame() is the only wall-clock advancer (see below); this button
 // only arms/disarms state.dayCycle.playing and captures the elevation the
-// arc peaks at, exactly as play-button arms state.timeline.playing.
+// arc peaks at, exactly as togglePlay arms state.timeline.playing.
 function trackDragTo(event) {
   const canvasEl = document.getElementById("day-track");
   const rect = canvasEl.getBoundingClientRect();
@@ -18058,14 +17857,11 @@ controls.addEventListener("end", () => {
   }
 });
 
-// The play control lives twice -- the Animation section and the shelf tab
-// strip (Param: "add a play button next to the scene tile") -- and one
-// painter keeps their labels telling the same story.
+// The play control is the shelf's icon beside the drawer tabs (Param: "add
+// a play button next to the scene tile"), and only that since 2026-09-14.
+// Every paint of it comes through here.
 function paintPlayButtons(text) {
-  const panel = document.getElementById("play-button");
-  if (panel) panel.textContent = text;
-  // The shelf's control is an ICON tile: a triangle at rest, two bars
-  // while the take runs.
+  // An ICON tile: a triangle at rest, two bars while the take runs.
   const shelf = document.getElementById("shelf-play");
   if (shelf) {
     shelf.textContent = text === "Pause" ? "❚❚" : "▶";
@@ -18088,10 +17884,8 @@ function paintPlayButtons(text) {
 let beforeTheTake = null;
 
 function paintStopButton() {
-  for (const id of ["stop-button", "shelf-stop"]) {
-    const button = document.getElementById(id);
-    if (button) button.disabled = !beforeTheTake;
-  }
+  const button = document.getElementById("shelf-stop");
+  if (button) button.disabled = !beforeTheTake;
 }
 
 function stopTake() {
@@ -18145,7 +17939,7 @@ function startPlaying(fromTheTop) {
   if (liveGraphs.wanted) showLiveGraphs(true);
 }
 
-document.getElementById("play-button").addEventListener("click", () => {
+function togglePlay() {
   if (!state.timeline) return;
   if (state.timeline.playing) {
     state.timeline.playing = false;
@@ -18153,7 +17947,12 @@ document.getElementById("play-button").addEventListener("click", () => {
     return;
   }
   startPlaying(false);
-});
+}
+
+function restartTake() {
+  if (!state.timeline) return;
+  startPlaying(true);
+}
 // ---------- the undo history ----------
 // A small recorded history (Param's words) of the things a session does
 // to a scene: sky, environment, skin, floor, placements, moves, turns,
@@ -18371,23 +18170,13 @@ function refreshLayersShelf() {
   if (shelfKind === "layers") renderShelf();
 }
 
-document.getElementById("shelf-play").addEventListener("click", () => {
-  document.getElementById("play-button").click();
-});
-document.getElementById("shelf-restart").addEventListener("click", () => {
-  document.getElementById("restart-button").click();
-});
-for (const id of ["stop-button", "shelf-stop"]) {
-  const button = document.getElementById(id);
-  if (button) button.addEventListener("click", stopTake);
-}
-document.getElementById("shelf-record").addEventListener("click", () => {
-  document.getElementById("record-button").click();
-});
-document.getElementById("restart-button").addEventListener("click", () => {
-  if (!state.timeline) return;
-  startPlaying(true);
-});
+// The take's four icons call its functions directly. They used to click
+// the panel's own Play, Restart, Stop and Record, which were copies of
+// them and went on 2026-09-14.
+document.getElementById("shelf-play").addEventListener("click", togglePlay);
+document.getElementById("shelf-restart").addEventListener("click", restartTake);
+document.getElementById("shelf-stop").addEventListener("click", stopTake);
+document.getElementById("shelf-record").addEventListener("click", toggleRecording);
 
 scrubber.addEventListener("input", () => {
   if (!state.timeline) return;
@@ -18576,7 +18365,6 @@ function frame(now) {
 
 // The tile grids are built here, after SKINS and skinMaterialCache exist.
 guarded("the material tiles", buildMaterialTiles);
-guarded("the ground tiles", buildGroundTiles);
 guarded("the weather tiles", buildWeatherTiles);
 guarded("the atmosphere tiles", buildAtmosphereTiles);
 guarded("the pickers", wireAllPickers);

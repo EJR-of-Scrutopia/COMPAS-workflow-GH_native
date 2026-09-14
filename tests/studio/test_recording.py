@@ -32,7 +32,7 @@ import app as studio_app  # noqa: E402
 def _record_body() -> str:
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("async function recordAnimation")
-    return js[start:js.index('document.getElementById("record-button")', start)]
+    return js[start:js.index("function toggleRecording()", start)]
 
 
 def test_recording_arms_what_play_arms():

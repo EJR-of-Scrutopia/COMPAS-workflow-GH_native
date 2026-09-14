@@ -697,11 +697,6 @@ input[type="range"]:hover::-moz-range-thumb { background: var(--ink); }
    painter composed is cropped away by the box it is shown in. */
 #weather-tiles .tile canvas { aspect-ratio: 2 / 1; }
 
-/* Skies as skies. The thumbnail is the equirect itself, so the eye reads
-   the horizon, the weather and where the sun sits in one glance, which is
-   everything a filename withholds. */
-#hdri-tiles .tile img { aspect-ratio: 2 / 1; }
-
 /* A grid of tiles is a choice, not a display, so it hides until it is
    wanted. The trigger says what is chosen and shows it, which is what a
    dropdown does, without pretending a picture is a word. */

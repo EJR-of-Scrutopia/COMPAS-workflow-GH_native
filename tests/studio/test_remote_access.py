@@ -399,10 +399,15 @@ def test_play_lives_on_the_shelf_and_starts_where_you_stand():
     # bind it to openShelf(undefined).
     assert 'querySelectorAll("#shelf-tabs button")' not in js
     assert js.count('querySelectorAll("#shelf-tabs button[data-shelf]")') == 3
-    assert 'document.getElementById("play-button").click()' in js
-    # Every label paint goes through the one helper, or the two buttons
-    # drift into telling different stories.
-    assert 'document.getElementById("play-button").textContent' not in js
+    # One face since 2026-09-14: the panel's Play, Restart, Stop and
+    # Record were copies of these icons and went, and the icons call the
+    # take's own functions rather than clicking buttons that are gone.
+    for gone in ("play-button", "restart-button", "stop-button", "record-button"):
+        assert 'id="' + gone + '"' not in html, gone
+        assert '"' + gone + '"' not in js, gone
+    assert 'document.getElementById("shelf-play").addEventListener("click", togglePlay);' in js
+    # Every label paint goes through the one helper.
+    assert 'document.getElementById("shelf-play").textContent' not in js
     assert js.count("paintPlayButtons(") >= 8
 
     capture = _js_function(js, "function captureOrbitBase(atT)")
@@ -412,12 +417,13 @@ def test_play_lives_on_the_shelf_and_starts_where_you_stand():
     assert "base.centre || state.centre" in apply_block
 
     # The trio: play, restart, record, icons in a row (his walk), each
-    # delegating to the one real control so no logic is duplicated.
+    # calling the one function behind it so no logic is duplicated.
     tabs = html[html.index('id="shelf-tabs"'):]
     tabs = tabs[:tabs.index("</div>")]
     assert 'id="shelf-restart"' in tabs and 'id="shelf-record"' in tabs
-    assert 'document.getElementById("restart-button").click()' in js
-    assert 'document.getElementById("record-button").click()' in js
+    assert 'document.getElementById("shelf-restart").addEventListener("click", restartTake);' in js
+    assert 'document.getElementById("shelf-record").addEventListener("click", toggleRecording);' in js
+    assert 'document.getElementById("shelf-stop").addEventListener("click", stopTake);' in js
     assert r'"❚❚"' in js and r'"▶"' in js, (
         "the shelf play tile is an icon: triangle at rest, bars playing")
 
@@ -1944,7 +1950,8 @@ def test_the_shelf_record_tile_becomes_a_stop_button():
     assert '    tile.textContent = state.recording ? "\\u25a0" : "\\u25cf";' in js, (
         "a filled square while recording, a filled circle at rest")
     assert '    tile.classList.toggle("recording", state.recording);' in js
-    assert '    tile.title = state.recording ? "Stop the recording" : "Record the animation";' in js
+    assert '    tile.title = state.recording ? "Stop the recording" : "Record the animation at 1080p";' in js, (
+        "the resolution the panel's Record 1080p used to say, now it is the only face")
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
     assert "#shelf-actions button.recording," in css, (
         "filled red at rest while a take runs, like the panel's own button")
@@ -2298,8 +2305,9 @@ def test_the_machine_draws_the_way_he_asked():
     # another render and upload.
     assert "  recordStop: false," in js
     assert "      if (state.recordStop) { stopped = frameIndex; break; }" in js
-    assert 'button.textContent = state.recording ? "Stop recording" : "Record 1080p";' in js
-    assert '  button.classList.toggle("recording", state.recording);' in js
+    # One control since 2026-09-14, the shelf's record icon.
+    assert 'tile.textContent = state.recording ?' in js
+    assert '    tile.classList.toggle("recording", state.recording);' in js
     assert "    state.recordStop = true;" in js, "a second press stops the take"
     # A stopped take is not stitched: he pressed stop because it was
     # wrong, and handing him a video of it anyway would be a surprise.

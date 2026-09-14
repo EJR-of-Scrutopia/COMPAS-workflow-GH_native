@@ -210,4 +210,7 @@ def test_tiles_are_pictures_from_the_backend_not_renders():
     assert 'export const GROUND_BASE = "/api/ground-materials";' in source
     studio_source = studio()
     assert 'image.loading = "lazy";' in studio_source
-    assert "imageTile(entry.key, entry.label, tileUrl(entry, base))" in studio_source
+    # The shelf's Materials tile is the one grid of library pictures since
+    # the panel's hidden skin and floor grids went (2026-09-14).
+    assert "const tile = imageTile(row.entry.key, row.entry.label," in studio_source
+    assert "tileUrl(row.entry, row.skin ? undefined : GROUND_BASE));" in studio_source

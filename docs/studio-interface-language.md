@@ -657,8 +657,9 @@ from would be a worse fault than the one it fixes.
 **Stop is not Pause and not Restart.** A Stop button existed once and
 was removed for being those two together. This one undoes the whole
 excursion instead: the mode he was looking at, the clock he was at and
-where he was standing. Both faces stay disabled until a take has been
-entered, because with nothing captured there is nowhere to go back to.
+where he was standing. It stays disabled until a take has been entered,
+because with nothing captured there is nowhere to go back to. (Two faces
+then, the panel's and the shelf's; one since 2026-09-14, the shelf's.)
 
 **What this round did not change.** No dial was added or removed, so
 section 10's census stands. The `body.recording #stats-overlay` rule
@@ -850,6 +851,45 @@ came out as bare sliders the first time anything showed them, with no
 reading to type into. It upgrades a hidden label now, and the row keeps
 the hidden class until it is shown. Measured with Haze chosen: ten rows
 in the Atmosphere block and no raw slider anywhere in the panel.
+
+**What this round did not change.** No dial was added or removed, so the
+census stands at 59 of 65.
+
+**No panel control repeats a shelf tile.** The same message, its second
+half: "if theres banner menu items which are captured in the tiles then
+we dont need them in the menu etc". Each of these only opened a tile or
+did what a shelf icon does, and each went, leaving the tile or the icon
+as the one face:
+
+- the Skin section's skin picker, with its search box and hidden grid
+  (the Materials tile, Assign to skin);
+- the Scene section's sky picker and its hidden grid (the Skies tile);
+- the Ground group's surface picker, search box and hidden grid (the
+  Materials tile, Assign to ground);
+- Library in the Props group (the Props tile);
+- Play, Restart and Stop in the Animation section, and Record 1080p in
+  Output (the four icons beside the drawer tabs).
+
+WHAT STAYED, and why. The folders, because which library a tile shows is
+a setting and not a picture. The hidden selects (`render-skin`,
+`ground-preset`, `hdri-select`), because every reader of the choice goes
+through them and the tiles write them. The take's report under Take, which
+says at rest that a take records at 1080p from the icon beside Play, the
+resolution the button's name used to carry; the icon's own title says it
+too.
+
+THE ICONS CALL THE TAKE'S FUNCTIONS. They used to click the panel's
+buttons, so the buttons could not simply be deleted: `togglePlay`,
+`restartTake`, `stopTake` and `toggleRecording` are what the buttons'
+handlers were, and the icons are wired to them by name.
+
+THE HIDDEN GRIDS WERE NOT FREE. The skin and floor pickers' grids were
+built, and their built-in tiles rendered on the preview rig, only to lend
+a picker its swatch; the floor's preview wrote the floor's own material
+and had to put its lay angle back. None of that runs now. Measured in a
+headless browser: none of the thirteen ids is on the page, Play and Pause
+swap the icon, Restart starts the clock from nought, and Stop put the
+scene back in Both with the Stop icon disabled again, with no errors.
 
 **What this round did not change.** No dial was added or removed, so the
 census stands at 59 of 65.

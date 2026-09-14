@@ -891,12 +891,15 @@ def test_transport_is_pause_restart_and_a_stop_that_undoes_the_take():
 
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="play-button"' in html and 'id="restart-button"' in html
-    assert 'id="stop-button"' in html and 'id="shelf-stop"' in html
+    # One face since 2026-09-14, the shelf's icons: the panel's Play,
+    # Restart and Stop were copies of them.
+    assert 'id="shelf-play"' in html and 'id="shelf-restart"' in html
+    assert 'id="shelf-stop"' in html and 'id="stop-button"' not in html
 
-    # NOTHING TO GO BACK TO, nothing to press: both faces start
-    # disabled, and are enabled only once a take has been entered.
-    for which in ('id="stop-button"', 'id="shelf-stop"'):
+    # NOTHING TO GO BACK TO, nothing to press: the face starts disabled,
+    # and is enabled only once a take has been entered.
+    assert "button.disabled = !beforeTheTake;" in _function_body(js, "paintStopButton")
+    for which in ('id="shelf-stop"',):
         tag = html[html.index(which):]
         tag = tag[:tag.index(">")]
         assert "disabled" in tag, which
@@ -941,11 +944,9 @@ def test_transport_is_pause_restart_and_a_stop_that_undoes_the_take():
     # which also switches to the animation view and reads the framing off
     # the viewport, so a take can never begin in the wrong mode or from a
     # camera the user did not choose.
-    # The ADDEENER, not the first mention: the shelf's restart icon
-    # delegates by clicking this very button, and that call sits earlier
-    # in the file than the handler it reaches.
-    restart_start = js.index('getElementById("restart-button").addEventListener')
-    restart_body = js[restart_start:js.index("\n});", restart_start)]
+    # The shelf's restart icon calls restartTake itself since the panel's
+    # Restart it used to click went (2026-09-14).
+    restart_body = _function_body(js, "restartTake")
     assert "startPlaying(true)" in restart_body
     start_body = _function_body(js, "startPlaying")
     # The clock decision precedes the capture, and the timeline is only
@@ -1343,9 +1344,12 @@ def test_props_come_from_a_library_of_real_models():
     assert "function carryNewProp(" in js and "function carryExistingProp(" in js
     assert "state.carrying" in js
     assert "if (state.carrying) {" in _function_body(js, "cancelCarry") or True
-    for control in ("prop-browse", "props-clear", "prop-tiles",
+    for control in ("props-clear", "prop-tiles",
                     "prop-credit", "prop-type"):
         assert 'id="{}"'.format(control) in html, control
+    # Library only opened the Props tile, and went with the other openers
+    # on 2026-09-14.
+    assert 'id="prop-browse"' not in html
     assert 'id="prop-figure"' not in html, "the five buttons are gone"
     # The manifest, not the file, is the authority on scale.
     loader = _function_body(js, "loadPropTemplate")
@@ -2093,8 +2097,11 @@ def test_the_panel_reorganises_into_six_sections():
     assert 'id="record-button"' not in animation, (
         "Record moved to Output; leaving a copy behind is how two "
         "buttons over one take come to disagree")
+    # And on 2026-09-14 it left the panel altogether: the shelf's record
+    # icon was the same control, and the take reports in Output.
+    assert 'id="record-button"' not in html
     output = html[html.index('id="output-section"'):]
-    for control in ("record-button", "record-status", "recordings-folder-row",
+    for control in ("record-status", "recordings-folder-row",
                     "still-render", "still-size", "still-readout"):
         assert 'id="{}"'.format(control) in output, control
     # And the tab that reaches it.
@@ -2845,8 +2852,11 @@ def test_a_scene_keeps_the_prop_sizes_and_the_floors_lay_angle():
     assert "state.ground.rotation = Math.random() * Math.PI * 2;" in js
     assert js.count("texture.rotation = state.ground.rotation || 0;") == 1
     assert "material.map.rotation = state.ground.rotation || 0;" in js
-    # The picker thumbnails stay squared up: the lay angle is the floor's.
-    assert "material.map.rotation = 0;" in js
+    # The ground picker's thumbnails squared the floor's own material up
+    # and had to put the lay angle back; they went on 2026-09-14, so
+    # nothing else writes the floor's map.
+    assert "function renderGroundPreview(" not in js
+    assert "material.map.rotation = 0;" not in js
 
 
 def test_asset_loads_announce_themselves_on_the_glass():
@@ -2953,12 +2963,50 @@ def test_the_panel_faces_follow_silent_restores():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     body = _function_body(js, "repaintSettingControls")
     assert 'paintSegmented("environment-segments", "environment-mode")' in body
-    assert '"ground-picker"' in body and '"hdri-picker"' in body
+    assert '"weather-picker"' in body and '"atmosphere-picker"' in body
+    # The skin, floor and sky pickers only opened shelf tiles and went on
+    # 2026-09-14; those tiles paint what is chosen when they are drawn.
+    assert '"ground-picker"' not in body and '"hdri-picker"' not in body
     assert "syncGroundControls();" in body
     # The three silent writers all repaint: the scene restore, the
     # material-library boot restore, and the hdri list refresh -- plus
     # the shelf's sky click.
     assert js.count("repaintSettingControls();") >= 4
+
+
+def test_no_panel_control_repeats_a_shelf_tile():
+    """Param, 2026-09-14: "We need to do a swap around so we dont repeat
+    many inputs, if theres banner menu items which are captured in the
+    tiles then we dont need them in the menu etc". Each of these only
+    opened a tile, or did what a shelf icon does; the tile or the icon is
+    the one face now. What stood beside them and still needs the panel
+    stays: the folders (which library a tile shows is a setting), the
+    hidden selects every reader goes through, and the take's report."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel = html[html.index('<aside id="panel">'):html.index("</aside>")]
+    shelf = html[html.index('<div id="shelf">'):html.index('<aside id="panel">')]
+    for gone in ("skin-picker", "skin-search", "skin-tiles", "hdri-picker", "hdri-tiles",
+                 "ground-picker", "ground-search", "ground-tiles", "prop-browse",
+                 "play-button", "restart-button", "stop-button", "record-button"):
+        assert 'id="' + gone + '"' not in html, gone
+        assert '"' + gone + '"' not in js, gone
+    for kept in ("material-folder-row", "hdri-folder-row", "ground-folder-row",
+                 "props-folder-row", "recordings-folder-row", "render-skin",
+                 "ground-preset", "hdri-select", "record-status", "props-clear"):
+        assert 'id="' + kept + '"' in panel, kept
+    for face in ('id="shelf-play"', 'id="shelf-restart"', 'id="shelf-stop"',
+                 'id="shelf-record"', 'data-shelf="materials"', 'data-shelf="skies"',
+                 'data-shelf="props"'):
+        assert face in shelf, face
+    # The resolution the panel's Record 1080p said, said at rest by the one
+    # face left, before any take has repainted it.
+    assert 'id="shelf-record" class="shelf-act" title="Record the animation at 1080p"' in shelf
+    # The grids that only lent those pickers a swatch are not built, so
+    # neither are the previews they rendered.
+    for builder in ("buildSkinTiles", "buildGroundTiles", "buildHdriTiles", "buildLibraryGrid"):
+        assert builder not in js, builder
 
 
 def test_the_camera_menu_owns_the_lens_and_the_recording_keeps_it():
