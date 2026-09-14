@@ -5103,7 +5103,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         }
     }
 
-    private bool TryReadResult(IGH_DataAccess data, out ResultDto? result)
+    internal static bool TryReadResult(IGH_DataAccess data, out ResultDto? result)
     {
         ResultGoo? goo = null;
         result = null;
@@ -5522,7 +5522,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
     /// A flat plane list, as his orient clusters take one, read into the
     /// placement plane shape with Z taken true off the Rhino plane.
     /// </summary>
-    private static List<MechanismPlacementPlane> ReadPlaneList(IGH_DataAccess data, int at)
+    internal static List<MechanismPlacementPlane> ReadPlaneList(IGH_DataAccess data, int at)
     {
         var planes = new List<Plane>();
         data.GetDataList(at, planes);
@@ -5715,6 +5715,23 @@ public sealed class MachineComponent : NativeComponentBase
     /// <summary>WHERE Cables (CB) sits (2026-09-14), declared once for the
     /// registration and the reader. Appended, never inserted.</summary>
     internal const int CablesPort = 15;
+
+    /// <summary>
+    /// WHERE THE MACHINE'S PARTS SIT, one record per component that reads
+    /// them (2026-09-14). This component and Placed Mechanism read the same
+    /// parts at different positions, and a reader carrying one component's
+    /// numbers into the other would read the wrong port without a word,
+    /// which is what Wire Start once did. Each component names its own
+    /// positions, and the harness checks every one against the nickname
+    /// registered there.
+    /// </summary>
+    internal readonly record struct PartPorts(
+        int Frame1, int Frame2, int Motors, int Reel, int ReelPlanes,
+        int Routing, int WireStart, int Cables);
+
+    internal static readonly PartPorts OwnPorts =
+        new(Frame1: 5, Frame2: 6, Motors: 7, Reel: 8, ReelPlanes: 9, Routing: 10,
+            WireStart: WireStartPort, Cables: CablesPort);
 
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
@@ -5917,8 +5934,8 @@ public sealed class MachineComponent : NativeComponentBase
             data.GetData(13, ref machineId);
             data.GetData(14, ref reeve);
 
-            MechanismAssetInput asset = ReadAsset(data, warnings, notes);
-            List<MechanismRoutingWire> routing = ReadRouting(data, warnings, notes);
+            MechanismAssetInput asset = ReadAsset(data, OwnPorts, true, warnings, notes);
+            List<MechanismRoutingWire> routing = ReadRouting(data, OwnPorts.Routing, warnings, notes);
 
             // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route,
             // BEFORE the document is built (spec 3.5, and the final fix
@@ -6052,25 +6069,29 @@ public sealed class MachineComponent : NativeComponentBase
         return ExportPlan.NameIsOneSegment(trimmed) ? trimmed : "machine";
     }
 
-    private MechanismAssetInput ReadAsset(
-        IGH_DataAccess data, List<string> warnings, List<string> notes)
+    internal static MechanismAssetInput ReadAsset(
+        IGH_DataAccess data, PartPorts ports, bool refusePermanentWorks,
+        List<string> warnings, List<string> notes)
     {
         // TT and AN MOVED to the Mechanism component (spec 3.3): the slots
         // stay, GH_ParamAccess.list exactly as they were registered, so an
         // archived wire still connects and can be refused by name rather
         // than left dangling with no explanation.
-        _ = MechanismCollectorComponent.RefuseMovedPortPublic(
-            data, 3, GH_ParamAccess.list, "Tension Tie (TT)",
-            "the Mechanism component's own Tension Tie (TT) input",
-            warnings);
-        _ = MechanismCollectorComponent.RefuseMovedPortPublic(
-            data, 4, GH_ParamAccess.list, "Anchor (AN)",
-            "the Mechanism component's own Anchor (AN) input",
-            warnings);
-        MechanismMesh? f1 = ReadOnePiece(data, 5, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
+        if (refusePermanentWorks)
+        {
+            _ = MechanismCollectorComponent.RefuseMovedPortPublic(
+                data, 3, GH_ParamAccess.list, "Tension Tie (TT)",
+                "the Mechanism component's own Tension Tie (TT) input",
+                warnings);
+            _ = MechanismCollectorComponent.RefuseMovedPortPublic(
+                data, 4, GH_ParamAccess.list, "Anchor (AN)",
+                "the Mechanism component's own Anchor (AN) input",
+                warnings);
+        }
+        MechanismMesh? f1 = ReadOnePiece(data, ports.Frame1, "Frame 1 (F1)", warnings, notes, out bool f1Brep);
 
         var f2Items = new List<object>();
-        data.GetDataList(6, f2Items);
+        data.GetDataList(ports.Frame2, f2Items);
         var f2 = new List<MechanismMesh>(f2Items.Count);
         var f2Brep = new List<bool>(f2Items.Count);
         for (int i = 0; i < f2Items.Count; i++)
@@ -6085,7 +6106,7 @@ public sealed class MachineComponent : NativeComponentBase
             f2Brep.Add(b);
         }
 
-        MechanismMesh? mo = ReadOnePiece(data, 7, "Motors (MO)", warnings, notes, out bool moBrep);
+        MechanismMesh? mo = ReadOnePiece(data, ports.Motors, "Motors (MO)", warnings, notes, out bool moBrep);
 
         // THE REELS, READ AS TREES AND PAIRED BY BRANCH POSITION (spec
         // 4.1): Reel (RE) branch i against Reel Rotation Planes (RP) branch i, in the
@@ -6096,9 +6117,9 @@ public sealed class MachineComponent : NativeComponentBase
         // refuse a machine that is wired correctly. What that costs is
         // named in the chin below rather than left to be discovered.
         List<List<MechanismMesh?>> reelBranches = ReadMeshTree(
-            data, 8, "Reel (RE)", warnings, out List<bool> reelBranchFromBrep,
+            data, ports.Reel, "Reel (RE)", warnings, out List<bool> reelBranchFromBrep,
             out int reelPaths);
-        List<List<MechanismFrame?>> axisBranches = ReadPlaneTree(data, 9, out int axisPaths);
+        List<List<MechanismFrame?>> axisBranches = ReadPlaneTree(data, ports.ReelPlanes, out int axisPaths);
 
         if (reelPaths > 0 && axisPaths > 0 && reelPaths != axisPaths)
         {
@@ -6135,7 +6156,7 @@ public sealed class MachineComponent : NativeComponentBase
         // unchanged; what changes is that THIS reader can no longer be the
         // one that inflates them (spec 3.4).
         MechanismMesh? cables = ReadOnePiece(
-            data, CablesPort, "Cables (CB)", warnings, notes, out bool cablesBrep);
+            data, ports.Cables, "Cables (CB)", warnings, notes, out bool cablesBrep);
         if (cables is not null && cablesBrep)
             notes.Add($"Cables (CB) {MechanismCollector.BrepMeshingNote}");
         return new MechanismAssetInput(
@@ -6236,7 +6257,7 @@ public sealed class MachineComponent : NativeComponentBase
         return branches;
     }
 
-    private MechanismMesh? ReadOnePiece(
+    internal static MechanismMesh? ReadOnePiece(
         IGH_DataAccess data, int port, string label,
         List<string> warnings, List<string> notes, out bool fromBrep)
     {
@@ -6269,10 +6290,10 @@ public sealed class MachineComponent : NativeComponentBase
         return MechanismCollector.JoinMeshes(parts);
     }
 
-    private List<MechanismRoutingWire> ReadRouting(
-        IGH_DataAccess data, List<string> warnings, List<string> notes)
+    internal static List<MechanismRoutingWire> ReadRouting(
+        IGH_DataAccess data, int port, List<string> warnings, List<string> notes)
     {
-        data.GetDataTree(10, out GH_Structure<GH_Plane> rtTree);
+        data.GetDataTree(port, out GH_Structure<GH_Plane> rtTree);
         var branches = new List<(IReadOnlyList<int>, IReadOnlyList<MechanismFrame>)>();
         int deepest = 0;
         foreach (GH_Path path in rtTree.Paths)
@@ -6306,5 +6327,267 @@ public sealed class MachineComponent : NativeComponentBase
                 " frame(s) each. THIS COUNT IS THE MACHINE'S wireCount.");
         }
         return wires;
+    }
+}
+
+/// <summary>
+/// ONE MECHANISM, PLACED BY HIS OWN ORIENT METHOD (2026-09-14): every input
+/// he wires and nothing else. His words: "i just need the ones ive given
+/// surely? I dont think i need optional."
+///
+/// It does the Machine component's job and the Mechanism component's job in
+/// one solve, by the same builds, so nothing is re-derived and the two
+/// documents stay split: the machine is written to the library folder once,
+/// under its id, and rewritten only when its content changes; the study
+/// payload leaves on ME for Export, citing that machine. The mechanism is
+/// oriented by his two plane lists (see
+/// <see cref="MechanismCollector.PlacementsFromOrientPlanes"/>); the Tension
+/// Tie he places himself and it is never oriented. The frame meaning and the
+/// reeve factor take their defaults, centreline and 4.0, as his machine does.
+/// </summary>
+public sealed class PlacedMechanismComponent : NativeComponentBase
+{
+    public PlacedMechanismComponent()
+        : base(
+            "Placed Mechanism",
+            "PM",
+            "One mechanism as you built it, oriented by your own two plane " +
+            "lists (machine planes first, then side planes), with the tension " +
+            "tie you placed yourself. Writes the machine to its library " +
+            "folder and hands the study to Export's Mechanism input. Only your " +
+            "inputs, none optional.",
+            ComponentCategories.Deliver,
+            "placed_mechanism")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("3b9e6d1c-8f24-4a57-b0c3-5e1d7a92f468");
+
+    /// <summary>
+    /// Where this component's machine parts sit, read by the Machine
+    /// component's own readers. Checked by the harness against every
+    /// nickname registered here.
+    /// </summary>
+    internal static readonly MachineComponent.PartPorts Ports =
+        new(Frame1: 2, Frame2: 3, Motors: 4, Reel: 5, ReelPlanes: 6, Routing: 7, WireStart: 8, Cables: 9);
+
+    internal const int TensionTiePort = 1;
+    internal const int MachinePlanesPort = 10;
+    internal const int SidePlanesPort = 11;
+    internal const int MachineIdPort = 12;
+    internal const int FolderPort = 13;
+
+    protected override void RegisterInputParams(GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ResultParam(),
+            "Result",
+            "RES",
+            "The solved Result: the wires are matched to its net nodes.",
+            GH_ParamAccess.item);
+        parameters.AddGenericParameter(
+            "Tension Tie", "TT",
+            "Your Tension Tie Mesh: the fused anchor and tie, already placed " +
+            "by you, one piece. Never oriented here.",
+            GH_ParamAccess.list);
+        parameters.AddGenericParameter(
+            "Frame 1", "F1",
+            "Your Mechanism Mesh, the one mechanism as built; several objects " +
+            "are joined.",
+            GH_ParamAccess.list);
+        parameters.AddGenericParameter(
+            "Frame 2", "F2", "Your Mechanism Mesh 2.", GH_ParamAccess.list);
+        parameters.AddGenericParameter(
+            "Motors", "MO", "Your Motors Mesh; several objects are joined.",
+            GH_ParamAccess.list);
+        parameters.AddGenericParameter(
+            "Reel", "RE",
+            "Your Reel Mesh, one branch per reel kind.",
+            GH_ParamAccess.tree);
+        parameters.AddPlaneParameter(
+            "Reel Rotation Planes", "RP",
+            "Your All Axis, one branch per reel kind matching Reel branch for " +
+            "branch, one plane per physical reel.",
+            GH_ParamAccess.tree);
+        parameters.AddPlaneParameter(
+            "Wire Frames", "RT",
+            "Your Wire Frames, one branch per wire, planes[0] at the net end.",
+            GH_ParamAccess.tree);
+        parameters.AddPlaneParameter(
+            "Wire Start", "WS",
+            "Your Placement Plane: one plane per wire, the wire's true start.",
+            GH_ParamAccess.tree);
+        parameters.AddGenericParameter(
+            "Cables", "CB",
+            "Your Cables Mesh, for display; the wires are measured from Wire " +
+            "Frames.",
+            GH_ParamAccess.list);
+        parameters.AddPlaneParameter(
+            "Machine Planes", "MP",
+            "Your 'orient machine plane' list: plane 0 where the mechanism was " +
+            "built, every plane one mechanism along a side. Applied first.",
+            GH_ParamAccess.list);
+        parameters.AddPlaneParameter(
+            "Side Planes", "SP",
+            "Your 'Orient Planes' list: plane 0 the side it was built on, every " +
+            "plane one side. Applied after Machine Planes.",
+            GH_ParamAccess.list);
+        parameters.AddTextParameter(
+            "Machine Id", "ID",
+            "The machine's minted code, which the study cites and the machine " +
+            "file is named by. Never change it for the same machine.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Folder", "F",
+            "The machine library folder. The machine is written here when its " +
+            "content changes, and left alone when it has not.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void RegisterOutputParams(GH_OutputParamManager parameters)
+    {
+        parameters.AddTextParameter(
+            "Mechanism", "ME",
+            "The study payload, for Export's Mechanism input.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Machine", "MC",
+            "The bench.machine/1 document this study cites.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Status", "ST",
+            "What was read, placed and written, then every warning and note.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        try
+        {
+            var warnings = new List<string>();
+            var notes = new List<string>();
+
+            bool hasResult = MechanismCollectorComponent.TryReadResult(data, out ResultDto? solved);
+            string machineId = string.Empty;
+            string folder = string.Empty;
+            data.GetData(MachineIdPort, ref machineId);
+            data.GetData(FolderPort, ref folder);
+            machineId = machineId.Trim();
+
+            MechanismAssetInput parts = MachineComponent.ReadAsset(data, Ports, false, warnings, notes);
+            List<MechanismRoutingWire> routing = MachineComponent.ReadRouting(data, Ports.Routing, warnings, notes);
+            routing = MechanismCollector.PrependWireStarts(
+                routing, MechanismCollectorComponent.ReadWireStarts(data, Ports.WireStart), notes);
+
+            string machine = MechanismCollector.BuildMachine(
+                parts, routing, machineId, machineId,
+                MechanismCollector.DefaultReeveFactor, null, warnings, notes);
+
+            var status = new List<string>();
+            if (machine.Length > 0)
+            {
+                if (!ExportPlan.NameIsOneSegment(machineId))
+                {
+                    warnings.Add(
+                        $"Machine Id \"{machineId}\" cannot name a file (it is not " +
+                        "one path segment), so the machine was not written.");
+                }
+                else if (string.IsNullOrWhiteSpace(folder))
+                {
+                    warnings.Add("Folder is empty, so the machine was not written.");
+                }
+                else
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(folder);
+                        string target = Path.Combine(folder, $"{machineId}-machine.json");
+                        if (File.Exists(target) && File.ReadAllText(target) == machine)
+                        {
+                            status.Add($"machine unchanged: {target}");
+                        }
+                        else
+                        {
+                            string? refusal =
+                                MechanismCollector.RefuseOverwritingAnotherMachine(target, machineId);
+                            if (refusal is not null)
+                            {
+                                warnings.Add(refusal);
+                            }
+                            else
+                            {
+                                AtomicFile.Write(target, machine);
+                                status.Add($"machine written: {target}");
+                            }
+                        }
+                    }
+                    catch (Exception writeError)
+                    {
+                        warnings.Add("The machine could not be written: " + writeError.Message);
+                    }
+                }
+            }
+
+            MechanismMachineCitation? citation = machine.Length > 0
+                ? MechanismCollector.ReadMachineCitation(machine, warnings)
+                : null;
+
+            MechanismMesh? tie = MachineComponent.ReadOnePiece(
+                data, TensionTiePort, "Tension Tie (TT)", warnings, notes, out bool tieBrep);
+            var study = new MechanismAssetInput(
+                null, false,
+                Array.Empty<MechanismMesh>(), Array.Empty<bool>(),
+                null, false,
+                tie, tieBrep,
+                Array.Empty<MechanismReelGroup>(),
+                null, false)
+            {
+                TensionTiePlaced = true,
+            };
+
+            List<MechanismPlacementPlane> machinePlanes =
+                MechanismCollectorComponent.ReadPlaneList(data, MachinePlanesPort);
+            List<MechanismPlacementPlane> sidePlanes =
+                MechanismCollectorComponent.ReadPlaneList(data, SidePlanesPort);
+            List<MechanismPlacementBranch> placements = MechanismCollector.PlacementsFromOrientPlanes(
+                routing, machinePlanes, sidePlanes, warnings);
+
+            // No placement must never fall back to the derivation from the
+            // net, so the build is handed no Result in that one case.
+            string? payload = MechanismCollector.BuildWithResult(
+                study, routing, placements, warnings, notes,
+                placements.Count == 0 ? null : solved, null, null, citation);
+
+            status.Insert(0,
+                $"received: machine \"{machineId}\" " +
+                (machine.Length > 0 ? "built" : "NOT built") +
+                $", {routing.Count(w => w.Route.Count > 0)} wire(s), " +
+                $"{Math.Max(1, machinePlanes.Count)} mechanism(s) per side by " +
+                $"{Math.Max(1, sidePlanes.Count)} side(s) = {placements.Count} placement(s), " +
+                "tension tie " + (tie is null ? "NOT wired" : "placed by you") +
+                ", Result " + (hasResult ? "wired." : "NOT wired."));
+
+            foreach (string warning in warnings)
+            {
+                status.Add(warning);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, Headline(warning));
+            }
+            foreach (string note in notes)
+            {
+                status.Add(note);
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, Headline(note));
+            }
+
+            data.SetData(0, payload ?? string.Empty);
+            data.SetData(1, machine);
+            data.SetData(2, string.Join(Environment.NewLine, status));
+            Message = $"{placements.Count} placed";
+        }
+        catch (Exception error)
+        {
+            Message = "Failed";
+            ReportException("Placed Mechanism failed", error);
+        }
     }
 }

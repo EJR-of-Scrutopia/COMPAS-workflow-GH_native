@@ -246,6 +246,12 @@
       "label": "MC",
       "category": "05 Deliver",
       "filename": "machine.png"
+    },
+    {
+      "key": "placed_mechanism",
+      "label": "PM",
+      "category": "05 Deliver",
+      "filename": "placed_mechanism.png"
     }
   ]
 }

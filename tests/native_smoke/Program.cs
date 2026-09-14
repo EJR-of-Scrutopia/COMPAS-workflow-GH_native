@@ -384,6 +384,7 @@ internal static partial class Program
             ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
             ["Ananke.COMPAS.Native.Components.MechanismCollectorComponent"] = ("mechanism", "ME"),
             ["Ananke.COMPAS.Native.Components.MachineComponent"] = ("machine", "MC"),
+            ["Ananke.COMPAS.Native.Components.PlacedMechanismComponent"] = ("placed_mechanism", "PM"),
         };
 
     public static int Main(string[] args)
@@ -587,7 +588,7 @@ internal static partial class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 23)
+        if (componentTypes.Length != 24)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
@@ -606,8 +607,10 @@ internal static partial class Program
             // 2026-09-09: MachineComponent, which writes the machine ALONE
             // to its own file, because a machine is not a property of a
             // study and had no business riding through a study exporter.
+            // 24 from 2026-09-14: Placed Mechanism, his one clean component,
+            // only his inputs, placed by his own two orient lists.
             failures.Add(
-                $"Expected 23 concrete public components, found " +
+                $"Expected 24 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -3789,7 +3792,9 @@ internal static partial class Program
                 + "along it. A tie flagged as placed says placement \"world\" "
                 + "and is never oriented; the Cables mesh reaches the "
                 + "mechanism block as a temporary part; each new port's index "
-                + "is one named constant.");
+                + "is one named constant, and every machine part position on "
+                + "the Machine and Placed Mechanism components reads the input "
+                + "its nickname says.");
         }
         catch (Exception exception)
         {
@@ -43797,6 +43802,16 @@ internal static partial class Program
             (12, "MA", "Machine", "item"), (13, "RW", "Reeve Per Wire", "tree"),
             (14, "MP", "Machine Planes", "list"), (15, "SP", "Side Planes", "list"),
         });
+        Ports("PlacedMechanismComponent", new (int, string, string, string)[]
+        {
+            (0, "RES", "Result", "item"), (1, "TT", "Tension Tie", "list"),
+            (2, "F1", "Frame 1", "list"), (3, "F2", "Frame 2", "list"),
+            (4, "MO", "Motors", "list"), (5, "RE", "Reel", "tree"),
+            (6, "RP", "Reel Rotation Planes", "tree"), (7, "RT", "Wire Frames", "tree"),
+            (8, "WS", "Wire Start", "tree"), (9, "CB", "Cables", "list"),
+            (10, "MP", "Machine Planes", "list"), (11, "SP", "Side Planes", "list"),
+            (12, "ID", "Machine Id", "item"), (13, "F", "Folder", "item"),
+        });
     }
 
     /// <summary>
@@ -44101,6 +44116,8 @@ internal static partial class Program
             ("MechanismCollectorComponent", "MachinePlanesPort", 14, "MP"),
             ("MechanismCollectorComponent", "SidePlanesPort", 15, "SP"),
             ("MachineComponent", "CablesPort", 15, "CB"),
+            ("PlacedMechanismComponent", "MachinePlanesPort", 10, "MP"),
+            ("PlacedMechanismComponent", "SidePlanesPort", 11, "SP"),
         };
         foreach ((string typeName, string constant, int at, string nick) in ports)
         {
@@ -44108,6 +44125,39 @@ internal static partial class Program
             FieldInfo? field = type.GetField(constant, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (field is null || (int)field.GetRawConstantValue()! != at)
                 failures.Add($"{typeName}.{constant} must be the constant {at}");
+        }
+
+        // EVERY PART POSITION a reader carries, on BOTH components that read
+        // the machine's parts, against the nickname registered at it.
+        (string Member, string Nick)[] partNicks =
+        {
+            ("Frame1", "F1"), ("Frame2", "F2"), ("Motors", "MO"), ("Reel", "RE"),
+            ("ReelPlanes", "RP"), ("Routing", "RT"), ("WireStart", "WS"), ("Cables", "CB"),
+        };
+        foreach ((string typeName, string fieldName) in new[]
+        {
+            ("MachineComponent", "OwnPorts"), ("PlacedMechanismComponent", "Ports"),
+        })
+        {
+            Type type = RequireComponentType(plugin, typeName);
+            object? record = type.GetField(fieldName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null);
+            if (record is null)
+            {
+                failures.Add($"{typeName}.{fieldName} is missing");
+                continue;
+            }
+            object component = Activator.CreateInstance(type)!;
+            object paramsObject = type.BaseType!.GetProperty("Params")!.GetValue(component)!;
+            var inputs = (IList)paramsObject.GetType().GetProperty("Input")!.GetValue(paramsObject)!;
+            foreach ((string member, string nick) in partNicks)
+            {
+                int at = (int)record.GetType().GetProperty(member)!.GetValue(record)!;
+                string got = at >= 0 && at < inputs.Count
+                    ? (string)inputs[at]!.GetType().GetProperty("NickName")!.GetValue(inputs[at])!
+                    : "(none)";
+                if (got != nick)
+                    failures.Add($"{typeName}.{fieldName}.{member} reads input {at}, which is {got}, not {nick}");
+            }
         }
 
         if (failures.Count > 0)
