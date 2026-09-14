@@ -1750,3 +1750,22 @@ def test_a_still_goes_to_the_output_folder_and_leaves_no_tiles(tmp_path, monkeyp
     # And the folder button says it is for both.
     assert app_module.FOLDER_TITLES["recordings_folder"] == (
         "Choose where finished stills and recordings are saved")
+
+
+def test_health_says_when_the_server_is_older_than_its_code(tmp_path, monkeypatch):
+    """Param, 2026-09-14: "the still captue is still not working why is
+    this such a challenge?" The fix had been on disk since the afternoon
+    before; the server process was from before it, and nothing said so."""
+
+    import sys
+    sys.path.insert(0, str(REPO / "bench" / "studio"))
+    import app as app_module
+
+    client, _studies = make_client(tmp_path, monkeypatch)
+    fresh = client.get("/api/health").json()
+    assert fresh["serverStale"] is False
+    monkeypatch.setattr(app_module, "server_code_marks", lambda: "moved-on")
+    assert client.get("/api/health").json()["serverStale"] is True
+    # The hash is of the studio's own Python files, sizes and times.
+    marks = app_module.SERVER_CODE_AT_START
+    assert isinstance(marks, str) and len(marks) == 10

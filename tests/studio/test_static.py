@@ -4467,3 +4467,18 @@ def test_ctrl_takes_the_wheel_and_the_right_button_before_the_orbit_does():
     assert "controls.target.set(camera.position.x + turned[0] * lookDrag.distance," in down
     assert "camera.position.set(" not in down and "camera.position.x +=" not in down
     assert js.count('}, true);') >= 2
+
+
+def test_the_page_says_when_the_server_needs_a_restart():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    check = _function_body(js, "checkServerCode")
+    assert 'const stale = !("serverStale" in health) || health.serverStale === true;' in check, (
+        "a server too old to answer the question is older still")
+    assert 'button.classList.toggle("attention", stale);' in check
+    assert "showBanner(" in check
+    assert "setInterval(checkServerCode, 60000);" in js
+    still = _function_body(js, "renderStill")
+    assert still.index("if (await checkServerCode()) {") < still.index('document.body.classList.add("stilling");'), (
+        "a plate is not rendered onto a stale server")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#restart-studio.attention {" in css

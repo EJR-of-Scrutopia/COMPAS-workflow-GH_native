@@ -7902,6 +7902,14 @@ function paintStillSize() {
 async function renderStill() {
   if (state.stillRendering || state.recording) return;
   if (!state.bundle) { paintStillReadout("load a study first"); return; }
+  // Asked again at the moment it matters: a plate from a stale server goes
+  // where the old code sends it.
+  if (await checkServerCode()) {
+    paintStillReadout("restart the studio first: this server predates the still fixes");
+    showBanner("Restart studio first (foot of the panel): this server is older than its "
+      + "code, and would put the still where the old code does.", "error");
+    return;
+  }
   const frame = stillFrame();
   const target = "study-" + state.bundle.slug;
   const across = Math.ceil(frame.width / STILL_TILE);
@@ -13300,6 +13308,42 @@ function applySurfaceControls() {
 // is the difference between "the server is up" and "the server is the one I
 // asked for". A restart that came back on the old build would put us
 // straight back in the fault this button exists to end.
+// ---------- a server older than its own code ----------
+// The page reloads onto new JavaScript by itself; the server does not
+// reload onto new Python until it is restarted. When the two disagree the
+// studio says so, beside the button that fixes it, rather than letting a
+// still quietly go on doing what the old server did (Param, 2026-09-14,
+// after a still fixed the day before went on landing in the study folder).
+// A server too old to answer the question at all is older still.
+let serverStaleSaid = false;
+
+async function checkServerCode() {
+  let health = null;
+  try {
+    health = await (await fetch("/api/health", { cache: "no-store" })).json();
+  } catch (error) {
+    return null;
+  }
+  const stale = !("serverStale" in health) || health.serverStale === true;
+  const button = document.getElementById("restart-studio");
+  const status = document.getElementById("restart-status");
+  button.classList.toggle("attention", stale);
+  if (stale) {
+    status.textContent = "the server is running older code than is on disk: restart it";
+    if (!serverStaleSaid) {
+      serverStaleSaid = true;
+      showBanner("The studio server is older than its own code, so recent fixes "
+        + "(stills to the output folder among them) are not running yet. Press "
+        + "Restart studio at the foot of the panel.", "error");
+    }
+  } else if (status.textContent.startsWith("the server is running older code")) {
+    status.textContent = "";
+  }
+  return stale;
+}
+checkServerCode();
+setInterval(checkServerCode, 60000);
+
 document.getElementById("restart-studio").addEventListener("click", async () => {
   const button = document.getElementById("restart-studio");
   const status = document.getElementById("restart-status");

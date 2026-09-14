@@ -1574,3 +1574,7 @@ body.stilling #fixture-panel { display: none; }
    allows (#graphs-dials is the precedent), and it keeps the four
    cells and their alignment while taking the whole width. */
 #fixture-dials { grid-template-columns: auto 1fr auto auto; }
+
+/* The one control that fixes a stale server, lit while the server is stale. */
+#restart-studio.attention { border-color: var(--danger); color: var(--ink);
+  background: var(--danger); }

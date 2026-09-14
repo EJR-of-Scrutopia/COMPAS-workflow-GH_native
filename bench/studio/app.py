@@ -595,6 +595,28 @@ HEAVY_ASSET_PREFIXES = ("/api/props/", "/api/hdri/", "/api/materials/",
 HEAVY_ASSET_CACHE = "public, max-age=3600, stale-while-revalidate=604800"
 
 
+def server_code_marks() -> str:
+    """A short hash of the server's own Python, as it stands on disk now.
+
+    Param, 2026-09-14, after two nights of stills landing in the study
+    folder: "the still captue is still not working why is this such a
+    challenge?" The fix had been on disk since the afternoon before. What
+    had not changed was the process: the page picks up new JavaScript on a
+    reload, and the Python server goes on running the code it started with
+    until it is restarted, and nothing on the page said so. The server
+    takes this hash as it starts, and /api/health says when the two differ.
+    """
+
+    marks = []
+    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        stat = path.stat()
+        marks.append("{}:{}:{}".format(path.name, stat.st_size, int(stat.st_mtime)))
+    return hashlib.sha1("|".join(marks).encode("utf-8")).hexdigest()[:10]
+
+
+SERVER_CODE_AT_START = server_code_marks()
+
+
 def static_version() -> str:
     """A short hash of every static file's size and modification time.
 
@@ -1345,7 +1367,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         """
 
         return {"studio": True, "build": static_version(),
-                "pid": os.getpid()}
+                "pid": os.getpid(),
+                # Whether the server's own code on disk has moved on since
+                # this process started: a restart is what picks it up.
+                "serverStale": server_code_marks() != SERVER_CODE_AT_START}
 
     @app.post("/api/restart")
     def restart():
