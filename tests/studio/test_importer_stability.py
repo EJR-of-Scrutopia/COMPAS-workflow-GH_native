@@ -1326,3 +1326,37 @@ def test_the_sky_thumbnail_route_builds_once(tmp_path, monkeypatch):
     assert client.get("/api/hdri/sky.hdr/light").status_code == 200
     assert (skies / ".thumbnails" / "sky.hdr.light.hdr").stat().st_mtime_ns \
         == light_stamp, "the second ask reuses the first"
+
+
+def test_an_updated_scene_shows_its_new_thumbnail(tmp_path, monkeypatch):
+    """Param, 2026-09-14: "when i update a scene we need to update the
+    thumbnail too". The update wrote the new picture; the drawer asked for
+    it at the same address, which a browser answers from the image it
+    already holds without asking again."""
+
+    import base64
+    from PIL import Image
+    import io
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    saved = client.post("/api/scenes", json={
+        "name": "Crown", "study": "Tiny", "state": {"camera": {}}, "thumbnail": THUMBNAIL})
+    scene_id = saved.json()["scene"]["id"]
+    first = client.get("/api/scenes/" + scene_id + "/thumbnail")
+    assert first.headers.get("cache-control") == "no-cache", (
+        "rewritten under the same address, so always asked about again")
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 6), (250, 10, 10)).save(buffer, "JPEG")
+    red = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+    updated = client.put("/api/scenes/" + scene_id, json={
+        "study": "Tiny", "state": {"camera": {"fov": 30}}, "thumbnail": red})
+    assert updated.status_code == 200, updated.text
+    second = client.get("/api/scenes/" + scene_id + "/thumbnail")
+    assert second.content != first.content, "the update's own picture is served"
+    assert second.content == buffer.getvalue()
+
+    js = (REPO / "bench" / "studio" / "static" / "studio.js").read_text(encoding="utf-8")
+    assert '"/thumbnail?v="' in js, "the address changes when the scene is saved again"
+    assert '+ encodeURIComponent(row.saved || "") + "-" + (sceneThumbnailTurns.get(row.id) || 0);' in js
+    assert "sceneThumbnailTurns.set(row.id, (sceneThumbnailTurns.get(row.id) || 0) + 1);" in js

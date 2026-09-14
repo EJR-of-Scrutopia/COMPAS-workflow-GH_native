@@ -6558,6 +6558,11 @@ async function refreshScenes() {
   renderSceneList();
 }
 
+// How many times each scene has been updated this session. Its `saved`
+// stamp is to the second, and two updates inside one second would
+// otherwise ask for the same picture twice.
+const sceneThumbnailTurns = new Map();
+
 function renderSceneList() {
   const list = document.getElementById("scene-list");
   if (!list) return;
@@ -6580,7 +6585,13 @@ function renderSceneList() {
       : "Restore " + row.name;
     if (row.thumbnail) {
       const image = document.createElement("img");
-      image.src = "/api/scenes/" + encodeURIComponent(row.id) + "/thumbnail";
+      // VERSIONED BY WHEN IT WAS SAVED. Param, 2026-09-14: "when i update a
+      // scene we need to update the thumbnail too". The server did write
+      // the new picture; the drawer asked for it at the same address, and
+      // a browser hands back an image it already holds for an address
+      // without asking again, so the old picture stayed on the tile.
+      image.src = "/api/scenes/" + encodeURIComponent(row.id) + "/thumbnail?v="
+        + encodeURIComponent(row.saved || "") + "-" + (sceneThumbnailTurns.get(row.id) || 0);
       image.alt = "";
       tile.appendChild(image);
     }
@@ -6667,6 +6678,7 @@ function renderSceneList() {
         return;
       }
       logStudio("updated scene " + row.name);
+      sceneThumbnailTurns.set(row.id, (sceneThumbnailTurns.get(row.id) || 0) + 1);
       await refreshScenes();
     });
     const holder = document.createElement("div");

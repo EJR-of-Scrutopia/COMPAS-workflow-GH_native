@@ -1581,7 +1581,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         path = _scene_path(scene_id, ".jpg")
         if not path.is_file():
             raise HTTPException(404, "scene {} has no thumbnail".format(scene_id))
-        return FileResponse(path, media_type="image/jpeg")
+        # An update rewrites this file under the same address, so it may be
+        # kept but must be asked about again every time.
+        return FileResponse(path, media_type="image/jpeg",
+                            headers={"Cache-Control": "no-cache"})
 
     @app.delete("/api/scenes/{scene_id}")
     def delete_scene(scene_id: str):
