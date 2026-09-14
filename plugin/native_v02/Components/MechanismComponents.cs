@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ananke.COMPAS.Native.Contracts;
@@ -282,15 +283,105 @@ internal static class MechanismCollector
     /// knows where the mechanism document goes, and saves the machine there
     /// too, as &lt;id&gt;-machine.json, so the one component needs no folder
     /// of its own. Export splits the machine off before the study document
-    /// is built, so the study never carries machine bodies.
+    /// is built, so the study never carries machine bodies. The machine is
+    /// spliced on as the LAST property and cut back off by position, never
+    /// parsed whole (2026-09-15): it runs to tens of megabytes, and a parse
+    /// and re-serialise of it cost seconds on every solve.
     /// </summary>
     public const string CarriedMachineKey = "machineDocument";
 
+    /// <summary>
+    /// A cheap fingerprint of everything the machine document is built from
+    /// (2026-09-15): every vertex and face index of every part, every reel
+    /// axis, every routing frame and the id. Placed Mechanism rebuilds the
+    /// machine only when this changes, because re-solving the vault does
+    /// not change the machine.
+    /// </summary>
+    public static ulong MachineFingerprint(
+        MechanismAssetInput parts, IReadOnlyList<MechanismRoutingWire> routing, string machineId)
+    {
+        ulong hash = 14695981039346656037UL;
+        void Mix(ulong value)
+        {
+            hash ^= value;
+            hash *= 1099511628211UL;
+        }
+        void Number(double value) => Mix((ulong)BitConverter.DoubleToInt64Bits(value));
+        void Vector(double[]? vector)
+        {
+            if (vector is null)
+            {
+                Mix(0xFFUL);
+                return;
+            }
+            Mix((ulong)vector.Length);
+            foreach (double value in vector)
+                Number(value);
+        }
+        void Mesh(MechanismMesh? mesh)
+        {
+            if (mesh is null)
+            {
+                Mix(1UL);
+                return;
+            }
+            Mix((ulong)mesh.Vertices.Count);
+            foreach (double[] vertex in mesh.Vertices)
+                Vector(vertex);
+            Mix((ulong)mesh.Faces.Count);
+            foreach (int[] face in mesh.Faces)
+            {
+                Mix((ulong)face.Length);
+                foreach (int index in face)
+                    Mix((uint)index);
+            }
+        }
+        void Frame(MechanismFrame frame)
+        {
+            Vector(frame.Origin);
+            Vector(frame.XAxis);
+            Vector(frame.YAxis);
+            Vector(frame.ZAxis);
+        }
+
+        Mesh(parts.Frame1);
+        Mix((ulong)parts.Frame2.Count);
+        foreach (MechanismMesh part in parts.Frame2)
+            Mesh(part);
+        Mesh(parts.Motors);
+        Mesh(parts.Cables);
+        Mix((ulong)parts.Reels.Count);
+        foreach (MechanismReelGroup group in parts.Reels)
+        {
+            Mesh(group.Mesh);
+            Mix((ulong)group.Bodies.Count);
+            foreach (MechanismReelBody body in group.Bodies)
+                Frame(body.Axis);
+        }
+        Mix((ulong)routing.Count);
+        foreach (MechanismRoutingWire wire in routing)
+        {
+            Mix((uint)wire.Wire);
+            Mix((ulong)wire.Route.Count);
+            foreach (MechanismFrame frame in wire.Route)
+                Frame(frame);
+        }
+        foreach (char character in machineId ?? string.Empty)
+            Mix(character);
+        return hash;
+    }
+
     public static string CarryMachine(string payload, string machineDocument)
     {
-        JsonObject rootNode = JsonNode.Parse(payload)!.AsObject();
-        rootNode[CarriedMachineKey] = JsonNode.Parse(machineDocument);
-        return rootNode.ToJsonString();
+        int close = payload.LastIndexOf('}');
+        if (close < 0)
+            throw new InvalidOperationException("The study payload is not a JSON object.");
+        var builder = new StringBuilder(payload.Length + machineDocument.Length + 32);
+        builder.Append(payload, 0, close);
+        builder.Append(",\"").Append(CarriedMachineKey).Append("\":");
+        builder.Append(machineDocument);
+        builder.Append(payload, close, payload.Length - close);
+        return builder.ToString();
     }
 
     /// <summary>
@@ -309,13 +400,24 @@ internal static class MechanismCollector
         {
             return payload;
         }
-        JsonObject rootNode = JsonNode.Parse(payload)!.AsObject();
-        if (rootNode[CarriedMachineKey] is not JsonNode carried)
+        string marker = ",\"" + CarriedMachineKey + "\":";
+        int at = payload.IndexOf(marker, StringComparison.Ordinal);
+        int close = payload.LastIndexOf('}');
+        if (at < 0 || close < at)
             return payload;
-        machineDocument = carried.ToJsonString();
-        machineId = rootNode["machine"]?["id"]?.GetValue<string>();
-        rootNode.Remove(CarriedMachineKey);
-        return rootNode.ToJsonString();
+        machineDocument = payload.Substring(at + marker.Length, close - at - marker.Length).Trim();
+        string study = payload.Substring(0, at) + payload.Substring(close);
+        using (JsonDocument parsed = JsonDocument.Parse(study))
+        {
+            if (parsed.RootElement.TryGetProperty("machine", out JsonElement cited) &&
+                cited.ValueKind == JsonValueKind.Object &&
+                cited.TryGetProperty("id", out JsonElement idElement) &&
+                idElement.ValueKind == JsonValueKind.String)
+            {
+                machineId = idElement.GetString();
+            }
+        }
+        return study;
     }
 
     /// <summary>
@@ -6204,16 +6306,48 @@ public sealed class MachineComponent : NativeComponentBase
         // upstream tree, and demanding the two path strings match would
         // refuse a machine that is wired correctly. What that costs is
         // named in the chin below rather than left to be discovered.
-        List<List<MechanismMesh?>> reelBranches = ReadMeshTree(
-            data, ports.Reel, "Reel (RE)", warnings, out List<bool> reelBranchFromBrep,
-            out int reelPaths);
-        List<List<MechanismFrame?>> axisBranches = ReadPlaneTree(data, ports.ReelPlanes, out int axisPaths);
+        List<List<MechanismMesh?>> reelBranches;
+        List<List<MechanismFrame?>> axisBranches;
+        List<bool> reelBranchFromBrep;
+        int reelPaths;
+        int axisPaths;
         if (pairFlatReels)
         {
+            // HIS FLAT LISTS (Placed Mechanism): reel i at plane i.
+            var reelItems = new List<object>();
+            data.GetDataList(ports.Reel, reelItems);
+            var meshes = new List<MechanismMesh?>(reelItems.Count);
+            bool anyBrep = false;
+            for (int i = 0; i < reelItems.Count; i++)
+            {
+                if (MechanismCollectorComponent.TryMeshOrBrepPublic(reelItems[i], out MechanismMesh? mesh, out bool brep) &&
+                    mesh is not null)
+                {
+                    meshes.Add(mesh);
+                    anyBrep |= brep;
+                }
+                else
+                {
+                    warnings.Add($"Reel (RE)[{i}] did not resolve to a mesh or a closed Brep.");
+                    meshes.Add(null);
+                }
+            }
+            var axes = MechanismCollectorComponent.ReadPlaneList(data, ports.ReelPlanes)
+                .Select(p => (MechanismFrame?)new MechanismFrame(p.Origin, p.XAxis, p.YAxis, p.ZAxis))
+                .ToList();
             (reelBranches, axisBranches, reelBranchFromBrep) = MechanismReels.PairFlatLists(
-                reelBranches, axisBranches, reelBranchFromBrep, notes);
+                new List<List<MechanismMesh?>> { meshes },
+                new List<List<MechanismFrame?>> { axes },
+                new List<bool> { anyBrep },
+                notes);
             reelPaths = reelBranches.Count;
             axisPaths = axisBranches.Count;
+        }
+        else
+        {
+            reelBranches = ReadMeshTree(
+                data, ports.Reel, "Reel (RE)", warnings, out reelBranchFromBrep, out reelPaths);
+            axisBranches = ReadPlaneTree(data, ports.ReelPlanes, out axisPaths);
         }
 
         if (reelPaths > 0 && axisPaths > 0 && reelPaths != axisPaths)
@@ -6472,6 +6606,14 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
     internal const int SidePlanesPort = 11;
     internal const int MachineIdPort = 12;
 
+    // THE LAST MACHINE BUILT, reused while its fingerprint holds (2026-09-15).
+    private ulong _machineKey;
+    private bool _machineBuilt;
+    private string _machine = string.Empty;
+    private MechanismMachineCitation? _citation;
+    private readonly List<string> _machineWarnings = new();
+    private readonly List<string> _machineNotes = new();
+
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
         parameters.AddParameter(
@@ -6497,21 +6639,20 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             GH_ParamAccess.list);
         parameters.AddGenericParameter(
             "Reel", "RE",
-            "Your Reel Mesh, one branch per reel kind.",
-            GH_ParamAccess.tree);
+            "Your Reel Mesh: a flat list, one mesh per reel.",
+            GH_ParamAccess.list);
         parameters.AddPlaneParameter(
             "Reel Rotation Planes", "RP",
-            "Your All Axis, one branch per reel kind matching Reel branch for " +
-            "branch, one plane per physical reel.",
-            GH_ParamAccess.tree);
+            "Your All Axis: a flat list, plane i the rotation plane of reel i.",
+            GH_ParamAccess.list);
         parameters.AddPlaneParameter(
             "Wire Frames", "RT",
             "Your Wire Frames, one branch per wire, planes[0] at the net end.",
             GH_ParamAccess.tree);
         parameters.AddPlaneParameter(
             "Wire Start", "WS",
-            "Your Placement Plane: one plane per wire, the wire's true start.",
-            GH_ParamAccess.tree);
+            "Your Placement Plane: a flat list, plane i the true start of wire i.",
+            GH_ParamAccess.list);
         parameters.AddGenericParameter(
             "Cables", "CB",
             "Your Cables Mesh, for display; the wires are measured from Wire " +
@@ -6532,6 +6673,19 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             "The machine's minted code, which the study cites and the machine " +
             "file is named by. Never change it for the same machine.",
             GH_ParamAccess.item);
+
+        // ONLY WIRE FRAMES IS A TREE (his ruling, 2026-09-15): it is what keeps
+        // each wire's frames together. Every other list flattens whatever
+        // arrives, so a branched upstream never makes this component solve
+        // once per branch.
+        foreach (int flat in new[]
+        {
+            TensionTiePort, Ports.Frame1, Ports.Frame2, Ports.Motors, Ports.Reel,
+            Ports.ReelPlanes, Ports.WireStart, Ports.Cables, MachinePlanesPort, SidePlanesPort,
+        })
+        {
+            parameters[flat].DataMapping = GH_DataMapping.Flatten;
+        }
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager parameters)
@@ -6557,6 +6711,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             var warnings = new List<string>();
             var notes = new List<string>();
 
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             bool hasResult = MechanismCollectorComponent.TryReadResult(data, out ResultDto? solved);
             string machineId = string.Empty;
             data.GetData(MachineIdPort, ref machineId);
@@ -6564,12 +6719,42 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
 
             MechanismAssetInput parts = MachineComponent.ReadAsset(data, Ports, false, true, warnings, notes);
             List<MechanismRoutingWire> routing = MachineComponent.ReadRouting(data, Ports.Routing, warnings, notes);
-            routing = MechanismCollector.PrependWireStarts(
-                routing, MechanismCollectorComponent.ReadWireStarts(data, Ports.WireStart), notes);
+            // WIRE STARTS AS HIS FLAT LIST: plane i is the true start of wire i.
+            // Read as a tree, a flattened list would give wire 0 a start and
+            // every other wire none, with nothing said.
+            var wireStarts = new Dictionary<int, MechanismFrame>();
+            List<MechanismPlacementPlane> startPlanes =
+                MechanismCollectorComponent.ReadPlaneList(data, Ports.WireStart);
+            for (int i = 0; i < startPlanes.Count; i++)
+            {
+                wireStarts[i] = new MechanismFrame(
+                    startPlanes[i].Origin, startPlanes[i].XAxis, startPlanes[i].YAxis, startPlanes[i].ZAxis);
+            }
+            routing = MechanismCollector.PrependWireStarts(routing, wireStarts, notes);
 
-            string machine = MechanismCollector.BuildMachine(
-                parts, routing, machineId, machineId,
-                MechanismCollector.DefaultReeveFactor, null, warnings, notes);
+            long readMs = clock.ElapsedMilliseconds;
+
+            // THE MACHINE IS BUILT ONLY WHEN IT CHANGED. Its document runs to
+            // tens of megabytes, and re-solving the vault does not touch it.
+            ulong machineKey = MechanismCollector.MachineFingerprint(parts, routing, machineId);
+            bool reused = _machineBuilt && _machineKey == machineKey;
+            if (!reused)
+            {
+                _machineWarnings.Clear();
+                _machineNotes.Clear();
+                _machine = MechanismCollector.BuildMachine(
+                    parts, routing, machineId, machineId,
+                    MechanismCollector.DefaultReeveFactor, null, _machineWarnings, _machineNotes);
+                _citation = _machine.Length > 0
+                    ? MechanismCollector.ReadMachineCitation(_machine, _machineWarnings)
+                    : null;
+                _machineKey = machineKey;
+                _machineBuilt = true;
+            }
+            string machine = _machine;
+            warnings.AddRange(_machineWarnings);
+            notes.AddRange(_machineNotes);
+            long machineMs = clock.ElapsedMilliseconds - readMs;
 
             var status = new List<string>();
             if (machine.Length > 0 && !ExportPlan.NameIsOneSegment(machineId))
@@ -6579,9 +6764,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
                     "one path segment), so Export will not save the machine.");
             }
 
-            MechanismMachineCitation? citation = machine.Length > 0
-                ? MechanismCollector.ReadMachineCitation(machine, warnings)
-                : null;
+            MechanismMachineCitation? citation = _citation;
 
             MechanismMesh? tie = MachineComponent.ReadOnePiece(
                 data, TensionTiePort, "Tension Tie (TT)", warnings, notes, out bool tieBrep);
@@ -6613,6 +6796,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             // line is not true of what this component built.
             if (parts.Reels.Count > 0)
                 warnings.RemoveAll(w => w.StartsWith("mechanism: NO REEL", StringComparison.Ordinal));
+            long studyMs = clock.ElapsedMilliseconds - readMs - machineMs;
             if (payload is not null && machine.Length > 0)
             {
                 payload = MechanismCollector.CarryMachine(payload, machine);
@@ -6629,6 +6813,20 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
                 $"{Math.Max(1, sidePlanes.Count)} side(s) = {placements.Count} placement(s), " +
                 "tension tie " + (tie is null ? "NOT wired" : "placed by you") +
                 ", Result " + (hasResult ? "wired." : "NOT wired."));
+            status.Insert(1,
+                $"timings: read {readMs} ms, machine {(reused ? "reused" : "built")} {machineMs} ms, " +
+                $"study {studyMs} ms, total {clock.ElapsedMilliseconds} ms.");
+
+            // THE SPOOL RADIUS MEASUREMENT (spec 8.4) is a REMARK here: it
+            // describes his wire frames against each drum's published radius,
+            // it does not stop the export, and it stays whole in Status.
+            foreach (string radius in warnings
+                .Where(w => w.StartsWith("mechanism: reel entry(ies)", StringComparison.Ordinal))
+                .ToList())
+            {
+                warnings.Remove(radius);
+                notes.Add(radius);
+            }
 
             foreach (string warning in warnings)
             {

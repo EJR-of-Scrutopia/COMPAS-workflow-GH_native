@@ -43806,9 +43806,9 @@ internal static partial class Program
         {
             (0, "RES", "Result", "item"), (1, "TT", "Tension Tie", "list"),
             (2, "F1", "Frame 1", "list"), (3, "F2", "Frame 2", "list"),
-            (4, "MO", "Motors", "list"), (5, "RE", "Reel", "tree"),
-            (6, "RP", "Reel Rotation Planes", "tree"), (7, "RT", "Wire Frames", "tree"),
-            (8, "WS", "Wire Start", "tree"), (9, "CB", "Cables", "list"),
+            (4, "MO", "Motors", "list"), (5, "RE", "Reel", "list"),
+            (6, "RP", "Reel Rotation Planes", "list"), (7, "RT", "Wire Frames", "tree"),
+            (8, "WS", "Wire Start", "list"), (9, "CB", "Cables", "list"),
             (10, "MP", "Machine Planes", "list"), (11, "SP", "Side Planes", "list"),
             (12, "ID", "Machine Id", "item"),
         });
@@ -44191,6 +44191,30 @@ internal static partial class Program
                 failures.Add("a real reel tree must come back untouched");
             if (Paired(new[] { three }, new[] { new[] { threeAxes[0], threeAxes[1] } }) != (1, 1))
                 failures.Add("flat lists whose counts differ must come back untouched for Resolve to refuse");
+        }
+
+        // THE MACHINE FINGERPRINT: the same machine keys the same, a vertex
+        // moved by a micrometre or a different id keys differently.
+        {
+            MethodInfo fingerprint = RequirePublicStatic(collectorType, "MachineFingerprint");
+            object Part(double x) => Activator.CreateInstance(
+                meshType,
+                (object)new[] { new[] { 0.0, 0.0, 0.0 }, new[] { x, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 } },
+                (object)new[] { new[] { 0, 1, 2 } })!;
+            object Machine(double x) => Activator.CreateInstance(
+                assetType,
+                Part(x), false,
+                MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+                null, false, null, false,
+                MechanismReelEntriesFlat(plugin, meshType, frameType, new List<string>()),
+                null, false)!;
+            object Key(object asset, string id) => fingerprint.Invoke(null, new object?[] { asset, routing, id })!;
+            if (!Key(Machine(1.0), "winch-7").Equals(Key(Machine(1.0), "winch-7")))
+                failures.Add("the same machine must fingerprint the same, or it is rebuilt on every solve");
+            if (Key(Machine(1.0), "winch-7").Equals(Key(Machine(1.000001), "winch-7")))
+                failures.Add("a vertex moved by a micrometre must change the fingerprint, or a changed machine is never rebuilt");
+            if (Key(Machine(1.0), "winch-7").Equals(Key(Machine(1.0), "winch-8")))
+                failures.Add("a different machine id must change the fingerprint");
         }
 
         // THE MACHINE RIDES TO EXPORT: carried, split back off whole, and saved
