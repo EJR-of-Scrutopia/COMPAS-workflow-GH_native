@@ -61,6 +61,37 @@ internal sealed record MechanismReelGroup(
 /// </summary>
 internal static class MechanismReels
 {
+    /// <summary>
+    /// HIS FLAT LISTS, PAIRED ONE TO ONE (2026-09-15). Placed Mechanism takes
+    /// Reel and Reel Rotation Planes exactly as his orient clusters hold them:
+    /// one flat list of N reel meshes and one of N planes, reel i at plane i.
+    /// The Machine component refuses that shape, because there one branch of
+    /// each could as well mean one reel kind at N axes; on Placed Mechanism it
+    /// means only his pairing, so each reel becomes its own branch with its own
+    /// plane. Anything else, a real tree or counts that differ, comes back
+    /// untouched for <see cref="Resolve"/> to read or refuse as before.
+    /// </summary>
+    public static (List<List<MechanismMesh?>> Reels, List<List<MechanismFrame?>> Axes, List<bool> FromBrep)
+        PairFlatLists(
+            List<List<MechanismMesh?>> reels,
+            List<List<MechanismFrame?>> axes,
+            List<bool> fromBrep,
+            List<string> notes)
+    {
+        if (reels.Count != 1 || axes.Count != 1 || reels[0].Count < 2 ||
+            reels[0].Count != axes[0].Count)
+        {
+            return (reels, axes, fromBrep);
+        }
+        bool brep = fromBrep.Count > 0 && fromBrep[0];
+        var pairedReels = reels[0].Select(mesh => new List<MechanismMesh?> { mesh }).ToList();
+        var pairedAxes = axes[0].Select(axis => new List<MechanismFrame?> { axis }).ToList();
+        notes.Add(
+            $"Reel (RE) and Reel Rotation Planes (RP) arrived as one flat list of " +
+            $"{pairedReels.Count} each and were paired one to one, reel i at plane i.");
+        return (pairedReels, pairedAxes, Enumerable.Repeat(brep, pairedReels.Count).ToList());
+    }
+
     /// <summary>A body transform whose determinant is AT OR BELOW this is
     /// refused. Not a tolerance on zero: a proper rotation has determinant
     /// exactly +1 and a reflection exactly -1, so anything negative is

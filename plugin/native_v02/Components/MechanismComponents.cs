@@ -6022,7 +6022,7 @@ public sealed class MachineComponent : NativeComponentBase
             data.GetData(13, ref machineId);
             data.GetData(14, ref reeve);
 
-            MechanismAssetInput asset = ReadAsset(data, OwnPorts, true, warnings, notes);
+            MechanismAssetInput asset = ReadAsset(data, OwnPorts, true, false, warnings, notes);
             List<MechanismRoutingWire> routing = ReadRouting(data, OwnPorts.Routing, warnings, notes);
 
             // THE WIRE'S TRUE START GOES BACK ON THE FRONT of its route,
@@ -6159,7 +6159,7 @@ public sealed class MachineComponent : NativeComponentBase
 
     internal static MechanismAssetInput ReadAsset(
         IGH_DataAccess data, PartPorts ports, bool refusePermanentWorks,
-        List<string> warnings, List<string> notes)
+        bool pairFlatReels, List<string> warnings, List<string> notes)
     {
         // TT and AN MOVED to the Mechanism component (spec 3.3): the slots
         // stay, GH_ParamAccess.list exactly as they were registered, so an
@@ -6208,6 +6208,13 @@ public sealed class MachineComponent : NativeComponentBase
             data, ports.Reel, "Reel (RE)", warnings, out List<bool> reelBranchFromBrep,
             out int reelPaths);
         List<List<MechanismFrame?>> axisBranches = ReadPlaneTree(data, ports.ReelPlanes, out int axisPaths);
+        if (pairFlatReels)
+        {
+            (reelBranches, axisBranches, reelBranchFromBrep) = MechanismReels.PairFlatLists(
+                reelBranches, axisBranches, reelBranchFromBrep, notes);
+            reelPaths = reelBranches.Count;
+            axisPaths = axisBranches.Count;
+        }
 
         if (reelPaths > 0 && axisPaths > 0 && reelPaths != axisPaths)
         {
@@ -6555,7 +6562,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             data.GetData(MachineIdPort, ref machineId);
             machineId = machineId.Trim();
 
-            MechanismAssetInput parts = MachineComponent.ReadAsset(data, Ports, false, warnings, notes);
+            MechanismAssetInput parts = MachineComponent.ReadAsset(data, Ports, false, true, warnings, notes);
             List<MechanismRoutingWire> routing = MachineComponent.ReadRouting(data, Ports.Routing, warnings, notes);
             routing = MechanismCollector.PrependWireStarts(
                 routing, MechanismCollectorComponent.ReadWireStarts(data, Ports.WireStart), notes);
@@ -6601,6 +6608,11 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
             string? payload = MechanismCollector.BuildWithResult(
                 study, routing, placements, warnings, notes,
                 placements.Count == 0 ? null : solved, null, null, citation);
+            // The study half always says NO REEL, because a study carries no
+            // machine bodies. When the machine it cites has its reels, that
+            // line is not true of what this component built.
+            if (parts.Reels.Count > 0)
+                warnings.RemoveAll(w => w.StartsWith("mechanism: NO REEL", StringComparison.Ordinal));
             if (payload is not null && machine.Length > 0)
             {
                 payload = MechanismCollector.CarryMachine(payload, machine);

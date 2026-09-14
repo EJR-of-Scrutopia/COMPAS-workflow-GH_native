@@ -44153,6 +44153,46 @@ internal static partial class Program
                 failures.Add($"Placed Mechanism must carry exactly his thirteen inputs; it has {inputCount}");
         }
 
+        // HIS FLAT REEL LISTS, PAIRED ONE TO ONE on Placed Mechanism.
+        {
+            Type reelsType = RequireComponentType(plugin, "MechanismReels");
+            MethodInfo pair = RequirePublicStatic(reelsType, "PairFlatLists");
+            Type meshListType = typeof(List<>).MakeGenericType(meshType);
+            Type frameListType = typeof(List<>).MakeGenericType(frameType);
+            object Branches(Type listType, IEnumerable<object[]> branches)
+            {
+                var outer = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(listType))!;
+                foreach (object[] items in branches)
+                {
+                    var inner = (IList)Activator.CreateInstance(listType)!;
+                    foreach (object item in items)
+                        inner.Add(item);
+                    outer.Add(inner);
+                }
+                return outer;
+            }
+            object Frame(double z) => Activator.CreateInstance(
+                frameType, new[] { 0.0, 0.0, z }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 })!;
+            (int Reels, int Axes) Paired(object[][] reelBranches, object[][] axisBranches)
+            {
+                object result = pair.Invoke(null, new object?[]
+                {
+                    Branches(meshListType, reelBranches), Branches(frameListType, axisBranches),
+                    new List<bool> { false }, new List<string>(),
+                })!;
+                int Count(string field) => ((IList)result.GetType().GetField(field)!.GetValue(result)!).Count;
+                return (Count("Item1"), Count("Item2"));
+            }
+            object[] three = { Mesh(3), Mesh(3), Mesh(3) };
+            object[] threeAxes = { Frame(0), Frame(1), Frame(2) };
+            if (Paired(new[] { three }, new[] { threeAxes }) != (3, 3))
+                failures.Add("one flat list of three reels and one of three planes must pair into three reels, each at its own plane");
+            if (Paired(new[] { new[] { three[0] }, new[] { three[1], three[2] } }, new[] { new[] { threeAxes[0] }, new[] { threeAxes[1], threeAxes[2] } }) != (2, 2))
+                failures.Add("a real reel tree must come back untouched");
+            if (Paired(new[] { three }, new[] { new[] { threeAxes[0], threeAxes[1] } }) != (1, 1))
+                failures.Add("flat lists whose counts differ must come back untouched for Resolve to refuse");
+        }
+
         // THE MACHINE RIDES TO EXPORT: carried, split back off whole, and saved
         // as <id>-machine.json with exactly its own text.
         {
