@@ -42379,12 +42379,12 @@ internal static partial class Program
                 "be refused by name; warnings were: " + string.Join(" | ", fullWarnings));
         }
         bool axisMissingReelNamed = fullWarnings.Any(w =>
-            w.Contains("Reel Axis (AX) entry [3]", StringComparison.Ordinal) &&
+            w.Contains("Reel Rotation Planes (RP) entry [3]", StringComparison.Ordinal) &&
             w.Contains("no matching reel mesh", StringComparison.Ordinal));
         if (!axisMissingReelNamed)
         {
             throw new InvalidOperationException(
-                "Reel Axis (AX) entry [3], authored with no matching reel " +
+                "Reel Rotation Planes (RP) entry [3], authored with no matching reel " +
                 "mesh, must be refused by name; warnings were: " + string.Join(" | ", fullWarnings));
         }
         bool tieFusedNoted = fullNotes.Any(n =>
@@ -43775,7 +43775,7 @@ internal static partial class Program
             // one branch, which is precisely the legacy zipped shape spec
             // 4.7 refuses -- so the access is the whole difference between
             // reading his machine and refusing it.
-            (8, "RE", "Reel", "tree"), (9, "AX", "Reel Axis", "tree"),
+            (8, "RE", "Reel", "tree"), (9, "RP", "Reel Rotation Planes", "tree"),
             (10, "RT", "Routing", "tree"),
             (11, "FM", "Frame Meaning", "item"), (12, "WS", "Wire Start", "tree"),
             (13, "ID", "Machine Id", "item"), (14, "RV", "Reeve", "item"),

@@ -4753,7 +4753,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "Reel Axis",
             "AX",
             "REFUSING STUB (spec 5.1): the reel axes MOVED to the " +
-            "Machine component's own Reel Axis (AX) input, which now reads " +
+            "Machine component's own Reel Rotation Planes (RP) input, which now reads " +
             "a TREE, one branch per reel KIND and one plane per BODY. " +
             "Held, not removed, for the same reason as Frame 1 (F1); " +
             "anything still wired here is refused by name rather than read.",
@@ -5298,7 +5298,7 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
             "the Machine component's own Reel (RE) input", warnings);
         _ = RefuseMovedTreePort(
             data, 6, GH_ParamAccess.tree, "Reel Axis (AX)",
-            "the Machine component's own Reel Axis (AX) input", warnings);
+            "the Machine component's own Reel Rotation Planes (RP) input", warnings);
 
         // Frame1, Frame2, Motors and the reels are always null/empty here
         // now, whatever used to be wired to the five stubs above: their
@@ -5805,8 +5805,8 @@ public sealed class MachineComponent : NativeComponentBase
         parameters[8].Optional = true;
 
         parameters.AddPlaneParameter(
-            "Reel Axis",
-            "AX",
+            "Reel Rotation Planes",
+            "RP",
             "One branch per reel kind, matching Reel BY BRANCH POSITION, " +
             "and within a branch ONE PLANE PER PHYSICAL REEL: seven planes " +
             "in the spool branch draw that one drum at seven places. The " +
@@ -6088,7 +6088,7 @@ public sealed class MachineComponent : NativeComponentBase
         MechanismMesh? mo = ReadOnePiece(data, 7, "Motors (MO)", warnings, notes, out bool moBrep);
 
         // THE REELS, READ AS TREES AND PAIRED BY BRANCH POSITION (spec
-        // 4.1): Reel (RE) branch i against Reel Axis (AX) branch i, in the
+        // 4.1): Reel (RE) branch i against Reel Rotation Planes (RP) branch i, in the
         // order Grasshopper itself lists the paths. Position, never path
         // NAME: he groups his reels under whatever path his own definition
         // happens to produce, the two ports are branched by the same
@@ -6103,8 +6103,8 @@ public sealed class MachineComponent : NativeComponentBase
         if (reelPaths > 0 && axisPaths > 0 && reelPaths != axisPaths)
         {
             warnings.Add(
-                $"Reel (RE) holds {reelPaths} branch(es) and Reel Axis " +
-                $"(AX) holds {axisPaths}. They are paired by BRANCH " +
+                $"Reel (RE) holds {reelPaths} branch(es) and Reel Rotation " +
+                $"Planes (RP) holds {axisPaths}. They are paired by BRANCH " +
                 "POSITION, one branch per reel KIND, so a count that " +
                 "disagrees leaves entries with a mesh and no axis, or an " +
                 "axis and no mesh; each is refused by name below. Branch " +

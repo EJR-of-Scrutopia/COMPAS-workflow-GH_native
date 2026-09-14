@@ -76,7 +76,7 @@ internal static class MechanismReels
     /// ENTRIES, each one mesh at as many bodies as it has axes.
     ///
     /// BRANCHES ARE PAIRED BY POSITION, entry i of Reel (RE) against entry i
-    /// of Reel Axis (AX), which is the same convention the two ports have
+    /// of Reel Rotation Planes (RP), which is the same convention the two ports have
     /// always had; this method never sees a Grasshopper path, so there is no
     /// second reading available to drift into. A branch with no matching
     /// branch refuses ONLY that entry, by name -- the axis is authored,
@@ -162,7 +162,7 @@ internal static class MechanismReels
             branches[0].Count == axisBranches[0].Count)
         {
             warnings.Add(
-                $"Reel (RE) and Reel Axis (AX) both hold ONE branch of " +
+                $"Reel (RE) and Reel Rotation Planes (RP) both hold ONE branch of " +
                 $"{axisBranches[0].Count} objects. That is the OLD flat " +
                 "reading, where reel i paired with axis i. They are now " +
                 "read as ENTRIES: one branch per reel KIND, its meshes " +
@@ -199,7 +199,7 @@ internal static class MechanismReels
                 if (axisBranch[a] is null)
                 {
                     warnings.Add(
-                        $"Reel Axis (AX) entry [{e}] plane [{a}] is null, so " +
+                        $"Reel Rotation Planes (RP) entry [{e}] plane [{a}] is null, so " +
                         "that BODY has no axis to spin about and is refused; " +
                         "the axis is authored, never inferred. The bodies " +
                         "after it move down one place." +
@@ -219,7 +219,7 @@ internal static class MechanismReels
             if (meshes.Count == 0)
             {
                 warnings.Add(
-                    $"Reel Axis (AX) entry [{e}] carries " +
+                    $"Reel Rotation Planes (RP) entry [{e}] carries " +
                     $"{axes.Count} plane(s) but Reel (RE) has no matching " +
                     "reel mesh branch; the axis is authored, never inferred, " +
                     $"so reel entry {e} is refused.");
@@ -229,7 +229,7 @@ internal static class MechanismReels
             {
                 warnings.Add(
                     $"Reel (RE) entry [{e}] carries {meshes.Count} mesh(es) " +
-                    "but Reel Axis (AX) has no matching axis plane; the axis " +
+                    "but Reel Rotation Planes (RP) has no matching axis plane; the axis " +
                     "is authored, never inferred, so reel entry " +
                     $"{e} is refused.");
                 continue;
