@@ -4653,6 +4653,13 @@ public sealed class MechanismCollectorComponent : NativeComponentBase
         new("6b2e9f14-8a3d-4c7e-9f21-5d0a7c3e9b41");
 
     /// <summary>
+    /// HIDDEN FROM THE TOOLBAR (2026-09-14), not deleted: Placed Mechanism does
+    /// this job in one component, and his earlier definitions still open and
+    /// solve with this one.
+    /// </summary>
+    public override GH_Exposure Exposure => GH_Exposure.hidden;
+
+    /// <summary>
     /// WHERE Wire Start (WS) SITS ON THIS COMPONENT, declared once so that
     /// the registration below and <see cref="ReadWireStarts"/> index the
     /// same port (spec 3.5). The reader is shared with the Machine
@@ -5699,6 +5706,13 @@ public sealed class MachineComponent : NativeComponentBase
 
     public override Guid ComponentGuid =>
         new("7c4f1a28-5d63-4e90-8b17-2af6c05d9e33");
+
+    /// <summary>
+    /// HIDDEN FROM THE TOOLBAR (2026-09-14), not deleted: Placed Mechanism does
+    /// this job in one component, and his earlier definitions still open and
+    /// solve with this one.
+    /// </summary>
+    public override GH_Exposure Exposure => GH_Exposure.hidden;
 
     /// <summary>
     /// WHERE Wire Start (WS) SITS ON THIS COMPONENT, declared once so that

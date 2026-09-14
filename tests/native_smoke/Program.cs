@@ -44127,6 +44127,22 @@ internal static partial class Program
                 failures.Add($"{typeName}.{constant} must be the constant {at}");
         }
 
+        // ONE COMPONENT ON THE TOOLBAR (2026-09-14): the old Machine and
+        // Mechanism pair are hidden, not deleted, so his earlier definitions
+        // still open and solve, while Placed Mechanism is the one he sees.
+        foreach ((string typeName, string exposure) in new[]
+        {
+            ("MachineComponent", "hidden"), ("MechanismCollectorComponent", "hidden"),
+            ("PlacedMechanismComponent", "primary"),
+        })
+        {
+            Type type = RequireComponentType(plugin, typeName);
+            object component = Activator.CreateInstance(type)!;
+            string got = type.GetProperty("Exposure")!.GetValue(component)!.ToString()!;
+            if (got != exposure)
+                failures.Add($"{typeName} must be exposed as {exposure} on the toolbar; it is {got}");
+        }
+
         // EVERY PART POSITION a reader carries, on BOTH components that read
         // the machine's parts, against the nickname registered at it.
         (string Member, string Nick)[] partNicks =
