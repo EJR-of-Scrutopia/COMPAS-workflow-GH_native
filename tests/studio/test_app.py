@@ -424,282 +424,6 @@ def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_pat
     assert client.post("/api/frames/nonsense/stitch").status_code == 404
 
 
-def _mechanism(spool_radii, instances=0, wires=0, anchors=0, schema=None):
-    """A mechanism document with a bank of spools of the given radii."""
-    return {
-        "schema": schema or "bench.mechanism/1",
-        "lengthUnitToMetres": 1,
-        "mechanism": {
-            "frame1": {"vertices": [[0, 0, 0]], "faces": [[0, 0, 0]]},
-            "reels": [{"reel": i, "windingRadius": r}
-                      for i, r in enumerate(spool_radii)],
-        },
-        "instances": [{"side": 0, "mechanism": 0} for _ in range(instances)],
-        "wires": [{"id": str(i)} for i in range(wires)],
-        "anchors": [{"side": 0} for _ in range(anchors)],
-    }
-
-
-def test_the_mechanism_library_says_what_each_machine_is(tmp_path, monkeypatch):
-    """Param: "the mechanism itself wants to become an asset, so add to
-    import the mechanism as a drop down selection".
-
-    A dropdown of bare study names says nothing about which machine suits
-    which vault, so the listing carries the facts a choice is made on --
-    above all the SPOOL count, since one machine pulls one bank.
-    """
-
-    import json as _json
-    client, _studies = make_client(tmp_path, monkeypatch)
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import bundle
-
-    # Seven spools and three pulleys, exactly the shape of his real file:
-    # they all arrive under `reels`, and only the winding radius separates
-    # them.
-    (bundle.UPLOAD_DIR / "Tiny-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 7 + [0.17, 0.2, 0.3],
-                               instances=6, wires=42, anchors=6)),
-        encoding="utf-8")
-    (bundle.UPLOAD_DIR / "Five-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 5)), encoding="utf-8")
-    (bundle.UPLOAD_DIR / "Broken-mechanism.json").write_text(
-        "{not json", encoding="utf-8")
-
-    rows = client.get("/api/mechanisms").json()["mechanisms"]
-    by_name = {row["export"]: row for row in rows}
-    assert sorted(by_name) == ["Broken", "Five", "Tiny"]
-
-    tiny = by_name["Tiny"]
-    assert tiny["spools"] == 7, "the pulleys are not part of the bank"
-    assert tiny["reels"] == 10, "though they are still reels"
-    assert tiny["instances"] == 6 and tiny["wires"] == 42 and tiny["anchors"] == 6
-    assert "reels" in tiny["parts"] and "frame1" in tiny["parts"]
-    assert tiny["ok"] is True
-
-    assert by_name["Five"]["spools"] == 5
-
-    # A REEL STATING NO WINDING RADIUS MEANS TWO DIFFERENT THINGS.
-    #
-    # When NO reel states one, the document predates the writer measuring
-    # them and every reel is a drum.
-    (bundle.UPLOAD_DIR / "Silent-mechanism.json").write_text(
-        _json.dumps({
-            "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
-            "mechanism": {"reels": [{"reel": 0}, {"reel": 1}, {"reel": 2}]},
-        }), encoding="utf-8")
-    silent = {row["export"]: row
-              for row in client.get("/api/mechanisms").json()["mechanisms"]}["Silent"]
-    assert silent["spools"] == 3, "with none stated, every reel is a drum"
-    assert silent["unstated"] == 0
-
-    # When SOME state one and one does not, it cannot be placed and is not
-    # counted. Measured on his real file: reels 0-6 wind at 0.033, reels 7
-    # and 9 at 0.20 and 0.27, and reel 8 states null while sitting on the
-    # PULLEYS' own axis. Counting it in gave a bank of eight for a machine
-    # with seven spools, which would have chosen the wrong mechanism for
-    # every study.
-    (bundle.UPLOAD_DIR / "Partial-mechanism.json").write_text(
-        _json.dumps({
-            "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
-            "mechanism": {"reels": [
-                {"reel": 0, "windingRadius": 0.033},
-                {"reel": 1, "windingRadius": 0.033},
-                {"reel": 2, "windingRadius": 0.20},
-                {"reel": 3, "windingRadius": None},
-                # JSON true. In Python isinstance(True, int) is True, so
-                # without a guard this reads as a radius of 1.0 -- not a
-                # spool, and not reported as unplaceable either, which is
-                # the worst of both: a reel that silently vanishes from
-                # the count with nothing said about it.
-                {"reel": 4, "windingRadius": True},
-            ]},
-        }), encoding="utf-8")
-    partial = {row["export"]: row
-               for row in client.get("/api/mechanisms").json()["mechanisms"]}["Partial"]
-    assert partial["spools"] == 2, "the unstated reel is not counted into the bank"
-    assert partial["unstated"] == 2, "and it is reported rather than absorbed"
-    assert partial["reels"] == 5
-
-    # A damaged mechanism is LISTED and says why, not skipped: it is his
-    # work, and one that silently vanishes from the picker is worse than
-    # one that cannot be chosen.
-    assert by_name["Broken"]["ok"] is False
-    assert by_name["Broken"]["reason"]
-    assert by_name["Broken"]["spools"] == 0
-
-
-def test_the_mechanisms_have_a_library_folder_of_their_own(tmp_path, monkeypatch):
-    """Param: "Ok make a directory and export it there, I can then wire in
-    other mechanisms there too."
-
-    A mechanism stopped being a property of one vault the moment he wanted
-    to choose between them, so it gets a root like the skins and the
-    props. BOTH roots are read: a study's own mechanism, exported beside
-    it, should not have to be filed anywhere to be usable.
-    """
-
-    import json as _json
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import app as app_module
-    import bundle
-
-    client, _studies = make_client(tmp_path, monkeypatch)
-    library = tmp_path / "machines"
-    library.mkdir()
-    monkeypatch.setattr(app_module, "MECHANISMS_DIR", library)
-
-    (library / "Seven spool winch-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
-    (bundle.UPLOAD_DIR / "Tiny-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 3)), encoding="utf-8")
-
-    # The folder reports itself the way every other library does.
-    row = client.get("/api/mechanisms/folder").json()
-    assert row["path"] == str(library)
-    assert row["exists"] is True
-    assert row["count"] == 1, "one machine filed, whatever sits beside the vaults"
-
-    # And BOTH roots are listed.
-    names = [r["export"] for r in client.get("/api/mechanisms").json()["mechanisms"]]
-    assert names == ["Seven spool winch", "Tiny"], names
-
-
-def test_the_folder_route_is_not_read_as_the_name_of_a_machine(tmp_path, monkeypatch):
-    """/api/mechanisms/folder and /api/mechanisms/{name} share a prefix,
-    and FastAPI matches in declaration order. With the name route first,
-    "folder" is a machine nobody has -- a 404 on the control panel that
-    looks like a broken folder rather than a routing mistake. The props
-    and hdri routes are already arranged around this same trap."""
-
-    client, _studies = make_client(tmp_path, monkeypatch)
-    assert client.get("/api/mechanisms/folder").status_code == 200
-    assert "path" in client.get("/api/mechanisms/folder").json()
-
-
-def test_a_machine_is_fetched_by_name_from_either_root(tmp_path, monkeypatch):
-    """Keyed by NAME rather than by study, because a machine in the
-    library belongs to no study -- which is the whole point of the
-    library. The library is read first, so a curated copy wins over one
-    that happens to sit beside a vault under the same name."""
-
-    import json as _json
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import app as app_module
-    import bundle
-
-    client, _studies = make_client(tmp_path, monkeypatch)
-    library = tmp_path / "machines"
-    library.mkdir()
-    monkeypatch.setattr(app_module, "MECHANISMS_DIR", library)
-
-    (library / "Shared-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
-    (bundle.UPLOAD_DIR / "Shared-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 2)), encoding="utf-8")
-    (bundle.UPLOAD_DIR / "Only-beside-a-vault-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05] * 4)), encoding="utf-8")
-
-    got = client.get("/api/mechanisms/Shared")
-    assert got.status_code == 200
-    assert len(got.json()["mechanism"]["reels"]) == 7, (
-        "the library's copy wins over the one beside the vault")
-    # A machine that lives only beside a vault is still reachable.
-    beside = client.get("/api/mechanisms/Only-beside-a-vault")
-    assert beside.status_code == 200
-    assert len(beside.json()["mechanism"]["reels"]) == 4
-    # And one that is nowhere says so.
-    assert client.get("/api/mechanisms/Nothing").status_code == 404
-
-    # A NAME CANNOT CLIMB OUT OF EITHER ROOT. A bare ".." proves nothing:
-    # it names a file that is not there, so a 404 arrives with or without
-    # a guard. An ENCODED separator is what the guard is actually for --
-    # Starlette decodes %2F into the path parameter, so without the check
-    # the name reaches the filesystem carrying a directory separator.
-    outside = tmp_path / "outside-mechanism.json"
-    outside.write_text(_json.dumps(_mechanism([0.05])), encoding="utf-8")
-    for attempt in ("..%2Foutside", "..%5Coutside", "..%2F..%2Foutside"):
-        got = client.get("/api/mechanisms/" + attempt)
-        assert got.status_code in (400, 404), (attempt, got.status_code)
-        assert "mechanism" not in got.json(), (
-            "a name reached outside its root: " + attempt)
-
-
-def test_the_mechanism_folder_is_remembered_between_runs(tmp_path, monkeypatch):
-    """Every other library root survives a restart, and this one has to as
-    well or he re-points it every morning. apply_saved_folders is the one
-    that does it, and it is called by serve.py rather than by create_app,
-    so it is exercised directly here."""
-
-    import json as _json
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import app as app_module
-
-    library = tmp_path / "machines"
-    library.mkdir()
-    settings = tmp_path / "settings.json"
-    settings.write_text(_json.dumps({"mechanism_folder": str(library)}),
-                        encoding="utf-8")
-    monkeypatch.setattr(app_module, "SETTINGS_PATH", settings)
-    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
-
-    applied = app_module.apply_saved_folders()
-    assert applied.get("mechanism_folder") == library
-    assert app_module.MECHANISMS_DIR == library
-
-    # A folder that has since gone is reported and left alone, not set to
-    # a path that is not there.
-    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
-    settings.write_text(_json.dumps({"mechanism_folder": str(tmp_path / "gone")}),
-                        encoding="utf-8")
-    assert "mechanism_folder" not in app_module.apply_saved_folders()
-    assert app_module.MECHANISMS_DIR is None
-
-
-def test_a_mechanism_summary_is_memoised_but_a_re_export_invalidates_it(
-        tmp_path, monkeypatch):
-    """His mechanism document is 25 MB, almost all of it vertices. Listing
-    would be unusable if every call re-parsed every file, and stale if the
-    memo never let go."""
-
-    import json as _json
-    client, _studies = make_client(tmp_path, monkeypatch)
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import bundle
-
-    path = bundle.UPLOAD_DIR / "Tiny-mechanism.json"
-    path.write_text(_json.dumps(_mechanism([0.05] * 7)), encoding="utf-8")
-    assert client.get("/api/mechanisms").json()["mechanisms"][0]["spools"] == 7
-
-    # A re-export moves the mtime and changes the size, so the memo lets
-    # go without anyone having to clear it.
-    path.write_text(_json.dumps(_mechanism([0.05] * 3, wires=1)), encoding="utf-8")
-    row = client.get("/api/mechanisms").json()["mechanisms"][0]
-    assert row["spools"] == 3, "a re-export is seen"
-    assert row["wires"] == 1
-
-
-def test_a_mechanism_of_an_unsupported_schema_is_listed_not_hidden(
-        tmp_path, monkeypatch):
-    import json as _json
-    client, _studies = make_client(tmp_path, monkeypatch)
-    import sys
-    sys.path.insert(0, str(REPO / "bench" / "studio"))
-    import bundle
-
-    (bundle.UPLOAD_DIR / "Future-mechanism.json").write_text(
-        _json.dumps(_mechanism([0.05], schema="bench.mechanism/9")),
-        encoding="utf-8")
-    row = client.get("/api/mechanisms").json()["mechanisms"][0]
-    assert row["ok"] is False
-    assert "bench.mechanism/9" in row["reason"], row["reason"]
-
-
 JPEG_MAGIC = b"\xff\xd8\xff"
 
 
@@ -1772,16 +1496,15 @@ def test_health_says_when_the_server_is_older_than_its_code(tmp_path, monkeypatc
 
 
 def test_a_study_filed_in_mechanisms_finds_the_machine_it_cites(tmp_path, monkeypatch):
-    """Plugin 717e501: Export files a study's mechanism document, and the
+    """Plugin 717e501: Export files a vault's mechanism document, and the
     machine it cites as <id>-machine.json, in a Mechanisms folder inside the
-    export folder. The studio reads the study there and folds the cited
-    machine's parts in; a machine it cannot find is named, not guessed."""
+    export folder. The studio reads the vault's own mechanism there and folds
+    the cited machine in from beside it; the machine chooser and its library
+    are gone (Param, 2026-09-15)."""
 
     import json as _json
     client, _studies = make_client(tmp_path, monkeypatch)
-    import app as app_module
     import bundle
-    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
 
     filed = bundle.UPLOAD_DIR / "Mechanisms"
     filed.mkdir()
@@ -1795,9 +1518,8 @@ def test_a_study_filed_in_mechanisms_finds_the_machine_it_cites(tmp_path, monkey
     (filed / "Tiny-mechanism.json").write_text(_json.dumps(study), encoding="utf-8")
 
     first = client.get("/api/studies/Tiny/mechanism")
-    assert first.status_code == 200, first.text
-    resolution = first.json()["machineResolution"]
-    assert resolution["found"] is False and "winch 7-machine.json" in resolution["reason"]
+    assert first.status_code == 404
+    assert "winch 7-machine.json" in first.json()["detail"]
 
     machine = {
         "schema": "bench.machine/1", "id": "winch 7", "lengthUnitToMetres": 1,
@@ -1806,11 +1528,12 @@ def test_a_study_filed_in_mechanisms_finds_the_machine_it_cites(tmp_path, monkey
     }
     (filed / "winch 7-machine.json").write_text(_json.dumps(machine), encoding="utf-8")
 
-    second = client.get("/api/studies/Tiny/mechanism").json()
-    assert second["machineResolution"] == {"id": "winch 7", "found": True}
-    assert "frame1" in second["mechanism"] and "tensionTie" in second["mechanism"]
+    second = client.get("/api/studies/Tiny/mechanism")
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["machineResolution"] == {"id": "winch 7", "found": True}
+    assert "frame1" in body["mechanism"] and "tensionTie" in body["mechanism"]
 
-    rows = {row["export"]: row for row in client.get("/api/mechanisms").json()["mechanisms"]}
-    assert "Tiny" in rows, "a study filed in Mechanisms is choosable too"
-    assert rows["Tiny"]["reels"] == 1 and "frame1" in rows["Tiny"]["parts"]
-    assert client.get("/api/mechanisms/Tiny").json()["machineResolution"]["found"] is True
+    for gone in ("/api/mechanisms", "/api/mechanisms/folder", "/api/mechanisms/Tiny"):
+        assert client.get(gone).status_code in (404, 405), (
+            gone + " belongs to the machine chooser, which is gone")

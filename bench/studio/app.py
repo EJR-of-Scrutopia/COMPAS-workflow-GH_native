@@ -97,16 +97,6 @@ MATERIALS_DIR = None
 # it simple." Same folder shape, same reader, different root.
 GROUND_MATERIALS_DIR = None
 
-# The machines, as a library of their own. Param: "Ok make a directory and
-# export it there, I can then wire in other mechanisms there too."
-#
-# A mechanism stopped being a property of one vault the moment he wanted
-# to choose between them, so it gets a root like the skins and the props
-# rather than being read out of whichever folder the vaults happen to sit
-# in. Both are still read: a study's own mechanism, exported beside it,
-# stays available without his having to file it anywhere.
-MECHANISMS_DIR = None
-
 # What the studio knows about materials it does not own. The library is read
 # and never written, so a tile size typed into the panel has to live
 # somewhere else, and it lives here, keyed by "family/name". SHARED by both
@@ -313,7 +303,6 @@ FOLDER_TITLES = {
     "ground_folder": "Choose your ground material folder",
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
-    "mechanism_folder": "Choose your mechanism library folder",
     "recordings_folder": "Choose where finished stills and recordings are saved",
 }
 
@@ -413,7 +402,7 @@ def apply_saved_folders() -> dict:
     """
 
     global MATERIALS_DIR, GROUND_MATERIALS_DIR, HDRI_DIR, PROPS_DIR
-    global MECHANISMS_DIR, RECORDINGS_DIR
+    global RECORDINGS_DIR
 
     applied = {}
     chosen = apply_saved_folder()
@@ -424,7 +413,6 @@ def apply_saved_folders() -> dict:
                         ("ground_folder", "GROUND_MATERIALS_DIR"),
                         ("hdri_folder", "HDRI_DIR"),
                         ("props_folder", "PROPS_DIR"),
-                        ("mechanism_folder", "MECHANISMS_DIR"),
                         ("recordings_folder", "RECORDINGS_DIR")):
         raw = stored.get(key)
         if not raw:
@@ -1056,11 +1044,19 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if document is None:
             raise HTTPException(404, "this study carries no mechanism document")
         try:
-            return _with_cited_machine(
-                mechanism.validate_mechanism_document(document), sidecar.parent)
+            document = mechanism.validate_mechanism_document(document)
         except ValueError as error:
             raise HTTPException(
                 404, "the stored mechanism document is unusable: {}".format(error))
+        # ONE FORMAT (Param, 2026-09-15): "we will use this export as one
+        # whole format now". A mechanism that cites no machine is the old
+        # combined shape, from before the machine split, and is not read.
+        if mechanism.cited_machine_id(document) is None:
+            raise HTTPException(
+                404, "this vault's mechanism was exported before the machine "
+                "split and is no longer read; re-export the vault with "
+                "Placed Mechanism")
+        return _with_cited_machine(document, sidecar.parent)
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
@@ -1600,93 +1596,6 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 removed.append(path.name)
         return {"deleted": scene_id, "removed": removed}
 
-    _mechanism_summaries: dict = {}
-
-    def _mechanism_summary(path: Path) -> dict:
-        """What a mechanism document IS, cheaply enough to list.
-
-        These are large -- his 2 Sided Vault is 25 MB, almost all of it
-        vertices -- so each summary is memoised on the file's own mtime
-        and size. The first listing after a restart pays one parse per
-        file; every listing after that is free, and a re-export
-        invalidates itself because its mtime moves.
-        """
-
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
-        cached = _mechanism_summaries.get(path.name)
-        if cached and cached[0] == key:
-            return cached[1]
-        row = {
-            "export": path.name[: -len("-mechanism.json")],
-            "bytes": stat.st_size, "ok": True, "reason": "",
-            "spools": 0, "unstated": 0, "reels": 0, "parts": [],
-            "instances": 0, "wires": 0, "anchors": 0,
-        }
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-            mechanism.validate_mechanism_document(document)
-            document = _with_cited_machine(document, path.parent)
-        except (OSError, ValueError) as error:
-            # LISTED, not skipped: a damaged mechanism is still his work,
-            # and one that silently vanishes from the picker is worse than
-            # one that says why it cannot be chosen.
-            row.update(ok=False, reason=str(error))
-            _mechanism_summaries[path.name] = (key, row)
-            return row
-        body = document.get("mechanism")
-        body = body if isinstance(body, dict) else {}
-        reels = body.get("reels")
-        reels = reels if isinstance(reels, list) else ([reels] if reels else [])
-        # A SPOOL is a drum small enough to be one. The bank of spools
-        # decides how many cables one machine can pull, which is the whole
-        # basis of choosing between mechanisms.
-        #
-        # A reel that states NO winding radius means two different things
-        # depending on the company it keeps, and getting this wrong
-        # miscounts the bank in one direction or the other:
-        #
-        #   no reel in the document states one -- an export from before
-        #     the writer measured them, so every reel is taken as a drum
-        #     and the bank is the whole list;
-        #   some reels state one and this does not -- measured on his file
-        #     of 2026-09-09 02:xx, where reels 0-6 wind at 0.033, reels 7
-        #     and 9 at 0.20 and 0.27, and reel 8 states null while sitting
-        #     on the pulleys' own axis. Counting it in gave a bank of
-        #     EIGHT for a machine with seven spools, and would have chosen
-        #     the wrong mechanism for every study.
-        #
-        # So an unstated radius among stated ones is not counted, and is
-        # reported, because a reel the reader cannot place is a fact he
-        # can act on rather than a number quietly one too high.
-        stated = [reel.get("windingRadius") for reel in reels
-                  if isinstance(reel, dict)]
-        stated = [v for v in stated if isinstance(v, (int, float))
-                  and not isinstance(v, bool)]
-        spools, unstated = 0, 0
-        for reel in reels:
-            radius = reel.get("windingRadius") if isinstance(reel, dict) else None
-            if isinstance(radius, (int, float)) and not isinstance(radius, bool):
-                if float(radius) < mechanism.SPOOL_RADIUS_LIMIT:
-                    spools += 1
-            elif stated:
-                unstated += 1
-            else:
-                spools += 1
-        row.update(
-            spools=spools, unstated=unstated, reels=len(reels),
-            parts=sorted(k for k, v in body.items() if isinstance(v, (dict, list))),
-            instances=len(document.get("instances") or []),
-            wires=len(document.get("wires") or []),
-            anchors=len(document.get("anchors") or []),
-        )
-        _mechanism_summaries[path.name] = (key, row)
-        return row
-
-    # Declared ABOVE /api/mechanisms/{name}: FastAPI matches in
-    # declaration order, so with these second the word "folder" would be
-    # read as the name of a machine. The same trap the props and hdri
-    # routes are already arranged around.
     # Where finished takes are saved. Param: "we need a recorder output
     # folder button too to select where it gets directed." The setting
     # existed already and deliver_recording has always read it; what was
@@ -1704,46 +1613,11 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def browse_recordings_folder():
         return {"path": ask_for_folder(title=FOLDER_TITLES["recordings_folder"])}
 
-    @app.get("/api/mechanisms/folder")
-    def mechanism_folder():
-        return _library_row("mechanisms")
-
-    @app.post("/api/mechanisms/folder")
-    def set_mechanism_folder(body: dict):
-        return _set_library_folder(
-            "mechanisms", body, "mechanism_folder", "MECHANISMS_DIR")
-
-    @app.post("/api/mechanisms/folder/browse")
-    def browse_mechanism_folder():
-        return {"path": ask_for_folder(title=FOLDER_TITLES["mechanism_folder"])}
-
-    def _mechanism_roots():
-        """Where a machine may be found, library first.
-
-        Both roots are read. The library is where he files the machines he
-        wants to choose between; the vault folder is where the exporter
-        puts a study's own, and that one should not have to be filed
-        anywhere to be usable.
-        """
-
-        roots = []
-        # Export's own default home for a study's mechanism and the machine
-        # it cites (plugin 717e501) is read as a root too.
-        filed = (None if bundle.UPLOAD_DIR is None
-                 else Path(bundle.UPLOAD_DIR) / mechanism.MECHANISMS_SUBFOLDER)
-        for root in (MECHANISMS_DIR, bundle.UPLOAD_DIR, filed):
-            if root is None:
-                continue
-            path = Path(root)
-            if path.is_dir() and not any(path == seen for seen in roots):
-                roots.append(path)
-        return roots
-
     _machine_documents: dict = {}
 
     def _read_machine(path: Path) -> dict:
         """A machine document, memoised on its mtime and size: his run to
-        tens of megabytes, and every study citing one reads it."""
+        tens of megabytes, and every load of the vault citing one reads it."""
 
         stat = path.stat()
         key = (stat.st_mtime_ns, stat.st_size)
@@ -1755,98 +1629,32 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         return document
 
     def _with_cited_machine(document: dict, near: Path) -> dict:
-        """The study with the machine it cites folded in, or with a
-        machineResolution saying why it could not be.
+        """The vault's own mechanism with the machine it cites folded in.
 
-        Looked for BESIDE the study first, where Export files it, then in
-        every mechanism root. A document that cites nothing comes back as
-        it came, which is every mechanism written before the machine split.
+        ONE SOURCE (Param, 2026-09-15): "I want it to take the mechanism i
+        provide it when giving the form in and thats what it should use. we
+        shouldnt do random mechanisms." The machine is read from BESIDE the
+        vault's own mechanism document, where Export files it, and from
+        nowhere else: no library, and no other vault's folder. A machine
+        that is missing or does not match is a 404 naming it, so the vault
+        loads with no mechanism and says why rather than wearing another.
         """
 
         ident = mechanism.cited_machine_id(document)
-        if ident is None:
-            return document
-        out = dict(document)
         if "/" in ident or "\\" in ident or ".." in ident:
-            out["machineResolution"] = {
-                "id": ident, "found": False,
-                "reason": "the cited id is not a file name"}
-            return out
-        name = ident + mechanism.MACHINE_SUFFIX
-        roots = [Path(near)] + [root for root in _mechanism_roots()
-                                if root != Path(near)]
-        for root in roots:
-            path = root / name
-            if not path.is_file():
-                continue
-            try:
-                return mechanism.merge_cited_machine(document, _read_machine(path))
-            except (OSError, ValueError) as error:
-                out["machineResolution"] = {
-                    "id": ident, "found": False,
-                    "reason": "{}: {}".format(name, error)}
-                return out
-        out["machineResolution"] = {
-            "id": ident, "found": False,
-            "reason": "no {} beside the study or in a mechanism folder".format(name)}
-        return out
-
-    @app.get("/api/mechanisms/{name}")
-    def mechanism_by_name(name: str):
-        """One machine by name, from either root.
-
-        Keyed by NAME rather than by study, because a machine in the
-        library belongs to no study -- which is the whole point of the
-        library.
-        """
-
-        if "/" in name or "\\" in name or ".." in name:
-            raise HTTPException(400, "bad mechanism name")
-        for root in _mechanism_roots():
-            path = root / "{}-mechanism.json".format(name)
-            if not path.is_file():
-                continue
-            try:
-                return _with_cited_machine(
-                    mechanism.validate_mechanism_document(
-                        json.loads(path.read_text(encoding="utf-8"))),
-                    path.parent)
-            except (OSError, ValueError) as error:
-                raise HTTPException(
-                    404, "the mechanism {} is unusable: {}".format(name, error))
-        raise HTTPException(404, "no mechanism named {}".format(name))
-
-    @app.get("/api/mechanisms")
-    def mechanism_library():
-        """Every mechanism document in the folder, as a choosable asset.
-
-        Param: "the mechanism itself wants to become an asset, so add to
-        import the mechanism as a drop down selection, so if i export any
-        other types of mechanisms, we can pick and chose or you can auto
-        chose the best one."
-
-        The documents themselves are still fetched one at a time through
-        /api/studies/{export}/mechanism, which is already keyed by export
-        name and so already serves any of them. This route only says what
-        is there and what each one is, which is what a chooser needs.
-        """
-
-        rows, seen = [], set()
-        for root in _mechanism_roots():
-            for path in sorted(root.glob("*-mechanism.json")):
-                row = _mechanism_summary(path)
-                # A machine filed in the library WINS over one of the same
-                # name beside a vault: the library is the curated copy, and
-                # two entries under one name in a picker is worse than
-                # either of them.
-                if row["export"] in seen:
-                    continue
-                seen.add(row["export"])
-                row["root"] = str(root)
-                rows.append(row)
-        rows.sort(key=lambda row: row["export"].lower())
-        first = _mechanism_roots()
-        return {"root": str(first[0]) if first else "", "mechanisms": rows}
+            raise HTTPException(
+                404, "the cited machine id {!r} is not a file name".format(ident))
+        path = Path(near) / (ident + mechanism.MACHINE_SUFFIX)
+        if not path.is_file():
+            raise HTTPException(
+                404, "the machine this vault cites is missing: no {} beside "
+                "its mechanism document".format(path.name))
+        try:
+            return mechanism.merge_cited_machine(document, _read_machine(path))
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                404, "the machine this vault cites is unusable: {}: {}".format(
+                    path.name, error))
 
     def _library_row(kind: str):
         """Where a library reads from, whether it is there, and how much is
@@ -1865,10 +1673,6 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         elif kind == "recordings":
             directory, counter = RECORDINGS_DIR, (
                 lambda d: len([p for p in d.glob("*.mp4") if p.is_file()]))
-        elif kind == "mechanisms":
-            directory, counter = MECHANISMS_DIR, (
-                lambda d: len([p for p in d.glob("*-mechanism.json")
-                               if p.is_file()]))
         else:
             # Sidecars are not counted, for the reason /api/props gives.
             directory, counter = PROPS_DIR, (

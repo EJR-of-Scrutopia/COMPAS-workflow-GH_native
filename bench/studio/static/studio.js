@@ -12,7 +12,7 @@ import {
 } from "/static/panel.js";
 import {
   readMechanism, checkNetVertices, checkRouteDirection, turnsFor,
-  wireCentreline, reelContactRadius, ribChain, chainLength, chooseMechanism,
+  wireCentreline, reelContactRadius, ribChain, chainLength,
   derivePlacements, SPOOL_RADIUS_LIMIT,
 } from "/static/mechanism.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
@@ -244,11 +244,6 @@ const state = {
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
-  // Which mechanism a study wears: "auto", "none", or an export name.
-  // Remembered across sessions, because a chosen machine is a setting
-  // rather than a property of whichever vault happens to be open.
-  mechanismChoice: "auto",
-  mechanismLibrary: [],   // the summaries from /api/mechanisms
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
   recordStop: false,   // set by pressing the button again; the loop checks it each frame
   analysisSliders: { loadsScale: 1, reactionsScale: 1, forcesScale: 1,
@@ -6492,101 +6487,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") rememberSession();
 });
 
-const MECHANISM_CHOICE_KEY = "vaulted.mechanism.choice";
-
-async function refreshMechanisms() {
-  const select = document.getElementById("mechanism-select");
-  if (!select) return;
-  select.innerHTML = "";
-  const add = (value, label, title) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = label;
-    if (title) option.title = title;
-    select.appendChild(option);
-  };
-  // AUTO AND NO MECHANISM ARE STUDIO-SIDE FACTS. Neither needs a folder,
-  // a library or a server, so both are written FIRST and unconditionally.
-  //
-  // Written after the fetch instead, a server that could not answer left
-  // the control entirely EMPTY -- and that is how Param came to ask for
-  // an option that already existed: "can you allow no machine to be
-  // placed in the web app, this can be done by having an option in the
-  // machine drop down which says no mechanism". It was there. He could
-  // not see it, because his studio's server predates /api/mechanisms, the
-  // fetch threw, and the function returned before adding a single entry.
-  //
-  // Turning the machine OFF is the one choice that must never depend on
-  // anything being reachable.
-  add("auto", "Auto", "Fit the bank of spools to this vault's supports");
-  add("none", "No mechanism", "Draw no machine at all");
-  let payload = null;
-  try {
-    payload = await fetchJson("/api/mechanisms");
-  } catch (error) {
-    // A library that cannot be listed costs him the borrowed machines and
-    // nothing else. Said, because a picker with two entries where there
-    // were five looks like a lost folder.
-    logStudio("mechanism library: the machines could not be listed ("
-      + error.message + "); Auto and No mechanism still work");
-    state.mechanismLibrary = [];
-  }
-  state.mechanismLibrary = payload ? (payload.mechanisms || []) : [];
-  for (const entry of state.mechanismLibrary) {
-    // The facts a choice is actually made on, in the label itself: a
-    // dropdown of bare study names says nothing about which machine
-    // suits which vault.
-    const detail = entry.ok === false
-      ? "unreadable"
-      : entry.spools + " spools" + (entry.instances ? ", places itself" : "");
-    add(entry.export, entry.export + "  (" + detail + ")",
-      entry.ok === false ? entry.reason : "");
-  }
-  select.value = state.mechanismChoice;
-  if (!select.value) {
-    // The remembered choice names an export that is no longer in the
-    // folder. Auto rather than a silent blank, and said, because a
-    // machine quietly changing is worse than one that changed loudly.
-    logStudio("mechanism: \"" + state.mechanismChoice + "\" is no longer in "
-      + "the folder, so Auto is used");
-    state.mechanismChoice = "auto";
-    select.value = "auto";
-  }
-}
-
-// Keyed by the machine's NAME, not by a study's, because a machine filed
-// in the library belongs to no study -- which is the whole point of the
-// library. The route reads the library folder first and the vault folder
-// behind it, so a study's own mechanism still resolves without his having
-// filed it anywhere.
-function fetchMechanismFor(name) {
-  return fetch("/api/mechanisms/" + encodeURIComponent(name))
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
-}
-
-// Which mechanism document this study wears. His own is fetched in
-// parallel with the bundle, since that is the common case; only a choice
-// landing on a DIFFERENT export costs a second request.
-async function resolveMechanism(own, exportName, loaded) {
-  if (state.mechanismChoice === "none") return null;
-  if (state.mechanismChoice && state.mechanismChoice !== "auto") {
-    if (state.mechanismChoice === exportName) return own;
-    return (await fetchMechanismFor(state.mechanismChoice)) || own;
-  }
-  // Auto. A document that brings its OWN placements is already the right
-  // answer for this study, and nothing borrowed can beat it.
-  if (own && Array.isArray(own.instances) && own.instances.length) return own;
-  const supports = loaded && Array.isArray(loaded.supports)
-    ? loaded.supports.length : 0;
-  const pick = chooseMechanism(state.mechanismLibrary, exportName, supports);
-  if (!pick || pick.export === exportName) return own;
-  logStudio("mechanism: this study places no machines of its own, so "
-    + pick.export + " is borrowed -- " + pick.spools + " spools against "
-    + supports + " supports");
-  return (await fetchMechanismFor(pick.export)) || own;
-}
-
 async function refreshScenes() {
   const payload = await fetchJson("/api/scenes");
   state.scenes = payload.scenes || [];
@@ -12739,9 +12639,18 @@ async function loadStudy(exportName) {
     // The machine, on the same terms: absent is an ordinary state of the
     // world and reads as "no machine for this study", exactly as a
     // missing formwork document reads as "no formwork act".
+    // THE VAULT WEARS THE MECHANISM EXPORTED WITH IT, and nothing else
+    // (Param, 2026-09-15). A vault with none, or one exported before the
+    // machine split, loads bare and the log says why.
     const mechanismPromise = fetch(
       "/api/studies/" + encodeURIComponent(exportName) + "/mechanism")
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        const reason = await r.json().then((body) => body.detail)
+          .catch(() => r.statusText);
+        logStudio("mechanism: " + reason);
+        return null;
+      })
       .catch(() => null);
     const fresh = await fetchJson(url);
     if (sequence !== state.loadSequence) return "superseded";
@@ -12751,8 +12660,7 @@ async function loadStudy(exportName) {
     const formwork = await formworkPromise;
     const ownMechanism = await mechanismPromise;
     if (sequence !== state.loadSequence) return "superseded";
-    const mechanismDocument = await resolveMechanism(ownMechanism, exportName, fresh);
-    if (sequence !== state.loadSequence) return "superseded";
+    const mechanismDocument = ownMechanism;
     state.formwork = formwork;
     state.mechanism = mechanismDocument;
     overlay.classList.add("hidden");
@@ -12940,9 +12848,7 @@ document.getElementById("study-refresh").addEventListener("click", async () => {
   const select = document.getElementById("study-select");
   const standing = select.value;
   const names = await refreshStudies(standing);
-  await refreshMechanisms();
-  logStudio("folder re-read: " + names.length + " vaults, "
-    + state.mechanismLibrary.length + " machines");
+  logStudio("folder re-read: " + names.length + " vaults");
   if (standing && names.includes(standing)) {
     select.value = standing;
     await loadStudy(standing);
@@ -18479,35 +18385,14 @@ guarded("the panel groups", buildGroups);
 // arrives, a folder with nothing in it simply leaves the old props, and no
 // material folder chosen leaves the four built-in skins.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
-try {
-  const remembered = localStorage.getItem(MECHANISM_CHOICE_KEY);
-  if (remembered) state.mechanismChoice = remembered;
-} catch (error) { /* private browsing: Auto stands */ }
-refreshMechanisms().catch(
-  (error) => logStudio("mechanism library: " + error.message));
-showLibraryFolder("mechanisms", "mechanism-folder-path", "machines");
+// The machine chooser is gone (2026-09-15): a vault wears the mechanism
+// exported with it. A choice the chooser remembered means nothing now, so
+// it is forgotten rather than left to be misread.
+try { localStorage.removeItem("vaulted.mechanism.choice"); } catch (error) { /* nothing stored */ }
 showLibraryFolder("recordings", "recordings-folder-path", "recordings");
 document.getElementById("recordings-folder-choose").addEventListener("click", () =>
   chooseLibraryFolder("recordings", "recordings-folder-path", "recordings",
     async () => {}));
-document.getElementById("mechanism-folder-choose").addEventListener("click", () =>
-  chooseLibraryFolder("mechanisms", "mechanism-folder-path", "machines",
-    async () => {
-      await refreshMechanisms();
-      // A new folder can mean a different machine under the same name,
-      // so the vault on screen is re-dressed rather than left wearing
-      // one that came out of the old folder.
-      const study = document.getElementById("study-select").value;
-      if (study) await loadStudy(study);
-    }));
-document.getElementById("mechanism-select").addEventListener("change", async (e) => {
-  state.mechanismChoice = e.target.value;
-  try {
-    localStorage.setItem(MECHANISM_CHOICE_KEY, state.mechanismChoice);
-  } catch (error) { /* nothing to remember with; the choice still applies */ }
-  const study = document.getElementById("study-select").value;
-  if (study) await loadStudy(study);
-});
 materialLibraryReady = refreshMaterialLibrary().catch(
   (error) => logStudio("material library: " + error.message));
 // Said once at boot, and printed in the panel. A page that reports the same

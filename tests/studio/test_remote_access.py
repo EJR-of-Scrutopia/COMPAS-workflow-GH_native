@@ -1866,42 +1866,27 @@ def test_a_take_records_at_the_size_it_claims_and_in_a_format_that_keeps_up():
     assert '          + Math.round(each * (total - frameIndex) / 60) + " min left";' in js
 
 
-def test_turning_the_machine_off_never_depends_on_the_server():
-    """Param: "can you allow no machine to be placed in the web app, this
-    can be done by having an option in the machine drop down which says no
-    mechanism."
+def test_the_mechanism_is_one_toggle_that_needs_nothing_reachable():
+    """Param, 2026-09-15: "the only option should be mechanism or no
+    mechanism and this can be a toggle."
 
-    It already existed. He could not SEE it, because refreshMechanisms
-    fetched the library first and returned on failure before adding a
-    single entry -- and his studio's server predates /api/mechanisms, so
-    the fetch threw and the control was left entirely empty.
+    The toggle is the show-machine checkbox, and it sits in Import where the
+    machine dropdown and its folder button stood. It needs no library, no
+    folder and no listing, so there is nothing for a server to fail to
+    answer."""
 
-    Auto and No mechanism need no folder, no library and no server.
-    Turning the machine off is the one choice that must never depend on
-    anything being reachable."""
-
+    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
     js = STUDIO_JS.read_text(encoding="utf-8")
-    build = js[js.index("async function refreshMechanisms() {"):
-               js.index("function fetchMechanismFor(")]
-    # The two fixed entries are added BEFORE the fetch is even attempted.
-    added = build.index('add("auto"')
-    fetched = build.index('fetchJson("/api/mechanisms")')
-    assert added < fetched, (
-        "Auto and No mechanism must be written before the library is asked "
-        "for, or a server that cannot answer empties the control")
-    assert build.index('add("none"') < fetched
-    # And a failed listing costs the borrowed machines and nothing else.
-    assert "    return;                        // no folder chosen; the control stays empty" not in build, (
-        "a failed listing must no longer abandon the whole control")
-    assert 'logStudio("mechanism library: the machines could not be listed ("' in build
-    assert "    state.mechanismLibrary = [];" in build
-    # Choosing it draws no machine at all, and the old one is taken down:
-    # buildMachine disposes before it reads the document.
-    assert '  if (state.mechanismChoice === "none") return null;' in js
-    machine = js[js.index("async function buildMachine() {"):]
-    assert machine.index("disposeMachine();") < machine.index("if (!state.mechanism) return;"), (
-        "the standing machine is taken down before the new document is read, "
-        "or No mechanism would leave the old one on screen")
+    assert html.count('id="show-machine"') == 1, "one mechanism toggle, not two"
+    toggle = html.index('id="show-machine"')
+    assert html.index('<div id="vault-row">') < toggle < html.index('<div id="vault-tools">'), (
+        "the toggle sits in Import, beside the vault it belongs to")
+    assert "> Mechanism</label>" in html
+    for gone in ('id="mechanism-select"', 'id="mechanism-folder-choose"', 'id="mechanism-folder-row"'):
+        assert gone not in html, gone + " belongs to the chooser, which is gone"
+    for gone in ("refreshMechanisms", "fetchMechanismFor", "chooseMechanism",
+                 "/api/mechanisms", "state.mechanismChoice", "mechanismLibrary"):
+        assert gone not in js, gone + " belongs to the chooser, which is gone"
 
 
 def test_the_recorder_owns_the_camera_and_the_canvas_during_a_take():
@@ -2021,67 +2006,24 @@ def test_the_machines_are_derived_when_the_document_places_none():
     assert "    if (!v) return null;               // a support the net does not carry" in js
 
 
-def test_a_mechanism_is_chosen_rather_than_inherited():
-    """Param: "the mechanism itself wants to become an asset, so add to
-    import the mechanism as a drop down selection, so if i export any
-    other types of mechanisms, we can pick and chose or you can auto chose
-    the best one."
+def test_a_vault_wears_only_the_mechanism_exported_with_it():
+    """Param, 2026-09-15: "I want it to take the mechanism i provide it when
+    giving the form in and thats what it should use. we shouldnt do random
+    mechanisms."
 
-    A mechanism stopped being a property of one study. The document is
-    still fetched through /api/studies/{export}/mechanism, which was
-    already keyed by export name and so already served any of them; what
-    was missing was a listing to choose from and somewhere to choose."""
+    The mechanism is the vault's own, fetched by the vault's own export
+    name, and nothing chooses between machines or borrows one from another
+    vault. A vault that has none, or one exported before the machine split,
+    loads bare and the log says why."""
 
-    html = (REPO / "bench" / "studio" / "static" / "index.html").read_text(encoding="utf-8")
-    assert '<select id="mechanism-select"' in html
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert 'fetchJson("/api/mechanisms")' in js
-    # A FOLDER OF THEIR OWN, on the same two helpers every other library
-    # uses. Param: "Ok make a directory and export it there, I can then
-    # wire in other mechanisms there too."
-    assert '<button id="mechanism-folder-choose"' in html
-    assert 'showLibraryFolder("mechanisms", "mechanism-folder-path", "machines");' in js
-    assert 'chooseLibraryFolder("mechanisms", "mechanism-folder-path", "machines",' in js
-    # A new folder can mean a different machine under the same name, so
-    # the vault on screen is re-dressed rather than left wearing one out
-    # of the old folder.
-    assert "      await refreshMechanisms();\n" \
-        "      // A new folder can mean a different machine under the same name," in js
-    # The document is fetched by the MACHINE's name, not by a study's: a
-    # machine in the library belongs to no study.
-    assert '  return fetch("/api/mechanisms/" + encodeURIComponent(name))' in js
-    assert '"/api/studies/" + encodeURIComponent(exportName) + "/mechanism")\n' \
-        "    .then((r) => (r.ok ? r.json() : null))" not in js
-    assert '  add("auto", "Auto",' in js
-    assert '  add("none", "No mechanism", "Draw no machine at all");' in js
-    # The facts a choice is made on go in the LABEL: a dropdown of bare
-    # study names says nothing about which machine suits which vault.
-    assert '      : entry.spools + " spools" + (entry.instances ? ", places itself" : "");' in js
-
-    # AUTO NEVER OVERRIDES A DOCUMENT THAT PLACES ITSELF. Agreed with the
-    # exporter session: the document is authoritative when it carries
-    # instances, and the studio only chooses when it carries none.
-    assert "  if (own && Array.isArray(own.instances) && own.instances.length) return own;" in js
-    assert '  if (state.mechanismChoice === "none") return null;' in js
-    # Only a choice landing on a DIFFERENT export costs a second request;
-    # his own is already in flight beside the bundle.
-    assert "    if (state.mechanismChoice === exportName) return own;" in js
-    assert "  if (!pick || pick.export === exportName) return own;" in js
-    # And a borrow is SAID, with the arithmetic that justified it.
-    assert '    + pick.export + " is borrowed -- " + pick.spools + " spools against "' in js
-
-    # The choice outlives the session, since a chosen machine is a setting
-    # rather than a property of whichever vault happens to be open.
-    assert 'const MECHANISM_CHOICE_KEY = "vaulted.mechanism.choice";' in js
-    assert "    localStorage.setItem(MECHANISM_CHOICE_KEY, state.mechanismChoice);" in js
-    # A remembered choice naming an export that has since left the folder
-    # falls back to Auto and SAYS so: a machine quietly changing is worse
-    # than one that changed loudly.
-    assert "  if (!select.value) {" in js
-    assert '      + "the folder, so Auto is used");' in js
-    # Refresh re-reads the machines beside the vaults, or a newly
-    # exported machine would not appear until a reload.
-    assert "  await refreshMechanisms();" in js
+    assert "    const mechanismDocument = ownMechanism;\n" in js
+    assert '"/api/studies/" + encodeURIComponent(exportName) + "/mechanism")' in js
+    assert '        logStudio("mechanism: " + reason);\n' in js
+    assert '" is borrowed -- "' not in js, "no machine is ever borrowed from another vault"
+    # A choice remembered by the old chooser means nothing now and is
+    # forgotten rather than left to be misread.
+    assert 'localStorage.removeItem("vaulted.mechanism.choice")' in js
 
 
 def test_refresh_reloads_the_vault_on_screen_not_just_the_listing():

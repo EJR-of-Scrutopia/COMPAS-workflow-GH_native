@@ -63,7 +63,8 @@ def load_contract(path) -> Dict[str, Any]:
 # changes over.
 KIND_SUFFIXES = (
     "-contract.json", "-compas.json", "-tessellation.json", "-frames.json",
-    "-form.json", "-skin.json", "-formwork.json", "-mechanism.json")
+    "-form.json", "-skin.json", "-formwork.json", "-mechanism.json",
+    "-machine.json")
 
 # The two spellings of the document that carries the form, newest first, so
 # a study written both ways lands on the newer one.

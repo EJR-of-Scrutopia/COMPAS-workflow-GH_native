@@ -101,7 +101,7 @@ CHECK = textwrap.dedent("""
       SCHEMA, PART_KINDS, readGeometry, placementMatrix, isReflection,
       turnsFor, readMechanism, checkNetVertices, checkRouteDirection,
       wireCentreline, reelContactRadius, SPOOL_STEPS, PULLEY_STEPS,
-      ribChain, chainLength, DEFAULT_CABLE_RADIUS, chooseMechanism,
+      ribChain, chainLength, DEFAULT_CABLE_RADIUS,
       supportRows, outwardFrame, betweenFrames, derivePlacements,
     } from %MODULE%;
 
@@ -713,55 +713,6 @@ CHECK = textwrap.dedent("""
       (n) => n.indexOf("no reel axes") >= 0),
       "a mechanism with no spool line says so");
 
-    // ---------- choosing a mechanism ----------
-    // "we can pick and chose or you can auto chose the best one. this
-    // will likely be ones with different wire configs to deal with un
-    // even numbers of wires."
-    const shelf = [
-      { export: "Seven", spools: 7, ok: true },
-      { export: "Five", spools: 5, ok: true },
-      { export: "Four", spools: 4, ok: true },
-      { export: "Broken", spools: 0, ok: false },
-    ];
-    // 42 supports divide exactly by seven and leave two on five.
-    expect(chooseMechanism(shelf, null, 42).export === "Seven",
-      "a bank of seven serves 42 supports exactly");
-    // 20 leaves nothing on five or four; the LARGER bank wins, because
-    // fewer machines is the simpler site.
-    expect(chooseMechanism(shelf, null, 20).export === "Five",
-      "a tie on fit goes to the larger bank: "
-      + chooseMechanism(shelf, null, 20).export);
-    // 21 divides by seven, not by five or four.
-    expect(chooseMechanism(shelf, null, 21).export === "Seven",
-      "21 is three banks of seven");
-    // His OWN document wins a tie, but never on fit -- or "auto" would
-    // mean "his own, always" and the control would be pointless.
-    expect(chooseMechanism(
-      [{ export: "A", spools: 5, ok: true }, { export: "B", spools: 5, ok: true }],
-      "B", 20).export === "B", "his own wins an equal fit");
-    expect(chooseMechanism(
-      [{ export: "A", spools: 7, ok: true }, { export: "B", spools: 5, ok: true }],
-      "B", 42).export === "A", "but does not win on a worse fit");
-    // An unreadable one is never chosen, and neither is one with no bank.
-    expect(chooseMechanism([{ export: "Broken", spools: 0, ok: false }], null, 42) === null,
-      "nothing usable means nothing chosen, not a guess");
-    // A mechanism that READS PERFECTLY WELL but carries no spools pulls
-    // nothing, and dividing by its bank is a division by zero. It is not
-    // a candidate, and this is a different refusal from the unreadable
-    // one above.
-    expect(chooseMechanism([{ export: "Bodyless", spools: 0, ok: true }], null, 42) === null,
-      "a machine with no bank pulls nothing and is never chosen");
-    expect(chooseMechanism(
-      [{ export: "Bodyless", spools: 0, ok: true },
-       { export: "Five", spools: 5, ok: true }], null, 42).export === "Five",
-      "and it never displaces one that can");
-    expect(chooseMechanism([], null, 42) === null, "an empty shelf chooses nothing");
-    expect(chooseMechanism(null, null, 42) === null, "and so does no shelf at all");
-    // A study whose supports are unknown still gets a machine: every
-    // remainder is zero, so the largest bank wins.
-    expect(chooseMechanism(shelf, null, 0).export === "Seven",
-      "with no support count the largest bank stands in");
-
     console.log("ok");
 """)
 
@@ -1071,24 +1022,73 @@ def test_a_study_without_a_machine_says_so_rather_than_failing(tmp_path, monkeyp
     assert "no export named" in missing.json()["detail"]
 
 
+def _citing_study(extra=None):
+    document = {
+        "schema": "bench.mechanism/1",
+        "machine": {"schema": "bench.machine/1", "id": "winch 7"},
+        "mechanism": {"tensionTie": {"vertices": [[0, 0, 0]], "faces": []}},
+    }
+    document.update(extra or {})
+    return document
+
+
+def _machine_file(ident="winch 7"):
+    return {"schema": "bench.machine/1", "id": ident,
+            "machine": {"frame1": {"vertices": [[0, 0, 0]], "faces": []}}}
+
+
 def test_the_machine_comes_back_verbatim(tmp_path, monkeypatch):
     """Unshaped on purpose. The key layout is expected to move again, and
     a server that understood those keys would need a restart every time it
-    did -- mid-session, while Param is exporting and looking."""
+    did -- mid-session, while Param is exporting and looking. The cited
+    machine is folded in, and nothing else is touched."""
 
     client, _ = make_client(tmp_path, monkeypatch)
     import bundle
-    document = {
-        "schema": "bench.mechanism/1",
-        "reels": [{"geometry": {"vertices": [[0, 0, 0]], "faces": []}}],
-        "aKeyInventedTomorrow": [1, 2, 3],
-    }
-    _write(bundle.UPLOAD_DIR, "Tiny-mechanism.json", document)
+    _write(bundle.UPLOAD_DIR, "Tiny-mechanism.json",
+           _citing_study({"aKeyInventedTomorrow": [1, 2, 3]}))
+    _write(bundle.UPLOAD_DIR, "winch 7-machine.json", _machine_file())
     body = client.get("/api/studies/Tiny/mechanism").json()
-    assert body["reels"] == document["reels"]
+    assert "frame1" in body["mechanism"] and "tensionTie" in body["mechanism"]
     assert body["aKeyInventedTomorrow"] == [1, 2, 3], (
         "a key this reader has never heard of must still reach the client")
     assert body["lengthUnitToMetres"] == 1.0, "the scale is resolved once, here"
+
+
+def test_a_mechanism_from_before_the_machine_split_is_not_read(tmp_path, monkeypatch):
+    """ONE FORMAT (Param, 2026-09-15): "we will use this export as one whole
+    format now". A mechanism that cites no machine is the old combined shape,
+    and it is refused by name so the vault loads bare and says to re-export,
+    rather than wearing a machine from before the split."""
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    import bundle
+    _write(bundle.UPLOAD_DIR, "Tiny-mechanism.json",
+           {"schema": "bench.mechanism/1",
+            "mechanism": {"frame1": {"vertices": [[0, 0, 0]], "faces": []}}})
+    response = client.get("/api/studies/Tiny/mechanism")
+    assert response.status_code == 404
+    assert "re-export" in response.json()["detail"]
+
+
+def test_the_machine_is_read_only_from_beside_the_vault(tmp_path, monkeypatch):
+    """"I want it to take the mechanism i provide it when giving the form in
+    and thats what it should use." The cited machine is read from beside the
+    vault's own mechanism document and from nowhere else; a machine of that
+    id anywhere else does not stand in, and a missing one is named."""
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    import bundle
+    _write(bundle.UPLOAD_DIR, "Tiny-mechanism.json", _citing_study())
+    elsewhere = tmp_path / "somewhere else"
+    elsewhere.mkdir()
+    _write(elsewhere, "winch 7-machine.json", _machine_file())
+    missing = client.get("/api/studies/Tiny/mechanism")
+    assert missing.status_code == 404
+    assert "winch 7-machine.json" in missing.json()["detail"]
+    _write(bundle.UPLOAD_DIR, "winch 7-machine.json", _machine_file("winch 8"))
+    wrong = client.get("/api/studies/Tiny/mechanism")
+    assert wrong.status_code == 404 and "winch 8" in wrong.json()["detail"]
 
 
 def test_an_unusable_machine_document_names_its_own_fault(tmp_path, monkeypatch):
@@ -1119,6 +1119,8 @@ def test_the_machine_file_is_not_mistaken_for_a_study(tmp_path, monkeypatch):
     import geometry
     assert "-mechanism.json" in geometry.KIND_SUFFIXES, (
         "so the loose scan skips it without reading it")
+    assert "-machine.json" in geometry.KIND_SUFFIXES, (
+        "and a machine filed beside the vaults is skipped the same way")
 
 
 # ---------- the machine a study cites (plugin, 2026-09-15) ----------
