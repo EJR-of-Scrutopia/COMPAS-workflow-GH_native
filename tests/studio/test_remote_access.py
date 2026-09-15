@@ -455,7 +455,7 @@ def test_the_take_neither_reaims_nor_inherits_the_drags_glide():
     # decided where the start of the animation is").
     capture = _js_function(js, "function captureOrbitBase(atT)")
     assert 'typeof atT === "number" ? atT : state.timeline.t' in capture
-    assert "Math.max(0, reference - openingSeconds())" in capture
+    assert "- orbitTurned(reference)," in capture
     # The final shape of the ruling: the VAULT owns the circle, the AIM
     # starts where the user was looking and glides home -- no jump at
     # Play, no drifting off the vault mid-turn.

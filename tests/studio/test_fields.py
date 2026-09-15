@@ -481,6 +481,53 @@ GROUND_CHECK = textwrap.dedent("""
 """)
 
 
+ORBIT_CHECK = textwrap.dedent("""
+    import { finalOrbitTurn } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    const revolution = 2 * Math.PI;
+
+    // The whole take's sweep lands on a whole number of revolutions, with a
+    // last turn of more than nothing and at most one revolution.
+    for (const spin of [0.1, 0.3, 0.7, 1.3, 2]) {
+      for (const turning of [0, 0.5, 12, 37.8, 47.8, 100.25]) {
+        const last = finalOrbitTurn(spin, turning);
+        const whole = (spin * turning + last) / revolution;
+        expect(Math.abs(whole - Math.round(whole)) < 1e-9,
+          "spin " + spin + " for " + turning + " s ends on the start, got " + whole + " turns");
+        expect(last > 0 && last <= revolution + 1e-12,
+          "spin " + spin + " for " + turning + " s turns at most once more, got " + last);
+      }
+    }
+    // A strike that ends on the start bearing still earns one look round.
+    expect(Math.abs(finalOrbitTurn(0.5, 4 * Math.PI) - revolution) < 1e-9,
+      "exactly on the start takes the full revolution");
+    // Half a revolution short of it takes half a revolution.
+    expect(Math.abs(finalOrbitTurn(1, 3 * Math.PI) - Math.PI) < 1e-9,
+      "half a turn from the start takes half a turn");
+    expect(finalOrbitTurn(0, 50) === 0, "a still camera has nothing to finish");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_orbit_ends_on_the_bearing_it_started_on(tmp_path):
+    """Param, 2026-09-15: "the rotations around should always end on the
+    position which the animation started. It must only max out at 1 full
+    rotation after the formwork is removed and therefore will stop at some
+    point on that last rotation when it meets that point." """
+
+    script = tmp_path / "check_orbit.mjs"
+    script.write_text(
+        ORBIT_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
+
+
 @needs_node
 def test_ground_joints_keep_their_size_when_the_floor_is_resized(tmp_path):
     """The joint textures are drawn with a fixed number of pavers per image,

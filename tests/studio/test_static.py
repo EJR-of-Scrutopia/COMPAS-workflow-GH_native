@@ -1729,7 +1729,9 @@ def test_every_clock_reads_the_drop_order_at_the_same_rate():
     assert "sprayedMaterial" not in helper, (
         "the stagger no longer branches on material"
     )
-    for name in ("applySceneAtTime", "timelineDuration", "currentStageIndex"):
+    # timelineDuration reads it through strikeEndSeconds since 2026-09-15.
+    assert "strikeEndSeconds()" in _function_body(js, "timelineDuration")
+    for name in ("applySceneAtTime", "strikeEndSeconds", "currentStageIndex"):
         assert "placementStep()" in _function_body(js, name), (
             "{} must read the stagger from the one helper".format(name)
         )
@@ -2734,8 +2736,7 @@ def test_the_take_orbits_from_wherever_the_camera_is_left():
     assert "lookFrom: controls.target.clone()" in capture
     assert "camera.position.clone().sub(centre)" in capture
     assert "Math.atan2(offset.y, offset.x)" in capture
-    assert ("- state.timeline.orbitSpeed * "
-            "Math.max(0, reference - openingSeconds())") in capture, (
+    assert "- orbitTurned(reference)," in capture, (
         "the bearing must have the current rotation taken out of it, on the "
         "same clamped clock applyTimeline adds back (the orbit waits out "
         "the opening act, so the capture must subtract the same wait)"
@@ -2848,20 +2849,22 @@ def test_the_studio_opens_where_it_was_left():
 def test_the_take_ends_on_the_vault_not_on_the_strike():
     """Param: "at the end of the animation when the form work drops away,
     can we continue the rotation one more time so we look at the final form
-    once too". The timeline gains a last act after the strike, one
-    revolution at the spin rate in force, floored so a still camera still
-    pauses on the result and capped so a very slow spin cannot quietly add a
-    minute to every take and every recording."""
+    once too". Re-pinned 2026-09-15 on his word: "the rotations around should
+    always end on the position which the animation started. It must only max
+    out at 1 full rotation after the formwork is removed". The last act lasts
+    the turn back to the start bearing, the camera holds there, and a still
+    camera still pauses on the result."""
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     duration = _function_body(js, "timelineDuration")
-    assert "admireSeconds()" in duration
+    assert "strikeEndSeconds() + admireSeconds()" in duration
     admire = _function_body(js, "admireSeconds")
-    # Re-pinned 2026-09-05 on Param's word: "just a half rotation
-    # instead of a full when finished".
-    assert "Math.PI / spin" in admire
-    assert "(2 * Math.PI) / spin" not in admire
-    assert "ADMIRE_MIN_SECONDS" in admire and "ADMIRE_MAX_SECONDS" in admire
+    assert "finalOrbitTurn(spin, strikeEndSeconds() - openingSeconds()) / spin" in admire
+    assert "ADMIRE_MIN_SECONDS" in admire
+    assert "ADMIRE_MAX_SECONDS" not in js, "a capped turn cannot promise to end on the start"
+    assert "Math.min(spin * Math.max(0, t - openingSeconds()), whole)" in _function_body(js, "orbitTurned")
+    assert "const angle = base.azimuth + orbitTurned(t);" in _function_body(js, "applyTimeline")
+    assert "- orbitTurned(reference)," in _function_body(js, "captureOrbitBase")
     # The strike itself is unchanged: it still clamps at 1, so the tail
     # holds the struck state rather than replaying it.
     assert "Math.min(1, (build - buildEnd) / STRIKE_SECONDS)" in js

@@ -52,14 +52,19 @@ def test_the_orbit_waits_out_the_opening_act():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     apply_body = js[js.index("function applyTimeline"):]
     apply_body = apply_body[:apply_body.index("\n}")]
-    clamp = "Math.max(0, t - openingSeconds())"
-    assert clamp in apply_body, (
+    # Re-pinned 2026-09-15: both writers of the angle read ONE helper,
+    # orbitTurned, which also holds the camera on its start bearing at the
+    # end of the take.
+    turned = js[js.index("function orbitTurned"):]
+    turned = turned[:turned.index("\n}")]
+    assert "Math.max(0, t - openingSeconds())" in turned, (
         "the growth into the final form keeps a still camera; the turn "
         "starts when build time begins"
     )
+    assert "base.azimuth + orbitTurned(t)" in apply_body
     capture_body = js[js.index("function captureOrbitBase"):]
     capture_body = capture_body[:capture_body.index("\n}")]
-    assert "Math.max(0, reference - openingSeconds())" in capture_body, (
+    assert "- orbitTurned(reference)" in capture_body, (
         "both writers of the angle must clamp the same clock, or a "
         "mid-take capture jumps the camera by the opening act's length"
     )

@@ -28,7 +28,7 @@ import {
   smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
-  groundRepeat,
+  groundRepeat, finalOrbitTurn,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
   FLY_SPEEDS, FLY_KEYS, flyStep, lensStep, lookTurn,
   fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,
@@ -15437,29 +15437,40 @@ const INFLATE_SECONDS = 3;
 
 // The last act. Once the formwork has dropped away the take carries on
 // turning, so the finished vault is seen once on its own rather than the
-// film ending on the frame the strike finishes. Param asked for exactly
-// this: "at the end of the animation when the form work drops away, can we
-// continue the rotation one more time so we look at the final form".
+// film ending on the frame the strike finishes ("continue the rotation one
+// more time so we look at the final form").
 //
-// HALF a revolution at the spin rate in force (Param: "change the
-// animation rotation at the end to just a half rotation instead of a
-// full when finished"), floored so a still camera still pauses on the
-// result, and capped so a very slow spin does not quietly add a minute
-// to every take and every recording.
+// It lasts exactly as long as the camera needs to come back round to the
+// bearing the take started on, never more than one revolution (Param,
+// 2026-09-15; finalOrbitTurn in fields.js holds the rule). That replaces the
+// half turn and its 40 s cap: a capped turn could not be relied on to end
+// where the take began. A still camera still pauses on the result.
 const ADMIRE_MIN_SECONDS = 4;
-const ADMIRE_MAX_SECONDS = 40;
+
+// Where the formwork has gone, on the take's clock: the end of the strike.
+function strikeEndSeconds() {
+  return openingSeconds() + placementCount() * placementStep()
+    + DROP_SECONDS + STRIKE_SECONDS;
+}
 
 function admireSeconds() {
   const spin = state.timeline ? state.timeline.orbitSpeed : 0;
   if (!(spin > 0)) return ADMIRE_MIN_SECONDS;
-  return Math.min(ADMIRE_MAX_SECONDS,
-    Math.max(ADMIRE_MIN_SECONDS, Math.PI / spin));
+  return finalOrbitTurn(spin, strikeEndSeconds() - openingSeconds()) / spin;
+}
+
+// How far the take's camera has turned at t: the spin since the opening
+// act, held on the start bearing once the last turn has brought it there,
+// so a frame rounded past the end cannot carry it on.
+function orbitTurned(t) {
+  const spin = state.timeline.orbitSpeed;
+  const turning = strikeEndSeconds() - openingSeconds();
+  const whole = spin * turning + finalOrbitTurn(spin, turning);
+  return Math.min(spin * Math.max(0, t - openingSeconds()), whole);
 }
 
 function timelineDuration() {
-  const step = placementStep();
-  return openingSeconds() + placementCount() * step
-    + DROP_SECONDS + STRIKE_SECONDS + admireSeconds();
+  return strikeEndSeconds() + admireSeconds();
 }
 
 function pieceTint(key) {
@@ -17510,8 +17521,7 @@ function captureOrbitBase(atT) {
     height: offset.z,
     // The same clamped clock applyTimeline adds back, or a capture taken
     // mid-take jumps the camera by exactly the opening act's length.
-    azimuth: Math.atan2(offset.y, offset.x)
-      - state.timeline.orbitSpeed * Math.max(0, reference - openingSeconds()),
+    azimuth: Math.atan2(offset.y, offset.x) - orbitTurned(reference),
   };
 }
 
@@ -17525,8 +17535,7 @@ function applyTimeline(t) {
     // The camera holds its framing through the whole opening act -- the
     // formwork growing into its final form deserves a still witness, Param
     // ruled -- and starts its turn the instant build time begins.
-    const angle = base.azimuth
-      + state.timeline.orbitSpeed * Math.max(0, t - openingSeconds());
+    const angle = base.azimuth + orbitTurned(t);
     camera.position.set(
       centre.x + base.radius * Math.cos(angle),
       centre.y + base.radius * Math.sin(angle),

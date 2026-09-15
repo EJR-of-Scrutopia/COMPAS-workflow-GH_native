@@ -581,6 +581,26 @@ export function machineTime(t, seconds) {
 // The net is the third actor: it follows the frames until the act ends and
 // then yields to the finished instanced wires, whose pose at that instant
 // is identical by the writer's time-100 guarantee.
+// THE TAKE ENDS WHERE IT BEGAN (Param, 2026-09-15): "the rotations around
+// should always end on the position which the animation started. It must
+// only max out at 1 full rotation after the formwork is removed and
+// therefore will stop at some point on that last rotation when it meets
+// that point."
+//
+// spin is the orbit in radians per second; turning is how many seconds the
+// camera has already turned for when the formwork has gone. The answer is
+// the last turn, in radians: whatever brings the whole sweep to a whole
+// number of revolutions, more than nothing and never more than one. A
+// strike that ends exactly on the start bearing takes the full revolution,
+// so the vault is still seen once on its own. A still camera has nothing
+// to finish.
+export function finalOrbitTurn(spin, turning) {
+  if (!(spin > 0) || !(turning >= 0)) return 0;
+  const revolution = 2 * Math.PI;
+  const left = revolution - ((spin * turning) % revolution);
+  return left > 1e-9 ? left : revolution;
+}
+
 export function formworkVisibility({
   t, seconds, showMode, strikeU, hasMembers, hasColumnMesh,
 }) {
