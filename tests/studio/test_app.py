@@ -1769,3 +1769,48 @@ def test_health_says_when_the_server_is_older_than_its_code(tmp_path, monkeypatc
     # The hash is of the studio's own Python files, sizes and times.
     marks = app_module.SERVER_CODE_AT_START
     assert isinstance(marks, str) and len(marks) == 10
+
+
+def test_a_study_filed_in_mechanisms_finds_the_machine_it_cites(tmp_path, monkeypatch):
+    """Plugin 717e501: Export files a study's mechanism document, and the
+    machine it cites as <id>-machine.json, in a Mechanisms folder inside the
+    export folder. The studio reads the study there and folds the cited
+    machine's parts in; a machine it cannot find is named, not guessed."""
+
+    import json as _json
+    client, _studies = make_client(tmp_path, monkeypatch)
+    import app as app_module
+    import bundle
+    monkeypatch.setattr(app_module, "MECHANISMS_DIR", None)
+
+    filed = bundle.UPLOAD_DIR / "Mechanisms"
+    filed.mkdir()
+    triangle = {"vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]], "faces": [[0, 1, 2]]}
+    study = {
+        "schema": "bench.mechanism/1", "lengthUnitToMetres": 1,
+        "machine": {"schema": "bench.machine/1", "id": "winch 7", "wireCount": 7},
+        "mechanism": {"tensionTie": dict(triangle, permanence="permanent")},
+        "instances": [{"side": 0, "mechanism": 0}], "wires": [],
+    }
+    (filed / "Tiny-mechanism.json").write_text(_json.dumps(study), encoding="utf-8")
+
+    first = client.get("/api/studies/Tiny/mechanism")
+    assert first.status_code == 200, first.text
+    resolution = first.json()["machineResolution"]
+    assert resolution["found"] is False and "winch 7-machine.json" in resolution["reason"]
+
+    machine = {
+        "schema": "bench.machine/1", "id": "winch 7", "lengthUnitToMetres": 1,
+        "machine": {"frame1": triangle,
+                    "reels": [{"reel": 0, "mesh": triangle, "windingRadius": 0.05}]},
+    }
+    (filed / "winch 7-machine.json").write_text(_json.dumps(machine), encoding="utf-8")
+
+    second = client.get("/api/studies/Tiny/mechanism").json()
+    assert second["machineResolution"] == {"id": "winch 7", "found": True}
+    assert "frame1" in second["mechanism"] and "tensionTie" in second["mechanism"]
+
+    rows = {row["export"]: row for row in client.get("/api/mechanisms").json()["mechanisms"]}
+    assert "Tiny" in rows, "a study filed in Mechanisms is choosable too"
+    assert rows["Tiny"]["reels"] == 1 and "frame1" in rows["Tiny"]["parts"]
+    assert client.get("/api/mechanisms/Tiny").json()["machineResolution"]["found"] is True

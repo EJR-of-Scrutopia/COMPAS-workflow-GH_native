@@ -124,7 +124,15 @@ def mechanism_sidecar(export_name: str) -> Path:
     older spelling, so there is no legacy name to fall back to.
     """
 
-    return _sidecar(export_name, "-mechanism.json")
+    direct = _sidecar(export_name, "-mechanism.json")
+    if direct.is_file():
+        return direct
+    # Export's own default home for it (plugin 717e501): a Mechanisms
+    # folder inside the export folder, where the machine it cites is filed
+    # too. Read after the export folder itself, so a study filed both ways
+    # opens the copy beside it.
+    filed = UPLOAD_DIR / "Mechanisms" / "{}-mechanism.json".format(export_name)
+    return filed if filed.is_file() else direct
 
 
 def tessellation_sidecar(export_name: str) -> Path:

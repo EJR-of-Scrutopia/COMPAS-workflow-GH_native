@@ -107,6 +107,8 @@ const KNOWN_KEYS = new Set([
   "principalRows", "mechanism", "instances", "wires", "study", "generated",
   "vertexCount", "columnNodeCount", "anchors", "tensionTies",
   "notes", "warnings", "provenance",
+  // The machine this study cites, and what the server found for it.
+  "machine", "machineResolution",
   // Declared by the writer from 2026-09-09 so no consumer has to infer
   // any of them from where frames happen to sit against a drum mesh. The
   // cable is stated TWICE, as a radius and as a thickness; see below.
@@ -281,6 +283,14 @@ export function readMechanism(document) {
   // and not "arrives pre-placed".
   const body = document.mechanism && typeof document.mechanism === "object"
     ? document.mechanism : {};
+  // A study cites its machine by id and the server folds the machine's
+  // parts in. When it could not, the parts are missing for a reason a
+  // person can act on, so the reason is said.
+  const resolution = document.machineResolution;
+  if (resolution && resolution.found === false) {
+    notes.push("the machine this study cites (" + JSON.stringify(resolution.id)
+      + ") was not found: " + (resolution.reason || "no reason given"));
+  }
   for (const spec of PART_KINDS) {
     const found = partsUnder(body, spec.key);
     if (!found) continue;
@@ -289,7 +299,42 @@ export function readMechanism(document) {
         + found.name + "\", not \"" + spec.key + "\"");
     }
     let index = 0;
+    // A reel ENTRY with bodies (bench.machine/1): one authored mesh carried
+    // to as many places as it has bodies. Each body is one physical reel,
+    // and its place in entry-then-body order is the number a routing
+    // frame's ownerReel names, so that is its index here.
+    let bodyIndex = 0;
     for (const entry of found.entries) {
+      if (spec.kind === "reel" && entry && Array.isArray(entry.bodies)
+          && entry.bodies.length) {
+        const declaredReel = typeof entry.permanence === "string"
+          ? entry.permanence.toLowerCase() : null;
+        for (const placed of entry.bodies) {
+          const geometry = readGeometry(entry.mesh || entry.geometry, scale);
+          if (!geometry) {
+            notes.push("a reel body carried no readable geometry");
+            bodyIndex += 1;
+            continue;
+          }
+          placeBody(geometry, placed, scale);
+          parts.push({
+            kind: spec.kind,
+            index: bodyIndex,
+            geometry,
+            material: spec.material, tint: spec.tint || null,
+            world: false,
+            permanent: declaredReel ? declaredReel === "permanent" : !!spec.permanent,
+            spins: !!spec.spins,
+            driven: entry.driven !== false,
+            windingRadius: Number.isFinite(+entry.windingRadius)
+              ? +entry.windingRadius * scale : null,
+            axis: readAxis({ axis: placed && placed.axis }, scale),
+          });
+          bodyIndex += 1;
+        }
+        index += 1;
+        continue;
+      }
       // A reel carries its mesh under `mesh` and its spin axis beside it;
       // the simpler parts are the geometry themselves.
       const geometry = readGeometry(
@@ -491,6 +536,23 @@ export function readMechanism(document) {
     routingFrameMeaning: meaning, cableRadius,
     rotation: document.rotation || null,
     numbering: document.numbering || null };
+}
+
+// A reel body's placement, applied to its entry's mesh in place: the
+// linear part is written ROW BY ROW (x' = L0 x + L1 y + L2 z), and the
+// translation is in document units, so it takes the document's scale.
+function placeBody(geometry, placed, scale) {
+  const linear = placed && Array.isArray(placed.linear) && placed.linear.length === 9
+    ? placed.linear.map(Number) : [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const move = placed && Array.isArray(placed.translation) && placed.translation.length === 3
+    ? placed.translation.map((value) => +value * scale) : [0, 0, 0];
+  const v = geometry.vertices;
+  for (let i = 0; i + 2 < v.length; i += 3) {
+    const x = v[i], y = v[i + 1], z = v[i + 2];
+    v[i] = linear[0] * x + linear[1] * y + linear[2] * z + move[0];
+    v[i + 1] = linear[3] * x + linear[4] * y + linear[5] * z + move[1];
+    v[i + 2] = linear[6] * x + linear[7] * y + linear[8] * z + move[2];
+  }
 }
 
 function readAxis(entry, scale) {

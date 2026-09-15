@@ -1119,3 +1119,115 @@ def test_the_machine_file_is_not_mistaken_for_a_study(tmp_path, monkeypatch):
     import geometry
     assert "-mechanism.json" in geometry.KIND_SUFFIXES, (
         "so the loose scan skips it without reading it")
+
+
+# ---------- the machine a study cites (plugin, 2026-09-15) ----------
+# Since the machine split, a study's mechanism document carries no machine
+# bodies: it cites a bench.machine/1 document by id, and Export files that
+# machine as <id>-machine.json beside the study's own mechanism file. The
+# server folds the machine's parts back in, so the reader sees a whole
+# mechanism exactly as it always has.
+
+_TRIANGLE = {"vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]], "faces": [[0, 1, 2]]}
+
+
+def _study_citing(ident="winch-7"):
+    return {
+        "schema": "bench.mechanism/1",
+        "lengthUnitToMetres": 1,
+        "machine": {"schema": "bench.machine/1", "id": ident, "name": ident,
+                    "wireCount": 7},
+        "mechanism": {"tensionTie": dict(_TRIANGLE, permanence="permanent")},
+        "instances": [],
+        "wires": [],
+    }
+
+
+def _machine_document(ident="winch-7"):
+    return {
+        "schema": "bench.machine/1",
+        "id": ident,
+        "lengthUnitToMetres": 1,
+        "machine": {
+            "frame1": _TRIANGLE,
+            "reels": [{"reel": 0, "mesh": _TRIANGLE, "windingRadius": 0.05,
+                       "bodies": []}],
+            # A key the study owns as well: the study's own must win.
+            "tensionTie": {"vertices": [[9, 9, 9]], "faces": []},
+        },
+    }
+
+
+def test_a_study_takes_its_parts_from_the_machine_it_cites():
+    merged = mechanism.merge_cited_machine(_study_citing(), _machine_document())
+    body = merged["mechanism"]
+    assert "frame1" in body and "reels" in body, "the machine's parts are folded in"
+    assert body["tensionTie"]["vertices"][0] == [0, 0, 0], (
+        "the study's own tie wins over anything the machine carries under that key")
+    assert merged["machineResolution"] == {"id": "winch-7", "found": True}
+    assert mechanism.cited_machine_id(_machine_document()) is None, (
+        "a machine document cites nothing")
+
+
+def test_a_machine_of_another_id_or_schema_is_refused():
+    with pytest.raises(ValueError, match="winch-8"):
+        mechanism.merge_cited_machine(_study_citing(), _machine_document("winch-8"))
+    wrong = _machine_document()
+    wrong["schema"] = "bench.mechanism/1"
+    with pytest.raises(ValueError, match="bench.machine/1"):
+        mechanism.merge_cited_machine(_study_citing(), wrong)
+    scaled = _machine_document()
+    scaled["lengthUnitToMetres"] = 0.001
+    with pytest.raises(ValueError, match="scale"):
+        mechanism.merge_cited_machine(_study_citing(), scaled)
+
+
+READ_BODIES = textwrap.dedent("""
+    import { readMechanism } from %MODULE%;
+    const tri = { vertices: [[0,0,0],[1,0,0],[0,1,0]], faces: [[0,1,2]] };
+    const plane = (x) => ({ origin: [x,0,0], xAxis: [1,0,0], yAxis: [0,1,0], zAxis: [0,0,1] });
+    const identity = [1,0,0, 0,1,0, 0,0,1];
+    const doc = {
+      schema: "bench.mechanism/1", lengthUnitToMetres: 1,
+      machine: { schema: "bench.machine/1", id: "winch-7" },
+      machineResolution: { id: "winch-7", found: true },
+      mechanism: { reels: [
+        { reel: 0, mesh: tri, windingRadius: 0.05, bodies: [
+          { axis: plane(0), linear: identity, translation: [0,0,0], determinant: 1 },
+          { axis: plane(2), linear: identity, translation: [2,0,0], determinant: 1 } ] },
+        { reel: 1, mesh: tri, windingRadius: 0.2, bodies: [
+          { axis: plane(5), linear: [0,-1,0, 1,0,0, 0,0,1], translation: [5,0,0], determinant: 1 } ] } ] },
+      instances: [], wires: [] };
+    const fail = (message) => { console.log("FAIL " + message); process.exit(1); };
+    const model = readMechanism(doc);
+    const reels = model.parts.filter((part) => part.kind === "reel");
+    if (reels.length !== 3) fail("three bodies are three reels, got " + reels.length);
+    if (reels.map((r) => r.index).join() !== "0,1,2")
+      fail("a reel's index is its BODY number, entry then body: " + reels.map((r) => r.index).join());
+    if (Math.abs(reels[1].geometry.vertices[3] - 3) > 1e-12)
+      fail("body 1 sits where its translation puts it: vertex 1 x is " + reels[1].geometry.vertices[3]);
+    if (Math.abs(reels[2].geometry.vertices[3] - 5) > 1e-12 || Math.abs(reels[2].geometry.vertices[4] - 1) > 1e-12)
+      fail("body 2 is turned by its linear part, row by row: vertex 1 is "
+        + reels[2].geometry.vertices.slice(3, 6).join());
+    if (Math.abs(reels[2].windingRadius - 0.2) > 1e-12) fail("a body winds at its entry's radius");
+    if (!reels.every((r) => r.axis)) fail("every body carries its own axis");
+    if (model.notes.some((note) => note.includes("does not use the key")))
+      fail("the citation keys are read, not reported as unread: " + model.notes.join(" | "));
+    const missing = readMechanism({ ...doc, mechanism: {},
+      machineResolution: { id: "winch-7", found: false, reason: "no winch-7-machine.json" } });
+    if (!missing.notes.some((note) => note.includes("winch-7") && note.includes("not found")))
+      fail("a machine that could not be found is said: " + missing.notes.join(" | "));
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_reel_bodies_are_reels_numbered_the_way_wire_frames_name_them(tmp_path):
+    script = tmp_path / "bodies.mjs"
+    script.write_text(
+        READ_BODIES.replace("%MODULE%", json.dumps(MODULE.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(script)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout

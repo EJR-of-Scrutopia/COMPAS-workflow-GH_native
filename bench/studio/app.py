@@ -1051,11 +1051,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
         if export not in pairs:
             raise HTTPException(404, "no export named {!r}".format(export))
-        document = bundle._read_optional(bundle.mechanism_sidecar(export))
+        sidecar = bundle.mechanism_sidecar(export)
+        document = bundle._read_optional(sidecar)
         if document is None:
             raise HTTPException(404, "this study carries no mechanism document")
         try:
-            return mechanism.validate_mechanism_document(document)
+            return _with_cited_machine(
+                mechanism.validate_mechanism_document(document), sidecar.parent)
         except ValueError as error:
             raise HTTPException(
                 404, "the stored mechanism document is unusable: {}".format(error))
@@ -1624,6 +1626,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
             mechanism.validate_mechanism_document(document)
+            document = _with_cited_machine(document, path.parent)
         except (OSError, ValueError) as error:
             # LISTED, not skipped: a damaged mechanism is still his work,
             # and one that silently vanishes from the picker is worse than
@@ -1724,13 +1727,69 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         """
 
         roots = []
-        for root in (MECHANISMS_DIR, bundle.UPLOAD_DIR):
+        # Export's own default home for a study's mechanism and the machine
+        # it cites (plugin 717e501) is read as a root too.
+        filed = (None if bundle.UPLOAD_DIR is None
+                 else Path(bundle.UPLOAD_DIR) / mechanism.MECHANISMS_SUBFOLDER)
+        for root in (MECHANISMS_DIR, bundle.UPLOAD_DIR, filed):
             if root is None:
                 continue
             path = Path(root)
             if path.is_dir() and not any(path == seen for seen in roots):
                 roots.append(path)
         return roots
+
+    _machine_documents: dict = {}
+
+    def _read_machine(path: Path) -> dict:
+        """A machine document, memoised on its mtime and size: his run to
+        tens of megabytes, and every study citing one reads it."""
+
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        cached = _machine_documents.get(str(path))
+        if cached and cached[0] == key:
+            return cached[1]
+        document = json.loads(path.read_text(encoding="utf-8"))
+        _machine_documents[str(path)] = (key, document)
+        return document
+
+    def _with_cited_machine(document: dict, near: Path) -> dict:
+        """The study with the machine it cites folded in, or with a
+        machineResolution saying why it could not be.
+
+        Looked for BESIDE the study first, where Export files it, then in
+        every mechanism root. A document that cites nothing comes back as
+        it came, which is every mechanism written before the machine split.
+        """
+
+        ident = mechanism.cited_machine_id(document)
+        if ident is None:
+            return document
+        out = dict(document)
+        if "/" in ident or "\\" in ident or ".." in ident:
+            out["machineResolution"] = {
+                "id": ident, "found": False,
+                "reason": "the cited id is not a file name"}
+            return out
+        name = ident + mechanism.MACHINE_SUFFIX
+        roots = [Path(near)] + [root for root in _mechanism_roots()
+                                if root != Path(near)]
+        for root in roots:
+            path = root / name
+            if not path.is_file():
+                continue
+            try:
+                return mechanism.merge_cited_machine(document, _read_machine(path))
+            except (OSError, ValueError) as error:
+                out["machineResolution"] = {
+                    "id": ident, "found": False,
+                    "reason": "{}: {}".format(name, error)}
+                return out
+        out["machineResolution"] = {
+            "id": ident, "found": False,
+            "reason": "no {} beside the study or in a mechanism folder".format(name)}
+        return out
 
     @app.get("/api/mechanisms/{name}")
     def mechanism_by_name(name: str):
@@ -1748,8 +1807,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             if not path.is_file():
                 continue
             try:
-                return mechanism.validate_mechanism_document(
-                    json.loads(path.read_text(encoding="utf-8")))
+                return _with_cited_machine(
+                    mechanism.validate_mechanism_document(
+                        json.loads(path.read_text(encoding="utf-8"))),
+                    path.parent)
             except (OSError, ValueError) as error:
                 raise HTTPException(
                     404, "the mechanism {} is unusable: {}".format(name, error))

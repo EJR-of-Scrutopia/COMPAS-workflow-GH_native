@@ -23,7 +23,7 @@ refresh there, not a server restart.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 SCHEMA_PREFIX = "bench.mechanism/"
 # Below this winding radius a drum counts as a SPOOL rather than a
@@ -35,6 +35,15 @@ SCHEMA_PREFIX = "bench.mechanism/"
 SPOOL_RADIUS_LIMIT = 0.1
 
 SCHEMA = "bench.mechanism/1"
+
+# THE MACHINE A STUDY CITES (plugin, 2026-09-10 onward). A study's
+# mechanism document carries no machine bodies: it names a bench.machine/1
+# document by id, and Export files that machine as <id>-machine.json. Its
+# default home for both is a Mechanisms folder inside the export folder
+# (plugin 717e501).
+MACHINE_SCHEMA = "bench.machine/1"
+MACHINE_SUFFIX = "-machine.json"
+MECHANISMS_SUBFOLDER = "Mechanisms"
 
 
 def scale_to_metres(document: Mapping[str, Any]) -> float:
@@ -96,4 +105,65 @@ def validate_mechanism_document(document: Any) -> Dict[str, Any]:
     # Resolved once here so the client never has to work out which of the
     # two spellings this document used.
     out["lengthUnitToMetres"] = scale
+    return out
+
+
+def cited_machine_id(document: Any) -> Optional[str]:
+    """The id of the bench.machine/1 document a study cites, or None.
+
+    None for a document that cites nothing, which is every mechanism
+    written before the machine split and every machine document itself.
+    """
+
+    if not isinstance(document, Mapping):
+        return None
+    cited = document.get("machine")
+    if not isinstance(cited, Mapping) or cited.get("schema") != MACHINE_SCHEMA:
+        return None
+    ident = cited.get("id")
+    if not isinstance(ident, str) or not ident.strip():
+        return None
+    return ident.strip()
+
+
+def merge_cited_machine(document: Mapping[str, Any],
+                        machine: Any) -> Dict[str, Any]:
+    """A study with the machine it cites folded back in.
+
+    The reader has only ever seen a whole mechanism, its parts under
+    `mechanism`, and this keeps it that way: the machine's own block goes
+    in first and the study's own keys go over it, so the study's tension
+    tie and cable figures win over anything the machine carries under the
+    same names. The machine's placements, bank and routing stay behind;
+    the study carries its own instances and wires.
+
+    Refused, by ValueError naming the reason, when the file is not a
+    machine document, is a different machine from the one cited, or is
+    drawn at a different scale: any of those would put real parts in a
+    plausible wrong place.
+    """
+
+    if not isinstance(machine, Mapping) or machine.get("schema") != MACHINE_SCHEMA:
+        found = machine.get("schema") if isinstance(machine, Mapping) else None
+        raise ValueError("machine schema {!r} is not {!r}.".format(
+            found, MACHINE_SCHEMA))
+    wanted = cited_machine_id(document)
+    if machine.get("id") != wanted:
+        raise ValueError(
+            "the machine file carries id {!r}, not the {!r} this study "
+            "cites.".format(machine.get("id"), wanted))
+    study_scale = scale_to_metres(document)
+    machine_scale = scale_to_metres(machine)
+    if abs(study_scale - machine_scale) > 1e-9:
+        raise ValueError(
+            "the machine is drawn at scale {!r} and the study at {!r}; one "
+            "scale is needed to stamp its parts.".format(
+                machine_scale, study_scale))
+    body = dict(machine.get("machine") or {})
+    own = document.get("mechanism")
+    if isinstance(own, Mapping):
+        body.update(own)
+    out = dict(document)
+    out["mechanism"] = body
+    out["machineResolution"] = {"id": wanted, "found": True}
     return out
