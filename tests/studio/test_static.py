@@ -2557,6 +2557,39 @@ def test_appearance_overrides_are_render_only_and_persist():
     assert "state.appearance.skin" not in _function_body(js, "loadStudy")
 
 
+def test_formwork_and_both_draw_the_formwork_documents_own_columns():
+    """Param, 2026-09-15: "the columns arent showing in the formwork and both
+    displays". The rest modes drew columns only from a separate columns
+    file, which the export no longer writes. The reload now draws the
+    formwork document's own solid first, through the same helper a file
+    goes through, and a file stands in only when there is none."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "reloadColumns")
+    own = body.index("state.formwork.columns.solid")
+    assert own < body.index("= await loadColumns(names)"), "the document's own solid comes first"
+    branch = ("  if (ownSolid) {\n"
+              "    state.objects.columns = new THREE.Group();\n")
+    assert branch in body.replace("\r\n", "\n"), "the solid is drawn whenever the document has one"
+    assert "addColumnSolid(state.objects.columns, ownSolid)" in body
+    assert "addColumnSolid(group, await fetchJson(" in _function_body(js, "loadColumns")
+
+
+def test_the_machine_wears_his_cable_mesh_instead_of_lofted_tubes():
+    """Param, 2026-09-15: "the recreation in the app is really bad ... bring
+    my cable mesh into the vaulted app". A cable part is stamped on every
+    instance in the wires' own material, and no tube is lofted from the
+    route frames while one is there; the frames still drive the reels."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "buildMachine")
+    assert 'if (part.kind === "cable") continue;' in body
+    stamp = body.index('const cableParts = model.parts.filter((part) => part.kind === "cable");')
+    assert body.index("const wireMaterial = materials.steel.clone();") < stamp
+    assert "const mesh = new THREE.Mesh(geometry, wireMaterial);" in body[stamp:]
+    assert "const routed = cableParts.length ? null : loftWire(" in body
+
+
 def test_a_columns_reload_settles_the_scene_it_joins():
     """The columns group is added AFTER buildScene, whose rebuildTimeline was
     the last thing to rule on what the scene shows. Nothing then decided

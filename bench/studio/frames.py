@@ -279,6 +279,11 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
     # unusable member list should cost the members, never the whole act.
     if isinstance(document.get("columns"), Mapping):
         normalised["columns"] = dict(document["columns"])
+    # The radius the exporter swept the column solid along, for the formwork
+    # route to serve beside that solid. Carried only when it is one.
+    radius = document.get("radius")
+    if isinstance(radius, (int, float)) and not isinstance(radius, bool) and radius > 0:
+        normalised["radius"] = radius
     return normalised
 
 

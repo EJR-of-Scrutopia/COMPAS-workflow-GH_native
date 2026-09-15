@@ -1316,6 +1316,37 @@ def test_the_formwork_route_serves_per_frame_forces_that_fit_the_net(tmp_path, m
     assert len(served["edges"]) == 12
 
 
+def test_the_formwork_route_serves_the_documents_own_column_solid(tmp_path, monkeypatch):
+    """Param, 2026-09-15: "the columns arent showing in the formwork and both
+    displays". The export stopped writing a separate columns file and carries
+    the column mesh inside the formwork document, so the route serves it as
+    columns.solid in the bench.columns/1 shape the studio draws: the mesh,
+    the swept radius, and each served member joined to the document's own
+    nodes, with its aligned force."""
+
+    document = tiny_frames(members=((0, 1),))
+    document["radius"] = 0.03
+    document["columns"].update({
+        "nodes": [{"x": 1.0, "y": 1.0, "z": 0.0}, {"x": 1.0, "y": 1.0, "z": 1.0}],
+        "vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+        "faces": [[0, 1, 2]],
+    })
+    served = formwork_study(tmp_path, monkeypatch, tiny_with_mould(), document)
+    solid = served["columns"]["solid"]
+    assert solid["schema"] == "bench.columns/1"
+    assert solid["vertices"] == [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
+    assert solid["faces"] == [[0, 1, 2]]
+    assert solid["radius"] == 0.03
+    assert solid["members"] == [
+        {"from": [1.0, 1.0, 0.0], "to": [1.0, 1.0, 1.0], "force": 7.5}]
+
+    # A document with no column mesh serves no solid key at all.
+    document["columns"].pop("vertices")
+    (tmp_path / "bare").mkdir()
+    bare = formwork_study(tmp_path / "bare", monkeypatch, tiny_with_mould(), document)
+    assert "solid" not in bare["columns"]
+
+
 def test_forces_of_the_wrong_length_leave_every_frame_with_the_reason_served(
         tmp_path, monkeypatch):
     """Five values for twelve edges cannot be joined to anything: the key

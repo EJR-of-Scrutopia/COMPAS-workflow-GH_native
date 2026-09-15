@@ -1215,6 +1215,11 @@ READ_BODIES = textwrap.dedent("""
     if (!reels.every((r) => r.axis)) fail("every body carries its own axis");
     if (model.notes.some((note) => note.includes("does not use the key")))
       fail("the citation keys are read, not reported as unread: " + model.notes.join(" | "));
+    const cabled = readMechanism({ ...doc, mechanism: { ...doc.mechanism,
+      cables: { vertices: [[0,0,0],[1,0,0],[0,1,0]], faces: [[0,1,2]], permanence: "temporary" } } });
+    const cables = cabled.parts.filter((part) => part.kind === "cable");
+    if (cables.length !== 1 || cables[0].permanent)
+      fail("his Cables (CB) mesh is one temporary cable part: " + JSON.stringify(cables.map((c) => c.permanent)));
     const missing = readMechanism({ ...doc, mechanism: {},
       machineResolution: { id: "winch-7", found: false, reason: "no winch-7-machine.json" } });
     if (!missing.notes.some((note) => note.includes("winch-7") && note.includes("not found")))

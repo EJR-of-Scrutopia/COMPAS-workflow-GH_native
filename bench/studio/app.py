@@ -704,6 +704,45 @@ def _gpu_load():
         return None
 
 
+def _column_solid(stored, radius, members, forces):
+    """The formwork document's own column solid, in the bench.columns/1
+    shape the studio already draws, or None when it carries none.
+
+    ONE FORMAT (Param, 2026-09-15): the export stopped writing a separate
+    columns file, and its column mesh travels inside the formwork document
+    instead, so Formwork and Both had nothing to draw. The members are the
+    served pairs joined to the document's own nodes, with the aligned force
+    where there is one, because the principal-line walk reads their ends.
+    """
+
+    if not isinstance(stored, dict):
+        return None
+    vertices, faces = stored.get("vertices"), stored.get("faces")
+    if not (isinstance(vertices, list) and vertices and isinstance(faces, list) and faces):
+        return None
+    nodes = []
+    for node in stored.get("nodes") if isinstance(stored.get("nodes"), list) else []:
+        if isinstance(node, dict):
+            nodes.append([node.get("x"), node.get("y"), node.get("z")])
+        elif isinstance(node, list) and len(node) == 3:
+            nodes.append(node)
+        else:
+            nodes.append(None)
+    segments = []
+    for index, (u, v) in enumerate(members):
+        if u >= len(nodes) or v >= len(nodes) or nodes[u] is None or nodes[v] is None:
+            continue
+        segment = {"from": nodes[u], "to": nodes[v]}
+        if forces is not None:
+            segment["force"] = forces[index]
+        segments.append(segment)
+    solid = {"schema": "bench.columns/1", "vertices": vertices, "faces": faces,
+             "members": segments}
+    if isinstance(radius, (int, float)) and not isinstance(radius, bool) and radius > 0:
+        solid["radius"] = radius
+    return solid
+
+
 def _index_pairs(raw, count):
     """The usable [u, v] pairs of a raw member or edge list, and the raw
     index each one came from.
@@ -998,6 +1037,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 continue
             for frame in served_frames:
                 frame[key] = [frame[key][index] for index in kept]
+        served_columns = {
+            "members": members,
+            "forces": member_force,
+            "forceUnit": "kN",
+        }
+        # The document's own column solid, for the rest modes. Absent, not
+        # null, when it carries none: an older document serves what it did.
+        solid = _column_solid(stored, document.get("radius"), members, member_force)
+        if solid is not None:
+            served_columns["solid"] = solid
         return {
             "study": export,
             "vertexCount": document["vertexCount"],
@@ -1010,11 +1059,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             # against an unfiltered one.
             "edgeIndices": kept_edges,
             "forceDensities": force_densities,
-            "columns": {
-                "members": members,
-                "forces": member_force,
-                "forceUnit": "kN",
-            },
+            "columns": served_columns,
             "notes": notes,
         }
 

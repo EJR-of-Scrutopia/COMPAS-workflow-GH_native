@@ -5793,26 +5793,28 @@ function columnGeometryFrom(document_) {
   return geometry;
 }
 
+// One bench.columns/1 solid into the columns group. It stamps the radius
+// the exporter swept it along, which the act's animated members read so the
+// two drawings of one set of columns are the same thickness, and its raw
+// members feed the principal-line walk: their tree tips are where the
+// columns meet the net.
+function addColumnSolid(group, columnDocument) {
+  if (typeof columnDocument.radius === "number" && columnDocument.radius > 0) {
+    state.columnRadius = columnDocument.radius;
+  }
+  if (Array.isArray(columnDocument.members)) {
+    state.columnMembers.push(...columnDocument.members);
+  }
+  const mesh = new THREE.Mesh(columnGeometryFrom(columnDocument), materials.steel);
+  mesh.castShadow = mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
 async function loadColumns(names) {
   const group = new THREE.Group();
   for (const name of names) {
     try {
-      const columnDocument = await fetchJson("/api/columns/" + encodeURIComponent(name));
-      // bench.columns/1 stamps the radius the exporter swept these solids
-      // along. The act's animated members read it, so the two drawings of
-      // one set of columns are the same thickness.
-      if (typeof columnDocument.radius === "number" && columnDocument.radius > 0) {
-        state.columnRadius = columnDocument.radius;
-      }
-      // The raw members feed the principal-line walk: their tree tips
-      // are where the columns meet the net.
-      if (Array.isArray(columnDocument.members)) {
-        state.columnMembers.push(...columnDocument.members);
-      }
-      const geometry = columnGeometryFrom(columnDocument);
-      const mesh = new THREE.Mesh(geometry, materials.steel);
-      mesh.castShadow = mesh.receiveShadow = true;
-      group.add(mesh);
+      addColumnSolid(group, await fetchJson("/api/columns/" + encodeURIComponent(name)));
     } catch (error) {
       showBanner("Column file " + name + " failed to load: " + error.message, "error");
     }
@@ -5841,7 +5843,21 @@ async function reloadColumns(names) {
   const previousRadius = state.columnRadius;
   state.columnRadius = null;
   state.columnMembers = [];
-  if (names.length) {
+  // ONE FORMAT (Param, 2026-09-15): the formwork document carries its own
+  // column solid, served as columns.solid, and that is what Formwork and
+  // Both draw. A separate columns file stands in only for a study
+  // exported before the export stopped writing one.
+  const ownSolid = state.formwork && state.formwork.columns
+    && state.formwork.columns.solid;
+  if (ownSolid) {
+    state.objects.columns = new THREE.Group();
+    try {
+      addColumnSolid(state.objects.columns, ownSolid);
+    } catch (error) {
+      showBanner("The formwork's columns failed to draw: " + error.message, "error");
+    }
+    scene.add(state.objects.columns);
+  } else if (names.length) {
     state.objects.columns = await loadColumns(names);
     scene.add(state.objects.columns);
   }
@@ -16723,6 +16739,9 @@ async function buildMachine() {
 
 
   for (const part of model.parts) {
+    // His cable mesh wears the wires' own material, so it is stamped
+    // below, once that material exists.
+    if (part.kind === "cable") continue;
     const geometry = geometryFromPart(part);
     // The permanent works are authored ONCE, at row scale, in the body's
     // own frame: on the real file the tie is 17.5 m long and centred on
@@ -16813,6 +16832,26 @@ async function buildMachine() {
   const routingOffset = model.routingFrameMeaning === "centreline" ? 0
     : model.routingFrameMeaning === "contact" ? state.wireRadius
     : -state.wireRadius;
+  // HIS CABLES, AS HE MODELLED THEM (Param, 2026-09-15: "the recreation
+  // in the app is really bad ... bring my cable mesh into the vaulted
+  // app"). One mesh, authored on the mechanism he built, stamped on every
+  // instance the way Frame 1 is, in the wires' black steel. The route
+  // frames still turn the reels and hold the free span to the net; only
+  // the tube lofted from them gives way.
+  const cableParts = model.parts.filter((part) => part.kind === "cable");
+  if (cableParts.length && instances.some((instance) => instance.mirrored)) {
+    wireMaterial.side = THREE.DoubleSide;
+  }
+  for (const part of cableParts) {
+    const geometry = geometryFromPart(part);
+    for (const instance of instances) {
+      const mesh = new THREE.Mesh(geometry, wireMaterial);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      if (instance.matrix) mesh.matrix.fromArray(instance.matrix);
+      sides[instances.indexOf(instance)].add(mesh);
+    }
+  }
   const wires = [];
   for (const wire of model.wires) {
     // The instance NAMES the wires it carries; the path is the fallback
@@ -16826,7 +16865,7 @@ async function buildMachine() {
     // The wire travels with the machine that pulls it, so it retreats
     // with that side rather than being left stretched across the site.
     const side = sides[instances.indexOf(instance)] || temporary;
-    const routed = loftWire(
+    const routed = cableParts.length ? null : loftWire(
       wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);
     let mesh = null;
     if (routed) {

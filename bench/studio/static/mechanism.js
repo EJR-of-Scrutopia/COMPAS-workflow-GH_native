@@ -61,6 +61,11 @@ export const PART_KINDS = [
   // "the others are metal": the pulleys had been wearing the reels'
   // timber, which is what put birch grain on a sheave.
   { key: "pulleys", kind: "pulley", material: "metal/steel-brushed" },
+  // "i want you to use the cable ... and bring my cable mesh into the
+  // vaulted app" (Param, 2026-09-15): his own Cables (CB) mesh, drawn in
+  // the wires' black steel in place of the tube lofted from the route
+  // frames. The material named here is the one that steel wears.
+  { key: "cables", kind: "cable", material: "metal/steel-polished-dark" },
   // "Shiny ish metalic, like we used for the principle line bars, dark.
   // This is for the anchor / tie." The principal bars wear
   // metal/steel-polished-dark (PRINCIPAL_SKIN in studio.js), so the two
