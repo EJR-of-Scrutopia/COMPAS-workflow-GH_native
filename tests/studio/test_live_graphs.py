@@ -653,9 +653,10 @@ def test_the_header_names_the_skin_not_its_own_class(tmp_path):
 
     And a skin the cut was NOT weighed with is not named at all. A swap
     within one structural class (granite for limestone, both stone)
-    dispatches no material change, so nothing re-cuts the bundle: the
-    header would otherwise name the skin worn now beside the density the
-    one before it set."""
+    dispatches no material change; since 2026-09-15 it re-cuts at the new
+    density all the same, but until that cut lands the header would
+    otherwise name the skin worn now beside the density the one before it
+    set."""
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     tables = []
@@ -689,3 +690,81 @@ def test_the_header_names_the_skin_not_its_own_class(tmp_path):
         "granite worn over a cut weighed at limestone's 2400 did not set "
         "that density, so the header must not name it beside it")
     assert said["worn"] == "a granite skin", "the skin that did set it is named"
+
+
+MATCH_HARNESS = r"""
+%(tables)s
+const library = [
+  { key: "metal/steel-brushed", family: "metal", name: "steel-brushed", label: "Steel brushed" },
+  { key: "concrete/board-marked-grey", family: "concrete", name: "board-marked-grey", label: "Board marked grey" },
+  { key: "stone/granite-grey", family: "stone", name: "granite-grey", label: "Granite grey" },
+];
+const state = { appearance: { skin: null }, pattern: "running-bond", size: 0.6, thickness: 0.05, bundle: null };
+let cut = "concrete";
+const document = { getElementById: (id) => ({ value: id === "study-select" ? "5 sided form" : cut }) };
+const isLibraryKey = (key) => typeof key === "string" && key.includes("/");
+const libraryEntry = (key) => library.find((entry) => entry.key === key) || null;
+%(functions)s
+const loadedAt = (material, density) => {
+  cut = material;
+  state.bundle = { export: "5 sided form", material, pattern: "running-bond", size: 0.6,
+    provenance: { thickness: 0.05, density } };
+};
+const matches = (skin, material, density) => {
+  state.appearance.skin = skin;
+  loadedAt(material, density);
+  return requestMatchesLoaded(material);
+};
+console.log(JSON.stringify({
+  steelOnConcreteCut: matches("metal/steel-brushed", "concrete", 2400),
+  steelOnSteelWeight: matches("metal/steel-brushed", "concrete", 7850),
+  concreteSkin: matches("concrete/board-marked-grey", "concrete", 2400),
+  noSkin: matches("none", "concrete", 2400),
+  graniteOnStone: matches("stone/granite-grey", "stone", 2500),
+  graniteWeighed: matches("stone/granite-grey", "stone", 2700),
+}));
+"""
+
+
+@needs_node
+def test_a_skin_that_weighs_differently_re_cuts_the_vault(tmp_path):
+    """Param, 2026-09-15, over graphs "weighed at 2400 kg/m3" under a metal
+    skin: "whatever material i have selected that is the density calculation
+    based on thickness it should be calculating!" A metal has no structural
+    class, so choosing it changed no material and nothing re-cut. The loaded
+    vault now matches a request only at the density the skin weighs, the
+    skin handler re-cuts when it does not, and a boot load waits for the
+    library's catalogue before reading a library skin's density."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    tables = []
+    for head in ("const STRUCTURAL_DENSITIES = {", "const FAMILY_DENSITIES = {"):
+        start = js.index(head)
+        tables.append(js[start:js.index("};", start) + 2])
+    start = js.index("const NAME_DENSITIES = [")
+    tables.append(js[start:js.index("];", start) + 2])
+    functions = "\n".join(_body(js, head) + "\n}\n" for head in (
+        "function structuralDensity()", "function skinDensity()",
+        "function requestMatchesLoaded(material)"))
+    script = tmp_path / "match.mjs"
+    script.write_text(MATCH_HARNESS % {"tables": "\n".join(tables), "functions": functions},
+                      encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    said = json.loads(result.stdout)
+    assert said["steelOnConcreteCut"] is False, "steel over a vault weighed at 2400 must re-cut"
+    assert said["steelOnSteelWeight"] is True, "a vault already weighed as steel does not"
+    assert said["concreteSkin"] is True and said["noSkin"] is True
+    assert said["graniteOnStone"] is False, "granite weighs 2700, not stone's 2500"
+    assert said["graniteWeighed"] is True
+
+    js = js.replace("\r\n", "\n")
+    skin = js[js.index('document.getElementById("render-skin").addEventListener("change"'):]
+    skin = skin[:skin.index("\n});")]
+    assert ("    if (study.value && !requestMatchesLoaded(structural.value)) "
+            "loadStudy(study.value);") in skin
+    load = js[js.index("async function loadStudy("):]
+    load = load[:load.index("\n}\n")]
+    assert load.index("await skinCatalogueReady();") < load.index("const weighAs = skinDensity();")
+    ready = js[js.index("async function skinCatalogueReady() {"):]
+    assert "await materialLibraryReady;" in ready[:ready.index(chr(10) + "}" + chr(10))]

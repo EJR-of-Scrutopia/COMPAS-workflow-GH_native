@@ -7324,6 +7324,17 @@ const NAME_DENSITIES = [
   [/sandstone/, 2300], [/rubble/, 2200], [/travertine/, 2400],
 ];
 
+// A library skin's density comes from the library's catalogue, and at boot
+// the first load can run before the catalogue arrives: the skin then read
+// as the structural material and the vault was weighed as concrete under
+// steel. A load waits here first; only the density leaves for the server.
+async function skinCatalogueReady() {
+  if (isLibraryKey(state.appearance.skin) && !state.materialLibrary.length
+      && materialLibraryReady) {
+    await materialLibraryReady;
+  }
+}
+
 function structuralDensity() {
   const structural = document.getElementById("material-select").value;
   return STRUCTURAL_DENSITIES[structural] || 2400;
@@ -12543,6 +12554,12 @@ function updatePatternForMaterial(material) {
 // already answers issues no request at all. bundle.size is the REQUESTED
 // size by bundle.py's own contract, so this comparison is honest for
 // authored cuts too, where the size is requested and then unused.
+//
+// The DENSITY is one of those parameters (Param, 2026-09-15: "whatever
+// material i have selected that is the density calculation based on
+// thickness it should be calculating!"). A skin with no structural class
+// of its own, a metal, changes no material, so a vault cut as concrete
+// kept concrete's 2400 kg/m3 under a steel skin, and so did the graphs.
 function requestMatchesLoaded(material) {
   const loaded = state.bundle;
   return !!loaded
@@ -12550,7 +12567,8 @@ function requestMatchesLoaded(material) {
     && loaded.material === material
     && loaded.pattern === state.pattern
     && loaded.size === state.size
-    && loaded.provenance.thickness === state.thickness;
+    && loaded.provenance.thickness === state.thickness
+    && Math.abs((loaded.provenance.density || 0) - skinDensity()) <= 1;
 }
 
 // Size and thickness commits settle before they cut: stepping a slider
@@ -12635,6 +12653,8 @@ async function loadStudy(exportName) {
   // material density in the calculations"). Sent only when a skin
   // actually overrides the structural density, so a plain concrete
   // study keeps its existing cache entry and rebuilds nothing.
+  await skinCatalogueReady();
+  if (sequence !== state.loadSequence) return "superseded";
   const weighAs = skinDensity();
   if (weighAs && Math.abs(weighAs - structuralDensity()) > 1) {
     url += "&density=" + weighAs;
@@ -13416,6 +13436,11 @@ document.getElementById("render-skin").addEventListener("change", async (e) => {
     skinDrivenMaterialChange = true;
     structural.value = derived;
     structural.dispatchEvent(new Event("change"));
+  } else {
+    // The same class can still weigh differently: steel over concrete,
+    // granite for limestone. The vault is re-cut at the skin's density.
+    const study = document.getElementById("study-select");
+    if (study.value && !requestMatchesLoaded(structural.value)) loadStudy(study.value);
   }
   updateWeightNote();
   // A library material has to arrive before it can be worn. rebuildAppearance
