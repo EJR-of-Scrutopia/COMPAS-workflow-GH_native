@@ -4027,6 +4027,30 @@ internal static partial class Program
 
         try
         {
+            ValidateMechanismOrientedSidesBindNearest(plugin);
+            Console.WriteLine(
+                "PASS  A wire is bound to the anchor NEAREST the end it was "
+                + "placed at (Param, 2026-09-15), so an oriented machine "
+                + "never takes another side's anchors. Two rows of three, "
+                + "one machine built at the far row and copied to the near "
+                + "one by a half turn about the world origin, so BOTH "
+                + "instance frames have their origin at (0,0,0), which is "
+                + "Placed Mechanism's shape. The row-to-side pairing that "
+                + "stood before read those origins as positions and handed "
+                + "side 0 the near row, 16 m away; now side 0's wire k "
+                + "binds 8 + k, the half-turned side's binds 7 - k, every "
+                + "placed end lands on its bound vertex, and the document "
+                + "is silent. NearestOneToOne is also driven directly: it "
+                + "takes the shortest pair first, so an early wire never "
+                + "takes the anchor a later wire stands on.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MechanismOrientedSidesBindNearest: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateExportMechanismDiagnosticsSeparated(plugin);
             Console.WriteLine(
                 "PASS  Export mechanism diagnostics kept separate (audit "
@@ -50580,6 +50604,190 @@ internal static partial class Program
                 + worst.ToString("0.#########", CultureInfo.InvariantCulture)
                 + " m from the net vertex the document bound it to. The "
                 + "studio draws that cable to that vertex.");
+        }
+    }
+
+    /// <summary>
+    /// A WIRE IS BOUND TO THE ANCHOR NEAREST WHERE ITS END WAS PLACED
+    /// (Param, 2026-09-15): "taking placement planes and seeing which wire
+    /// ends are the closest to each of those points and connecting them that
+    /// way".
+    ///
+    /// WHAT WAS WRONG, SEEN ON HIS FIVE SIDED FORM. Export paired each anchor
+    /// row with the side whose instance frame ORIGINS sat nearest. Placed
+    /// Mechanism's frames are orient transforms, and a transform's origin is
+    /// its translation, not where the machine stands: every side's origin sat
+    /// within 2 m of the world origin, every side took its neighbour's row,
+    /// and all 105 cables were drawn 7.7 to 15.9 m across the vault.
+    ///
+    /// THE FIXTURE IS THAT SHAPE AT ITS SMALLEST: two rows of three anchors,
+    /// the row discovered first (ids 5 to 7) at x = +8, one machine built in
+    /// world coordinates at the x = -8 row, and a copy half turned about the
+    /// world origin onto the +8 row. Both frames have origin (0,0,0), so the
+    /// old pairing tied and gave side 0 the first row found, the wrong one.
+    /// </summary>
+    private static void ValidateMechanismOrientedSidesBindNearest(Assembly plugin)
+    {
+        Type documentType = RequireComponentType(plugin, "MechanismDocument");
+        MethodInfo json = RequirePublicStatic(documentType, "Json");
+        MethodInfo nearest = documentType.GetMethod(
+            "NearestOneToOne", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "MechanismDocument.NearestOneToOne was not found.");
+
+        // THE PAIRING ITSELF. A null end takes nothing, and the shortest pair
+        // goes first: wire 1 stands 0.1 m from anchor 0, so wire 0 (0.5 m
+        // from it) must give it up, where a wire-by-wire pass would not.
+        int[] Pair(double[]?[] ends, double[][] anchorSet) =>
+            (int[])nearest.Invoke(null, new object?[] { ends, anchorSet })!;
+        int[] simple = Pair(
+            new double[]?[] { new[] { 0.0, 0, 0 }, new[] { 1.0, 0, 0 }, null },
+            new[] { new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 0 }, new[] { 5.0, 5, 5 } });
+        if (!simple.SequenceEqual(new[] { 1, 0, -1 }))
+        {
+            throw new InvalidOperationException(
+                "Each end takes the anchor it stands on and a wire with no end "
+                + "takes none: expected [1, 0, -1], got ["
+                + string.Join(", ", simple) + "].");
+        }
+        int[] contest = Pair(
+            new double[]?[] { new[] { 0.0, 0, 0 }, new[] { 0.4, 0, 0 } },
+            new[] { new[] { 0.5, 0, 0 }, new[] { -5.0, 0, 0 } });
+        if (!contest.SequenceEqual(new[] { 1, 0 }))
+        {
+            throw new InvalidOperationException(
+                "The shortest pair is taken first, so wire 1 (0.1 m from "
+                + "anchor 0) keeps it and wire 0 takes anchor 1: expected "
+                + "[1, 0], got [" + string.Join(", ", contest) + "].");
+        }
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        const double Pitch = 0.15;
+        var allPoints = new List<double[]>();
+        for (int k = 0; k < 5; k++)
+            allPoints.Add(new[] { -2.0 + k, 0.0, 1.0 });
+        for (int k = 0; k < 3; k++)
+            allPoints.Add(new[] { 8.0, -Pitch + (Pitch * k), 0.0 });
+        for (int k = 0; k < 3; k++)
+            allPoints.Add(new[] { -8.0, -Pitch + (Pitch * k), 0.0 });
+        Array vertexArray = Array.CreateInstance(point, allPoints.Count);
+        for (int i = 0; i < allPoints.Count; i++)
+        {
+            vertexArray.SetValue(
+                Activator.CreateInstance(point, allPoints[i][0], allPoints[i][1], allPoints[i][2]),
+                i);
+        }
+        var edgePairs = new List<(int, int)>();
+        for (int k = 0; k + 1 < 5; k++)
+            edgePairs.Add((k, k + 1));
+        for (int k = 0; k + 1 < 3; k++)
+        {
+            edgePairs.Add((5 + k, 6 + k));
+            edgePairs.Add((8 + k, 9 + k));
+        }
+        Array edgeArray = Array.CreateInstance(edgeType, edgePairs.Count);
+        for (int i = 0; i < edgePairs.Count; i++)
+        {
+            edgeArray.SetValue(
+                Activator.CreateInstance(edgeType, edgePairs[i].Item1, edgePairs[i].Item2), i);
+        }
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertexArray);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edgeArray);
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            Enumerable.Repeat(1.0, edgePairs.Count).ToArray());
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            Enumerable.Range(5, 6).ToArray());
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        static string F(double v) => v.ToString("R", CultureInfo.InvariantCulture);
+        static string Frame(double[] origin, double[] xAxis, double[] yAxis) =>
+            "{\"origin\":[" + string.Join(",", origin.Select(F)) + "],\"xAxis\":["
+            + string.Join(",", xAxis.Select(F)) + "],\"yAxis\":["
+            + string.Join(",", yAxis.Select(F)) + "],\"zAxis\":[0,0,1]}";
+
+        // ONE MACHINE, BUILT IN WORLD COORDINATES AT THE x = -8 ROW, and its
+        // copy on side 1 is the half turn about the world origin.
+        double[][] axesUnturned = { new[] { 1.0, 0, 0 }, new[] { 0.0, 1, 0 } };
+        double[][] axesTurned = { new[] { -1.0, 0, 0 }, new[] { 0.0, -1, 0 } };
+        string Instance(int side, double[][] axes) =>
+            "{\"side\":" + side + ",\"mechanism\":0,\"frame\":"
+            + Frame(new[] { 0.0, 0, 0 }, axes[0], axes[1])
+            + ",\"kind\":\"mechanism\",\"placement\":\"instance\"}";
+        var wireJson = new List<string>();
+        foreach (int side in new[] { 0, 1 })
+        {
+            for (int k = 0; k < 3; k++)
+            {
+                double[] end = { -8.0, -Pitch + (Pitch * k), 0.0 };
+                double[] drum = { -10.0, -0.5 + (0.5 * k), 1.0 };
+                wireJson.Add(
+                    "{\"side\":" + side + ",\"mechanism\":0,\"wire\":" + k + ",\"route\":["
+                    + Frame(end, axesUnturned[0], axesUnturned[1]) + ","
+                    + Frame(drum, axesUnturned[0], axesUnturned[1]) + "]}");
+            }
+        }
+        string payload =
+            "{\"mechanism\":{},"
+            + "\"machine\":{\"schema\":\"bench.machine/1\",\"id\":\"MCH-ORIENT\","
+            + "\"name\":\"oriented fixture machine\",\"wireCount\":3,\"reeveDefault\":1.0},"
+            + "\"reeve\":{},"
+            + "\"instances\":[" + Instance(0, axesUnturned) + "," + Instance(1, axesTurned) + "],"
+            + "\"wires\":[" + string.Join(",", wireJson) + "],"
+            + "\"anchors\":[],\"tensionTies\":[]}";
+
+        var warnings = new List<string>();
+        var notes = new List<string>();
+        string document = (string)json.Invoke(
+            null, new object?[] { result, "oriented fixture", 1.0, payload, warnings, notes })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The mechanism document did not parse.");
+        var bound = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (JsonNode? wire in root["wires"]!.AsArray())
+            bound[(string)wire!["id"]!] = (int)wire["net_vertex"]!;
+
+        double worst = 0.0;
+        for (int k = 0; k < 3; k++)
+        {
+            foreach ((string id, int expected, double[] end) in new[]
+            {
+                ($"0-0-{k}", 8 + k, new[] { -8.0, -Pitch + (Pitch * k), 0.0 }),
+                ($"1-0-{k}", 7 - k, new[] { 8.0, Pitch - (Pitch * k), 0.0 }),
+            })
+            {
+                if (!bound.TryGetValue(id, out int got) || got != expected)
+                {
+                    throw new InvalidOperationException(
+                        "WIRE " + id + " MUST BE BOUND TO NET VERTEX " + expected
+                        + ", the anchor its placed end stands on; got "
+                        + (bound.ContainsKey(id) ? got.ToString(CultureInfo.InvariantCulture) : "no such wire")
+                        + ". The studio draws that cable to that vertex.");
+                }
+                worst = Math.Max(worst, Math.Sqrt(
+                    Math.Pow(allPoints[got][0] - end[0], 2) +
+                    Math.Pow(allPoints[got][1] - end[1], 2) +
+                    Math.Pow(allPoints[got][2] - end[2], 2)));
+            }
+        }
+        Console.WriteLine(
+            "      Mechanism oriented sides: over six wires on two rows, both "
+            + "frames at origin (0,0,0), the worst distance between a placed "
+            + $"end and its bound vertex is {worst:0.#########} m.");
+        if (worst > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Every placed end must land on the vertex it is bound to; the "
+                + "worst is " + worst.ToString("0.#########", CultureInfo.InvariantCulture) + " m.");
+        }
+        if (warnings.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A correctly placed oriented study must draw no document "
+                + "warning; got " + warnings.Count + ": " + string.Join(" | ", warnings));
         }
     }
 

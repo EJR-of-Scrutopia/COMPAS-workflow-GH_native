@@ -1034,73 +1034,23 @@ internal static class MechanismDocument
             }
         }
 
-        // NET VERTEX MATCHING. WHICH ANCHORS an instance draws from is
-        // settled here, row by row: the rows are paired to sides by
-        // proximity (below) and flattened, and each instance takes its own
-        // run of that flat list in his tree order (side, mechanism, wire).
-        // WHICH OF THOSE ANCHORS EACH WIRE GETS is settled further down, by
-        // where the wire was actually PLACED and not by its position in the
-        // tree (Task 7a). R1's non-negotiable survives both: every wire
-        // gets its OWN explicit net_vertex written into the document, never
-        // left to be inferred from tree position downstream.
+        // NET VERTEX MATCHING. Every anchor row the net holds is one pool,
+        // and each wire is bound to the anchor nearest the end it was
+        // placed at (below). The rows are flattened in discovery order,
+        // which only the short-run fallback reads. R1's non-negotiable
+        // stands: every wire gets its OWN explicit net_vertex written into
+        // the document, never left to be inferred downstream.
         //
-        // WHICH ROW IS WHICH SIDE'S is decided by PHYSICAL PROXIMITY (audit
-        // finding 3), never by row-discovery order:
-        // MouldGeometry.ConnectedGroups' own order is "the order of their
-        // lowest node index... arbitrary but STABLE", an artefact of how
-        // the net happened to get numbered, with zero relationship to his
-        // own authored `side` field. Each row is paired to whichever
-        // side's own instances sit nearest it in world space. Falls back to
-        // document order when the row count and the authored side count
-        // disagree, which this pairing cannot resolve unambiguously -- the
-        // same behaviour this file always had.
+        // THE ROW-TO-SIDE PAIRING THAT STOOD HERE IS GONE (2026-09-15). It
+        // paired each row with the side whose instance frame ORIGINS sat
+        // nearest, and Placed Mechanism's frames are orient transforms
+        // whose origin is a translation, not where the machine stands: on
+        // his five sided form every side's origin sat within 2 m of the
+        // world origin, so every side was handed its neighbour's row and
+        // all 105 cables were drawn 7.7 to 15.9 m across the vault.
         List<List<int>> rows = MechanismGeometry.AnchorRowIndices(result);
-        List<List<int>> orderedRows = rows;
-        List<int> sideOrder = instanceFrames.Keys
-            .Select(k => k.Side)
-            .Distinct()
-            .OrderBy(s => s)
-            .ToList();
-        if (eq is not null && rows.Count > 0 && rows.Count == sideOrder.Count)
-        {
-            List<double[]> rowCentres = rows
-                .Select(row => Centroid(row.Select(id =>
-                {
-                    Point3Dto p = eq.Vertices[id];
-                    return new[] { p.X, p.Y, p.Z };
-                }).ToList()))
-                .ToList();
-            var unassigned = Enumerable.Range(0, rows.Count).ToList();
-            var assignment = new int[sideOrder.Count];
-            for (int s = 0; s < sideOrder.Count; s++)
-            {
-                double[] sideCentre = Centroid(instanceFrames
-                    .Where(kv => kv.Key.Side == sideOrder[s])
-                    .Select(kv => kv.Value.Origin)
-                    .ToList());
-                int nearest = unassigned
-                    .OrderBy(r => MechanismCollector.Distance(rowCentres[r], sideCentre))
-                    .First();
-                assignment[s] = nearest;
-                unassigned.Remove(nearest);
-            }
-            orderedRows = assignment.Select(r => rows[r]).ToList();
-            bool swapped = false;
-            for (int i = 0; i < assignment.Length; i++)
-                swapped |= assignment[i] != i;
-            if (swapped)
-            {
-                notes.Add(
-                    "mechanism: anchor rows were paired to sides by " +
-                    "physical proximity to each side's own placed " +
-                    "instances, not by the net's own numbering, and the " +
-                    "two disagreed for this study: document-order " +
-                    "pairing would have matched every wire against the " +
-                    "wrong side's anchors.");
-            }
-        }
         var anchorFlat = new List<int>();
-        foreach (List<int> row in orderedRows)
+        foreach (List<int> row in rows)
             anchorFlat.AddRange(row);
 
         // A PER-ROW TOLERANCE for the match-distance check below (finding
@@ -1123,9 +1073,9 @@ internal static class MechanismDocument
         var rowSpacing = new Dictionary<int, double>();
         if (eq is not null)
         {
-            for (int r = 0; r < orderedRows.Count; r++)
+            for (int r = 0; r < rows.Count; r++)
             {
-                List<int> row = orderedRows[r];
+                List<int> row = rows[r];
                 IReadOnlyList<double[]> points = row.Select(id =>
                 {
                     Point3Dto p = eq.Vertices[id];
@@ -1141,129 +1091,68 @@ internal static class MechanismDocument
             }
         }
 
-        // WHICH ANCHOR IN THE INSTANCE'S OWN RUN EACH WIRE IS BOUND TO,
-        // DECIDED BY WHERE THE WIRE WAS PLACED (Task 7a, 2026-09-10).
+        // WHICH ANCHOR EACH WIRE IS BOUND TO: THE ONE NEAREST WHERE THE
+        // WIRE'S END WAS PLACED (Param, 2026-09-15): "taking placement
+        // planes and seeing which wire ends are the closest to each of
+        // those points and connecting them that way".
         //
-        // THIS CHANGES THE ARTEFACT ON EVERY TWO-SIDED VAULT, which is his
-        // default workflow, and it is said here as loudly as in the commit
-        // that made it: a wire's net_vertex is the anchor THE STUDIO DRAWS
-        // ITS CABLE TO, so a study exported before this and a study
-        // exported after it bind the turned side's seven cables to
-        // different anchors. The new binding is the one the machine was
-        // actually placed against; the old one was the row's own discovery
-        // order, and on a turned instance the two ran end for end.
+        // A wire's end is its first routing plane (planes[0] is the net
+        // end, his ruling) carried through its own instance frame, which
+        // is exactly where the machine was placed. Nothing about sides,
+        // rows, tree order or frame origins is read, so no placement
+        // method, derived, authored or oriented, can hand a wire another
+        // side's anchor. See NearestOneToOne for the pairing itself.
         //
-        // WHAT WAS WRONG. MechanismCollector.DerivePlacements pairs wire to
-        // anchor SPATIALLY -- its alongMachine order against its alongRow
-        // order -- and settles each row's sense by which side of the row
-        // the net stands on, so the far side's machine is turned round to
-        // face away from its own springing. That is the whole content of
-        // "one machine, built once, turned round". This document paired
-        // wire ORDER against the row's DISCOVERY order, which
-        // MouldGeometry.ConnectedGroups documents as "arbitrary but
-        // stable". The two agree on an untouched instance and run end for
-        // end on a turned one: measured on a seven-wire, two-row fixture,
-        // the turned side's wires were bound 0.9, 0.6, 0.3, 0, 0.3, 0.6 and
-        // 0.9 m from where they had been placed, and a CORRECT study drew
-        // FOUR match-distance warnings for it.
-        //
-        // THE RULE NOW, AND WHY IT IS THE SAME RULE AND NOT A SECOND COPY
-        // OF IT. Both ends are ordered along ONE axis, the row's own
-        // direction (MechanismCollector.WidestPairDirection, the method
-        // DerivePlacements itself orders anchor rows by), using
-        // MechanismCollector.OrderAlongAxis, the method it orders both
-        // alongMachine and alongRow by. The k-th wire along that axis takes
-        // the k-th anchor along it.
-        //
-        // That reproduces the derivation EXACTLY, and the algebra is worth
-        // stating because it is why one axis suffices where the derivation
-        // needs two. A placed wire end is R*first + t, and the derivation's
-        // own worldX is R*machineX, so ordering placed wire ends along
-        // worldX is ordering first along machineX to within a constant --
-        // alongMachine, recovered in world space. Ordering the anchors
-        // along the same axis is alongRow. And pairing k-th to k-th is
-        // INVARIANT UNDER FLIPPING THAT AXIS, since flipping reverses both
-        // lists, so the sign conventions that make DerivePlacements' two
-        // frames comparable drop out here entirely and cannot be got wrong
-        // a second time.
-        //
-        // IT ALSO WORKS ON AN AUTHORED PLACEMENT, where there is no
-        // derivation to agree with: the wire is bound to the anchor it was
-        // laid out against, which is what the match-distance guard below
-        // has always been measuring.
-        //
-        // WHAT IS NOT PROVED, AND IS DELIBERATELY LEFT ALONE. An instance
-        // whose run of anchors is SHORT (fewer anchors left than it has
-        // wires) keeps the old flat pairing and the old drop rule: a
-        // spatial pairing over an incomplete pair of sets would silently
-        // change WHICH wire is dropped, and a dropped wire is named by id
-        // in a warning he reads. So is an instance with a single wire (no
-        // order to fix), one carrying no placement frame, and one whose
-        // wires carry no route to place. And the axis is the ANCHORS' own:
-        // a machine authored with its wire ends running across the row
-        // rather than along it projects them all onto nearly one point, and
-        // this pairing is then no better than the tree order it replaced.
-        // None of those shapes appear in a study this plugin writes.
+        // WHAT KEEPS THE OLD FLAT PAIRING: a net with FEWER anchors than
+        // wires. Some wire is then dropped, and a dropped wire is named by
+        // id in a warning he reads, so which one goes stays the plain tree
+        // order rather than whichever lost a distance contest
+        // (ValidateMechanismDocument pins that shape). A wire with no
+        // route or no instance frame has no end to measure and takes the
+        // anchors left over, in row order; none appear in a study this
+        // plugin writes.
         var matchedVertices = new int[wireEntries.Count];
         for (int i = 0; i < wireEntries.Count; i++)
             matchedVertices[i] = i < anchorFlat.Count ? anchorFlat[i] : -1;
-        for (int blockStart = 0; blockStart < wireEntries.Count;)
+        if (eq is not null && wireEntries.Count > 0 && anchorFlat.Count >= wireEntries.Count)
         {
-            int blockSide = wireEntries[blockStart].Side;
-            int blockMechanism = wireEntries[blockStart].Mechanism;
-            int blockEnd = blockStart;
-            while (blockEnd < wireEntries.Count &&
-                   wireEntries[blockEnd].Side == blockSide &&
-                   wireEntries[blockEnd].Mechanism == blockMechanism)
+            var wireEnds = new double[]?[wireEntries.Count];
+            for (int i = 0; i < wireEntries.Count; i++)
             {
-                blockEnd++;
-            }
-
-            int blockCount = blockEnd - blockStart;
-            if (eq is null ||
-                blockCount < 2 ||
-                blockEnd > anchorFlat.Count ||
-                !instanceFrames.TryGetValue(
-                    (blockSide, blockMechanism), out MechanismFrame? blockFrame) ||
-                blockFrame is null)
-            {
-                blockStart = blockEnd;
-                continue;
-            }
-
-            var blockAnchorIds = new List<int>(blockCount);
-            var blockAnchorPoints = new List<double[]>(blockCount);
-            var blockWirePoints = new List<double[]>(blockCount);
-            bool blockReadable = true;
-            for (int k = 0; k < blockCount; k++)
-            {
-                int anchorId = anchorFlat[blockStart + k];
-                if (anchorId < 0 ||
-                    anchorId >= eq.Vertices.Count ||
-                    wireEntries[blockStart + k].Route.Count == 0)
+                if (wireEntries[i].Route.Count > 0 &&
+                    instanceFrames.TryGetValue(
+                        (wireEntries[i].Side, wireEntries[i].Mechanism),
+                        out MechanismFrame? endFrame) &&
+                    endFrame is not null)
                 {
-                    blockReadable = false;
-                    break;
+                    wireEnds[i] = TransformLocal(wireEntries[i].Route[0].Frame.Origin, endFrame);
                 }
-                blockAnchorIds.Add(anchorId);
-                Point3Dto anchorPoint = eq.Vertices[anchorId];
-                blockAnchorPoints.Add(new[] { anchorPoint.X, anchorPoint.Y, anchorPoint.Z });
-                blockWirePoints.Add(TransformLocal(
-                    wireEntries[blockStart + k].Route[0].Frame.Origin, blockFrame));
             }
-            if (!blockReadable)
+            List<double[]> anchorPoints = anchorFlat.Select(id =>
             {
-                blockStart = blockEnd;
-                continue;
+                Point3Dto p = eq.Vertices[id];
+                return new[] { p.X, p.Y, p.Z };
+            }).ToList();
+            int[] nearest = NearestOneToOne(wireEnds, anchorPoints);
+            var taken = new bool[anchorFlat.Count];
+            foreach (int a in nearest)
+            {
+                if (a >= 0)
+                    taken[a] = true;
             }
-
-            double[] rowAxis = MechanismCollector.WidestPairDirection(blockAnchorPoints);
-            int[] anchorsAlongRow = MechanismCollector.OrderAlongAxis(blockAnchorPoints, rowAxis);
-            int[] wiresAlongRow = MechanismCollector.OrderAlongAxis(blockWirePoints, rowAxis);
-            for (int k = 0; k < blockCount; k++)
-                matchedVertices[blockStart + wiresAlongRow[k]] = blockAnchorIds[anchorsAlongRow[k]];
-
-            blockStart = blockEnd;
+            int spare = 0;
+            for (int i = 0; i < wireEntries.Count; i++)
+            {
+                if (nearest[i] >= 0)
+                {
+                    matchedVertices[i] = anchorFlat[nearest[i]];
+                    continue;
+                }
+                while (taken[spare])
+                    spare++;
+                taken[spare] = true;
+                matchedVertices[i] = anchorFlat[spare];
+            }
         }
 
         // THE REEVE FACTOR'S OWN SHAPE (spec section 6, parallel to
@@ -1568,11 +1457,11 @@ internal static class MechanismDocument
             // LEFT TO BE FOUND. On the DERIVED path it cannot separate a
             // backwards routing tree from a correct one, and since Task 7a
             // it cannot in the plainest possible way: this document now
-            // binds each wire to the anchor the derivation PLACED it on
-            // (the block above), so on a derived placement the distance
-            // below reads zero on every instance, turned or not, correct or
-            // backwards. It is the derivation's own fit measured a second
-            // time, exactly as residualM is.
+            // binds each wire to the anchor nearest where it was PLACED
+            // (NearestOneToOne), so on a placement that lands every end on
+            // an anchor the distance below reads zero, turned or not,
+            // correct or backwards. It is the placement's own fit measured
+            // a second time, exactly as residualM is.
             //
             // WHAT IT DID READ BEFORE THAT, AND WHY IT MEANT NOTHING
             // EITHER: the two pairings disagreed on a turned instance, so a
@@ -2100,24 +1989,53 @@ internal static class MechanismDocument
     }
 
     /// <summary>
-    /// The plain arithmetic mean of a set of world points: the row-to-side
-    /// pairing's own probe point (finding 3), for both an anchor row's
-    /// nodes and a side's own placed instances. The origin for an empty
-    /// set, which the caller never actually hands it (both call sites
-    /// guard the shapes that would).
+    /// Binds each wire end to its nearest anchor, one to one: every
+    /// (end, anchor) pair is ranked by distance and taken shortest first
+    /// while both are still free, ties broken by wire then anchor index so
+    /// one payload always binds the same way. Returns, per wire, the index
+    /// into <paramref name="anchors"/> it took, or -1 for a wire with no
+    /// end (null) or none left.
+    ///
+    /// Shortest first rather than wire by wire, so an early wire never
+    /// takes the anchor a later wire stands on. Where every end sits on
+    /// an anchor, as a placed machine's do, each pair at zero is taken
+    /// before any other and the binding is exact.
     /// </summary>
-    private static double[] Centroid(IReadOnlyList<double[]> points)
+    internal static int[] NearestOneToOne(
+        IReadOnlyList<double[]?> wireEnds, IReadOnlyList<double[]> anchors)
     {
-        if (points.Count == 0)
-            return new double[] { 0.0, 0.0, 0.0 };
-        double x = 0.0, y = 0.0, z = 0.0;
-        foreach (double[] p in points)
+        var result = new int[wireEnds.Count];
+        Array.Fill(result, -1);
+        var pairs = new List<(double Distance, int Wire, int Anchor)>();
+        for (int w = 0; w < wireEnds.Count; w++)
         {
-            x += p[0];
-            y += p[1];
-            z += p[2];
+            if (wireEnds[w] is not double[] end)
+                continue;
+            for (int a = 0; a < anchors.Count; a++)
+                pairs.Add((MechanismCollector.Distance(end, anchors[a]), w, a));
         }
-        return new[] { x / points.Count, y / points.Count, z / points.Count };
+        pairs.Sort((x, y) =>
+        {
+            int byDistance = x.Distance.CompareTo(y.Distance);
+            if (byDistance != 0)
+                return byDistance;
+            int byWire = x.Wire.CompareTo(y.Wire);
+            return byWire != 0 ? byWire : x.Anchor.CompareTo(y.Anchor);
+        });
+        var anchorTaken = new bool[anchors.Count];
+        int bound = 0;
+        int placeable = wireEnds.Count(end => end is not null);
+        foreach (var (_, wire, anchor) in pairs)
+        {
+            if (bound == placeable)
+                break;
+            if (result[wire] >= 0 || anchorTaken[anchor])
+                continue;
+            result[wire] = anchor;
+            anchorTaken[anchor] = true;
+            bound++;
+        }
+        return result;
     }
 
     private static double[] ReadTripleRaw(JsonElement array) =>
