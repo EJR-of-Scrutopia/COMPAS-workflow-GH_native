@@ -30,7 +30,7 @@ import {
   interpolateFormworkFrame, machineTime, machineRetreats, formworkVisibility,
   groundRepeat, finalOrbitTurn,
   sunPosition, sunLight, timeAtElevation, utcOffsetMinutes, localClockMinutes,
-  FLY_SPEEDS, FLY_KEYS, flyStep, lensStep, lookTurn,
+  FLY_SPEEDS, FLY_KEYS, flyStep, lensStep, lookTurn, spaceBarAction,
   fixtureFaces, spotShadowGrants, screenGroundAxes, arrowStep,
 } from "/static/fields.js";
 import { equirectHorizonColour } from "/static/fields.js";
@@ -17878,7 +17878,9 @@ function paintPlayButtons(text) {
   const shelf = document.getElementById("shelf-play");
   if (shelf) {
     shelf.textContent = text === "Pause" ? "❚❚" : "▶";
-    shelf.title = text === "Pause" ? "Pause the animation" : "Play the animation";
+    shelf.title = text === "Pause"
+      ? "Pause the animation (Space; press twice for the start)"
+      : "Play the animation (Space; press twice for the start)";
   }
 }
 
@@ -17966,6 +17968,58 @@ function restartTake() {
   if (!state.timeline) return;
   startPlaying(true);
 }
+
+// Back to the start of the take, paused (Param, 2026-09-15: "double
+// pressing quickly, brings it back to the start on pause"). The clock goes
+// to nought through applyTimeline, so the scene and the camera both stand
+// where the take begins, and the view stays the animation's.
+function rewindTake() {
+  if (!state.timeline) return;
+  state.timeline.playing = false;
+  paintPlayButtons("Play");
+  applyTimeline(0);
+  updateHud();
+  logStudio("back to the start of the take, paused");
+}
+
+// SPACE PLAYS AND PAUSES, and a quick second press rewinds (Param,
+// 2026-09-15: "press space bar to run the animation and press again to
+// pause. double pressing quickly, brings it back to the start on pause").
+// The first press of a pair has already played or paused; the second puts
+// whatever that left back at the start, paused. A held key's repeats are
+// not presses, and nothing happens while a take or a plate is being made.
+//
+// A focused text box keeps its spaces, but a slider does not: it has no use
+// for one, and focus stays on a slider after every drag, so taking the key
+// only when nothing is focused would leave Space dead after any change.
+// The default is prevented, so a focused button or checkbox is not pressed
+// as well and the page does not scroll.
+let lastSpacePress = null;
+
+function spaceBelongsToTyping() {
+  const focus = document.activeElement;
+  if (!focus) return false;
+  if (focus.isContentEditable) return true;
+  const tag = focus.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  return tag === "INPUT" && focus.type !== "range";
+}
+
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Space" && event.key !== " ") return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (spaceBelongsToTyping()) return;
+  event.preventDefault();
+  if (event.repeat || state.recording || state.stillRendering) return;
+  const now = performance.now();
+  if (spaceBarAction(lastSpacePress, now) === "rewind") {
+    lastSpacePress = null;
+    rewindTake();
+    return;
+  }
+  lastSpacePress = now;
+  togglePlay();
+});
 // ---------- the undo history ----------
 // A small recorded history (Param's words) of the things a session does
 // to a scene: sky, environment, skin, floor, placements, moves, turns,

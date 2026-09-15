@@ -4566,3 +4566,29 @@ def test_the_page_says_when_the_server_needs_a_restart():
         "a plate is not rendered onto a stale server")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#restart-studio.attention {" in css
+
+
+def test_space_is_wired_to_play_pause_and_the_rewind():
+    """Param, 2026-09-15: "press space bar to run the animation and press
+    again to pause. double pressing quickly, brings it back to the start on
+    pause". The listener hands the decision to spaceBarAction (node-tested in
+    test_fields), rewinds through the clock so the camera and the scene both
+    return, and keeps out of text entry, held repeats and a take being made.
+    A focused slider does not keep the key, or Space would be dead after
+    every drag."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8").replace("\r\n", "\n")
+    start = js.index("let lastSpacePress = null;")
+    listener = js[start:js.index("\n});", start)]
+    assert 'if (event.code !== "Space" && event.key !== " ") return;' in listener
+    assert "if (spaceBelongsToTyping()) return;" in listener
+    assert listener.index("event.preventDefault();") < listener.index(
+        "if (event.repeat || state.recording || state.stillRendering) return;")
+    assert 'if (spaceBarAction(lastSpacePress, now) === "rewind") {\n    lastSpacePress = null;\n    rewindTake();' in listener
+    assert "lastSpacePress = now;\n  togglePlay();" in listener
+    typing = _function_body(js, "spaceBelongsToTyping")
+    assert 'return tag === "INPUT" && focus.type !== "range";' in typing
+    rewind = _function_body(js, "rewindTake")
+    assert "state.timeline.playing = false;" in rewind
+    assert 'paintPlayButtons("Play");' in rewind
+    assert "applyTimeline(0);" in rewind

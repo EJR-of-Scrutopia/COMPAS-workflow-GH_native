@@ -528,6 +528,50 @@ def test_the_orbit_ends_on_the_bearing_it_started_on(tmp_path):
     assert "ok" in result.stdout
 
 
+SPACE_CHECK = textwrap.dedent("""
+    import { spaceBarAction, DOUBLE_PRESS_MS } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    expect(DOUBLE_PRESS_MS === 300, "a double press is two presses within 300 ms");
+    expect(spaceBarAction(null, 1000) === "toggle", "the first press ever plays or pauses");
+    expect(spaceBarAction(1000, 1200) === "rewind", "a second press 200 ms later rewinds");
+    expect(spaceBarAction(1000, 1300) === "rewind", "300 ms is still a double press");
+    expect(spaceBarAction(1000, 1301) === "toggle", "301 ms is a new press");
+    expect(spaceBarAction(1000, 5000) === "toggle", "a press seconds later plays or pauses");
+
+    // The studio's own sequence: it forgets the press that completed a pair.
+    let last = null;
+    const run = (times) => times.map((now) => {
+      const action = spaceBarAction(last, now);
+      last = action === "rewind" ? null : now;
+      return action;
+    }).join(",");
+    expect(run([0, 150, 250]) === "toggle,rewind,toggle",
+      "a third quick press starts a fresh pair rather than rewinding again");
+    last = null;
+    expect(run([0, 2000, 2100]) === "toggle,toggle,rewind",
+      "play, pause later, then a quick second press rewinds");
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_space_plays_pauses_and_a_quick_double_press_rewinds(tmp_path):
+    """Param, 2026-09-15: "press space bar to run the animation and press
+    again to pause. double pressing quickly, brings it back to the start on
+    pause"."""
+
+    script = tmp_path / "check_space.mjs"
+    script.write_text(
+        SPACE_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
+
+
 @needs_node
 def test_ground_joints_keep_their_size_when_the_floor_is_resized(tmp_path):
     """The joint textures are drawn with a fixed number of pavers per image,

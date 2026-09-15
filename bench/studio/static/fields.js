@@ -1035,6 +1035,22 @@ export const FLY_SPEEDS = { 1: 1.5, 2: 5, 3: 15, 4: 45 };
 // so a camera looking down still rises rather than backing away.
 export const FLY_KEYS = ["w", "a", "s", "d", "q", "e"];
 
+// Param, 2026-09-15: "press space bar to run the animation and press again
+// to pause. double pressing quickly, brings it back to the start on pause".
+// A press within this many milliseconds of the one before is the second of
+// a double press: about the gap an operating system allows a double click.
+export const DOUBLE_PRESS_MS = 300;
+
+// What a press of Space does, given when the last counted press was (null
+// for none) and when this one is: "rewind" when it follows that press
+// closely enough to be the second of a double press, else "toggle". The
+// caller forgets the press that completed a double, so a third quick press
+// starts a fresh pair rather than rewinding again.
+export function spaceBarAction(previousPress, now, windowMs = DOUBLE_PRESS_MS) {
+  return previousPress !== null && now - previousPress <= windowMs
+    ? "rewind" : "toggle";
+}
+
 // One frame's move for the keys held, as [x, y, z] in metres, or null when
 // nothing is held or the held keys cancel. `right` is the camera's OWN
 // screen-right, taken from its matrix, not forward crossed with up: looking

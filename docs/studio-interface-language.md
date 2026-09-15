@@ -918,3 +918,18 @@ and the sky, with no errors.
 
 **What this round did not change.** No dial was added or removed, so the
 census stands at 59 of 65. One button was added, with its title.
+
+**Space plays and pauses, and a quick double press rewinds.** Param,
+2026-09-15: "press space bar to run the animation and press again to pause.
+double pressing quickly, brings it back to the start on pause". A press
+within 300 ms of the one before is the second of a pair, and it puts the
+take back at its start, paused, with the camera on the bearing the take
+begins on. The first press of the pair has already played or paused, so a
+double press always ends at the start whatever was running. A third quick
+press starts a fresh pair. The key stands down while a text box has focus,
+while Ctrl, Alt or Cmd is held, and while a take or a plate is being made;
+a slider with focus does not keep it, because focus stays on a slider after
+every drag. The play tile's title names the key.
+
+**What this round did not change.** No dial was added or removed, so the
+census stands at 59 of 65. No control was added; one key was.
