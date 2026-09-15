@@ -155,3 +155,145 @@ def test_the_reader_completes_first_and_restores_what_was_never_saved():
         assert restore in apply_, restore
     # The sky brightness is applied by the sun's own step, after it is set.
     assert apply_.index("state.skyBrightness = scene_.skyBrightness;") < apply_.index("applySkyBrightness();")
+
+
+# ---------- a new scene ----------
+# Param, 2026-09-15: "can we add a new scene button to scene tile, where it
+# just gives us a blank scene to start from, not deleting any other saved
+# scenes". The blank goes through the same completion as every scene, so
+# the tests below hold it to the defaults above, run the real startNewScene
+# against stubs to prove its order, and pin the button.
+
+def _new_scene_source(js):
+    start = js.index("function blankScene()")
+    end = js.index("async function startNewScene()", start)
+    end = js.index(chr(10) + "}" + chr(10), end) + 2
+    return js[start:end]
+
+
+BLANK_CHECK = textwrap.dedent("""
+    import { completeScene, SCENE_DEFAULTS, SCENE_LEFT_AS_THEY_ARE } from %DEFAULTS%;
+    const blankScene = new Function(%SOURCE% + "; return blankScene;")();
+    const blank = completeScene(blankScene());
+    const out = { mismatched: [], kept: [], props: blank.props, propLayers: blank.propLayers };
+    for (const [key, value] of Object.entries(SCENE_DEFAULTS)) {
+      if (JSON.stringify(blank[key]) !== JSON.stringify(value)) out.mismatched.push(key);
+    }
+    for (const key of SCENE_LEFT_AS_THEY_ARE) {
+      if (key !== "props" && key !== "propLayers" && blank[key] !== undefined) out.kept.push(key);
+    }
+    console.log(JSON.stringify(out));
+""")
+
+
+@needs_node
+def test_a_new_scene_is_the_defaults_around_the_same_vault(tmp_path):
+    """Every default setting, nothing placed, and nothing said about what a
+    scene may leave as it is (the vault's cut and skin, the camera, the
+    sun), so those stay as they are on screen."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    script = tmp_path / "blank.mjs"
+    script.write_text(BLANK_CHECK.replace("%DEFAULTS%", json.dumps(DEFAULTS.as_uri()))
+                      .replace("%SOURCE%", json.dumps(_new_scene_source(js))), encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert out["mismatched"] == [], "every setting is the studio's default"
+    assert out["props"] == [] and out["propLayers"] == [], "nothing placed, one fresh layer"
+    assert out["kept"] == [], "the camera, the sun and the vault are left as they are"
+
+
+ORDER_CHECK = textwrap.dedent("""
+    const calls = [];
+    let pushed = null;
+    let applyResult = true;
+    let release = null;
+    let holdApply = false;
+    const state = { bundle: null };
+    const document = { getElementById(id) {
+      return id === "study-select" ? { value: "Trial 2" } : null; } };
+    const stubs = {
+      showBanner: (message) => calls.push("banner"),
+      collectScene: () => { calls.push("collect"); return { marker: "before" }; },
+      applyScene: async (record) => {
+        calls.push("apply " + (record.state.marker || JSON.stringify(record.state)) + " " + record.study);
+        if (holdApply) await new Promise((resolve) => { release = resolve; });
+        return applyResult;
+      },
+      saveProps: () => calls.push("save"),
+      refreshLayersShelf: () => calls.push("layers"),
+      pushUndo: (label, undo, redo) => { calls.push("undo " + label); pushed = { undo, redo }; },
+      logStudio: () => calls.push("log"),
+      fetch: () => calls.push("FETCH"),
+    };
+    const made = new Function(...Object.keys(stubs), "state", "document",
+      %SOURCE% + "; return { startNewScene, blankScene };")(...Object.values(stubs), state, document);
+    const report = {};
+
+    report.noStudy = [await made.startNewScene(), calls.splice(0)];
+
+    state.bundle = {};
+    report.started = [await made.startNewScene(), calls.splice(0)];
+
+    await pushed.undo();
+    report.undone = calls.splice(0);
+    report.redoIsTheSame = pushed.redo === made.startNewScene;
+
+    applyResult = false;
+    pushed = null;
+    report.refused = [await made.startNewScene(), calls.splice(0), pushed === null];
+    applyResult = true;
+
+    holdApply = true;
+    const first = made.startNewScene();
+    const second = await made.startNewScene();
+    release();
+    report.twice = [await first, second, calls.filter((c) => c.startsWith("apply")).length];
+    console.log(JSON.stringify(report));
+""")
+
+
+@needs_node
+def test_a_new_scene_restores_the_blank_then_offers_the_old_one_back(tmp_path):
+    """Run, not read. The picture on screen is taken BEFORE the blank goes
+    on, the empty layout is written only once the blank is on, and the undo
+    entry is pushed after the apply because loadStudy clears the history on
+    its way in. Nothing it does reaches the network, so no saved scene can
+    be touched."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    source = _new_scene_source(js)
+    assert "fetch(" not in source and "/api/scenes" not in source
+    script = tmp_path / "order.mjs"
+    script.write_text(ORDER_CHECK.replace("%SOURCE%", json.dumps(source)), encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = json.loads(result.stdout.strip().splitlines()[-1])
+
+    assert report["noStudy"] == [False, ["banner"]], "no study, nothing to start around"
+    blank = 'apply {"props":[],"propLayers":[]} Trial 2'
+    assert report["started"] == [True, ["collect", blank, "save", "layers", "undo new scene", "log"]]
+    assert report["undone"] == ["apply before Trial 2", "save", "layers"], (
+        "Ctrl+Z puts back the picture taken before, and its layout")
+    assert report["redoIsTheSame"] is True
+    assert report["refused"] == [False, ["collect", blank], True], (
+        "a blank that did not go on writes no layout and offers no undo")
+    assert report["twice"] == [True, False, 1], "a second press while the first rebuilds is ignored"
+
+
+def test_the_new_scene_button_sits_beside_save_in_the_scenes_drawer():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    actions = page[page.index('<div id="shelf-actions">'):]
+    actions = actions[:actions.index('<button id="shelf-close"')]
+    tag = actions[actions.index('<button id="scene-new"'):]
+    tag = tag[:tag.index(">")]
+    assert 'class="hidden"' in tag, "shown only in the Scenes drawer"
+    assert "No saved scene is touched" in tag and "Ctrl+Z" in tag, "the title says both"
+    assert actions.index('id="scene-new"') < actions.index('id="scene-save"')
+    assert page.count('id="scene-new"') == 1
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    shelf = _body(js, "function renderShelf()")
+    assert ('document.getElementById("scene-new").classList' + chr(10)
+            + '    .toggle("hidden", shelfKind !== "scenes");') in shelf
+    assert 'document.getElementById("scene-new").addEventListener("click", startNewScene);' in js

@@ -6758,6 +6758,63 @@ document.getElementById("scene-save").addEventListener("click", async () => {
 // The scene list opens from the shelf's Scenes tab now; refreshScenes is
 // called by renderShelf when that drawer shows.
 
+// ---------- a new scene ----------
+// Param, 2026-09-15: "can we add a new scene button to scene tile, where it
+// just gives us a blank scene to start from, not deleting any other saved
+// scenes".
+//
+// A BLANK SCENE IS A SCENE LIKE ANY OTHER. It goes through applyScene, the
+// one road a picture is restored by, carrying no props and nothing else, so
+// completeScene gives every setting the studio's own default: exactly what
+// an old scene that never saved a setting gets. What any scene may leave
+// unsaid (SCENE_LEFT_AS_THEY_ARE) stays as it is on screen: the vault with
+// its cut and its skin, where the camera stands, and the sun's place and
+// hour. The atmosphere and the wind take their adopters' defaults, which
+// are none and the light breeze.
+//
+// NOTHING SAVED IS TOUCHED. No request here reaches /api/scenes. The
+// study's working layout is written empty, as Clear writes it, so a reload
+// opens on the blank start rather than on the field it replaced; a saved
+// scene keeps its own props inside itself. And the picture it replaced is
+// one undo away.
+function blankScene() {
+  return { props: [], propLayers: [] };
+}
+
+let startingNewScene = false;
+
+async function startNewScene() {
+  if (!state.bundle) {
+    showBanner("Load a study before starting a new scene", "error");
+    return false;
+  }
+  // A second press while the first is still rebuilding would take the
+  // half-built blank as the picture to undo back to.
+  if (startingNewScene) return false;
+  startingNewScene = true;
+  try {
+    const before = collectScene();
+    const study = document.getElementById("study-select").value;
+    const started = await applyScene({ name: "a blank start", study, state: blankScene() });
+    if (!started) return false;
+    saveProps();
+    refreshLayersShelf();
+    // AFTER the apply: loadStudy clears the history on its way in, and an
+    // entry pushed first would be gone before anyone could press Ctrl+Z.
+    pushUndo("new scene", async () => {
+      await applyScene({ name: "the scene before", study, state: before });
+      saveProps();
+      refreshLayersShelf();
+    }, startNewScene);
+    logStudio("new scene: a blank start around " + study + "; no saved scene was touched");
+    return true;
+  } finally {
+    startingNewScene = false;
+  }
+}
+
+document.getElementById("scene-new").addEventListener("click", startNewScene);
+
 // ---------- the sun ----------
 // One instrument in place of three sliders and a colour picker. The site
 // and the instant are the real variables; azimuth, elevation, colour and
@@ -8419,6 +8476,8 @@ function renderShelf() {
     .toggle("hidden", shelfKind !== "materials");
   document.getElementById("shelf-assign-ground").classList
     .toggle("hidden", shelfKind !== "materials");
+  document.getElementById("scene-new").classList
+    .toggle("hidden", shelfKind !== "scenes");
   document.getElementById("scene-save").classList
     .toggle("hidden", shelfKind !== "scenes");
   const shelfEdit = document.getElementById("shelf-prop-edit");

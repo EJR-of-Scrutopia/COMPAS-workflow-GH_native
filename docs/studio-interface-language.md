@@ -893,3 +893,28 @@ scene back in Both with the Stop icon disabled again, with no errors.
 
 **What this round did not change.** No dial was added or removed, so the
 census stands at 59 of 65.
+
+**New scene, beside Save.** Param, 2026-09-15: "can we add a new scene
+button to scene tile, where it just gives us a blank scene to start from,
+not deleting any other saved scenes". A plain button, first in the Scenes
+drawer's head, because a new scene is what a save follows.
+
+A BLANK SCENE IS RESTORED, NOT BUILT. It goes through `applyScene`, the one
+road a picture comes back by, carrying no props, so `completeScene` gives
+every setting the studio's default, exactly as it does for an old scene
+that never saved one. What any scene may leave unsaid stays as it is on
+screen: the vault with its cut and skin, where the camera stands, and the
+sun's place and hour. The atmosphere goes to None and the wind to its light
+breeze.
+
+Nothing saved is touched: no request from it reaches `/api/scenes`. The
+study's working layout is written empty, as Clear writes it, so a reload
+opens on the blank start. The picture it replaced is one Ctrl+Z away, and
+the button's title says both. Measured on his layout of 98,815 props with
+Haze, a 40 per cent wind and the sky at 70: New scene left 0 props, no
+atmosphere, a 10 per cent wind and the sky at 100 with the three saved
+scenes unchanged, and Ctrl+Z put all 98,815 back with the Haze, the wind
+and the sky, with no errors.
+
+**What this round did not change.** No dial was added or removed, so the
+census stands at 59 of 65. One button was added, with its title.
