@@ -44193,6 +44193,40 @@ internal static partial class Program
                 failures.Add("flat lists whose counts differ must come back untouched for Resolve to refuse");
         }
 
+        // THE STUDY HALF CARRIES THE MACHINE'S REELS, so its frames can say
+        // which drum they ride; the tie stays placed.
+        {
+            Type placed = RequireComponentType(plugin, "PlacedMechanismComponent");
+            MethodInfo studyAsset = placed.GetMethod("StudyAsset", BindingFlags.Static | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("PlacedMechanismComponent.StudyAsset is missing.");
+            Type bodyType = RequireComponentType(plugin, "MechanismReelBody");
+            Type groupType = RequireComponentType(plugin, "MechanismReelGroup");
+            object reelBody = Activator.CreateInstance(
+                bodyType,
+                Activator.CreateInstance(frameType, new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 1.0, 0.0 }, new[] { 0.0, 0.0, 1.0 })!,
+                new[] { 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 },
+                new[] { 0.0, 0.0, 0.0 },
+                1.0)!;
+            object reelGroup = Activator.CreateInstance(
+                groupType, Mesh(6), false, MechanismListOf(bodyType, reelBody))!;
+            object parts = Activator.CreateInstance(
+                assetType,
+                Mesh(3), false,
+                MechanismListOf(meshType), MechanismListOf(typeof(bool)),
+                null, false, null, false,
+                MechanismListOf(groupType, reelGroup),
+                null, false)!;
+            object built = studyAsset.Invoke(null, new object?[] { parts, Mesh(4), false })!;
+            int reelsIn = ((IEnumerable)assetType.GetProperty("Reels")!.GetValue(parts)!).Cast<object>().Count();
+            int reelsOut = ((IEnumerable)assetType.GetProperty("Reels")!.GetValue(built)!).Cast<object>().Count();
+            if (reelsIn == 0 || reelsOut != reelsIn)
+                failures.Add($"the study half must carry the machine's {reelsIn} reel entries to classify wire frames; it carries {reelsOut}");
+            if (assetType.GetProperty("TensionTiePlaced")!.GetValue(built) is not true)
+                failures.Add("the study half's tie must stay flagged as placed");
+            if (assetType.GetProperty("Frame1")!.GetValue(built) is not null)
+                failures.Add("the study half must carry no machine bodies");
+        }
+
         // THE MACHINE FINGERPRINT: the same machine keys the same, a vertex
         // moved by a micrometre or a different id keys differently.
         {

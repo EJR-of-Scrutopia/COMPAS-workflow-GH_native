@@ -2019,15 +2019,14 @@ internal static class MechanismDocument
                     "OWN DOCUMENT (see the machine block above), not from " +
                     "this one, which carries no reels at all since the " +
                     "machine left the study. WHICH reel a given wire rides " +
-                    "is NOT PUBLISHED ANYWHERE TODAY, and this document " +
-                    "will not pretend it is: the machine document's own " +
-                    "routing frames carry no owner and no ownerReel, and " +
-                    "this document's frames carry ownerReel -1 with owner " +
-                    "\"body\" on every frame, because the reels left the " +
-                    "study when the machine split out of it. Binding a " +
-                    "wire to its drum is an OPEN ITEM on the plugin side, " +
-                    "registered as a running deferral in its own test " +
-                    "harness. Until it is closed, use the cited machine's " +
+                    "is on this document's own routing frames when Placed " +
+                    "Mechanism wrote it: a frame a drum carries says owner " +
+                    "\"reel\" and an ownerReel that is a BODY index into " +
+                    "the cited machine (entry 0's bodies, then entry 1's). " +
+                    "A study the older Mechanism component wrote carries " +
+                    "ownerReel -1 with owner \"body\" on every frame, " +
+                    "which says nothing about the drum. For one of those, " +
+                    "use the cited machine's " +
                     "bank: bank.radius is the median winding radius across " +
                     "the entries whose bodies terminate wire routes, which " +
                     "is the spools and not the pulleys, so it is the right " +

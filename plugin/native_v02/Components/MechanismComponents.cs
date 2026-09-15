@@ -3899,17 +3899,15 @@ internal static class MechanismCollector
                     "one that does not exist. This document's routing " +
                     "frames carry NO owner and NO ownerReel at all: they " +
                     "are plain frames, so there is no per-frame reel " +
-                    "ownership here to resolve. The STUDY document does " +
-                    "carry an ownerReel on each of its own routing " +
-                    "frames, and on every study written today it reads -1 " +
-                    "with owner \"body\" on every frame, because the " +
-                    "reels left the study when the machine split out of " +
-                    "it. Binding a wire to the drum it rides is an OPEN " +
-                    "ITEM on the plugin side, registered as a running " +
-                    "deferral in its own test harness rather than left to " +
-                    "be discovered; until it is closed, read an ownerReel " +
-                    "on a study as ABSENT and not as an index into this " +
-                    "document's bodies.",
+                    "ownership here to resolve. The STUDY document " +
+                    "carries it on its own routing frames. A study " +
+                    "written by Placed Mechanism classifies them against " +
+                    "this machine's reels, so a frame a drum carries says " +
+                    "owner \"reel\" and an ownerReel that IS an index in " +
+                    "this BODY space. A study written by the older " +
+                    "Mechanism component reads -1 with owner \"body\" on " +
+                    "every frame; read that ownerReel as ABSENT, not as " +
+                    "an index.",
             },
             ["bank"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -6614,6 +6612,28 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
     private readonly List<string> _machineWarnings = new();
     private readonly List<string> _machineNotes = new();
 
+    /// <summary>
+    /// THE STUDY HALF'S ASSET (2026-09-15): the tie he placed, and the
+    /// machine's REELS. The study build needs the reels to say which routing
+    /// frames ride which drum; without them every frame came out owned by the
+    /// body, and the studio turns a reel only for wires whose frames name it,
+    /// so no reel turned. Export keeps reels out of the study document
+    /// (MechanismDocument.StudyMechanismKeys), so they cost the study nothing.
+    /// An ownerReel is then a BODY index into the cited machine.
+    /// </summary>
+    internal static MechanismAssetInput StudyAsset(
+        MechanismAssetInput parts, MechanismMesh? tie, bool tieBrep) =>
+        new(
+            null, false,
+            Array.Empty<MechanismMesh>(), Array.Empty<bool>(),
+            null, false,
+            tie, tieBrep,
+            parts.Reels,
+            null, false)
+        {
+            TensionTiePlaced = true,
+        };
+
     protected override void RegisterInputParams(GH_InputParamManager parameters)
     {
         parameters.AddParameter(
@@ -6768,16 +6788,7 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
 
             MechanismMesh? tie = MachineComponent.ReadOnePiece(
                 data, TensionTiePort, "Tension Tie (TT)", warnings, notes, out bool tieBrep);
-            var study = new MechanismAssetInput(
-                null, false,
-                Array.Empty<MechanismMesh>(), Array.Empty<bool>(),
-                null, false,
-                tie, tieBrep,
-                Array.Empty<MechanismReelGroup>(),
-                null, false)
-            {
-                TensionTiePlaced = true,
-            };
+            MechanismAssetInput study = StudyAsset(parts, tie, tieBrep);
 
             List<MechanismPlacementPlane> machinePlanes =
                 MechanismCollectorComponent.ReadPlaneList(data, MachinePlanesPort);
@@ -6827,6 +6838,15 @@ public sealed class PlacedMechanismComponent : NativeComponentBase
                 warnings.Remove(radius);
                 notes.Add(radius);
             }
+
+            // Both halves measure the same reels, so the same line can arrive
+            // twice; it is said once.
+            List<string> distinctWarnings = warnings.Distinct().ToList();
+            warnings.Clear();
+            warnings.AddRange(distinctWarnings);
+            List<string> distinctNotes = notes.Distinct().ToList();
+            notes.Clear();
+            notes.AddRange(distinctNotes);
 
             foreach (string warning in warnings)
             {
