@@ -74,11 +74,15 @@ SCENE_SCHEMA = "bench.scene/1"
 # The id is minted here, never taken from the caller, so no scene name can
 # reach the filesystem. The pattern is asserted on every route anyway.
 SCENE_ID = re.compile(r"^scene-[0-9a-f]{12}$")
-MAX_SCENE_BYTES = 4 * 1024 * 1024
 # A study's prop layout, kept beside it (see put_layout). A field of
 # 100,000 props is about four and a half megabytes in the rows the client
 # writes, so this is room for a big site rather than a guess at one.
 MAX_LAYOUT_BYTES = 64 * 1024 * 1024
+# A scene carries the whole prop layout inside it (state.props), so it is
+# bounded by the layout's own bound plus room for everything else a scene
+# holds. At a flat 4 MB it refused Param's planted site, 10 MB, while the
+# same props saved beside the study without complaint (2026-09-15).
+MAX_SCENE_BYTES = MAX_LAYOUT_BYTES + 4 * 1024 * 1024
 MAX_THUMBNAIL_BYTES = 400 * 1024
 THUMBNAIL_PREFIX = "data:image/jpeg;base64,"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"

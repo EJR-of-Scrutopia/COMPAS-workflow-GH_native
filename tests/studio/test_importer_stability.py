@@ -989,6 +989,26 @@ def test_a_scene_refuses_what_it_cannot_store(tmp_path, monkeypatch):
     assert client.delete("/api/scenes/scene-0123456789ab").status_code == 404
 
 
+def test_a_scene_holds_every_prop_a_layout_can(tmp_path, monkeypatch):
+    """Param, 2026-09-15: "Scene not saved: the scene is 10040822 bytes; the
+    limit is 4194304." A scene carries the whole prop layout, and a layout
+    is allowed 64 MB beside its study, so a planted site saved there and was
+    refused as a scene. The scene's bound now sits above the layout's, and a
+    scene past the old 4 MB saves and reads back whole."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    app, _bundle, _geometry = studio()
+    assert app.MAX_SCENE_BYTES > app.MAX_LAYOUT_BYTES
+    rows = [1.2345] * (900 * 1024)
+    state = {"camera": {}, "props": {"stride": 9, "types": ["fern_02__a"], "rows": rows}}
+    saved = client.post("/api/scenes", json={"name": "Planted", "study": "Tiny", "state": state})
+    assert saved.status_code == 201, saved.text[:200]
+    scene_id = saved.json()["scene"]["id"]
+    assert (tmp_path / "scenes" / (scene_id + ".json")).stat().st_size > 4 * 1024 * 1024
+    back = client.get("/api/scenes/" + scene_id).json()
+    assert len(back["state"]["props"]["rows"]) == len(rows)
+
+
 def test_a_damaged_scene_is_listed_rather_than_hidden(tmp_path, monkeypatch):
     """A scene is the user's own work and cannot be rebuilt from anything,
     so a file that will not parse is shown as damaged and can be deleted. A
