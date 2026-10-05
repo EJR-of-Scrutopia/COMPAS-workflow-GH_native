@@ -40,7 +40,7 @@
 // Leaves the scene as it found it: every prop it places is removed again.
 import { pathToFileURL } from "node:url";
 
-const REPO = "C:/Users/Param/OneDrive - Ananke-eidos/Documents/Ananke Eidos Studio"
+const REPO = "C:/dev"
   + "/VS code/COMPAS-Workflow-bench";
 const PUP = REPO + "/bench/scripts/probe-env/node_modules/puppeteer-core"
   + "/lib/puppeteer/puppeteer-core.js";
