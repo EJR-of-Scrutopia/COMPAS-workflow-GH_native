@@ -14,7 +14,9 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize import lsq_linear, nnls
+
+from tree_forest_compas.prescribed import PrescribedError, solve_prescribed_lengths
 
 
 class HoldError(RuntimeError):
@@ -106,5 +108,77 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
         force_densities=tuple(float(value) for value in q),
         tensions=tuple(float(value) for value in (q * lengths)),
         residual=float(residual),
+        units="N, mm",
+    )
+
+
+class CorrectionResult(NamedTuple):
+    reel_commands: tuple
+    residual_before: float
+    residual_after: float
+    reachable: bool
+    units: str
+
+
+def correction_for(
+    problem,
+    fixed,
+    rest_lengths,
+    ea,
+    loads,
+    measured,
+    target,
+    step=1.0,
+    tolerance=5.0,
+):
+    """What to reel to remove the deviation the markers actually measured.
+
+    The net has one rest length per cable and three coordinates per node, so it
+    is under-actuated: the best any command can do is least squares. The residual
+    this cannot remove is reported, because if it exceeds the acceptance line the
+    answer is more cables, not better tuning.
+
+    Each Jacobian column shortens one rest length by ``step``, which only adds
+    stretch. If the net is nevertheless slack at the nudged lengths the solve
+    raises PrescribedError; that is re-raised as HoldError naming the cable,
+    because a correction computed around a slack net would be fiction.
+    """
+
+    measured = np.asarray(measured, dtype=float)
+    target = np.asarray(target, dtype=float)
+    if measured.shape != target.shape:
+        raise HoldError("measured and target must be the same shape.")
+
+    rest = np.asarray(rest_lengths, dtype=float).reshape(-1)
+    deviation = (measured - target).reshape(-1)
+    before = float(np.linalg.norm((measured - target), axis=1).max())
+
+    # one column per cable: move that rest length a little, see what every node does
+    columns = []
+    for index in range(rest.size):
+        nudged = rest.copy()
+        nudged[index] = nudged[index] - float(step)
+        try:
+            moved = solve_prescribed_lengths(
+                problem, fixed=fixed, rest_lengths=nudged, ea=ea, loads=loads
+            )
+        except PrescribedError as error:
+            raise HoldError(
+                "cannot linearise the net around cable {}: {}".format(index, error)
+            ) from error
+        xyz = np.asarray(moved.session.equilibrium_vertices, dtype=float)
+        columns.append(((xyz - target) / float(step)).reshape(-1))
+    jacobian = np.column_stack(columns)
+
+    solution = lsq_linear(jacobian, -deviation)
+    commands = solution.x * float(step)
+    after_vector = (jacobian.dot(solution.x) + deviation).reshape(target.shape)
+    after = float(np.linalg.norm(after_vector, axis=1).max())
+
+    return CorrectionResult(
+        reel_commands=tuple(float(-value) for value in commands),
+        residual_before=before,
+        residual_after=after,
+        reachable=bool(after <= float(tolerance)),
         units="N, mm",
     )

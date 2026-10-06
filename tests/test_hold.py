@@ -104,3 +104,72 @@ def test_bad_indices_and_nan_loads_are_refused_with_hold_error():
     nan_loads[2, 2] = np.nan
     with pytest.raises(HoldError, match="finite"):
         hold_force_densities(vertices, edges, fixed=[0, 1], loads=nan_loads)
+
+
+def test_a_correction_reduces_the_deviation_and_reports_what_is_left():
+    import numpy as np
+
+    pytest.importorskip("compas_fd")
+    from tree_forest_compas.fd import register_fd_network
+    from tree_forest_compas.hold import correction_for
+
+    lines = [
+        [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+        [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+    ]
+    problem = register_fd_network(lines)
+    loads = np.zeros((3, 3))
+    loads[1, 2] = -500.0
+    rest = [1030.0, 1030.0]
+
+    # pretend the markers read the middle node 20 mm lower than it should be
+    from tree_forest_compas.prescribed import solve_prescribed_lengths
+
+    state = solve_prescribed_lengths(
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads
+    )
+    target = np.asarray(state.session.equilibrium_vertices, dtype=float)
+    measured = target.copy()
+    measured[1, 2] -= 20.0
+
+    result = correction_for(
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads,
+        measured=measured, target=target,
+    )
+
+    assert result.residual_before > result.residual_after
+    assert len(result.reel_commands) == 2
+    assert result.reachable is True
+
+
+def test_an_under_actuated_net_reports_the_residual_it_cannot_remove():
+    import numpy as np
+
+    pytest.importorskip("compas_fd")
+    from tree_forest_compas.fd import register_fd_network
+    from tree_forest_compas.hold import correction_for
+    from tree_forest_compas.prescribed import solve_prescribed_lengths
+
+    lines = [
+        [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+        [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+    ]
+    problem = register_fd_network(lines)
+    loads = np.zeros((3, 3))
+    loads[1, 2] = -500.0
+    rest = [1030.0, 1030.0]
+    state = solve_prescribed_lengths(
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads
+    )
+    target = np.asarray(state.session.equilibrium_vertices, dtype=float)
+
+    # ask for a sideways move that two symmetric cables cannot deliver
+    measured = target.copy()
+    measured[1, 1] += 50.0
+
+    result = correction_for(
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads,
+        measured=measured, target=target, tolerance=5.0,
+    )
+    assert result.reachable is False
+    assert result.residual_after > 5.0
