@@ -53,7 +53,8 @@ def acceptance_line(rib, areal_load, limit_ratio=None):
 
     With no ``limit_ratio`` the line is simply what the rib does. Pass a ratio
     such as 270 to compare against a span over ratio code limit instead, and the
-    stricter of the two is returned.
+    stricter of the two is returned. A zero load gives exactly 0.0, a line no net
+    can meet, so a caller must supply a real load.
     """
 
     computed = rib_deflection(rib, areal_load)
