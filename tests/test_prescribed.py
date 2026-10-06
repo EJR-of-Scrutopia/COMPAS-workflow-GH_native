@@ -142,3 +142,28 @@ def test_per_member_ea_settles_with_the_default_budget():
     lengths = np.asarray(result.lengths)
     elastic = ea * (lengths - 248.0) / (248.0 * lengths)
     assert np.max(np.abs(elastic - result.force_densities) / elastic) < 1e-6
+
+
+def test_rest_lengths_come_back_out_of_a_solved_session():
+    from tree_forest_compas.prescribed import rest_lengths_from_session
+
+    problem = register_fd_network(_straight_chain())
+    loads = np.zeros((9, 3))
+    loads[1:-1, 2] = -20.0
+    session = solve_fd_problem(problem, fixed=[0, 8], forcedensities=12.0, loads=loads)
+
+    rest = np.asarray(rest_lengths_from_session(session, ea=1.0e6), dtype=float)
+    lengths = np.asarray(session.member_lengths, dtype=float)
+    assert np.all(rest < lengths)          # a stretched cable is shorter at rest
+
+    result = solve_prescribed_lengths(
+        problem, fixed=[0, 8], rest_lengths=rest, ea=1.0e6, loads=loads
+    )
+    recovered = np.asarray(result.session.equilibrium_vertices, dtype=float)
+    assert np.abs(recovered - np.asarray(session.equilibrium_vertices)).max() < 1e-3
+
+
+def test_reel_commands_are_the_change_in_rest_length():
+    from tree_forest_compas.prescribed import reel_commands
+
+    assert reel_commands([1000.0, 900.0], [995.0, 900.5]) == (-5.0, 0.5)

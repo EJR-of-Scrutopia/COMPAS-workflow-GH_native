@@ -213,3 +213,36 @@ def solve_prescribed_lengths(
     raise PrescribedError(
         "Did not settle in {} iterations: {}.".format(max_iterations, "; ".join(unmet))
     )
+
+
+def rest_lengths_from_session(session, ea):
+    """The rest length each member must have had to be in the state it is in."""
+
+    lengths = np.asarray(session.member_lengths, dtype=float)
+    tensions = np.asarray(session.force_densities, dtype=float) * lengths
+    stiffness = np.asarray(ea, dtype=float).reshape(-1)
+    if stiffness.size == 1:
+        stiffness = np.full(len(lengths), float(stiffness[0]))
+    if stiffness.size != len(lengths):
+        raise PrescribedError("ea must be one value or one value per segment.")
+    if np.any(~(tensions > 0.0)):
+        bad = np.flatnonzero(~(tensions > 0.0))
+        raise PrescribedError(
+            "Members {} are not in tension, so they have no rest length to "
+            "reel to.".format(", ".join(str(int(index)) for index in bad))
+        )
+    # Vectorised rest_length.rest_length_for, the definition of record.
+    return tuple(float(value) for value in lengths / (1.0 + tensions / stiffness))
+
+
+def reel_commands(before, after):
+    """How much each cable must be reeled to go from one state to the next.
+
+    Negative is reeling in, which shortens the cable and raises the net.
+    """
+
+    first = np.asarray(before, dtype=float).reshape(-1)
+    second = np.asarray(after, dtype=float).reshape(-1)
+    if first.size != second.size:
+        raise PrescribedError("Both states must have the same number of cables.")
+    return tuple(float(value) for value in (second - first))
