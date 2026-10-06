@@ -4,6 +4,19 @@ Each stage is one solve and one set of register rows. The reel command for a
 stage is the change in rest length from the stage before it, which is the number
 the machine is actually given.
 
+A `reel_command` is rest length now minus rest length before, in millimetres:
+negative means reeling in, which shortens the cable and raises the net, matching
+`prescribed.reel_commands`. The first stage has no predecessor, so its command
+is zero.
+
+`load_magnitude_sum` is the sum of the per-node force magnitudes in newtons (the
+total weight arriving for a gravity case). It is not a resultant: loads in
+opposing directions add rather than cancel. A stage whose loads are None is
+unloaded and records zero.
+
+Without a target, `worst_deviation` and `within_acceptance` are None: no check
+was made, so none is claimed.
+
 Units are newtons and millimetres.
 """
 
@@ -28,14 +41,18 @@ class Stage(NamedTuple):
     loads: object
 
 
+_MIN_EXTENT_MM = 50.0   # a vault smaller than this across is almost surely not in mm
+
+
 def _check_millimetres(problem):
     xyz = np.asarray(problem.source_vertices, dtype=float)
     extent = float(np.abs(xyz.max(axis=0) - xyz.min(axis=0)).max())
-    if extent < 50.0:
+    if extent < _MIN_EXTENT_MM:
         raise StagedError(
-            "The geometry is only {:.4g} across, which is not millimetres for a "
-            "vault. Everything here is newtons and millimetres; convert the "
-            "model before solving.".format(extent)
+            "The geometry is only {:.4g} across, which looks like metres, not "
+            "millimetres (a magnitude check only: it cannot catch centimetres). "
+            "Everything here is newtons and millimetres; convert the model "
+            "before solving.".format(extent)
         )
 
 
@@ -46,6 +63,13 @@ def run_stages(problem, fixed, stages, ea, acceptance, target=None,
     _check_millimetres(problem)
     if not stages:
         raise StagedError("A staged run needs at least one stage.")
+    if acceptance_source is None:
+        raise StagedError("acceptance_source must say where the acceptance came from.")
+    reference = None
+    if target is not None:
+        reference = np.asarray(target, dtype=float)
+        if reference.shape != (len(problem.source_vertices), 3):
+            raise StagedError("target must have one row of three per vertex.")
 
     rows = []
     previous_rest = None
@@ -61,18 +85,22 @@ def run_stages(problem, fixed, stages, ea, acceptance, target=None,
             )
 
         xyz = np.asarray(result.session.equilibrium_vertices, dtype=float)
-        if target is None:
-            deviation = 0.0
+        if reference is None:
+            deviation = None
         else:
-            reference = np.asarray(target, dtype=float)
-            if reference.shape != xyz.shape:
-                raise StagedError("target must have one row per vertex.")
             deviation = float(np.linalg.norm(xyz - reference, axis=1).max())
 
         commands = (
             np.zeros_like(rest) if previous_rest is None else rest - previous_rest
         )
-        load_applied = float(np.abs(np.asarray(stage.loads, dtype=float)).sum())
+        if stage.loads is None:
+            load_sum = 0.0
+        else:
+            load_sum = float(
+                np.linalg.norm(
+                    np.asarray(stage.loads, dtype=float).reshape(-1, 3), axis=1
+                ).sum()
+            )
 
         for index in range(rest.size):
             rows.append(
@@ -88,8 +116,11 @@ def run_stages(problem, fixed, stages, ea, acceptance, target=None,
                     "worst_deviation": deviation,
                     "acceptance": float(acceptance),
                     "acceptance_source": str(acceptance_source),
-                    "within_acceptance": bool(deviation <= float(acceptance)),
-                    "load_applied": load_applied,
+                    "within_acceptance": (
+                        None if deviation is None
+                        else bool(deviation <= float(acceptance))
+                    ),
+                    "load_magnitude_sum": load_sum,
                     "units": "N, mm",
                 }
             )
