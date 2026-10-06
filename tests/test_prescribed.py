@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import re
 
 import numpy as np
 import pytest
@@ -112,19 +111,24 @@ def test_a_partially_slack_net_is_refused_naming_the_slack_members():
     loads = np.zeros((9, 3))
     loads[1:-1, 2] = -20.0
     rest_lengths = np.array([400.0] * 4 + [248.0] * 4)
-    with pytest.raises(PrescribedError, match=r"slack") as caught:
+    with pytest.raises(PrescribedError, match="slack") as caught:
         solve_prescribed_lengths(
             problem, fixed=[0, 8], rest_lengths=rest_lengths, ea=1.0e6, loads=loads
         )
-    # The members named are the ones still slack once the net has moved to its
-    # own equilibrium, so assert a list is given rather than which members.
-    assert re.search(r"Members \d+(, \d+)* are slack", str(caught.value))
+    # The members whose rest length is too long are the cause and must be named
+    # as slack at the registered geometry, and only those.
+    assert "members 0, 1, 2, 3 are already slack at the registered geometry" in str(
+        caught.value
+    )
 
     single = np.array([260.0] + [248.0] * 7)
-    with pytest.raises(PrescribedError, match=r"Members \d+(, \d+)* are slack"):
+    with pytest.raises(PrescribedError, match="slack") as caught:
         solve_prescribed_lengths(
             problem, fixed=[0, 8], rest_lengths=single, ea=1.0e6, loads=loads
         )
+    assert "members 0 are already slack at the registered geometry" in str(caught.value)
+    # Members that went slack only as the net moved are labelled as a symptom.
+    assert "a symptom" in str(caught.value)
 
 
 def test_per_member_ea_settles_with_the_default_budget():

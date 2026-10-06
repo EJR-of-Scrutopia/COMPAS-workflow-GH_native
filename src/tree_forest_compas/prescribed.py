@@ -46,12 +46,27 @@ def _edge_lengths(vertices, edges):
     return np.linalg.norm(ends - starts, axis=1)
 
 
-def _slack_message(mask, iteration):
-    return (
-        "Members {} are slack at iteration {}: a cable cannot push. Shorten the "
-        "rest length or change the anchors.".format(
-            ", ".join(str(int(index)) for index in np.flatnonzero(mask)), iteration
+def _names(mask):
+    return ", ".join(str(int(index)) for index in np.flatnonzero(mask))
+
+
+def _slack_message(registered, mask, iteration):
+    parts = []
+    if np.any(registered):
+        parts.append(
+            "members {} are already slack at the registered geometry (rest "
+            "length not shorter than the registered length: the likely cause)".format(
+                _names(registered)
+            )
         )
+    if np.any(mask):
+        parts.append(
+            "members {} were slack at iteration {}, after the net moved "
+            "(a symptom, not necessarily a cause)".format(_names(mask), iteration)
+        )
+    return (
+        "A cable cannot push, and the net went slack: {}. Shorten the rest "
+        "lengths of the first set or change the anchors.".format("; ".join(parts))
     )
 
 
@@ -94,6 +109,7 @@ def solve_prescribed_lengths(
 
     lengths = _edge_lengths(problem.source_vertices, edges)
     slack = lengths <= rest
+    registered_slack = slack.copy()
     if np.all(slack):
         raise PrescribedError(
             "Every member is slack at the registered geometry: the net cannot "
@@ -140,11 +156,13 @@ def solve_prescribed_lengths(
         slack_count = np.where(slack, slack_count + 1, 0)
         if np.any(slack_count >= _SLACK_PATIENCE):
             raise PrescribedError(
-                _slack_message(slack_count >= _SLACK_PATIENCE, iteration)
+                _slack_message(
+                    registered_slack, slack_count >= _SLACK_PATIENCE, iteration
+                )
             )
         if residual < float(residual_tolerance) and movement < float(movement_tolerance):
             if np.any(slack):
-                raise PrescribedError(_slack_message(slack, iteration))
+                raise PrescribedError(_slack_message(registered_slack, slack, iteration))
             return PrescribedResult(
                 session=session,
                 force_densities=tuple(float(value) for value in q),
@@ -178,7 +196,7 @@ def solve_prescribed_lengths(
         q = np.maximum(proposal, _FLOOR)
 
     if np.any(slack):
-        raise PrescribedError(_slack_message(slack, int(max_iterations)))
+        raise PrescribedError(_slack_message(registered_slack, slack, int(max_iterations)))
     unmet = []
     if movement >= float(movement_tolerance):
         unmet.append(
