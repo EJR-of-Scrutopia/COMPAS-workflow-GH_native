@@ -173,3 +173,114 @@ def test_an_under_actuated_net_reports_the_residual_it_cannot_remove():
     )
     assert result.reachable is False
     assert result.residual_after > 5.0
+
+
+def _two_cable_net():
+    pytest.importorskip("compas_fd")
+    from tree_forest_compas.fd import register_fd_network
+    from tree_forest_compas.prescribed import solve_prescribed_lengths
+
+    lines = [
+        [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+        [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+    ]
+    problem = register_fd_network(lines)
+    loads = np.zeros((3, 3))
+    loads[1, 2] = -500.0
+
+    def solve(rest):
+        state = solve_prescribed_lengths(
+            problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads
+        )
+        return np.asarray(state.session.equilibrium_vertices, dtype=float)
+
+    return problem, loads, solve
+
+
+def test_correction_applied_to_the_rest_lengths_moves_the_node_toward_target():
+    from tree_forest_compas.hold import correction_for
+
+    problem, loads, solve = _two_cable_net()
+    design = [1030.0, 1030.0]
+    target = solve(design)
+    # the net is currently reeled 10 mm short of design; markers read the truth
+    current = [1020.0, 1020.0]
+    measured = solve(current)
+    before = np.linalg.norm(measured - target, axis=1).max()
+    assert before > 1.0
+
+    result = correction_for(
+        problem, fixed=[0, 2], rest_lengths=current, ea=2.0e5, loads=loads,
+        measured=measured, target=target,
+    )
+    # reel_commands are changes to the rest length: negative shortens. The net is
+    # too short, so it must be let out.
+    assert all(command > 0.0 for command in result.reel_commands)
+    applied = np.asarray(current) + np.asarray(result.reel_commands)
+    after = np.linalg.norm(solve(applied) - target, axis=1).max()
+    assert after < 0.1 * before
+    assert abs(result.residual_after - after) < 1e-6
+    assert result.max_command == max(abs(c) for c in result.reel_commands)
+
+
+def test_a_dropped_node_is_corrected_by_shortening_the_cables():
+    from tree_forest_compas.hold import correction_for
+
+    problem, loads, solve = _two_cable_net()
+    rest = [1030.0, 1030.0]
+    target = solve(rest)
+    measured = target.copy()
+    measured[1, 2] -= 20.0
+    result = correction_for(
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads,
+        measured=measured, target=target,
+    )
+    assert all(command < 0.0 for command in result.reel_commands)
+    applied = np.asarray(rest) + np.asarray(result.reel_commands)
+    moved = solve(applied)
+    # the real node is the measured one plus the net's own movement
+    real = measured + (moved - target)
+    assert abs(real[1, 2] - target[1, 2]) < 2.0
+    assert abs(result.residual_after - abs(real[1, 2] - target[1, 2])) < 1e-6
+
+
+def test_the_step_size_does_not_change_the_commands_materially():
+    from tree_forest_compas.hold import correction_for
+
+    problem, loads, solve = _two_cable_net()
+    rest = [1030.0, 1030.0]
+    target = solve(rest)
+    measured = target.copy()
+    measured[1, 2] -= 20.0
+    one = correction_for(
+        problem, [0, 2], rest, 2.0e5, loads, measured, target, step=1.0
+    )
+    two = correction_for(
+        problem, [0, 2], rest, 2.0e5, loads, measured, target, step=2.0
+    )
+    assert np.allclose(one.reel_commands, two.reel_commands, rtol=0.1)
+
+
+def test_a_slack_net_is_refused_with_hold_error():
+    from tree_forest_compas.hold import correction_for
+
+    problem, loads, solve = _two_cable_net()
+    target = solve([1030.0, 1030.0])
+    with pytest.raises(HoldError, match="current rest lengths"):
+        correction_for(
+            problem, [0, 2], [2000.0, 2000.0], 2.0e5, loads, target, target
+        )
+
+
+def test_mismatched_inputs_are_refused_with_hold_error():
+    from tree_forest_compas.hold import correction_for
+
+    problem, loads, solve = _two_cable_net()
+    target = solve([1030.0, 1030.0])
+    with pytest.raises(HoldError, match="rest length"):
+        correction_for(problem, [0, 2], [1030.0], 2.0e5, loads, target, target)
+    with pytest.raises(HoldError, match="node"):
+        correction_for(
+            problem, [0, 2], [1030.0, 1030.0], 2.0e5, loads,
+            target[:2], target[:2],
+        )

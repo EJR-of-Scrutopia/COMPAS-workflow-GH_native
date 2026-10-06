@@ -113,11 +113,27 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
 
 
 class CorrectionResult(NamedTuple):
+    """The correction, and how well it was checked.
+
+    reel_commands are CHANGES to each cable's rest length in millimetres:
+    negative shortens (reels in), positive lets out. residual_before and
+    residual_after are the largest node distance from target in millimetres;
+    residual_after comes from re-solving the net at the commanded rest lengths and
+    adding its movement to the measured positions, so reachable rests on the net's
+    own answer, not the linear model. residual_predicted is
+    the linear model's forecast of the same number. A large gap between the two,
+    or a max_command beyond the range where the linear model holds (see
+    correction_for), means the correction should be repeated from fresh
+    measurements.
+    """
+
     reel_commands: tuple
     residual_before: float
     residual_after: float
     reachable: bool
     units: str
+    residual_predicted: float = 0.0
+    max_command: float = 0.0
 
 
 def correction_for(
@@ -138,47 +154,94 @@ def correction_for(
     this cannot remove is reported, because if it exceeds the acceptance line the
     answer is more cables, not better tuning.
 
-    Each Jacobian column shortens one rest length by ``step``, which only adds
-    stretch. If the net is nevertheless slack at the nudged lengths the solve
-    raises PrescribedError; that is re-raised as HoldError naming the cable,
-    because a correction computed around a slack net would be fiction.
+    rest_lengths are the CURRENT commanded rest lengths. The sensitivity of every
+    node to each rest length is found by finite difference about the net at those
+    lengths: one solve at rest_lengths and one per cable with that cable shortened
+    by ``step`` mm. The linear model is trustworthy for commands of a few times
+    ``step``; max_command reports the largest command so a caller can see when it
+    has left that range. Too small a step gives noisy columns, too large a
+    linearisation error. The commands are then applied and the net re-solved, and
+    residual_after is the measured position plus the re-solved net's movement
+    (nonlinear), so it and reachable do not rest on the linear model.
+
+    A net that is slack at any of the solved lengths (including the commanded
+    ones) raises HoldError naming the cable or saying so, because a correction
+    around a slack net would be fiction.
     """
 
     measured = np.asarray(measured, dtype=float)
     target = np.asarray(target, dtype=float)
     if measured.shape != target.shape:
         raise HoldError("measured and target must be the same shape.")
+    node_count = len(problem.source_vertices)
+    if target.shape != (node_count, 3):
+        raise HoldError(
+            "measured and target need one row per node: got {}, expected "
+            "({}, 3).".format(target.shape, node_count)
+        )
 
     rest = np.asarray(rest_lengths, dtype=float).reshape(-1)
+    cable_count = len(problem.source_edges)
+    if rest.size != cable_count:
+        raise HoldError(
+            "Needs one rest length per cable: got {}, expected {}.".format(
+                rest.size, cable_count
+            )
+        )
+    step = float(step)
+    if not np.isfinite(step) or step <= 0.0:
+        raise HoldError("step must be finite and positive.")
+
     deviation = (measured - target).reshape(-1)
     before = float(np.linalg.norm((measured - target), axis=1).max())
 
-    # one column per cable: move that rest length a little, see what every node does
+    def solve_at(lengths, what):
+        try:
+            state = solve_prescribed_lengths(
+                problem, fixed=fixed, rest_lengths=lengths, ea=ea, loads=loads
+            )
+        except PrescribedError as error:
+            raise HoldError("{}: {}".format(what, error)) from error
+        return np.asarray(state.session.equilibrium_vertices, dtype=float)
+
+    baseline = solve_at(rest, "cannot linearise the net at the current rest lengths")
+
+    # one column per cable: how every node moves per mm of shortening
     columns = []
     for index in range(rest.size):
         nudged = rest.copy()
-        nudged[index] = nudged[index] - float(step)
-        try:
-            moved = solve_prescribed_lengths(
-                problem, fixed=fixed, rest_lengths=nudged, ea=ea, loads=loads
-            )
-        except PrescribedError as error:
-            raise HoldError(
-                "cannot linearise the net around cable {}: {}".format(index, error)
-            ) from error
-        xyz = np.asarray(moved.session.equilibrium_vertices, dtype=float)
-        columns.append(((xyz - target) / float(step)).reshape(-1))
+        nudged[index] = nudged[index] - step
+        xyz = solve_at(
+            nudged, "cannot linearise the net around cable {}".format(index)
+        )
+        columns.append(((xyz - baseline) / step).reshape(-1))
     jacobian = np.column_stack(columns)
 
     solution = lsq_linear(jacobian, -deviation)
-    commands = solution.x * float(step)
-    after_vector = (jacobian.dot(solution.x) + deviation).reshape(target.shape)
-    after = float(np.linalg.norm(after_vector, axis=1).max())
+    if not solution.success or not np.all(np.isfinite(solution.x)):
+        raise HoldError(
+            "least squares did not converge (status {}): {}".format(
+                solution.status, solution.message
+            )
+        )
+    shortening = solution.x
+    commands = tuple(float(-value) for value in shortening)
+    predicted_vector = (jacobian.dot(shortening) + deviation).reshape(target.shape)
+    predicted = float(np.linalg.norm(predicted_vector, axis=1).max())
+
+    applied = solve_at(
+        rest + np.asarray(commands), "the commanded rest lengths leave the net slack"
+    )
+    # the markers may disagree with the model, so carry the measured position
+    # forward by the model's own predicted movement, not the model's absolute one
+    after = float(np.linalg.norm(measured + (applied - baseline) - target, axis=1).max())
 
     return CorrectionResult(
-        reel_commands=tuple(float(-value) for value in commands),
+        reel_commands=commands,
         residual_before=before,
         residual_after=after,
         reachable=bool(after <= float(tolerance)),
         units="N, mm",
+        residual_predicted=predicted,
+        max_command=float(max(abs(value) for value in commands)),
     )
