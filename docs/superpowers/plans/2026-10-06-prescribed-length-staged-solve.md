@@ -254,7 +254,7 @@ def test_a_single_cable_takes_the_sag_the_closed_form_predicts():
 
     half = 1000.0
     ea = 2.0e5
-    rest = 1005.0
+    rest = 995.0
     load = 300.0
     lines = [
         [[0.0, 0.0, 0.0], [half, 0.0, 0.0]],
@@ -262,7 +262,7 @@ def test_a_single_cable_takes_the_sag_the_closed_form_predicts():
     ]
     problem = register_fd_network(lines)
     loads = np.zeros((3, 3))
-    loads[2, 2] = -load
+    loads[1, 2] = -load
 
     def out_of_balance(sag):
         member = math.hypot(half, sag)
@@ -272,9 +272,9 @@ def test_a_single_cable_takes_the_sag_the_closed_form_predicts():
     expected = brentq(out_of_balance, 1e-6, 500.0)
 
     result = solve_prescribed_lengths(
-        problem, fixed=[0, 1], rest_lengths=[rest, rest], ea=ea, loads=loads
+        problem, fixed=[0, 2], rest_lengths=[rest, rest], ea=ea, loads=loads
     )
-    sag = -float(np.asarray(result.session.equilibrium_vertices)[2][2])
+    sag = -float(np.asarray(result.session.equilibrium_vertices)[1][2])
     assert abs(sag - expected) < 0.5
 
 
@@ -740,21 +740,21 @@ def test_a_correction_reduces_the_deviation_and_reports_what_is_left():
     ]
     problem = register_fd_network(lines)
     loads = np.zeros((3, 3))
-    loads[2, 2] = -500.0
+    loads[1, 2] = -500.0
     rest = [1030.0, 1030.0]
 
     # pretend the markers read the middle node 20 mm lower than it should be
     from tree_forest_compas.prescribed import solve_prescribed_lengths
 
     state = solve_prescribed_lengths(
-        problem, fixed=[0, 1], rest_lengths=rest, ea=2.0e5, loads=loads
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads
     )
     target = np.asarray(state.session.equilibrium_vertices, dtype=float)
     measured = target.copy()
-    measured[2, 2] -= 20.0
+    measured[1, 2] -= 20.0
 
     result = correction_for(
-        problem, fixed=[0, 1], rest_lengths=rest, ea=2.0e5, loads=loads,
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads,
         measured=measured, target=target,
     )
 
@@ -778,19 +778,19 @@ def test_an_under_actuated_net_reports_the_residual_it_cannot_remove():
     ]
     problem = register_fd_network(lines)
     loads = np.zeros((3, 3))
-    loads[2, 2] = -500.0
+    loads[1, 2] = -500.0
     rest = [1030.0, 1030.0]
     state = solve_prescribed_lengths(
-        problem, fixed=[0, 1], rest_lengths=rest, ea=2.0e5, loads=loads
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads
     )
     target = np.asarray(state.session.equilibrium_vertices, dtype=float)
 
     # ask for a sideways move that two symmetric cables cannot deliver
     measured = target.copy()
-    measured[2, 1] += 50.0
+    measured[1, 1] += 50.0
 
     result = correction_for(
-        problem, fixed=[0, 1], rest_lengths=rest, ea=2.0e5, loads=loads,
+        problem, fixed=[0, 2], rest_lengths=rest, ea=2.0e5, loads=loads,
         measured=measured, target=target, tolerance=5.0,
     )
     assert result.reachable is False
@@ -803,6 +803,17 @@ Run: `.venv/Scripts/python.exe -m pytest tests/test_hold.py -k correction -v`
 Expected: FAIL, `ImportError: cannot import name 'correction_for'`
 
 - [ ] **Step 3: Add the correction to `hold.py`**
+
+First add these two imports to the top of `hold.py`, beside the existing numpy
+and scipy ones. `prescribed` does not import `hold`, so there is no cycle:
+
+```python
+from scipy.optimize import lsq_linear
+
+from tree_forest_compas.prescribed import solve_prescribed_lengths
+```
+
+Then add the correction itself:
 
 ```python
 class CorrectionResult(NamedTuple):
@@ -831,10 +842,6 @@ def correction_for(
     this cannot remove is reported, because if it exceeds the acceptance line the
     answer is more cables, not better tuning.
     """
-
-    from scipy.optimize import lsq_linear
-
-    from tree_forest_compas.prescribed import solve_prescribed_lengths
 
     measured = np.asarray(measured, dtype=float)
     target = np.asarray(target, dtype=float)
@@ -1023,7 +1030,7 @@ git commit -m "feat(benchmark): what the timber falsework would deflect under th
 
 **Interfaces:**
 - Consumes: Tasks 1 to 6.
-- Produces: `Stage` (NamedTuple with `name`, `kind`, `rest_lengths`, `loads`), `StagedError(RuntimeError)`, `run_stages(problem, fixed, stages, ea, acceptance, target=None) -> list[dict]`, and in `register.py`: `write_register(rows, path) -> None`, `REGISTER_COLUMNS`.
+- Produces: `Stage` (NamedTuple with `name`, `kind`, `rest_lengths`, `loads`), `StagedError(RuntimeError)`, `run_stages(problem, fixed, stages, ea, acceptance, target=None, acceptance_source="unspecified") -> list[dict]`, and in `register.py`: `write_register(rows, path) -> None`, `REGISTER_COLUMNS`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1044,6 +1051,8 @@ from tree_forest_compas.staged_solve import run_stages
 
 
 def _vee_problem():
+    # register_fd_network welds in first-encounter order, so the shared
+    # middle node is vertex 1 and the two anchors are vertices 0 and 2.
     lines = [
         [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
         [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
@@ -1055,11 +1064,11 @@ def test_a_two_stage_run_reports_the_reel_command_between_them():
     problem = _vee_problem()
     unloaded = np.zeros((3, 3))
     loaded = np.zeros((3, 3))
-    loaded[2, 2] = -400.0
+    loaded[1, 2] = -400.0
 
     rows = run_stages(
         problem,
-        fixed=[0, 1],
+        fixed=[0, 2],
         stages=[
             Stage(name="T0", kind="raise", rest_lengths=[1030.0, 1030.0], loads=unloaded),
             Stage(name="T1", kind="tile", rest_lengths=[1030.0, 1030.0], loads=loaded),
@@ -1085,7 +1094,7 @@ def test_a_geometry_in_metres_is_refused_before_anything_is_solved():
     with pytest.raises(StagedError, match="millimetres"):
         run_stages(
             problem,
-            fixed=[0, 1],
+            fixed=[0, 2],
             stages=[Stage(name="T0", kind="raise", rest_lengths=[1.03, 1.03],
                           loads=np.zeros((3, 3)))],
             ea=2.0e5,
@@ -1099,10 +1108,10 @@ def test_the_register_writes_every_column(tmp_path):
 
     problem = _vee_problem()
     loaded = np.zeros((3, 3))
-    loaded[2, 2] = -400.0
+    loaded[1, 2] = -400.0
     rows = run_stages(
         problem,
-        fixed=[0, 1],
+        fixed=[0, 2],
         stages=[Stage(name="T1", kind="tile", rest_lengths=[1030.0, 1030.0],
                       loads=loaded)],
         ea=2.0e5,
@@ -1119,16 +1128,16 @@ def test_a_ten_millimetre_offset_reads_as_ten_millimetres_of_deviation():
 
     problem = _vee_problem()
     loaded = np.zeros((3, 3))
-    loaded[2, 2] = -400.0
+    loaded[1, 2] = -400.0
     state = solve_prescribed_lengths(
-        problem, fixed=[0, 1], rest_lengths=[1030.0, 1030.0], ea=2.0e5, loads=loaded
+        problem, fixed=[0, 2], rest_lengths=[1030.0, 1030.0], ea=2.0e5, loads=loaded
     )
     target = np.asarray(state.session.equilibrium_vertices, dtype=float).copy()
     target[:, 2] += 10.0           # every node of the target is 10 mm above
 
     rows = run_stages(
         problem,
-        fixed=[0, 1],
+        fixed=[0, 2],
         stages=[Stage(name="T1", kind="tile", rest_lengths=[1030.0, 1030.0],
                       loads=loaded)],
         ea=2.0e5,
@@ -1169,6 +1178,7 @@ REGISTER_COLUMNS = (
     "force_density",
     "worst_deviation",
     "acceptance",
+    "acceptance_source",
     "within_acceptance",
     "load_applied",
     "units",
@@ -1235,7 +1245,8 @@ def _check_millimetres(problem):
         )
 
 
-def run_stages(problem, fixed, stages, ea, acceptance, target=None):
+def run_stages(problem, fixed, stages, ea, acceptance, target=None,
+               acceptance_source="unspecified"):
     """Solve every stage in order and return the register rows."""
 
     _check_millimetres(problem)
@@ -1282,6 +1293,7 @@ def run_stages(problem, fixed, stages, ea, acceptance, target=None):
                     "force_density": float(result.force_densities[index]),
                     "worst_deviation": deviation,
                     "acceptance": float(acceptance),
+                    "acceptance_source": str(acceptance_source),
                     "within_acceptance": bool(deviation <= float(acceptance)),
                     "load_applied": load_applied,
                     "units": "N, mm",
@@ -1340,7 +1352,7 @@ def _vee_problem():
 
 def _unit_load():
     pattern = np.zeros((3, 3))
-    pattern[2, 2] = -1.0
+    pattern[1, 2] = -1.0
     return pattern
 
 
@@ -1355,7 +1367,7 @@ def test_an_underpowered_motor_binds_on_torque():
         anchor_wll=3340.0,
     )
     result = capacity_of(
-        _vee_problem(), fixed=[0, 1], rest_lengths=[1030.0, 1030.0], ea=2.0e5,
+        _vee_problem(), fixed=[0, 2], rest_lengths=[1030.0, 1030.0], ea=2.0e5,
         load_pattern=_unit_load(), mechanism=mechanism, acceptance=1e9,
     )
     assert result.binding == "motor torque"
@@ -1373,7 +1385,7 @@ def test_a_strong_mechanism_binds_on_the_acceptance_line_instead():
         anchor_wll=3.34e4,
     )
     result = capacity_of(
-        _vee_problem(), fixed=[0, 1], rest_lengths=[1030.0, 1030.0], ea=2.0e5,
+        _vee_problem(), fixed=[0, 2], rest_lengths=[1030.0, 1030.0], ea=2.0e5,
         load_pattern=_unit_load(), mechanism=mechanism, acceptance=5.0,
     )
     assert result.binding == "deviation"
@@ -1559,10 +1571,10 @@ def _vee_problem():
 
 def test_the_sweep_covers_the_grid_and_tags_each_result():
     pattern = np.zeros((3, 3))
-    pattern[2, 2] = -1.0
+    pattern[1, 2] = -1.0
     results = sweep(
         _vee_problem(),
-        fixed=[0, 1],
+        fixed=[0, 2],
         rest_lengths=[1030.0, 1030.0],
         ea=2.0e5,
         load_pattern=pattern,
@@ -1581,10 +1593,10 @@ def test_the_sweep_covers_the_grid_and_tags_each_result():
 
 def test_the_fronts_name_the_best_on_each_axis():
     pattern = np.zeros((3, 3))
-    pattern[2, 2] = -1.0
+    pattern[1, 2] = -1.0
     results = sweep(
         _vee_problem(),
-        fixed=[0, 1],
+        fixed=[0, 2],
         rest_lengths=[1030.0, 1030.0],
         ea=2.0e5,
         load_pattern=pattern,
