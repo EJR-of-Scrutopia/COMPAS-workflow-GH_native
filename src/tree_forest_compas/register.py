@@ -9,7 +9,11 @@ the net (the sign of `prescribed.reel_commands`). `load_magnitude_sum` is the su
 of the force magnitudes at the nodes, in newtons: the total weight arriving for
 a gravity case. It is not a resultant (opposing loads add, they do not cancel).
 `worst_deviation` and `within_acceptance` are null when the stage was solved
-without a target, because no check was made.
+without a target, because no check was made. They are also always null for the
+stage kind "raise" (`staged_solve.NO_TARGET_KINDS`): a raise stage is still
+stepping towards the target by design, so it carries no conformance verdict, and
+a reader must not take null there as a pass or a fail. Only the other kinds, for
+example "tile", carry a verdict when a target was given.
 """
 
 from __future__ import annotations

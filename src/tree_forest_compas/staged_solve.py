@@ -15,7 +15,13 @@ opposing directions add rather than cancel. A stage whose loads are None is
 unloaded and records zero.
 
 Without a target, `worst_deviation` and `within_acceptance` are None: no check
-was made, so none is claimed.
+was made, so none is claimed. The same holds for a stage whose kind is "raise"
+(see NO_TARGET_KINDS): the raise stages are still stepping towards the target by
+design, so measuring them against it would record a large deviation and a false
+"failed" verdict for a stage that was never meant to be on target. Only the
+other kinds (for example "tile") are checked against the target. This was chosen
+over a per-stage target because a run has one target, and a stage's kind already
+says whether it is meant to have arrived.
 
 Units are newtons and millimetres.
 """
@@ -41,6 +47,7 @@ class Stage(NamedTuple):
     loads: object
 
 
+NO_TARGET_KINDS = ("raise",)   # stage kinds that carry no conformance verdict
 _MIN_EXTENT_MM = 50.0   # a vault smaller than this across is almost surely not in mm
 
 
@@ -85,7 +92,7 @@ def run_stages(problem, fixed, stages, ea, acceptance, target=None,
             )
 
         xyz = np.asarray(result.session.equilibrium_vertices, dtype=float)
-        if reference is None:
+        if reference is None or str(stage.kind).strip().lower() in NO_TARGET_KINDS:
             deviation = None
         else:
             deviation = float(np.linalg.norm(xyz - reference, axis=1).max())

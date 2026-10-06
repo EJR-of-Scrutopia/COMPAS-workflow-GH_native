@@ -218,3 +218,28 @@ def test_the_writer_refuses_bad_registers_with_a_runtime_error(tmp_path):
     row["tension"] = float("nan")
     with pytest.raises(RegisterError, match="NaN"):
         write_register([row], tmp_path / "c.json")
+
+
+def test_a_raise_stage_carries_no_conformance_verdict_but_a_tile_stage_does():
+    problem = _vee_problem()
+    loaded = np.zeros((3, 3))
+    loaded[1, 2] = -400.0
+    target = np.asarray(problem.source_vertices, dtype=float).copy()
+    target[:, 2] += 500.0          # far from either stage, so a verdict would be "failed"
+    rows = run_stages(
+        problem,
+        fixed=[0, 2],
+        stages=[
+            Stage(name="S1", kind="raise", rest_lengths=[1030.0, 1030.0], loads=loaded),
+            Stage(name="T1", kind="tile", rest_lengths=[1030.0, 1030.0], loads=loaded),
+        ],
+        ea=2.0e5,
+        acceptance=15.0,
+        target=target,
+    )
+    raised = [row for row in rows if row["stage"] == "S1"]
+    tiled = [row for row in rows if row["stage"] == "T1"]
+    assert all(row["worst_deviation"] is None for row in raised)
+    assert all(row["within_acceptance"] is None for row in raised)
+    assert all(row["within_acceptance"] is False for row in tiled)
+    assert all(row["worst_deviation"] > 400.0 for row in tiled)
