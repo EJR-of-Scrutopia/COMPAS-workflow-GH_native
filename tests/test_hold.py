@@ -3,6 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+# hold.py needs scipy for the non-negative least squares solve, and scipy lives
+# in the "equilibrium" extra rather than "dev", so CI's dependency-light job
+# does not have it. Skip rather than fail collection, as the compas_fd guards
+# elsewhere in this suite do.
+pytest.importorskip("scipy")
+
 from tree_forest_compas.hold import HoldError
 from tree_forest_compas.hold import hold_force_densities
 
