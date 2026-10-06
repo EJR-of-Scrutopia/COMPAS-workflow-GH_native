@@ -22,6 +22,14 @@ class HoldError(RuntimeError):
 
 
 class HoldResult(NamedTuple):
+    """One equilibrium solution at the target geometry.
+
+    Only equilibrium is guaranteed. When the net is redundant (more edges than
+    three times the number of free nodes) the force densities are not unique and
+    this is one non-negative member of a family; do not read it as a property of
+    the net. Choosing a preferred member is a separate, explicit decision.
+    """
+
     force_densities: tuple
     tensions: tuple
     residual: float
@@ -29,7 +37,13 @@ class HoldResult(NamedTuple):
 
 
 def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6):
-    """Force densities that hold every free node in place under the given load."""
+    """One set of force densities that holds every free node in place.
+
+    The result satisfies equilibrium under the given load with every density
+    non-negative. It is one solution among many when the net is redundant:
+    non-negative least squares returns a single sparse vertex of the family, so
+    only equilibrium is guaranteed, not uniqueness.
+    """
 
     xyz = np.asarray(vertices, dtype=float)
     if xyz.ndim != 2 or xyz.shape[1] != 3:
@@ -38,8 +52,19 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
     p = np.asarray(loads, dtype=float)
     if p.shape != xyz.shape:
         raise HoldError("loads must have one row per vertex.")
+    if not np.all(np.isfinite(p)) or not np.all(np.isfinite(xyz)):
+        raise HoldError("vertices and loads must be finite numbers.")
 
-    free = [index for index in range(len(xyz)) if index not in set(int(f) for f in fixed)]
+    count = len(xyz)
+    fixed_set = {int(f) for f in fixed}
+    for index in fixed_set:
+        if not 0 <= index < count:
+            raise HoldError("Fixed index {} is outside the {} vertices.".format(index, count))
+    for u, v in edges:
+        if not (0 <= u < count and 0 <= v < count):
+            raise HoldError("Edge ({}, {}) refers to a vertex outside 0..{}.".format(u, v, count - 1))
+
+    free = [index for index in range(count) if index not in fixed_set]
     if not free:
         raise HoldError("Every vertex is fixed, so there is nothing to hold.")
 
@@ -60,7 +85,10 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
             a[3 * row_of[v]:3 * row_of[v] + 3, column] = xyz[u] - xyz[v]
     b = -p[free].reshape(-1)
 
-    q, residual = nnls(a, b)
+    try:
+        q, residual = nnls(a, b)
+    except Exception as error:  # scipy raises its own types; report ours
+        raise HoldError("The non-negative least squares solve failed: {}".format(error)) from error
     relative = float(residual) / load_size
     if relative > float(residual_tolerance):
         worst = int(np.argmax(np.abs(a.dot(q) - b)))
