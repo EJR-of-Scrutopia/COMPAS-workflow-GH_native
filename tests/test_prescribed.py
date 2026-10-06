@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 import numpy as np
 import pytest
@@ -104,3 +105,36 @@ def test_a_net_with_an_unsupported_component_is_refused():
         solve_prescribed_lengths(
             problem, fixed=[0, 8], rest_lengths=np.full(9, 240.0), ea=1.0e6
         )
+
+
+def test_a_partially_slack_net_is_refused_naming_the_slack_members():
+    problem = register_fd_network(_straight_chain())
+    loads = np.zeros((9, 3))
+    loads[1:-1, 2] = -20.0
+    rest_lengths = np.array([400.0] * 4 + [248.0] * 4)
+    with pytest.raises(PrescribedError, match=r"slack") as caught:
+        solve_prescribed_lengths(
+            problem, fixed=[0, 8], rest_lengths=rest_lengths, ea=1.0e6, loads=loads
+        )
+    # The members named are the ones still slack once the net has moved to its
+    # own equilibrium, so assert a list is given rather than which members.
+    assert re.search(r"Members \d+(, \d+)* are slack", str(caught.value))
+
+    single = np.array([260.0] + [248.0] * 7)
+    with pytest.raises(PrescribedError, match=r"Members \d+(, \d+)* are slack"):
+        solve_prescribed_lengths(
+            problem, fixed=[0, 8], rest_lengths=single, ea=1.0e6, loads=loads
+        )
+
+
+def test_per_member_ea_settles_with_the_default_budget():
+    problem = register_fd_network(_straight_chain())
+    loads = np.zeros((9, 3))
+    loads[1:-1, 2] = -20.0
+    ea = np.array([1e6, 5e5, 2e6, 1e6, 8e5, 1.5e6, 1e6, 6e5])
+    result = solve_prescribed_lengths(
+        problem, fixed=[0, 8], rest_lengths=np.full(8, 248.0), ea=ea, loads=loads
+    )
+    lengths = np.asarray(result.lengths)
+    elastic = ea * (lengths - 248.0) / (248.0 * lengths)
+    assert np.max(np.abs(elastic - result.force_densities) / elastic) < 1e-6

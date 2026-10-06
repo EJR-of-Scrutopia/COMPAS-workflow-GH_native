@@ -20,7 +20,7 @@ from tree_forest_compas.fd import solve_fd_problem
 
 
 _FLOOR = 1e-6          # force density given to a member that is slack mid-iteration
-_RESIDUAL_TOLERANCE = 1e-8   # largest relative gap between q and the elastic q
+_SLACK_PATIENCE = 50   # consecutive iterations a member may stay slack before refusal
 _MEMORY = 6            # steps the Anderson mixing looks back over
 
 
@@ -46,17 +46,33 @@ def _edge_lengths(vertices, edges):
     return np.linalg.norm(ends - starts, axis=1)
 
 
+def _slack_message(mask, iteration):
+    return (
+        "Members {} are slack at iteration {}: a cable cannot push. Shorten the "
+        "rest length or change the anchors.".format(
+            ", ".join(str(int(index)) for index in np.flatnonzero(mask)), iteration
+        )
+    )
+
+
 def solve_prescribed_lengths(
     problem,
     fixed,
     rest_lengths,
     ea,
     loads=None,
-    max_iterations=100,
+    max_iterations=1000,
     movement_tolerance=1e-6,
     damping=0.5,
+    residual_tolerance=1e-8,
 ):
-    """Find the geometry and tension a net takes for the given rest lengths."""
+    """Find the geometry and tension a net takes for the given rest lengths.
+
+    The iteration settles when the largest node movement is below
+    movement_tolerance (mm) AND every member's force density is within
+    residual_tolerance (relative) of the value its own elastic law gives.
+    A member that is slack (length not above rest length) is refused by name.
+    """
 
     edges = tuple(problem.source_edges)
     rest = np.asarray(rest_lengths, dtype=float).reshape(-1)
@@ -91,6 +107,9 @@ def solve_prescribed_lengths(
     session = None
     history_q = []
     history_f = []
+    slack_count = np.zeros(len(edges), dtype=int)
+    residual = float("inf")
+    slack = np.zeros(len(edges), dtype=bool)
     for iteration in range(1, int(max_iterations) + 1):
         try:
             session = solve_fd_problem(
@@ -109,22 +128,23 @@ def solve_prescribed_lengths(
         stretch = lengths - rest
         slack = stretch <= 0.0
         # Vectorised rest_length.force_density, the definition of record.
-        # A member that is slack part-way through is held at a small positive
-        # force density so the iteration can recover; it is refused only if it
-        # is still slack when the iteration settles.
+        # A member that is slack part-way through is given a small positive
+        # force density (fd.py rejects zero). That value is nearly absorbing
+        # under the stiffness-scaled step, so a member that stays slack is
+        # refused by name rather than waited on.
         target = np.where(
             slack, _FLOOR, stiffness * np.where(slack, 1.0, stretch) / (rest * lengths)
         )
-        residual = float(np.abs(target - q).max() / np.abs(q).max())
-        if residual < _RESIDUAL_TOLERANCE and movement < float(movement_tolerance):
+        # Per member, so one stiff member cannot hide behind a large one.
+        residual = float(np.max(np.abs(target - q) / q))
+        slack_count = np.where(slack, slack_count + 1, 0)
+        if np.any(slack_count >= _SLACK_PATIENCE):
+            raise PrescribedError(
+                _slack_message(slack_count >= _SLACK_PATIENCE, iteration)
+            )
+        if residual < float(residual_tolerance) and movement < float(movement_tolerance):
             if np.any(slack):
-                bad = np.flatnonzero(slack)
-                raise PrescribedError(
-                    "Members {} are slack at equilibrium: a cable cannot push. "
-                    "Shorten the rest length or change the anchors.".format(
-                        ", ".join(str(int(index)) for index in bad)
-                    )
-                )
+                raise PrescribedError(_slack_message(slack, iteration))
             return PrescribedResult(
                 session=session,
                 force_densities=tuple(float(value) for value in q),
@@ -157,7 +177,21 @@ def solve_prescribed_lengths(
                 proposal = mixed
         q = np.maximum(proposal, _FLOOR)
 
+    if np.any(slack):
+        raise PrescribedError(_slack_message(slack, int(max_iterations)))
+    unmet = []
+    if movement >= float(movement_tolerance):
+        unmet.append(
+            "movement {:.6g} mm per step is not below {:.6g}".format(
+                movement, float(movement_tolerance)
+            )
+        )
+    if residual >= float(residual_tolerance):
+        unmet.append(
+            "worst member force-density error {:.6g} is not below {:.6g}".format(
+                residual, float(residual_tolerance)
+            )
+        )
     raise PrescribedError(
-        "Did not settle in {} iterations; the net was still moving {:.6g} mm per "
-        "step.".format(max_iterations, movement)
+        "Did not settle in {} iterations: {}.".format(max_iterations, "; ".join(unmet))
     )
