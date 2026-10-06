@@ -10,8 +10,9 @@ newtons, and it is quantised to max_factor / steps by the capacity walk.
 The three fronts are reported side by side. No weighting is applied: the owner
 chooses by eye against the real trade. FRONT_RANKING says what each ranks by.
 
-What this sweep checks, per combination: static rope tension against rope MBL
-over the safety factor, static tension against the anchor working load, drum
+What this sweep checks, per combination: static net cable tension against the
+net cable's rope_mbl over the safety factor, static spool rope (lead) tension
+against spool_rope_mbl over the safety factor, static tension against the anchor working load, drum
 torque against the geared motor torque after the margin, and deviation from the
 unloaded shape against the acceptance line.
 
@@ -50,7 +51,8 @@ DEFAULT_MICROSTEPS = 16.0
 DRIVE_FIELDS = ("steps_per_revolution", "microsteps")
 
 CHECKS_PERFORMED = [
-    "rope tension, static, against rope_mbl / safety_factor",
+    "rope tension, static, of the NET CABLE (full cable tension, dead-ended at the carriage) against rope_mbl / safety_factor",
+    "spool rope tension, static, of the SPOOL ROPE (lead tension, cable tension over the mechanical advantage) against spool_rope_mbl / safety_factor",
     "anchor load, static, against anchor_wll",
     "drum torque against motor_torque * gear_ratio * gear_efficiency * torque_margin",
     "deviation from the unloaded shape against the acceptance line",
@@ -65,8 +67,9 @@ CHECKS_NOT_PERFORMED = [
 ]
 UNCHECKED_WARNING = (
     "The smallest drum, the highest gear ratio and the most falls are unopposed "
-    "by any constraint modelled here; a feasible row is feasible only against "
-    "the checks listed in checks_performed."
+    "by any constraint modelled here; a feasible or recommended row is feasible "
+    "only against the checks listed in checks_performed, and it may fail rope "
+    "bend fatigue (D over d) or not physically fit the drum (width, fleet angle)."
 )
 FRONT_RANKING = {
     "accuracy": "smallest resolution (net travel per microstep)",
@@ -77,12 +80,16 @@ FRONT_RANKING = {
     "margin": "largest limit_factor",
 }
 UNIT_NOTES = {
-    "limit_factor": "multiple of the load pattern (dimensionless)",
+    "limit_factor": (
+        "multiple of the load pattern (dimensionless); 0 can mean the first walk "
+        "step already failed (below one walk step), not that nothing can be carried"
+    ),
     "breaching_factor": "multiple of the load pattern (dimensionless)",
     "resolution": "mm of net travel per motor microstep",
     "drum_radius": "mm",
     "motor_torque": "N mm",
-    "rope_mbl": "N",
+    "rope_mbl": "N, the net cable's minimum breaking load",
+    "spool_rope_mbl": "N, the spool rope's minimum breaking load; null means the same as rope_mbl",
     "anchor_wll": "N",
     "acceptance": "mm",
 }

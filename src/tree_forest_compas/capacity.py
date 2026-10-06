@@ -17,6 +17,19 @@ leave the net slack with nothing on it, so the registered shape is not
 reachable at zero load; the datum is therefore the shape the net takes under
 its pretension alone, and "deviation" means movement away from that.
 
+The machine has TWO ropes and each check is made against the right one:
+
+- The NET CABLE is dead-ended at the sliding carriage and never passes through
+  the reeve, so it carries the full cable tension whatever the number of falls.
+  "rope tension" checks the worst cable tension against rope_mbl /
+  safety_factor, and rope_mbl is the net cable's minimum breaking load.
+- The SPOOL ROPE runs from a dead end on the frame, round the carriage sheave,
+  over the fixed top pulley and down to the drum, so it carries the lead
+  tension (cable tension over the mechanical advantage). "spool rope tension"
+  checks the lead tension against spool_rope_mbl / safety_factor. More falls
+  relieve this check and leave the net cable check unchanged. spool_rope_mbl
+  defaults to None, meaning "the same as rope_mbl".
+
 Lead tension is the worst rope tension divided by the actual mechanical
 advantage of the reeving, AMA = (1 - eta**n) / (1 - eta) for sheave efficiency
 eta < 1 and n falls, and AMA = n when eta == 1. Gear efficiency covers the
@@ -48,6 +61,14 @@ class Mechanism(NamedTuple):
     torque_margin: float = 0.5
     safety_factor: float = 5.0
     sheave_efficiency: float = 0.98
+    spool_rope_mbl: object = None   # None means the same as rope_mbl
+
+
+def spool_rope_mbl_of(mechanism):
+    """The spool rope's minimum breaking load, defaulting to the net cable's."""
+
+    value = mechanism.spool_rope_mbl
+    return mechanism.rope_mbl if value is None else value
 
 
 class Capacity(NamedTuple):
@@ -68,6 +89,7 @@ class Capacity(NamedTuple):
     sheave_efficiency: float
     steps: int
     max_factor: float
+    units: str = "N, mm"            # torque is N mm, never N m
 
 
 def _validate(mechanism, steps, max_factor, acceptance):
@@ -97,6 +119,7 @@ def _validate(mechanism, steps, max_factor, acceptance):
     need("safety_factor", mechanism.safety_factor)
     need("sheave_efficiency", mechanism.sheave_efficiency, upper=1.0)
     need("rope_mbl", mechanism.rope_mbl)
+    need("spool_rope_mbl", spool_rope_mbl_of(mechanism))
     need("anchor_wll", mechanism.anchor_wll)
     need("acceptance", acceptance, positive=False)
     need("max_factor", max_factor)
@@ -118,8 +141,8 @@ def _checks(mechanism, tensions, deviation, acceptance):
     worst = float(np.max(tensions))
     allowed_rope = float(mechanism.rope_mbl) / float(mechanism.safety_factor)
     if worst > allowed_rope:
-        return "rope tension", "{:.6g} N against {:.6g} N allowed".format(
-            worst, allowed_rope
+        return "rope tension", (
+            "net cable: {:.6g} N against {:.6g} N allowed".format(worst, allowed_rope)
         )
     if worst > float(mechanism.anchor_wll):
         return "anchor", "{:.6g} N against {:.6g} N working load".format(
@@ -129,6 +152,13 @@ def _checks(mechanism, tensions, deviation, acceptance):
     lead = worst / _mechanical_advantage(
         mechanism.reeve_factor, mechanism.sheave_efficiency
     )
+    allowed_spool = float(spool_rope_mbl_of(mechanism)) / float(mechanism.safety_factor)
+    if lead > allowed_spool:
+        return "spool rope tension", (
+            "spool rope: {:.6g} N lead tension against {:.6g} N allowed".format(
+                lead, allowed_spool
+            )
+        )
     drum_torque = lead * float(mechanism.drum_radius)
     available = (
         float(mechanism.motor_torque)
@@ -164,10 +194,16 @@ def capacity_of(
 
     _validate(mechanism, steps, max_factor, acceptance)
     pattern = np.asarray(load_pattern, dtype=float)
-    unloaded = solve_prescribed_lengths(
-        problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
-        loads=np.zeros_like(pattern),
-    )
+    try:
+        unloaded = solve_prescribed_lengths(
+            problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
+            loads=np.zeros_like(pattern),
+        )
+    except PrescribedError as error:
+        raise CapacityError(
+            "The unloaded datum solve (the shape the deviation is measured "
+            "from) failed at these rest lengths: {}".format(error)
+        )
     reference = np.asarray(unloaded.session.equilibrium_vertices, dtype=float)
 
     def result(limit, breaching, binding, detail):
@@ -192,7 +228,7 @@ def capacity_of(
                 loads=pattern * factor,
             )
         except PrescribedError as error:
-            kind = "net went slack" if "slack" in str(error) else "numerical failure"
+            kind = "net went slack" if error.kind == "slack" else "numerical failure"
             return result(last_good, factor, kind, str(error))
 
         xyz = np.asarray(state.session.equilibrium_vertices, dtype=float)

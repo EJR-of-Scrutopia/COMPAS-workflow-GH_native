@@ -25,7 +25,15 @@ _MEMORY = 6            # steps the Anderson mixing looks back over
 
 
 class PrescribedError(RuntimeError):
-    """Raised when a prescribed-length solve cannot produce a tension state."""
+    """Raised when a prescribed-length solve cannot produce a tension state.
+
+    ``kind`` is "slack" when the net went (or was) slack, and "other" for input
+    refusals and numerical failures. Callers key on it, never on the message.
+    """
+
+    def __init__(self, message="", kind="other"):
+        super().__init__(message)
+        self.kind = kind
 
 
 class PrescribedResult(NamedTuple):
@@ -113,7 +121,8 @@ def solve_prescribed_lengths(
     if np.all(slack):
         raise PrescribedError(
             "Every member is slack at the registered geometry: the net cannot "
-            "carry anything until it is reeled in."
+            "carry anything until it is reeled in.",
+            kind="slack",
         )
     # Vectorised rest_length.force_density, the definition of record.
     q = np.where(slack, 1e-6, stiffness * (lengths - rest) / (rest * lengths))
@@ -158,11 +167,14 @@ def solve_prescribed_lengths(
             raise PrescribedError(
                 _slack_message(
                     registered_slack, slack_count >= _SLACK_PATIENCE, iteration
-                )
+                ),
+                kind="slack",
             )
         if residual < float(residual_tolerance) and movement < float(movement_tolerance):
             if np.any(slack):
-                raise PrescribedError(_slack_message(registered_slack, slack, iteration))
+                raise PrescribedError(
+                    _slack_message(registered_slack, slack, iteration), kind="slack"
+                )
             return PrescribedResult(
                 session=session,
                 force_densities=tuple(float(value) for value in q),
@@ -196,7 +208,9 @@ def solve_prescribed_lengths(
         q = np.maximum(proposal, _FLOOR)
 
     if np.any(slack):
-        raise PrescribedError(_slack_message(registered_slack, slack, int(max_iterations)))
+        raise PrescribedError(
+            _slack_message(registered_slack, slack, int(max_iterations)), kind="slack"
+        )
     unmet = []
     if movement >= float(movement_tolerance):
         unmet.append(
@@ -238,7 +252,9 @@ def rest_lengths_from_session(session, ea):
 def reel_commands(before, after):
     """How much each cable must be reeled to go from one state to the next.
 
-    Negative is reeling in, which shortens the cable and raises the net.
+    The inputs are rest lengths and the result is the change in rest length,
+    after minus before, in millimetres, one value per cable. Negative is reeling
+    in, which shortens the cable and raises the net.
     """
 
     first = np.asarray(before, dtype=float).reshape(-1)

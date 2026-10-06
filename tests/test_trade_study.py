@@ -246,3 +246,14 @@ def test_the_command_line_refuses_a_non_finite_value_instead_of_writing_it(tmp_p
     assert done.returncode == 1
     assert "Traceback" not in done.stderr
     assert not out_path.exists()
+
+
+def test_the_disclosure_names_both_ropes_and_the_unchecked_failures():
+    from tree_forest_compas.trade_study import CHECKS_PERFORMED
+    from tree_forest_compas.trade_study import UNCHECKED_WARNING
+    from tree_forest_compas.trade_study import UNIT_NOTES
+
+    assert any("NET CABLE" in line for line in CHECKS_PERFORMED)
+    assert any("SPOOL ROPE" in line for line in CHECKS_PERFORMED)
+    assert "bend fatigue" in UNCHECKED_WARNING and "fit the drum" in UNCHECKED_WARNING
+    assert "below one walk step" in UNIT_NOTES["limit_factor"]
