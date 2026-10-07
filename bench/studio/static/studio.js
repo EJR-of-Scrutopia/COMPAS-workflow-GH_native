@@ -5,6 +5,7 @@ import { Sky } from "three/addons/objects/Sky.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
+import { mountCableNet } from "./cablenet.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
   buildSegmented, paintSegmented,
@@ -15233,6 +15234,8 @@ for (const button of document.querySelectorAll("#data-tabs button")) {
   button.addEventListener("click", () => showDataTab(button.dataset.tab));
 }
 
+mountCableNet(document.getElementById("cablenet-panel"),
+  () => document.getElementById("study-select").value);
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   renderDataPanel(state.bundle ? state.bundle.verification : null);
