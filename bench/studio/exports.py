@@ -56,6 +56,27 @@ def _part_row(parts, kind, key):
     }
 
 
+def _unreachable(stage):
+    """THE test for a stage the correction cannot reach: `reachable` is
+    exactly False.  Missing or null is not evidence of either answer, so it is
+    neither called reached nor called unreachable (see `_reach_word`), and the
+    panel's `stage.reachable === false` is this same test."""
+
+    return stage.get("reachable") is False
+
+
+def _reach_word(stage, yes="yes", no="no", unknown="not recorded"):
+    """Three words for one stage, so no document can turn a missing value
+    into a claim: True is `yes`, False is `no`, anything else is not recorded."""
+
+    reachable = stage.get("reachable")
+    if reachable is True:
+        return yes
+    if reachable is False:
+        return no
+    return unknown
+
+
 def _tri(value):
     """yes / no / not established, for a verdict that may be unknown."""
 
@@ -94,7 +115,7 @@ def _shape_verdict(demand):
         if (isinstance(residual, (int, float)) and not isinstance(residual, bool)
                 and math.isfinite(residual) and (worst is None or residual > worst)):
             worst, worst_stage = float(residual), stage.get("name")
-        if stage.get("reachable") is False:
+        if _unreachable(stage):
             unreachable.append(stage.get("name"))
     why_unknown = None
     if unreachable:
@@ -367,6 +388,14 @@ def last_spreadsheet_note():
 class Newtons(float):
     """A force cell: a number in the workbook, shown to one decimal."""
 
+    places = 1
+
+
+class Millimetres(float):
+    """A length cell: a number in the workbook, shown to two decimals."""
+
+    places = 2
+
 
 def _newtons(value):
     return "not recorded" if value is None else "{:.1f}".format(float(value))
@@ -386,6 +415,23 @@ def _blank(value):
 
 def _force_cell(value):
     return "" if value is None else Newtons(_newtons(value))
+
+
+def _length_cell(value):
+    """A length for the workbook, through the same rounding as the data sheet
+    (a residual is 1.40, never 1.4000000000000001).  Missing stays blank."""
+
+    if value is None or value == "":
+        return ""
+    return Millimetres(_millimetres(value))
+
+
+def _csv_value(value):
+    """A cell as the CSV fallback writes it: figures at their own decimals."""
+
+    if isinstance(value, (Newtons, Millimetres)):
+        return "{:.{p}f}".format(float(value), p=value.places)
+    return value
 
 
 def _read_this_rows(model):
@@ -447,7 +493,7 @@ def _chosen_rows(model):
              _blank(None if shape.get("acceptance_mm") is None
                     else _millimetres(shape["acceptance_mm"])),
              _blank(shape.get("acceptance_source")))],
-        ["Shape: worst residual (mm)", _blank(shape.get("worst_residual_mm")),
+        ["Shape: worst residual (mm)", _length_cell(shape.get("worst_residual_mm")),
          "at stage {}".format(_blank(shape.get("worst_stage")))],
     ]
     if shape.get("unreachable_stages"):
@@ -493,7 +539,8 @@ def _stages_rows(model):
                 return values[i] if i < len(values) else ""
             rows.append([stage.get("stage"), stage.get("name"), stage.get("kind"),
                          wire.get("name"), _blank(wire.get("net_vertex")),
-                         at("wire_rest_lengths"), at("wire_reel_commands"),
+                         _length_cell(at("wire_rest_lengths")),
+                         _length_cell(at("wire_reel_commands")),
                          _force_cell(at("wire_tensions") or None)])
     rows += [[], ["Stage", "Name", "Placed weight (N)", "Skin load sum (N)",
                   "Deviation (mm)", "Reachable", "Residual after (mm)"]]
@@ -501,9 +548,9 @@ def _stages_rows(model):
         rows.append([stage.get("stage"), stage.get("name"),
                      _force_cell(stage.get("placed_weight_newtons")),
                      _force_cell(stage.get("skin_load_sum_newtons")),
-                     _blank(stage.get("deviation")),
-                     "yes" if stage.get("reachable") else "no",
-                     _blank(stage.get("residual_after"))])
+                     _length_cell(stage.get("deviation")),
+                     _reach_word(stage),
+                     _length_cell(stage.get("residual_after"))])
     return rows
 
 
@@ -556,8 +603,8 @@ def _write_workbook(sheets, model, path):
             sheet.append(list(row))
         for cells in sheet.iter_rows():
             for cell in cells:
-                if isinstance(cell.value, Newtons):
-                    cell.number_format = "0.0"
+                if isinstance(cell.value, (Newtons, Millimetres)):
+                    cell.number_format = "0." + "0" * cell.value.places
         sheet.cell(row=1, column=1).font = Font(bold=True)
         if name == "Parts":
             for cells in sheet.iter_rows(min_row=2):
@@ -582,7 +629,8 @@ def write_spreadsheet(model, directory, stem):
     for name in SHEETS:
         path = directory / "{}-{}.csv".format(stem, name.lower().replace(" ", "-"))
         with open(path, "w", newline="", encoding="utf-8-sig") as handle:
-            csv.writer(handle).writerows(sheets[name])
+            csv.writer(handle).writerows(
+                [[_csv_value(c) for c in row] for row in sheets[name]])
         written.append(path)
     _last_note = (
         "The workbook was not written because openpyxl is not installed "
@@ -934,8 +982,8 @@ def _datasheet_sections(model):
             "Stage {} ({}, {}): residual {} mm, {}.".format(
                 stage.get("stage"), stage.get("name"), stage.get("kind"),
                 _millimetres(stage.get("residual_after")),
-                "reached" if stage.get("reachable") is not False
-                else "not reachable"))
+                _reach_word(stage, "reached", "not reachable",
+                            "reachability not recorded")))
     out.append("## Whether it holds\n\n" + "\n\n".join(
         [_verdict_opening(verdict)] + halves
         + ["The two halves are separate questions and can disagree. Strong "

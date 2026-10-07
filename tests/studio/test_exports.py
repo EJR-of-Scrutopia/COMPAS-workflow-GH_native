@@ -908,3 +908,60 @@ def test_the_panel_and_the_documents_agree_on_what_is_unknown():
         why = _model(demand=demand)["verdict"]["shape"]["why_unknown"]
         assert why in js          # the panel carries the documents' wording
     assert re.search(r"acceptance === null", js)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: one truth test for `reachable`, one rounding for lengths
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("missing", ["absent", "null"])
+def test_a_stage_with_no_reachable_is_told_the_same_way_everywhere(
+        tmp_path, monkeypatch, missing):
+    demand = _demand()
+    if missing == "absent":
+        demand["stages"][1].pop("reachable")
+    else:
+        demand["stages"][1]["reachable"] = None
+    model = _model(demand=demand)
+    # not False, so not an unreachable stage; and never read as reached
+    assert model["verdict"]["shape"]["unreachable_stages"] == []
+    text = exports.datasheet_markdown(model)
+    assert "Stage 2 (S7, tile): residual 1.40 mm, reachability not recorded." in text
+    assert "Stage 1 (S1, raise): residual 0.50 mm, reached." in text
+    assert "not reachable" not in text
+    rows = exports._sheet_rows(model)["Stages"]
+    reach = {r[1]: r[5] for r in rows if len(r) == 7 and r[1] in ("S1", "S7")}
+    assert reach == {"S1": "yes", "S7": "not recorded"}
+    assert "Shape: unreachable stages" not in str(exports._sheet_rows(model)["Chosen"])
+
+
+def test_a_stage_that_is_false_is_unreachable_in_every_document():
+    demand = _demand()
+    demand["stages"][1]["reachable"] = False
+    model = _model(demand=demand)
+    assert model["verdict"]["shape"]["unreachable_stages"] == ["S7"]
+    assert "residual 1.40 mm, not reachable." in exports.datasheet_markdown(model)
+    rows = exports._sheet_rows(model)["Stages"]
+    assert {r[1]: r[5] for r in rows if len(r) == 7}["S7"] == "no"
+    assert "does not hold" in exports.diagram_svg(model)
+
+
+def test_the_panel_tests_reachable_against_false_only():
+    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
+          / "cablenet.js").read_text(encoding="utf-8")
+    assert "stage.reachable === false" in js
+    assert "stage.reachable ===" not in js.replace("stage.reachable === false", "")
+
+
+def test_workbook_lengths_use_the_data_sheets_rounding(tmp_path, monkeypatch):
+    demand = _demand()
+    demand["stages"][1]["residual_after"] = 1.4000000000000001
+    demand["stages"][1]["deviation"] = 0.30000000000000004
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    model = _model(demand=demand)
+    paths = exports.write_spreadsheet(model, tmp_path, "x")
+    stages = next(p for p in paths if p.name.endswith("-stages.csv")).read_text(
+        encoding="utf-8-sig")
+    assert "1.40" in stages and "0.30" in stages
+    assert "1.4000000000000001" not in stages and "0.30000000000000004" not in stages
+    assert exports._millimetres(1.4000000000000001) == "1.40"
