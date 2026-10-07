@@ -638,3 +638,248 @@ def write_diagram(model, directory, stem):
     path = Path(directory) / "{}.svg".format(stem)
     path.write_text(diagram_svg(model), encoding="utf-8")
     return path
+
+
+# ---------------------------------------------------------------------------
+# The data sheet.  Written for a supervisor and for the thesis, so it argues
+# the case in prose.  A renderer: it reads the model and computes nothing.
+# ---------------------------------------------------------------------------
+
+def _num(value, places=1):
+    """A figure for prose, with thousands separators; formatting only."""
+
+    if value is None:
+        return "not recorded"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    if float(value) == int(value) and abs(value) >= 1000:
+        return "{:,}".format(int(value))
+    return "{:,.{p}f}".format(float(value), p=places)
+
+
+def _pounds(price):
+    price = price or {}
+    if price.get("pounds") is None:
+        return "no total can be given, because no line is priced"
+    text = "£{:.2f}".format(price["pounds"])
+    if price.get("is_floor"):
+        unpriced = price.get("unpriced") or []
+        return ("at least {}, a floor and not a forecast, because {} {} no "
+                "price yet ({})".format(
+                    text, len(unpriced),
+                    "line has" if len(unpriced) == 1 else "lines have",
+                    ", ".join(unpriced)))
+    return text
+
+
+def _sentence(text):
+    text = str(text).strip()
+    return text if text.endswith((".", "?", "!")) else text + "."
+
+
+def _verdict_opening(verdict):
+    """The outcome, in one sentence, naming the half that fails."""
+
+    tension, shape = verdict["tension"], verdict["shape"]
+    carries = bool(tension.get("passes"))
+    keeps = bool(shape.get("within"))
+    if carries and keeps:
+        return ("This configuration holds: the parts carry the tension, and "
+                "the net keeps its shape within the acceptance line.")
+    if not carries and not keeps:
+        return ("This configuration does not hold, and both halves fail: the "
+                "parts do not carry the tension, and the net does not keep "
+                "its shape within the acceptance line.")
+    if not carries:
+        return ("This configuration does not hold, because the parts do not "
+                "carry the tension, although the net does keep its shape "
+                "within the acceptance line.")
+    return ("This configuration does not hold, because the net does not keep "
+            "its shape within the acceptance line, although the parts do "
+            "carry the tension.")
+
+
+def _datasheet_sections(model):
+    demand = model.get("demand") or {}
+    verdict = model["verdict"]
+    tension, shape = verdict["tension"], verdict["shape"]
+    out = []
+
+    # 1
+    out.append("## What this machine replaces\n\n" + "\n\n".join([
+        "The winch machine described here stands in for the timber falsework "
+        "that would otherwise hold the vault up while it is built. The "
+        "falsework is the reference the machine is judged against: the "
+        "deflection of its rib becomes the acceptance line, the most the "
+        "net may stray from its intended shape before it is no better than "
+        "the timber it replaced.",
+        "The study records the rib in these words, quoted verbatim: "
+        "\"{}\".".format(shape.get("acceptance_source") or "no source recorded"),
+        "That gives an acceptance line of {} mm. {}".format(
+            _num(shape.get("acceptance_mm"), 2),
+            "It is taken from the study's own record of the rib, and is not "
+            "re-derived here." if shape.get("acceptance_source")
+            else "No source was recorded for it, so the reader should treat "
+                 "the line with caution."),
+    ]))
+
+    # 2
+    wires = demand.get("wires") or []
+    out.append("## What the vault demands\n\n" + "\n\n".join([
+        "The net must be held at a prestress floor of {} N, which is the "
+        "largest tension any wire carries at any stage of the build. The "
+        "stage that sizes it is {}. The study entered a uniform prestress of "
+        "{} N for the cut rule; the floor is what the staged analysis then "
+        "found the wires actually have to carry.".format(
+            _num(demand.get("prestress_floor_newtons")),
+            demand.get("sizing_stage") or "not recorded",
+            _num(demand.get("prestress_input_newtons"))),
+        "The skin is laid at a density of {} and a thickness of {}, both as "
+        "recorded by the study in its own units, and the largest weight "
+        "placed on the net at any stage is {} N. The net is held by {} "
+        "anchors and driven by {} {}.".format(
+            _num(demand.get("density")), _num(demand.get("thickness"), 3),
+            _num(demand.get("placed_weight_newtons")),
+            demand.get("anchors", 0), len(wires),
+            "wire" if len(wires) == 1 else "wires"),
+        "These figures come from the staged cable-net analysis of the study "
+        "named {}, taken on {}. They are results of that analysis and not "
+        "measurements of a built vault.".format(
+            model.get("study") or "(unnamed)", model.get("generated_at")),
+    ]))
+
+    # 3
+    lines = []
+    for part in model.get("parts") or []:
+        price = ("£{:.2f}".format(part["unit_price"])
+                 if part.get("unit_price") is not None else "no price yet")
+        bits = [part.get("supplier") or "supplier not recorded"]
+        if part.get("part_number"):
+            bits.append("part number {}".format(part["part_number"]))
+        bits.append(price)
+        if part.get("vat"):
+            bits.append("VAT {}".format(part["vat"]))
+        if part.get("confidence"):
+            bits.append("confidence {}".format(part["confidence"]))
+        lines.append("{} {} ({}): {}.".format(
+            part["kind"].replace("_", " ").capitalize(), part["id"],
+            part["model"], "; ".join(bits)))
+    speed = model.get("rope_speed_mm_s")
+    out.append("## What was chosen\n\n" + "\n\n".join([
+        "The chosen configuration is made of the parts below, in the order "
+        "the load travels through them.",
+        "\n\n".join(lines) if lines else "No parts are recorded.",
+        "Priced together, the parts come to {}. Prices are as seen on the "
+        "date recorded against each line in the spreadsheet; VAT is not "
+        "normalised between suppliers and delivery is excluded.".format(
+            _pounds(model.get("price"))),
+        "The rope speed is {}.".format(
+            "{} mm/s".format(_num(speed)) if speed is not None
+            else "not fixed by this configuration"),
+    ]))
+
+    # 4
+    margin = tension.get("margin")
+    halves = [
+        "The tension half asks whether every part can carry what the net "
+        "puts on it. The weakest part, which binds, is {}. It sets a ceiling "
+        "of {} N against a prestress floor of {} N, a margin of {}.{}".format(
+            tension.get("binding") or "not recorded",
+            _num(tension.get("ceiling_newtons")),
+            _num(tension.get("prestress_floor_newtons")),
+            "{:.2f} times".format(margin) if margin is not None
+            else "not recorded",
+            " The verdict carries this note: {}".format(
+                _sentence(tension["passes_note"]))
+            if tension.get("passes_note") else ""),
+    ]
+    reach = ""
+    if shape.get("unreachable_stages"):
+        reach = (" The correction does not reach stage {}, which fails the "
+                 "half outright.".format(
+                     ", ".join(str(s) for s in shape["unreachable_stages"])))
+    halves.append(
+        "The shape half asks whether the net, once corrected, stays within "
+        "the acceptance line. The worst residual after correction is {} mm, "
+        "at stage {}, against an acceptance line of {} mm, which is {}.{}"
+        .format(
+            _num(shape.get("worst_residual_mm"), 2),
+            shape.get("worst_stage") or "not recorded",
+            _num(shape.get("acceptance_mm"), 2),
+            "within it" if shape.get("within") else "outside it", reach))
+    stage_lines = []
+    for stage in model.get("stages") or []:
+        stage_lines.append(
+            "Stage {} ({}, {}): residual {} mm, {}.".format(
+                stage.get("stage"), stage.get("name"), stage.get("kind"),
+                _num(stage.get("residual_after"), 2),
+                "reached" if stage.get("reachable") is not False
+                else "not reachable"))
+    out.append("## Whether it holds\n\n" + "\n\n".join(
+        [_verdict_opening(verdict)] + halves
+        + ["The two halves are separate questions and can disagree. Strong "
+           "parts do not keep a net in shape, and a net that keeps its "
+           "shape may still be held by parts that would break."]
+        + (["\n\n".join(stage_lines)] if stage_lines else [])))
+
+    # 5
+    term_lines = []
+    ceiling = tension.get("ceiling_newtons")
+    for term in model.get("terms") or []:
+        if term.get("binds"):
+            gap = " This term binds."
+        elif ceiling is not None:
+            gap = " It is {} N above the binding term.".format(
+                _num(term["newtons"] - ceiling))
+        else:
+            gap = ""
+        term_lines.append(
+            "The {} term allows {} N and is set by {}.{}".format(
+                term["name"], _num(term["newtons"]),
+                term.get("part_id") or "the configuration as a whole", gap))
+    out.append("## The load path\n\n" + "\n\n".join([
+        "The ceiling is the smallest of the terms below. They are all given, "
+        "and not only the one that won, so the reader can see how far each "
+        "is from binding.",
+        "\n\n".join(term_lines) if term_lines else "No terms are recorded.",
+    ]))
+
+    # 6
+    assumed = []
+    for item in model.get("assumptions") or []:
+        assumed.append("**{}.** Value: {}. {}".format(
+            item["what"], _num(item.get("value"), 2), _sentence(item["why"])))
+    out.append("## The assumptions, listed as assumptions\n\n" + "\n\n".join([
+        "Every figure below was assumed, and was not measured. It is listed "
+        "here so that no assumed number can be mistaken for a measured one. "
+        "The rope's axial stiffness, for instance, is taken as {} N, and its "
+        "provenance is recorded as: {}.".format(
+            _num(demand.get("ea_newtons")),
+            demand.get("ea_provenance") or "not recorded"),
+        "\n\n".join(assumed) if assumed else "No assumptions are recorded.",
+    ]))
+
+    # 7
+    out.append("## What is not checked\n\n" + "\n\n".join([
+        "The verdict above is silent on the following. Silence here is not "
+        "a pass.",
+        "\n\n".join(model.get("not_checked") or ["Nothing is recorded."]),
+    ]))
+    return out
+
+
+def datasheet_markdown(model):
+    """The data sheet as Markdown, seven sections in the specified order."""
+
+    head = "# {}: winch machine data sheet\n\nFigures taken {}. Units: {}.".format(
+        model.get("study") or "Cable-net study", model.get("generated_at"),
+        model.get("units"))
+    return head + "\n\n" + "\n\n".join(_datasheet_sections(model)) + "\n"
+
+
+def write_datasheet(model, directory, stem):
+    """Write the data sheet beside the other exports and return its path."""
+
+    path = Path(directory) / "{}.md".format(stem)
+    path.write_text(datasheet_markdown(model), encoding="utf-8")
+    return path

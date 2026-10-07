@@ -413,3 +413,104 @@ def test_the_net_band_counts_agree_with_their_nouns():
     demand["net"]["fixed"] = [1]
     two = exports.diagram_svg(_model(demand=demand))
     assert "2 wires" in two and "1 anchor," in two
+
+
+def _section(text, heading_word):
+    """The body of the `## ` section whose heading contains the word.
+
+    Found by heading text, never by position, so adding a section cannot make
+    an assertion silently read the wrong one.
+    """
+    blocks = text.split("\n## ")
+    matches = [b for b in blocks[1:] if b.splitlines()[0].lower().find(heading_word) >= 0]
+    assert len(matches) == 1, (heading_word, [b.splitlines()[0] for b in blocks])
+    return matches[0]
+
+
+def test_the_data_sheet_leads_with_the_failure_when_it_fails():
+    model = _model()
+    model["verdict"]["shape"]["within"] = False
+    model["verdict"]["shape"]["worst_residual_mm"] = 7.4
+    model["verdict"]["holds"] = False
+    section = _section(exports.datasheet_markdown(model), "whether it holds")
+    body = section.split("\n", 1)[1].strip()
+    first_sentence = body.split(". ")[0]
+    assert "not" in first_sentence.lower() or "fails" in first_sentence.lower()
+    assert "does not keep its shape" in first_sentence
+    assert "do not carry" not in first_sentence
+    assert "7.4" in section
+
+
+def test_the_data_sheet_names_the_tension_half_when_only_it_fails():
+    model = _model()
+    model["verdict"]["tension"]["passes"] = False
+    model["verdict"]["holds"] = False
+    section = _section(exports.datasheet_markdown(model), "whether it holds")
+    first_sentence = section.split("\n", 1)[1].strip().split(". ")[0]
+    assert "do not carry the tension" in first_sentence
+    assert "does not keep" not in first_sentence
+
+
+def test_the_data_sheet_states_a_pass_first_when_both_halves_hold():
+    model = _model()
+    assert model["verdict"]["holds"]
+    section = _section(exports.datasheet_markdown(model), "whether it holds")
+    first_sentence = section.split("\n", 1)[1].strip().split(". ")[0]
+    assert "holds" in first_sentence.lower() and "not" not in first_sentence.lower()
+
+
+def test_the_assumptions_are_a_section_and_not_a_footnote():
+    text = exports.datasheet_markdown(_model())
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert any("assumption" in h.lower() for h in headings)
+    assert any("not checked" in h.lower() for h in headings)
+    assert "450000" in text or "450,000" in text      # the rope EA is named
+
+
+def test_the_sheet_has_the_seven_sections_in_the_specified_order():
+    text = exports.datasheet_markdown(_model())
+    headings = [l[3:].lower() for l in text.splitlines() if l.startswith("## ")]
+    words = ["replaces", "demands", "chosen", "holds", "load path",
+             "assumptions", "not checked"]
+    assert len(headings) == 7
+    for heading, word in zip(headings, words):
+        assert word in heading
+
+
+def test_every_assumed_figure_reaches_the_sheet():
+    model = _model()
+    section = _section(exports.datasheet_markdown(model), "assumptions")
+    for assumption in model["assumptions"]:
+        assert assumption["what"] in section
+
+
+def test_every_unchecked_item_reaches_the_sheet():
+    model = _model()
+    section = _section(exports.datasheet_markdown(model), "not checked")
+    for line in model["not_checked"]:
+        assert line in section
+
+
+def test_the_acceptance_source_is_quoted_verbatim():
+    model = _model()
+    section = _section(exports.datasheet_markdown(model), "replaces")
+    assert model["verdict"]["shape"]["acceptance_source"] in section
+
+
+def test_the_data_sheet_has_no_em_dash_and_no_latex():
+    text = exports.datasheet_markdown(_model())
+    assert "\u2014" not in text and "$" not in text and "\frac" not in text
+
+
+def test_the_load_path_lists_every_term_and_marks_the_binding_one():
+    model = _model()
+    section = _section(exports.datasheet_markdown(model), "load path")
+    for term in model["terms"]:
+        assert term["name"] in section
+    assert section.count("binds") + section.count("binding") >= 1
+
+
+def test_the_data_sheet_is_written_beside_the_others(tmp_path):
+    path = exports.write_datasheet(_model(), tmp_path, "vault-cablenet")
+    assert path.name == "vault-cablenet.md"
+    assert path.read_text(encoding="utf-8").startswith("# ")
