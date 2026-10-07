@@ -189,6 +189,15 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     rule, not a value derived from anything.
     """
 
+    if falsework is not None and not (acceptance is None and acceptance_source is None):
+        raise CableNetError(
+            "This run names the falsework entry {!r} AND an explicit acceptance "
+            "line. The falsework computes the acceptance from that rib and this "
+            "skin, so the explicit one would be discarded without saying so, and "
+            "the figure on screen would not be the figure that was asked for. "
+            "Give one or the other.".format(falsework)
+        )
+
     vertices = arrays["vertices"]
     edges = [tuple(edge) for edge in arrays["edges"]]
     anchors = geometry.support_ids(contract)
