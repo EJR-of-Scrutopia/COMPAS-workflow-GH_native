@@ -14,8 +14,8 @@ import json
 import math
 from pathlib import Path
 
-from tree_forest_compas.capacity import Mechanism
-from tree_forest_compas.capacity import ceiling_terms
+from tree_forest_compas.mechanism import Mechanism
+from tree_forest_compas.mechanism import ceiling_terms
 
 PARTS_PATH = Path(__file__).resolve().parent / "parts.json"
 GRAVITY = 9.80665

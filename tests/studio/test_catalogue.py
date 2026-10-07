@@ -148,3 +148,22 @@ def test_an_unpriced_line_keeps_the_total_a_floor():
     assert total["is_floor"] is True
     assert total["unpriced"]          # the EG34 carries no price
     assert total["pounds"] > 0.0
+
+
+def test_importing_the_catalogue_loads_no_solver_stack():
+    # A clean interpreter: in this process another test has already imported
+    # numpy, so only a subprocess can show the catalogue does not pull it in.
+    import subprocess
+
+    script = """
+import sys
+sys.path.insert(0, {studio!r})
+import catalogue
+bad = [m for m in ("numpy", "scipy", "compas", "compas_fd") if m in sys.modules]
+assert not bad, bad
+print("clean")
+""".format(studio=str(Path(catalogue.__file__).resolve().parent))
+    done = subprocess.run([sys.executable, "-c", script],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "clean"
