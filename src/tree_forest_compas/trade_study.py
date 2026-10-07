@@ -44,11 +44,12 @@ import math
 
 from tree_forest_compas.capacity import CapacityError
 from tree_forest_compas.capacity import Mechanism
+from tree_forest_compas.capacity import capacity_from_curve
 from tree_forest_compas.capacity import capacity_of
 
 DEFAULT_STEPS_PER_REVOLUTION = 200.0
 DEFAULT_MICROSTEPS = 16.0
-DRIVE_FIELDS = ("steps_per_revolution", "microsteps")
+DRIVE_FIELDS = ("steps_per_revolution", "microsteps", "counts_per_revolution")
 
 CHECKS_PERFORMED = [
     "rope tension, static, of the NET CABLE (full cable tension, dead-ended at the carriage) against rope_mbl / safety_factor",
@@ -85,7 +86,12 @@ UNIT_NOTES = {
         "step already failed (below one walk step), not that nothing can be carried"
     ),
     "breaching_factor": "multiple of the load pattern (dimensionless)",
-    "resolution": "mm of net travel per motor microstep",
+    "resolution": "mm of net travel per commanded count",
+    "counts_per_revolution": (
+        "commanded counts per motor revolution (dimensionless); steps times "
+        "microsteps for a stepper, and the encoder counts for a drive that has "
+        "no microsteps"
+    ),
     "drum_radius": "mm",
     "motor_torque": "N mm",
     "rope_mbl": "N, the net cable's minimum breaking load",
@@ -122,16 +128,24 @@ def resolution_at_the_net(
     reeve_factor,
     steps_per_revolution=DEFAULT_STEPS_PER_REVOLUTION,
     microsteps=DEFAULT_MICROSTEPS,
+    counts_per_revolution=None,
 ):
-    """Millimetres of net travel per motor microstep: cable travel over the falls."""
+    """Millimetres of net travel per commanded count: cable travel over the falls.
 
-    per_step = (
-        2.0
-        * math.pi
-        * float(drum_radius)
-        / (float(steps_per_revolution) * float(microsteps) * float(gear_ratio))
-    )
-    return per_step / float(reeve_factor)
+    A stepper's counts are steps times microsteps, which is the default. A drive
+    that positions from an encoder has counts of its own and no microsteps at
+    all, so counts_per_revolution is given directly for those. Scoring an
+    encoder drive as though it microstepped would make the accuracy front
+    meaningless for it.
+    """
+
+    if counts_per_revolution is None:
+        counts_per_revolution = float(steps_per_revolution) * float(microsteps)
+    counts = float(counts_per_revolution)
+    if not counts > 0.0:
+        raise TradeStudyError("counts_per_revolution must be greater than zero.")
+    per_count = 2.0 * math.pi * float(drum_radius) / (counts * float(gear_ratio))
+    return per_count / float(reeve_factor)
 
 
 def _check_grid(grid):
@@ -159,6 +173,8 @@ def sweep(
     max_factor=20.0,
     steps_per_revolution=DEFAULT_STEPS_PER_REVOLUTION,
     microsteps=DEFAULT_MICROSTEPS,
+    counts_per_revolution=None,
+    curve=None,
     **fixed_mechanism,
 ):
     """Run a capacity walk for every combination in the grid.
@@ -173,6 +189,7 @@ def sweep(
     base = dict(fixed_mechanism)
     base["steps_per_revolution"] = steps_per_revolution
     base["microsteps"] = microsteps
+    base["counts_per_revolution"] = counts_per_revolution
     results = []
     for values in itertools.product(*(grid[name] for name in names)):
         spec = dict(base)
@@ -183,8 +200,17 @@ def sweep(
         row = {name: getattr(mechanism, name) for name in Mechanism._fields}
         row["steps_per_revolution"] = spec["steps_per_revolution"]
         row["microsteps"] = spec["microsteps"]
+        counts = spec["counts_per_revolution"]
+        if counts is None:
+            try:
+                counts = float(spec["steps_per_revolution"]) * float(spec["microsteps"])
+            except (TypeError, ValueError):
+                counts = None
+        row["counts_per_revolution"] = counts
         try:
             for name in DRIVE_FIELDS:
+                if name == "counts_per_revolution" and spec[name] is None:
+                    continue
                 value = float(spec[name])
                 if not (math.isfinite(value) and value > 0.0):
                     raise CapacityError(
@@ -192,17 +218,20 @@ def sweep(
                             name, spec[name]
                         )
                     )
-            outcome = capacity_of(
-                problem,
-                fixed=fixed,
-                rest_lengths=rest_lengths,
-                ea=ea,
-                load_pattern=load_pattern,
-                mechanism=mechanism,
-                acceptance=acceptance,
-                steps=steps,
-                max_factor=max_factor,
-            )
+            if curve is None:
+                outcome = capacity_of(
+                    problem,
+                    fixed=fixed,
+                    rest_lengths=rest_lengths,
+                    ea=ea,
+                    load_pattern=load_pattern,
+                    mechanism=mechanism,
+                    acceptance=acceptance,
+                    steps=steps,
+                    max_factor=max_factor,
+                )
+            else:
+                outcome = capacity_from_curve(mechanism, curve, acceptance)
         except CapacityError as error:
             row.update(
                 {
@@ -231,8 +260,7 @@ def sweep(
                     mechanism.drum_radius,
                     mechanism.gear_ratio,
                     mechanism.reeve_factor,
-                    spec["steps_per_revolution"],
-                    spec["microsteps"],
+                    counts_per_revolution=counts,
                 ),
                 "parts": int(mechanism.reeve_factor),
                 "skipped": None,
@@ -260,6 +288,8 @@ def study(
     max_factor=20.0,
     steps_per_revolution=DEFAULT_STEPS_PER_REVOLUTION,
     microsteps=DEFAULT_MICROSTEPS,
+    counts_per_revolution=None,
+    curve=None,
     **fixed_mechanism,
 ):
     """The sweep, its fronts, and a header that lets the file be read alone."""
@@ -276,6 +306,8 @@ def study(
         max_factor=max_factor,
         steps_per_revolution=steps_per_revolution,
         microsteps=microsteps,
+        counts_per_revolution=counts_per_revolution,
+        curve=curve,
         **fixed_mechanism,
     )
     header = {
@@ -290,6 +322,8 @@ def study(
         "fixed_mechanism": dict(fixed_mechanism),
         "steps_per_revolution": steps_per_revolution,
         "microsteps": microsteps,
+        "counts_per_revolution": counts_per_revolution,
+        "curve_supplied": curve is not None,
         "acceptance": acceptance,
         "walk_steps": steps,
         "max_factor": max_factor,

@@ -257,3 +257,80 @@ def test_the_disclosure_names_both_ropes_and_the_unchecked_failures():
     assert any("SPOOL ROPE" in line for line in CHECKS_PERFORMED)
     assert "bend fatigue" in UNCHECKED_WARNING and "fit the drum" in UNCHECKED_WARNING
     assert "below one walk step" in UNIT_NOTES["limit_factor"]
+
+
+def test_counts_per_revolution_matches_the_equivalent_stepper_pair():
+    from tree_forest_compas.trade_study import resolution_at_the_net
+
+    stepper = resolution_at_the_net(
+        36.0, 20.0, 1, steps_per_revolution=200.0, microsteps=16.0
+    )
+    encoder = resolution_at_the_net(36.0, 20.0, 1, counts_per_revolution=3200.0)
+    assert abs(stepper - encoder) < 1e-12
+
+
+def test_a_precomputed_curve_gives_the_same_rows_without_solving(monkeypatch):
+    import numpy as np
+    import tree_forest_compas.trade_study as module
+    from tree_forest_compas.capacity import tension_curve
+    from tree_forest_compas.fd import register_fd_network
+
+    lines = [
+        [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+        [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+    ]
+    problem = register_fd_network(lines)
+    pattern = np.zeros((3, 3))
+    pattern[1, 2] = -1.0
+    grid = {"motor_torque": [1000.0, 3000.0, 9000.0]}
+    fixed_mechanism = dict(
+        drum_radius=36.0, reeve_factor=1, gear_ratio=20.0, gear_efficiency=0.94,
+        rope_mbl=9090.0, anchor_wll=3340.0,
+    )
+    solved = module.sweep(
+        problem, [0, 2], [995.0, 995.0], 2.0e5, pattern, grid, 50.0,
+        steps=10, max_factor=2000.0, **fixed_mechanism
+    )
+    curve = tension_curve(
+        problem, [0, 2], [995.0, 995.0], 2.0e5, pattern,
+        steps=10, max_factor=2000.0,
+    )
+
+    def explode(*args, **kwargs):
+        raise AssertionError("sweep solved the net when a curve was supplied")
+
+    monkeypatch.setattr(module, "capacity_of", explode)
+    cached = module.sweep(
+        problem, [0, 2], [995.0, 995.0], 2.0e5, pattern, grid, 50.0,
+        steps=10, max_factor=2000.0, curve=curve, **fixed_mechanism
+    )
+    assert cached == solved
+
+
+def test_an_encoder_drive_row_carries_the_effective_counts_and_none_stays_valid():
+    import numpy as np
+    import tree_forest_compas.trade_study as module
+    from tree_forest_compas.fd import register_fd_network
+
+    lines = [
+        [[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+        [[2000.0, 0.0, 0.0], [1000.0, 0.0, -300.0]],
+    ]
+    problem = register_fd_network(lines)
+    pattern = np.zeros((3, 3))
+    pattern[1, 2] = -1.0
+    common = dict(
+        drum_radius=36.0, reeve_factor=1, gear_ratio=20.0, gear_efficiency=0.94,
+        rope_mbl=9090.0, anchor_wll=3340.0, motor_torque=3000.0,
+    )
+    args = (problem, [0, 2], [995.0, 995.0], 2.0e5, pattern, {"gear_ratio": [20.0]}, 50.0)
+    default = module.sweep(*args, steps=5, max_factor=2000.0, **{
+        k: v for k, v in common.items() if k != "gear_ratio"})
+    assert default[0]["skipped"] is None
+    assert default[0]["counts_per_revolution"] == 3200.0
+    encoder = module.sweep(*args, steps=5, max_factor=2000.0,
+                           counts_per_revolution=4096.0, **{
+        k: v for k, v in common.items() if k != "gear_ratio"})
+    assert encoder[0]["counts_per_revolution"] == 4096.0
+    assert encoder[0]["resolution"] == module.resolution_at_the_net(
+        36.0, 20.0, 1, counts_per_revolution=4096.0)
