@@ -72,11 +72,17 @@ async function build(root, studyName) {
   const speedBox = add(root, "section", "cablenet-speed");
   const verdictBox = add(root, "section", "cablenet-verdict");
   const tableBox = add(root, "section", "cablenet-table");
+  const exportBox = add(root, "section", "cablenet-export");
 
   const floor = demand ? prestressFloor(demand) : 0;
   const shape = demand ? shapeOf(demand) : null;
   const wound = demand ? ropeWound(demand) : null;
   renderDemand(demandBox, demand, floor, demandNote, shape, wound);
+  renderExport(exportBox, studyName, demand, () => ({
+    configuration: configurationOf(state),
+    angle_degrees: ASSUMED_ANGLE_DEGREES,
+    ...(wound != null ? { rope_wound_mm: wound } : {}),
+  }));
   const rpmReadout = renderSpeed(speedBox, state, annotateSpeed);
   renderParts(partsBox, parts, state, refresh);
 
@@ -195,7 +201,11 @@ function configurationOf(state) {
   return { ...configuration, chain: [...configuration.chain] };
 }
 
-// the upgrade ladder, so the panel always shows what the next change would buy
+// the upgrade ladder, so the panel always shows what the next change would buy.
+// DUPLICATION, KNOWN: app.py's _export_ladder defines these same rungs for the
+// exports, and no route exposes them, so the panel cannot yet take them from
+// the server. Until one does (see the task 7 report) the two must be edited
+// together, and the server's is the one that counts.
 function ladder(state) {
   const rungs = [
     { chain: ["eye-M12", "turnbuckle-eye-eye-M10"] },
@@ -475,4 +485,84 @@ function renderTable(box, rows, parts) {
     table.appendChild(cells);
   });
   box.appendChild(table);
+}
+
+// The export section: where the three documents go, and the button that
+// writes them. Every string from the server goes through esc().
+function renderExport(box, studyName, demand, bodyOf) {
+  box.innerHTML = "<h3>Export</h3>";
+  const folderLine = add(box, "p", "cablenet-export-folder");
+  const choose = add(box, "button", "cablenet-export-choose");
+  choose.type = "button";
+  choose.textContent = "Choose folder";
+  const exportButton = add(box, "button", "cablenet-export-run");
+  exportButton.type = "button";
+  exportButton.textContent = "Export";
+  const reason = add(box, "span", "cablenet-note");
+  const result = add(box, "div", "cablenet-export-result");
+
+  const showFolder = (row) => {
+    folderLine.innerHTML = row && row.path
+      ? `Exports are saved to <strong>${esc(row.path)}</strong>` +
+        `${row.exists ? "" : " (this folder is not there)"}.`
+      : "No export folder is set.";
+  };
+  const showError = (error) => {
+    result.innerHTML = `<p class="cablenet-error">${esc(error.message)}</p>`;
+  };
+  const loadFolder = async () => {
+    try {
+      showFolder(await getJson("/api/cablenet/exports/folder"));
+    } catch (error) {
+      folderLine.textContent = `The export folder could not be read: ${error.message}`;
+    }
+  };
+
+  if (!demand) {
+    exportButton.disabled = true;
+    reason.textContent = " This study has no cable net demand, so there is " +
+      "nothing to describe.";
+  }
+
+  choose.onclick = async () => {
+    choose.disabled = true;
+    try {
+      const browsed = await getJson("/api/cablenet/exports/folder/browse",
+        { method: "POST" });
+      // A cancelled dialog returns no path and must change nothing.
+      if (browsed && browsed.path) {
+        const row = await getJson("/api/cablenet/exports/folder", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: browsed.path }) });
+        showFolder(row);
+        result.innerHTML = "";
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      choose.disabled = false;
+    }
+  };
+
+  exportButton.onclick = async () => {
+    exportButton.disabled = true;
+    result.textContent = "Writing the documents...";
+    try {
+      const done = await getJson(
+        `/api/studies/${encodeURIComponent(studyName)}/cablenet/exports`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bodyOf()) });
+      const files = (done.paths || []).map((path) => `<li>${esc(path)}</li>`).join("");
+      result.innerHTML =
+        `<p>Written to ${esc(done.folder)}:</p><ul>${files}</ul>` +
+        (done.note ? `<p class="cablenet-note">${esc(done.note)}</p>` : "");
+      loadFolder();
+    } catch (error) {
+      showError(error);
+    } finally {
+      exportButton.disabled = !demand;
+    }
+  };
+
+  loadFolder();
 }
