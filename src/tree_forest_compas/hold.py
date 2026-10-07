@@ -112,6 +112,43 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
     )
 
 
+def nodes_needing_support(vertices, edges, fixed, loads):
+    """Free nodes no tension-only net can hold, named rather than discovered.
+
+    A cable pulls a node TOWARD its neighbour and never pushes. So a node whose
+    load has a downward component, and every one of whose neighbours is at or
+    below it, cannot be in equilibrium: every available force and the load all
+    point down. On the real vault export two such nodes sit at the crown, and
+    the answer is to put a wire on them.
+
+    This is a NECESSARY condition, not a sufficient one: a node with a neighbour
+    above it may still be unholdable once the horizontal balance is worked out.
+    The solver stays the authority. This exists so the common case gives a node
+    number instead of a least squares message.
+    """
+
+    xyz = np.asarray(vertices, dtype=float)
+    pull = np.asarray(loads, dtype=float).reshape(-1, 3)
+    held = set(int(index) for index in fixed)
+    above = [False] * len(xyz)
+    touched = [False] * len(xyz)
+    for u, v in edges:
+        u, v = int(u), int(v)
+        touched[u] = touched[v] = True
+        if xyz[v][2] > xyz[u][2]:
+            above[u] = True
+        if xyz[u][2] > xyz[v][2]:
+            above[v] = True
+    return tuple(
+        index
+        for index in range(len(xyz))
+        if index not in held
+        and touched[index]
+        and not above[index]
+        and pull[index][2] < 0.0
+    )
+
+
 class CorrectionResult(NamedTuple):
     """The correction, and how well it was checked.
 
@@ -146,6 +183,7 @@ def correction_for(
     target,
     step=1.0,
     tolerance=5.0,
+    actuated=None,
 ):
     """What to reel to remove the deviation the markers actually measured.
 
@@ -156,13 +194,20 @@ def correction_for(
 
     rest_lengths are the CURRENT commanded rest lengths. The sensitivity of every
     node to each rest length is found by finite difference about the net at those
-    lengths: one solve at rest_lengths and one per cable with that cable shortened
-    by ``step`` mm. The linear model is trustworthy for commands of a few times
+    lengths: one solve at rest_lengths and one per ACTUATED cable with that cable
+    shortened by ``step`` mm. The linear model is trustworthy for commands of a few times
     ``step``; max_command reports the largest command so a caller can see when it
     has left that range. Too small a step gives noisy columns, too large a
     linearisation error. The commands are then applied and the net re-solved, and
     residual_after is the measured position plus the re-solved net's movement
     (nonlinear), so it and reachable do not rest on the linear model.
+
+    actuated is a sequence of cable indices, the ones a motor can really reel.
+    Only those are perturbed and commanded; every other cable receives exactly
+    0.0, and reel_commands is always one entry per cable so callers can index it
+    by cable number. None means every cable is actuated. A manufactured member
+    can never be commanded, so on a real net (2253 members, about seven wires)
+    this is the difference between one solve per member and one per wire.
 
     A net that is slack at any of the solved lengths (including the commanded
     ones) raises HoldError naming the cable or saying so, because a correction
@@ -192,6 +237,20 @@ def correction_for(
     if not np.isfinite(step) or step <= 0.0:
         raise HoldError("step must be finite and positive.")
 
+    if actuated is None:
+        driven = tuple(range(rest.size))
+    else:
+        driven = tuple(int(index) for index in actuated)
+        if not driven:
+            raise HoldError("actuated must name at least one cable to command.")
+        for index in driven:
+            if not 0 <= index < rest.size:
+                raise HoldError(
+                    "actuated cable {} is outside 0..{}.".format(index, rest.size - 1)
+                )
+        if len(set(driven)) != len(driven):
+            raise HoldError("actuated names the same cable twice.")
+
     deviation = (measured - target).reshape(-1)
     before = float(np.linalg.norm((measured - target), axis=1).max())
 
@@ -206,9 +265,9 @@ def correction_for(
 
     baseline = solve_at(rest, "cannot linearise the net at the current rest lengths")
 
-    # one column per cable: how every node moves per mm of shortening
+    # one column per actuated cable: how every node moves per mm of shortening
     columns = []
-    for index in range(rest.size):
+    for index in driven:
         nudged = rest.copy()
         nudged[index] = nudged[index] - step
         xyz = solve_at(
@@ -225,7 +284,9 @@ def correction_for(
             )
         )
     shortening = solution.x
-    commands = tuple(float(-value) for value in shortening)
+    full = np.zeros(rest.size)
+    full[list(driven)] = shortening
+    commands = tuple(float(-value) for value in full)
     predicted_vector = (jacobian.dot(shortening) + deviation).reshape(target.shape)
     predicted = float(np.linalg.norm(predicted_vector, axis=1).max())
 
