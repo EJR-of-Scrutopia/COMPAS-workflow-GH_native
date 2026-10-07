@@ -500,8 +500,8 @@ carries `supplier`, `part_number`, `unit_price`, `vat`, `price_seen`,
 | `ac-0r75-3ph` | B | 0.75 kW three phase, 4 pole, 1440 rpm | 4974 | continuous |
 | `ac-1r1-3ph` | B | 1.1 kW three phase, 4 pole, 1440 rpm | 7295 | continuous |
 | `ac-1r5-3ph` | B | 1.5 kW three phase, 4 pole, 1440 rpm | 9948 | continuous |
-| `boatlift-1hp` | C | 1 HP 56C boat hoist duty, single phase | 4130 | continuous |
-| `boatlift-2hp` | C | 2 HP 56C boat hoist duty, single phase | 8260 | continuous |
+| `boatlift-1hp` | C | 1 HP 56C boat hoist duty, single phase | 4128 | continuous |
+| `boatlift-2hp` | C | 2 HP 56C boat hoist duty, single phase | 8257 | continuous |
 
 The family B and C torques are computed from power and speed by the expression
 in section 6.1, not quoted by a supplier, so they carry confidence `assumed`
