@@ -14,6 +14,7 @@ acceptance line contradicted each other for exactly that reason.
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Dict, List
 
@@ -55,6 +56,14 @@ def _part_row(parts, kind, key):
     }
 
 
+def _tri(value):
+    """yes / no / not established, for a verdict that may be unknown."""
+
+    if value is None:
+        return NOT_ESTABLISHED
+    return "yes" if value else "no"
+
+
 def _chain_rows(parts, configuration):
     rows = []
     for key in configuration["chain"]:
@@ -69,6 +78,11 @@ def _shape_verdict(demand):
     A stage is satisfied when the correction reached it AND the residual it
     could not remove is inside the acceptance line. Both must hold at every
     stage: a vault that strays at one course is a vault that strayed.
+
+    ``within`` has three states.  True and False are findings.  None means NOT
+    ESTABLISHED: nothing was measured, or there is no line to judge it
+    against, and absence of evidence is never read as a pass.  An unreachable
+    stage is evidence, so it gives False even when nothing else is known.
     """
 
     acceptance = demand.get("acceptance")
@@ -77,14 +91,27 @@ def _shape_verdict(demand):
     unreachable = []
     for stage in demand.get("stages") or []:
         residual = stage.get("residual_after")
-        if residual is not None and (worst is None or residual > worst):
+        if (isinstance(residual, (int, float)) and not isinstance(residual, bool)
+                and math.isfinite(residual) and (worst is None or residual > worst)):
             worst, worst_stage = float(residual), stage.get("name")
         if stage.get("reachable") is False:
             unreachable.append(stage.get("name"))
-    within = True
+    why_unknown = None
     if unreachable:
         within = False
-    elif acceptance is not None and worst is not None:
+    elif not demand.get("stages"):
+        within = None
+        why_unknown = ("the demand has no stages, so no residual was "
+                       "measured")
+    elif worst is None:
+        within = None
+        why_unknown = ("no stage records a residual after correction, so "
+                       "nothing was measured")
+    elif acceptance is None:
+        within = None
+        why_unknown = ("no acceptance line is set, so the residual has "
+                       "nothing to be judged against")
+    else:
         within = worst <= float(acceptance)
     return {
         "worst_residual_mm": worst,
@@ -93,7 +120,19 @@ def _shape_verdict(demand):
         "acceptance_source": demand.get("acceptance_source"),
         "unreachable_stages": unreachable,
         "within": within,
+        "why_unknown": why_unknown,
     }
+
+
+NOT_ESTABLISHED = "not established"
+
+
+def _holds(tension_passes, within):
+    """True, False or None (not established).  None is never a pass."""
+
+    if not tension_passes or within is False:
+        return False
+    return True if within is True else None
 
 
 def _ladder(configuration, ladder_rows):
@@ -191,7 +230,7 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "verdict": {
             "tension": tension,
             "shape": shape,
-            "holds": bool(tension["passes"]) and bool(shape["within"]),
+            "holds": _holds(bool(tension["passes"]), shape["within"]),
         },
         "assumptions": _assumptions(parts, configuration, demand, angle_degrees),
         "not_checked": list(NOT_CHECKED),
@@ -402,8 +441,9 @@ def _chosen_rows(model):
          _blank(tension.get("passes_note"))],
         ["Tension: margin", _blank(tension.get("margin"))],
         ["Shape: within the acceptance line",
-         "yes" if shape.get("within") else "no",
-         "acceptance {} mm ({})".format(
+         _tri(shape.get("within")),
+         ("{}: {}; ".format(NOT_ESTABLISHED, shape.get("why_unknown"))
+          if shape.get("within") is None else "") + "acceptance {} mm ({})".format(
              _blank(None if shape.get("acceptance_mm") is None
                     else _millimetres(shape["acceptance_mm"])),
              _blank(shape.get("acceptance_source")))],
@@ -413,7 +453,7 @@ def _chosen_rows(model):
     if shape.get("unreachable_stages"):
         rows.append(["Shape: unreachable stages", ", ".join(
             str(n) for n in shape["unreachable_stages"])])
-    rows.append(["Both halves hold", "yes" if verdict.get("holds") else "no"])
+    rows.append(["Both halves hold", _tri(verdict.get("holds"))])
     return rows
 
 
@@ -612,6 +652,17 @@ def _box_width(lines):
 _BOX_MIN = 120
 
 
+def _svg_verdict(verdict, shape):
+    """One line that keeps pass, fail and not-established apart."""
+
+    outcome = {True: "holds", False: "does not hold",
+               None: NOT_ESTABLISHED + " (shape unchecked)"}[verdict.get("holds")]
+    return "Verdict: {}. Tension {}; shape {}.".format(
+        outcome, _tri(verdict["tension"].get("passes")),
+        {True: "within the line", False: "outside the line",
+         None: NOT_ESTABLISHED}[shape.get("within")])
+
+
 def diagram_svg(model):
     """The load path as one SVG string."""
 
@@ -636,7 +687,7 @@ def diagram_svg(model):
         model.get("study") or "Study")
     width = max(width, left * 2 + _estimated_width(heading, 14))
     band = top + box_h + 44
-    height = band + 30 + len(wires) * 14
+    height = band + 30 + len(wires) * 14 + 20
     width = int(round(width))
 
     parts = [
@@ -678,6 +729,9 @@ def diagram_svg(model):
     for row, wire in enumerate(wires):
         parts.append(_text(left, band + 24 + row * 14, "{} pulls net vertex {}".format(
             wire.get("name"), wire.get("net_vertex")), 11))
+    shape = model["verdict"]["shape"]
+    parts.append(_text(left, band + 24 + len(wires) * 14 + 14,
+                       _svg_verdict(model["verdict"], shape), 12, "bold"))
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
 
@@ -732,7 +786,17 @@ def _verdict_opening(verdict):
 
     tension, shape = verdict["tension"], verdict["shape"]
     carries = bool(tension.get("passes"))
-    keeps = bool(shape.get("within"))
+    keeps = shape.get("within")
+    if keeps is None:
+        why = shape.get("why_unknown") or "nothing was checked"
+        if not carries:
+            return ("This configuration does not hold, because the parts do "
+                    "not carry the tension. Whether the net keeps its shape "
+                    "has not been established, because {}.".format(why))
+        return ("Whether this configuration is sound has not been "
+                "established. The parts carry the tension, but whether the "
+                "net keeps its shape has not been established, because {}."
+                .format(why))
     if carries and keeps:
         return ("This configuration holds: the parts carry the tension, and "
                 "the net keeps its shape within the acceptance line.")
@@ -848,15 +912,22 @@ def _datasheet_sections(model):
         reach = (" The correction does not reach stage {}, which fails the "
                  "half outright.".format(
                      ", ".join(str(s) for s in shape["unreachable_stages"])))
-    halves.append(
-        "The shape half asks whether the net, once corrected, stays within "
-        "the acceptance line. The worst residual after correction is {} mm, "
-        "at stage {}, against an acceptance line of {} mm, which is {}.{}"
-        .format(
-            _millimetres(shape.get("worst_residual_mm")),
-            shape.get("worst_stage") or "not recorded",
-            _millimetres(shape.get("acceptance_mm")),
-            "within it" if shape.get("within") else "outside it", reach))
+    if shape.get("within") is None:
+        halves.append(
+            "The shape half asks whether the net, once corrected, stays "
+            "within the acceptance line. That has not been established, "
+            "because {}. Nothing here counts as a pass for it.".format(
+                shape.get("why_unknown") or "nothing was checked"))
+    else:
+        halves.append(
+            "The shape half asks whether the net, once corrected, stays within "
+            "the acceptance line. The worst residual after correction is {} mm, "
+            "at stage {}, against an acceptance line of {} mm, which is {}.{}"
+            .format(
+                _millimetres(shape.get("worst_residual_mm")),
+                shape.get("worst_stage") or "not recorded",
+                _millimetres(shape.get("acceptance_mm")),
+                "within it" if shape.get("within") else "outside it", reach))
     stage_lines = []
     for stage in model.get("stages") or []:
         stage_lines.append(

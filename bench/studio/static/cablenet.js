@@ -187,17 +187,31 @@ function shapeOf(demand) {
   let worst = null;
   let allReachable = true;
   for (const stage of stages) {
-    if (stage.reachable !== true) allReachable = false;
+    if (stage.reachable === false) allReachable = false;
     const residual = Number(stage.residual_after);
-    if (Number.isFinite(residual) && (worst === null || residual > worst.residual)) {
+    if (stage.residual_after != null && Number.isFinite(residual) &&
+        (worst === null || residual > worst.residual)) {
       worst = { residual, name: stage.name == null ? stage.stage : stage.name };
     }
   }
   const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
-  const known = stages.length > 0 && worst !== null;
-  const withinLine = acceptance == null || (worst !== null && worst.residual <= acceptance);
+  // Three states, the same as the exported documents: it holds, it fails, or
+  // it is NOT ESTABLISHED. Absence of evidence is never a pass. A stage the
+  // correction cannot reach is evidence, so it fails even with nothing else.
+  let whyUnknown = null;
+  if (!allReachable) {
+    whyUnknown = null;
+  } else if (stages.length === 0) {
+    whyUnknown = "the demand has no stages, so no residual was measured";
+  } else if (worst === null) {
+    whyUnknown = "no stage records a residual after correction, so nothing was measured";
+  } else if (acceptance === null) {
+    whyUnknown = "no acceptance line is set, so the residual has nothing to be judged against";
+  }
+  const known = whyUnknown === null;
+  const withinLine = worst !== null && acceptance !== null && worst.residual <= acceptance;
   return {
-    known, worst, allReachable, acceptance,
+    known, whyUnknown, worst, allReachable, acceptance,
     holds: known && allReachable && withinLine,
   };
 }
@@ -253,7 +267,11 @@ function renderDemand(box, demand, floor, note, shape, wound) {
     `<strong>${floor.toFixed(0)} N</strong>, at stage ` +
     `${esc(demand.sizing_stage)}. That is a property of the vault and the skin, so ` +
     `it does not move when parts change.</p><p>${acceptance}</p>` +
-    (shape && shape.known
+    (shape && !shape.known
+      ? `<p>Whether the net keeps its shape has not been established, because ` +
+        `${esc(shape.whyUnknown)}.</p>`
+      : "") +
+    (shape && shape.known && shape.worst
       ? `<p>The worst the net misses its shape after correction is ` +
         `<strong>${shape.worst.residual.toFixed(2)} mm</strong>, at stage ` +
         `${esc(shape.worst.name)}` +
@@ -390,8 +408,13 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
     // not row.passes: the server folds the drum and rail checks into it
     const carries = row.ceiling >= floor;
     const pathOk = !path || (path.drum_fits && path.rail_fits);
-    const shapeOk = !shape || !shape.known || shape.holds;
-    verdict = carries && pathOk && shapeOk ? "It holds." : "It does not hold.";
+    const shapeFails = !!shape && shape.known && !shape.holds;
+    const shapeUnknown = !shape || !shape.known;
+    // A failure in either half stays a failure; only when nothing has failed
+    // does an unchecked shape make the answer "not established".
+    if (!carries || !pathOk || shapeFails) verdict = "It does not hold.";
+    else if (shapeUnknown) verdict = "Whether it holds has not been established.";
+    else verdict = "It holds.";
     if (carries) {
       reasons.push("The parts can carry the tension.");
     } else {
@@ -408,7 +431,7 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
       reasons.push(`The carriage would travel ${path.carriage_travel_mm.toFixed(0)} mm ` +
         `but the rail's stroke is ${path.rail_stroke_mm.toFixed(0)} mm.`);
     }
-    if (shape && shape.known) {
+    if (shape && shape.known && shape.worst) {
       const line = shape.acceptance == null ? "no acceptance line set"
         : `${shape.acceptance.toFixed(2)} mm acceptance line`;
       if (!shape.holds) {
@@ -422,8 +445,14 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
         reasons.push(`The net stays within the shape: the worst miss is ` +
           `${shape.worst.residual.toFixed(2)} mm against a ${line}.`);
       }
-    } else if (!demand || !shape || !shape.known) {
-      reasons.push("The shape of the net could not be checked.");
+    } else if (shape && !shape.known) {
+      reasons.push(`Whether the net keeps its shape has not been established, ` +
+        `because ${esc(shape.whyUnknown)}.`);
+    } else if (shape && !shape.worst) {
+      reasons.push("At least one stage cannot be corrected at all, so the net " +
+        "does not keep its shape.");
+    } else {
+      reasons.push("Whether the net keeps its shape has not been established.");
     }
   }
   box.innerHTML =

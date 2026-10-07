@@ -798,3 +798,113 @@ def test_downloading_before_any_run_is_a_404(client, monkeypatch, tmp_path):
     _into(monkeypatch, tmp_path / "out")
     response = client.get("/api/studies/My Vault/cablenet/exports/diagram")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The shape verdict has three states. Nothing to judge is NOT a pass.
+# ---------------------------------------------------------------------------
+
+def _degenerate_demands():
+    no_stages = _demand(stages=[])
+    no_residual = _demand()
+    for stage in no_residual["stages"]:
+        stage.pop("residual_after")
+    no_line = _demand(acceptance=None)
+    no_line["stages"][1]["residual_after"] = 99.0
+    return {"no stages": no_stages, "no residual": no_residual,
+            "no acceptance": no_line}
+
+
+@pytest.mark.parametrize("which", ["no stages", "no residual", "no acceptance"])
+def test_a_demand_with_nothing_to_judge_is_not_established(which):
+    model = _model(demand=_degenerate_demands()[which])
+    shape = model["verdict"]["shape"]
+    assert shape["within"] is None
+    assert shape["why_unknown"]
+    assert model["verdict"]["holds"] is not True
+    assert model["verdict"]["holds"] is None
+
+
+def test_the_three_reasons_are_told_apart():
+    reasons = {k: _model(demand=d)["verdict"]["shape"]["why_unknown"]
+               for k, d in _degenerate_demands().items()}
+    assert len(set(reasons.values())) == 3
+
+
+def test_a_failing_tension_half_is_false_even_when_the_shape_is_unknown():
+    import catalogue
+    parts = catalogue.load_parts()
+    configuration = _configuration()
+    row = _row(parts, configuration, passes=False)
+    model = _model(demand=_demand(stages=[]), row=row)
+    assert model["verdict"]["holds"] is False
+
+
+def test_genuine_verdicts_are_not_turned_into_unknowns():
+    passing = _model()["verdict"]
+    assert passing["shape"]["within"] is True and passing["holds"] is True
+    assert passing["shape"]["why_unknown"] is None
+    demand = _demand()
+    demand["stages"][1]["residual_after"] = 7.4
+    failing = _model(demand=demand)["verdict"]
+    assert failing["shape"]["within"] is False and failing["holds"] is False
+
+
+def test_an_unreachable_stage_is_a_failure_and_not_an_unknown():
+    demand = _demand(stages=[{"stage": 1, "name": "S1", "reachable": False}])
+    verdict = _model(demand=demand)["verdict"]
+    assert verdict["shape"]["within"] is False
+    assert verdict["holds"] is False
+    nulled = _demand(acceptance=None)
+    nulled["stages"][1]["reachable"] = False
+    assert _model(demand=nulled)["verdict"]["shape"]["within"] is False
+
+
+def _unknown_model():
+    return _model(demand=_demand(stages=[]))
+
+
+def test_the_data_sheet_says_not_established_and_never_that_it_holds():
+    text = exports.datasheet_markdown(_unknown_model())
+    section = _section(text, "whether it holds")
+    first = section.split("\n", 1)[1].strip().split(". ")[0].lower()
+    assert "not been established" in first
+    assert "this configuration holds" not in section.lower()
+    assert "does not hold" not in section.lower()
+    assert "stays within the acceptance line. That has not been established" in section
+    assert "no residual was measured" in section
+
+
+def test_the_chosen_sheet_says_not_established_and_never_yes_for_the_shape(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    written = exports.write_spreadsheet(_unknown_model(), tmp_path, "x")
+    rows = [[c.value for c in row] for row in
+            openpyxl.load_workbook(written[0])["Chosen"].iter_rows()]
+    by_label = {r[0]: r for r in rows if r and r[0]}
+    shape_row = by_label["Shape: within the acceptance line"]
+    both_row = by_label["Both halves hold"]
+    assert shape_row[1] == "not established"
+    assert "no residual was measured" in str(shape_row[2])
+    assert both_row[1] == "not established"
+
+
+def test_the_diagram_says_not_established_and_never_that_it_holds():
+    svg = exports.diagram_svg(_unknown_model())
+    assert "not established" in svg
+    assert "Verdict: holds" not in svg and "does not hold" not in svg
+    passing = exports.diagram_svg(_model())
+    assert "Verdict: holds" in passing and "not established" not in passing
+    demand = _demand()
+    demand["stages"][1]["residual_after"] = 7.4
+    failing = exports.diagram_svg(_model(demand=demand))
+    assert "does not hold" in failing and "not established" not in failing
+
+
+def test_the_panel_and_the_documents_agree_on_what_is_unknown():
+    import re
+    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
+          / "cablenet.js").read_text(encoding="utf-8")
+    for demand in _degenerate_demands().values():
+        why = _model(demand=demand)["verdict"]["shape"]["why_unknown"]
+        assert why in js          # the panel carries the documents' wording
+    assert re.search(r"acceptance === null", js)
