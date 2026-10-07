@@ -54,6 +54,7 @@ DRIVE_FIELDS = ("steps_per_revolution", "microsteps", "counts_per_revolution")
 CHECKS_PERFORMED = [
     "rope tension, static, of the NET CABLE (full cable tension, dead-ended at the carriage) against rope_mbl / safety_factor",
     "spool rope tension, static, of the SPOOL ROPE (lead tension, cable tension over the mechanical advantage) against spool_rope_mbl / safety_factor",
+    "sheave load, static, of the moving block (worst cable tension times the falls over the mechanical advantage) against sheave_swl, for any reeving of more than one fall",
     "anchor load, static, against anchor_wll",
     "drum torque against motor_torque * gear_ratio * gear_efficiency * torque_margin",
     "deviation from the unloaded shape against the acceptance line",

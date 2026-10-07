@@ -334,3 +334,9 @@ def test_an_encoder_drive_row_carries_the_effective_counts_and_none_stays_valid(
     assert encoder[0]["counts_per_revolution"] == 4096.0
     assert encoder[0]["resolution"] == module.resolution_at_the_net(
         36.0, 20.0, 1, counts_per_revolution=4096.0)
+
+
+def test_the_header_names_the_sheave_clause():
+    from tree_forest_compas.trade_study import CHECKS_PERFORMED
+
+    assert any("sheave_swl" in line for line in CHECKS_PERFORMED)
