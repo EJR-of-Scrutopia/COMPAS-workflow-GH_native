@@ -307,3 +307,31 @@ def test_a_non_positive_sheave_swl_is_refused(bad):
 
     with pytest.raises(CapacityError):
         _validate(_mech(reeve_factor=2, sheave_swl=bad), 40, 20.0, 100.0)
+
+
+def test_capacity_of_stops_walking_at_the_first_binding_rung(monkeypatch):
+    from tree_forest_compas import capacity as capacity_module
+
+    calls = []
+    real = capacity_module.solve_prescribed_lengths
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(capacity_module, "solve_prescribed_lengths", counting)
+    mechanism = Mechanism(
+        drum_radius=36.0, reeve_factor=1, gear_ratio=1.0, motor_torque=300.0,
+        gear_efficiency=0.94, rope_mbl=9.09e4, anchor_wll=3.34e4,
+    )
+    result = capacity_of(
+        _vee_problem(), fixed=[0, 2], rest_lengths=[995.0, 995.0], ea=2.0e5,
+        load_pattern=_unit_load(), mechanism=mechanism, max_factor=2000.0,
+        acceptance=1e9,
+    )
+    assert result.binding == "motor torque" and result.breaching_factor is not None
+    rungs_to_breach = int(round(result.breaching_factor / (2000.0 / 40)))
+    # the unloaded datum plus one solve per rung up to and including the breach,
+    # and nowhere near the 41 an always-full walk costs
+    assert len(calls) == 1 + rungs_to_breach
+    assert len(calls) < 10

@@ -152,13 +152,18 @@ def _checks(mechanism, tensions, deviation, acceptance):
 
 
 def tension_curve(problem, fixed, rest_lengths, ea, load_pattern,
-                  steps=40, max_factor=20.0):
+                  steps=40, max_factor=20.0, lazy=False):
     """Walk the load up and record what the NET does, for any mechanism.
 
     Nothing here knows about drums, gearing or rope. Every check a mechanism
     makes is a function of the worst cable tension and the deviation, so the
     expensive half of a capacity walk is done once and reused by every
     candidate. The walk stops at the first rung the solver cannot answer.
+
+    With lazy=True the unloaded datum is still solved here, but the rungs are
+    yielded one at a time in the returned curve's `points`, which is then a
+    one-shot generator: a consumer that stops at the first breach never pays
+    for the rungs above it. The default materialises every rung, as before.
     """
 
     pattern = np.asarray(load_pattern, dtype=float)
@@ -174,29 +179,34 @@ def tension_curve(problem, fixed, rest_lengths, ea, load_pattern,
         )
     reference = np.asarray(unloaded.session.equilibrium_vertices, dtype=float)
 
-    points = []
-    for step in range(1, int(steps) + 1):
-        factor = float(max_factor) * step / float(steps)
-        try:
-            state = solve_prescribed_lengths(
-                problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
-                loads=pattern * factor,
+    def rungs():
+        for step in range(1, int(steps) + 1):
+            factor = float(max_factor) * step / float(steps)
+            try:
+                state = solve_prescribed_lengths(
+                    problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
+                    loads=pattern * factor,
+                )
+            except PrescribedError as error:
+                kind = "net went slack" if error.kind == "slack" else "numerical failure"
+                yield CurvePoint(factor, None, None, kind, str(error))
+                return
+            xyz = np.asarray(state.session.equilibrium_vertices, dtype=float)
+            yield CurvePoint(
+                factor=factor,
+                worst_tension=float(np.max(np.asarray(state.tensions, dtype=float))),
+                deviation=float(np.linalg.norm(xyz - reference, axis=1).max()),
             )
-        except PrescribedError as error:
-            kind = "net went slack" if error.kind == "slack" else "numerical failure"
-            points.append(CurvePoint(factor, None, None, kind, str(error)))
-            break
-        xyz = np.asarray(state.session.equilibrium_vertices, dtype=float)
-        points.append(CurvePoint(
-            factor=factor,
-            worst_tension=float(np.max(np.asarray(state.tensions, dtype=float))),
-            deviation=float(np.linalg.norm(xyz - reference, axis=1).max()),
-        ))
-    return TensionCurve(tuple(points), int(steps), float(max_factor))
+
+    points = rungs() if lazy else tuple(rungs())
+    return TensionCurve(points, int(steps), float(max_factor))
 
 
 def capacity_from_curve(mechanism, curve, acceptance):
-    """Apply one mechanism's checks to a walk already done. No solving."""
+    """Apply one mechanism's checks to a walk. No solving of its own.
+
+    curve.points may be a lazy generator (see tension_curve); it is consumed
+    in order and abandoned at the first breach."""
 
     _validate(mechanism, curve.steps, curve.max_factor, acceptance)
 
@@ -250,6 +260,6 @@ def capacity_of(
     _validate(mechanism, steps, max_factor, acceptance)
     curve = tension_curve(
         problem, fixed, rest_lengths, ea, load_pattern,
-        steps=steps, max_factor=max_factor,
+        steps=steps, max_factor=max_factor, lazy=True,
     )
     return capacity_from_curve(mechanism, curve, acceptance)
