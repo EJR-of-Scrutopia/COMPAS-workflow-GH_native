@@ -544,19 +544,47 @@ between the wire and the eye bolt's axis and takes the matching rating, using
 the angled figure for anything over 5 degrees and refusing anything over 45,
 which is outside the published table.
 
-Turnbuckles are tiered by **configuration as well as size**, because the
-configuration matters as much as the thread. The rig's current part is a
-DIN 1480 hook and hook M10 in A4, which its supplier rates at 150 kg, 1471 N,
-and that is the single lowest limit in the whole machine. Published tables for
-eye and eye and for stub end at the same thread are far higher, by a factor
-approaching three. The hook is the weak element, so moving to a stub-end
-turnbuckle may buy more than moving up two thread sizes.
+Turnbuckles are tiered by **configuration as well as size, and configuration
+matters six times more than size.** All three ladders below are from
+steelropes24's own pages for DIN 1480 in V4A AISI 316, each stating both the
+working load and the tested minimum breaking load, and each stating the same
+method: "The payload of the turnbuckles is given with a 5-fold safety factor to
+the minimum breaking load." Working load in kilograms, with the newtons the
+catalogue holds:
 
-The ladder is therefore populated from each supplier's own page for the exact
-configuration and material, never from a generic DIN 1480 table, and section 13
-records that this ladder is not yet confirmed. The generic tables found so far
-disagree with each other and with the supplier by enough that quoting them
-would be worse than leaving the rung empty.
+| thread | hook/hook | hook/eye | eye/eye | h/h N | h/e N | e/e N |
+| --- | --- | --- | --- | --- | --- | --- |
+| M5 | 40 | not offered | 150 | 392 | | 1471 |
+| M6 | 53 | 55 | 250 | 520 | 539 | 2452 |
+| M8 | 90 | 120 | 500 | 883 | 1177 | 4903 |
+| M10 | 150 | 180 | 900 | 1471 | 1765 | 8826 |
+| M12 | not offered | 240 | 1000 | | 2354 | 9807 |
+| M14 | not offered | 260 | not offered | | 2550 | |
+| M16 | not offered | 360 | not offered | | 3530 | |
+| M20 | not offered | 540 | not offered | | 5296 | |
+
+**The hook is the weak element by a factor of six at the same thread.** The
+rig's part is the hook and hook M10 at 150 kg. The eye and eye in the same M10
+thread is 900 kg. Going up in hook form barely helps and runs out: the largest
+hook and eye offered, M20 at 540 kg, is still below the M10 eye and eye, and
+hook and hook is not made above M10 at all.
+
+The breaking loads confirm why. A hook and hook M10 breaks at 765 kg where an
+eye and eye M10 breaks at 4597 kg, and an M10 A4 thread's own tensile capacity
+is near 4100 kg. So the eye and eye is thread-limited, as a tensioner should
+be, and the hook form throws away five sixths of the thread before the metal is
+reached.
+
+This also settles it on grounds other than load. An open hook is the wrong
+termination for a permanently tensioned wire whatever its rating, because it
+can come unhooked, and a closed eye pinned with a shackle cannot.
+
+A generic DIN 1480 table is never used. The ones found while settling this
+disagreed with each other and with the supplier badly enough to be useless, and
+at least one quoted the minimum breaking load in a column a reader would take
+for a working load, which for the M10 eye and eye is a six-fold overstatement.
+Only a supplier's own page for the exact configuration and material is entered,
+and the catalogue records which column the figure came from.
 
 **rope**: `rope_mbl`, `mass_per_metre_kg`, `ea_newtons`, `diameter_mm`. 7x19
 AISI 316, with the MBL band published sources give for each diameter:
@@ -581,8 +609,11 @@ lengths scale with it. Section 13 carries it.
 
 **sheave**: `sheave_swl`, `diameter_mm`, `sheave_efficiency`. The rig's WZ 11 K
 is 125 kg at 180 degrees, 1226 N, 120 mm, and it is the binding part in any
-reeved arrangement. Heavier rungs come from the same supplier's range and are
-sourced with the turnbuckle ladder.
+reeved arrangement at any other choice of part, as the ladder in section 6.6
+shows. This is the one rung of the rope path still unsourced, and it is
+recorded in section 13. Until it is filled the honest answer is to leave the
+moving block off, which the ladder says costs nothing: direct drive reaches
+5625 N without it.
 
 **drum**: `drum_radius`, `width_mm`, `groove_pitch_mm`. The briefed drum is 72
 diameter winding surface, so radius 36, 150 wide, grooved at 4.
@@ -637,9 +668,36 @@ inverter is what makes them usable. The same motors on a 60 Hz supply would be
 a fifth faster again, which is the other half of why the supply frequency has
 to be stated rather than inherited from a data sheet.
 
-It is reported as a column with no pass or fail, because the acceptable rate of
-movement has not been set. Section 13 carries it as an open item: given a
-figure, it becomes a check like any other.
+**The acceptable rate is an input, not a constant, and deliberately so.**
+Nobody knows what rate the net wants, because no prototype has been built to
+find out, and finding out is what this calculation is for. Hard-coding a limit
+would be inventing the answer the machine is meant to produce.
+
+So the panel carries a rope speed slider, and it works in both directions:
+
+- Each configuration reports the rope speed it delivers, as a column.
+- The slider sets a speed of interest, and configurations are marked according
+  to whether they can deliver it. A family A row can be commanded to almost any
+  speed, so it is marked by whether the motor speed required is sane. A family
+  B row has its speed fixed by `rated_speed_rpm / gear_ratio`, so the slider
+  effectively selects the ratios that land in range, and the inverter's
+  frequency range sets how far from nominal it can be pulled.
+- The motor speed the chosen rope speed demands is reported beside it, in rpm,
+  because that is the number to check against a motor's own torque curve.
+
+The slider's range runs from 1 mm/s to 400 mm/s, which spans a slow deliberate
+creep at one end and the fastest the catalogue's gearing can produce at the
+other, and nothing in it is a verdict.
+
+**One honesty note about the derating.** `torque_margin` is a flat 0.5 for
+family A, chosen as a blanket allowance for the fact that a stepper's torque
+falls away with speed. With speed now an explicit input, that flat figure is
+only defensible at low speed, and at the top of the slider's range it will
+overstate what a NEMA 34 on a 48 V bus can actually deliver. The rig's own bill
+of materials already flags this for the CL57Y. So the reported motor rpm is not
+decoration: it is the number that says whether the flat derate still holds, and
+the panel shows it for that reason. Modelling a real torque curve needs each
+motor's published curve and is in section 13.
 
 ### 6.5 The prestress floor
 
@@ -743,6 +801,37 @@ These fourteen rows are exact and are used as the test fixture for section 6.6,
 so an implementation that gets the mechanical advantage, the sheave resultant
 or the family torque derivation wrong fails against published numbers rather
 than against my arithmetic.
+
+**The upgrade ladder, which is what the chooser is for.** Starting from the rig
+as drawn and changing one thing at a time, direct drive, no pulley, 9 N m
+stepper. Each row shows where the limit moved to.
+
+| upgrade | ceiling N | now bound by |
+| --- | --- | --- |
+| as drawn | 1471 | turnbuckle |
+| eye and eye turnbuckle, same M10 thread | 1818 | rope |
+| and 5 mm rope | 2350 | motor torque |
+| and M16 eye bolt | 2350 | motor torque |
+| and 6 mm rope | 2350 | motor torque |
+| and 50 to 1 gearbox | 3760 | rope |
+| and eye/eye M12, 8 mm rope, M20 eye bolt | 5625 | motor torque |
+
+Two readings of that table matter. The first change costs nothing: the same
+thread size in a different configuration, from the same supplier, and the
+ceiling rises by a quarter. Two changes in, at 5 mm rope, the motor becomes the
+binding part for the first time, and only then does any of the motor and
+gearbox discussion in this section begin to pay. The limit walks up the chain
+as parts are upgraded, which is exactly the behaviour the chooser exists to
+show, and it is why the rope path and the motors had to widen together.
+
+The second reading is a warning. **With the WZ 11 K sheave fitted, every row of
+that ladder returns 1214 N.** The moving block caps the machine below its own
+starting point and no upgrade anywhere else moves it, so the pulley must not be
+fitted until a heavier sheave is sourced. The chooser will say this on its own
+once the sheave clause of section 7.1 exists; it is recorded here because it is
+the single most counter-intuitive result in the spec.
+
+These seven rows join the fixture.
 
 ### 6.7 Fails or not
 
@@ -902,12 +991,22 @@ It shows, in this order:
    change.
 2. **The parts.** One selector per kind, each option showing the part number,
    the price and the confidence word. The pulley choice is a toggle, labelled
-   with what it does to both the motor and the sheave.
-3. **The verdict.** Pass or fail, the ceiling, the part that set it, and the
-   five ceiling terms listed so the margin on each is visible.
-4. **The rope.** Turns, rope on the drum against the drum's capacity, and
+   with what it does to both the motor and the sheave. The turnbuckle selector
+   shows the configuration as prominently as the thread size, since that is
+   where the six-fold difference lives.
+3. **The speed.** The rope speed slider of section 6.4, from 1 to 400 mm/s,
+   with the speed each configuration delivers and the motor rpm it demands
+   shown beside it. It filters and annotates; it never passes or fails.
+4. **The verdict.** Pass or fail, the ceiling, and the part that set it. The
+   terms are listed individually with the margin on each, and the anchor chain
+   is broken out into its own elements rather than shown as one number: the
+   engine takes `anchor_wll` as the chain's minimum, but a reader needs to see
+   that it was the turnbuckle and not the eye bolt. So six lines are shown,
+   the rope, the turnbuckle, the eye bolt, the spool rope, the sheave and the
+   motor, against five terms in the arithmetic.
+5. **The rope.** Turns, rope on the drum against the drum's capacity, and
    carriage travel against the rail's stroke, per wire.
-5. **The configurations.** The scored table, with the three fronts marked.
+6. **The configurations.** The scored table, with the three fronts marked.
 
 The written interface standard in `project_vaulted_interface_language` applies
 and is enforced by the existing tests: plain words, no jargon the vault itself
@@ -1022,6 +1121,37 @@ CL57Y both refuse, naming the families.
 `steps_per_revolution` and `microsteps` pair, and omitting it reproduces every
 existing expected value unchanged.
 
+**The turnbuckle configuration, which is the costliest thing to get wrong.**
+An eye and eye M10 resolves to 8826 N and a hook and hook M10 to 1471 N, from
+the same thread size. A test asserts the six-fold difference explicitly, so a
+catalogue entry that silently carries the wrong configuration cannot pass. A
+second test asserts that no entry's working load exceeds its own stated
+breaking load divided by five, which catches a breaking load pasted into a
+working load column: that mistake would read as a plausible 4597 N for the M10
+eye and eye and is exactly what the generic tables invited.
+
+**The upgrade ladder.** All seven rows of section 6.6, each asserting the
+ceiling and the part that binds. The row that must not be got wrong is the
+second, where swapping only the turnbuckle configuration moves the binding part
+from the turnbuckle to the rope: it is the assertion that the chain is being
+re-minimised rather than a cached limit reused.
+
+**The pulley caps the ladder.** With the WZ 11 K fitted, every row of the
+upgrade ladder returns 1214 N. A test walks the whole ladder with
+`reeve_factor=2` and asserts the ceiling never moves, which pins the
+counter-intuitive result so a later change cannot quietly undo it.
+
+**The speed slider decides nothing.** A configuration's pass or fail verdict is
+identical at every slider position, and a test asserts that moving the slider
+changes only which rows are marked and never a ceiling, a binding part or a
+verdict. The slider is an input for exploring, and a test is the only thing
+that stops it becoming a constraint by accident.
+
+**Rope speed and motor rpm agree.** For a family B row the reported rope speed
+equals `rated_speed_rpm / gear_ratio / 60 * 2 * pi * drum_radius`, and the
+reported motor rpm for a requested rope speed is its exact inverse, so the two
+columns cannot drift apart.
+
 **The refactor.** `capacity_from_curve` applied to `tension_curve`'s output
 returns a `Capacity` identical in every field to what `capacity_of` returns for
 the same inputs, across the cases the existing capacity tests already cover.
@@ -1063,15 +1193,17 @@ configuration, and none of which changes a number:
    It should be measured on a sample, or a figure obtained from GS Products,
    before any net is cut. Everything else in this spec tolerates it being
    wrong; the cut lengths do not.
-2. **The turnbuckle ladder.** This is now the most important open item, because
-   the turnbuckle is the binding part in almost every configuration, so the
-   whole ceiling moves with it. The rig's part is rated 150 kg by its own
-   supplier. Generic DIN 1480 tables found so far give figures up to three
-   times higher for eye and eye and stub-end at the same thread, and they
-   disagree with each other and with the supplier by too much to quote. Each
-   rung must come from a supplier's own page for the exact configuration and
-   material before the chooser's answers mean anything above 1471 N. Note that
-   configuration may matter more than size: the hook is the weak element.
+2. **The sheave ladder**, which is now the only unsourced rung in the rope
+   path and the reason the moving block is unusable. The WZ 11 K at 1226 N caps
+   every configuration below the rig's own starting point, so until a heavier
+   sheave is found the pulley should not be fitted at all. This is less urgent
+   than it sounds, because section 6.6 shows direct drive reaching 5625 N
+   without one, so the pulley may simply not be needed.
+
+   The turnbuckle ladder that stood here is **settled**: all three DIN 1480
+   configurations are now in section 6.2 from the supplier's own pages, with
+   both the working and the breaking load, and the finding is that the eye and
+   eye in the existing M10 thread is six times the fitted hook and hook part.
 3. **The gearbox efficiencies.** The planetary figures, 0.94 and 0.90, and the
    whole worm ladder from 0.90 down to 0.45, are interpolated from a published
    band rather than taken from a model's datasheet. They move the torque
@@ -1086,9 +1218,17 @@ configuration, and none of which changes a number:
    required companion parts and does not design them. Closing a position loop
    around an inverter is its own piece of work and it is not something the
    Octopus does with step and direction.
-6. **The acceptable rate of movement at the net**, which is what would turn
-   rope speed from a reported column into a check. Section 6.4 has the
-   expression ready for a figure.
+6. **A real torque curve per motor.** `torque_margin` is a flat derate, and
+   with the speed slider of section 6.4 in the interface it will be asked to
+   hold at speeds where it does not. Each motor's published torque against
+   speed, at the bus voltage actually used, would replace it. Until then the
+   panel reports the motor rpm demanded so the flat figure can be checked by
+   eye against a data sheet.
+
+   The acceptable rate of movement at the net is deliberately **not** an open
+   item. It was one until the owner ruled on 7 October that it must stay a
+   flexible input, since the prototype exists to discover it and a hard-coded
+   limit would be inventing the answer.
 7. **ISO 4308-1's minimum D over d**, which is why the sheave ratio is reported
    without a verdict. One of the three unverified figures LEFTOVERS lists; the
    other two, the ACI 347 and BS 5975 deflection limits, bear on the acceptance
