@@ -6,7 +6,9 @@ import pytest
 pytest.importorskip("scipy")
 pytest.importorskip("compas_fd")
 
+from tree_forest_compas.capacity import CurvePoint
 from tree_forest_compas.capacity import Mechanism
+from tree_forest_compas.capacity import TensionCurve
 from tree_forest_compas.capacity import capacity_from_curve
 from tree_forest_compas.capacity import capacity_of
 from tree_forest_compas.capacity import tension_curve
@@ -64,12 +66,37 @@ def test_one_curve_serves_many_mechanisms_and_they_disagree():
     assert weak.binding == "motor torque"
 
 
-def test_a_curve_that_ends_in_a_solver_failure_reports_it_like_capacity_of():
-    problem, pattern = _net()
-    # rest lengths longer than the straight run leave the net slack under load
-    curve = tension_curve(
-        problem, fixed=[0, 2], rest_lengths=[995.0, 995.0], ea=2.0e5,
-        load_pattern=pattern, steps=40, max_factor=1.0e7,
+def _tough_mechanism():
+    # limits far above anything the literal curves ask, so only the curve binds
+    return _mechanism(
+        motor_torque=1.0e9, rope_mbl=1.0e9, anchor_wll=1.0e9, spool_rope_mbl=1.0e9,
     )
-    result = capacity_from_curve(_mechanism(motor_torque=1.0e12), curve, 1.0e9)
-    assert result.binding in ("net went slack", "numerical failure", "rope tension")
+
+
+def _good_curve(failure=None, detail="", steps=7, max_factor=70.0):
+    points = [CurvePoint(10.0 * k, 100.0, 1.0) for k in (1, 2, 3)]
+    if failure is not None:
+        points.append(CurvePoint(40.0, None, None, failure, detail))
+    return TensionCurve(tuple(points), steps, max_factor)
+
+
+@pytest.mark.parametrize("name", ["net went slack", "numerical failure"])
+def test_a_failure_rung_is_reproduced_faithfully(name):
+    curve = _good_curve(failure=name, detail="solver said so")
+    result = capacity_from_curve(_tough_mechanism(), curve, 50.0)
+    assert result.binding == name
+    assert result.detail == "solver said so"
+    assert result.breaching_factor == 40.0
+    assert result.limit_factor == 30.0   # the last good rung, not the failed one
+    assert result.steps == 7
+    assert result.max_factor == 70.0
+
+
+def test_a_curve_with_every_rung_good_binds_nothing():
+    curve = _good_curve()
+    result = capacity_from_curve(_tough_mechanism(), curve, 50.0)
+    assert result.binding == "none"
+    assert result.breaching_factor is None
+    assert result.limit_factor == 30.0
+    assert result.steps == 7
+    assert result.max_factor == 70.0

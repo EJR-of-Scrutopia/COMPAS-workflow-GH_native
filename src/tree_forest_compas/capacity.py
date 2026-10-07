@@ -347,6 +347,8 @@ def capacity_of(
 ):
     """Raise the load until something binds, and say what bound."""
 
+    # Validated here as well as in capacity_from_curve on purpose: a nonsensical
+    # mechanism is refused in microseconds, not after a forty-rung solve.
     _validate(mechanism, steps, max_factor, acceptance)
     curve = tension_curve(
         problem, fixed, rest_lengths, ea, load_pattern,
