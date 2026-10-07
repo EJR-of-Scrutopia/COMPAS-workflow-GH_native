@@ -176,10 +176,10 @@ both preserve.
 The net's own weight is then added to the same array, and kept as a separate
 running total: 0.061 kg per metre for the 4 mm rope, by the catalogue, applied
 as half of each member's weight to each of its two nodes. A stage with no skin
-placed therefore still carries a load, which matters because
-`hold_force_densities` refuses a stage with no load at all rather than
-answering zero. The net's weight does not vary by stage, since the whole net is
-hanging from the moment it is raised.
+placed therefore still carries a load, which matters because the raise stage
+would otherwise be weightless and a capacity walk needs a load pattern it can
+scale. The net's weight does not vary by stage, since the whole net is hanging
+from the moment it is raised.
 
 So each stage carries three sums, and the document records all three:
 
@@ -227,33 +227,49 @@ through verbatim, by design, so it is `cablenet.py` that reads the wires and
 `cablenet.py` that refuses a document whose wires do not carry a `net_vertex`,
 naming the wire.
 
-### 5.4 The design point, and the net's manufactured rest lengths
+### 5.4 The cut rule, and why there is no design point solve
 
 The target shape is the contract's equilibrium geometry: the funicular form the
 finished vault takes. It is the same at every stage, because holding it is the
 whole point.
 
-That form is funicular for the **full** skin load and for no other. So the
-design point is the last stage, and it is where the net is dimensioned:
+An earlier draft of this section dimensioned the net by a hold solve at the full
+load. **That cannot run, and the reason is worth stating plainly, because it is
+the central physical fact about this machine.**
+
+The vault is a compression shell, and it rises. Measured on
+`Aramdillo style-contract.json`: 801 vertices, 2253 edges, 34 anchors, a rise of
+3502 mm, and two free nodes, 342 at z 3502 and 658 at z 3358, whose every
+neighbour is at or below them. A cable pulls a node toward its neighbour and
+never pushes, so at such a node every available force points downward and so
+does the load. No tension-only net can hold it, however long a solver is given.
+The solve is infeasible, not approximate.
+
+Only an upward force can hold those nodes, and that is precisely what a wire
+is. The same measurement from the other end: with the anchors fixed and no
+wires at all, a forward solve at the target geometry refuses in 0.9 seconds with
+the net gone slack across dozens of members. **The wires are load bearing from
+the first stage, and no amount of prestress in the net substitutes for them.**
+
+So the net is not dimensioned by a solve. It is cut by a rule:
 
 ```
-hold_force_densities(target, all_edges, fixed, loads = full skin + net weight)
-    -> a tension per member
-rest_length_for(ea, tension, length)  per member
-    -> the net's manufactured rest lengths
+rest_i = length_i(target) / (1 + t / EA)
 ```
 
-Those are the lengths the net is made to. They are an output of step A and they
-belong in the demand document, because they are a thing somebody has to cut.
+where `t` is a chosen uniform prestress: every member carries `t` when stretched
+to its length at the target geometry. This is instant, it is a rule a person can
+check with a tape measure, and it makes prestress an explicit input rather than
+a quantity derived from a calculation, which is what requirement 1 asked for.
+Where the net then actually sits is the forward solve's answer, and section 5.5
+is unchanged by this.
 
-`hold_force_densities` returns one member of a family when the net is
-redundant, and says so. With 2253 edges against 2301 equilibrium equations this
-net is not redundant but over-determined, so the solve is a non-negative least
-squares fit and its residual is the quantity that matters. The residual is
-recorded in the demand document, and a residual above the solver's own
-tolerance is reported rather than absorbed: it means the exported geometry is
-not exactly funicular for the load it is being given, which is a fact about the
-export and should be read as one.
+`hold_force_densities` keeps its place in the engine and its tests. It is no
+longer on the studio's path. What replaces it as a diagnostic is
+`nodes_needing_support`, an O(edges) check that names the nodes no tension-only
+net can hold, so the answer is "put a wire on node 342" rather than a least
+squares message. It is a necessary condition and not a sufficient one; the
+solver stays the authority.
 
 ### 5.5 Walking the stages
 
@@ -279,9 +295,11 @@ Per stage, in order:
    which is the honest answer for an under-actuated net.
 4. Apply the correction to the wire rest lengths. The net members are not
    corrected: their rest lengths are manufactured and the correction must not
-   be allowed to move them. `correction_for` is given the full rest length
-   vector and its commands for net members are discarded, with a test pinning
-   that they are.
+   be allowed to move them. `correction_for` is told which cables are actuated,
+   via `actuated=`, so the wires alone are perturbed and the net's lengths are
+   never touched. This is not only correctness. That function finite-differences
+   one solve per rest length, so on this net the difference is 2261 solves per
+   stage against 8, which is the difference between tens of minutes and seconds.
 5. Record the stage as a `Stage(name, kind, rest_lengths, loads)`.
 
 The first stage is `kind="raise"`, which carries no conformance verdict because
@@ -701,18 +719,26 @@ motor's published curve and is in section 13.
 
 ### 6.5 The prestress floor
 
-The floor at a stage is the greatest wire tension that stage demands, which
-step A already solved and stored in `stages[k].wire_tensions`. Requirement 1's
-headline figure is the maximum across every stage:
+Prestress is an input, by the cut rule of section 5.4, so the floor is the
+smallest input that works: the least prestress at which every stage stays inside
+the acceptance line and no member goes slack. Step A walks the build at a given
+prestress and records the greatest wire tension it demanded, which is what the
+machine must then be able to deliver:
 
 ```
 prestress_floor = max over stages of max over wires of wire_tension
 ```
 
-It is a property of the vault and the skin, not of the parts, so it does not
-move when the configuration changes. That is worth stating on screen, because
-it is the number that says whether the whole idea is feasible before any part
-is chosen.
+at the least prestress that passed. It is a property of the vault and the skin,
+not of the parts, so it does not move when the configuration changes. That is
+worth stating on screen, because it is the number that says whether the whole
+idea is feasible before any part is chosen.
+
+Searching for the least prestress means repeating the walk, which at roughly
+three minutes a walk puts a six-rung ladder near twenty minutes. So the first
+implementation takes one prestress as given and reports what it demanded, and
+the search over a ladder is deliberately left until that cost is measured on a
+real study rather than estimated.
 
 ### 6.6 The ceiling
 
@@ -1239,4 +1265,12 @@ configuration, and none of which changes a number:
    deviation the wires cannot remove. If that residual exceeds the acceptance
    line on a real study, the answer is more wires or a different routing, and
    that is a design finding this spec is built to surface rather than one it
-   can pre-empt.
+   can pre-empt. Section 5.4 sharpens it: there are nodes that need a wire
+   before any question of accuracy arises, and `nodes_needing_support` names
+   them, so the first answer to "how many wires" is "at least this many, here".
+10. **The cut rule puts the same prestress in every member.** It is the simplest
+    rule that can be checked by hand and it is not necessarily the best one. A
+    graded prestress, higher near the crown where the net is doing the most
+    work, is a plausible refinement, and it needs a real study to justify rather
+    than an argument. Nothing in the engine prevents it: the rest lengths are
+    an array, and only the rule that fills them would change.
