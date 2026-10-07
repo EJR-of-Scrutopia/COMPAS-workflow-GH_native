@@ -549,3 +549,218 @@ def test_the_load_path_uses_one_decimal_convention():
     section = _section(exports.datasheet_markdown(_model()), "load path")
     figures = re.findall(r"allows ([\d,.]+) N", section)
     assert figures and all(re.fullmatch(r"[\d,]+\.\d", f) for f in figures)
+
+
+# ---------------------------------------------------------------------------
+# The routes
+# ---------------------------------------------------------------------------
+
+def _plant_demand(monkeypatch, tmp_path, name="My Vault", demand=None):
+    import json
+    import bundle
+    import geometry
+
+    monkeypatch.setattr(bundle, "STUDIES_DIR", tmp_path / "studies")
+    path = bundle.cablenet_path(geometry.slugify(name), "tile", "herringbone",
+                                1.0, 0.02, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(demand or _demand()), encoding="utf-8")
+
+
+def _into(monkeypatch, folder):
+    folder.mkdir(exist_ok=True)
+    monkeypatch.setattr(studio_app, "read_settings",
+                        lambda: {"cablenet_exports_folder": str(folder)})
+
+
+def _spy_on_export_model(monkeypatch):
+    seen = {}
+    real = exports.export_model
+
+    def spy(*args, **kwargs):
+        seen["row"] = args[2]
+        seen["ladder"] = kwargs.get("ladder_rows")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(exports, "export_model", spy)
+    return seen
+
+
+def test_one_run_produces_three_documents_that_name_the_same_binding_part(tmp_path):
+    model = _model()
+    paths = (exports.write_spreadsheet(model, tmp_path, "x")
+             + [exports.write_diagram(model, tmp_path, "x"),
+                exports.write_datasheet(model, tmp_path, "x")])
+    binding = model["verdict"]["tension"]["binding"]
+    ceiling = str(round(model["verdict"]["tension"]["ceiling_newtons"]))
+    svg = [p for p in paths if p.suffix == ".svg"][0].read_text(encoding="utf-8")
+    md = [p for p in paths if p.suffix == ".md"][0].read_text(encoding="utf-8")
+    assert binding in svg and binding in md
+    # the data sheet groups thousands for a reader ("1,471.0 N"); the figure is
+    # the same, so compare it with the grouping taken out
+    assert ceiling in svg and ceiling in md.replace(",", "")
+
+
+def test_the_route_writes_all_three_and_they_agree(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    folder = tmp_path / "out"
+    _into(monkeypatch, folder)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    written = [Path(p) for p in response.json()["paths"]]
+    assert {p.suffix for p in written} >= {".svg", ".md"}
+    assert all(p.is_file() and p.parent == folder for p in written)
+    svg = next(p for p in written if p.suffix == ".svg").read_text(encoding="utf-8")
+    md = next(p for p in written if p.suffix == ".md").read_text(encoding="utf-8")
+    assert "turnbuckle-hook-hook-M10" in svg and "turnbuckle-hook-hook-M10" in md
+    assert "1471" in svg and "1471" in md.replace(",", "")
+
+
+def test_the_route_scores_the_panels_ladder(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    ladder = seen["ladder"]
+    assert len(ladder) == 5
+    assert ladder[0]["configuration"] == _configuration()
+    assert ladder[1]["configuration"]["chain"] == ["eye-M12", "turnbuckle-eye-eye-M10"]
+    assert ladder[2]["configuration"]["rope"] == "rope-5mm"
+    assert ladder[3]["configuration"]["chain"] == ["eye-M16", "turnbuckle-eye-eye-M10"]
+    assert ladder[3]["configuration"]["rope"] == "rope-6mm"
+    assert ladder[4]["configuration"]["chain"] == ["eye-M20", "turnbuckle-eye-eye-M12"]
+    assert ladder[4]["configuration"]["rope"] == "rope-8mm"
+    assert all(rung["refused"] is None and rung["ceiling"] > 0 for rung in ladder)
+
+
+def test_a_rung_the_catalogue_refuses_is_passed_through_with_its_text(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    # no eye-and-eye turnbuckle exists at M20, so the first rung is refused
+    configuration = _configuration(chain=["eye-M20", "turnbuckle-hook-eye-M20"])
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": configuration})
+    assert response.status_code == 200, response.text
+    assert len(seen["ladder"]) == 5
+    assert seen["ladder"][1]["refused"]
+
+
+def test_the_rope_wound_is_the_worst_wires_summed_reel_commands(
+        client, monkeypatch, tmp_path):
+    stages = _demand()["stages"]
+    stages[0]["wire_reel_commands"] = [5.0, -3.0]
+    stages[1]["wire_reel_commands"] = [-10.0, -20.0]
+    _plant_demand(monkeypatch, tmp_path, demand=_demand(stages=stages))
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    client.post("/api/studies/My Vault/cablenet/exports",
+                json={"configuration": _configuration()})
+    assert seen["row"]["rope_path"]["rope_wound_mm"] == 23.0
+
+
+def test_a_body_rope_wound_wins_over_the_demand(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    client.post("/api/studies/My Vault/cablenet/exports",
+                json={"configuration": _configuration(), "rope_wound_mm": 123.0})
+    assert seen["row"]["rope_path"]["rope_wound_mm"] == 123.0
+
+
+def test_a_failing_configuration_is_still_exported(client, monkeypatch, tmp_path):
+    stages = _demand()["stages"]
+    stages[1]["wire_tensions"] = [90000.0]       # far over any ceiling
+    _plant_demand(monkeypatch, tmp_path, demand=_demand(stages=stages))
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    assert seen["row"]["passes"] is False
+
+
+def test_a_refused_configuration_is_a_400_not_a_500(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    response = client.post(
+        "/api/studies/My Vault/cablenet/exports",
+        json={"configuration": _configuration(motor="no-such-motor")})
+    assert response.status_code == 400
+    assert "cannot be built" in response.json()["detail"]
+
+
+def test_a_study_with_no_demand_document_cannot_export(client):
+    response = client.post("/api/studies/nothing-here/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 404
+    assert "cable net phase" in response.json()["detail"]
+
+
+def test_an_unwritable_folder_is_reported_and_not_swallowed(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    gone = tmp_path / "gone"
+    monkeypatch.setattr(studio_app, "read_settings",
+                        lambda: {"cablenet_exports_folder": str(gone)})
+    # the folder is missing, so the export must say so rather than silently
+    # landing somewhere else, which is what deliver_output would do
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code != 200
+    assert str(gone) in response.json()["detail"]
+    assert not gone.exists()
+
+
+def test_an_os_error_while_writing_names_the_folder_and_the_reason(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    folder = tmp_path / "out"
+    _into(monkeypatch, folder)
+
+    def refuse(*args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(exports, "write_diagram", refuse)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code != 200
+    detail = response.json()["detail"]
+    assert str(folder) in detail and "Access is denied" in detail
+
+
+def test_each_kind_can_be_downloaded_after_a_run(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    client.post("/api/studies/My Vault/cablenet/exports",
+                json={"configuration": _configuration()})
+    for kind, suffix in (("spreadsheet", ".xlsx"), ("diagram", ".svg"),
+                         ("datasheet", ".md")):
+        response = client.get("/api/studies/My Vault/cablenet/exports/" + kind)
+        assert response.status_code == 200, kind
+        assert suffix in response.headers["content-disposition"]
+    assert client.get("/api/studies/My Vault/cablenet/exports/other").status_code == 400
+
+
+def test_a_csv_fallback_is_served_as_one_zip(client, monkeypatch, tmp_path):
+    import io
+    import zipfile
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    posted = client.post("/api/studies/My Vault/cablenet/exports",
+                         json={"configuration": _configuration()}).json()
+    assert posted["note"]
+    response = client.get("/api/studies/My Vault/cablenet/exports/spreadsheet")
+    assert response.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert len(names) == len(exports.SHEETS) and all(n.endswith(".csv") for n in names)
+
+
+def test_downloading_before_any_run_is_a_404(client, monkeypatch, tmp_path):
+    _into(monkeypatch, tmp_path / "out")
+    response = client.get("/api/studies/My Vault/cablenet/exports/diagram")
+    assert response.status_code == 404

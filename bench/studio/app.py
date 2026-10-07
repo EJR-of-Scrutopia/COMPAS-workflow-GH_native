@@ -1196,6 +1196,207 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             rows.append(row)
         return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
 
+    # ------------------------------------------------------------------
+    # The three cable net exports: one request writes the workbook, the
+    # diagram and the data sheet from one model, so they cannot disagree.
+    # ------------------------------------------------------------------
+
+    def _cablenet_demand(export: str, body: dict) -> dict:
+        # Resolved exactly as GET /api/studies/{export}/cablenet resolves it:
+        # the slug and the cache key the staging document was written under.
+        try:
+            density = float(body["density"]) if body.get("density") else None
+            path = bundle.cablenet_path(
+                geometry.slugify(export), str(body.get("material", "tile")),
+                bundle.cut_cache_pattern(
+                    str(body.get("pattern", "herringbone")), body.get("source")),
+                float(body.get("size", 1.0)),
+                float(body.get("thickness", 0.02)), density)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "the study options are unreadable: {}".format(error))
+        if not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "This study has no cable net demand yet. Run it again with "
+                    "the cable net phase enabled and the engine will write one."
+                ),
+            )
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _rope_wound_mm(demand: dict):
+        """Per wire, the sum of |reel command| over every stage; the worst wire.
+
+        The same figure the panel works out (ropeWound in cablenet.js)."""
+
+        totals = []
+        for stage in demand.get("stages") or []:
+            for wire, command in enumerate(stage.get("wire_reel_commands") or []):
+                while len(totals) <= wire:
+                    totals.append(0.0)
+                totals[wire] += abs(float(command or 0.0))
+        return max(totals) if totals else None
+
+    def _demand_floor(demand: dict) -> float:
+        worst = 0.0
+        for stage in demand.get("stages") or []:
+            for tension in stage.get("wire_tensions") or []:
+                worst = max(worst, float(tension))
+        return worst
+
+    def _score_for_export(catalogue, parts, configuration, angle, floor, wound):
+        """One scored row, shaped as the configurations route shapes it; a
+        configuration the catalogue refuses keeps its reason as `refused`."""
+
+        try:
+            ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
+            row = {
+                "configuration": configuration,
+                "ceiling": ceiling,
+                "binding": binding,
+                "passes": bool(ceiling >= floor) if floor > 0.0 else None,
+                "passes_note": (
+                    None if floor > 0.0 else
+                    "no prestress floor was given, so there is no demand "
+                    "to compare the ceiling against"),
+                "margin": (ceiling / floor) if floor > 0.0 else None,
+                "price": catalogue.price_of(parts, configuration),
+                "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
+                "refused": None,
+            }
+            if wound is not None:
+                path = catalogue.drum_and_travel(parts, configuration, wound)
+                row["rope_path"] = path
+                if not (path["drum_fits"] and path["rail_fits"]):
+                    row["passes"] = False
+            return row
+        except Exception as error:
+            return {"configuration": configuration,
+                    "refused": "{}: {}".format(type(error).__name__, error)}
+
+    def _export_ladder(configuration: dict) -> list:
+        """The rungs the panel shows (ladder() in cablenet.js), at the chosen
+        thread: eye-and-eye turnbuckle, then 5 mm rope, then the M16 eye bolt
+        and 6 mm rope, then the M20 eye bolt with eye-and-eye M12 and 8 mm."""
+
+        thread = "M10"
+        for key in configuration.get("chain") or []:
+            if str(key).startswith("turnbuckle-"):
+                thread = str(key).rsplit("-", 1)[-1]
+        eye_and_eye = "turnbuckle-eye-eye-{}".format(thread)
+        rungs = [
+            {"chain": ["eye-M12", eye_and_eye]},
+            {"chain": ["eye-M12", eye_and_eye], "rope": "rope-5mm"},
+            {"chain": ["eye-M16", eye_and_eye], "rope": "rope-6mm"},
+            {"chain": ["eye-M20", "turnbuckle-eye-eye-M12"], "rope": "rope-8mm"},
+        ]
+        return [dict(configuration)] + [{**configuration, **rung} for rung in rungs]
+
+    def _exports_folder() -> Path:
+        return Path(read_settings().get("cablenet_exports_folder")
+                    or CABLENET_EXPORTS_DIR)
+
+    def _newest_export(export: str, suffixes) -> Optional[Path]:
+        folder = _exports_folder()
+        prefix = "{}-cablenet-".format(geometry.slugify(export))
+        if not folder.is_dir():
+            return None
+        found = [p for p in folder.iterdir()
+                 if p.is_file() and p.name.startswith(prefix)
+                 and p.suffix.lower() in suffixes]
+        return max(found, key=lambda p: p.stat().st_mtime) if found else None
+
+    @app.post("/api/studies/{export}/cablenet/exports")
+    def write_cablenet_exports(export: str, body: dict):
+        import catalogue
+        import exports
+
+        configuration = body.get("configuration")
+        if not isinstance(configuration, dict) or not configuration:
+            raise HTTPException(400, "No configuration was sent to export.")
+        try:
+            angle = float(body.get("angle_degrees", 10.0))
+            wound_body = body.get("rope_wound_mm")
+            wound_body = None if wound_body is None else float(wound_body)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "a number was unreadable: {}".format(error))
+
+        demand = _cablenet_demand(export, body)
+        wound = wound_body if wound_body is not None else _rope_wound_mm(demand)
+        floor = _demand_floor(demand)
+        parts = catalogue.load_parts()
+        ladder_rows = [
+            _score_for_export(catalogue, parts, rung, angle, floor, wound)
+            for rung in _export_ladder(configuration)]
+        row = ladder_rows[0]
+
+        # Not deliver_output: that swallows an OSError and hands back the
+        # source, which would tell the caller a missing export succeeded.
+        folder = _exports_folder()
+        if not folder.is_dir():
+            raise HTTPException(
+                400, "The exports folder {} is not there; choose another "
+                "folder and run the export again.".format(folder))
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = "{}-cablenet-{}".format(geometry.slugify(export), stamp)
+        stem, again = base, 2
+        while any(p.name.startswith(stem) for p in folder.iterdir()):
+            stem = "{}-{}".format(base, again)
+            again += 1
+
+        try:
+            model = exports.export_model(
+                parts, demand, row, configuration, angle,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                ladder_rows=ladder_rows)
+        except exports.ExportError as error:
+            raise HTTPException(400, str(error))
+        try:
+            written = list(exports.write_spreadsheet(model, folder, stem))
+            written.append(exports.write_diagram(model, folder, stem))
+            written.append(exports.write_datasheet(model, folder, stem))
+        except OSError as error:
+            raise HTTPException(
+                500, "Could not write the exports into {}: {}".format(folder, error))
+        return {
+            "folder": str(folder),
+            "paths": [str(p) for p in written],
+            "note": exports.last_spreadsheet_note(),
+        }
+
+    @app.get("/api/studies/{export}/cablenet/exports/{kind}")
+    def download_cablenet_export(export: str, kind: str):
+        import io
+        import zipfile
+
+        if kind not in ("spreadsheet", "diagram", "datasheet"):
+            raise HTTPException(
+                400, "kind must be spreadsheet, diagram or datasheet, not {!r}".format(kind))
+        suffixes = {"spreadsheet": (".xlsx", ".csv"), "diagram": (".svg",),
+                    "datasheet": (".md",)}[kind]
+        newest = _newest_export(export, suffixes)
+        if newest is None:
+            raise HTTPException(
+                404, "No {} has been exported for this study yet.".format(kind))
+        if newest.suffix.lower() != ".csv":
+            return FileResponse(newest, filename=newest.name)
+        # The workbook fell back to one CSV per sheet: serve that run's
+        # sheets together as one zip, since a download is one file.
+        match = re.match(r"(.*-cablenet-\d{8}-\d{6}(?:-\d+)?)-[a-z-]+\.csv$", newest.name)
+        stem = match.group(1) if match else newest.stem
+        sheets = sorted(p for p in newest.parent.iterdir()
+                        if p.is_file() and p.suffix.lower() == ".csv"
+                        and p.name.startswith(stem + "-"))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for sheet in sheets:
+                archive.write(sheet, sheet.name)
+        return Response(
+            buffer.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition":
+                     'attachment; filename="{}-spreadsheet.zip"'.format(stem)})
+
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
         export = body.get("export", "")
