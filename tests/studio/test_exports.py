@@ -587,18 +587,52 @@ def _spy_on_export_model(monkeypatch):
 
 
 def test_one_run_produces_three_documents_that_name_the_same_binding_part(tmp_path):
+    # LITERAL: the ceiling is rendered once by the shared formatter and must
+    # appear byte for byte in the diagram, the data sheet and the spreadsheet.
     model = _model()
     paths = (exports.write_spreadsheet(model, tmp_path, "x")
              + [exports.write_diagram(model, tmp_path, "x"),
                 exports.write_datasheet(model, tmp_path, "x")])
     binding = model["verdict"]["tension"]["binding"]
-    ceiling = str(round(model["verdict"]["tension"]["ceiling_newtons"]))
+    shown = exports._newtons(model["verdict"]["tension"]["ceiling_newtons"])
+    assert shown == "1471.0"
     svg = [p for p in paths if p.suffix == ".svg"][0].read_text(encoding="utf-8")
     md = [p for p in paths if p.suffix == ".md"][0].read_text(encoding="utf-8")
     assert binding in svg and binding in md
-    # the data sheet groups thousands for a reader ("1,471.0 N"); the figure is
-    # the same, so compare it with the grouping taken out
-    assert ceiling in svg and ceiling in md.replace(",", "")
+    assert shown + " N" in svg and shown + " N" in md
+    if exports._openpyxl is not None:
+        import openpyxl
+        book = openpyxl.load_workbook(next(p for p in paths if p.suffix == ".xlsx"))
+        cells = [c for row in book["Chosen"].iter_rows() for c in row
+                 if c.value is not None]
+        ceiling = next(c for c in cells if c.value == float(shown))
+        assert ceiling.number_format == "0.0"
+        assert binding in [c.value for c in cells]
+
+
+def test_the_csv_fallback_prints_the_same_ceiling_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    model = _model()
+    paths = exports.write_spreadsheet(model, tmp_path, "x")
+    shown = exports._newtons(model["verdict"]["tension"]["ceiling_newtons"])
+    chosen = next(p for p in paths if p.name.endswith("-chosen.csv"))
+    text = chosen.read_text(encoding="utf-8-sig")
+    assert shown in text
+    assert model["verdict"]["tension"]["binding"] in text
+
+
+def test_every_force_is_written_by_the_one_formatter():
+    # no renderer may format newtons its own way: 1500 N and 1471.4 N read alike
+    assert exports._newtons(1500) == "1500.0"
+    assert exports._newtons(1471.4) == "1471.4"
+    assert exports._newtons(None) == "not recorded"
+    model = _model()
+    svg = exports.diagram_svg(model)
+    md = exports.datasheet_markdown(model)
+    import re
+    for text in (svg, md):
+        assert not re.search(r"\d,\d{3}(\.\d)? N\b", text)
+        assert not re.search(r"\b\d{4,} N\b", text)       # always a decimal
 
 
 def test_the_route_writes_all_three_and_they_agree(client, monkeypatch, tmp_path):
@@ -614,7 +648,7 @@ def test_the_route_writes_all_three_and_they_agree(client, monkeypatch, tmp_path
     svg = next(p for p in written if p.suffix == ".svg").read_text(encoding="utf-8")
     md = next(p for p in written if p.suffix == ".md").read_text(encoding="utf-8")
     assert "turnbuckle-hook-hook-M10" in svg and "turnbuckle-hook-hook-M10" in md
-    assert "1471" in svg and "1471" in md.replace(",", "")
+    assert "1471.0 N" in svg and "1471.0 N" in md
 
 
 def test_the_route_scores_the_panels_ladder(client, monkeypatch, tmp_path):

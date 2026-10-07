@@ -317,8 +317,36 @@ def last_spreadsheet_note():
     return _last_note
 
 
+# ---------------------------------------------------------------------------
+# One way to write a figure.  All three documents print a force, a length or
+# a price through these, so the same number cannot read two ways.  Newtons are
+# one decimal and millimetres two, with no grouping separator (a ceiling is
+# "1471.0 N" everywhere, and the same text parses as a number in a CSV);
+# money is pounds and pence.
+# ---------------------------------------------------------------------------
+
+class Newtons(float):
+    """A force cell: a number in the workbook, shown to one decimal."""
+
+
+def _newtons(value):
+    return "not recorded" if value is None else "{:.1f}".format(float(value))
+
+
+def _millimetres(value):
+    return "not recorded" if value is None else "{:.2f}".format(float(value))
+
+
+def _money(value):
+    return "\u00a3{:.2f}".format(float(value))
+
+
 def _blank(value):
     return "" if value is None else value
+
+
+def _force_cell(value):
+    return "" if value is None else Newtons(_newtons(value))
 
 
 def _read_this_rows(model):
@@ -359,23 +387,26 @@ def _chosen_rows(model):
     rows += [[], ["Ceiling term", "Part", "Tension it permits (N)", "Binds"]]
     for term in model.get("terms") or []:
         rows.append([term["name"], _blank(term.get("part_id")),
-                     term["newtons"], "BINDS" if term.get("binds") else ""])
+                     _force_cell(term["newtons"]),
+                     "BINDS" if term.get("binds") else ""])
     verdict = model["verdict"]
     tension, shape = verdict["tension"], verdict["shape"]
     rows += [
         [],
         ["Verdict", "Result", "Detail"],
         ["Prestress the build demands (N)",
-         _blank(tension.get("prestress_floor_newtons"))],
-        ["Ceiling (N)", tension["ceiling_newtons"],
+         _force_cell(tension.get("prestress_floor_newtons"))],
+        ["Ceiling (N)", _force_cell(tension["ceiling_newtons"]),
          "binding: {}".format(_blank(tension.get("binding")))],
         ["Tension: holds", "yes" if tension.get("passes") else "no",
          _blank(tension.get("passes_note"))],
         ["Tension: margin", _blank(tension.get("margin"))],
         ["Shape: within the acceptance line",
          "yes" if shape.get("within") else "no",
-         "acceptance {} mm ({})".format(_blank(shape.get("acceptance_mm")),
-                                        _blank(shape.get("acceptance_source")))],
+         "acceptance {} mm ({})".format(
+             _blank(None if shape.get("acceptance_mm") is None
+                    else _millimetres(shape["acceptance_mm"])),
+             _blank(shape.get("acceptance_source")))],
         ["Shape: worst residual (mm)", _blank(shape.get("worst_residual_mm")),
          "at stage {}".format(_blank(shape.get("worst_stage")))],
     ]
@@ -400,10 +431,10 @@ def _parts_rows(model):
     price = model.get("price") or {}
     unpriced = price.get("unpriced") or []
     if price.get("is_floor"):
-        total = "At least £{:.2f}; {} lines have no price yet: {}".format(
-            price["pounds"], len(unpriced), ", ".join(unpriced))
+        total = "At least {}; {} lines have no price yet: {}".format(
+            _money(price["pounds"]), len(unpriced), ", ".join(unpriced))
     elif price.get("pounds") is not None:
-        total = "£{:.2f}".format(price["pounds"])
+        total = _money(price["pounds"])
     else:
         total = ""
     rows.append(["Total (a floor, not a forecast)" if price.get("is_floor")
@@ -423,13 +454,13 @@ def _stages_rows(model):
             rows.append([stage.get("stage"), stage.get("name"), stage.get("kind"),
                          wire.get("name"), _blank(wire.get("net_vertex")),
                          at("wire_rest_lengths"), at("wire_reel_commands"),
-                         at("wire_tensions")])
+                         _force_cell(at("wire_tensions") or None)])
     rows += [[], ["Stage", "Name", "Placed weight (N)", "Skin load sum (N)",
                   "Deviation (mm)", "Reachable", "Residual after (mm)"]]
     for stage in model.get("stages") or []:
         rows.append([stage.get("stage"), stage.get("name"),
-                     _blank(stage.get("placed_weight_newtons")),
-                     _blank(stage.get("skin_load_sum_newtons")),
+                     _force_cell(stage.get("placed_weight_newtons")),
+                     _force_cell(stage.get("skin_load_sum_newtons")),
                      _blank(stage.get("deviation")),
                      "yes" if stage.get("reachable") else "no",
                      _blank(stage.get("residual_after"))])
@@ -452,9 +483,9 @@ def _ladder_rows(model):
         price = rung.get("price") or {}
         text = ""
         if price.get("pounds") is not None:
-            text = "{}£{:.2f}".format("At least " if price.get("is_floor") else "",
-                                      price["pounds"])
-        rows.append([rung["label"], differ, rung["ceiling_newtons"],
+            text = "{}{}".format("At least " if price.get("is_floor") else "",
+                                 _money(price["pounds"]))
+        rows.append([rung["label"], differ, _force_cell(rung["ceiling_newtons"]),
                      _blank(rung.get("binding")), text])
     return rows
 
@@ -483,6 +514,10 @@ def _write_workbook(sheets, model, path):
         sheet = book.create_sheet(name)
         for row in sheets[name]:
             sheet.append(list(row))
+        for cells in sheet.iter_rows():
+            for cell in cells:
+                if isinstance(cell.value, Newtons):
+                    cell.number_format = "0.0"
         sheet.cell(row=1, column=1).font = Font(bold=True)
         if name == "Parts":
             for cells in sheet.iter_rows(min_row=2):
@@ -566,7 +601,7 @@ def _box_lines(name, title, term, configuration):
     lines = [(title, 12, "bold"), (term.get("part_id") or name, 11, "normal")]
     if name == "motor torque" and configuration.get("gearbox"):
         lines.append(("via " + configuration["gearbox"], 10, "normal"))
-    lines.append(("permits {:.0f} N".format(term["newtons"]), 12, "normal"))
+    lines.append(("permits {} N".format(_newtons(term["newtons"])), 12, "normal"))
     return lines
 
 
@@ -627,7 +662,7 @@ def diagram_svg(model):
             y += 18 if size >= 11 else 12
         if binds:
             parts.append(_text(round(x + box_w / 2, 1), top + box_h + 18,
-                               "binds: ceiling {:.0f} N".format(verdict["ceiling_newtons"]),
+                               "binds: ceiling {} N".format(_newtons(verdict["ceiling_newtons"])),
                                12, "bold", "middle"))
         parts.append("</g>")
         if index:
@@ -676,7 +711,7 @@ def _pounds(price):
     price = price or {}
     if price.get("pounds") is None:
         return "no total can be given, because no line is priced"
-    text = "£{:.2f}".format(price["pounds"])
+    text = _money(price["pounds"])
     if price.get("is_floor"):
         unpriced = price.get("unpriced") or []
         return ("at least {}, a floor and not a forecast, because {} {} no "
@@ -731,7 +766,7 @@ def _datasheet_sections(model):
         "The study records the rib in these words, quoted verbatim: "
         "\"{}\".".format(shape.get("acceptance_source") or "no source recorded"),
         "That gives an acceptance line of {} mm. {}".format(
-            _num(shape.get("acceptance_mm"), 2),
+            _millimetres(shape.get("acceptance_mm")),
             "It is taken from the study's own record of the rib, and is not "
             "re-derived here." if shape.get("acceptance_source")
             else "No source was recorded for it, so the reader should treat "
@@ -746,15 +781,15 @@ def _datasheet_sections(model):
         "stage that sizes it is {}. The study entered a uniform prestress of "
         "{} N for the cut rule; the floor is what the staged analysis then "
         "found the wires actually have to carry.".format(
-            _num(demand.get("prestress_floor_newtons")),
+            _newtons(demand.get("prestress_floor_newtons")),
             demand.get("sizing_stage") or "not recorded",
-            _num(demand.get("prestress_input_newtons"))),
+            _newtons(demand.get("prestress_input_newtons"))),
         "The skin is laid at a density of {} kg/m3 and a thickness of {} m, "
         "and the largest weight placed on the net at any stage is {} N. The net is held by {} "
         "anchors and driven by {} {}.".format(
             _num(demand.get("density_kg_m3")),
             _num(demand.get("thickness_m"), 3),
-            _num(demand.get("placed_weight_newtons")),
+            _newtons(demand.get("placed_weight_newtons")),
             demand.get("anchors", 0), len(wires),
             "wire" if len(wires) == 1 else "wires"),
         "These figures come from the staged cable-net analysis of the study "
@@ -766,7 +801,7 @@ def _datasheet_sections(model):
     # 3
     lines = []
     for part in model.get("parts") or []:
-        price = ("£{:.2f}".format(part["unit_price"])
+        price = (_money(part["unit_price"])
                  if part.get("unit_price") is not None else "no price yet")
         bits = [part.get("supplier") or "supplier not recorded"]
         if part.get("part_number"):
@@ -800,8 +835,8 @@ def _datasheet_sections(model):
         "puts on it. The weakest part, which binds, is {}. It sets a ceiling "
         "of {} N against a prestress floor of {} N, a margin of {}.{}".format(
             tension.get("binding") or "not recorded",
-            _num(tension.get("ceiling_newtons")),
-            _num(tension.get("prestress_floor_newtons")),
+            _newtons(tension.get("ceiling_newtons")),
+            _newtons(tension.get("prestress_floor_newtons")),
             "{:.2f} times".format(margin) if margin is not None
             else "not recorded",
             " The verdict carries this note: {}".format(
@@ -818,16 +853,16 @@ def _datasheet_sections(model):
         "the acceptance line. The worst residual after correction is {} mm, "
         "at stage {}, against an acceptance line of {} mm, which is {}.{}"
         .format(
-            _num(shape.get("worst_residual_mm"), 2),
+            _millimetres(shape.get("worst_residual_mm")),
             shape.get("worst_stage") or "not recorded",
-            _num(shape.get("acceptance_mm"), 2),
+            _millimetres(shape.get("acceptance_mm")),
             "within it" if shape.get("within") else "outside it", reach))
     stage_lines = []
     for stage in model.get("stages") or []:
         stage_lines.append(
             "Stage {} ({}, {}): residual {} mm, {}.".format(
                 stage.get("stage"), stage.get("name"), stage.get("kind"),
-                _num(stage.get("residual_after"), 2),
+                _millimetres(stage.get("residual_after")),
                 "reached" if stage.get("reachable") is not False
                 else "not reachable"))
     out.append("## Whether it holds\n\n" + "\n\n".join(
@@ -845,12 +880,12 @@ def _datasheet_sections(model):
             gap = " This term binds."
         elif ceiling is not None:
             gap = " It is {} N above the binding term.".format(
-                _num(term["newtons"] - ceiling, 1, True))
+                _newtons(term["newtons"] - ceiling))
         else:
             gap = ""
         term_lines.append(
             "The {} term allows {} N and is set by {}.{}".format(
-                term["name"], _num(term["newtons"], 1, True),
+                term["name"], _newtons(term["newtons"]),
                 term.get("part_id") or "the configuration as a whole", gap))
     out.append("## The load path\n\n" + "\n\n".join([
         "The ceiling is the smallest of the terms below. They are all given, "
@@ -869,7 +904,7 @@ def _datasheet_sections(model):
         "here so that no assumed number can be mistaken for a measured one. "
         "The rope's axial stiffness, for instance, is taken as {} N, and its "
         "provenance is recorded as: {}.".format(
-            _num(demand.get("ea_newtons")),
+            _newtons(demand.get("ea_newtons")),
             demand.get("ea_provenance") or "not recorded"),
         "\n\n".join(assumed) if assumed else "No assumptions are recorded.",
     ]))
