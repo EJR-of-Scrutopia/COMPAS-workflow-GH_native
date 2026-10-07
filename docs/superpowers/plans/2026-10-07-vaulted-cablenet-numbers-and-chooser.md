@@ -19,7 +19,7 @@ amended by Task 0.
 **Ruling 1: the design point hold solve of spec section 5.4 is replaced by a
 cut rule.** Measured on `Aramdillo style-contract.json`: the net has 801
 vertices, 2253 edges, 34 anchors and a rise of 3502 mm. Two free nodes, 342 at
-z 3502 and 658 at z 3358, have every neighbour at or below them. Under downward
+z 3358 and 658 at z 3502, have every neighbour at or below them. Under downward
 load no tension-only member can hold such a node: every member pulls it down or
 sideways and so does the load. So `hold_force_densities` on the bare net is
 infeasible, not merely approximate. Separately, its non-negative least squares

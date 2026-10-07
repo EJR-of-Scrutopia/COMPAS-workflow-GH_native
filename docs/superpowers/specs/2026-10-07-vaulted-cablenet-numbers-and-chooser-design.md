@@ -239,7 +239,7 @@ the central physical fact about this machine.**
 
 The vault is a compression shell, and it rises. Measured on
 `Aramdillo style-contract.json`: 801 vertices, 2253 edges, 34 anchors, a rise of
-3502 mm, and two free nodes, 342 at z 3502 and 658 at z 3358, whose every
+3502 mm, and two free nodes, 342 at z 3358 and 658 at z 3502, whose every
 neighbour is at or below them. A cable pulls a node toward its neighbour and
 never pushes, so at such a node every available force points downward and so
 does the load. No tension-only net can hold it, however long a solver is given.
