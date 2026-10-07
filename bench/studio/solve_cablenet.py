@@ -146,13 +146,28 @@ def build_problem(vertices_metres, edges, anchors, wires, tolerance=1e-6):
 
 
 def to_engine(loads_by_node, node_of, vertex_count):
-    """Per-contract-node loads reordered into the problem's own vertex order."""
+    """Per-contract-node loads reordered into the problem's own vertex order.
+
+    A node that carries load and maps to no problem vertex is refused, never
+    skipped: faces come from formGraph.faces and edges from equilibrium.edges,
+    so a face corner no edge touches would otherwise lose its weight silently.
+    A node with exactly zero load may be skipped, since nothing is lost.
+    """
 
     out = [[0.0, 0.0, 0.0] for _ in range(vertex_count)]
     for node, vector in enumerate(loads_by_node):
         vertex = node_of.get(node)
         if vertex is None:
-            continue                  # a node no edge touched carries nothing
+            if any(float(value) != 0.0 for value in vector):
+                raise CableNetError(
+                    "Contract node {} carries a load of {} N (x, y, z) but no "
+                    "edge touches it, so the net has nothing to hang that "
+                    "weight from. Dropping it would understate the demand; "
+                    "the faces and the edges of this study disagree about "
+                    "which nodes exist.".format(
+                        node, [float(value) for value in vector])
+                )
+            continue
         out[vertex] = [float(value) for value in vector]
     return out
 
@@ -195,7 +210,8 @@ def cut_rest_lengths(problem, net_edge_count, ea, prestress):
 
 
 def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
-                acceptance_source, target=None, stage_names=None, stage_kinds=None):
+                acceptance_source, target=None, stage_names=None, stage_kinds=None,
+                placed_weights=None):
     """Solve every stage in order and return the demand document.
 
     The net's own rest lengths never change: they are manufactured. Only the
@@ -285,6 +301,9 @@ def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
             "stage": index + 1,
             "name": (stage_names or {}).get(index, "S{}".format(index + 1)),
             "kind": (stage_kinds or {}).get(index, "raise" if index == 0 else "tile"),
+            "placed_weight_newtons": (
+                None if placed_weights is None else float(placed_weights[index])
+            ),
             "skin_load_sum_newtons": skin_sum,
             "net_weight_newtons": net_sum,
             "node_load_sum_newtons": skin_sum + net_sum,
@@ -389,7 +408,12 @@ def solve(request: dict) -> dict:
         built, request["loads_by_stage"], request["net_weight"],
         request["ea"], request["prestress"], acceptance,
         acceptance_source, target=None, stage_names=names,
+        placed_weights=request.get("placed_weights"),
     )
+    document["study"] = request.get("study")
+    document["density"] = request.get("density")
+    document["thickness"] = request.get("thickness")
+    document["net"]["ea_provenance"] = request.get("ea_provenance")
     document["wires"] = [
         {"name": w.name, "net_vertex": w.net_vertex, "frame_point": w.frame_point}
         for w in wires

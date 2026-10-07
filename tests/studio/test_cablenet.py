@@ -124,3 +124,70 @@ print("clean")
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "clean"
+
+
+def test_the_loads_the_engine_receives_still_sum_to_the_placed_weight():
+    # The test above sums what stage_node_loads BUILDS. A face's weight can
+    # only be dropped later, in to_engine, so this one sums what it RETURNS.
+    import solve_cablenet
+
+    vertices, faces = _two_quads()
+    plan = [
+        {"stage": 1, "courses_placed": 1, "segments": [], "faces": [0]},
+        {"stage": 2, "courses_placed": 2, "segments": [], "faces": [0, 1]},
+    ]
+    curve = staging.formwork_curve(vertices, faces, plan, "tile", 0.02, 1800.0)
+    loads = cablenet.stage_node_loads(vertices, faces, plan, 0.02, 1800.0)
+    # the engine numbers its vertices differently from the contract
+    node_of = {0: 5, 1: 4, 2: 3, 3: 2, 4: 1, 5: 0}
+    for entry, weights in zip(loads, curve):
+        received = solve_cablenet.to_engine(entry, node_of, 6)
+        total = sum(-row[2] for row in received)
+        assert abs(total - weights["placed_weight_newtons"]) < 1e-9 * max(
+            1.0, weights["placed_weight_newtons"])
+
+
+def test_a_loaded_node_no_edge_touches_is_refused_by_name_and_load():
+    import solve_cablenet
+
+    loads = [[0.0, 0.0, -10.0], [0.0, 0.0, -25.5], [0.0, 0.0, -3.0]]
+    node_of = {0: 0, 2: 1}                    # node 1 carries 25.5 N, no edge
+    with pytest.raises(cablenet.CableNetError, match="node 1") as raised:
+        solve_cablenet.to_engine(loads, node_of, 2)
+    assert "25.5" in str(raised.value)
+
+
+def test_a_zero_load_node_no_edge_touches_may_be_skipped():
+    import solve_cablenet
+
+    loads = [[0.0, 0.0, -10.0], [0.0, 0.0, 0.0], [0.0, 0.0, -3.0]]
+    out = solve_cablenet.to_engine(loads, {0: 0, 2: 1}, 2)
+    assert out == [[0.0, 0.0, -10.0], [0.0, 0.0, -3.0]]
+
+
+def test_the_request_carries_the_placed_weight_study_and_ea_provenance():
+    import os
+    import tempfile
+
+    seen = {}
+
+    def fake(request):
+        seen.update(request)
+        return {"stages": [{}]}
+
+    vertices, faces = _two_quads()
+    plan = [{"stage": 1, "courses_placed": 1, "segments": [], "faces": [0]}]
+    original = cablenet.geometry.support_ids
+    cablenet.geometry.support_ids = lambda c: [0, 1]
+    try:
+        cablenet.run_cablenet(
+            {}, {"vertices": vertices, "edges": [[0, 1], [1, 2]], "faces": faces},
+            plan, 0.02, 1800.0, os.path.join(tempfile.mkdtemp(), "d.json"),
+            {"mechanism": {"wires": [{"name": "w", "net_vertex": 2, "frame_point":
+                                      {"x": 1.0, "y": 1.0, "z": 3.0}}]}},
+            2.0e5, 300.0, 50.0, "test", 0.061, runner=fake,
+            study="My Vault", ea_provenance="rope-4mm: assumed")
+    finally:
+        cablenet.geometry.support_ids = original
+    assert abs(seen["placed_weights"][0] - 0.02 * 1800.0 * staging.GRAVITY) < 1e-9
+    assert seen["study"] == "My Vault" and seen["ea_provenance"] == "rope-4mm: assumed"

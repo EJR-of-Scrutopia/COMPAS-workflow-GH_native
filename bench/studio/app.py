@@ -1324,6 +1324,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                             "acceptance": None,
                             "acceptance_source": None,
                             "falsework": falsework_key,
+                            "study": export,
+                            "ea_provenance": "{}: EA {} N, {}".format(
+                                rope_key, parts["rope"][rope_key]["ea_newtons"],
+                                parts["rope"][rope_key].get("ea_confidence")),
                             # a starting point for the cut rule, not derived
                             "prestress": float(cablenet_options.get("prestress", 300.0)),
                         },

@@ -116,7 +116,7 @@ def test_the_demand_document_round_trips_and_carries_both_sums():
         built, loads_by_stage=stage_loads,
         net_weight=[[0.0, 0.0, -1.0], [0.0, 0.0, -2.0], [0.0, 0.0, -1.0]],
         ea=2.0e5, prestress=300.0, acceptance=1000.0,
-        acceptance_source="test rib", target=None,
+        acceptance_source="test rib", target=None, placed_weights=[200.0],
     )
     text = json.dumps(document, allow_nan=False)
     again = json.loads(text)
@@ -125,6 +125,9 @@ def test_the_demand_document_round_trips_and_carries_both_sums():
     assert abs(stage["net_weight_newtons"] - 4.0) < 1e-9
     assert abs(stage["node_load_sum_newtons"] - 204.0) < 1e-9
     assert len(stage["wire_rest_lengths"]) == 1
+    # both sums are in the file so the invariant is checkable from it alone
+    assert stage["placed_weight_newtons"] == 200.0
+    assert stage["placed_weight_newtons"] == stage["skin_load_sum_newtons"]
 
 
 def test_the_acceptance_line_comes_from_the_named_falsework():
@@ -144,3 +147,24 @@ def test_the_acceptance_line_comes_from_the_named_falsework():
     with pytest.raises(cablenet.CableNetError) as refused:
         solve_cablenet.resolve_acceptance(request, far, [0, 1])
     assert "2000" in str(refused.value) and "15900" in str(refused.value)
+
+
+def test_solve_writes_study_density_thickness_and_ea_provenance():
+    pytest.importorskip("compas_fd")
+    vertices, edges, anchors = _vee_contract()
+    document = solve_cablenet.solve({
+        "vertices": vertices, "edges": edges, "anchors": anchors,
+        "wires": [{"name": "w1", "net_vertex": 1,
+                   "frame_point": [1000.0, 0.0, 3000.0]}],
+        "stage_names": {"0": "S1"},
+        "loads_by_stage": [[[0.0, 0.0, 0.0], [0.0, 0.0, -200.0], [0.0, 0.0, 0.0]]],
+        "net_weight": [[0.0, 0.0, -1.0], [0.0, 0.0, -2.0], [0.0, 0.0, -1.0]],
+        "ea": 2.0e5, "prestress": 300.0, "acceptance": 1000.0,
+        "acceptance_source": "t", "placed_weights": [200.0],
+        "study": "V", "density": 1800.0, "thickness": 0.02,
+        "ea_provenance": "rope-4mm: assumed",
+    })
+    assert document["study"] == "V" and document["density"] == 1800.0
+    assert document["thickness"] == 0.02
+    assert document["net"]["ea_provenance"] == "rope-4mm: assumed"
+    assert document["stages"][0]["placed_weight_newtons"] == 200.0

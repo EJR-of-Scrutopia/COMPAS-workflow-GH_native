@@ -174,7 +174,7 @@ def wires_from_mechanism(document, vertex_count, anchors):
 def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
                  acceptance_source, mass_per_metre, runner=None, python_exe=None,
-                 falsework=None):
+                 falsework=None, study=None, ea_provenance=None):
     """Everything step A does, from a contract to a written demand document.
 
     The engine runs in solve_cablenet.py under a solver interpreter, never in
@@ -207,7 +207,18 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         vertices, arrays["faces"], plan, thickness, density
     )
     net_weight = net_weight_loads(vertices, edges, mass_per_metre)
+    # The weight each stage places, summed straight from face areas and NOT from
+    # loads_by_stage, so the demand document can show the two agree (section
+    # 5.2) without the reader trusting the code that distributed the loads.
+    placed_weights = [
+        sum(geometry.face_area(vertices, arrays["faces"][i])
+            for i in entry["faces"]) * thickness * density * staging.GRAVITY
+        for entry in plan
+    ]
     request = {
+        "study": None if study is None else str(study),
+        "ea_provenance": None if ea_provenance is None else str(ea_provenance),
+        "placed_weights": [float(w) for w in placed_weights],
         "vertices": [[float(c) for c in point] for point in vertices],
         "edges": [[int(u), int(v)] for u, v in edges],
         "anchors": [int(a) for a in anchors],
