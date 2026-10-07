@@ -1076,3 +1076,40 @@ def test_the_route_exports_a_different_rope_and_says_so(client, monkeypatch, tmp
     md = next(Path(p) for p in response.json()["paths"]
               if p.endswith(".md")).read_text(encoding="utf-8")
     assert "not the rope that was analysed" in md
+
+
+# ---------------------------------------------------------------------------
+# The panel writes a force the way the documents do
+# ---------------------------------------------------------------------------
+
+_CABLENET_JS = (Path(__file__).resolve().parents[2] / "bench" / "studio"
+                / "static" / "cablenet.js")
+
+
+def test_the_panel_never_rounds_a_force_to_whole_newtons():
+    import re
+    js = _CABLENET_JS.read_text(encoding="utf-8")
+    # a number followed by " N" must come out of newtons(), not toFixed
+    assert not re.search(r"toFixed\(\d\)\}? N\b", js)
+    assert len(re.findall(r"\$\{newtons\(", js)) >= 4
+
+
+def test_the_panels_formatter_renders_what_exports_newtons_renders():
+    import json
+    import re
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("needs node")
+    js = _CABLENET_JS.read_text(encoding="utf-8")
+    source = re.search(r"function newtons\(value\) \{.*?\n\}", js, re.S).group(0)
+    values = [1471.0, 1471, 1470.96, 1470.94, 1500, 1471.4, 0, 450000, 0.04, None]
+    out = subprocess.run(
+        [node, "-e", source + "console.log(JSON.stringify({}.map(newtons)))".format(
+            json.dumps(values))],
+        capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == [exports._newtons(v) for v in values]
+    # the case that made this more than cosmetic: a fractional ceiling just
+    # under the floor must not read as "1471 N against 1471 N"
+    assert exports._newtons(1470.94) != exports._newtons(1471.0)

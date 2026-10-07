@@ -171,6 +171,14 @@ function esc(value) {
   return String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }
 
+// The one way the panel writes a force. It is exports._newtons in Python: one
+// decimal, no grouping, so "1471.0 N" reads the same on screen and in all
+// three documents. Never round a force to whole newtons here: a fractional
+// ceiling just under the floor would then read "1471 N against 1471 N".
+function newtons(value) {
+  return value == null ? "not recorded" : Number(value).toFixed(1);
+}
+
 function money(value) {
   return `£${Number(value).toFixed(2)}`;
 }
@@ -264,7 +272,7 @@ function renderDemand(box, demand, floor, note, shape, wound) {
   box.innerHTML =
     `<h3>What the build demands</h3>` +
     `<p>The greatest tension any wire must carry is ` +
-    `<strong>${floor.toFixed(0)} N</strong>, at stage ` +
+    `<strong>${newtons(floor)} N</strong>, at stage ` +
     `${esc(demand.sizing_stage)}. That is a property of the vault and the skin, so ` +
     `it does not move when parts change.</p><p>${acceptance}</p>` +
     (shape && !shape.known
@@ -419,7 +427,7 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
       reasons.push("The parts can carry the tension.");
     } else {
       reasons.push(`The parts cannot carry the tension: the ceiling is ` +
-        `${row.ceiling.toFixed(0)} N against ${floor.toFixed(0)} N demanded.`);
+        `${newtons(row.ceiling)} N against ${newtons(floor)} N demanded.`);
     }
     if (path && !path.drum_fits) {
       reasons.push(`The rope does not fit the drum in one layer (` +
@@ -459,7 +467,7 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
     `<h3>The verdict</h3>` +
     `<p><strong>${verdict}</strong> ${reasons.join(" ")}</p>` +
     `<p>The ceiling is ` +
-    `${row.ceiling.toFixed(0)} N, set by ${esc(bound)}.` +
+    `${newtons(row.ceiling)} N, set by ${esc(bound)}.` +
     (row.margin == null ? "" : ` That is ${row.margin.toFixed(2)} times the demand.`) +
     `</p>` +
     `<p class="cablenet-note">The eye bolt is rated at its off-axis figure ` +
@@ -523,7 +531,7 @@ function renderTable(box, rows, parts, ladderKnown) {
         `<td>${index === 0 ? "chosen: " : ""}` +
         `${esc(turnbuckleLabel(parts, configuration.chain[1]))}</td>` +
         `<td>${esc(configuration.rope)}</td>` +
-        `<td>${row.ceiling.toFixed(0)} N</td><td>${esc(row.binding)}</td>` +
+        `<td>${newtons(row.ceiling)} N</td><td>${esc(row.binding)}</td>` +
         `<td>${row.price.is_floor ? "from " : ""}${money(row.price.pounds)}</td>`;
     }
     table.appendChild(cells);
