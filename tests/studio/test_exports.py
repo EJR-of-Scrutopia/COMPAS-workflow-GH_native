@@ -514,3 +514,38 @@ def test_the_data_sheet_is_written_beside_the_others(tmp_path):
     path = exports.write_datasheet(_model(), tmp_path, "vault-cablenet")
     assert path.name == "vault-cablenet.md"
     assert path.read_text(encoding="utf-8").startswith("# ")
+
+
+def test_the_model_names_the_units_of_density_and_thickness():
+    demand = _model()["demand"]
+    assert demand["density_kg_m3"] == 1800.0
+    assert demand["thickness_m"] == 0.02
+
+
+def test_the_sheet_names_the_units_of_density_and_thickness():
+    section = _section(exports.datasheet_markdown(_model()), "demands")
+    assert "1,800 kg/m3" in section and "0.020 m" in section
+    assert "own units" not in section
+
+
+def test_no_assumption_has_a_confidence_word_for_a_value():
+    model = _model()
+    for assumption in model["assumptions"]:
+        assert assumption["value"] != "assumed", assumption
+    text = exports.datasheet_markdown(model)
+    assert "Value: assumed" not in text
+
+
+def test_the_rope_ea_and_the_gearbox_efficiency_each_appear_once():
+    whats = [a["what"] for a in _model()["assumptions"]]
+    assert whats.count("rope EA") == 1
+    assert whats.count("gearbox efficiency") == 1
+    assert not any(w.endswith("ea confidence") or w.endswith("efficiency confidence")
+                   for w in whats)
+
+
+def test_the_load_path_uses_one_decimal_convention():
+    import re
+    section = _section(exports.datasheet_markdown(_model()), "load path")
+    figures = re.findall(r"allows ([\d,.]+) N", section)
+    assert figures and all(re.fullmatch(r"[\d,]+\.\d", f) for f in figures)

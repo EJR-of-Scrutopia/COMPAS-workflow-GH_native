@@ -178,6 +178,8 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
             "sizing_stage": demand.get("sizing_stage"),
             "density": demand.get("density"),
             "thickness": demand.get("thickness"),
+            "density_kg_m3": demand.get("density"),
+            "thickness_m": demand.get("thickness"),
             "ea_newtons": demand.get("ea_newtons"),
             "ea_provenance": (demand.get("net") or {}).get("ea_provenance"),
             "placed_weight_newtons": _total_placed(demand),
@@ -238,6 +240,12 @@ def _total_placed(demand):
     return max(values) if values else None
 
 
+# confidence fields whose figure is reported as a named assumption below, so
+# the field must not also appear as an entry of its own
+_NAMED_CONFIDENCE = {("rope", "ea_confidence"),
+                     ("gearbox", "efficiency_confidence")}
+
+
 def _assumptions(parts, configuration, demand, angle_degrees):
     """Every figure that is assumed and not measured, each with a `what`."""
 
@@ -258,9 +266,16 @@ def _assumptions(parts, configuration, demand, angle_degrees):
             continue
         entry = parts[kind][key]
         for field, value in entry.items():
-            if (field == "confidence" or field.endswith("_confidence"))                     and value == "assumed":
-                add("{} {}: {}".format(kind, key, field.replace("_", " ")),
-                    value, entry.get("note") or "marked assumed in the catalogue")
+            if not ((field == "confidence" or field.endswith("_confidence"))
+                    and value == "assumed"):
+                continue
+            if (kind, field) in _NAMED_CONFIDENCE:
+                continue          # reported below under its named assumption
+            base = ("unit_price" if field == "confidence"
+                    else field[:-len("_confidence")])
+            label = "price" if field == "confidence" else base.replace("_", " ")
+            add("{} {}: {}".format(kind, key, label), entry.get(base),
+                entry.get("note") or "marked assumed in the catalogue")
 
     rope = parts["rope"][configuration["rope"]]
     add("rope EA", rope.get("ea_newtons"),
@@ -645,14 +660,14 @@ def write_diagram(model, directory, stem):
 # the case in prose.  A renderer: it reads the model and computes nothing.
 # ---------------------------------------------------------------------------
 
-def _num(value, places=1):
+def _num(value, places=1, fixed=False):
     """A figure for prose, with thousands separators; formatting only."""
 
     if value is None:
         return "not recorded"
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return str(value)
-    if float(value) == int(value) and abs(value) >= 1000:
+    if not fixed and float(value) == int(value) and abs(value) >= 1000:
         return "{:,}".format(int(value))
     return "{:,.{p}f}".format(float(value), p=places)
 
@@ -734,11 +749,11 @@ def _datasheet_sections(model):
             _num(demand.get("prestress_floor_newtons")),
             demand.get("sizing_stage") or "not recorded",
             _num(demand.get("prestress_input_newtons"))),
-        "The skin is laid at a density of {} and a thickness of {}, both as "
-        "recorded by the study in its own units, and the largest weight "
-        "placed on the net at any stage is {} N. The net is held by {} "
+        "The skin is laid at a density of {} kg/m3 and a thickness of {} m, "
+        "and the largest weight placed on the net at any stage is {} N. The net is held by {} "
         "anchors and driven by {} {}.".format(
-            _num(demand.get("density")), _num(demand.get("thickness"), 3),
+            _num(demand.get("density_kg_m3")),
+            _num(demand.get("thickness_m"), 3),
             _num(demand.get("placed_weight_newtons")),
             demand.get("anchors", 0), len(wires),
             "wire" if len(wires) == 1 else "wires"),
@@ -830,12 +845,12 @@ def _datasheet_sections(model):
             gap = " This term binds."
         elif ceiling is not None:
             gap = " It is {} N above the binding term.".format(
-                _num(term["newtons"] - ceiling))
+                _num(term["newtons"] - ceiling, 1, True))
         else:
             gap = ""
         term_lines.append(
             "The {} term allows {} N and is set by {}.{}".format(
-                term["name"], _num(term["newtons"]),
+                term["name"], _num(term["newtons"], 1, True),
                 term.get("part_id") or "the configuration as a whole", gap))
     out.append("## The load path\n\n" + "\n\n".join([
         "The ceiling is the smallest of the terms below. They are all given, "
