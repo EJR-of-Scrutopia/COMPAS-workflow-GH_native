@@ -2826,15 +2826,32 @@ Item 4 in Task 8 (`test_an_unpriced_line_keeps_the_total_a_floor`). Item 5 in
 Task 9, where a configuration naming a missing part returns a row carrying
 `refused` rather than a 500.
 
-**Known risks the plan does not remove.**
+**Measured on the real export, so the implementer need not guess.**
 
-The cost of Task 7 on the real export is not yet measured. Registering 2260
-lines welds by linear scan, which is roughly two million distance tests, and
-each stage costs one forward solve plus one per wire. If a forward solve on 801
-nodes turns out to take more than a few seconds, a twenty stage walk will run to
-tens of minutes. That is tolerable for a phase that already shells out a finite
-element solve per stage, and it is not tolerable for a prestress ladder that
-repeats the walk. Task 7's implementer should time one forward solve first and
-report it before building any search over prestress; the ladder itself is
-deliberately not in this plan for that reason, and the prestress is a single
-input until the cost is known.
+Run on `Aramdillo style-contract.json` with the cut rule at 300 N prestress and
+EA 450000:
+
+- `register_fd_network` on the 2253 net lines takes **1.5 s** and produces
+  **exactly 801 vertices**, matching the contract's 801 nodes. So the weld
+  neither merges nor splits anything at the default tolerance on this export,
+  and the linear scan is not a performance problem. Task 6's merge refusal is
+  still needed, for the export where that stops being true.
+- One `solve_prescribed_lengths` on the full net costs about **1 s**. A twenty
+  stage walk at one solve plus one per wire is therefore roughly
+  20 x 8 x 1 s, call it **three minutes**, inside a phase that already shells
+  out a finite element solve per stage. A six-rung prestress ladder would be
+  about twenty minutes, which is why the ladder is still not in this plan and
+  prestress stays a single input.
+
+**And one result the implementer must expect.** With only the 34 anchors fixed
+and no wires, that solve does not converge: it refuses after 0.9 s with "A cable
+cannot push, and the net went slack", naming members 1, 2, 7, 10, 13 and many
+more. That is the correct answer, not a defect. A net at a rising geometry with
+nothing pulling up cannot carry a downward load, which is the same finding as
+the crown nodes seen from the other end. It means the wires are load bearing
+from the very first stage, and that no amount of prestress in the net alone
+substitutes for them.
+
+Task 7 should take this as a test: the bare net, with no wires, must refuse with
+a slack error rather than return a shape. If it ever returns one, something has
+started pushing.
