@@ -110,64 +110,164 @@ def net_weight_loads(vertices, edges, mass_per_metre, gravity=staging.GRAVITY):
 
 
 class Wire(NamedTuple):
-    """One spooled cable: a net node, and the frame point it is pulled to."""
+    """One spooled cable: the net node it holds, and the machine point it runs to.
+
+    frame_point is the point on the MACHINE the wire is fixed to, in world
+    millimetres. The name is kept from the older shape; it is the drum end of
+    the wire's route, not a point on a frame.
+    """
 
     name: str
     net_vertex: int
-    frame_point: list                 # millimetres
+    frame_point: list                 # millimetres, world space
+    machine_wire: object = None       # index of the wire on its machine
+    reeve_factor: object = None
+    permanence: object = None
 
 
-def wires_from_mechanism(document, vertex_count, anchors):
+def frame_to_world(frame, local):
+    """Map a point from a machine instance's local space into world space.
+
+    frame is {origin, xAxis, yAxis, zAxis}: the instance's own axes written in
+    world coordinates. The point is local[0] along xAxis, local[1] along yAxis
+    and local[2] along zAxis, from origin:
+
+        world = origin + x * xAxis + y * yAxis + z * zAxis
+
+    The axes are the COLUMNS of the rotation. Reading them as rows is the
+    transpose, which is the identity for the first instance and so passes any
+    check made on it alone; on the real export it puts a rotated instance's
+    drums about 14 m out.
+    """
+
+    try:
+        origin, ax, ay, az = (
+            [float(c) for c in frame[key]]
+            for key in ("origin", "xAxis", "yAxis", "zAxis")
+        )
+        x, y, z = (float(c) for c in local)
+        if not (len(origin) == len(ax) == len(ay) == len(az) == 3):
+            raise ValueError("an axis is not a 3-vector")
+    except (KeyError, TypeError, ValueError) as error:
+        raise CableNetError(
+            "An instance frame needs origin, xAxis, yAxis and zAxis, each "
+            "three numbers ({}).".format(error)
+        )
+    return [origin[k] + x * ax[k] + y * ay[k] + z * az[k] for k in range(3)]
+
+
+def wires_from_mechanism(document, vertex_count, supports):
     """The wires a study's mechanism document declares, in millimetres.
 
     mechanism.py validates the schema and the scale and hands the document
     through verbatim by design, so the wire keys are read and checked here. The
     document's components, its motors and reels, are deliberately ignored:
     choosing those is what the chooser does.
+
+    The wires are at the top level of the document, beside mechanism, instances
+    and anchors. Each carries id, net_vertex, machine_wire, path, permanence,
+    reeveFactor and route. The route is in its machine's LOCAL space and runs
+    from the net end (first) to the machine end (last); the instance named by
+    path[0] (side, mechanism) carries the frame that takes it into world space.
+    The document's own units are checked: metres at a scale of 1 are converted
+    to millimetres here, anything else is refused.
+
+    supports are the form document's resolvedSupportNodeIds. On this machine the
+    wires ARE the supports: those nodes are held by the machine and not by the
+    ground, so every wire must sit on one. The older nested shape
+    document["mechanism"]["wires"] with a frame_point is still read, because it
+    costs nothing; there the wire's point is already world metres.
     """
 
-    body = (document or {}).get("mechanism") or {}
-    raw = body.get("wires")
+    document = document or {}
+    raw = document.get("wires")
+    nested = False
+    if not raw:
+        raw = (document.get("mechanism") or {}).get("wires")
+        nested = bool(raw)
     if not raw:
         raise CableNetError(
-            "This study's mechanism document declares no wires. Add one wire "
-            "per spool, each naming the net_vertex it pulls and the frame "
-            "point it is anchored to, and export it again."
+            "This study's mechanism document declares no wires. It needs a "
+            "top-level 'wires' list, one entry per spool, each naming the "
+            "net_vertex it holds and the route it runs, and then exporting "
+            "again."
         )
-    held = set(int(index) for index in anchors)
+    scale = 1.0 if nested else float(document.get("lengthUnitToMetres", 1.0))
+    if (not nested and document.get("units", "m") != "m") or scale != 1.0:
+        raise CableNetError(
+            "This mechanism document is in {!r} with lengthUnitToMetres {}; "
+            "only metres at a scale of 1 are read, and anything else would "
+            "move every drum by the wrong factor.".format(
+                document.get("units"), scale)
+        )
+    frames = {}
+    for instance in document.get("instances") or []:
+        frames[(instance.get("side"), instance.get("mechanism"))] = (
+            instance.get("frame"))
+
+    held = set(int(index) for index in supports)
     wires = []
     for position, entry in enumerate(raw):
-        name = str(entry.get("name") or "wire {}".format(position + 1))
+        name = str(entry.get("id") or entry.get("name")
+                   or "wire {}".format(position + 1))
         if "net_vertex" not in entry:
             raise CableNetError(
                 "Wire {!r} carries no net_vertex, so nothing says which node it "
-                "pulls.".format(name)
+                "holds.".format(name)
             )
         node = int(entry["net_vertex"])
         if not 0 <= node < int(vertex_count):
             raise CableNetError(
-                "Wire {!r} pulls net_vertex {}, which is outside this study's "
+                "Wire {!r} holds net_vertex {}, which is outside this study's "
                 "0 to {}.".format(name, node, int(vertex_count) - 1)
             )
-        if node in held:
+        if node not in held:
             raise CableNetError(
-                "Wire {!r} pulls net_vertex {}, which is an anchor. Commanding "
-                "a fixed node moves nothing and would silently achieve "
-                "nothing.".format(name, node)
+                "Wire {!r} holds net_vertex {}, which is NOT a support node. "
+                "On this machine the wires ARE the supports: every support "
+                "node is held by a wire rather than by the ground, so a wire "
+                "belongs on a node in resolvedSupportNodeIds. A wire on any "
+                "other node would be pulling a free node, which the exporter "
+                "does not produce; the numbering of this export and of the "
+                "form document has gone out of step.".format(name, node)
             )
-        point = entry.get("frame_point") or {}
-        try:
-            frame = [
-                float(point["x"]) * 1000.0,
-                float(point["y"]) * 1000.0,
-                float(point["z"]) * 1000.0,
-            ]
-        except (KeyError, TypeError, ValueError):
-            raise CableNetError(
-                "Wire {!r} has no usable frame_point; it needs x, y and z in "
-                "metres.".format(name)
-            )
-        wires.append(Wire(name=name, net_vertex=node, frame_point=frame))
+        if nested:
+            point = entry.get("frame_point") or {}
+            try:
+                machine = [float(point[k]) * 1000.0 for k in "xyz"]
+            except (KeyError, TypeError, ValueError):
+                raise CableNetError(
+                    "Wire {!r} has no usable frame_point; it needs x, y and z "
+                    "in metres.".format(name)
+                )
+        else:
+            route = entry.get("route") or []
+            try:
+                local = route[-1]["origin"]
+            except (IndexError, KeyError, TypeError):
+                raise CableNetError(
+                    "Wire {!r} has no route, so nothing says where the machine "
+                    "end is.".format(name)
+                )
+            try:
+                key = (entry["path"][0]["side"], entry["path"][0]["mechanism"])
+            except (IndexError, KeyError, TypeError):
+                raise CableNetError(
+                    "Wire {!r} names no path[0] with a side and a mechanism, so "
+                    "its instance cannot be found.".format(name)
+                )
+            if frames.get(key) is None:
+                raise CableNetError(
+                    "Wire {!r} runs on side {} mechanism {}, and the document "
+                    "has no instance with a frame for it.".format(name, *key)
+                )
+            machine = [c * 1000.0 for c in frame_to_world(frames[key], local)]
+        wires.append(Wire(
+            name=name, net_vertex=node, frame_point=machine,
+            machine_wire=entry.get("machine_wire"),
+            reeve_factor=entry.get("reeveFactor"),
+            permanence=entry.get("permanence"),
+        ))
     return wires
 
 
@@ -224,7 +324,9 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "anchors": [int(a) for a in anchors],
         "wires": [
             {"name": w.name, "net_vertex": w.net_vertex,
-             "frame_point": list(w.frame_point)}
+             "frame_point": list(w.frame_point),
+             "machine_wire": w.machine_wire, "reeve_factor": w.reeve_factor,
+             "permanence": w.permanence}
             for w in wires
         ],
         "loads_by_stage": loads_by_stage,

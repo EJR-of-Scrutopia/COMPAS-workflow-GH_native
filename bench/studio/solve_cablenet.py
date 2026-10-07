@@ -33,7 +33,7 @@ class BuiltProblem(NamedTuple):
     vertex_of: dict                   # problem vertex index -> contract node id
     net_edge_count: int               # problem edges 0..n-1 are the net's own
     wire_vertices: tuple              # the problem vertex of each wire's frame end
-    fixed: tuple                      # anchors plus frame points, problem indices
+    fixed: tuple                      # the wires' machine ends only, problem indices
 
 
 def build_problem(vertices_metres, edges, anchors, wires, tolerance=1e-6):
@@ -51,6 +51,11 @@ def build_problem(vertices_metres, edges, anchors, wires, tolerance=1e-6):
     Problem edge k is input line k, so the net's edges keep the contract's own
     order and the wires follow, one per wire, in the order given. Rest lengths
     and reel commands are indexed the same way.
+
+    `anchors` are the form's support nodes. They are NOT fixed. The wires hold
+    them: each support is the net end of a wire, the wire's other end is a
+    machine point, and `fixed` is those machine points and nothing else. A
+    support with no wire would float, so it is refused.
     """
 
     millimetres = [[float(c) * 1000.0 for c in point] for point in vertices_metres]
@@ -132,9 +137,16 @@ def build_problem(vertices_metres, edges, anchors, wires, tolerance=1e-6):
             )
         wire_vertices.append(int(frame_vertex))
 
-    fixed = tuple(sorted(
-        set(node_of[int(a)] for a in anchors) | set(wire_vertices)
-    ))
+    wired = set(wire.net_vertex for wire in wires)
+    for anchor in anchors:
+        if int(anchor) not in wired:
+            raise CableNetError(
+                "Support node {} has no wire. The wires are the supports on "
+                "this machine, so a support nothing holds would float free "
+                "rather than stand on the ground.".format(int(anchor))
+            )
+    # Only the machine ends are fixed. The net nodes the wires hold are free.
+    fixed = tuple(sorted(set(wire_vertices)))
     return BuiltProblem(
         problem=problem,
         node_of=node_of,
@@ -392,7 +404,10 @@ def solve(request: dict) -> dict:
 
     wires = [
         Wire(name=w["name"], net_vertex=int(w["net_vertex"]),
-             frame_point=list(w["frame_point"]))
+             frame_point=list(w["frame_point"]),
+             machine_wire=w.get("machine_wire"),
+             reeve_factor=w.get("reeve_factor"),
+             permanence=w.get("permanence"))
         for w in request["wires"]
     ]
     vertices = request["vertices"]
@@ -415,7 +430,9 @@ def solve(request: dict) -> dict:
     document["thickness"] = request.get("thickness")
     document["net"]["ea_provenance"] = request.get("ea_provenance")
     document["wires"] = [
-        {"name": w.name, "net_vertex": w.net_vertex, "frame_point": w.frame_point}
+        {"name": w.name, "net_vertex": w.net_vertex, "frame_point": w.frame_point,
+         "machine_wire": w.machine_wire, "reeve_factor": w.reeve_factor,
+         "permanence": w.permanence}
         for w in wires
     ]
     return document

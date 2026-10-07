@@ -63,26 +63,144 @@ def test_the_net_carries_its_own_weight_split_between_each_members_ends():
     assert abs(-loads[1][2] - expected / 2.0) < 1e-12
 
 
-def test_wires_are_read_from_the_mechanism_document_and_checked():
+IDENTITY = {"origin": [0, 0, 0], "xAxis": [1, 0, 0], "yAxis": [0, 1, 0],
+            "zAxis": [0, 0, 1]}
+# a quarter turn about z, then a shift: local x lands on world +y
+QUARTER = {"origin": [10, 20, 30], "xAxis": [0, 1, 0], "yAxis": [-1, 0, 0],
+           "zAxis": [0, 0, 1]}
+
+
+def _mechanism(net_vertex=5, machine_end=(1.0, 2.0, 3.0), frame=IDENTITY):
+    return {
+        "units": "m", "lengthUnitToMetres": 1,
+        "mechanism": {},
+        "instances": [{"side": 0, "mechanism": 0, "frame": frame}],
+        "wires": [{
+            "id": "0-0-0", "net_vertex": net_vertex, "machine_wire": 2,
+            "reeveFactor": 4, "permanence": "temporary",
+            "path": [{"side": 0, "mechanism": 0}],
+            "route": [{"origin": [9, 9, 9]}, {"origin": list(machine_end)}],
+        }],
+    }
+
+
+def test_a_point_is_carried_through_a_frame_by_its_axes_as_columns():
+    # the axes are the columns: local (1, 0, 0) goes ALONG xAxis. The transpose
+    # would send it along (0, -1, 0) here, and be the identity for IDENTITY.
+    assert cablenet.frame_to_world(IDENTITY, [1, 2, 3]) == [1, 2, 3]
+    assert cablenet.frame_to_world(QUARTER, [1, 0, 0]) == [10, 21, 30]
+    assert cablenet.frame_to_world(QUARTER, [0, 1, 0]) == [9, 20, 30]
+    assert cablenet.frame_to_world(QUARTER, [0, 0, 5]) == [10, 20, 35]
+    with pytest.raises(cablenet.CableNetError, match="xAxis"):
+        cablenet.frame_to_world({"origin": [0, 0, 0]}, [0, 0, 0])
+
+
+def test_wires_are_read_from_the_top_level_and_put_in_world_millimetres():
+    wires = cablenet.wires_from_mechanism(
+        _mechanism(frame=QUARTER), vertex_count=10, supports=[5, 6])
+    assert wires[0].name == "0-0-0" and wires[0].net_vertex == 5
+    # route[-1] is (1, 2, 3) local: 10 + 1*0 + 2*-1, 20 + 1*1 + 0, 30 + 3
+    assert wires[0].frame_point == pytest.approx([8000.0, 21000.0, 33000.0])
+    assert wires[0].machine_wire == 2
+    assert wires[0].reeve_factor == 4
+    assert wires[0].permanence == "temporary"
+
+
+def test_the_older_nested_shape_is_still_read():
     document = {"mechanism": {"wires": [
         {"name": "w1", "net_vertex": 5, "frame_point": {"x": 1.0, "y": 2.0, "z": 3.0}},
     ]}}
-    wires = cablenet.wires_from_mechanism(document, vertex_count=10, anchors=[0, 1])
-    assert wires[0].net_vertex == 5
+    wires = cablenet.wires_from_mechanism(document, vertex_count=10, supports=[5])
     assert wires[0].frame_point == [1000.0, 2000.0, 3000.0]
 
+
+def test_a_wire_on_a_node_that_is_not_a_support_is_refused_the_right_way_round():
+    with pytest.raises(cablenet.CableNetError) as refused:
+        cablenet.wires_from_mechanism(
+            _mechanism(net_vertex=3), vertex_count=10, supports=[5, 6])
+    message = str(refused.value)
+    assert "NOT a support node" in message and "wires ARE the supports" in message
+    # the wire on a support, which the old code refused, is the normal case
+    cablenet.wires_from_mechanism(_mechanism(net_vertex=5), 10, [5, 6])
+
+
+def test_a_broken_wire_or_document_is_refused_by_name():
+    gone = _mechanism()
+    gone["instances"] = []
+    scaled = _mechanism()
+    scaled["lengthUnitToMetres"] = 0.001
     for broken, match in (
-        ({"mechanism": {"wires": [{"name": "w"}]}}, "net_vertex"),
-        ({"mechanism": {"wires": [{"name": "w", "net_vertex": 99,
-                                   "frame_point": {"x": 0, "y": 0, "z": 1}}]}},
-         "outside"),
-        ({"mechanism": {"wires": [{"name": "w", "net_vertex": 0,
-                                   "frame_point": {"x": 0, "y": 0, "z": 1}}]}},
-         "anchor"),
+        ({"wires": [{"id": "w"}]}, "net_vertex"),
+        (_mechanism(net_vertex=99), "outside"),
         ({"mechanism": {}}, "no wires"),
+        (gone, "no instance"),
+        (scaled, "lengthUnitToMetres"),
     ):
         with pytest.raises(cablenet.CableNetError, match=match):
-            cablenet.wires_from_mechanism(broken, vertex_count=10, anchors=[0, 1])
+            cablenet.wires_from_mechanism(broken, vertex_count=10, supports=[5, 6])
+
+
+REAL = Path(
+    "C:/Users/Param/OneDrive - Ananke-eidos/Documents/Kinetic AI/PHD robotics"
+    "/COMPAS Exports"
+)
+
+
+def _real_export():
+    import json
+
+    mechanism_path = REAL / "Mechanisms" / "5 sided form-mechanism.json"
+    form_path = REAL / "5 sided form-form.json"
+    if not mechanism_path.is_file() or not form_path.is_file():
+        pytest.skip("the real 5 sided form export is not on this machine")
+    mechanism = json.loads(mechanism_path.read_text(encoding="utf-8"))
+    form = json.loads(form_path.read_text(encoding="utf-8"))
+    return mechanism, form
+
+
+def test_the_real_export_is_read_whole_and_every_wire_stands_on_a_support():
+    mechanism, form = _real_export()
+    equilibrium = form["equilibrium"]
+    supports = equilibrium["resolvedSupportNodeIds"]
+    wires = cablenet.wires_from_mechanism(
+        mechanism, len(equilibrium["vertices"]), supports)
+    assert len(wires) == 105
+    assert all(w.net_vertex in set(supports) for w in wires)
+    # the wires are the supports: one each, none left over
+    assert sorted(w.net_vertex for w in wires) == sorted(supports)
+    assert wires[0].name == "0-0-0" and wires[0].net_vertex == 1
+    assert wires[0].machine_wire == 0 and wires[0].reeve_factor == 4
+
+    by_id = {w["id"]: w for w in mechanism["wires"]}
+    # instance (0, 0) is the identity, so its drum is where its route says
+    identity = by_id["0-0-0"]["route"][-1]["origin"]
+    assert wires[0].frame_point == pytest.approx([c * 1000.0 for c in identity])
+    # instance (0, 1) is translated, so the same kind of wire lands elsewhere
+    moved = next(w for w in wires if w.name == "0-1-0")
+    local = by_id["0-1-0"]["route"][-1]["origin"]
+    assert max(abs(a - b * 1000.0) for a, b in zip(moved.frame_point, local)) > 100.0
+    # and so is one on a rotated side
+    turned = next(w for w in wires if w.name == "3-0-0")
+    local = by_id["3-0-0"]["route"][-1]["origin"]
+    assert max(abs(a - b * 1000.0) for a, b in zip(turned.frame_point, local)) > 1000.0
+
+
+def test_the_real_exports_net_ends_land_on_their_support_nodes_through_the_frames():
+    # route[0] is the net end of the wire. Carried through its instance's frame
+    # it must land on the support node the wire names, in the form document's own
+    # coordinates, for all 105 wires: a transposed basis misses by metres on
+    # every rotated side, which nothing downstream would notice.
+    mechanism, form = _real_export()
+    vertices = form["equilibrium"]["vertices"]
+    frames = {(i["side"], i["mechanism"]): i["frame"] for i in mechanism["instances"]}
+    worst = 0.0
+    for wire in mechanism["wires"]:
+        key = (wire["path"][0]["side"], wire["path"][0]["mechanism"])
+        point = cablenet.frame_to_world(frames[key], wire["route"][0]["origin"])
+        node = vertices[wire["net_vertex"]]
+        worst = max(worst, max(abs(point[0] - node["x"]), abs(point[1] - node["y"]),
+                               abs(point[2] - node["z"])))
+    assert worst < 1e-3, worst
 
 
 def test_run_cablenet_with_an_injected_runner_never_imports_the_engine():
@@ -103,7 +221,7 @@ import tempfile, os
 out = os.path.join(tempfile.mkdtemp(), "demand.json")
 contract = {{"equilibrium": {{"supports": []}}}}
 import geometry
-geometry.support_ids = lambda c: [0, 2]
+geometry.support_ids = lambda c: [1]
 arrays = {{
     "vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, -0.3], [2.0, 0.0, 0.0]],
     "edges": [[0, 1], [2, 1]],
@@ -178,7 +296,7 @@ def test_the_request_carries_the_placed_weight_study_and_ea_provenance():
     vertices, faces = _two_quads()
     plan = [{"stage": 1, "courses_placed": 1, "segments": [], "faces": [0]}]
     original = cablenet.geometry.support_ids
-    cablenet.geometry.support_ids = lambda c: [0, 1]
+    cablenet.geometry.support_ids = lambda c: [2]
     try:
         cablenet.run_cablenet(
             {}, {"vertices": vertices, "edges": [[0, 1], [1, 2]], "faces": faces},
