@@ -87,3 +87,29 @@ def test_a_malformed_row_is_refused_as_a_row_not_a_500(client):
     assert rows[0]["refused"] and ":" in rows[0]["refused"]
     assert rows[1]["refused"]
     assert rows[2]["refused"] is None and rows[2]["ceiling"] > 0
+
+
+_GOOD = {"motor": "34HS46", "drive": "CL86Y", "gearbox": "EG23-G20",
+         "drum": "drum-72", "rope": "rope-4mm", "rail": "MGN15H-300",
+         "chain": ["eye-M12", "turnbuckle-hook-hook-M10"], "sheave": None,
+         "reeve_factor": 1}
+
+
+def test_with_no_prestress_floor_passes_is_null_and_says_why(client):
+    body = client.post("/api/studies/any/cablenet/configurations",
+                       json={"configurations": [_GOOD], "angle_degrees": 2.0}).json()
+    row = body["rows"][0]
+    assert row["passes"] is None and "no" in row["passes_note"]
+
+
+def test_the_scored_row_carries_the_drum_and_rail_checks_and_they_are_hard(client):
+    fits = client.post("/api/studies/any/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 2.0, "prestress_floor": 900.0,
+        "rope_wound_mm": 250.0}).json()["rows"][0]
+    assert fits["rope_path"]["drum_fits"] and fits["rope_path"]["rail_fits"]
+    assert fits["passes"] is True
+    over = client.post("/api/studies/any/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 2.0, "prestress_floor": 900.0,
+        "rope_wound_mm": 9000.0}).json()["rows"][0]
+    assert over["rope_path"]["drum_fits"] is False
+    assert over["passes"] is False

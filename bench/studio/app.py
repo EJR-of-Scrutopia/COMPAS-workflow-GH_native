@@ -1148,6 +1148,8 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         angle = float(body.get("angle_degrees", 10.0))
         floor = float(body.get("prestress_floor") or 0.0)
         wanted_speed = body.get("rope_speed_mm_s")
+        # Total rope one wire must wind over the whole build, millimetres.
+        wound = body.get("rope_wound_mm")
         rows = []
         for configuration in configurations:
             try:
@@ -1156,12 +1158,24 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     "configuration": configuration,
                     "ceiling": ceiling,
                     "binding": binding,
-                    "passes": bool(floor <= 0.0 or ceiling >= floor),
+                    "passes": bool(ceiling >= floor) if floor > 0.0 else None,
+                    "passes_note": (
+                        None if floor > 0.0 else
+                        "no prestress floor was given, so there is no demand "
+                        "to compare the ceiling against"),
                     "margin": (ceiling / floor) if floor > 0.0 else None,
                     "price": catalogue.price_of(parts, configuration),
                     "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
                     "refused": None,
                 }
+                if wound is not None:
+                    path = catalogue.drum_and_travel(
+                        parts, configuration, float(wound))
+                    row["rope_path"] = path
+                    if not (path["drum_fits"] and path["rail_fits"]):
+                        # hard checks: a second drum layer or a carriage past
+                        # its stroke is a rig that cannot be built as drawn
+                        row["passes"] = False
                 if wanted_speed:
                     row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
                         parts, configuration, float(wanted_speed))

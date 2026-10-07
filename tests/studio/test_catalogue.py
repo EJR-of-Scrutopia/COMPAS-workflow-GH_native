@@ -167,3 +167,54 @@ print("clean")
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "clean"
+
+
+REEVED_NO_SHEAVE = dict(
+    motor="23HS45", drive="CL57Y", gearbox="EG23-G20", drum="drum-72",
+    rope="rope-8mm", rail="MGN15H-300",
+    chain=["eye-M20", "turnbuckle-eye-eye-M12"], sheave=None, reeve_factor=2)
+
+
+def test_a_reeving_with_no_sheave_named_is_refused():
+    parts = catalogue.load_parts()
+    with pytest.raises(catalogue.CatalogueError, match="sheave") as raised:
+        catalogue.mechanism_for(parts, REEVED_NO_SHEAVE, angle_degrees=2.0)
+    assert "doubles the force" in str(raised.value)
+
+
+def test_the_unchecked_reeved_motor_torque_answer_is_unreachable():
+    parts = catalogue.load_parts()
+    with pytest.raises(catalogue.CatalogueError):
+        catalogue.ceiling_for(parts, REEVED_NO_SHEAVE, angle_degrees=2.0)
+    named, binding = catalogue.ceiling_for(
+        parts, dict(REEVED_NO_SHEAVE, sheave="WZ-11-K"), angle_degrees=2.0)
+    assert round(named) == 1214 and binding == "sheave"
+
+
+def test_the_briefed_drum_holds_37_wraps_which_is_8369_mm():
+    parts = catalogue.load_parts()
+    configuration = dict(REEVED_NO_SHEAVE, sheave="WZ-11-K", rope="rope-4mm")
+    fits = catalogue.drum_and_travel(parts, configuration, 8000.0)
+    assert fits["drum_capacity_wraps"] == 37
+    assert round(fits["drum_capacity_mm"]) == 8369
+    assert fits["drum_fits"] is True
+    assert fits["carriage_travel_mm"] == 4000.0 and fits["rail_fits"] is False
+    over = catalogue.drum_and_travel(parts, configuration, 8400.0)
+    assert over["drum_fits"] is False
+
+
+def test_the_carriage_travel_is_checked_against_the_stroke():
+    parts = catalogue.load_parts()
+    configuration = dict(REEVED_NO_SHEAVE, sheave="WZ-11-K", rope="rope-4mm")
+    ok = catalogue.drum_and_travel(parts, configuration, 600.0)
+    assert ok["carriage_travel_mm"] == 300.0 and ok["rail_fits"] is True
+    no = catalogue.drum_and_travel(parts, configuration, 601.0)
+    assert no["rail_fits"] is False
+
+
+def test_the_sheave_to_rope_ratio_is_a_number_with_no_verdict():
+    parts = catalogue.load_parts()
+    configuration = dict(REEVED_NO_SHEAVE, sheave="WZ-11-K", rope="rope-4mm")
+    result = catalogue.drum_and_travel(parts, configuration, 100.0)
+    assert result["sheave_over_rope_diameter"] == 30.0
+    assert not any("verdict" in k or "ok" == k for k in result)

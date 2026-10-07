@@ -137,6 +137,13 @@ def mechanism_for(parts, configuration, angle_degrees):
     falls = int(configuration.get("reeve_factor", 1))
     sheave_key = configuration.get("sheave")
     sheave = _part(parts, "sheave", sheave_key) if sheave_key else None
+    if falls > 1 and sheave is None:
+        raise CatalogueError(
+            "A reeving of {} falls needs a sheave named. A moving block roughly "
+            "doubles the force through its sheave, so a reeving with no sheave "
+            "named cannot be checked, and its extra mechanical advantage would "
+            "raise the other ceilings while nothing limited the block.".format(falls)
+        )
 
     return Mechanism(
         drum_radius=float(drum["drum_radius"]),
@@ -234,3 +241,51 @@ def motor_rpm_for(parts, configuration, rope_speed_mm_s):
         float(rope_speed_mm_s) * 60.0 * float(gearbox["gear_ratio"])
         / (2.0 * math.pi * float(drum["drum_radius"]))
     )
+
+
+def drum_and_travel(parts, configuration, rope_wound_mm):
+    """Two hard checks on the total rope to be wound, and one bare number.
+
+    Rope on the drum must fit the drum's single layer, and the carriage must
+    not travel further than the rail's stroke:
+
+        drum capacity   = floor(width / groove pitch) * 2 pi * drum radius
+        carriage travel = rope taken in / reeve_factor
+
+    These are hard checks and not warnings. Past the capacity a second layer
+    starts, which changes the effective radius and silently invalidates every
+    torque figure; past the stroke the carriage cannot reach.
+
+    The sheave-to-rope diameter ratio is returned as a NUMBER WITH NO VERDICT.
+    The governing minimum would come from ISO 4308-1, which is not confirmed,
+    and a pass or fail against an unconfirmed limit is worse than none.
+    """
+
+    drum = _part(parts, "drum", configuration["drum"])
+    rail = _part(parts, "rail", configuration["rail"])
+    rope = _part(parts, "rope", configuration["rope"])
+    wound = float(rope_wound_mm)
+    if wound < 0.0:
+        raise CatalogueError("The rope wound cannot be negative.")
+    falls = int(configuration.get("reeve_factor", 1))
+    radius = float(drum["drum_radius"])
+    wraps = math.floor(float(drum["width_mm"]) / float(drum["groove_pitch_mm"]))
+    capacity = wraps * 2.0 * math.pi * radius
+    travel = wound / falls
+    stroke = float(rail["stroke_mm"])
+    sheave_key = configuration.get("sheave")
+    ratio = None
+    if sheave_key:
+        ratio = (float(_part(parts, "sheave", sheave_key)["diameter_mm"])
+                 / float(rope["diameter_mm"]))
+    return {
+        "rope_wound_mm": wound,
+        "turns_at_drum": wound / (2.0 * math.pi * radius),
+        "drum_capacity_wraps": wraps,
+        "drum_capacity_mm": capacity,
+        "drum_fits": bool(wound <= capacity),
+        "carriage_travel_mm": travel,
+        "rail_stroke_mm": stroke,
+        "rail_fits": bool(travel <= stroke),
+        "sheave_over_rope_diameter": ratio,
+    }
