@@ -74,7 +74,9 @@ async function build(root, studyName) {
   const tableBox = add(root, "section", "cablenet-table");
 
   const floor = demand ? prestressFloor(demand) : 0;
-  renderDemand(demandBox, demand, floor, demandNote);
+  const shape = demand ? shapeOf(demand) : null;
+  const wound = demand ? ropeWound(demand) : null;
+  renderDemand(demandBox, demand, floor, demandNote, shape, wound);
   const rpmReadout = renderSpeed(speedBox, state, annotateSpeed);
   renderParts(partsBox, parts, state, refresh);
 
@@ -82,10 +84,13 @@ async function build(root, studyName) {
   async function score() {
     const body = {
       configurations: [configurationOf(state), ...ladder(state)],
-      angle_degrees: 10.0,
+      angle_degrees: ASSUMED_ANGLE_DEGREES,
       prestress_floor: floor,
       rope_speed_mm_s: state.speed,
     };
+    // The drum and rail checks only run when the server is told how much rope
+    // the build winds. Without a demand document there is nothing to send.
+    if (wound != null) body.rope_wound_mm = wound;
     return getJson(
       `/api/studies/${encodeURIComponent(studyName)}/cablenet/configurations`,
       { method: "POST", headers: { "Content-Type": "application/json" },
@@ -98,7 +103,7 @@ async function build(root, studyName) {
     try {
       const scored = await score();
       if (mine !== ticket) return;
-      renderVerdict(verdictBox, scored.rows[0], floor, parts);
+      renderVerdict(verdictBox, scored.rows[0], floor, parts, shape, demand);
       renderTable(tableBox, scored.rows, parts);
       showRpm(rpmReadout, state.speed, scored.rows[0]);
     } catch (error) {
@@ -139,6 +144,44 @@ function money(value) {
   return `£${Number(value).toFixed(2)}`;
 }
 
+// The wire's angle to its eye bolt's axis is not recorded in the export, so
+// this is an assumption, not a computed figure. It selects the bolt's off-axis
+// rating, which is the conservative direction.
+const ASSUMED_ANGLE_DEGREES = 10.0;
+
+// Whether the net keeps its shape. Deviation is a property of the vault, the
+// wires and the prestress; the chosen parts cannot move it.
+function shapeOf(demand) {
+  const stages = demand.stages || [];
+  let worst = null;
+  let allReachable = true;
+  for (const stage of stages) {
+    if (stage.reachable !== true) allReachable = false;
+    const residual = Number(stage.residual_after);
+    if (Number.isFinite(residual) && (worst === null || residual > worst.residual)) {
+      worst = { residual, name: stage.name == null ? stage.stage : stage.name };
+    }
+  }
+  const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
+  const known = stages.length > 0 && worst !== null;
+  const withinLine = acceptance == null || (worst !== null && worst.residual <= acceptance);
+  return {
+    known, worst, allReachable, acceptance,
+    holds: known && allReachable && withinLine,
+  };
+}
+
+// Total rope one wire winds over the whole build, taken at the worst wire.
+function ropeWound(demand) {
+  const totals = [];
+  for (const stage of demand.stages || []) {
+    (stage.wire_reel_commands || []).forEach((command, wire) => {
+      totals[wire] = (totals[wire] || 0) + Math.abs(Number(command) || 0);
+    });
+  }
+  return totals.length ? Math.max(...totals) : null;
+}
+
 function prestressFloor(demand) {
   let worst = 0;
   for (const stage of demand.stages || []) {
@@ -172,7 +215,7 @@ function turnbuckleLabel(parts, key) {
     `${entry.working_load_kg} kg working load`;
 }
 
-function renderDemand(box, demand, floor, note) {
+function renderDemand(box, demand, floor, note, shape, wound) {
   if (!demand) {
     box.textContent = note
       ? `The cable net demand could not be read: ${note}`
@@ -189,7 +232,18 @@ function renderDemand(box, demand, floor, note) {
     `<p>The greatest tension any wire must carry is ` +
     `<strong>${floor.toFixed(0)} N</strong>, at stage ` +
     `${esc(demand.sizing_stage)}. That is a property of the vault and the skin, so ` +
-    `it does not move when parts change.</p><p>${acceptance}</p>`;
+    `it does not move when parts change.</p><p>${acceptance}</p>` +
+    (shape && shape.known
+      ? `<p>The worst the net misses its shape after correction is ` +
+        `<strong>${shape.worst.residual.toFixed(2)} mm</strong>, at stage ` +
+        `${esc(shape.worst.name)}` +
+        `${shape.allReachable ? "" : ", and at least one stage cannot be corrected at all"}. ` +
+        `That is a property of the vault, the wires and the prestress, so ` +
+        `it does not move when parts change.</p>`
+      : "") +
+    (wound == null ? "" :
+      `<p>The worst wire winds ${wound.toFixed(0)} mm of rope in total. ` +
+      `That too comes from the vault and not the parts.</p>`);
 }
 
 function renderParts(box, parts, state, refresh) {
@@ -295,23 +349,75 @@ function showRpm(readout, speed, row) {
     : ` ${speed} mm/s is ${rpm.toFixed(0)} rpm at the motor with this gearbox and drum`;
 }
 
-function renderVerdict(box, row, floor, parts) {
+function renderVerdict(box, row, floor, parts, shape, demand) {
   if (!row || row.refused) {
     box.innerHTML =
       `<h3>The verdict</h3><p>${row ? esc(row.refused) : "No answer."}</p>`;
     return;
   }
-  const verdict = floor > 0
-    ? (row.passes ? "It holds." : "It does not hold.")
-    : "No demand to compare against yet.";
   const bound = parts.turnbuckle[row.binding]
     ? turnbuckleLabel(parts, row.binding) : row.binding;
+  const path = row.rope_path || null;
+
+  // Holding is two questions: can the parts carry the tension, and does the
+  // net stay within the acceptance line. Say which half failed. Every entry
+  // in reasons is HTML; only numbers and escaped names go into it.
+  let verdict;
+  const reasons = [];
+  if (!(floor > 0)) {
+    verdict = "No demand to compare against yet.";
+  } else {
+    // not row.passes: the server folds the drum and rail checks into it
+    const carries = row.ceiling >= floor;
+    const pathOk = !path || (path.drum_fits && path.rail_fits);
+    const shapeOk = !shape || !shape.known || shape.holds;
+    verdict = carries && pathOk && shapeOk ? "It holds." : "It does not hold.";
+    if (carries) {
+      reasons.push("The parts can carry the tension.");
+    } else {
+      reasons.push(`The parts cannot carry the tension: the ceiling is ` +
+        `${row.ceiling.toFixed(0)} N against ${floor.toFixed(0)} N demanded.`);
+    }
+    if (path && !path.drum_fits) {
+      reasons.push(`The rope does not fit the drum in one layer (` +
+        `${path.rope_wound_mm.toFixed(0)} mm against ` +
+        `${path.drum_capacity_mm.toFixed(0)} mm). A second layer changes the ` +
+        `effective radius, so every torque figure here would be wrong.`);
+    }
+    if (path && !path.rail_fits) {
+      reasons.push(`The carriage would travel ${path.carriage_travel_mm.toFixed(0)} mm ` +
+        `but the rail's stroke is ${path.rail_stroke_mm.toFixed(0)} mm.`);
+    }
+    if (shape && shape.known) {
+      const line = shape.acceptance == null ? "no acceptance line set"
+        : `${shape.acceptance.toFixed(2)} mm acceptance line`;
+      if (!shape.holds) {
+        const how = shape.allReachable ? "" :
+          " and at least one stage cannot be corrected at all";
+        reasons.push(`The net misses the shape by ${shape.worst.residual.toFixed(2)} mm ` +
+          `at stage ${esc(shape.worst.name)} against a ${line}${how}. ` +
+          `This comes from the vault, the wires and the prestress, so no ` +
+          `change of parts here will cure it.`);
+      } else {
+        reasons.push(`The net stays within the shape: the worst miss is ` +
+          `${shape.worst.residual.toFixed(2)} mm against a ${line}.`);
+      }
+    } else if (!demand || !shape || !shape.known) {
+      reasons.push("The shape of the net could not be checked.");
+    }
+  }
   box.innerHTML =
     `<h3>The verdict</h3>` +
-    `<p><strong>${verdict}</strong> The ceiling is ` +
+    `<p><strong>${verdict}</strong> ${reasons.join(" ")}</p>` +
+    `<p>The ceiling is ` +
     `${row.ceiling.toFixed(0)} N, set by ${esc(bound)}.` +
     (row.margin == null ? "" : ` That is ${row.margin.toFixed(2)} times the demand.`) +
     `</p>` +
+    `<p class="cablenet-note">The eye bolt is rated at its off-axis figure ` +
+    `(${ASSUMED_ANGLE_DEGREES.toFixed(0)} degrees) because the wire's angle to the ` +
+    `bolt is not recorded in the export. This is an assumption. A bolt genuinely ` +
+    `loaded along its axis would be stronger.</p>` +
+    ropeHtml(path) +
     (row.rope_speed_mm_s
       ? `<p>This drive runs the rope at ${row.rope_speed_mm_s.toFixed(0)} mm/s.</p>`
       : `<p>A stepper is commanded as fast or as slow as wanted. Check the ` +
@@ -323,6 +429,27 @@ function renderVerdict(box, row, floor, parts) {
           `${row.price.unpriced.length} parts have`} no price yet ` +
         `(${esc(row.price.unpriced.join(", "))}).`
       : `${money(row.price.pounds)}.`}</p>`;
+}
+
+function ropeHtml(path) {
+  if (!path) return "";
+  const mark = (ok) => (ok ? "PASS" : "FAIL");
+  const ratio = path.sheave_over_rope_diameter;
+  return `<h4>Rope</h4><ul>` +
+    `<li><strong>${mark(path.drum_fits)}</strong> Rope on the drum: ` +
+    `${path.rope_wound_mm.toFixed(0)} mm wound against ` +
+    `${path.drum_capacity_mm.toFixed(0)} mm of single-layer capacity ` +
+    `(${path.drum_capacity_wraps} wraps).` +
+    (path.drum_fits ? "" :
+      " Past this a second layer starts and the torque figures are invalid.") +
+    `</li>` +
+    `<li><strong>${mark(path.rail_fits)}</strong> Carriage travel: ` +
+    `${path.carriage_travel_mm.toFixed(0)} mm against a rail stroke of ` +
+    `${path.rail_stroke_mm.toFixed(0)} mm.</li>` +
+    `<li>Sheave to rope diameter ratio: ` +
+    `${ratio == null ? "no sheave chosen" : ratio.toFixed(1)}. ` +
+    `This is a bare number and carries no verdict, because the minimum it ` +
+    `should meet is not confirmed.</li></ul>`;
 }
 
 function renderTable(box, rows, parts) {
