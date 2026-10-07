@@ -333,6 +333,8 @@ def run_staging(
     include_cra: bool = False,
     source: Optional[str] = None,
     density: Optional[float] = None,
+    include_cablenet: bool = False,
+    cablenet_options: Optional[dict] = None,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -570,6 +572,17 @@ def run_staging(
         "cra_mu": FRICTION[material] if include_cra else None,
         "cra_skipped": skipped,
     }
+    if include_cablenet:
+        # imported here, not at module scope: staging must stay importable
+        # without the solver stack, and the guard test holds it to that.
+        import cablenet
+
+        options = dict(cablenet_options or {})
+        document["cablenet"] = cablenet.run_cablenet(
+            contract=contract, arrays=arrays, plan=plan, thickness=thickness,
+            density=density, out_path=options.pop("out_path"), **options
+        )
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(document), encoding="utf-8")

@@ -93,6 +93,13 @@ def staging_path(slug: str, material: str, pattern: str, size: float,
         _density_suffix(density))
 
 
+def cablenet_path(slug: str, material: str, pattern: str, size: float,
+                  thickness: float, density=None) -> Path:
+    return STUDIES_DIR / slug / "studio" / "cablenet-{}-{}-s{}-t{}{}.json".format(
+        material, pattern, round(size * 1000), round(thickness * 1000),
+        _density_suffix(density))
+
+
 def _sidecar(export_name: str, *suffixes: str) -> Path:
     """The first of these documents that exists, or the last name tried.
 

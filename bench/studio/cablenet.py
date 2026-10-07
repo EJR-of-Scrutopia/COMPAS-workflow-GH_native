@@ -265,3 +265,201 @@ def to_engine(loads_by_node, node_of, vertex_count):
             continue                  # a node no edge touched carries nothing
         out[vertex] = [float(value) for value in vector]
     return out
+
+
+def cut_rest_lengths(problem, net_edge_count, ea, prestress):
+    """The lengths the net's own members are MADE to.
+
+    Every member carries the same prestress when stretched to its length at the
+    target geometry:
+
+        rest = length(target) / (1 + prestress / EA)
+
+    There is no solve here and there deliberately is not one. The vault's
+    geometry is a rising compression shell, and a tension-only net at a rising
+    geometry under downward load cannot be held at all at its highest nodes: on
+    the real export two free nodes at the crown have every neighbour at or below
+    them, so no cable can hold them and only a wire can. A hold solve at the
+    target is therefore infeasible rather than approximate, and a non-negative
+    least squares over 2253 members would in any case not finish in minutes.
+
+    So prestress is an INPUT, which is what it always was physically, and where
+    the net then sits is the forward solve's answer.
+    """
+
+    import numpy as np
+
+    if not float(ea) > 0.0:
+        raise CableNetError("EA must be greater than zero.")
+    if not float(prestress) > 0.0:
+        raise CableNetError(
+            "The prestress must be greater than zero: a net cut to its own "
+            "target lengths carries nothing and goes slack."
+        )
+    xyz = np.asarray(problem.source_vertices, dtype=float)
+    rest = []
+    for u, v in problem.source_edges[:int(net_edge_count)]:
+        length = float(np.linalg.norm(xyz[int(v)] - xyz[int(u)]))
+        rest.append(length / (1.0 + float(prestress) / float(ea)))
+    return rest
+
+
+def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
+                acceptance_source, target=None, stage_names=None, stage_kinds=None):
+    """Solve every stage in order and return the demand document.
+
+    The net's own rest lengths never change: they are manufactured. Only the
+    wires are commanded, and only the wires are perturbed when the correction is
+    linearised, which is the difference between one solve per member and one per
+    wire.
+    """
+
+    import numpy as np
+
+    from tree_forest_compas.hold import correction_for
+    from tree_forest_compas.hold import nodes_needing_support
+    from tree_forest_compas.prescribed import PrescribedError
+    from tree_forest_compas.prescribed import solve_prescribed_lengths
+
+    problem = built.problem
+    vertex_count = len(problem.source_vertices)
+    edge_count = len(problem.source_edges)
+    wire_indices = list(range(built.net_edge_count, edge_count))
+    if not wire_indices:
+        raise CableNetError("A cable net with no wires cannot be commanded.")
+
+    net_rest = cut_rest_lengths(problem, built.net_edge_count, ea, prestress)
+    xyz = np.asarray(problem.source_vertices, dtype=float)
+    wire_rest = [
+        float(np.linalg.norm(xyz[int(v)] - xyz[int(u)])) / (1.0 + prestress / ea)
+        for u, v in problem.source_edges[built.net_edge_count:]
+    ]
+    reference = xyz if target is None else np.asarray(target, dtype=float)
+
+    # the diagnostic first, so an unholdable node is a node number and not a
+    # least squares message
+    heaviest = max(
+        range(len(loads_by_stage)),
+        key=lambda k: sum(-row[2] for row in loads_by_stage[k]),
+    )
+    combined = [
+        [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+        for a, b in zip(loads_by_stage[heaviest], net_weight)
+    ]
+    engine_loads = to_engine(combined, built.node_of, vertex_count)
+    stranded = nodes_needing_support(
+        problem.source_vertices, problem.source_edges, built.fixed, engine_loads
+    )
+    if stranded:
+        named = [built.vertex_of.get(v, v) for v in stranded]
+        raise CableNetError(
+            "These nodes need a wire and have none: {}. Every cable at such a "
+            "node runs downward, so no tension can hold it and the load has "
+            "nowhere to go. Add a wire to each in the mechanism document."
+            .format(", ".join(str(n) for n in named[:20]))
+        )
+
+    stages = []
+    previous = list(wire_rest)
+    for index, skin in enumerate(loads_by_stage):
+        combined = [
+            [a[0] + b[0], a[1] + b[1], a[2] + b[2]] for a, b in zip(skin, net_weight)
+        ]
+        loads = np.asarray(
+            to_engine(combined, built.node_of, vertex_count), dtype=float
+        )
+        rest = np.asarray(list(net_rest) + list(previous), dtype=float)
+        try:
+            state = solve_prescribed_lengths(
+                problem, fixed=built.fixed, rest_lengths=rest, ea=ea, loads=loads
+            )
+        except PrescribedError as error:
+            raise CableNetError(
+                "Stage {} did not solve: {}".format(index + 1, error)
+            ) from error
+        measured = np.asarray(state.session.equilibrium_vertices, dtype=float)
+
+        correction = correction_for(
+            problem, fixed=built.fixed, rest_lengths=rest, ea=ea, loads=loads,
+            measured=measured, target=reference, actuated=wire_indices,
+            tolerance=float(acceptance),
+        )
+        commanded = [
+            previous[position] + correction.reel_commands[edge]
+            for position, edge in enumerate(wire_indices)
+        ]
+        tensions = np.asarray(state.tensions, dtype=float)
+        skin_sum = float(sum(-row[2] for row in skin))
+        net_sum = float(sum(-row[2] for row in net_weight))
+        stages.append({
+            "stage": index + 1,
+            "name": (stage_names or {}).get(index, "S{}".format(index + 1)),
+            "kind": (stage_kinds or {}).get(index, "raise" if index == 0 else "tile"),
+            "skin_load_sum_newtons": skin_sum,
+            "net_weight_newtons": net_sum,
+            "node_load_sum_newtons": skin_sum + net_sum,
+            "wire_rest_lengths": [float(v) for v in commanded],
+            "wire_reel_commands": [
+                float(commanded[p] - previous[p]) for p in range(len(commanded))
+            ],
+            "wire_tensions": [float(tensions[edge]) for edge in wire_indices],
+            "worst_net_tension": float(np.max(tensions[: built.net_edge_count])),
+            "deviation": float(correction.residual_before),
+            "reachable": bool(correction.reachable),
+            "residual_after": float(correction.residual_after),
+        })
+        previous = commanded
+
+    worst = max(stages, key=lambda row: max(row["wire_tensions"]))
+    return {
+        "schema": "bench.cablenet/1",
+        "units": "N, mm",
+        "geometry_scale_applied": 1000.0,
+        "prestress": float(prestress),
+        "ea_newtons": float(ea),
+        "net": {
+            "vertices": [[float(c) for c in p] for p in problem.source_vertices],
+            "edges": [[int(u), int(v)] for u, v in problem.source_edges],
+            "fixed": [int(v) for v in built.fixed],
+            "net_edge_count": int(built.net_edge_count),
+            "manufactured_rest_lengths": [float(v) for v in net_rest],
+            "node_of": {str(k): int(v) for k, v in built.node_of.items()},
+        },
+        "stages": stages,
+        "sizing_stage": worst["name"],
+        "acceptance": float(acceptance),
+        "acceptance_source": str(acceptance_source),
+    }
+
+
+def run_cablenet(contract, arrays, plan, thickness, density, out_path,
+                 mechanism_document, ea, prestress, acceptance,
+                 acceptance_source, mass_per_metre):
+    """Everything step A does, from a contract to a written demand document."""
+
+    import json
+    from pathlib import Path
+
+    vertices = arrays["vertices"]
+    edges = [tuple(edge) for edge in arrays["edges"]]
+    anchors = geometry.support_ids(contract)
+    wires = wires_from_mechanism(mechanism_document, len(vertices), anchors)
+    built = build_problem(vertices, edges, anchors, wires)
+
+    loads_by_stage = stage_node_loads(
+        vertices, arrays["faces"], plan, thickness, density
+    )
+    net_weight = net_weight_loads(vertices, edges, mass_per_metre)
+    names = {i: "S{}".format(entry["stage"]) for i, entry in enumerate(plan)}
+    document = walk_stages(
+        built, loads_by_stage, net_weight, ea, prestress, acceptance,
+        acceptance_source, target=None, stage_names=names,
+    )
+    document["wires"] = [
+        {"name": w.name, "net_vertex": w.net_vertex, "frame_point": w.frame_point}
+        for w in wires
+    ]
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(document, allow_nan=False), encoding="utf-8")
+    return {"path": str(out_path), "stages": len(document["stages"])}
