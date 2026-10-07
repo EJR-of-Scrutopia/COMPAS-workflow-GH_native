@@ -71,3 +71,19 @@ def test_the_demand_is_found_under_the_slug_the_run_wrote_it_to(client, tmp_path
     response = client.get("/api/studies/My Vault/cablenet")
     assert response.status_code == 200
     assert response.json() == {"stages": []}
+
+
+def test_a_malformed_row_is_refused_as_a_row_not_a_500(client):
+    good = {"motor": "34HS46", "drive": "CL86Y", "gearbox": "EG23-G20",
+            "drum": "drum-72", "rope": "rope-4mm", "rail": "MGN15H-300",
+            "chain": ["eye-M12"], "sheave": None, "reeve_factor": 1}
+    missing = dict(good)
+    del missing["motor"]
+    payload = {"configurations": ["not a dict", missing, good], "angle_degrees": 2.0}
+    response = client.post("/api/studies/any/cablenet/configurations", json=payload)
+    assert response.status_code == 200
+    rows = response.json()["rows"]
+    assert len(rows) == 3
+    assert rows[0]["refused"] and ":" in rows[0]["refused"]
+    assert rows[1]["refused"]
+    assert rows[2]["refused"] is None and rows[2]["ceiling"] > 0

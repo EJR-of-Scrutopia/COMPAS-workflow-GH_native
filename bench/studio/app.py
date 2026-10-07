@@ -1165,8 +1165,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 if wanted_speed:
                     row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
                         parts, configuration, float(wanted_speed))
-            except catalogue.CatalogueError as error:
-                rows.append({"configuration": configuration, "refused": str(error)})
+            except Exception as error:
+                # One malformed row must not sink the request; the type stays
+                # in the message so a real defect is still diagnosable.
+                rows.append({
+                    "configuration": configuration,
+                    "refused": "{}: {}".format(type(error).__name__, error),
+                })
                 continue
             rows.append(row)
         return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
@@ -1212,7 +1217,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         cablenet_options = body.get("cablenet_options") or {}
         if not isinstance(cablenet_options, dict):
             raise HTTPException(400, "cablenet_options must be an object")
-        for field in ("ea", "prestress", "acceptance", "mass_per_metre"):
+        for field in ("prestress",):
             if field in cablenet_options:
                 try:
                     float(cablenet_options[field])
@@ -1220,6 +1225,18 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     raise HTTPException(
                         400, "cablenet_options.{} must be a number, not {!r}".format(
                             field, cablenet_options[field]))
+        rope_key = str(cablenet_options.get("rope", "rope-4mm"))
+        falsework_key = str(cablenet_options.get("falsework", "plywood-rib-2000"))
+        parts = None
+        if include_cablenet:
+            import catalogue
+
+            parts = catalogue.load_parts()
+            if rope_key not in parts["rope"]:
+                raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
+            if falsework_key not in (parts.get("falsework") or {}):
+                raise HTTPException(
+                    400, "no falsework named {!r} in the catalogue".format(falsework_key))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -1284,13 +1301,17 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                                 slug, material, key_pattern, size, thickness,
                                 density),
                             "mechanism_document": mechanism_document,
-                            "ea": float(cablenet_options.get("ea", 2.0e5)),
+                            # EA and mass come from the chosen rope's catalogue
+                            # entry; the acceptance is computed from the named
+                            # falsework inside the engine process.
+                            "ea": float(parts["rope"][rope_key]["ea_newtons"]),
+                            "mass_per_metre": float(
+                                parts["rope"][rope_key]["mass_per_metre_kg"]),
+                            "acceptance": None,
+                            "acceptance_source": None,
+                            "falsework": falsework_key,
+                            # a starting point for the cut rule, not derived
                             "prestress": float(cablenet_options.get("prestress", 300.0)),
-                            "acceptance": float(cablenet_options.get("acceptance", 50.0)),
-                            "acceptance_source": str(cablenet_options.get(
-                                "acceptance_source", "studio default")),
-                            "mass_per_metre": float(cablenet_options.get(
-                                "mass_per_metre", 0.061)),
                         },
                     }
                 staging.run_staging(
