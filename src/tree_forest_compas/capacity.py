@@ -93,6 +93,30 @@ class Capacity(NamedTuple):
     units: str = "N, mm"            # torque is N mm, never N m
 
 
+class CurvePoint(NamedTuple):
+    """One rung of the load walk, with no mechanism in sight.
+
+    failure is None for a rung the solver answered; otherwise it is the binding
+    name capacity_of would have reported and detail is the solver's message.
+    worst_tension and deviation are None on a failed rung.
+    """
+
+    factor: float
+    worst_tension: object
+    deviation: object
+    failure: object = None
+    detail: str = ""
+
+
+class TensionCurve(NamedTuple):
+    """The net's response to load, independent of any mechanism."""
+
+    points: tuple
+    steps: int
+    max_factor: float
+    units: str = "N, mm"
+
+
 def _validate(mechanism, steps, max_factor, acceptance):
     def need(name, value, positive=True, upper=None):
         value = float(value)
@@ -229,6 +253,87 @@ def _checks(mechanism, tensions, deviation, acceptance):
     return None, ""
 
 
+def tension_curve(problem, fixed, rest_lengths, ea, load_pattern,
+                  steps=40, max_factor=20.0):
+    """Walk the load up and record what the NET does, for any mechanism.
+
+    Nothing here knows about drums, gearing or rope. Every check a mechanism
+    makes is a function of the worst cable tension and the deviation, so the
+    expensive half of a capacity walk is done once and reused by every
+    candidate. The walk stops at the first rung the solver cannot answer.
+    """
+
+    pattern = np.asarray(load_pattern, dtype=float)
+    try:
+        unloaded = solve_prescribed_lengths(
+            problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
+            loads=np.zeros_like(pattern),
+        )
+    except PrescribedError as error:
+        raise CapacityError(
+            "The unloaded datum solve (the shape the deviation is measured "
+            "from) failed at these rest lengths: {}".format(error)
+        )
+    reference = np.asarray(unloaded.session.equilibrium_vertices, dtype=float)
+
+    points = []
+    for step in range(1, int(steps) + 1):
+        factor = float(max_factor) * step / float(steps)
+        try:
+            state = solve_prescribed_lengths(
+                problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
+                loads=pattern * factor,
+            )
+        except PrescribedError as error:
+            kind = "net went slack" if error.kind == "slack" else "numerical failure"
+            points.append(CurvePoint(factor, None, None, kind, str(error)))
+            break
+        xyz = np.asarray(state.session.equilibrium_vertices, dtype=float)
+        points.append(CurvePoint(
+            factor=factor,
+            worst_tension=float(np.max(np.asarray(state.tensions, dtype=float))),
+            deviation=float(np.linalg.norm(xyz - reference, axis=1).max()),
+        ))
+    return TensionCurve(tuple(points), int(steps), float(max_factor))
+
+
+def capacity_from_curve(mechanism, curve, acceptance):
+    """Apply one mechanism's checks to a walk already done. No solving."""
+
+    _validate(mechanism, curve.steps, curve.max_factor, acceptance)
+
+    def result(limit, breaching, binding, detail):
+        return Capacity(
+            limit_factor=limit,
+            breaching_factor=breaching,
+            binding=binding,
+            detail=detail,
+            torque_margin=float(mechanism.torque_margin),
+            safety_factor=float(mechanism.safety_factor),
+            sheave_efficiency=float(mechanism.sheave_efficiency),
+            steps=int(curve.steps),
+            max_factor=float(curve.max_factor),
+        )
+
+    last_good = 0.0
+    for point in curve.points:
+        if point.failure is not None:
+            return result(last_good, point.factor, point.failure, point.detail)
+        name, detail = _checks(
+            mechanism, np.array([point.worst_tension]), point.deviation, acceptance
+        )
+        if name is not None:
+            return result(last_good, point.factor, name, detail)
+        last_good = point.factor
+
+    return result(
+        last_good,
+        None,
+        "none",
+        "nothing bound up to {:.6g} times the load pattern".format(curve.max_factor),
+    )
+
+
 def capacity_of(
     problem,
     fixed,
@@ -243,56 +348,8 @@ def capacity_of(
     """Raise the load until something binds, and say what bound."""
 
     _validate(mechanism, steps, max_factor, acceptance)
-    pattern = np.asarray(load_pattern, dtype=float)
-    try:
-        unloaded = solve_prescribed_lengths(
-            problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
-            loads=np.zeros_like(pattern),
-        )
-    except PrescribedError as error:
-        raise CapacityError(
-            "The unloaded datum solve (the shape the deviation is measured "
-            "from) failed at these rest lengths: {}".format(error)
-        )
-    reference = np.asarray(unloaded.session.equilibrium_vertices, dtype=float)
-
-    def result(limit, breaching, binding, detail):
-        return Capacity(
-            limit_factor=limit,
-            breaching_factor=breaching,
-            binding=binding,
-            detail=detail,
-            torque_margin=float(mechanism.torque_margin),
-            safety_factor=float(mechanism.safety_factor),
-            sheave_efficiency=float(mechanism.sheave_efficiency),
-            steps=int(steps),
-            max_factor=float(max_factor),
-        )
-
-    last_good = 0.0
-    for step in range(1, int(steps) + 1):
-        factor = float(max_factor) * step / float(steps)
-        try:
-            state = solve_prescribed_lengths(
-                problem, fixed=fixed, rest_lengths=rest_lengths, ea=ea,
-                loads=pattern * factor,
-            )
-        except PrescribedError as error:
-            kind = "net went slack" if error.kind == "slack" else "numerical failure"
-            return result(last_good, factor, kind, str(error))
-
-        xyz = np.asarray(state.session.equilibrium_vertices, dtype=float)
-        deviation = float(np.linalg.norm(xyz - reference, axis=1).max())
-        name, detail = _checks(
-            mechanism, np.asarray(state.tensions, dtype=float), deviation, acceptance
-        )
-        if name is not None:
-            return result(last_good, factor, name, detail)
-        last_good = factor
-
-    return result(
-        last_good,
-        None,
-        "none",
-        "nothing bound up to {:.6g} times the load pattern".format(max_factor),
+    curve = tension_curve(
+        problem, fixed, rest_lengths, ea, load_pattern,
+        steps=steps, max_factor=max_factor,
     )
+    return capacity_from_curve(mechanism, curve, acceptance)
