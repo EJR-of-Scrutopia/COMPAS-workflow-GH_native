@@ -96,7 +96,33 @@ def _shape_verdict(demand):
     }
 
 
-def export_model(parts, demand, row, configuration, angle_degrees, generated_at):
+def _ladder(configuration, ladder_rows):
+    """The scored upgrade rungs, each described by what it changes."""
+
+    out = []
+    for item in ladder_rows or []:
+        rung = item.get("configuration") or {}
+        changes = {key: rung.get(key) for key in set(rung) | set(configuration)
+                   if rung.get(key) != configuration.get(key)}
+        chosen = not changes
+        entry = {
+            "label": "Chosen" if chosen else ", ".join(
+                "{} {}".format(k, changes[k]) for k in sorted(changes)),
+            "changes": changes,
+            "ceiling_newtons": None, "binding": None,
+            "price": item.get("price"), "is_chosen": chosen,
+        }
+        if item.get("refused"):
+            entry["refused"] = item["refused"]
+        else:
+            entry["ceiling_newtons"] = float(item["ceiling"])
+            entry["binding"] = item.get("binding")
+        out.append(entry)
+    return out
+
+
+def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
+                 ladder_rows=None):
     """Everything the three documents print, gathered once."""
 
     if row.get("refused"):
@@ -159,6 +185,7 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at)
             "anchors": len((demand.get("net") or {}).get("fixed") or []),
         },
         "stages": demand.get("stages") or [],
+        "ladder": _ladder(configuration, ladder_rows),
         "verdict": {
             "tension": tension,
             "shape": shape,
@@ -396,17 +423,24 @@ def _stages_rows(model):
 
 def _ladder_rows(model):
     rows = [["Rung", "Parts that differ", "Ceiling (N)", "Binding part", "Price"]]
-    ladder = model.get("ladder")
+    ladder = model.get("ladder") or []
     if not ladder:
-        rows.append(["The model carries no upgrade ladder, so none is shown."])
+        rows.append(["No ladder was supplied, so none is shown."])
         return rows
     for rung in ladder:
-        differ = rung.get("differs") or rung.get("parts") or ""
-        if isinstance(differ, (list, tuple)):
-            differ = ", ".join(str(d) for d in differ)
-        rows.append([_blank(rung.get("rung") or rung.get("name")), differ,
-                     _blank(rung.get("ceiling")), _blank(rung.get("binding")),
-                     _blank(rung.get("price"))])
+        differ = ", ".join("{}: {}".format(k, rung["changes"][k])
+                           for k in sorted(rung["changes"])) or "(the chosen set)"
+        if rung.get("refused"):
+            rows.append([rung["label"], differ, "", "",
+                         "Not buildable: {}".format(rung["refused"])])
+            continue
+        price = rung.get("price") or {}
+        text = ""
+        if price.get("pounds") is not None:
+            text = "{}£{:.2f}".format("At least " if price.get("is_floor") else "",
+                                      price["pounds"])
+        rows.append([rung["label"], differ, rung["ceiling_newtons"],
+                     _blank(rung.get("binding")), text])
     return rows
 
 

@@ -285,3 +285,57 @@ def test_the_note_is_reset_on_every_call(tmp_path, monkeypatch):
         pytest.skip("needs openpyxl for the successful run")
     exports.write_spreadsheet(_model(), tmp_path, "x")
     assert exports.last_spreadsheet_note() is None
+
+
+def _scored(parts, configuration, **kwargs):
+    import catalogue
+    ceiling, binding = catalogue.ceiling_for(parts, configuration, 10.0)
+    row = {"configuration": configuration, "ceiling": ceiling, "binding": binding,
+           "price": catalogue.price_of(parts, configuration), "refused": None}
+    row.update(kwargs)
+    return row
+
+
+def _laddered(*variants):
+    import catalogue
+    parts = catalogue.load_parts()
+    configuration = _configuration()
+    rows = [_scored(parts, configuration)]
+    for change in variants:
+        if isinstance(change, str):
+            rows.append({"configuration": dict(configuration, motor="boatlift-1hp"),
+                         "refused": change})
+        else:
+            rows.append(_scored(parts, dict(configuration, **change)))
+    return exports.export_model(parts, _demand(), _row(parts, configuration),
+                                configuration, 10.0, "2026-10-07", ladder_rows=rows)
+
+
+def test_a_rung_lists_only_the_keys_that_differ():
+    model = _laddered({"chain": ["eye-M12"]})
+    rung = [r for r in model["ladder"] if not r["is_chosen"]][0]
+    assert list(rung["changes"]) == ["chain"]
+    assert rung["ceiling_newtons"] > 0 and rung["binding"]
+
+
+def test_the_chosen_rung_is_marked_with_no_changes():
+    model = _laddered({"chain": ["eye-M12"]})
+    chosen = [r for r in model["ladder"] if r["is_chosen"]]
+    assert len(chosen) == 1 and chosen[0]["changes"] == {}
+
+
+def test_a_refused_rung_survives_with_its_text():
+    model = _laddered("family C")
+    rung = model["ladder"][1]
+    assert rung["refused"] == "family C"
+    assert rung["ceiling_newtons"] is None and rung["binding"] is None
+
+
+def test_no_ladder_rows_gives_an_empty_list():
+    assert _model()["ladder"] == []
+
+
+def test_the_ladder_sheet_renders_the_real_rungs():
+    rows = exports._sheet_rows(_laddered({"chain": ["eye-M12"]}, "family C"))["Ladder"]
+    assert len(rows) == 4 and rows[1][0] == "Chosen"
+    assert "chain" in rows[2][1] and rows[3][4].startswith("Not buildable")
