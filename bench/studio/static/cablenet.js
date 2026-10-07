@@ -319,7 +319,8 @@ function renderVerdict(box, row, floor, parts) {
         `used here is a flat one.</p>`) +
     `<p>${row.price.is_floor
       ? `At least ${money(row.price.pounds)}; ` +
-        `${row.price.unpriced.length} lines have no price yet ` +
+        `${row.price.unpriced.length === 1 ? "one part has" :
+          `${row.price.unpriced.length} parts have`} no price yet ` +
         `(${esc(row.price.unpriced.join(", "))}).`
       : `${money(row.price.pounds)}.`}</p>`;
 }
