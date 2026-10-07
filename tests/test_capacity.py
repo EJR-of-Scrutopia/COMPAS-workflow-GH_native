@@ -232,3 +232,78 @@ def test_the_pulley_lowers_the_ceiling_of_the_nine_newton_metre_configuration():
     assert round(direct) == 1471
     assert round(reeved) == 1214
     assert reeved < direct
+
+
+_BIG = 1e9
+
+
+def _isolated(name):
+    """A two-fall mechanism where only the named constraint can bind."""
+    far = dict(rope_mbl=_BIG, anchor_wll=_BIG, spool_rope_mbl=_BIG,
+               sheave_swl=_BIG, motor_torque=_BIG)
+    small = {
+        "rope tension": dict(rope_mbl=5000.0),
+        "anchor": dict(anchor_wll=700.0),
+        "spool rope tension": dict(spool_rope_mbl=4000.0),
+        "sheave": dict(sheave_swl=900.0),
+        "motor torque": dict(motor_torque=2000.0),
+    }[name]
+    far.update(small)
+    return _mech(reeve_factor=2, **far)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["rope tension", "anchor", "spool rope tension", "sheave", "motor torque"],
+)
+def test_each_ceiling_term_round_trips_through_its_own_check_in_isolation(name):
+    from tree_forest_compas.capacity import ceiling_terms, _checks
+
+    mechanism = _isolated(name)
+    terms = ceiling_terms(mechanism)
+    assert min(terms, key=terms.get) == name
+    term = terms[name]
+    below, _ = _checks(mechanism, np.array([term * 0.999]), 0.0, 1e9)
+    above, _ = _checks(mechanism, np.array([term * 1.001]), 0.0, 1e9)
+    assert below is None
+    assert above == name
+
+
+def test_an_unbindable_sheave_changes_no_check_result_at_any_tension():
+    from tree_forest_compas.capacity import _checks
+
+    plain = _mech(reeve_factor=2)
+    roomy = _mech(reeve_factor=2, sheave_swl=_BIG)
+    for tension in np.linspace(10.0, 5000.0, 200):
+        arr = np.array([tension])
+        assert _checks(plain, arr, 0.0, 1e9) == _checks(roomy, arr, 0.0, 1e9)
+    # deviation is also unchanged
+    arr = np.array([100.0])
+    assert _checks(plain, arr, 5.0, 1.0) == _checks(roomy, arr, 5.0, 1.0)
+
+
+def test_the_sheave_clause_names_itself_and_the_moving_block():
+    from tree_forest_compas.capacity import _checks
+
+    name, detail = _checks(
+        _mech(reeve_factor=2, sheave_swl=500.0), np.array([800.0]), 0.0, 1e9
+    )
+    assert name == "sheave"
+    assert "moving block" in detail
+
+
+def test_a_single_fall_never_reports_the_sheave_from_checks():
+    from tree_forest_compas.capacity import _checks
+
+    mechanism = _mech(reeve_factor=1, sheave_swl=1.0)
+    for tension in (1.0, 100.0, 1000.0, 5000.0):
+        name, _ = _checks(mechanism, np.array([tension]), 0.0, 1e9)
+        assert name != "sheave"
+
+
+@pytest.mark.parametrize("bad", [0.0, -5.0])
+def test_a_non_positive_sheave_swl_is_refused(bad):
+    from tree_forest_compas.capacity import CapacityError, _validate
+
+    with pytest.raises(CapacityError):
+        _validate(_mech(reeve_factor=2, sheave_swl=bad), 40, 20.0, 100.0)
