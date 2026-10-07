@@ -78,3 +78,47 @@ The adapter was written to a guess, and every green test and live run
 demonstrated only that the guess was self-consistent. One real file, read at the
 start, would have caught all five corrections above. The information needed to
 find it was in `settings.json` from the first day.
+
+## Correction to this document: the columns are not members
+
+An earlier draft of this file concluded that the engine needed compression
+members, because the crown node could not be held in tension. The owner's answer
+on 7 October settled it differently and better: **the system is tension only,
+and a column is not a member at all.** It is a prop whose height the machine
+sets, so in the model it is a node whose POSITION is prescribed, and the force
+the column experiences is the support reaction at that node. `FDSession` already
+reports `support_reactions`, so nothing new is needed in the solver.
+
+That resolves the refusal. Node 120, the crown, is a column head; of the 46
+column heads every one sits on a principal row, and they reach from 0.72 m to
+the full 5.00 m. The one node my run reported as unholdable is exactly the node a
+column props.
+
+## The whole kinematic history is already exported
+
+`5 sided form-formwork.json` carries 51 frames, each with all 1101 net vertex
+positions and all 82 column node positions, under four phases that match the
+owner's own description of the sequence:
+
+| phase | frames | what the columns are doing |
+| --- | --- | --- |
+| `reel` | 15 | flat on the ground, z = 0 |
+| `raise` | 15 | rising, reaching 4.667 m |
+| `finish` | 15 | at full height, 5.000 m |
+| `hold` | 6 | at full height |
+
+So the net's shape is KNOWN at every instant rather than being something to
+solve for. That makes the whole problem inverse: given the shape, the column
+positions and the load, what forces are needed and where. It is a far better
+spine than the course-by-course tiling plan the first spec was built around.
+
+## The open question this leaves
+
+The cross-axis reeling, perpendicular to the principal lines, is not in any
+export and is the piece the owner says is missing: how far those wires pull in,
+and what force that takes while holding equilibrium. With the shape prescribed
+it is computable rather than a design guess. Fix the column heads and the base
+wire nodes, fit the best tension-only state to the known shape under the real
+load, and whatever force remains unbalanced at each free node is what the
+cross-axis wires must supply, in magnitude and direction. The reel distance is
+then the change in each wire's length between frames.
