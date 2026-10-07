@@ -513,7 +513,7 @@ _PATH = [
     ("anchor", "Wall anchor and turnbuckle"),
     ("rope tension", "Net cable"),
     ("sheave", "Moving block"),
-    ("spool rope tension", "Drum"),
+    ("spool rope tension", "Rope at the drum"),
     ("motor torque", "Gearbox and motor"),
 ]
 
@@ -533,6 +533,35 @@ def _text(x, y, content, size=12, weight="normal", anchor="start"):
             'text-anchor="{}">{}</text>'.format(x, y, size, weight, anchor, _esc(content)))
 
 
+def _count(number, noun):
+    """"1 wire", "2 wires": the noun agrees with the count."""
+
+    return "{} {}".format(number, noun if number == 1 else noun + "s")
+
+
+def _estimated_width(content, size):
+    """Liberation Sans, about 0.58 of the font size per character."""
+
+    return 0.58 * size * len(str(content))
+
+
+def _box_lines(name, title, term, configuration):
+    """(text, size, weight) for each line of one element's box."""
+
+    lines = [(title, 12, "bold"), (term.get("part_id") or name, 11, "normal")]
+    if name == "motor torque" and configuration.get("gearbox"):
+        lines.append(("via " + configuration["gearbox"], 10, "normal"))
+    lines.append(("permits {:.0f} N".format(term["newtons"]), 12, "normal"))
+    return lines
+
+
+def _box_width(lines):
+    return max(_BOX_MIN, max(_estimated_width(t, s) for t, s, _ in lines) + 16)
+
+
+_BOX_MIN = 120
+
+
 def diagram_svg(model):
     """The load path as one SVG string."""
 
@@ -542,63 +571,63 @@ def diagram_svg(model):
     path += [(term["name"], term["name"]) for term in model["terms"]
              if term["name"] not in known]
 
-    box_w, box_h, gap, left, top = 150, 78, 22, 16, 56
-    width = left * 2 + len(path) * box_w + (len(path) - 1) * gap
+    box_h, gap, left, top = 78, 22, 16, 56
     verdict = model["verdict"]["tension"]
     configuration = model.get("configuration") or {}
     demand = model.get("demand") or {}
+    wires = demand.get("wires") or []
+
+    boxes = []
+    for name, title in path:
+        lines = _box_lines(name, title, by_name[name], configuration)
+        boxes.append((name, lines, _box_width(lines)))
+    width = left * 2 + sum(w for _, _, w in boxes) + gap * max(len(boxes) - 1, 0)
+    heading = "{}: load path, tension each part permits (N)".format(
+        model.get("study") or "Study")
+    width = max(width, left * 2 + _estimated_width(heading, 14))
+    band = top + box_h + 44
+    height = band + 30 + len(wires) * 14
+    width = int(round(width))
 
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="250" '
-        'viewBox="0 0 {w} 250" font-family="{f}" fill="{i}">'.format(
-            w=width, f=_esc(_FONT), i=_INK),
+        '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+        'viewBox="0 0 {w} {h}" font-family="{f}" fill="{i}">'.format(
+            w=width, h=height, f=_esc(_FONT), i=_INK),
         '<style>rect,line,path{{stroke:{i};stroke-width:2;fill:none}}'
         'g.binds rect{{stroke-width:4}}'
         'path.head{{fill:{i}}}</style>'.format(i=_INK),
-        _text(left, 22, "{}: load path, tension each part permits (N)".format(
-            model.get("study") or "Study"), 14, "bold"),
+        _text(left, 22, heading, 14, "bold"),
     ]
-    for index, (name, title) in enumerate(path):
-        term = by_name.get(name)
-        x = left + index * (box_w + gap)
-        binds = bool(term and term.get("binds"))
-        ident = term.get("part_id") or name
-        lines = [
-            _text(x + 8, top + 18, title, 12, "bold"),
-            _text(x + 8, top + 38, ident, 11),
-            _text(x + 8, top + 58, "permits {:.0f} N".format(term["newtons"]), 12),
-        ]
-        if name == "motor torque" and configuration.get("gearbox"):
-            lines.insert(2, _text(x + 8, top + 48, "via " + configuration["gearbox"], 10))
-            lines[3] = _text(x + 8, top + 66, "permits {:.0f} N".format(term["newtons"]), 12)
-        group = '<g class="binds">' if binds else "<g>"
-        parts.append(group)
+    x = left
+    for index, (name, lines, box_w) in enumerate(boxes):
+        term = by_name[name]
+        binds = bool(term.get("binds"))
+        parts.append('<g class="binds">' if binds else "<g>")
         parts.append('<rect x="{}" y="{}" width="{}" height="{}"/>'.format(
-            x, top, box_w, box_h))
-        parts.extend(lines)
+            round(x, 1), top, round(box_w, 1), box_h))
+        y = top + 18
+        for text, size, weight in lines:
+            parts.append(_text(round(x + 8, 1), y, text, size, weight))
+            y += 18 if size >= 11 else 12
         if binds:
-            parts.append(_text(x + box_w / 2, top + box_h + 18,
+            parts.append(_text(round(x + box_w / 2, 1), top + box_h + 18,
                                "binds: ceiling {:.0f} N".format(verdict["ceiling_newtons"]),
                                12, "bold", "middle"))
         parts.append("</g>")
         if index:
-            ax = x - gap
             parts.append('<line x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(
-                ax, top + box_h / 2, x, top + box_h / 2))
+                round(x - gap, 1), top + box_h / 2, round(x, 1), top + box_h / 2))
+        x += box_w + gap
 
-    band = top + box_h + 44
     parts.append('<line x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(
         left, band - 12, width - left, band - 12))
-    parts.append(_text(left, band + 6, "Net: {} anchors, {} wires, sized at stage {}".format(
-        demand.get("anchors"), len(demand.get("wires") or []),
+    parts.append(_text(left, band + 6, "Net: {}, {}, sized at stage {}".format(
+        _count(demand.get("anchors"), "anchor"), _count(len(wires), "wire"),
         demand.get("sizing_stage")), 12, "bold"))
-    for row, wire in enumerate(demand.get("wires") or []):
+    for row, wire in enumerate(wires):
         parts.append(_text(left, band + 24 + row * 14, "{} pulls net vertex {}".format(
             wire.get("name"), wire.get("net_vertex")), 11))
-    height = band + 30 + len(demand.get("wires") or []) * 14
-    parts[1] = parts[1].replace('height="250"', 'height="{}"'.format(height)).replace(
-        "0 {} 250".format(width), "0 {} {}".format(width, height))
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
 

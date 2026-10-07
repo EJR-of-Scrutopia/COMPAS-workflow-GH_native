@@ -387,3 +387,29 @@ def test_the_marked_element_moves_with_the_terms_not_with_a_recomputation():
 def test_the_diagram_names_the_net_band():
     svg = exports.diagram_svg(_model())
     assert "36 anchors" in svg and "658" in svg and "S7" in svg
+
+
+def test_every_box_is_at_least_as_wide_as_its_longest_line():
+    model = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    model["terms"][0]["part_id"] = "a-very-long-catalogue-identifier-for-a-part"
+    by_name = {t["name"]: t for t in model["terms"]}
+    for name, title in exports._PATH:
+        if name not in by_name:
+            continue
+        lines = exports._box_lines(name, title, by_name[name], model["configuration"])
+        longest = max(exports._estimated_width(t, s) for t, s, _ in lines)
+        assert exports._box_width(lines) >= longest
+    svg = exports.diagram_svg(model)
+    import re
+    width = int(re.search(r'<svg[^>]* width="(\d+)"', svg).group(1))
+    assert 'viewBox="0 0 {} '.format(width) in svg
+
+
+def test_the_net_band_counts_agree_with_their_nouns():
+    one = exports.diagram_svg(_model())
+    assert "1 wire," in one and "1 wires" not in one
+    demand = _demand()
+    demand["wires"].append({"name": "w2", "net_vertex": 9, "frame_point": [0, 0, 0]})
+    demand["net"]["fixed"] = [1]
+    two = exports.diagram_svg(_model(demand=demand))
+    assert "2 wires" in two and "1 anchor," in two
