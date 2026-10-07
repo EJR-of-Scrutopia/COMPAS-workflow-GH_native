@@ -182,3 +182,53 @@ def test_a_slack_datum_solve_is_a_capacity_error_that_names_the_datum():
             _vee_problem(), fixed=[0, 2], rest_lengths=[2500.0, 2500.0], ea=2.0e5,
             load_pattern=_unit_load(), mechanism=_good(), acceptance=100.0,
         )
+
+
+def _mech(**kwargs):
+    base = dict(
+        drum_radius=36.0, reeve_factor=1, gear_ratio=20.0, motor_torque=9000.0,
+        gear_efficiency=0.94, rope_mbl=9091.0, anchor_wll=1471.0,
+    )
+    base.update(kwargs)
+    return Mechanism(**base)
+
+
+def test_every_ceiling_term_is_the_tension_at_which_its_check_breaches():
+    from tree_forest_compas.capacity import ceiling_terms, _checks
+
+    mechanism = _mech(reeve_factor=2, sheave_swl=1226.0)
+    terms = ceiling_terms(mechanism)
+    assert set(terms) >= {"rope tension", "anchor", "spool rope tension",
+                          "sheave", "motor torque"}
+    smallest = min(terms.values())
+    # just under the smallest term nothing binds; just over, something does
+    name, _ = _checks(mechanism, np.array([smallest * 0.999]), 0.0, 1e9)
+    assert name is None
+    name, _ = _checks(mechanism, np.array([smallest * 1.001]), 0.0, 1e9)
+    assert terms[name] == smallest
+
+
+def test_a_sheave_limits_a_reeved_mechanism_and_a_single_fall_is_untouched():
+    from tree_forest_compas.capacity import ceiling_terms
+
+    reeved = ceiling_terms(_mech(reeve_factor=2, sheave_swl=1226.0))
+    assert abs(reeved["sheave"] - 1226.0 * 1.98 / 2) < 1.0
+    assert min(reeved.values()) == reeved["sheave"]
+    direct = ceiling_terms(_mech(reeve_factor=1, sheave_swl=1226.0))
+    assert "sheave" not in direct
+
+
+def test_a_mechanism_without_a_sheave_behaves_exactly_as_before():
+    from tree_forest_compas.capacity import ceiling_terms
+
+    assert "sheave" not in ceiling_terms(_mech(reeve_factor=2))
+
+
+def test_the_pulley_lowers_the_ceiling_of_the_nine_newton_metre_configuration():
+    from tree_forest_compas.capacity import ceiling_terms
+
+    direct = min(ceiling_terms(_mech(reeve_factor=1)).values())
+    reeved = min(ceiling_terms(_mech(reeve_factor=2, sheave_swl=1226.0)).values())
+    assert round(direct) == 1471
+    assert round(reeved) == 1214
+    assert reeved < direct

@@ -62,6 +62,7 @@ class Mechanism(NamedTuple):
     safety_factor: float = 5.0
     sheave_efficiency: float = 0.98
     spool_rope_mbl: object = None   # None means the same as rope_mbl
+    sheave_swl: object = None       # None means no sheave limit is modelled
 
 
 def spool_rope_mbl_of(mechanism):
@@ -118,6 +119,8 @@ def _validate(mechanism, steps, max_factor, acceptance):
     need("torque_margin", mechanism.torque_margin, upper=1.0)
     need("safety_factor", mechanism.safety_factor)
     need("sheave_efficiency", mechanism.sheave_efficiency, upper=1.0)
+    if mechanism.sheave_swl is not None:
+        need("sheave_swl", mechanism.sheave_swl)
     need("rope_mbl", mechanism.rope_mbl)
     need("spool_rope_mbl", spool_rope_mbl_of(mechanism))
     need("anchor_wll", mechanism.anchor_wll)
@@ -125,6 +128,43 @@ def _validate(mechanism, steps, max_factor, acceptance):
     need("max_factor", max_factor)
     if int(steps) != steps or int(steps) < 1:
         raise CapacityError("steps must be a whole number of at least 1.")
+
+
+def ceiling_terms(mechanism):
+    """The greatest cable tension each constraint permits, by name.
+
+    The inverse of every tension check in _checks, in the same order, so a
+    reader can be shown why a ceiling is what it is. The deviation check is not
+    here: it is a movement, not a tension, and no single tension bounds it.
+
+    A mechanism with reeve_factor 1 has no moving block, so no sheave term.
+    """
+
+    advantage = _mechanical_advantage(
+        mechanism.reeve_factor, mechanism.sheave_efficiency
+    )
+    terms = {
+        "rope tension": float(mechanism.rope_mbl) / float(mechanism.safety_factor),
+        "anchor": float(mechanism.anchor_wll),
+        "spool rope tension": (
+            float(spool_rope_mbl_of(mechanism))
+            * advantage
+            / float(mechanism.safety_factor)
+        ),
+    }
+    if int(mechanism.reeve_factor) > 1 and mechanism.sheave_swl is not None:
+        terms["sheave"] = (
+            float(mechanism.sheave_swl) * advantage / float(mechanism.reeve_factor)
+        )
+    terms["motor torque"] = (
+        float(mechanism.motor_torque)
+        * float(mechanism.gear_ratio)
+        * float(mechanism.gear_efficiency)
+        * float(mechanism.torque_margin)
+        * advantage
+        / float(mechanism.drum_radius)
+    )
+    return terms
 
 
 def _mechanical_advantage(falls, eta):
@@ -159,6 +199,16 @@ def _checks(mechanism, tensions, deviation, acceptance):
                 lead, allowed_spool
             )
         )
+    if int(mechanism.reeve_factor) > 1 and mechanism.sheave_swl is not None:
+        on_sheave = worst * float(mechanism.reeve_factor) / _mechanical_advantage(
+            mechanism.reeve_factor, mechanism.sheave_efficiency
+        )
+        allowed_sheave = float(mechanism.sheave_swl)
+        if on_sheave > allowed_sheave:
+            return "sheave", (
+                "{:.6g} N on the moving block against {:.6g} N safe working "
+                "load".format(on_sheave, allowed_sheave)
+            )
     drum_torque = lead * float(mechanism.drum_radius)
     available = (
         float(mechanism.motor_torque)
