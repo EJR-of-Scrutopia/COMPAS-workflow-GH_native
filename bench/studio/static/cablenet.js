@@ -410,6 +410,22 @@ function renderVerdict(box, row, floor, parts, shape, demand) {
   // in reasons is HTML; only numbers and escaped names go into it.
   let verdict;
   const reasons = [];
+  // The rope is chosen HERE, and choosing one the analysis did not use
+  // silently invalidates half of what is shown: the rope sets rope_mbl, which
+  // is parts arithmetic and stays valid, but it also set the EA the net was
+  // solved and cut for. Saying so only in the exported document would be too
+  // late, because by then the ceiling has already been believed.
+  const chosenRope = demand && parts.rope[row.configuration.rope];
+  const analysedEa = demand && demand.ea_newtons;
+  if (chosenRope && analysedEa &&
+      Math.abs(chosenRope.ea_newtons - analysedEa) > 1e-6 * Math.max(1, analysedEa)) {
+    reasons.push(`<strong>The chosen rope is not the rope that was ` +
+      `analysed.</strong> The analysis used EA ${newtons(analysedEa)} N; ` +
+      `${esc(row.configuration.rope)} is EA ${newtons(chosenRope.ea_newtons)} N. ` +
+      `The ceiling below is for the chosen rope. The prestress floor, the ` +
+      `residuals and the cut lengths are for the analysed rope and do not ` +
+      `describe this one.`);
+  }
   if (!(floor > 0)) {
     verdict = "No demand to compare against yet.";
   } else {
