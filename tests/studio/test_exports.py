@@ -339,3 +339,51 @@ def test_the_ladder_sheet_renders_the_real_rungs():
     rows = exports._sheet_rows(_laddered({"chain": ["eye-M12"]}, "family C"))["Ladder"]
     assert len(rows) == 4 and rows[1][0] == "Chosen"
     assert "chain" in rows[2][1] and rows[3][4].startswith("Not buildable")
+
+
+def test_the_diagram_marks_the_same_part_the_verdict_names(tmp_path):
+    model = _model()
+    svg = exports.write_diagram(model, tmp_path, "x").read_text(encoding="utf-8")
+    assert svg.startswith("<?xml") or svg.lstrip().startswith("<svg")
+    assert model["verdict"]["tension"]["binding"] in svg
+    # the binding element is marked, and exactly one is
+    assert svg.count('class="binds"') == 1
+
+
+def test_the_diagram_prints_the_terms_it_was_given_and_computes_nothing():
+    model = _model()
+    for term in model["terms"]:
+        term["newtons"] = 4242.0          # nonsense, but it is what was given
+    svg = exports.diagram_svg(model)
+    assert svg.count("4242") >= len(model["terms"])
+
+
+def test_a_single_fall_draws_no_moving_block(tmp_path):
+    model = _model()
+    assert "moving block" not in exports.diagram_svg(model).lower()
+    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    assert "moving block" in exports.diagram_svg(reeved).lower()
+
+
+def test_the_diagram_escapes_what_it_is_given():
+    model = _model()
+    model["study"] = 'Vault & <script>"'
+    svg = exports.diagram_svg(model)
+    assert "<script>" not in svg and "&amp;" in svg
+
+
+def test_escaping_does_not_double_escape():
+    assert exports._esc('&<>"') == "&amp;&lt;&gt;&quot;"
+
+
+def test_the_marked_element_moves_with_the_terms_not_with_a_recomputation():
+    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    svg = exports.diagram_svg(reeved)
+    assert svg.count('class="binds"') == 1
+    marked = svg.split('class="binds"')[1].split("</g>")[0]
+    assert "WZ-11-K" in marked
+
+
+def test_the_diagram_names_the_net_band():
+    svg = exports.diagram_svg(_model())
+    assert "36 anchors" in svg and "658" in svg and "S7" in svg

@@ -500,3 +500,112 @@ def write_spreadsheet(model, directory, stem):
         "instead, without the sheet structure or the shading on unpriced "
         "lines: {}.".format(", ".join(p.name for p in written)))
     return written
+
+
+# ---------------------------------------------------------------------------
+# The component diagram.  It prints what the model gives it and computes
+# nothing: every figure is read from model["terms"], model["verdict"] or
+# model["demand"], so the picture cannot disagree with the verdict beside it.
+# ---------------------------------------------------------------------------
+
+# the order the force travels, which is the order ceiling_terms checks it
+_PATH = [
+    ("anchor", "Wall anchor and turnbuckle"),
+    ("rope tension", "Net cable"),
+    ("sheave", "Moving block"),
+    ("spool rope tension", "Drum"),
+    ("motor torque", "Gearbox and motor"),
+]
+
+_INK = "#3a3a3a"
+_FONT = "Liberation Sans, Arial, sans-serif"
+
+
+def _esc(value):
+    """Escape for SVG text and attributes; the ampersand goes first."""
+
+    return (str(value).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _text(x, y, content, size=12, weight="normal", anchor="start"):
+    return ('<text x="{}" y="{}" font-size="{}" font-weight="{}" '
+            'text-anchor="{}">{}</text>'.format(x, y, size, weight, anchor, _esc(content)))
+
+
+def diagram_svg(model):
+    """The load path as one SVG string."""
+
+    by_name = {term["name"]: term for term in model["terms"]}
+    known = {name for name, _ in _PATH}
+    path = [(name, title) for name, title in _PATH if name in by_name]
+    path += [(term["name"], term["name"]) for term in model["terms"]
+             if term["name"] not in known]
+
+    box_w, box_h, gap, left, top = 150, 78, 22, 16, 56
+    width = left * 2 + len(path) * box_w + (len(path) - 1) * gap
+    verdict = model["verdict"]["tension"]
+    configuration = model.get("configuration") or {}
+    demand = model.get("demand") or {}
+
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="250" '
+        'viewBox="0 0 {w} 250" font-family="{f}" fill="{i}">'.format(
+            w=width, f=_esc(_FONT), i=_INK),
+        '<style>rect,line,path{{stroke:{i};stroke-width:2;fill:none}}'
+        'g.binds rect{{stroke-width:4}}'
+        'path.head{{fill:{i}}}</style>'.format(i=_INK),
+        _text(left, 22, "{}: load path, tension each part permits (N)".format(
+            model.get("study") or "Study"), 14, "bold"),
+    ]
+    for index, (name, title) in enumerate(path):
+        term = by_name.get(name)
+        x = left + index * (box_w + gap)
+        binds = bool(term and term.get("binds"))
+        ident = term.get("part_id") or name
+        lines = [
+            _text(x + 8, top + 18, title, 12, "bold"),
+            _text(x + 8, top + 38, ident, 11),
+            _text(x + 8, top + 58, "permits {:.0f} N".format(term["newtons"]), 12),
+        ]
+        if name == "motor torque" and configuration.get("gearbox"):
+            lines.insert(2, _text(x + 8, top + 48, "via " + configuration["gearbox"], 10))
+            lines[3] = _text(x + 8, top + 66, "permits {:.0f} N".format(term["newtons"]), 12)
+        group = '<g class="binds">' if binds else "<g>"
+        parts.append(group)
+        parts.append('<rect x="{}" y="{}" width="{}" height="{}"/>'.format(
+            x, top, box_w, box_h))
+        parts.extend(lines)
+        if binds:
+            parts.append(_text(x + box_w / 2, top + box_h + 18,
+                               "binds: ceiling {:.0f} N".format(verdict["ceiling_newtons"]),
+                               12, "bold", "middle"))
+        parts.append("</g>")
+        if index:
+            ax = x - gap
+            parts.append('<line x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(
+                ax, top + box_h / 2, x, top + box_h / 2))
+
+    band = top + box_h + 44
+    parts.append('<line x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(
+        left, band - 12, width - left, band - 12))
+    parts.append(_text(left, band + 6, "Net: {} anchors, {} wires, sized at stage {}".format(
+        demand.get("anchors"), len(demand.get("wires") or []),
+        demand.get("sizing_stage")), 12, "bold"))
+    for row, wire in enumerate(demand.get("wires") or []):
+        parts.append(_text(left, band + 24 + row * 14, "{} pulls net vertex {}".format(
+            wire.get("name"), wire.get("net_vertex")), 11))
+    height = band + 30 + len(demand.get("wires") or []) * 14
+    parts[1] = parts[1].replace('height="250"', 'height="{}"'.format(height)).replace(
+        "0 {} 250".format(width), "0 {} {}".format(width, height))
+    parts.append("</svg>")
+    return "\n".join(parts) + "\n"
+
+
+def write_diagram(model, directory, stem):
+    """Write the diagram beside the other exports and return its path."""
+
+    path = Path(directory) / "{}.svg".format(stem)
+    path.write_text(diagram_svg(model), encoding="utf-8")
+    return path
