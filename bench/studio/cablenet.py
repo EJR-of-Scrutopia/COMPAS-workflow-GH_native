@@ -173,13 +173,20 @@ def wires_from_mechanism(document, vertex_count, anchors):
 
 def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
-                 acceptance_source, mass_per_metre, runner=None, python_exe=None):
+                 acceptance_source, mass_per_metre, runner=None, python_exe=None,
+                 falsework=None):
     """Everything step A does, from a contract to a written demand document.
 
     The engine runs in solve_cablenet.py under a solver interpreter, never in
     this process. runner, when given, replaces the subprocess: it takes the
     request dict and returns the demand document. python_exe overrides the
     interpreter the default runner starts.
+
+    falsework, when given, is the KEY of a parts.json falsework entry. The
+    acceptance line is then computed in the engine process, where the geometry
+    is, from that rib and this skin, and acceptance and acceptance_source are
+    ignored (pass None). prestress is an input: a starting point for the cut
+    rule, not a value derived from anything.
     """
 
     vertices = arrays["vertices"]
@@ -204,8 +211,11 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "net_weight": net_weight,
         "ea": float(ea),
         "prestress": float(prestress),
-        "acceptance": float(acceptance),
-        "acceptance_source": str(acceptance_source),
+        "acceptance": None if falsework else float(acceptance),
+        "acceptance_source": None if falsework else str(acceptance_source),
+        "falsework": falsework,
+        "thickness": float(thickness),
+        "density": float(density),
         "stage_names": {
             str(i): "S{}".format(entry["stage"]) for i, entry in enumerate(plan)
         },

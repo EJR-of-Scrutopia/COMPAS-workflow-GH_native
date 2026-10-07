@@ -125,3 +125,22 @@ def test_the_demand_document_round_trips_and_carries_both_sums():
     assert abs(stage["net_weight_newtons"] - 4.0) < 1e-9
     assert abs(stage["node_load_sum_newtons"] - 204.0) < 1e-9
     assert len(stage["wire_rest_lengths"]) == 1
+
+
+def test_the_acceptance_line_comes_from_the_named_falsework():
+    import solve_cablenet
+    import cablenet
+
+    vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    request = {"falsework": "plywood-rib-2000", "thickness": 0.02, "density": 1800.0}
+    line, source = solve_cablenet.resolve_acceptance(request, vertices, [0, 1])
+    # a 2000 mm plywood rib under a 20 mm tile skin: a few millimetres, not
+    # micrometres and not metres
+    assert 0.5 < line < 50.0, line
+    assert "plywood-rib-2000" in source and "9000" in source
+    print("acceptance line mm", line)
+
+    far = [[0.0, 0.0, 0.0], [15.9, 0.0, 0.0]]
+    with pytest.raises(cablenet.CableNetError) as refused:
+        solve_cablenet.resolve_acceptance(request, far, [0, 1])
+    assert "2000" in str(refused.value) and "15900" in str(refused.value)

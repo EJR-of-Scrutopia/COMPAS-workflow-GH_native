@@ -323,6 +323,51 @@ def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
 
 
 
+def resolve_acceptance(request: dict, vertices_metres, anchors):
+    """The acceptance line and its source, from a named falsework entry.
+
+    The line is the deflection of the timber rib this machine replaces under
+    the same skin. Units: millimetres and newtons; the skin's areal load is
+    thickness (m) * density (kg/m3) * g (m/s2) = N/m2, divided by 1e6 for N/mm2.
+    A rib shorter than half the greatest anchor-to-anchor distance describes a
+    different building, and is refused.
+    """
+
+    import json as _json
+    import math
+
+    import staging
+    from tree_forest_compas import falsework
+
+    key = request["falsework"]
+    parts = _json.loads(
+        (Path(__file__).resolve().parent / "parts.json").read_text(encoding="utf-8"))
+    entry = (parts.get("falsework") or {}).get(key)
+    if entry is None:
+        raise CableNetError("No falsework entry named {!r} in parts.json.".format(key))
+    rib = falsework.Rib(
+        span=float(entry["span"]), spacing=float(entry["spacing"]),
+        depth=float(entry["depth"]), width=float(entry["width"]),
+        e_modulus=float(entry["e_modulus"]))
+    points = [[float(c) * 1000.0 for c in vertices_metres[int(a)]] for a in anchors]
+    reach = max(
+        (math.dist(p, q) for i, p in enumerate(points) for q in points[i + 1:]),
+        default=0.0)
+    if rib.span < reach / 2.0:
+        raise CableNetError(
+            "Falsework {!r} spans {:g} mm, less than half the study's greatest "
+            "anchor-to-anchor distance of {:g} mm (half is {:g} mm). It describes "
+            "a different building, so its deflection is not an acceptance line "
+            "for this one.".format(key, rib.span, reach, reach / 2.0))
+    areal = float(request["thickness"]) * float(request["density"]) * staging.GRAVITY / 1e6
+    try:
+        line = falsework.acceptance_line(rib, areal)
+    except falsework.FalseworkError as error:
+        raise CableNetError("Falsework {!r}: {}".format(key, error)) from error
+    source = "falsework {}: {}".format(key, _json.dumps(entry, sort_keys=True))
+    return line, source
+
+
 def solve(request: dict) -> dict:
     """The demand document for one request, wires echoed back as given."""
 
@@ -335,10 +380,15 @@ def solve(request: dict) -> dict:
     edges = [tuple(edge) for edge in request["edges"]]
     built = build_problem(vertices, edges, request["anchors"], wires)
     names = {int(k): v for k, v in request["stage_names"].items()}
+    acceptance = request.get("acceptance")
+    acceptance_source = request.get("acceptance_source")
+    if request.get("falsework"):
+        acceptance, acceptance_source = resolve_acceptance(
+            request, vertices, request["anchors"])
     document = walk_stages(
         built, request["loads_by_stage"], request["net_weight"],
-        request["ea"], request["prestress"], request["acceptance"],
-        request["acceptance_source"], target=None, stage_names=names,
+        request["ea"], request["prestress"], acceptance,
+        acceptance_source, target=None, stage_names=names,
     )
     document["wires"] = [
         {"name": w.name, "net_vertex": w.net_vertex, "frame_point": w.frame_point}
