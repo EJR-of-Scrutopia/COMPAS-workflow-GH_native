@@ -1885,8 +1885,14 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             directory, counter = RECORDINGS_DIR, (
                 lambda d: len([p for p in d.glob("*.mp4") if p.is_file()]))
         elif kind == "cablenet-exports":
+            # The three documents an export writes, plus the CSV fallback the
+            # spreadsheet degrades to where openpyxl is absent. Counting *.json
+            # would count none of them: the demand document is a working file
+            # that lives beside the staging document, not an export.
             directory, counter = CABLENET_EXPORTS_DIR, (
-                lambda d: len([p for p in d.glob("*.json") if p.is_file()]))
+                lambda d: len([p for p in d.iterdir()
+                               if p.is_file()
+                               and p.suffix.lower() in (".xlsx", ".svg", ".md", ".csv")]))
         else:
             # Sidecars are not counted, for the reason /api/props gives.
             directory, counter = PROPS_DIR, (
