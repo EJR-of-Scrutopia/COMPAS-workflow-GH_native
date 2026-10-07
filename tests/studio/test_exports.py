@@ -1140,3 +1140,23 @@ def test_exactly_one_ladder_row_is_the_chosen_set_even_if_a_rung_equals_it():
     assert [r["is_chosen"] for r in model["ladder"]].count(True) == 1
     assert [r["label"] for r in model["ladder"]].count("Chosen") == 1
     assert len(model["ladder"]) == 2
+
+
+def test_a_folder_that_cannot_be_listed_is_a_400_naming_it_not_a_500(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    folder = tmp_path / "out"
+    _into(monkeypatch, folder)
+    real = Path.iterdir
+
+    def refuse(self):
+        if self == folder:
+            raise PermissionError(13, "Access is denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 400, response.text
+    assert str(folder) in response.json()["detail"]
+    assert "Access is denied" in response.json()["detail"]

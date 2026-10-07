@@ -1349,9 +1349,12 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         prefix = "{}-cablenet-".format(geometry.slugify(export))
         if not folder.is_dir():
             return None
-        found = [p for p in folder.iterdir()
-                 if p.is_file() and p.name.startswith(prefix)
-                 and p.suffix.lower() in suffixes]
+        try:
+            found = [p for p in folder.iterdir()
+                     if p.is_file() and p.name.startswith(prefix)
+                     and p.suffix.lower() in suffixes]
+        except OSError:
+            return None          # unreadable folder: nothing to download
         return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
     @app.post("/api/studies/{export}/cablenet/exports")
@@ -1389,9 +1392,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         base = "{}-cablenet-{}".format(geometry.slugify(export), stamp)
         stem, again = base, 2
-        while any(p.name.startswith(stem) for p in folder.iterdir()):
-            stem = "{}-{}".format(base, again)
-            again += 1
+        try:
+            while any(p.name.startswith(stem) for p in folder.iterdir()):
+                stem = "{}-{}".format(base, again)
+                again += 1
+        except OSError as error:
+            # a folder that exists but cannot be listed (PermissionError, a
+            # share that went away) is a refusal that names it, not a 500
+            raise HTTPException(
+                400, "The exports folder {} cannot be read: {}. Choose another "
+                "folder and run the export again.".format(folder, error))
 
         try:
             model = exports.export_model(
