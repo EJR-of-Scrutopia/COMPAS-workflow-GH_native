@@ -181,6 +181,59 @@ def _ladder(configuration, ladder_rows):
     return out
 
 
+# a rope's EA is a catalogue figure; two ropes differ by far more than this
+_EA_TOLERANCE = 1e-6
+
+
+def _rope_mismatch(parts, demand, configuration):
+    """None when the chosen rope is the rope the analysis was run for.
+
+    The rope sets rope_mbl (parts arithmetic, valid whatever the analysis
+    was), but also ea_newtons and mass_per_metre, which FED the staged solve
+    and the manufactured cut.  A different rope therefore leaves the tension
+    ceiling valid and silently invalidates the prestress floor, the residuals
+    and the cut lengths.  Exploring another rope is legitimate, so this is a
+    statement carried on the model and not a refusal."""
+
+    ropes = parts.get("rope") or {}
+    chosen_id = configuration.get("rope")
+    chosen_ea = (ropes.get(chosen_id) or {}).get("ea_newtons")
+    analysed_ea = demand.get("ea_newtons")
+    numbers = (chosen_ea, analysed_ea)
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+               for v in numbers):
+        return None
+    if abs(chosen_ea - analysed_ea) <= _EA_TOLERANCE * max(
+            abs(chosen_ea), abs(analysed_ea)):
+        return None
+
+    provenance = str((demand.get("net") or {}).get("ea_provenance") or "")
+    named = [k for k in ropes if k in provenance]
+    analysed_id = max(named, key=len) if named else None
+    if analysed_id is None:
+        same = [k for k, r in ropes.items()
+                if isinstance(r.get("ea_newtons"), (int, float))
+                and abs(r["ea_newtons"] - analysed_ea)
+                <= _EA_TOLERANCE * abs(analysed_ea)]
+        analysed_id = same[0] if len(same) == 1 else None
+    analysed_name = analysed_id or "a rope of the stiffness the demand records"
+    lines = [
+        "Warning: the chosen rope is not the rope that was analysed.",
+        "The analysis was run for {} (EA {} N), which the demand names; the "
+        "chosen rope is {} (EA {} N).".format(
+            analysed_name, _newtons(analysed_ea), chosen_id, _newtons(chosen_ea)),
+        "The tension ceiling is for the chosen rope.",
+        "The prestress floor, the residuals and the cut lengths are for the "
+        "analysed rope and do not describe the chosen one.",
+    ]
+    return {
+        "chosen_rope": chosen_id, "analysed_rope": analysed_id,
+        "chosen_ea_newtons": float(chosen_ea),
+        "analysed_ea_newtons": float(analysed_ea),
+        "lines": lines, "text": " ".join(lines),
+    }
+
+
 def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
                  ladder_rows=None):
     """Everything the three documents print, gathered once."""
@@ -226,6 +279,7 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "generated_at": generated_at,
         "study": demand.get("study"),
         "units": "N, mm; torque N mm; prices pounds",
+        "rope_mismatch": _rope_mismatch(parts, demand, configuration),
         "configuration": dict(configuration),
         "terms": term_rows,
         "parts": part_rows,
@@ -312,10 +366,11 @@ def _assumptions(parts, configuration, demand, angle_degrees):
     out = []
     seen = set()
 
-    def add(what, value, why):
+    def add(what, value, why, unit=None):
         if what not in seen:
             seen.add(what)
-            out.append({"what": what, "value": value, "why": why})
+            out.append({"what": what, "value": value, "why": why,
+                        "unit": unit})
 
     chosen = [(kind, configuration.get(name)) for kind, name in PART_KINDS]
     for key in configuration.get("chain") or []:
@@ -335,13 +390,14 @@ def _assumptions(parts, configuration, demand, angle_degrees):
                     else field[:-len("_confidence")])
             label = "price" if field == "confidence" else base.replace("_", " ")
             add("{} {}: {}".format(kind, key, label), entry.get(base),
-                entry.get("note") or "marked assumed in the catalogue")
+                entry.get("note") or "marked assumed in the catalogue",
+                unit="N" if base.endswith("newtons") else None)
 
     rope = parts["rope"][configuration["rope"]]
     add("rope EA", rope.get("ea_newtons"),
         "Not a measured figure ({}). The manufactured net lengths scale with "
         "it, so a different EA means different cut lengths.".format(
-            rope.get("ea_confidence") or "unconfirmed"))
+            rope.get("ea_confidence") or "unconfirmed"), unit="N")
     gearbox = parts["gearbox"][configuration["gearbox"]]
     add("gearbox efficiency", gearbox.get("gear_efficiency"),
         "A catalogue efficiency, not measured on this unit.")
@@ -358,7 +414,8 @@ def _assumptions(parts, configuration, demand, angle_degrees):
         "Assumed off-axis, because the bolt's orientation is not in the export "
         "and so the angle cannot be derived from it.")
     add("uniform prestress", demand.get("prestress"),
-        "The cut rule assumes one uniform prestress across the net.")
+        "The cut rule assumes one uniform prestress across the net.",
+        unit="N")
     return out
 
 
@@ -434,9 +491,15 @@ def _csv_value(value):
     return value
 
 
+def _mismatch_rows(model):
+    mismatch = model.get("rope_mismatch")
+    return [[line] for line in mismatch["lines"]] + [[]] if mismatch else []
+
+
 def _read_this_rows(model):
     return [
         ["Read this"],
+    ] + _mismatch_rows(model) + [
         ["Study", _blank(model.get("study"))],
         ["Figures taken", _blank(model.get("generated_at"))],
         ["Units", _blank(model.get("units"))],
@@ -457,7 +520,10 @@ def _read_this_rows(model):
         ["Delivery is excluded."],
         [],
         ["Assumptions", "Value", "Why"],
-    ] + [[a["what"], _blank(a["value"]), a["why"]]
+    ] + [[a["what"],
+          _force_cell(a.get("value")) if a.get("unit") == "N"
+          and isinstance(a.get("value"), (int, float))
+          else _blank(a["value"]), a["why"]]
          for a in model.get("assumptions") or []] + [
         [],
         ["Not checked"],
@@ -465,7 +531,7 @@ def _read_this_rows(model):
 
 
 def _chosen_rows(model):
-    rows = [["Configuration"]]
+    rows = _mismatch_rows(model) + [["Configuration"]]
     for key, value in (model.get("configuration") or {}).items():
         shown = ", ".join(value) if isinstance(value, (list, tuple)) else value
         rows.append([key, _blank(shown)])
@@ -735,7 +801,11 @@ def diagram_svg(model):
         model.get("study") or "Study")
     width = max(width, left * 2 + _estimated_width(heading, 14))
     band = top + box_h + 44
-    height = band + 30 + len(wires) * 14 + 20
+    warning = (model.get("rope_mismatch") or {}).get("lines") or []
+    for line in warning:
+        width = max(width, left * 2 + _estimated_width(line, 12))
+    height = (band + 30 + len(wires) * 14 + 20
+              + (len(warning) * 16 + 8 if warning else 0))
     width = int(round(width))
 
     parts = [
@@ -780,6 +850,10 @@ def diagram_svg(model):
     shape = model["verdict"]["shape"]
     parts.append(_text(left, band + 24 + len(wires) * 14 + 14,
                        _svg_verdict(model["verdict"], shape), 12, "bold"))
+    base = band + 24 + len(wires) * 14 + 14
+    for index, line in enumerate(warning):
+        parts.append(_text(left, base + 22 + index * 16, line, 12,
+                           "bold" if index == 0 else "normal"))
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
 
@@ -807,6 +881,17 @@ def _num(value, places=1, fixed=False):
     if not fixed and float(value) == int(value) and abs(value) >= 1000:
         return "{:,}".format(int(value))
     return "{:,.{p}f}".format(float(value), p=places)
+
+
+def _assumed_value(item):
+    """An assumed figure in prose: a force through the one force formatter
+    (never grouped), anything else as a plain number."""
+
+    value = item.get("value")
+    if (item.get("unit") == "N" and isinstance(value, (int, float))
+            and not isinstance(value, bool)):
+        return "{} N".format(_newtons(value))
+    return _num(value, 2)
 
 
 def _pounds(price):
@@ -984,8 +1069,11 @@ def _datasheet_sections(model):
                 _millimetres(stage.get("residual_after")),
                 _reach_word(stage, "reached", "not reachable",
                             "reachability not recorded")))
+    mismatch = model.get("rope_mismatch")
     out.append("## Whether it holds\n\n" + "\n\n".join(
-        [_verdict_opening(verdict)] + halves
+        [_verdict_opening(verdict)]
+        + (["Rope caution: " + " ".join(mismatch["lines"][1:])]
+           if mismatch else []) + halves
         + ["The two halves are separate questions and can disagree. Strong "
            "parts do not keep a net in shape, and a net that keeps its "
            "shape may still be held by parts that would break."]
@@ -1017,7 +1105,7 @@ def _datasheet_sections(model):
     assumed = []
     for item in model.get("assumptions") or []:
         assumed.append("**{}.** Value: {}. {}".format(
-            item["what"], _num(item.get("value"), 2), _sentence(item["why"])))
+            item["what"], _assumed_value(item), _sentence(item["why"])))
     out.append("## The assumptions, listed as assumptions\n\n" + "\n\n".join([
         "Every figure below was assumed, and was not measured. It is listed "
         "here so that no assumed number can be mistaken for a measured one. "
@@ -1043,7 +1131,12 @@ def datasheet_markdown(model):
     head = "# {}: winch machine data sheet\n\nFigures taken {}. Units: {}.".format(
         model.get("study") or "Cable-net study", model.get("generated_at"),
         model.get("units"))
-    return head + "\n\n" + "\n\n".join(_datasheet_sections(model)) + "\n"
+    mismatch = model.get("rope_mismatch")
+    warning = ("**{}** {}\n\n".format(mismatch["lines"][0],
+                                      " ".join(mismatch["lines"][1:]))
+               if mismatch else "")
+    return (head + "\n\n" + warning
+            + "\n\n".join(_datasheet_sections(model)) + "\n")
 
 
 def write_datasheet(model, directory, stem):

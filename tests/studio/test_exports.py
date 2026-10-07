@@ -548,7 +548,7 @@ def test_the_load_path_uses_one_decimal_convention():
     import re
     section = _section(exports.datasheet_markdown(_model()), "load path")
     figures = re.findall(r"allows ([\d,.]+) N", section)
-    assert figures and all(re.fullmatch(r"[\d,]+\.\d", f) for f in figures)
+    assert figures and all(re.fullmatch(r"\d+\.\d", f) for f in figures)
 
 
 # ---------------------------------------------------------------------------
@@ -631,8 +631,35 @@ def test_every_force_is_written_by_the_one_formatter():
     md = exports.datasheet_markdown(model)
     import re
     for text in (svg, md):
-        assert not re.search(r"\d,\d{3}(\.\d)? N\b", text)
         assert not re.search(r"\b\d{4,} N\b", text)       # always a decimal
+    # no force is grouped, whatever follows it: the only grouped figure the
+    # sheet may carry is the density, which is not a force
+    assert _grouped_figures(md + svg) == [], _grouped_figures(md + svg)
+
+
+GROUPED = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?(?: \S+)?"
+
+
+def _grouped_figures(text):
+    import re
+    return [g for g in re.findall(GROUPED, text) if not g.endswith(" kg/m3")]
+
+
+def test_the_forbidding_tests_really_fail_on_a_grouped_force():
+    # the guard must bite: feed it the shapes the old regexes let through
+    import re
+    for bad in ("Value: 450,000", "Value: 450,000.0", "allows 1,471.0 N",
+                "taken as 450,000 N"):
+        assert _grouped_figures(bad), bad
+    assert _grouped_figures("a density of 1,800 kg/m3") == []
+    assert not re.fullmatch(r"\d+\.\d", "1,471.0")
+
+
+def test_a_force_assumption_prints_ungrouped_with_one_decimal_and_a_unit():
+    text = exports.datasheet_markdown(_model())
+    assert "**rope EA.** Value: 450000.0 N." in text
+    assert "**uniform prestress.** Value: 300.0 N." in text
+    assert "450,000" not in text
 
 
 def test_the_route_writes_all_three_and_they_agree(client, monkeypatch, tmp_path):
@@ -965,3 +992,87 @@ def test_workbook_lengths_use_the_data_sheets_rounding(tmp_path, monkeypatch):
     assert "1.40" in stages and "0.30" in stages
     assert "1.4000000000000001" not in stages and "0.30000000000000004" not in stages
     assert exports._millimetres(1.4000000000000001) == "1.40"
+
+
+# ---------------------------------------------------------------------------
+# A chosen rope can contradict the analysis the demand was solved for
+# ---------------------------------------------------------------------------
+
+def _all_documents(model, tmp_path):
+    """The three documents as text, the workbook through its CSV fallback."""
+
+    import re
+    texts = {"datasheet": exports.datasheet_markdown(model),
+             "diagram": exports.diagram_svg(model)}
+    rows = exports._sheet_rows(model)
+    texts["workbook"] = "\n".join(
+        str(c) for sheet in rows.values() for row in sheet for c in row)
+    return texts
+
+
+def test_a_different_rope_is_stated_in_all_three_documents(tmp_path):
+    # solved at 450000 N for rope-4mm, exported with rope-8mm (EA 1800000 N)
+    model = _model(configuration=_configuration(rope="rope-8mm"))
+    mismatch = model["rope_mismatch"]
+    assert mismatch["analysed_rope"] == "rope-4mm"
+    assert mismatch["chosen_rope"] == "rope-8mm"
+    for name, text in _all_documents(model, tmp_path).items():
+        flat = " ".join(text.split())
+        assert "the chosen rope is not the rope that was analysed" in flat, name
+        assert "rope-4mm" in flat and "rope-8mm" in flat, name
+        assert "The tension ceiling is for the chosen rope" in flat, name
+        assert ("The prestress floor, the residuals and the cut lengths are "
+                "for the analysed rope and do not describe the chosen one"
+                in flat), name
+    # the ceiling really is the chosen rope's, and the export is not refused
+    assert model["verdict"]["tension"]["ceiling_newtons"] > 0
+
+
+def test_the_data_sheet_states_the_mismatch_before_the_first_section():
+    text = exports.datasheet_markdown(
+        _model(configuration=_configuration(rope="rope-8mm")))
+    assert text.index("not the rope that was analysed") < text.index("## ")
+
+
+def test_the_two_ea_figures_are_each_labelled_when_the_rope_differs():
+    text = exports.datasheet_markdown(
+        _model(configuration=_configuration(rope="rope-8mm")))
+    assert "(EA 450000.0 N)" in text and "(EA 1800000.0 N)" in text
+
+
+def test_nothing_extra_is_said_when_the_rope_is_the_one_analysed(tmp_path):
+    import re
+    model = _model()
+    assert model["rope_mismatch"] is None
+    for name, text in _all_documents(model, tmp_path).items():
+        assert "not the rope that was analysed" not in text, name
+        assert "Warning" not in text, name
+    md = exports.datasheet_markdown(model)
+    # ONE rope EA figure, wherever it is printed
+    figures = set(re.findall(r"\b(?:450000|1800000)\.0\b", md))
+    assert figures == {"450000.0"}
+
+
+def test_a_demand_with_no_ea_cannot_contradict_a_rope():
+    demand = _demand()
+    demand["ea_newtons"] = None
+    assert _model(demand=demand)["rope_mismatch"] is None
+
+
+def test_an_unnamed_analysed_rope_is_found_by_its_stiffness():
+    demand = _demand()
+    demand["net"]["ea_provenance"] = "assumed"
+    model = _model(demand=demand, configuration=_configuration(rope="rope-8mm"))
+    assert model["rope_mismatch"]["analysed_rope"] == "rope-4mm"
+
+
+def test_the_route_exports_a_different_rope_and_says_so(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    folder = tmp_path / "out"
+    _into(monkeypatch, folder)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration(rope="rope-8mm")})
+    assert response.status_code == 200, response.text
+    md = next(Path(p) for p in response.json()["paths"]
+              if p.endswith(".md")).read_text(encoding="utf-8")
+    assert "not the rope that was analysed" in md
