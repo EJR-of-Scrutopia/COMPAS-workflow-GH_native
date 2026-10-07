@@ -79,6 +79,9 @@ async function build(root, studyName) {
   const wound = demand ? ropeWound(demand) : null;
   renderDemand(demandBox, demand, floor, demandNote, shape, wound);
   renderExport(exportBox, studyName, demand, () => ({
+    // No material, pattern or size is sent: the panel's own demand fetch above
+    // uses the same defaults, so the two agree. The day the panel learns to
+    // pass them, this export must pass them too.
     configuration: configurationOf(state),
     angle_degrees: ASSUMED_ANGLE_DEGREES,
     ...(wound != null ? { rope_wound_mm: wound } : {}),
@@ -87,9 +90,31 @@ async function build(root, studyName) {
   renderParts(partsBox, parts, state, refresh);
 
   let ticket = 0;
+  // The rungs come from the server (one definition, shared with the exports).
+  // Fetched once per configuration change; null means unavailable, and there
+  // is deliberately no hardcoded fallback, which would restore the drift.
+  let rungs = null;
+  let rungsFor = null;
+  async function loadRungs() {
+    const key = JSON.stringify(configurationOf(state));
+    if (key === rungsFor) return;
+    rungsFor = null;
+    rungs = null;
+    try {
+      const got = await getJson("/api/cablenet/ladder", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ configuration: configurationOf(state) }) });
+      rungs = got.rungs;
+      rungsFor = key;
+    } catch (error) {
+      rungs = null;
+    }
+  }
+
   async function score() {
+    await loadRungs();
     const body = {
-      configurations: [configurationOf(state), ...ladder(state)],
+      configurations: [configurationOf(state), ...(rungs || [])],
       angle_degrees: ASSUMED_ANGLE_DEGREES,
       prestress_floor: floor,
       rope_speed_mm_s: state.speed,
@@ -110,7 +135,7 @@ async function build(root, studyName) {
       const scored = await score();
       if (mine !== ticket) return;
       renderVerdict(verdictBox, scored.rows[0], floor, parts, shape, demand);
-      renderTable(tableBox, scored.rows, parts);
+      renderTable(tableBox, scored.rows, parts, rungs !== null);
       showRpm(rpmReadout, state.speed, scored.rows[0]);
     } catch (error) {
       verdictBox.textContent = `The numbers could not be fetched: ${error.message}`;
@@ -199,21 +224,6 @@ function prestressFloor(demand) {
 function configurationOf(state) {
   const { speed, ...configuration } = state;
   return { ...configuration, chain: [...configuration.chain] };
-}
-
-// the upgrade ladder, so the panel always shows what the next change would buy.
-// DUPLICATION, KNOWN: app.py's _export_ladder defines these same rungs for the
-// exports, and no route exposes them, so the panel cannot yet take them from
-// the server. Until one does (see the task 7 report) the two must be edited
-// together, and the server's is the one that counts.
-function ladder(state) {
-  const rungs = [
-    { chain: ["eye-M12", "turnbuckle-eye-eye-M10"] },
-    { chain: ["eye-M12", "turnbuckle-eye-eye-M10"], rope: "rope-5mm" },
-    { chain: ["eye-M16", "turnbuckle-eye-eye-M10"], rope: "rope-6mm" },
-    { chain: ["eye-M20", "turnbuckle-eye-eye-M12"], rope: "rope-8mm" },
-  ];
-  return rungs.map((rung) => ({ ...configurationOf(state), ...rung }));
 }
 
 // the configuration first, then the thread, then the load: the configuration
@@ -462,8 +472,13 @@ function ropeHtml(path) {
     `should meet is not confirmed.</li></ul>`;
 }
 
-function renderTable(box, rows, parts) {
+function renderTable(box, rows, parts, ladderKnown) {
   box.innerHTML = "<h3>What the next change would buy</h3>";
+  if (!ladderKnown) {
+    const missing = add(box, "p", "cablenet-error");
+    missing.textContent = "The upgrade ladder is unavailable: the server did not " +
+      "return the rungs, so only the chosen set is shown.";
+  }
   const table = document.createElement("table");
   table.innerHTML =
     "<tr><th>Turnbuckle</th><th>Rope</th><th>Ceiling</th>" +

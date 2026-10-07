@@ -1275,7 +1275,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     "refused": "{}: {}".format(type(error).__name__, error)}
 
     def _export_ladder(configuration: dict) -> list:
-        """The rungs the panel shows (ladder() in cablenet.js), at the chosen
+        """THE definition of the upgrade rungs. The panel fetches them from
+        POST /api/cablenet/ladder and the exports use them directly, so the
+        screen and the documents cannot disagree. The chosen configuration is
+        NOT a rung: each caller prepends it itself. Rungs sit at the chosen
         thread: eye-and-eye turnbuckle, then 5 mm rope, then the M16 eye bolt
         and 6 mm rope, then the M20 eye bolt with eye-and-eye M12 and 8 mm."""
 
@@ -1290,7 +1293,14 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             {"chain": ["eye-M16", eye_and_eye], "rope": "rope-6mm"},
             {"chain": ["eye-M20", "turnbuckle-eye-eye-M12"], "rope": "rope-8mm"},
         ]
-        return [dict(configuration)] + [{**configuration, **rung} for rung in rungs]
+        return [{**configuration, **rung} for rung in rungs]
+
+    @app.post("/api/cablenet/ladder")
+    def cablenet_ladder(body: dict):
+        configuration = body.get("configuration")
+        if not isinstance(configuration, dict) or not configuration:
+            raise HTTPException(400, "No configuration was sent to build rungs from.")
+        return {"rungs": _export_ladder(configuration)}
 
     def _exports_folder() -> Path:
         return Path(read_settings().get("cablenet_exports_folder")
@@ -1327,7 +1337,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         parts = catalogue.load_parts()
         ladder_rows = [
             _score_for_export(catalogue, parts, rung, angle, floor, wound)
-            for rung in _export_ladder(configuration)]
+            for rung in [dict(configuration)] + _export_ladder(configuration)]
         row = ladder_rows[0]
 
         # Not deliver_output: that swallows an OSError and hands back the

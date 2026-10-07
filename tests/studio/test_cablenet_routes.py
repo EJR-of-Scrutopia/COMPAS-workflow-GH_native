@@ -113,3 +113,17 @@ def test_the_scored_row_carries_the_drum_and_rail_checks_and_they_are_hard(clien
         "rope_wound_mm": 9000.0}).json()["rows"][0]
     assert over["rope_path"]["drum_fits"] is False
     assert over["passes"] is False
+
+
+def test_the_ladder_takes_its_thread_from_the_chosen_chain(client):
+    chosen = {"motor": "34HS46", "rope": "rope-4mm",
+              "chain": ["eye-M12", "turnbuckle-eye-eye-M12"]}
+    rungs = client.post("/api/cablenet/ladder",
+                        json={"configuration": chosen}).json()["rungs"]
+    assert len(rungs) == 4
+    # the chosen set is not a rung; the callers prepend it
+    # a constant M10 anywhere in the first three rungs fails here
+    for rung in rungs[:3]:
+        assert rung["chain"][1] == "turnbuckle-eye-eye-M12"
+    assert all(rung["motor"] == "34HS46" for rung in rungs)
+    assert client.post("/api/cablenet/ladder", json={}).status_code == 400
