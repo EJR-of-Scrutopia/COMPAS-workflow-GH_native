@@ -31,11 +31,22 @@ FORBIDDEN = re.compile(
 def test_studio_never_imports_the_solver_stacks():
     offenders = []
     for module in STUDIO.rglob("*.py"):
-        if module.name in ("solve_stage.py", "solve_cra.py"):
-            # The two deliberate exceptions: each executes inside its own
-            # solver venv (.venv-fea, .venv-cra), never in the server
-            # process; staging.py and the CRA caller only ever run them as
-            # a subprocess under that interpreter.
+        if module.name in ("solve_stage.py", "solve_cra.py", "solve_cablenet.py"):
+            # The three deliberate exceptions: each executes inside a solver
+            # interpreter as its own process, never in the server process;
+            # staging.py, the CRA caller and cablenet.py only ever run them
+            # as a subprocess under that interpreter.
+            #
+            # solve_cablenet.py joined them on 7 October 2026, under the same
+            # rule and not as a relaxation of it. The staged cable net solve
+            # was first written inside cablenet.py, in the server process,
+            # and this guard caught it. Note that deleting its numpy import
+            # would have turned the test green while the coupling remained,
+            # because tree_forest_compas pulls numpy in transitively and no
+            # pattern here matches that import. The guard was satisfied by
+            # moving the solve behind a subprocess boundary, which is what it
+            # was asking for. cablenet.py itself stays on the forbidden side
+            # and must never import a solver stack.
             continue
         if FORBIDDEN.search(module.read_text(encoding="utf-8")):
             offenders.append(str(module.relative_to(STUDIO)))
