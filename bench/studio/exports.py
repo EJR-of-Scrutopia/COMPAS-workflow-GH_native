@@ -13,10 +13,17 @@ acceptance line contradicted each other for exactly that reason.
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
 from typing import Dict, List
 
 import catalogue
 from tree_forest_compas.mechanism import ceiling_terms
+
+try:                                   # optional: the "exports" extra
+    import openpyxl as _openpyxl
+except ImportError:                    # pragma: no cover, exercised by a test
+    _openpyxl = None
 
 
 class ExportError(RuntimeError):
@@ -251,3 +258,211 @@ def _assumptions(parts, configuration, demand, angle_degrees):
     add("uniform prestress", demand.get("prestress"),
         "The cut rule assumes one uniform prestress across the net.")
     return out
+
+
+# ---------------------------------------------------------------------------
+# The spreadsheet. A renderer: it reads the model and computes nothing.
+# ---------------------------------------------------------------------------
+
+SHEETS = ("Read this", "Chosen", "Parts", "Stages", "Ladder")
+
+_last_note = None
+
+
+def last_spreadsheet_note():
+    """The degradation message if the last write fell back to CSV, else None."""
+
+    return _last_note
+
+
+def _blank(value):
+    return "" if value is None else value
+
+
+def _read_this_rows(model):
+    return [
+        ["Read this"],
+        ["Study", _blank(model.get("study"))],
+        ["Figures taken", _blank(model.get("generated_at"))],
+        ["Units", _blank(model.get("units"))],
+        ["Forces", "newtons"],
+        ["Lengths", "millimetres"],
+        ["Torque", "newton millimetres"],
+        [],
+        ["Confidence words"],
+        ["confirmed", "read from a supplier or maker document"],
+        ["approximate", "close to a documented figure, not read from one"],
+        ["estimate", "a working figure with no document behind it"],
+        ["assumed", "taken for want of any figure; listed under assumptions below"],
+        ["from price", "inferred from a listed price, not from a data sheet"],
+        [],
+        ["Prices"],
+        ["A line with no price leaves every total a floor, not a forecast."],
+        ["VAT is not normalised between suppliers; read the VAT column per line."],
+        ["Delivery is excluded."],
+        [],
+        ["Assumptions", "Value", "Why"],
+    ] + [[a["what"], _blank(a["value"]), a["why"]]
+         for a in model.get("assumptions") or []] + [
+        [],
+        ["Not checked"],
+    ] + [[line] for line in model.get("not_checked") or []]
+
+
+def _chosen_rows(model):
+    rows = [["Configuration"]]
+    for key, value in (model.get("configuration") or {}).items():
+        shown = ", ".join(value) if isinstance(value, (list, tuple)) else value
+        rows.append([key, _blank(shown)])
+    rows += [[], ["Ceiling term", "Part", "Tension it permits (N)", "Binds"]]
+    for term in model.get("terms") or []:
+        rows.append([term["name"], _blank(term.get("part_id")),
+                     term["newtons"], "BINDS" if term.get("binds") else ""])
+    verdict = model["verdict"]
+    tension, shape = verdict["tension"], verdict["shape"]
+    rows += [
+        [],
+        ["Verdict", "Result", "Detail"],
+        ["Prestress the build demands (N)",
+         _blank(tension.get("prestress_floor_newtons"))],
+        ["Ceiling (N)", tension["ceiling_newtons"],
+         "binding: {}".format(_blank(tension.get("binding")))],
+        ["Tension: holds", "yes" if tension.get("passes") else "no",
+         _blank(tension.get("passes_note"))],
+        ["Tension: margin", _blank(tension.get("margin"))],
+        ["Shape: within the acceptance line",
+         "yes" if shape.get("within") else "no",
+         "acceptance {} mm ({})".format(_blank(shape.get("acceptance_mm")),
+                                        _blank(shape.get("acceptance_source")))],
+        ["Shape: worst residual (mm)", _blank(shape.get("worst_residual_mm")),
+         "at stage {}".format(_blank(shape.get("worst_stage")))],
+    ]
+    if shape.get("unreachable_stages"):
+        rows.append(["Shape: unreachable stages", ", ".join(
+            str(n) for n in shape["unreachable_stages"])])
+    rows.append(["Both halves hold", "yes" if verdict.get("holds") else "no"])
+    return rows
+
+
+PARTS_HEADER = ["Kind", "Id", "Model", "Supplier", "Part number", "Unit price",
+                "VAT", "Date seen", "Confidence", "Source URL"]
+
+
+def _parts_rows(model):
+    rows = [list(PARTS_HEADER)]
+    for part in model.get("parts") or []:
+        rows.append([part["kind"], part["id"], part["model"], part["supplier"],
+                     part["part_number"], _blank(part.get("unit_price")),
+                     part["vat"], part["price_seen"], part["confidence"],
+                     part["source_url"]])
+    price = model.get("price") or {}
+    unpriced = price.get("unpriced") or []
+    if price.get("is_floor"):
+        total = "At least £{:.2f}; {} lines have no price yet: {}".format(
+            price["pounds"], len(unpriced), ", ".join(unpriced))
+    elif price.get("pounds") is not None:
+        total = "£{:.2f}".format(price["pounds"])
+    else:
+        total = ""
+    rows.append(["Total (a floor, not a forecast)" if price.get("is_floor")
+                 else "Total", total])
+    return rows
+
+
+def _stages_rows(model):
+    rows = [["Stage", "Name", "Kind", "Wire", "Net vertex", "Rest length (mm)",
+             "Reel command (mm)", "Tension (N)"]]
+    wires = (model.get("demand") or {}).get("wires") or []
+    for stage in model.get("stages") or []:
+        for i, wire in enumerate(wires):
+            def at(field):
+                values = stage.get(field) or []
+                return values[i] if i < len(values) else ""
+            rows.append([stage.get("stage"), stage.get("name"), stage.get("kind"),
+                         wire.get("name"), _blank(wire.get("net_vertex")),
+                         at("wire_rest_lengths"), at("wire_reel_commands"),
+                         at("wire_tensions")])
+    rows += [[], ["Stage", "Name", "Placed weight (N)", "Skin load sum (N)",
+                  "Deviation (mm)", "Reachable", "Residual after (mm)"]]
+    for stage in model.get("stages") or []:
+        rows.append([stage.get("stage"), stage.get("name"),
+                     _blank(stage.get("placed_weight_newtons")),
+                     _blank(stage.get("skin_load_sum_newtons")),
+                     _blank(stage.get("deviation")),
+                     "yes" if stage.get("reachable") else "no",
+                     _blank(stage.get("residual_after"))])
+    return rows
+
+
+def _ladder_rows(model):
+    rows = [["Rung", "Parts that differ", "Ceiling (N)", "Binding part", "Price"]]
+    ladder = model.get("ladder")
+    if not ladder:
+        rows.append(["The model carries no upgrade ladder, so none is shown."])
+        return rows
+    for rung in ladder:
+        differ = rung.get("differs") or rung.get("parts") or ""
+        if isinstance(differ, (list, tuple)):
+            differ = ", ".join(str(d) for d in differ)
+        rows.append([_blank(rung.get("rung") or rung.get("name")), differ,
+                     _blank(rung.get("ceiling")), _blank(rung.get("binding")),
+                     _blank(rung.get("price"))])
+    return rows
+
+
+def _sheet_rows(model):
+    """Every sheet as rows of plain values: built once, written either way."""
+
+    return {
+        "Read this": _read_this_rows(model),
+        "Chosen": _chosen_rows(model),
+        "Parts": _parts_rows(model),
+        "Stages": _stages_rows(model),
+        "Ladder": _ladder_rows(model),
+    }
+
+
+def _write_workbook(sheets, model, path):
+    from openpyxl.styles import Font, PatternFill
+
+    book = _openpyxl.Workbook()
+    book.remove(book.active)
+    shade = PatternFill("solid", fgColor="FFF2CC")
+    unpriced = {part["id"] for part in model.get("parts") or []
+                if part.get("unit_price") is None}
+    for name in SHEETS:
+        sheet = book.create_sheet(name)
+        for row in sheets[name]:
+            sheet.append(list(row))
+        sheet.cell(row=1, column=1).font = Font(bold=True)
+        if name == "Parts":
+            for cells in sheet.iter_rows(min_row=2):
+                if cells[1].value in unpriced:
+                    for cell in cells:
+                        cell.fill = shade
+    book.save(str(path))
+
+
+def write_spreadsheet(model, directory, stem):
+    """Write the workbook, or one CSV per sheet if openpyxl is absent."""
+
+    global _last_note
+    _last_note = None
+    directory = Path(directory)
+    sheets = _sheet_rows(model)
+    if _openpyxl is not None:
+        path = directory / "{}.xlsx".format(stem)
+        _write_workbook(sheets, model, path)
+        return [path]
+    written = []
+    for name in SHEETS:
+        path = directory / "{}-{}.csv".format(stem, name.lower().replace(" ", "-"))
+        with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+            csv.writer(handle).writerows(sheets[name])
+        written.append(path)
+    _last_note = (
+        "The workbook was not written because openpyxl is not installed "
+        "(install the 'exports' extra). One CSV per sheet was written "
+        "instead, without the sheet structure or the shading on unpriced "
+        "lines: {}.".format(", ".join(p.name for p in written)))
+    return written

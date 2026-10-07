@@ -218,3 +218,70 @@ def test_every_assumption_names_what_it_is():
             "anchor angle"} <= set(whats)
     assert any("assumed" in w or "EA" in w for w in whats)
     assert model["not_checked"]
+
+
+def test_the_workbook_has_the_five_sheets_in_order(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    model = _model()
+    written = exports.write_spreadsheet(model, tmp_path, "Test Vault-cablenet")
+    assert len(written) == 1 and written[0].suffix == ".xlsx"
+    book = openpyxl.load_workbook(written[0])
+    assert book.sheetnames == ["Read this", "Chosen", "Parts", "Stages", "Ladder"]
+
+
+def test_an_unpriced_line_marks_the_total_a_floor(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    model = _model()                       # the drum carries no price
+    written = exports.write_spreadsheet(model, tmp_path, "x")
+    book = openpyxl.load_workbook(written[0])
+    text = " ".join(str(c.value) for row in book["Parts"].iter_rows()
+                    for c in row if c.value is not None)
+    assert "floor" in text.lower()
+    assert "drum-72" in text
+
+
+def test_without_openpyxl_it_writes_csvs_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    written = exports.write_spreadsheet(_model(), tmp_path, "x")
+    assert len(written) == 5
+    assert all(path.suffix == ".csv" for path in written)
+    assert exports.last_spreadsheet_note() and "openpyxl" in exports.last_spreadsheet_note()
+
+
+def test_the_chosen_sheet_shows_both_halves_of_the_verdict(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    model = _model()
+    model["verdict"]["shape"]["within"] = False
+    written = exports.write_spreadsheet(model, tmp_path, "x")
+    book = openpyxl.load_workbook(written[0])
+    text = " ".join(str(c.value) for row in book["Chosen"].iter_rows()
+                    for c in row if c.value is not None).lower()
+    assert "tension" in text and "shape" in text
+
+
+def test_the_csv_path_says_what_the_workbook_would(tmp_path, monkeypatch):
+    # the rows are built once; the CSV is the same content, and it runs today
+    import csv
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    written = exports.write_spreadsheet(_model(), tmp_path, "x")
+    assert [p.name for p in written] == [
+        "x-" + name.lower().replace(" ", "-") + ".csv" for name in exports.SHEETS]
+    def text(name):
+        path = next(p for p in written if p.name.endswith(name + ".csv"))
+        with open(path, newline="", encoding="utf-8") as handle:
+            return " ".join(c for row in csv.reader(handle) for c in row)
+    parts = text("parts")
+    assert "floor" in parts.lower() and "drum-72" in parts
+    chosen = text("chosen").lower()
+    assert "tension" in chosen and "shape" in chosen
+
+
+def test_the_note_is_reset_on_every_call(tmp_path, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(exports, "_openpyxl", None)
+        exports.write_spreadsheet(_model(), tmp_path, "x")
+        assert exports.last_spreadsheet_note()
+    if exports._openpyxl is None:
+        pytest.skip("needs openpyxl for the successful run")
+    exports.write_spreadsheet(_model(), tmp_path, "x")
+    assert exports.last_spreadsheet_note() is None

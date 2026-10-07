@@ -44,6 +44,10 @@ fea = [
 ifc = [
     "compas_ifc==2.1.0",
 ]
+# The studio's cable net spreadsheet; without it the export falls back to CSV.
+exports = [
+    "openpyxl>=3.1",
+]
 # Masonry: block tessellation, contact assembly, and coupled rigid-block
 # stability. compas_dem pulls compas_cgal, compas_libigl, and compas_model.
 # Backs the "04 Masonry" tab.
