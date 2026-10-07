@@ -65,6 +65,10 @@ SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 RECORDINGS_DIR = Path(
     r"C:\Users\Param\OneDrive - Ananke-eidos\Documents\Kinetic AI"
     r"\PHD robotics\Animation")
+# Where the cable net exports are written (overridable via the
+# cablenet_exports_folder setting). Until one is chosen they share the
+# recordings folder, which is already somewhere Param looks.
+CABLENET_EXPORTS_DIR = RECORDINGS_DIR
 # What went wrong on screen, one JSON object per line, newest last. Trimmed
 # rather than rotated: this is a thing to read after a failure, not an
 # archive, and a file that grows without bound is a file nobody opens.
@@ -308,6 +312,7 @@ FOLDER_TITLES = {
     "hdri_folder": "Choose your HDRI folder",
     "props_folder": "Choose your prop library folder",
     "recordings_folder": "Choose where finished stills and recordings are saved",
+    "cablenet_exports_folder": "Choose where cable net exports are saved",
 }
 
 
@@ -406,7 +411,7 @@ def apply_saved_folders() -> dict:
     """
 
     global MATERIALS_DIR, GROUND_MATERIALS_DIR, HDRI_DIR, PROPS_DIR
-    global RECORDINGS_DIR
+    global RECORDINGS_DIR, CABLENET_EXPORTS_DIR
 
     applied = {}
     chosen = apply_saved_folder()
@@ -417,7 +422,8 @@ def apply_saved_folders() -> dict:
                         ("ground_folder", "GROUND_MATERIALS_DIR"),
                         ("hdri_folder", "HDRI_DIR"),
                         ("props_folder", "PROPS_DIR"),
-                        ("recordings_folder", "RECORDINGS_DIR")):
+                        ("recordings_folder", "RECORDINGS_DIR"),
+                        ("cablenet_exports_folder", "CABLENET_EXPORTS_DIR")):
         raw = stored.get(key)
         if not raw:
             continue
@@ -1801,6 +1807,23 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def browse_recordings_folder():
         return {"path": ask_for_folder(title=FOLDER_TITLES["recordings_folder"])}
 
+    # The seventh folder: where the cable net exports are written. Browse
+    # returns a path and remembers nothing; the caller posts it back above.
+    @app.get("/api/cablenet/exports/folder")
+    def cablenet_exports_folder():
+        return _library_row("cablenet-exports")
+
+    @app.post("/api/cablenet/exports/folder")
+    def set_cablenet_exports_folder(body: dict):
+        return _set_library_folder(
+            "cablenet-exports", body,
+            "cablenet_exports_folder", "CABLENET_EXPORTS_DIR")
+
+    @app.post("/api/cablenet/exports/folder/browse")
+    def browse_cablenet_exports_folder():
+        return {"path": ask_for_folder(
+            title=FOLDER_TITLES["cablenet_exports_folder"])}
+
     _machine_documents: dict = {}
 
     def _read_machine(path: Path) -> dict:
@@ -1861,6 +1884,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         elif kind == "recordings":
             directory, counter = RECORDINGS_DIR, (
                 lambda d: len([p for p in d.glob("*.mp4") if p.is_file()]))
+        elif kind == "cablenet-exports":
+            directory, counter = CABLENET_EXPORTS_DIR, (
+                lambda d: len([p for p in d.glob("*.json") if p.is_file()]))
         else:
             # Sidecars are not counted, for the reason /api/props gives.
             directory, counter = PROPS_DIR, (
