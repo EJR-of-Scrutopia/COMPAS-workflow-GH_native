@@ -120,10 +120,38 @@ def test_the_ladder_takes_its_thread_from_the_chosen_chain(client):
               "chain": ["eye-M12", "turnbuckle-eye-eye-M12"]}
     rungs = client.post("/api/cablenet/ladder",
                         json={"configuration": chosen}).json()["rungs"]
-    assert len(rungs) == 4
+    # the first rung IS the chosen set here (eye-M12 with eye-and-eye M12), so
+    # it is dropped: exactly one row is the chosen set (the caller's)
+    assert len(rungs) == 3
     # the chosen set is not a rung; the callers prepend it
-    # a constant M10 anywhere in the first three rungs fails here
-    for rung in rungs[:3]:
+    # a constant M10 anywhere in the first rungs fails here
+    for rung in rungs[:2]:
         assert rung["chain"][1] == "turnbuckle-eye-eye-M12"
     assert all(rung["motor"] == "34HS46" for rung in rungs)
     assert client.post("/api/cablenet/ladder", json={}).status_code == 400
+
+
+_RANK = {"eye-M12": 12, "eye-M16": 16, "eye-M20": 20, "eye-M24": 24,
+         "rope-4mm": 4, "rope-5mm": 5, "rope-6mm": 6, "rope-8mm": 8}
+
+
+def test_the_ladder_never_proposes_a_rung_weaker_than_the_chosen_set(client):
+    chosen = {"motor": "34HS46", "rope": "rope-6mm",
+              "chain": ["eye-M20", "turnbuckle-eye-eye-M10"]}
+    rungs = client.post("/api/cablenet/ladder",
+                        json={"configuration": chosen}).json()["rungs"]
+    assert rungs and chosen not in rungs
+    for rung in rungs:
+        assert _RANK[rung["chain"][0]] >= _RANK["eye-M20"], rung
+        assert _RANK[rung["rope"]] >= _RANK["rope-6mm"], rung
+    # nothing is proposed twice either
+    assert all(rungs.count(r) == 1 for r in rungs)
+
+
+def test_a_rung_equal_to_the_chosen_set_is_dropped_not_relabelled(client):
+    # eye-M20 + eye-eye-M12 + rope-8mm is the last rung exactly
+    chosen = {"motor": "34HS46", "rope": "rope-8mm",
+              "chain": ["eye-M20", "turnbuckle-eye-eye-M12"]}
+    rungs = client.post("/api/cablenet/ladder",
+                        json={"configuration": chosen}).json()["rungs"]
+    assert chosen not in rungs

@@ -1113,3 +1113,30 @@ def test_the_panels_formatter_renders_what_exports_newtons_renders():
     # the case that made this more than cosmetic: a fractional ceiling just
     # under the floor must not read as "1471 N against 1471 N"
     assert exports._newtons(1470.94) != exports._newtons(1471.0)
+
+
+def test_with_eye_m20_chosen_no_rung_drops_to_a_weaker_eye_bolt(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    chosen = _configuration(chain=["eye-M20", "turnbuckle-eye-eye-M10"])
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": chosen})
+    assert response.status_code == 200, response.text
+    assert all(r["configuration"]["chain"][0] == "eye-M20" for r in seen["ladder"])
+
+
+def test_exactly_one_ladder_row_is_the_chosen_set_even_if_a_rung_equals_it():
+    import catalogue
+    parts = catalogue.load_parts()
+    configuration = _configuration()
+    rows = [_scored(parts, configuration), _scored(parts, dict(configuration)),
+            _scored(parts, dict(configuration, chain=["eye-M16",
+                                                     "turnbuckle-hook-hook-M10"]))]
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-07",
+                                 ladder_rows=rows)
+    assert [r["is_chosen"] for r in model["ladder"]].count(True) == 1
+    assert [r["label"] for r in model["ladder"]].count("Chosen") == 1
+    assert len(model["ladder"]) == 2

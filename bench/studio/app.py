@@ -1280,20 +1280,58 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         screen and the documents cannot disagree. The chosen configuration is
         NOT a rung: each caller prepends it itself. Rungs sit at the chosen
         thread: eye-and-eye turnbuckle, then 5 mm rope, then the M16 eye bolt
-        and 6 mm rope, then the M20 eye bolt with eye-and-eye M12 and 8 mm."""
+        and 6 mm rope, then the M20 eye bolt with eye-and-eye M12 and 8 mm.
 
+        A rung is an upgrade or it is not offered: the eye bolt, the rope and
+        the turnbuckle thread are each never weaker than the chosen set's, so
+        a sheet headed "what should I change next" cannot print a downgrade.
+        A rung that comes out equal to the chosen set (or to an earlier rung)
+        is dropped, so exactly one row is the chosen set."""
+
+        def size(key, prefix):
+            tail = str(key).rsplit("-", 1)[-1]
+            digits = tail[1:] if tail[:1] == "M" else ""
+            return int(digits) if digits.isdigit() and str(key).startswith(prefix) else None
+
+        def stronger(floor_key, proposed, prefix):
+            """The proposed key, unless the chosen one is already larger."""
+            return (floor_key if floor_key is not None
+                    and (size(floor_key, prefix) or 0) > (size(proposed, prefix) or 0)
+                    else proposed)
+
+        chain = [str(k) for k in configuration.get("chain") or []]
         thread = "M10"
-        for key in configuration.get("chain") or []:
-            if str(key).startswith("turnbuckle-"):
-                thread = str(key).rsplit("-", 1)[-1]
+        chosen_eye = None
+        for key in chain:
+            if key.startswith("turnbuckle-"):
+                thread = key.rsplit("-", 1)[-1]
+            elif key.startswith("eye-"):
+                chosen_eye = key
+
+        def eye(proposed):
+            return stronger(chosen_eye, proposed, "eye-")
+
+        def rope(proposed):
+            chosen = configuration.get("rope")
+            diameters = {"rope-4mm": 4, "rope-5mm": 5, "rope-6mm": 6, "rope-8mm": 8}
+            return (chosen if diameters.get(chosen, 0) > diameters[proposed]
+                    else proposed)
+
         eye_and_eye = "turnbuckle-eye-eye-{}".format(thread)
+        last = stronger("turnbuckle-eye-eye-{}".format(thread),
+                        "turnbuckle-eye-eye-M12", "turnbuckle-eye-eye-")
         rungs = [
-            {"chain": ["eye-M12", eye_and_eye]},
-            {"chain": ["eye-M12", eye_and_eye], "rope": "rope-5mm"},
-            {"chain": ["eye-M16", eye_and_eye], "rope": "rope-6mm"},
-            {"chain": ["eye-M20", "turnbuckle-eye-eye-M12"], "rope": "rope-8mm"},
+            {"chain": [eye("eye-M12"), eye_and_eye]},
+            {"chain": [eye("eye-M12"), eye_and_eye], "rope": rope("rope-5mm")},
+            {"chain": [eye("eye-M16"), eye_and_eye], "rope": rope("rope-6mm")},
+            {"chain": [eye("eye-M20"), last], "rope": rope("rope-8mm")},
         ]
-        return [{**configuration, **rung} for rung in rungs]
+        out = []
+        for rung in rungs:
+            candidate = {**configuration, **rung}
+            if candidate != configuration and candidate not in out:
+                out.append(candidate)
+        return out
 
     @app.post("/api/cablenet/ladder")
     def cablenet_ladder(body: dict):

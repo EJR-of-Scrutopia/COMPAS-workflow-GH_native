@@ -165,6 +165,8 @@ def _ladder(configuration, ladder_rows):
         changes = {key: rung.get(key) for key in set(rung) | set(configuration)
                    if rung.get(key) != configuration.get(key)}
         chosen = not changes
+        if chosen and any(entry["is_chosen"] for entry in out):
+            continue          # exactly one row is the chosen set
         entry = {
             "label": "Chosen" if chosen else ", ".join(
                 "{} {}".format(k, changes[k]) for k in sorted(changes)),
