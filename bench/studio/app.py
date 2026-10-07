@@ -1107,6 +1107,70 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 "Placed Mechanism")
         return _with_cited_machine(document, sidecar.parent)
 
+    @app.get("/api/catalogue")
+    def catalogue_parts():
+        import catalogue
+
+        return catalogue.load_parts()
+
+    @app.get("/api/studies/{export}/cablenet")
+    def study_cablenet(export: str, material: str = "tile", pattern: str = "herringbone",
+                       size: float = 1.0, thickness: float = 0.02,
+                       density: Optional[float] = None,
+                       source: Optional[str] = None):
+        # The demand document is written beside the staging document, which
+        # start_run keys by geometry.slugify(export) and by the cache
+        # pattern for the cut source; this resolves it the same way.
+        path = bundle.cablenet_path(
+            geometry.slugify(export), material,
+            bundle.cut_cache_pattern(pattern, source), size, thickness, density)
+        if not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "This study has no cable net demand yet. Run it again with "
+                    "the cable net phase enabled and the engine will write one."
+                ),
+            )
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    @app.post("/api/studies/{export}/cablenet/configurations")
+    def score_configurations(export: str, body: dict):
+        import catalogue
+
+        configurations = body.get("configurations")
+        if not isinstance(configurations, list) or not configurations:
+            raise HTTPException(
+                status_code=400,
+                detail="No configurations were sent to score.",
+            )
+        parts = catalogue.load_parts()
+        angle = float(body.get("angle_degrees", 10.0))
+        floor = float(body.get("prestress_floor") or 0.0)
+        wanted_speed = body.get("rope_speed_mm_s")
+        rows = []
+        for configuration in configurations:
+            try:
+                ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
+                row = {
+                    "configuration": configuration,
+                    "ceiling": ceiling,
+                    "binding": binding,
+                    "passes": bool(floor <= 0.0 or ceiling >= floor),
+                    "margin": (ceiling / floor) if floor > 0.0 else None,
+                    "price": catalogue.price_of(parts, configuration),
+                    "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
+                    "refused": None,
+                }
+                if wanted_speed:
+                    row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
+                        parts, configuration, float(wanted_speed))
+            except catalogue.CatalogueError as error:
+                rows.append({"configuration": configuration, "refused": str(error)})
+                continue
+            rows.append(row)
+        return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
+
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
         export = body.get("export", "")
@@ -1144,6 +1208,18 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             raise HTTPException(
                 400, "source must be one of {} when given".format(
                     ", ".join(bundle.CUT_SOURCES)))
+        include_cablenet = bool(body.get("cablenet", False))
+        cablenet_options = body.get("cablenet_options") or {}
+        if not isinstance(cablenet_options, dict):
+            raise HTTPException(400, "cablenet_options must be an object")
+        for field in ("ea", "prestress", "acceptance", "mass_per_metre"):
+            if field in cablenet_options:
+                try:
+                    float(cablenet_options[field])
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        400, "cablenet_options.{} must be a number, not {!r}".format(
+                            field, cablenet_options[field]))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -1193,12 +1269,36 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 contract = geometry.load_contract(pairs[export]["contract"])
                 cut_source = bundle.resolve_cut_source(export, contract, source)
                 key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
+                run_options = {}
+                if include_cablenet:
+                    mechanism_document = bundle._read_optional(
+                        bundle.mechanism_sidecar(export))
+                    if mechanism_document is None:
+                        raise ValueError(
+                            "the cable net phase needs this study's mechanism "
+                            "document, and it carries none")
+                    run_options = {
+                        "include_cablenet": True,
+                        "cablenet_options": {
+                            "out_path": bundle.cablenet_path(
+                                slug, material, key_pattern, size, thickness,
+                                density),
+                            "mechanism_document": mechanism_document,
+                            "ea": float(cablenet_options.get("ea", 2.0e5)),
+                            "prestress": float(cablenet_options.get("prestress", 300.0)),
+                            "acceptance": float(cablenet_options.get("acceptance", 50.0)),
+                            "acceptance_source": str(cablenet_options.get(
+                                "acceptance_source", "studio default")),
+                            "mass_per_metre": float(cablenet_options.get(
+                                "mass_per_metre", 0.061)),
+                        },
+                    }
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, key_pattern, size,
                                         thickness, density),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
-                    source=cut_source, density=density,
+                    source=cut_source, density=density, **run_options,
                 )
                 run["phase"] = "bundling"
                 run["message"] = "assembling the bundle"
