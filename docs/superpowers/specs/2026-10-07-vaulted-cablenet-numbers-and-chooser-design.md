@@ -1268,7 +1268,19 @@ configuration, and none of which changes a number:
    can pre-empt. Section 5.4 sharpens it: there are nodes that need a wire
    before any question of accuracy arises, and `nodes_needing_support` names
    them, so the first answer to "how many wires" is "at least this many, here".
-10. **The cut rule puts the same prestress in every member.** It is the simplest
+10. **The wire's angle to its eye bolt is not derivable from the export, so it
+    is an assumption.** Section 6.2 says the angle is computed from the
+    routing. The mechanism document gives both ends of a wire, so the wire's
+    direction is known, but nothing anywhere records which way the eye bolt
+    FACES, and the angle that matters is between the two. Until the bolt's axis
+    is exported, the chooser uses the off-axis rating always, which is the
+    conservative direction, and the panel says on its face that this is an
+    assumption rather than a measurement. The consequence is that the
+    45-degree refusal in `chain_limit` is tested but cannot fire in the
+    product: a wire genuinely pulling at 70 degrees would be priced at the
+    45-degree rating. Recording the bolt orientation in the mechanism document
+    would close this properly.
+11. **The cut rule puts the same prestress in every member.** It is the simplest
     rule that can be checked by hand and it is not necessarily the best one. A
     graded prestress, higher near the crown where the net is doing the most
     work, is a plausible refinement, and it needs a real study to justify rather
