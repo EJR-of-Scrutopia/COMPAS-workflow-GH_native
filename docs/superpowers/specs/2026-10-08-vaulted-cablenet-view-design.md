@@ -99,23 +99,60 @@ note. Each gets a `layerAvailability` answer naming what is missing when it
 cannot draw, which for all five is "this study has no cable net demand yet; run
 it with the cable net phase enabled".
 
-## 5. The system, with the parts that go together paired
+## 5. The system: pick a configuration, not nine parts
 
-The selects are in the panel's own `label.named` style, not the wrapping,
-overlapping block in the owner's screenshot.
+**The catalogue stays rich and grows.** The point is not fewer parts; it is
+fewer decisions at the moment of use. Assembling a machine from nine independent
+selects is the wrong unit of choice, because most combinations are not machines
+anybody would build and the person is left to work out which are.
 
-**Choosing a motor narrows everything that must match it.** The catalogue
-already carries a `family` on every motor and drive, and `mechanism_for` already
-refuses a mismatch by raising. A refusal is the wrong way to learn this, so the
-panel prevents it instead: picking a motor filters the drive list to that
-motor's family and selects that family's sensible default, and filters the
-gearbox list to the kind that suits it, planetary for a stepper and worm for an
-alternating current motor. The refusal stays as the backstop for anything posted
-directly to the route.
+So the catalogue gains a **configurations** block: named, complete, buildable
+mechanisms, each naming its parts and carrying a line saying what it is for and
+what it is good at. The panel's primary control is a single select over those.
 
-Where a choice is made for the person, the panel says so in one line rather than
-silently changing a box, because a select that moves on its own and says nothing
-is how somebody ends up believing they chose it.
+A configuration is a part set plus a description, for example a seven-spool
+stepper rig with the planetary gearbox and the rope path as currently drawn; the
+same with the moving block fitted; a three-phase inverter rig on a worm reducer
+for higher sustained torque; the same rig with the rope path upgraded to eye and
+eye terminations and heavier rope. The list is the designed options, not the
+cross product.
+
+**Three ways in, in increasing effort:**
+
+1. **Recommend** picks a configuration outright, by the rule in this section.
+2. **The configuration select** offers the designed set, each with its one-line
+   description, and switching between them is the normal way to explore.
+3. **Vary parts** is a collapsed block, opened only when wanted, exposing the
+   individual selects. Changing anything marks the state "modified from
+   that configuration", so it is always clear whether you are looking at a designed
+   machine or one you have altered, and a reset returns to it.
+
+**The drive follows the motor, and is shown rather than chosen**, at every level
+including the varied one. The catalogue already carries a `family` on every
+motor and drive, and `mechanism_for` already refuses a mismatch by raising. A
+refusal is the wrong way to learn this at a panel, so the pairing is applied and
+named, and the refusal stays as the backstop for anything posted to the route
+directly. The gearbox list filters the same way, planetary for a stepper and
+worm for a three-phase motor.
+
+**What is settled is said, not offered.** The wiring and the electronics are
+decided, so they appear as a short stated block rather than as controls: the
+drive that follows the motor, the bespoke drum, the rail, and the note that the
+controller, single board computer, power supply, amplifiers and terminals carry
+no mechanical load and therefore change no number on this panel. A reader
+should not have to wonder whether they were forgotten.
+
+**Recommend.** One button filling the whole configuration in. The rule, stated
+on the panel and not merely implemented: the configuration that carries the load
+with the largest margin, and among those that tie, the one with the fewest
+parts. If none carries the load, it recommends the one with the highest ceiling
+and says plainly that nothing in the catalogue is sufficient, which is a result
+and not a failure. The search is arithmetic against the stored tension curve, so
+it is instant and never re-solves.
+
+Where something is decided for the person, the panel says so in a line rather
+than silently changing a control, because one that moves on its own and stays
+quiet is how somebody comes to believe they chose it.
 
 **Recommend.** One button that fills the whole system in. The rule, stated on
 the panel and not merely implemented: the configuration that carries the load
