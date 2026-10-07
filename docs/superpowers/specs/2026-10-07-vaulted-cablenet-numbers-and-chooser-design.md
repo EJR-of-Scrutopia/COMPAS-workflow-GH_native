@@ -35,10 +35,18 @@ trusting a number whose provenance is not on screen.
 
 **In.** The per-stage per-node load array. The staged cable net solve over a
 real study. The demand document that solve writes. A catalogue of named parts
-with their suppliers and prices. The prestress floor and ceiling. The pass or
-fail verdict with the binding part named. Rope through the drum, drum wrap
-capacity and carriage travel. An interface for choosing parts and comparing
-configurations.
+with their suppliers and prices, covering three drive families and tiered
+ladders for the parts that limit the machine. The prestress floor and ceiling.
+The pass or fail verdict with the binding part named. Rope through the drum,
+drum wrap capacity, carriage travel and rope speed. An interface for choosing
+parts and comparing configurations.
+
+Because the owner chose on 7 October to carry the alternating current drive as
+a buildable option rather than a comparison, the catalogue also names the
+companion parts that family requires, and the chooser refuses a motor paired
+with a drive that cannot control it. Designing the encoder and the software
+loop themselves is not in this spec; naming them as required, with the reason,
+is.
 
 **Out.** The net coloured by tension and the numbers drawn on parts (spec two).
 The component diagram, the spreadsheet and the data sheet (spec two). Any
@@ -97,10 +105,13 @@ failed silently once already, and a separate entry point would rebuild the cut.
 
 - `bench/studio/cablenet.py`: the adapter, the per-stage node loads, the staged
   run, and the demand document.
-- `bench/studio/catalogue.py`: reads and validates `parts.json`, and builds a
-  `Mechanism` from a chosen configuration.
-- `bench/studio/parts.json`: the named parts, seeded from the bill of
-  materials.
+- `bench/studio/catalogue.py`: reads and validates `parts.json`, refuses a
+  configuration whose motor and drive families disagree, resolves the anchor
+  chain at each wire's own angle, and builds a `Mechanism` from a chosen
+  configuration.
+- `bench/studio/parts.json`: the named parts across three drive families, with
+  tiered ladders for the anchor chain, the rope and the sheave, seeded from the
+  bill of materials and extended as section 6.2 sets out.
 - `bench/studio/static/cablenet.js`: the chooser panel.
 - `tests/studio/test_cablenet.py`, `tests/studio/test_catalogue.py`.
 - `tests/test_capacity_curve.py`.
@@ -109,7 +120,9 @@ failed silently once already, and a separate entry point would rebuild the cut.
 
 - `src/tree_forest_compas/capacity.py`: the sheave limit, and splitting the
   walk from the checks.
-- `src/tree_forest_compas/trade_study.py`: `sweep` accepts a precomputed curve.
+- `src/tree_forest_compas/trade_study.py`: `sweep` accepts a precomputed curve,
+  and `resolution_at_the_net` accepts counts per revolution for a drive that
+  does not microstep.
 - `bench/studio/staging.py`: the `include_cablenet` flag and the call.
 - `bench/studio/bundle.py`: `cablenet_path`, beside `staging_path`.
 - `bench/studio/app.py`: three routes.
@@ -382,97 +395,253 @@ and that is the only place the two forms meet.
 
 ## 6. Step B: the catalogue and the chooser
 
-### 6.1 The catalogue
+### 6.1 Three drive families, and why the family is a field
+
+The catalogue cannot hold motors in one list, because "torque" does not mean
+the same thing across the candidates. A stepper is quoted holding torque at
+standstill; an induction motor is quoted continuous torque at rated speed. Put
+them in one column and a 1 HP boat lift motor appears weaker than a 9 N m
+stepper, which is true of the number and false of the machine.
+
+So every motor entry carries a `family`, and the family decides how
+`motor_torque` is derived, how it is derated, and where position comes from.
+
+**Family A, closed-loop stepper.** What the rig is drawn with: NEMA 23 and
+NEMA 34 closed loop, driven step and direction from the Octopus through a
+CL57Y or CL86Y. `motor_torque` is the published holding torque. It is derated
+by `torque_margin` 0.5, because holding torque falls away with speed and the
+published figure is a standstill figure. Position comes from
+`steps_per_revolution * microsteps`. It creeps naturally, which is what a net
+being tensioned wants. It does not hold without power, so the ratchet and pawl
+stay.
+
+**Family B, three-phase AC with an inverter.** The buildable form of the winch
+motor route. `motor_torque` comes from the power and the speed:
+
+```
+T [N mm] = 9550 * power_kw / rated_speed_rpm * 1000
+```
+
+**The rated speed must be the one for this supply.** A four-pole motor
+synchronises at 1500 rpm on the United Kingdom's 50 Hz and runs near 1440 under
+load, where the 1725 rpm quoted for boat lift motors is a 60 Hz figure. The
+same motor therefore delivers about a fifth more torque here than its American
+data sheet implies, and the rope moves a fifth slower, which is the better end
+of both trades. The catalogue holds family B at 1440 rpm and family C at the
+1725 rpm its parts are actually sold at, and the two must not be mixed.
+
+So 0.75 kW at 1440 rpm is 4974 N mm, and 1.5 kW is 9948 N mm. It is derated by
+`torque_margin` 0.8, a service factor against the continuous thermal rating
+rather than a derate of a standstill figure; the breakdown torque of an
+induction motor is well above rated, so starting is not what limits it.
+
+Position does **not** come free. This family needs an inverter with a
+single-phase input and a three-phase output, an incremental encoder on the
+shaft, and a loop closed in software, because the Octopus cannot drive it with
+step and direction. That is the real cost of this family and the catalogue
+states it as a required companion part rather than leaving it to be discovered
+during a build.
+
+**Family C, single-phase capacitor motor, recorded and closed.** The boat lift
+motors as actually sold: 1 to 2 HP, 115 or 230 V single phase, 1725 rpm, TENV,
+in the NEMA 56C frame. They are in the catalogue and they are marked
+unbuildable for this machine, with the reason attached, because an option that
+is silently absent looks like an oversight and an option that is visibly closed
+is an answer.
+
+The reason is that a capacitor-run single-phase motor cannot be speed
+controlled by an inverter. Its run capacitor is sized for one frequency, so
+away from it the motor loses torque and heats, and an inverter has no third
+winding to work with. The motor is therefore a fixed-speed on and off device.
+That is entirely adequate for a boat lift, which goes up and comes down, and
+no use for holding a net within millimetres while courses are laid.
+
+Note also that NEMA 56C is an AC frame and not a larger stepper: 5/8 inch
+shaft, 4.5 inch pilot, 5.875 inch bolt circle. It shares nothing with the
+NEMA 34 stepper frame but the naming convention.
+
+### 6.2 The catalogue
 
 `bench/studio/parts.json`, seeded from
-`...\PHD robotics\AI\tasks\T1_spooling_machine\spooling-machine-BOM.xlsx`.
-Every entry carries `supplier`, `part_number`, `unit_price`, `vat`,
-`price_seen`, `confidence` and `source_url`, copied from that sheet, plus the
-engineering figures below. Entries are grouped by kind.
+`...\PHD robotics\AI\tasks\T1_spooling_machine\spooling-machine-BOM.xlsx` for
+everything already sourced, and extended with the ladders below. Every entry
+carries `supplier`, `part_number`, `unit_price`, `vat`, `price_seen`,
+`confidence` and `source_url`, in the bill of materials' own vocabulary, with
+`assumed` added for a figure no supplier published.
 
-**motor** (`motor_torque` in N mm)
+**motor**: `family`, `motor_torque` in N mm, `torque_basis`,
+`torque_margin`, and for families B and C `power_kw` and `rated_speed_rpm`.
 
-| id | model | torque | note |
+| id | family | model | torque | basis |
+| --- | --- | --- | --- | --- |
+| `23HS45` | A | 23HS45-4204D-E1000 | 3000 | holding |
+| `34HS31` | A | 34HS31 | 4300 | holding |
+| `34HS39` | A | 34HS39 | 6500 | holding |
+| `34HS46` | A | 34HS46-6004D-E1000 | 9000 | holding |
+| `34HS-12` | A | NEMA 34 closed loop, 12 N m | 12000 | holding |
+| `ac-0r75-3ph` | B | 0.75 kW three phase, 4 pole, 1440 rpm | 4974 | continuous |
+| `ac-1r1-3ph` | B | 1.1 kW three phase, 4 pole, 1440 rpm | 7295 | continuous |
+| `ac-1r5-3ph` | B | 1.5 kW three phase, 4 pole, 1440 rpm | 9948 | continuous |
+| `boatlift-1hp` | C | 1 HP 56C boat hoist duty, single phase | 4130 | continuous |
+| `boatlift-2hp` | C | 2 HP 56C boat hoist duty, single phase | 8260 | continuous |
+
+The family B and C torques are computed from power and speed by the expression
+in section 6.1, not quoted by a supplier, so they carry confidence `assumed`
+until a nameplate is read.
+
+**drive electronics**, one required per motor family, and the chooser refuses a
+configuration that pairs a motor with the wrong one.
+
+| id | for family | part | note |
 | --- | --- | --- | --- |
-| `34HS46` | 34HS46-6004D-E1000 | 9000 | NEMA 34 closed loop, 6.0 A, 1000 PPR |
-| `34HS39` | 34HS39 | 6500 | same family, less torque |
-| `34HS31` | 34HS31 | 4300 | same family, least torque |
-| `23HS45` | 23HS45-4204D-E1000 | 3000 | NEMA 23, the seven-spool candidate |
+| `CL57Y` | A | StepperOnline CL57Y, 24 to 50 V, 7 A | owned; 50 V ceiling limits a NEMA 34 at speed |
+| `CL86Y` | A | StepperOnline CL86Y, 30 to 110 V, 8.5 A | the standard pairing for a NEMA 34 |
+| `vfd-1ph-in` | B | inverter, single-phase in, three-phase out | plus an encoder and a software loop |
+| `none` | C | direct on line, fixed speed | why family C is closed |
 
-**gearbox** (`gear_ratio`, `gear_efficiency`)
+**gearbox**: `gear_ratio` and `gear_efficiency`, with the efficiency a function
+of the ratio for worms rather than one figure.
 
-| id | model | ratio | efficiency |
+| id | kind | ratio | efficiency |
 | --- | --- | --- | --- |
-| `EG23-G20` | EG23-G20-D8 | 20 | 0.94, assumed |
-| `EG34-G100` | EG34 family | 100 | 0.90, assumed, two stages |
-| `direct` | no gearbox | 1 | 1.00 |
+| `direct` | none | 1 | 1.00 |
+| `EG23-G20` | planetary | 20 | 0.94, assumed |
+| `EG34-G100` | planetary | 100 | 0.90, assumed |
+| `worm-7r5` | worm | 7.5 | 0.90, assumed |
+| `worm-10` | worm | 10 | 0.88, assumed |
+| `worm-20` | worm | 20 | 0.80, assumed |
+| `worm-30` | worm | 30 | 0.72, assumed |
+| `worm-50` | worm | 50 | 0.60, assumed |
+| `worm-100` | worm | 100 | 0.45, assumed |
 
-The efficiencies are marked `assumed`: StepperOnline publish no figure. They
-are the only engineering numbers in the catalogue that no supplier stated, and
-the interface shows the confidence word beside them.
+Worm reducers in the NEMA 56C input flange are offered from 7.5 to 1 up to 100
+to 1, and their suppliers quote efficiency falling with ratio across a band of
+roughly 45 to 93 per cent. The figures above interpolate that band and are
+marked assumed; each must be replaced with the chosen gearbox's own published
+figure before anything is ordered, because the torque term scales with it.
 
-**drum** (`drum_radius`, plus `width_mm` and `groove_pitch_mm`)
-
-| id | description | radius | width | groove |
-| --- | --- | --- | --- | --- |
-| `drum-72` | the briefed drum, 72 dia winding surface | 36 | 150 | 4 |
-
-**rope** (`rope_mbl`, `mass_per_metre_kg`, `ea_newtons`, `diameter_mm`)
-
-| id | spec | MBL | kg/m | diameter |
-| --- | --- | --- | --- | --- |
-| `rope-4mm-7x19` | 4 mm 7x19 AISI 316 | 9091 | 0.061 | 4 |
-
-MBL is the supplier's 927 kg converted at 9.80665. `ea_newtons` is 450000,
-confidence `assumed`: a 7x19 rope's effective modulus is well below solid
-steel's because of the lay, roughly 70 to 90 GPa over a metallic area near 5.65
-square millimetres. This is the single most consequential assumed number in the
-catalogue, because the rest lengths scale with it, and it is listed in section
-13 as a thing to measure.
-
-**sheave** (`sheave_swl`, `diameter_mm`, `sheave_efficiency`)
-
-| id | model | SWL | diameter | efficiency |
-| --- | --- | --- | --- | --- |
-| `WZ-11-K` | GPS Lifting WZ 11 K | 1226 | 120 | 0.98, assumed |
-
-SWL is the supplier's 125 kg at 180 degrees, converted.
+**Worm reducers are not self-locking and must not be treated as the fail-safe
+hold.** Their own suppliers state they are "not to be considered fail safe or
+self-locking devices". The ratchet and pawl remain in the design for every
+family.
 
 **anchor chain**: an ordered list of the parts in the load path at the wall,
-each with its own working load limit. The default chain is the eye bolt DIN 580
-M12 A4 at 3334 N and the turnbuckle DIN 1480 M10 A4 at 1471 N.
+each with an axial and an angled working load limit. DIN 580 A4 eye bolts, in
+kilograms, axial and at up to 45 degrees:
 
-**rail** (`stroke_mm`)
+| id | size | axial | at 45 degrees | axial N | angled N |
+| --- | --- | --- | --- | --- | --- |
+| `eye-M12` | M12 | 340 | 240 | 3334 | 2354 |
+| `eye-M16` | M16 | 700 | 500 | 6865 | 4903 |
+| `eye-M20` | M20 | 1200 | 860 | 11768 | 8434 |
+| `eye-M24` | M24 | 1800 | 1290 | 17652 | 12651 |
 
-| id | model | stroke |
-| --- | --- | --- |
-| `MGN15H-300` | MGN15H, 300 mm rail | 300 |
+**The angled rating is the one that applies.** A wire runs from a net node to a
+frame point and almost never pulls along the eye bolt's axis, and off axis the
+rating drops by about 30 per cent. The angle is not assumed: the mechanism
+document gives both ends of every wire, so `catalogue.py` computes the angle
+between the wire and the eye bolt's axis and takes the matching rating, using
+the angled figure for anything over 5 degrees and refusing anything over 45,
+which is outside the published table.
+
+Turnbuckles are tiered by **configuration as well as size**, because the
+configuration matters as much as the thread. The rig's current part is a
+DIN 1480 hook and hook M10 in A4, which its supplier rates at 150 kg, 1471 N,
+and that is the single lowest limit in the whole machine. Published tables for
+eye and eye and for stub end at the same thread are far higher, by a factor
+approaching three. The hook is the weak element, so moving to a stub-end
+turnbuckle may buy more than moving up two thread sizes.
+
+The ladder is therefore populated from each supplier's own page for the exact
+configuration and material, never from a generic DIN 1480 table, and section 13
+records that this ladder is not yet confirmed. The generic tables found so far
+disagree with each other and with the supplier by enough that quoting them
+would be worse than leaving the rung empty.
+
+**rope**: `rope_mbl`, `mass_per_metre_kg`, `ea_newtons`, `diameter_mm`. 7x19
+AISI 316, with the MBL band published sources give for each diameter:
+
+| id | diameter | MBL band, kN | catalogue MBL, N | kg/m |
+| --- | --- | --- | --- | --- |
+| `rope-4mm` | 4 | 8.3 to 9.1 | 9091 | 0.061 |
+| `rope-5mm` | 5 | 13.0 to 14.2 | 13000 | 0.093 |
+| `rope-6mm` | 6 | 18.8 to 20.5 | 18800 | 0.134 |
+| `rope-8mm` | 8 | 33.3 to 36.4 | 33300 | 0.238 |
+
+The 4 mm entry is GS Products' own 927 kg converted, which sits inside the
+band, and the rest take the bottom of the band until the supplier's own page
+for that diameter is read. Taking the bottom is the safe direction and the
+spread is recorded so nobody mistakes it for precision.
+
+`ea_newtons` is 450000, confidence `assumed`: a 7x19 rope's effective modulus
+is well below solid steel's because of the lay, roughly 70 to 90 GPa over a
+metallic area near 5.65 square millimetres. This is the single most
+consequential assumed number in the catalogue, because the manufactured net
+lengths scale with it. Section 13 carries it.
+
+**sheave**: `sheave_swl`, `diameter_mm`, `sheave_efficiency`. The rig's WZ 11 K
+is 125 kg at 180 degrees, 1226 N, 120 mm, and it is the binding part in any
+reeved arrangement. Heavier rungs come from the same supplier's range and are
+sourced with the turnbuckle ladder.
+
+**drum**: `drum_radius`, `width_mm`, `groove_pitch_mm`. The briefed drum is 72
+diameter winding surface, so radius 36, 150 wide, grooved at 4.
+
+**rail**: `stroke_mm`. The MGN15H-300 gives 300.
 
 **falsework**: named `Rib` entries, as section 5.5.
 
-### 6.2 From chosen parts to a `Mechanism`
+### 6.3 From chosen parts to a `Mechanism`
 
-A configuration is a set of catalogue ids plus the pulley choice. The pulley
-choice sets `reeve_factor`: 1 for no pulley, 2 for the moving block the rig is
-drawn with. `catalogue.mechanism_for(configuration)` returns a `Mechanism`, and
-two of its fields are computed rather than looked up:
+A configuration names a motor, a drive, a gearbox, a drum, a rope, an anchor
+chain, a sheave where one is fitted, a rail and a falsework entry, plus the
+pulley choice. The pulley choice sets `reeve_factor`: 1 for no pulley, 2 for
+the moving block the rig is drawn with.
+
+`catalogue.mechanism_for(configuration, wire_angles)` returns a `Mechanism`.
+Five of its fields are computed rather than looked up:
 
 ```
-anchor_wll      = min(working load limit of every part in the anchor chain)
-spool_rope_mbl  = the spool rope's MBL, which is the same rope unless a
-                  different one is named
+motor_torque    = holding torque            for family A
+                = 9550 * kw / rpm * 1000    for families B and C
+torque_margin   = 0.5 for family A, 0.8 for families B and C
+gear_efficiency = the gearbox's figure AT THE CHOSEN RATIO
+anchor_wll      = min over the chain of the rating at that wire's own angle
+spool_rope_mbl  = the spool rope's MBL, the same rope unless another is named
 ```
 
 **The binding anchor is the turnbuckle, not the eye bolt.** The eye bolt is
-3334 N and the turnbuckle is 1471 N, so the chain's limit is 1471 N, less than
-half the figure that has been used in the worked runs so far. Computing it from
-the chain rather than accepting a typed number is the point: the weakest part
-in a load path is not the part a person thinks of first.
+3334 N axially and 2354 N at an angle; the hook and hook turnbuckle is 1471 N.
+So the chain's limit is 1471 N, well under half the figure the worked runs have
+been using. Computing it from a named chain rather than accepting a typed
+number is the whole point: the weakest part in a load path is not the part a
+person thinks of first, and here it costs 3.79.
 
-`torque_margin` stays 0.5 and `safety_factor` stays 5.0, the engine's defaults,
-and both are shown on screen beside the verdict rather than buried.
+`safety_factor` stays 5.0, the engine's default, and is shown on screen beside
+the verdict rather than buried.
 
-### 6.3 The prestress floor
+### 6.4 Rope speed, which only families B and C make urgent
+
+The engine models no speed at all, and for family A it does not need to: a
+stepper is commanded as fast or as slow as wanted. For a motor with a rated
+speed, the rope speed is a consequence of the choice rather than a setting:
+
+```
+rope speed [mm/s] = rated_speed_rpm / gear_ratio / 60 * 2 * pi * drum_radius
+```
+
+At 1440 rpm on the briefed drum that is 271 mm/s through a 20 to 1 worm,
+109 mm/s at 50 to 1 and 54 mm/s at 100 to 1. A net being held to within
+millimetres while tiles are laid wants to creep, so these are fast, and the
+inverter is what makes them usable. The same motors on a 60 Hz supply would be
+a fifth faster again, which is the other half of why the supply frequency has
+to be stated rather than inherited from a data sheet.
+
+It is reported as a column with no pass or fail, because the acceptable rate of
+movement has not been set. Section 13 carries it as an open item: given a
+figure, it becomes a check like any other.
+
+### 6.5 The prestress floor
 
 The floor at a stage is the greatest wire tension that stage demands, which
 step A already solved and stored in `stages[k].wire_tensions`. Requirement 1's
@@ -487,7 +656,7 @@ move when the configuration changes. That is worth stating on screen, because
 it is the number that says whether the whole idea is feasible before any part
 is chosen.
 
-### 6.4 The ceiling
+### 6.6 The ceiling
 
 The ceiling is the greatest cable tension the chosen parts permit, and it is
 the smallest of the limits the mechanism imposes:
@@ -511,7 +680,7 @@ and shows all five, because knowing the ceiling is 1471 N is less useful than
 knowing it is the turnbuckle.
 
 **Worked, on the parts the bill of materials actually lists.** Computed with
-the figures in section 6.1, the briefed 36 mm drum, the EG23-G20 at 20 to 1 and
+the figures in section 6.2, the briefed 36 mm drum, the EG23-G20 at 20 to 1 and
 0.94, `torque_margin` 0.5, `safety_factor` 5.0 and `sheave_efficiency` 0.98.
 All values in newtons of cable tension.
 
@@ -524,12 +693,32 @@ All values in newtons of cable tension.
 | 23HS45, 3 N m | no | 1818 | 1471 | 1818 | 783 | n/a | **783** | motor torque |
 | 23HS45, 3 N m | yes | 1818 | 1471 | 3600 | 1551 | 1214 | **1214** | sheave |
 
-Three things follow, and they are the reason this spec exists rather than a
+**And across the whole widened catalogue**, direct drive, no pulley, with the
+worm efficiency taken at each ratio and the family's own `torque_margin`:
+
+| drive | ratio | motor torque term | ceiling | bound by |
+| --- | --- | --- | --- | --- |
+| stepper NEMA 23, 3 N m | 20:1 planetary | 783 | **783** | motor torque |
+| stepper NEMA 34, 4.3 N m | 20:1 planetary | 1123 | **1123** | motor torque |
+| stepper NEMA 34, 9 N m | 20:1 planetary | 2350 | **1471** | turnbuckle |
+| stepper NEMA 34, 12 N m | 50:1 planetary | 7500 | **1471** | turnbuckle |
+| AC 0.75 kW, 1440 rpm | 20:1 worm | 1769 | **1471** | turnbuckle |
+| AC 0.75 kW, 1440 rpm | 50:1 worm | 3316 | **1471** | turnbuckle |
+| AC 0.75 kW, 1440 rpm | 100:1 worm | 4974 | **1471** | turnbuckle |
+| AC 1.5 kW, 1440 rpm | 100:1 worm | 9948 | **1471** | turnbuckle |
+
+Four things follow, and they are the reason this spec exists rather than a
 larger motor being ordered.
 
-The motor is not the constraint. With the 9 N m motor the torque term is 2350 N
-against a ceiling of 1471 N set by a turnbuckle costing 3.79, and the machine
-cannot be made stronger by buying a bigger motor.
+**The motor is not the constraint, and a bigger one buys nothing.** Every row
+from the 9 N m stepper upward returns 1471 N, and on a 50 Hz supply that is
+every alternating current option in the catalogue without exception, including
+the smallest at the lowest ratio. The 1.5 kW motor through a 100 to 1 worm
+produces 9948 N of capability and still delivers 1471 N, because a turnbuckle
+costing 3.79 is in the way. Widening the motor list without widening
+the rope path would produce a chooser whose rows all read the same, correctly
+and uselessly. That is why section 6.2 tiers the anchor chain, the rope and the
+sheave as well.
 
 **Adding the pulley makes the strong configuration worse.** With the 9 N m
 motor the ceiling falls from 1471 N to 1214 N, because the moving block roughly
@@ -537,16 +726,25 @@ doubles the force through a sheave rated 1226 N while relieving a motor that
 was never short of torque. The pulley earns its place only with a small motor:
 it lifts the NEMA 23 from 783 N to 1214 N.
 
-There is a hard ceiling of about 1.2 to 1.5 kN per cable that no motor choice
-moves, set by the turnbuckle without a pulley and the sheave with one. If the
-demand exceeds that, the answer is a heavier turnbuckle and a heavier sheave,
-or more wires, and no amount of motor will do.
+There is a hard ceiling of about 1.2 to 1.5 kN per cable that no motor or
+gearbox choice moves, set by the hook and hook turnbuckle without a pulley and
+by the sheave with one. If the demand from step A exceeds it, the answer is a
+stub-end or larger turnbuckle and a heavier sheave, or more wires. No motor
+will do it.
 
-These six rows are exact and are used as the test fixture for section 6.4, so
-an implementation that gets the mechanical advantage or the sheave resultant
-wrong fails against published numbers rather than against my arithmetic.
+**Where the families genuinely differ is not torque.** It is positioning and
+speed. Family A creeps and holds by holding current; family B needs an
+inverter, an encoder and a software loop to do either, and runs at 54 to 271
+mm/s of rope depending on the ratio. The chooser must therefore show the rope
+speed and the required companion drive beside the ceiling, or family B looks
+like a cheap way to buy torque that nothing needs.
 
-### 6.5 Fails or not
+These fourteen rows are exact and are used as the test fixture for section 6.6,
+so an implementation that gets the mechanical advantage, the sheave resultant
+or the family torque derivation wrong fails against published numbers rather
+than against my arithmetic.
+
+### 6.7 Fails or not
 
 ```
 fails  when  prestress_floor > ceiling
@@ -557,7 +755,7 @@ from the net rather than the parts, the deviation exceeding the acceptance
 line, `capacity_from_curve` reports `deviation` as the binding name, as it does
 today.
 
-### 6.6 Rope through the drum, and what the catalogue now affords
+### 6.8 Rope through the drum, and what the catalogue now affords
 
 Requirement 3 is answered per wire per stage by `reel_command`, which the
 register already carries, plus three derived figures the catalogue now makes
@@ -589,29 +787,43 @@ at all.
 The fleet angle is not checked. It needs the distance from the drum to the
 first sheave, which is a layout dimension the catalogue does not hold.
 
-### 6.7 Moving between configurations
+### 6.9 Moving between configurations
 
 The chooser scores a list of configurations at once and returns a row for each:
-the parts, pass or fail, the ceiling and which part set it, the margin as
-`ceiling / prestress_floor`, the resolution at the net from
-`resolution_at_the_net`, the drum and travel checks, and the total price of the
-priced lines.
+the parts, the family, pass or fail, the ceiling and which part set it, the
+margin as `ceiling / prestress_floor`, the resolution at the net from
+`resolution_at_the_net`, the rope speed, the drum and travel checks, the
+companion drive the family requires, and the total price of the priced lines.
 
-The default list is the cross product of the catalogue's motors, gearboxes and
-the two pulley choices, which is 4 x 3 x 2, twenty-four rows, every one
-evaluated against the stored curve by arithmetic. `trade_study.fronts` then
-marks the best on each of its three axes, accuracy, simplicity and margin, so
-the three recommendations already implemented are visible without a second
-mechanism for the same thing.
+The widened catalogue makes the full cross product large: ten motors, nine
+gearboxes, two pulley choices, four ropes, four eye bolts and the turnbuckle
+rungs multiply into the thousands. That is affordable only because of section
+5.6: a row is arithmetic against the stored curve, microseconds each, so even
+several thousand rows cost less than one solve. Had the sweep kept re-solving
+the net, this widening would have been impossible rather than merely slow,
+which is worth recording as the reason that refactor is in this spec and not
+deferred.
+
+Two things keep the table legible rather than vast. Configurations whose
+motor and drive families disagree are never generated. And the rope path is
+swept as whole named chains rather than as independent parts, since mixing an
+M24 eye bolt with a 4 mm rope describes nothing anybody would build.
+
+`trade_study.fronts` then marks the best on each of its three axes, accuracy,
+simplicity and margin, so the three recommendations already implemented are
+visible without a second mechanism for the same thing.
 
 Rows whose price is a floor rather than a forecast are marked as such, because
 the bill of materials has unpriced lines and a total that hides them would be a
-lie by omission.
+lie by omission. Family B rows carry the inverter and the encoder in their
+total, or they would undercut family A on price by omitting what they need.
 
 ## 7. Changes to the engine
 
-Both changes are to `src/tree_forest_compas/capacity.py` and both must leave
-every existing test passing unchanged.
+Three changes, two to `src/tree_forest_compas/capacity.py` and one to
+`src/tree_forest_compas/trade_study.py`. Every one must leave the existing
+tests passing unchanged, and each is additive with a default that reproduces
+today's behaviour exactly.
 
 ### 7.1 The sheave limit
 
@@ -659,7 +871,24 @@ are the proof.
 the solve entirely and evaluates every grid combination against the curve. When
 not given it behaves as it does today. The sweep's header records which path
 was taken, because a reader of the file is entitled to know whether the rows
-came from twenty-four solves or one.
+came from thousands of solves or one.
+
+### 7.3 Resolution for a drive that has no microsteps
+
+`resolution_at_the_net` multiplies `steps_per_revolution` by `microsteps`,
+which describes a stepper and nothing else. A family B drive positions from an
+encoder, so the quantity it needs is counts per revolution of the motor shaft,
+however they arise.
+
+The function gains an optional `counts_per_revolution=` argument. When given it
+is used directly; when not, it falls back to
+`steps_per_revolution * microsteps`, which is what every present caller does,
+so the default is today's behaviour. `DRIVE_FIELDS` gains the new name so the
+sweep can grid over it.
+
+This is a one-line generalisation and it matters because without it the
+accuracy front is meaningless for family B: every alternating current row would
+be scored as though it microstepped.
 
 ## 8. The interface
 
@@ -717,6 +946,14 @@ the manner `geometry.load_contract` already sets. None of them is a 500.
 - A rib whose span is under half the study's greatest anchor-to-anchor
   distance, naming both.
 - A configuration naming a catalogue id that does not exist, naming the id.
+- A configuration pairing a motor with a drive for a different family, naming
+  both and saying which drives suit that motor. A CL57Y cannot run a
+  three-phase motor and an inverter cannot run a stepper.
+- A family C motor in any configuration, with the capacitor explanation from
+  section 6.1 carried through, since the option is closed rather than missing.
+- A wire whose angle to its eye bolt's axis exceeds 45 degrees, which is
+  outside the published rating table. Guessing past the end of a load table is
+  how a termination fails.
 - The design point hold solve failing, carrying the engine's own message
   through, since `HoldError` already says whether the geometry needed a strut
   or had no load.
@@ -744,12 +981,46 @@ at a tension where the same mechanism with one fall is not. A mechanism with
 `sheave_swl=None` behaves exactly as it does today, pinned against the existing
 expected values.
 
-**The ceiling, against the worked table.** All six rows of section 6.4, each
-asserting both the ceiling to the nearest newton and the name of the binding
-part. The row that matters most is the 9 N m motor with the pulley: it must
-return 1214 N bound by the sheave, lower than the same motor without the
-pulley. An implementation that treats reeving as a free gain passes every other
-test and fails this one.
+**The ceiling, against the worked tables.** All fourteen rows of section 6.6,
+each asserting both the ceiling to the nearest newton and the name of the
+binding part. Two rows matter most. The 9 N m motor with the pulley must return
+1214 N bound by the sheave, lower than the same motor without it, so an
+implementation that treats reeving as a free gain passes every other test and
+fails this one. And the 1.5 kW motor through a 100 to 1 worm must return 1471 N
+bound by the turnbuckle despite a motor term of 9948 N, which is the assertion
+that the chain limit is being computed rather than the motor believed.
+
+**The family torque derivation, at the right speed for the family.** From
+`9550 * kw / rpm * 1000`: 0.75 kW at 1440 rpm gives 4974 N mm and 1.5 kW gives
+9948 N mm for family B, while 1 HP at 1725 rpm gives 4130 N mm and 2 HP gives
+8260 N mm for family C. A test asserts both bases, since using one speed for
+both families is the mistake this is here to catch and it would pass any test
+that checked only the arithmetic.
+
+A family A motor's torque is taken as published with no such conversion, and a
+test asserts that a stepper entry is never put through the power expression.
+
+**The derating by family.** The same shaft torque yields different ceilings
+under family A and family B, 0.5 against 0.8, and a test pins both so the
+margins cannot be quietly unified.
+
+**The worm efficiency follows the ratio.** A 100 to 1 worm is evaluated at 0.45
+and a 20 to 1 at 0.80, not both at one figure, and a test asserts the ratio
+selects the efficiency.
+
+**The angled anchor rating.** A wire at 30 degrees to an M12 eye bolt's axis is
+rated 2354 N, not 3334 N; the same wire at 2 degrees takes the axial figure;
+and at 50 degrees it refuses. The chain limit with the hook and hook turnbuckle
+present is 1471 N in all three cases, which is the point: the test must assert
+the angle changed the eye bolt's own term and not merely the answer.
+
+**Family mismatch.** A stepper with an inverter and a three-phase motor with a
+CL57Y both refuse, naming the families.
+
+**Resolution without microsteps.** `resolution_at_the_net` with
+`counts_per_revolution` given returns the same value as the equivalent
+`steps_per_revolution` and `microsteps` pair, and omitting it reproduces every
+existing expected value unchanged.
 
 **The refactor.** `capacity_from_curve` applied to `tension_curve`'s output
 returns a `Capacity` identical in every field to what `capacity_of` returns for
@@ -792,15 +1063,39 @@ configuration, and none of which changes a number:
    It should be measured on a sample, or a figure obtained from GS Products,
    before any net is cut. Everything else in this spec tolerates it being
    wrong; the cut lengths do not.
-2. **The gearbox efficiencies**, 0.94 and 0.90, are assumed for the same
-   reason, and they move the torque ceiling directly.
-3. **ISO 4308-1's minimum D over d**, which is why the sheave ratio is reported
+2. **The turnbuckle ladder.** This is now the most important open item, because
+   the turnbuckle is the binding part in almost every configuration, so the
+   whole ceiling moves with it. The rig's part is rated 150 kg by its own
+   supplier. Generic DIN 1480 tables found so far give figures up to three
+   times higher for eye and eye and stub-end at the same thread, and they
+   disagree with each other and with the supplier by too much to quote. Each
+   rung must come from a supplier's own page for the exact configuration and
+   material before the chooser's answers mean anything above 1471 N. Note that
+   configuration may matter more than size: the hook is the weak element.
+3. **The gearbox efficiencies.** The planetary figures, 0.94 and 0.90, and the
+   whole worm ladder from 0.90 down to 0.45, are interpolated from a published
+   band rather than taken from a model's datasheet. They move the torque
+   ceiling directly, though as section 6.6 shows the torque ceiling is not what
+   binds today.
+4. **The family B nameplate torques**, computed from power and a nominal
+   1440 rpm rather than read off a motor. The expression is standard and the
+   speed is right for a four-pole machine on 50 Hz, but real full-load speeds
+   vary by a few per cent between models and a nameplate should replace the
+   figure. A motor's actual slip is the whole difference here.
+5. **The encoder and the software loop for family B.** This spec names them as
+   required companion parts and does not design them. Closing a position loop
+   around an inverter is its own piece of work and it is not something the
+   Octopus does with step and direction.
+6. **The acceptable rate of movement at the net**, which is what would turn
+   rope speed from a reported column into a check. Section 6.4 has the
+   expression ready for a figure.
+7. **ISO 4308-1's minimum D over d**, which is why the sheave ratio is reported
    without a verdict. One of the three unverified figures LEFTOVERS lists; the
    other two, the ACI 347 and BS 5975 deflection limits, bear on the acceptance
    line and are unchanged by this spec.
-4. **The fleet angle**, which needs a layout dimension the catalogue does not
+8. **The fleet angle**, which needs a layout dimension the catalogue does not
    carry.
-5. **Whether the seven wires are enough.** Section 5.5 expects a residual
+9. **Whether the seven wires are enough.** Section 5.5 expects a residual
    deviation the wires cannot remove. If that residual exceeds the acceptance
    line on a real study, the answer is more wires or a different routing, and
    that is a design finding this spec is built to surface rather than one it
