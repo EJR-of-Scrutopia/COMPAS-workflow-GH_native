@@ -11,6 +11,10 @@ import pytest
 # elsewhere in this suite do.
 pytest.importorskip("scipy")
 
+from scipy.optimize import lsq_linear
+from scipy.optimize import minimize
+from scipy.optimize import nnls
+
 from tree_forest_compas.hold import HoldError
 from tree_forest_compas.hold import fit_tension_state
 from tree_forest_compas.hold import hold_force_densities
@@ -509,3 +513,219 @@ def test_a_density_the_bounded_solve_leaves_just_below_zero_is_clamped(monkeypat
     fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
     assert min(fit.force_densities) == 0.0
     assert min(fit.tensions) == 0.0
+
+
+# The fast path for large nets. Past 400 members hold.py tries an L-BFGS-B solve
+# first and keeps its answer only if the optimality conditions hold; these tests
+# pin that it answers, that it is refused when it is wrong, and that a net of 400
+# members or fewer never sees it.
+
+
+def _hanging_grid(side, crowns=()):
+    """A square net of side by side vertices 1000 mm apart, the rim held and
+    the interior hung in a bowl 300 mm deep, loaded downward a little more on
+    some nodes than on others.
+
+    With no crowns every interior vertex has a neighbour above it, so a cable
+    can hold it, but the net cannot carry the whole load: the best state leaves
+    several newtons unbalanced. The load is uneven on purpose. An even load is
+    held exactly by equal densities, and SciPy's nnls cycles forever on a
+    lattice that regular, which would leave nothing to compare against.
+
+    crowns are interior (i, j) positions lifted 500 mm out of the bowl, higher
+    than every neighbour, which no cable can hold.
+    """
+
+    centre = (side - 1) / 2.0
+    vertices, edges, rim, loads = [], [], [], []
+    for j in range(side):
+        for i in range(side):
+            depth = 300.0 * (1.0 - ((i - centre) ** 2 + (j - centre) ** 2) / (2.0 * centre ** 2))
+            if (i, j) in crowns:
+                depth -= 500.0
+            vertices.append((1000.0 * i, 1000.0 * j, -depth))
+            index = j * side + i
+            if i in (0, side - 1) or j in (0, side - 1):
+                rim.append(index)
+                loads.append((0.0, 0.0, 0.0))
+            else:
+                loads.append((0.0, 0.0, -(10.0 + 0.5 * ((3 * i + 7 * j) % 5))))
+            if i + 1 < side:
+                edges.append((index, index + 1))
+            if j + 1 < side:
+                edges.append((index, index + side))
+    return vertices, edges, rim, np.asarray(loads)
+
+
+def _free_operator(vertices, edges, fixed, loads):
+    """The equilibrium operator and its right-hand side over the free vertices,
+    written out here so the answers are not checked against the code that gave
+    them."""
+
+    xyz = np.asarray(vertices, dtype=float)
+    held = set(fixed)
+    a = np.zeros((3 * len(xyz), len(edges)))
+    for column, (u, v) in enumerate(edges):
+        a[3 * u:3 * u + 3, column] = xyz[v] - xyz[u]
+        a[3 * v:3 * v + 3, column] = xyz[u] - xyz[v]
+    rows = [3 * i + axis for i in range(len(xyz)) if i not in held for axis in range(3)]
+    return a[rows], -np.asarray(loads, dtype=float).reshape(-1)[rows]
+
+
+def _net_with_its_nnls_optimum(side, crowns=()):
+    """A hanging grid and what SciPy's nnls makes of it: the densities, the norm
+    and the force each free vertex is left needing."""
+
+    vertices, edges, rim, loads = _hanging_grid(side, crowns)
+    a, b = _free_operator(vertices, edges, rim, loads)
+    densities, norm = nnls(a, b)
+    free = [i for i in range(len(vertices)) if i not in set(rim)]
+    residual = np.zeros((len(vertices), 3))
+    residual[free] = (b - a.dot(densities)).reshape(-1, 3)
+    return SimpleNamespace(vertices=vertices, edges=edges, rim=rim, loads=loads,
+                           densities=densities, norm=norm, residual=residual)
+
+
+@pytest.fixture(scope="module")
+def large_net():
+    """The 15 by 15 hanging grid, 420 members, every interior vertex holdable."""
+
+    return _net_with_its_nnls_optimum(15)
+
+
+@pytest.fixture(scope="module")
+def crowned_net():
+    """The same grid with four crowns that no cable can hold."""
+
+    return _net_with_its_nnls_optimum(15, crowns=[(4, 4), (4, 10), (10, 4), (10, 10)])
+
+
+def _watching_the_solves(monkeypatch, fast=minimize):
+    """Record, in order, which solves the non-negative solve calls. `fast`
+    stands in for the L-BFGS-B one."""
+
+    calls = []
+
+    def watched(name, solve):
+        def call(*args, **options):
+            calls.append(name)
+            return solve(*args, **options)
+
+        return call
+
+    monkeypatch.setattr("tree_forest_compas.hold.minimize", watched("minimize", fast))
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", watched("nnls", nnls))
+    monkeypatch.setattr("tree_forest_compas.hold.lsq_linear", watched("bvls", lsq_linear))
+    return calls
+
+
+def _fast_solve_answers_zeros(fun, x0, **options):
+    # nothing is a poor answer for a loaded net, whatever the solver calls it
+    return SimpleNamespace(x=np.zeros(len(x0)), success=True)
+
+
+def _fast_solve_answers_far_too_much(fun, x0, **options):
+    return SimpleNamespace(x=np.full(len(x0), 1.0e6), success=True)
+
+
+def _fast_solve_answers_not_a_number(fun, x0, **options):
+    return SimpleNamespace(x=np.full(len(x0), np.nan), success=True)
+
+
+def _fast_solve_raises(fun, x0, **options):
+    raise RuntimeError("no progress")
+
+
+def test_a_net_of_more_than_400_members_is_answered_by_the_fast_path_at_the_nnls_optimum(
+        monkeypatch, large_net):
+    assert len(large_net.edges) > 400
+    calls = _watching_the_solves(monkeypatch)
+
+    fit = fit_tension_state(large_net.vertices, large_net.edges, large_net.rim, large_net.loads)
+
+    # the fast path answered and no exact solve was needed behind it
+    assert calls == ["minimize"]
+    # the net cannot carry its whole load, so this compares two real numbers
+    assert large_net.norm > 1.0
+    assert fit.residual_norm == pytest.approx(large_net.norm, rel=1e-6)
+    assert min(fit.force_densities) >= 0.0
+
+
+def test_the_fast_path_leaves_unholdable_crowns_needing_their_force_as_nnls_does(
+        monkeypatch, crowned_net):
+    calls = _watching_the_solves(monkeypatch)
+
+    fit = fit_tension_state(crowned_net.vertices, crowned_net.edges, crowned_net.rim,
+                            crowned_net.loads)
+
+    # accepted by the check, which an answer that let a cable push would fail
+    assert calls == ["minimize"]
+    assert min(fit.force_densities) >= 0.0
+    assert crowned_net.norm > 1.0
+    assert fit.residual_norm == pytest.approx(crowned_net.norm, rel=1e-6)
+    # the force each vertex is left needing is what the actuators must supply
+    assert np.allclose(fit.residual, crowned_net.residual, atol=1e-4)
+
+
+@pytest.mark.parametrize(
+    "fast",
+    [_fast_solve_answers_zeros, _fast_solve_answers_far_too_much,
+     _fast_solve_answers_not_a_number, _fast_solve_raises],
+    ids=["zeros", "far-too-much", "not-a-number", "raises"],
+)
+def test_a_fast_path_answer_that_fails_the_check_or_raises_falls_through_to_nnls(
+        monkeypatch, large_net, fast):
+    calls = _watching_the_solves(monkeypatch, fast=fast)
+
+    fit = fit_tension_state(large_net.vertices, large_net.edges, large_net.rim, large_net.loads)
+
+    # the fast path was tried and refused, and nnls answered as it does alone
+    assert calls == ["minimize", "nnls"]
+    assert np.allclose(fit.force_densities, large_net.densities, rtol=1e-9, atol=1e-9)
+    assert fit.residual_norm == pytest.approx(large_net.norm, rel=1e-9)
+
+
+def test_a_fast_path_answer_is_judged_by_the_check_and_not_by_the_solvers_own_flag(
+        monkeypatch, large_net):
+    # L-BFGS-B often reports an abnormal ending once it has reached the limit
+    # of double precision, with an answer that is as good as it can be
+    def answers_the_optimum_flagged_as_failed(fun, x0, **options):
+        return SimpleNamespace(x=large_net.densities.copy(), success=False)
+
+    calls = _watching_the_solves(monkeypatch, fast=answers_the_optimum_flagged_as_failed)
+
+    fit = fit_tension_state(large_net.vertices, large_net.edges, large_net.rim, large_net.loads)
+
+    assert calls == ["minimize"]
+    assert fit.residual_norm == pytest.approx(large_net.norm, rel=1e-9)
+
+
+def test_a_density_the_fast_path_leaves_just_below_zero_is_clamped(monkeypatch, large_net):
+    # a cable never pushes, and a bound can be met a rounding error below it
+    def lands_just_below_zero(fun, x0, **options):
+        densities = large_net.densities.copy()
+        densities[densities == 0.0] = -3e-17
+        return SimpleNamespace(x=densities, success=True)
+
+    calls = _watching_the_solves(monkeypatch, fast=lands_just_below_zero)
+
+    fit = fit_tension_state(large_net.vertices, large_net.edges, large_net.rim, large_net.loads)
+
+    assert calls == ["minimize"]
+    assert min(fit.force_densities) == 0.0
+    assert min(fit.tensions) == 0.0
+
+
+def test_a_net_of_400_members_never_tries_the_fast_path(monkeypatch, large_net):
+    # twenty of the members along the rim join two held vertices and carry
+    # nothing, so dropping them leaves exactly 400 members and the same optimum
+    along_the_rim = [edge for edge in large_net.edges
+                     if edge[0] in large_net.rim and edge[1] in large_net.rim]
+    edges = [edge for edge in large_net.edges if edge not in along_the_rim[:20]]
+    assert len(edges) == 400
+    calls = _watching_the_solves(monkeypatch, fast=_fast_solve_raises)
+
+    fit = fit_tension_state(large_net.vertices, edges, large_net.rim, large_net.loads)
+
+    assert calls == ["nnls"]
+    assert fit.residual_norm == pytest.approx(large_net.norm, rel=1e-9)
