@@ -2782,10 +2782,9 @@ def test_every_control_the_script_asks_for_exists_on_the_page():
     asked = set(re.findall(r'getElementById\("([a-z0-9-]+)"\)', code))
     present = set(re.findall(r'id="([a-z0-9-]+)"', html))
     # The old Data-popup panel is gone from the page, but its mount stays in
-    # studio.js until the Cable net section's controller replaces it (the
-    # section's last task). mountCableNet returns at once for a root that is
-    # not there, so the lookup is defensive and nothing breaks. Delete the
-    # name with the mount.
+    # studio.js until the Cable net section's own mount replaces it.
+    # mountCableNet returns at once for a root that is not there, so the
+    # lookup is defensive and nothing breaks. Delete the name with the mount.
     created = {"cablenet-panel"}  # add names here, never patterns
     missing = sorted(asked - present - created)
     assert not missing, "the script talks to controls the page does not have: {}".format(missing)
