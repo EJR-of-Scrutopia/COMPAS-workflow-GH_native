@@ -2330,3 +2330,80 @@ def test_what_binds_is_said_at_the_sizing_stage_in_a_version_2_document():
     first = _model(row=dict(_row(catalogue.load_parts(), _configuration()),
                             load_factor={"binding_part": "x", "detail": "y"}))
     assert _chosen_row(first, "Binds on")[2] == "y"
+
+
+# ---------------------------------------------------------------------------
+# The run's own notes reach the data sheet, and a rib the server chose for the
+# vault's reach is an assumption said in all the places assumptions are said
+# ---------------------------------------------------------------------------
+
+# the real study's source and note, as the engine and the route wrote them
+_GLULAM_SOURCE = (
+    'falsework glulam-rib-9000: {"depth": 400.0, "description": "glulam GL24h rib 9000 x '
+    '600, 400 x 90 deep", "e_modulus": 11600.0, "spacing": 600.0, "span": 9000.0, '
+    '"width": 90.0}')
+_GLULAM_NOTE = ("falsework glulam-rib-9000 was used in place of plywood-rib-2000, which "
+                "spans 2000 mm, less than half the vault's 16.1 m reach")
+_CHOSEN = "falsework: the catalogue rib used, chosen from the vault's reach"
+
+
+def test_the_runs_notes_are_printed_in_the_first_section_after_the_rib():
+    model = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE, note=_GLULAM_NOTE)
+    assert model["notes"] == [_GLULAM_NOTE]
+    assert model["falsework"] == "glulam-rib-9000"
+    section = _section(exports.datasheet_markdown(model), "replaces")
+    rib = section.index("The catalogue records the rib in these words, quoted verbatim: "
+                        "\"falsework glulam-rib-9000: ")
+    note = section.index("The analysis carries this note, quoted verbatim: \"{}\".".format(
+        _GLULAM_NOTE))
+    line = section.index("That gives an acceptance line of 3.25 mm. It is taken from the "
+                         "catalogue's record of the rib, and is not re-derived here.")
+    assert rib < note < line
+    assert "The study records the rib" not in section and "study's own record" not in section
+    # the placement's note follows the run's
+    placement = {**_v2_demand()["placement"],
+                 "note": "the formwork document names no column heads, so none were held"}
+    both = _sized_model(note=_GLULAM_NOTE, placement=placement)
+    assert both["notes"] == [_GLULAM_NOTE, placement["note"]]
+    assert ("The analysis carries these notes, quoted verbatim: \"{}\" and \"{}\".".format(
+        _GLULAM_NOTE, placement["note"])) in _section(exports.datasheet_markdown(both), "replaces")
+    # no note says nothing, a blank one too, and a source of the study's own keeps its words
+    for quiet in (_sized_model(), _sized_model(note="   ")):
+        assert quiet["notes"] == []
+        plain = _section(exports.datasheet_markdown(quiet), "replaces")
+        assert "carries this note" not in plain
+        assert "The study records the rib in these words" in plain
+        assert "It is taken from the study's own record of the rib" in plain
+    # a source that names no rib the catalogue has is not the catalogue's
+    other = _sized_model(acceptance_source="falsework no-such-rib: {}")
+    assert other["falsework"] is None
+    assert "The study records the rib" in _section(exports.datasheet_markdown(other), "replaces")
+
+
+def test_the_rib_the_server_chose_is_listed_under_the_assumptions_in_both_documents():
+    # the route puts the falsework's sentence after any formwork note
+    formwork = ("no formwork document, so no frames and no column heads: the net is "
+                "analysed at the finished shape held by its drum ends alone")
+    model = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE,
+                         note=formwork + "; " + _GLULAM_NOTE)
+    entry = next(a for a in model["assumptions"] if a["what"] == _CHOSEN)
+    assert entry["value"] == "glulam-rib-9000"
+    assert entry["why"] == "The run notes: \"{}\"".format(_GLULAM_NOTE)
+    sheet = _section(exports.datasheet_markdown(model), "assumptions")
+    assert ("**{}.** Value: glulam-rib-9000. The run notes: \"{}\".".format(
+        _CHOSEN, _GLULAM_NOTE)) in sheet
+    rows = exports._sheet_rows(model)["Read this"]
+    chosen = [_CHOSEN, "glulam-rib-9000", "The run notes: \"{}\"".format(_GLULAM_NOTE)]
+    assert chosen in rows
+    assert rows.index(chosen) > rows.index(["Assumptions", "Value", "Why"])
+    # when no rib spans the vault, none was used and the note says why
+    unspanned = ("no catalogue falsework spans half the vault's 16.1 m reach; no "
+                 "acceptance line is set")
+    none = _sized_model(acceptance=None, acceptance_source=None,
+                        note=formwork + "; " + unspanned)
+    entry = next(a for a in none["assumptions"] if a["what"] == _CHOSEN)
+    assert entry["value"] == "none" and entry["why"] == "The run notes: \"{}\"".format(unspanned)
+    # the rib asked for stood: the run says nothing about the falsework, and nor do they
+    for quiet in (_sized_model(acceptance_source=_GLULAM_SOURCE),
+                  _sized_model(note=formwork), _model()):
+        assert not any(a["what"] == _CHOSEN for a in quiet["assumptions"])

@@ -334,6 +334,8 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "capacity": row.get("load_factor"),
         "sizing": catalogue.sizing_of(demand),
         "placement": demand.get("placement"),
+        "notes": _notes(demand),
+        "falsework": _falsework_key(parts, demand),
         "held": demand.get("held"),
         "hold": hold,
         "columns": _column_summary(hold),
@@ -648,7 +650,59 @@ def _assumptions(parts, configuration, demand, angle_degrees):
         "The prestress is the floor every member is given; the sag is judged at it."
         if version2 else "The cut rule assumes one uniform prestress across the net.",
         unit="N")
+    # the server changes a rib too short for the vault before the engine runs, and
+    # says so in the run's note: the line is then the deflection of a rib nobody
+    # asked for, which is an assumption made on the reader's behalf
+    changed = _falsework_note(demand)
+    if changed:
+        add("falsework: the catalogue rib used, chosen from the vault's reach",
+            _falsework_key(parts, demand) or "none",
+            "The run notes: \"{}\"".format(changed))
     return out
+
+
+def _notes(demand):
+    """The notes the document carries, the run's first and then the placement's,
+    each as the server wrote it. A blank note says nothing."""
+
+    placement = demand.get("placement")
+    out = []
+    for note in (demand.get("note"),
+                 placement.get("note") if isinstance(placement, dict) else None):
+        if isinstance(note, str) and note.strip():
+            out.append(note.strip())
+    return out
+
+
+def _falsework_note(demand):
+    """What the run's note says about the falsework, when the server changed the
+    rib it was asked for or found none that spans the vault. The route puts that
+    sentence last, after any formwork note and a "; " (app._cablenet_phase_options
+    and _choose_falsework), and it opens with the falsework it names."""
+
+    note = demand.get("note")
+    if not isinstance(note, str):
+        return None
+    note = note.strip()
+    for opening in ("falsework ", "no catalogue falsework "):
+        if note.startswith(opening):
+            return note
+        at = note.find("; " + opening)
+        if at >= 0:
+            return note[at + 2:]
+    return None
+
+
+def _falsework_key(parts, demand):
+    """The catalogue rib the acceptance line was taken from, when the source
+    names one. The engine writes it as "falsework <key>: <the entry>"
+    (solve_cablenet.resolve_acceptance); any other source is the study's own."""
+
+    source = demand.get("acceptance_source")
+    if not isinstance(source, str) or not source.startswith("falsework "):
+        return None
+    key = source[len("falsework "):].split(":", 1)[0].strip()
+    return key if key in (parts.get("falsework") or {}) else None
 
 
 # ---------------------------------------------------------------------------
@@ -1469,6 +1523,16 @@ def _datasheet_sections(model):
     out = []
 
     # 1
+    # a rib from the catalogue is the catalogue's record, not the study's
+    keeper = "catalogue" if model.get("falsework") else "study"
+    notes = model.get("notes") or []
+    if len(notes) == 1:
+        noted = ["The analysis carries this note, quoted verbatim: \"{}\".".format(notes[0])]
+    elif notes:
+        noted = ["The analysis carries these notes, quoted verbatim: {}.".format(
+            " and ".join("\"{}\"".format(note) for note in notes))]
+    else:
+        noted = []
     out.append("## What this machine replaces\n\n" + "\n\n".join([
         "The winch machine described here stands in for the timber falsework "
         "that would otherwise hold the vault up while it is built. The "
@@ -1476,12 +1540,15 @@ def _datasheet_sections(model):
         "deflection of its rib becomes the acceptance line, the most the "
         "net may stray from its intended shape before it is no better than "
         "the timber it replaced.",
-        "The study records the rib in these words, quoted verbatim: "
-        "\"{}\".".format(shape.get("acceptance_source") or "no source recorded"),
+        "The {} records the rib in these words, quoted verbatim: \"{}\".".format(
+            keeper, shape.get("acceptance_source") or "no source recorded"),
+    ] + noted + [
         "That gives an acceptance line of {} mm. {}".format(
             _millimetres(shape.get("acceptance_mm")),
-            "It is taken from the study's own record of the rib, and is not "
-            "re-derived here." if shape.get("acceptance_source")
+            ("It is taken from the catalogue's record of the rib, and is not "
+             "re-derived here." if keeper == "catalogue" else
+             "It is taken from the study's own record of the rib, and is not "
+             "re-derived here.") if shape.get("acceptance_source")
             else "No source was recorded for it, so the reader should treat "
                  "the line with caution."),
     ]))
