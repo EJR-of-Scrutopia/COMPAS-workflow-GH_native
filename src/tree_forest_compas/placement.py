@@ -79,7 +79,7 @@ def greedy_actuators(vertices, edges, fixed, loads, ea, floor, acceptance,
             return Placement(tuple(points), tuple(actuators), True)
         if step == steps:
             break
-        order = [int(i) for i in np.argsort(-magnitude) if int(i) not in held
+        order = [int(i) for i in np.argsort(-magnitude, kind="stable") if int(i) not in held
                  and magnitude[int(i)] > 0.0]
         chosen = order[:batch]
         if not chosen:

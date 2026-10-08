@@ -521,16 +521,17 @@ def test_a_density_the_bounded_solve_leaves_just_below_zero_is_clamped(monkeypat
 # members or fewer never sees it.
 
 
-def _hanging_grid(side, crowns=()):
+def _hanging_grid(side, crowns=(), depth=300.0, uneven=0.5):
     """A square net of side by side vertices 1000 mm apart, the rim held and
-    the interior hung in a bowl 300 mm deep, loaded downward a little more on
-    some nodes than on others.
+    the interior hung in a bowl `depth` mm deep, loaded downward 10 N a vertex
+    plus 0 to 4 steps of `uneven` newtons in a repeating pattern.
 
     With no crowns every interior vertex has a neighbour above it, so a cable
-    can hold it, but the net cannot carry the whole load: the best state leaves
-    several newtons unbalanced. The load is uneven on purpose. An even load is
-    held exactly by equal densities, and SciPy's nnls cycles forever on a
-    lattice that regular, which would leave nothing to compare against.
+    can hold it, but at the defaults the net cannot carry the whole load: the
+    best state leaves several newtons unbalanced. The load is uneven on purpose.
+    An even load (uneven=0.0) is held exactly by equal densities, and SciPy's
+    nnls cycles forever on a lattice that regular, which would leave nothing to
+    compare against.
 
     crowns are interior (i, j) positions lifted 500 mm out of the bowl, higher
     than every neighbour, which no cable can hold.
@@ -540,16 +541,16 @@ def _hanging_grid(side, crowns=()):
     vertices, edges, rim, loads = [], [], [], []
     for j in range(side):
         for i in range(side):
-            depth = 300.0 * (1.0 - ((i - centre) ** 2 + (j - centre) ** 2) / (2.0 * centre ** 2))
+            sag = depth * (1.0 - ((i - centre) ** 2 + (j - centre) ** 2) / (2.0 * centre ** 2))
             if (i, j) in crowns:
-                depth -= 500.0
-            vertices.append((1000.0 * i, 1000.0 * j, -depth))
+                sag -= 500.0
+            vertices.append((1000.0 * i, 1000.0 * j, -sag))
             index = j * side + i
             if i in (0, side - 1) or j in (0, side - 1):
                 rim.append(index)
                 loads.append((0.0, 0.0, 0.0))
             else:
-                loads.append((0.0, 0.0, -(10.0 + 0.5 * ((3 * i + 7 * j) % 5))))
+                loads.append((0.0, 0.0, -(10.0 + uneven * ((3 * i + 7 * j) % 5))))
             if i + 1 < side:
                 edges.append((index, index + 1))
             if j + 1 < side:
@@ -729,3 +730,58 @@ def test_a_net_of_400_members_never_tries_the_fast_path(monkeypatch, large_net):
 
     assert calls == ["nnls"]
     assert fit.residual_norm == pytest.approx(large_net.norm, rel=1e-9)
+
+
+# The fast path must never cause a refusal. hold_force_densities refuses a net
+# whose residual is over a millionth of its largest load, and the fast path
+# stops where the optimality conditions hold to a tolerance, which can leave a
+# net that is held exactly some way outside that line. So a refusal is judged
+# on the exact answer.
+
+
+def test_a_holdable_net_that_the_fast_path_leaves_outside_the_line_is_not_refused(monkeypatch):
+    # an even load on a shallow bowl is held exactly by equal densities
+    vertices, edges, rim, loads = _hanging_grid(15, depth=8.0, uneven=0.0)
+    a, b = _free_operator(vertices, edges, rim, loads)
+    line = 1.0e-6 * float(np.abs(loads).max())
+    answers = []
+
+    def fast_path_and_its_answer(fun, x0, **options):
+        answers.append(minimize(fun, x0, **options))
+        return answers[-1]
+
+    calls = _watching_the_solves(monkeypatch, fast=fast_path_and_its_answer)
+
+    held = hold_force_densities(vertices, edges, rim, loads)
+
+    # the fast path's own answer is several times further out than the line
+    assert np.linalg.norm(a.dot(np.maximum(answers[0].x, 0.0)) - b) > 3.0 * line
+    # so the exact solves answered behind it, and the net is held
+    assert calls[:2] == ["minimize", "nnls"]
+    assert held.residual <= line
+    assert min(held.force_densities) >= 0.0
+    assert np.linalg.norm(a.dot(held.force_densities) - b) <= line
+
+
+def test_a_net_that_cannot_be_held_is_refused_on_the_exact_answer_behind_the_fast_path(
+        monkeypatch, crowned_net):
+    calls = _watching_the_solves(monkeypatch)
+
+    with pytest.raises(HoldError, match="tension"):
+        hold_force_densities(crowned_net.vertices, crowned_net.edges, crowned_net.rim,
+                             crowned_net.loads)
+
+    # the fast path answered, and the refusal was judged on the exact solve after it
+    assert calls == ["minimize", "nnls"]
+
+
+def test_a_small_net_that_is_refused_is_solved_once(monkeypatch):
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = +1000.0
+    calls = _watching_the_solves(monkeypatch)
+
+    with pytest.raises(HoldError, match="tension"):
+        hold_force_densities(vertices, edges, fixed=[0, 1], loads=loads)
+
+    assert calls == ["nnls"]

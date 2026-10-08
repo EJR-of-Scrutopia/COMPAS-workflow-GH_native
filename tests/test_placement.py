@@ -159,3 +159,12 @@ def test_a_batch_below_one_and_negative_steps_are_refused():
         greedy_actuators(vertices, edges, fixed, loads, 2.0e5, 0.5, acceptance=1.0, batch=0)
     with pytest.raises(HoldError, match="steps"):
         greedy_actuators(vertices, edges, fixed, loads, 2.0e5, 0.5, acceptance=1.0, steps=-1)
+
+
+def test_vertices_left_equally_unbalanced_are_grabbed_in_index_order():
+    vertices, edges, fixed, loads = _flat_grid(6)
+    result = greedy_actuators(vertices, edges, fixed, loads, 2.0e5, 0.5,
+                              acceptance=None, batch=3, steps=2)
+    # sixteen interior vertices are each left needing the same 10 N, so ties
+    # decide the batches, and they go to the lowest index on every machine
+    assert [point.added for point in result.points[1:]] == [(7, 8, 9), (10, 13, 14)]

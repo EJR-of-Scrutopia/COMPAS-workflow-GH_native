@@ -161,7 +161,7 @@ def _fast_solve(a, b):
     return q, float(np.linalg.norm(misfit))
 
 
-def _non_negative_solve(a, b):
+def _non_negative_solve(a, b, exact=False):
     """The q >= 0 that minimises the norm of a q - b, and that norm.
 
     A net of more than 400 members is given to a bound-constrained L-BFGS-B
@@ -172,7 +172,8 @@ def _non_negative_solve(a, b):
     four significant figures every time (2491, 991.3, 471.6 and 125.4 N). Its
     answer is kept only if it meets the optimality conditions; otherwise, and
     for a net of 400 members or fewer, the exact solves below run alone and
-    unchanged.
+    unchanged. With exact=True the fast path is skipped, for a caller that is
+    about to refuse a net and must judge it on the best answer there is.
 
     The SciPy non-negative least squares goes first of those. On a redundant net
     it can cycle and give up however many iterations it is given, or meet a
@@ -182,7 +183,7 @@ def _non_negative_solve(a, b):
     is raised only when both fail.
     """
 
-    if a.shape[1] > _LARGE_NET_MEMBERS:
+    if not exact and a.shape[1] > _LARGE_NET_MEMBERS:
         answer = _fast_solve(a, b)
         if answer is not None:
             return answer
@@ -258,6 +259,11 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
     non-negative. It is one solution among many when the net is redundant: the
     solve returns a single member of the family, so only equilibrium is
     guaranteed, not uniqueness.
+
+    A net is refused only on the exact answer. The fast path for a large net
+    stops where the optimality conditions hold to a tolerance, which can leave
+    a net that is held exactly some way outside the refusal line, so a large
+    net the first answer would refuse is solved again exactly before it is.
     """
 
     xyz, edges, p, fixed_set = _checked_inputs(vertices, edges, fixed, loads)
@@ -277,6 +283,9 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
     b = -p[free].reshape(-1)
     q, residual = _non_negative_solve(a, b)
     relative = float(residual) / load_size
+    if relative > float(residual_tolerance) and a.shape[1] > _LARGE_NET_MEMBERS:
+        q, residual = _non_negative_solve(a, b, exact=True)
+        relative = float(residual) / load_size
     if relative > float(residual_tolerance):
         worst = int(np.argmax(np.abs(a.dot(q) - b)))
         raise HoldError(
