@@ -561,14 +561,41 @@ def test_recommend_blames_the_shape_and_ranks_by_the_parts_when_the_sag_is_past_
     assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
 
 
-def test_recommend_blames_the_shape_only_when_every_rig_is_stopped_by_it():
+def test_recommend_decides_the_shape_from_the_document_not_from_how_the_rigs_bind():
     parts = catalogue.load_parts()
-    # a skin heavy enough that the lighter rigs are stopped by their parts on the
-    # first rung as well: the shape is past the line, but it is not what stops
-    # every rig, so the rule is the plain one and the rigs are ranked as judged
+    # The sag is past the line and the skin is heavy enough that the lighter rigs
+    # are stopped by their parts on the first rung as well. The shape is past the
+    # line whatever the parts do, so the rule names it and the rigs are ranked by
+    # what their parts alone carry.
     result = catalogue.recommend(parts, 10.0, _demand(t1=15000.0, sag=10.0))
     bindings = {row["key"]: row["load_factor"]["binding"] for row in result["rows"]}
     assert "deviation" in bindings.values() and set(bindings.values()) != {"deviation"}
     assert result["sufficient"] is False
-    assert "nothing in the catalogue carries" in result["rule"]
-    assert all("parts_factor" not in row for row in result["rows"])
+    assert "shape" in result["rule"] and "no part can change it" in result["rule"]
+    assert "nothing in the catalogue carries" not in result["rule"]
+    # the heavy skin shows in the parts factors, which are low, and the best is chosen
+    factors = {row["key"]: row["parts_factor"]["limit_factor"] for row in result["rows"]}
+    assert all(0.0 <= value < 1.0 for value in factors.values())
+    largest = max(factors.values())
+    assert largest > 0.0 and factors[result["key"]] == largest
+    tied = [row for row in result["rows"] if row["parts_factor"]["limit_factor"] == largest]
+    assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
+
+
+def test_the_shape_rule_needs_a_line_and_a_sag_past_it():
+    parts = catalogue.load_parts()
+    line = 2.18
+    # a sag exactly on the line is inside it, as checks() has it, and a hair over is not
+    on = catalogue.recommend(parts, 10.0, _demand(sag=line, acceptance=line))
+    assert on["sufficient"] is True and "shape" not in on["rule"]
+    over = catalogue.recommend(parts, 10.0, _demand(sag=line + 0.01, acceptance=line))
+    assert over["sufficient"] is False and "shape is past the acceptance line" in over["rule"]
+    # with no line there is nothing for the shape to be past: the parts are judged alone
+    unlined = catalogue.recommend(parts, 10.0, _demand(sag=10.0, acceptance=None))
+    assert unlined["sufficient"] is True and "shape" not in unlined["rule"]
+    assert all("parts_factor" not in row for row in unlined["rows"])
+    # inside the line and no rig carries the load: it is the parts that fall short
+    heavy = catalogue.recommend(parts, 10.0, _demand(t1=100000.0, sag=1.0))
+    assert heavy["sufficient"] is False and "nothing in the catalogue carries" in heavy["rule"]
+    assert "shape" not in heavy["rule"]
+    assert all("parts_factor" not in row for row in heavy["rows"])

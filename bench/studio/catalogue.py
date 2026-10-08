@@ -521,9 +521,11 @@ def recommend(parts, angle_degrees, demand, reason=None):
     but has no sizing block is told to be run again; a block with no tension in it
     has nothing to scale.
 
-    When every rig is stopped by the shape, the sag at the sizing stage being past
-    the acceptance line, no part can change that and the load factors as judged are
-    all zero. The rule says so, and the rigs are ranked by what their parts alone
+    When the sag at the sizing stage is past the acceptance line, no part can change
+    that, and the load factors as judged say little about the parts: every rig is
+    stopped by the shape, or by a part that checks() tests before it. The document
+    says so directly, so the rule is decided from it and not from how the rigs happen
+    to bind. It names the shape, and the rigs are ranked by what their parts alone
     carry: the same walk with the line set aside, which each row carries as
     parts_factor beside its load_factor as judged.
     """
@@ -549,7 +551,10 @@ def recommend(parts, angle_degrees, demand, reason=None):
         raise CatalogueError(message)
     sized = [row for row in usable if row["load_factor"]
              and row["load_factor"].get("limit_factor") is not None]
-    if sized and all(row["load_factor"]["binding"] == "deviation" for row in sized):
+    sizing = sizing_of(demand)
+    line = None if sizing is None else demand.get("acceptance")
+    shape_past_line = line is not None and float(sizing["worst_sag_mm"]) > float(line)
+    if sized and shape_past_line:
         parts_alone = {**demand, "acceptance": None}
         for row in sized:
             row["parts_factor"] = load_factor(
