@@ -454,3 +454,18 @@ def test_the_run_says_cable_net_while_the_engine_works_and_done_after(tmp_path, 
     state = wait_for(client, started.json()["run"])
     assert during == [("running", "cable net")]
     assert state["state"] == "done" and state["phase"] == "done" and state["message"] == ""
+
+
+def test_a_falsework_or_a_count_that_cannot_be_read_is_a_400_not_a_500(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
+    # raw JSON text: a browser cannot write Infinity, a script can, and a list
+    # where a falsework's name goes does not hash
+    frame = '{"material": "concrete", "pattern": "bonded-courses", "size": 0.9, %s}'
+    for fragment, word in (('"falsework": ["oak"]', "falsework"),
+                           ('"falsework": {"a": 1}', "falsework"),
+                           ('"batch": Infinity', "number"),
+                           ('"steps": Infinity', "number")):
+        response = client.post("/api/studies/Tiny/cablenet/run", content=frame % fragment,
+                               headers={"content-type": "application/json"})
+        assert response.status_code == 400, fragment
+        assert word in response.json()["detail"], fragment

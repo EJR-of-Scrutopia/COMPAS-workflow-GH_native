@@ -1645,7 +1645,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             prestress = float(body.get("prestress", 300.0))
             batch = int(body.get("batch", 20))
             steps = int(body.get("steps", 40))
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
         if not prestress > 0.0:
             raise HTTPException(400, "prestress must be greater than zero newtons")
@@ -1659,6 +1659,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 ", ".join(bundle.CUT_SOURCES)))
         rope_key = str(body.get("rope", "rope-4mm"))
         falsework_key = body.get("falsework", "plywood-rib-2000")
+        if falsework_key is not None:
+            falsework_key = str(falsework_key)
         parts = catalogue.load_parts()
         if rope_key not in parts["rope"]:
             raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
