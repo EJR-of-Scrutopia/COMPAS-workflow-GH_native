@@ -1,5 +1,13 @@
 """The cable net engine, run as its own process.
 
+The document it writes is the hold analysis (hold_analysis): at every computed
+instant, the best tension-only state the net can carry with the drum ends and
+the column heads held, the force that state leaves unbalanced at each node,
+the sag that force causes, and the actuators placed at the heaviest instant.
+The forward walk (walk_stages) is optional: it runs only when a request asks
+for it, and its document, or its refusal, lands under the document's
+"forward" key.
+
 Runs under a solver interpreter (the repo's main .venv, the only one holding
 numpy, scipy and compas_fd together). Like solve_stage.py and solve_cra.py, this
 file is a deliberate exception to the studio guard: it executes in a solver
@@ -239,6 +247,8 @@ def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
     from tree_forest_compas.prescribed import PrescribedError
     from tree_forest_compas.prescribed import solve_prescribed_lengths
 
+    if acceptance is None:
+        raise CableNetError("the forward walk needs an acceptance line")
     problem = built.problem
     vertex_count = len(problem.source_vertices)
     edge_count = len(problem.source_edges)
@@ -353,6 +363,268 @@ def walk_stages(built, loads_by_stage, net_weight, ea, prestress, acceptance,
     }
 
 
+def instants_of(request):
+    """The computed instants, in order: the sampled frames under the net's own
+    weight, then every course of the skin at the finished shape."""
+
+    net_weight = request["net_weight"]
+    names = {int(k): v for k, v in (request.get("stage_names") or {}).items()}
+    placed = request.get("placed_weights")
+    out = []
+    for frame in request.get("frames") or []:
+        time = float(frame["time"])
+        out.append({
+            "name": "F{:g}".format(time), "kind": str(frame.get("phase") or "frame"),
+            "time": time, "course": None, "vertices": frame["vertices"],
+            "loads": [[float(c) for c in row] for row in net_weight],
+            "placed_weight": None, "skin_sum": 0.0,
+        })
+    for index, skin in enumerate(request["loads_by_stage"]):
+        combined = [[a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+                    for a, b in zip(skin, net_weight)]
+        out.append({
+            "name": names.get(index, "S{}".format(index + 1)), "kind": "tile",
+            "time": None, "course": index, "vertices": request["vertices"],
+            "loads": combined,
+            "placed_weight": None if placed is None else float(placed[index]),
+            "skin_sum": float(sum(-row[2] for row in skin)),
+        })
+    if not out:
+        raise CableNetError("There is no instant to analyse: no frames and no courses.")
+    return out
+
+
+def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptance,
+                  acceptance_source, wire_nodes=(), batch=20, steps=40):
+    """Fit the net at every instant, place the actuators at the heaviest, and
+    return the bench.cablenet/2 demand document (study and wires added by solve).
+
+    A HoldError or a StiffnessError from the fit, the sag or the walk is
+    refused as a CableNetError carrying its message and naming the instant,
+    so a mechanism in the net is a refusal that says so, not a traceback.
+    """
+
+    import numpy as np
+
+    from tree_forest_compas.hold import HoldError
+    from tree_forest_compas.hold import fit_tension_state
+    from tree_forest_compas.hold import nodes_needing_support
+    from tree_forest_compas.placement import greedy_actuators
+    from tree_forest_compas.stiffness import StiffnessError
+    from tree_forest_compas.stiffness import first_order_sag
+
+    if not float(ea) > 0.0:
+        raise CableNetError("EA must be greater than zero.")
+    if not float(prestress) > 0.0:
+        raise CableNetError(
+            "The prestress must be greater than zero: it is the floor every "
+            "member's stiffness is judged at, and a slack flat net is a mechanism.")
+    problem = built.problem
+    base = np.asarray(problem.source_vertices, dtype=float)
+    count = len(base)
+    edges = [(int(u), int(v)) for u, v in problem.source_edges]
+    net_edges = int(built.net_edge_count)
+    node_of, vertex_of = built.node_of, built.vertex_of
+    heads = [int(h) for h in heads]
+    for head in heads:
+        if head not in node_of:
+            raise CableNetError(
+                "Column head {} is a node no edge touches, so no column can "
+                "prop it.".format(head))
+    heads_p = sorted(set(node_of[h] for h in heads))
+    held_base = sorted(set(int(v) for v in built.fixed) | set(heads_p))
+    wire_count = len(edges) - net_edges
+
+    def positions(instant):
+        here = base.copy()
+        for node, vertex in node_of.items():
+            x, y, z = instant["vertices"][node]
+            here[vertex] = (float(x) * 1000.0, float(y) * 1000.0, float(z) * 1000.0)
+        return here
+
+    def lengths(here):
+        return np.linalg.norm(here[[v for _, v in edges]] - here[[u for u, _ in edges]], axis=1)
+
+    def engine_loads(instant):
+        return np.asarray(to_engine(instant["loads"], node_of, count), dtype=float)
+
+    # the floor every member is given, as a force density at the finished shape
+    floor = float(prestress) / lengths(base)
+
+    heaviest = max(range(len(instants)),
+                   key=lambda k: sum(-row[2] for row in instants[k]["loads"]))
+    here = positions(instants[heaviest])
+    loads = engine_loads(instants[heaviest])
+    stranded = nodes_needing_support(here, edges, held_base, loads)
+    try:
+        placement = greedy_actuators(here, edges, held_base, loads, float(ea), floor,
+                                     acceptance, batch=batch, steps=steps)
+    except (HoldError, StiffnessError) as error:
+        raise CableNetError(
+            "The actuators cannot be placed at {}: {}".format(
+                instants[heaviest]["name"], error)) from error
+    actuators_p = [int(v) for v in placement.actuators]
+    held = sorted(set(held_base) | set(actuators_p))
+
+    def contract_rows(vector_rows, free_only):
+        out = [None] * int(vertex_count)
+        for node, vertex in node_of.items():
+            if vertex in free_only:
+                continue
+            out[node] = [float(c) for c in vector_rows[vertex]]
+        return out
+
+    held_set = set(held)
+    stages = []
+    previous = None
+    for index, instant in enumerate(instants):
+        here = positions(instant)
+        loads = engine_loads(instant)
+        length = lengths(here)
+        try:
+            bare = fit_tension_state(here, edges, held_base, loads)
+            bare_sag = first_order_sag(here, edges, held_base, bare.force_densities,
+                                       float(ea), bare.residual, floor)
+            fit = fit_tension_state(here, edges, held, loads)
+            sag = np.asarray(first_order_sag(here, edges, held, fit.force_densities,
+                                             float(ea), fit.residual, floor), dtype=float)
+        except (HoldError, StiffnessError) as error:
+            raise CableNetError(
+                "The net cannot be analysed at {}: {}".format(
+                    instant["name"], error)) from error
+        tensions = np.asarray(fit.tensions, dtype=float)
+        residual = np.asarray(fit.residual, dtype=float)
+        reactions = np.asarray(fit.reactions, dtype=float)
+        sag_mm = np.linalg.norm(sag, axis=1)
+        bare_mm = np.linalg.norm(np.asarray(bare_sag, dtype=float), axis=1)
+        wire_t = [float(tensions[e]) for e in range(net_edges, len(edges))]
+        wire_l = [float(length[e]) for e in range(net_edges, len(edges))]
+        if previous is None:
+            reel = [0.0] * wire_count
+        else:
+            reel = [
+                (wire_l[i] - previous["l"][i])
+                - (wire_t[i] - previous["t"][i]) * wire_l[i] / float(ea)
+                for i in range(wire_count)
+            ]
+        travel = [[0.0, 0.0, 0.0] for _ in actuators_p] if previous is None else [
+            [float(c) for c in (here[v] - previous["xyz"][v])] for v in actuators_p]
+        worst_sag = float(sag_mm.max()) if sag_mm.size else 0.0
+        free_mask = [v for v in range(count) if v not in held_set]
+        worst_residual = float(np.linalg.norm(residual[free_mask], axis=1).max()) if free_mask else 0.0
+        skin_sum = float(instant["skin_sum"])
+        net_sum = float(sum(-row[2] for row in instant["loads"])) - skin_sum
+        node_sag_mm = [None] * int(vertex_count)
+        for node, vertex in node_of.items():
+            if vertex not in held_set:
+                node_sag_mm[node] = float(sag_mm[vertex])
+        stages.append({
+            "stage": index + 1,
+            "name": instant["name"],
+            "kind": instant["kind"],
+            "time": instant["time"],
+            "course": instant["course"],
+            "placed_weight_newtons": instant["placed_weight"],
+            "skin_load_sum_newtons": skin_sum,
+            "net_weight_newtons": net_sum,
+            "node_load_sum_newtons": skin_sum + net_sum,
+            "member_tensions": [float(tensions[e]) for e in range(net_edges)],
+            "wire_tensions": wire_t,
+            "wire_lengths": wire_l,
+            "wire_rest_lengths": [wire_l[i] * (1.0 - wire_t[i] / float(ea))
+                                  for i in range(wire_count)],
+            "wire_reel_commands": [float(r) for r in reel],
+            "actuator_forces": [[float(c) for c in reactions[v]] for v in actuators_p],
+            "actuator_travel": travel,
+            "node_residual": contract_rows(residual, held_set),
+            "node_sag": contract_rows(sag, held_set),
+            "node_sag_mm": node_sag_mm,
+            "column_forces": [
+                {"node": int(vertex_of[v]),
+                 "force": [float(c) for c in reactions[v]],
+                 "newtons": float(np.linalg.norm(reactions[v])),
+                 "vertical": float(reactions[v][2])}
+                for v in heads_p
+            ],
+            "worst_net_tension": float(tensions[:net_edges].max()) if net_edges else 0.0,
+            "worst_residual_newtons": worst_residual,
+            "deviation": float(bare_mm.max()) if bare_mm.size else 0.0,
+            "residual_after": worst_sag,
+            "reachable": None if acceptance is None else bool(worst_sag <= float(acceptance)),
+        })
+        previous = {"l": wire_l, "t": wire_t, "xyz": here}
+
+    def worst_force(stage):
+        forces = [abs(t) for t in stage["wire_tensions"]]
+        forces += [sum(c * c for c in f) ** 0.5 for f in stage["actuator_forces"]]
+        return max(forces) if forces else 0.0
+
+    sizing_stage = max(stages, key=worst_force)
+    sizing = {
+        "stage": sizing_stage["name"],
+        "worst_wire_tension_newtons": max(
+            max(abs(t) for t in s["wire_tensions"]) if s["wire_tensions"] else 0.0
+            for s in stages),
+        "worst_actuator_newtons": max(
+            max([sum(c * c for c in f) ** 0.5 for f in s["actuator_forces"]] or [0.0])
+            for s in stages),
+        "worst_sag_mm": sizing_stage["residual_after"],
+        "load_newtons": sizing_stage["node_load_sum_newtons"],
+    }
+    placement_block = {
+        "stage": instants[heaviest]["name"],
+        "batch": int(batch), "steps": int(steps),
+        "reached": bool(placement.reached),
+        "method": "greedy by unbalanced force, in batches: a heuristic, not an optimum",
+        "stranded": [int(vertex_of[v]) for v in stranded],
+        "curve": [
+            {"count": int(p.count), "worst_residual_newtons": float(p.worst_residual),
+             "worst_sag_mm": float(p.worst_sag),
+             "residual_norm_newtons": float(p.residual_norm),
+             "added": [int(vertex_of[v]) for v in p.added]}
+            for p in placement.points
+        ],
+    }
+    if not heads:
+        # frames come only from a formwork document, so frames with no heads
+        # are a document that names none (an older frames document carries no
+        # columns block), not a missing document
+        if any(instant["time"] is not None for instant in instants):
+            placement_block["note"] = (
+                "the formwork document names no column heads, so none were "
+                "held: the net is held by its drum ends alone and every column "
+                "is unknown")
+        else:
+            placement_block["note"] = (
+                "no formwork document, so no column heads were held: the net is "
+                "held by its drum ends alone and every column is unknown")
+    return {
+        "schema": "bench.cablenet/2",
+        "units": "N, mm",
+        "geometry_scale_applied": 1000.0,
+        "prestress": float(prestress),
+        "ea_newtons": float(ea),
+        "net": {
+            "vertices": [[float(c) for c in p] for p in problem.source_vertices],
+            "edges": [[int(u), int(v)] for u, v in edges],
+            "fixed": [int(v) for v in built.fixed],
+            "net_edge_count": net_edges,
+            "node_of": {str(k): int(v) for k, v in node_of.items()},
+            "column_heads": heads,
+        },
+        "held": {
+            "wire_nodes": [int(node) for node in wire_nodes],
+            "column_heads": heads,
+            "actuators": [int(vertex_of[v]) for v in actuators_p],
+        },
+        "placement": placement_block,
+        "sizing": sizing,
+        "sizing_stage": sizing["stage"],
+        "stages": stages,
+        "acceptance": None if acceptance is None else float(acceptance),
+        "acceptance_source": None if acceptance_source is None else str(acceptance_source),
+    }
+
 
 def resolve_acceptance(request: dict, vertices_metres, anchors):
     """The acceptance line and its source, from a named falsework entry.
@@ -413,18 +685,27 @@ def solve(request: dict) -> dict:
     vertices = request["vertices"]
     edges = [tuple(edge) for edge in request["edges"]]
     built = build_problem(vertices, edges, request["anchors"], wires)
-    names = {int(k): v for k, v in request["stage_names"].items()}
     acceptance = request.get("acceptance")
     acceptance_source = request.get("acceptance_source")
     if request.get("falsework"):
         acceptance, acceptance_source = resolve_acceptance(
             request, vertices, request["anchors"])
-    document = walk_stages(
-        built, request["loads_by_stage"], request["net_weight"],
-        request["ea"], request["prestress"], acceptance,
-        acceptance_source, target=None, stage_names=names,
-        placed_weights=request.get("placed_weights"),
+    document = hold_analysis(
+        built, request.get("column_heads") or [], instants_of(request),
+        len(vertices), request["ea"], request["prestress"], acceptance,
+        acceptance_source, wire_nodes=[w.net_vertex for w in wires],
+        batch=int(request.get("batch", 20)), steps=int(request.get("steps", 40)),
     )
+    if request.get("forward"):
+        names = {int(k): v for k, v in request["stage_names"].items()}
+        try:
+            document["forward"] = walk_stages(
+                built, request["loads_by_stage"], request["net_weight"],
+                request["ea"], request["prestress"], acceptance,
+                acceptance_source, target=None, stage_names=names,
+                placed_weights=request.get("placed_weights"))
+        except CableNetError as error:
+            document["forward"] = {"refused": str(error)}
     document["study"] = request.get("study")
     document["density"] = request.get("density")
     document["thickness"] = request.get("thickness")
