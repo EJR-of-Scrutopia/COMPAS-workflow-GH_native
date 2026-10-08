@@ -255,11 +255,11 @@ implemented surface and later design-by-statics roadmap are detailed in
 
 ## Next step: visualise and cut your export
 
-Export a solved result (`05 Deliver > Export`) and open it in
-[Bench Studio](https://github.com/EJR-of-Scrutopia/COMPAS_UI-integration-tool),
-a local web UI that turns the thrust network into masonry, lets you walk
-the cutting sequence stage by stage, and renders the result. Rhino is not
-required for that half of the workflow.
+Export a solved result (`05 Deliver > Export`) and open it in the studio
+(`bench/studio/serve.py`, under [The Bench](#the-bench-the-vs-code-side)
+below), a local web UI that turns the thrust network into masonry, lets
+you walk the cutting sequence stage by stage, and renders the result.
+Rhino is not required for that half of the workflow.
 
 For the Armadillo Vault's own cutting pattern -- a mesh aligned with the
 thrust flow whose dual becomes the blocks, so every joint runs across the
