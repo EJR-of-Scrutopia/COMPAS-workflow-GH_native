@@ -183,8 +183,17 @@ def sweep(
     Grid keys are Mechanism fields or the drive fields steps_per_revolution and
     microsteps; the fixed arguments supply the rest. steps and max_factor are
     the capacity walk's own settings.
+
+    acceptance, in millimetres, is required. The capacity checks read None as
+    "no line, skip the deviation check", but the study reports that it made
+    that check, so None is refused here instead.
     """
 
+    if acceptance is None:
+        raise TradeStudyError(
+            "The trade study needs an acceptance line, in millimetres: it judges "
+            "deviation from the unloaded shape against it, and acceptance was None."
+        )
     _check_grid(grid)
     names = sorted(grid)
     base = dict(fixed_mechanism)

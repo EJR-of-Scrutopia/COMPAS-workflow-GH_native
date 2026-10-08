@@ -210,11 +210,37 @@ def test_an_empty_grid_list_or_unknown_key_is_refused():
         _sweep({"pulley_diameter": [50.0]}, gear_ratio=50.0, reeve_factor=1)
 
 
+def test_a_study_with_no_acceptance_line_is_refused_not_run_without_the_check():
+    # The capacity checks read acceptance=None as "no line: skip the deviation
+    # check". The study's header says it made that check, so for the study a
+    # missing line has to be a refusal; a quiet skip would be output that
+    # contradicts its own claims.
+    problem = register_fd_network(LINES)
+    args = dict(
+        fixed=[0, 2], rest_lengths=[995.0, 995.0], ea=2.0e5, load_pattern=_pattern(),
+        grid={"reeve_factor": [1, 2]}, max_factor=2000.0, gear_ratio=50.0,
+        **FIXED_MECHANISM,
+    )
+    with pytest.raises(TradeStudyError, match="acceptance line"):
+        sweep(problem, acceptance=None, **args)
+    with pytest.raises(TradeStudyError, match="acceptance line"):
+        study(problem, acceptance=None, **args)
+    from tree_forest_compas.capacity import CurvePoint, TensionCurve
+
+    curve = TensionCurve((CurvePoint(10.0, 100.0, 1.0),), 1, 10.0)
+    with pytest.raises(TradeStudyError, match="acceptance line"):
+        sweep(problem, acceptance=None, curve=curve, **args)
+    # zero is a real line (no movement allowed), not a missing one
+    rows = sweep(problem, acceptance=0.0, **args)
+    assert [row["skipped"] for row in rows] == [None, None]
+
+
 def test_the_command_line_reports_a_bad_brief_without_a_traceback(tmp_path):
     missing = _brief()
     del missing["acceptance"]
     cases = [
         json.dumps(missing),
+        json.dumps(_brief(acceptance=None)),
         "{not json",
         json.dumps(_brief(rest_lengths=[995.0])),
         json.dumps(_brief(rest_lengths=[995.0, -1.0])),
