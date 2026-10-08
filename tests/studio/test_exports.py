@@ -1724,6 +1724,32 @@ def test_the_load_factor_line_sits_under_the_verdict_and_above_the_rope_warning(
     assert max(placed.values()) < height
 
 
+def test_the_chosen_sheet_names_what_binds_and_leaves_blank_what_is_unknown():
+    def row(model, label):
+        return next(r for r in exports._sheet_rows(model)["Chosen"] if r and r[0] == label)
+
+    assert row(_sized_model(), "Binds on")[1] == "turnbuckle-hook-hook-M10"
+    sagging = {"stage": "S7", "worst_wire_tension_newtons": 900.0, "worst_actuator_newtons": 0.0,
+               "worst_sag_mm": 5.0, "load_newtons": 12000.0}
+    assert row(_sized_model(sizing=sagging), "Binds on")[1] == "shape"
+    unsized = exports.export_model(*_sized_model_args_without_v2())
+    assert row(unsized, "Load factor")[1] == "" and row(unsized, "Binds on")[1] == ""
+    assert row(unsized, "Binds on")[2] == ""
+
+
+def test_an_unsized_diagram_keeps_its_verdict_and_adds_the_line_that_says_so():
+    # what the diagram said of a document from before the sizing block, unchanged,
+    # and then the one thing it could not say before
+    passing = exports.diagram_svg(_model())
+    assert "Verdict: holds" in passing
+    assert "Whether it carries the skin is not established" in passing
+    demand = _demand()
+    demand["stages"][1]["residual_after"] = 7.4
+    failing = exports.diagram_svg(_model(demand=demand))
+    assert "Verdict: does not hold" in failing
+    assert "Whether it carries the skin is not established" in failing
+
+
 def test_the_term_to_part_map_is_the_catalogues_alone():
     assert not hasattr(exports, "_term_part")
 
