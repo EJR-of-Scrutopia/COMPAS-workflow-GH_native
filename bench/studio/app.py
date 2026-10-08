@@ -143,6 +143,15 @@ def _within(directory: Path, path: Path) -> bool:
 RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
 
+# What a cable net run takes for each option its caller leaves out. One set for
+# both things that write cablenet-*.json, the staged run's cable net phase and
+# the cable net run of its own, so a default cannot differ between them and the
+# document change with the route that happened to write it.
+CABLENET_DEFAULTS = {
+    "prestress": 300.0, "rope": "rope-4mm", "falsework": "plywood-rib-2000",
+    "batch": 20, "steps": 40,
+}
+
 MATERIALS = sorted(staging.DENSITIES)
 # 0.1 on his word: "I would like to make the piece size go down to
 # 100mm target". A 100 mm target on a real vault is tens of
@@ -1197,6 +1206,85 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
 
     # ------------------------------------------------------------------
+    # The cable net phase, assembled once. Two things write cablenet-*.json: the
+    # staged run (POST /api/runs with the phase switched on) and the cable net
+    # run of its own. Each used to assemble the phase for itself and they
+    # disagreed: the staged run read no formwork document and sent no batch,
+    # steps or note, so it overwrote the other's frame-aware document with a
+    # frame-less one. Both come here now.
+    # ------------------------------------------------------------------
+
+    def _cablenet_phase_options(export, contract, slug, material, key_pattern, size,
+                                thickness, density, prestress, rope_key,
+                                falsework_key, batch, steps) -> dict:
+        """The keyword arguments of cablenet.run_cablenet that belong to the study
+        and to the caller's choices rather than to the cut: where the document is
+        written, the mechanism and formwork documents, the rope, the line the net
+        is held to, and how the actuators are searched for.
+
+        The mechanism document is read first and its absence raised here, and
+        both callers call this before the cut, so a study with no mechanism is
+        told before the slow part and not after it. A formwork document is never a
+        reason to refuse: missing, unreadable, or written for another solve than
+        the contract beside it, it costs the run its frames and its column heads
+        and leaves a sentence in the document saying so.
+        """
+
+        import catalogue
+
+        mechanism_document = bundle._read_optional(bundle.mechanism_sidecar(export))
+        if mechanism_document is None:
+            raise ValueError(
+                "the cable net analysis needs this study's mechanism "
+                "document, and it carries none")
+        formwork_document = bundle._read_optional(bundle.frames_sidecar(export))
+        note = None
+        if formwork_document is None:
+            note = ("no formwork document, so no frames and no column heads: "
+                    "the net is analysed at the finished shape held by its "
+                    "drum ends alone")
+        else:
+            # The studio's two gates for a frames document, in the order the
+            # formwork route applies them: its own checks, then that it belongs to
+            # THIS contract (R-004: an unpaired file is disclosed and skipped).
+            try:
+                formwork_document = frames.validate_frames_document(formwork_document)
+                unread = frames.pairing_error(formwork_document, contract)
+            except ValueError as error:
+                unread = str(error)
+            if unread is not None:
+                note = "the formwork document was not read: {}".format(unread)
+                formwork_document = None
+        rope = catalogue.load_parts()["rope"][rope_key]
+        options = {
+            "out_path": bundle.cablenet_path(
+                slug, material, key_pattern, size, thickness, density),
+            "mechanism_document": mechanism_document,
+            # EA and mass come from the chosen rope's catalogue entry; the
+            # acceptance is computed from the named falsework inside the engine
+            # process, and a run with no falsework has no line at all.
+            "ea": float(rope["ea_newtons"]),
+            "mass_per_metre": float(rope["mass_per_metre_kg"]),
+            "acceptance": None,
+            "acceptance_source": None,
+            "falsework": falsework_key,
+            "study": export,
+            "ea_provenance": "{}: EA {} N, {}".format(
+                rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
+            # a starting point for the cut rule, not derived
+            "prestress": prestress,
+            "formwork_document": formwork_document,
+            "batch": batch,
+            "steps": steps,
+            "note": note,
+        }
+        if cablenet_runner is not None:
+            # the test seam, as for the other two runners: a run under a test
+            # never starts the real engine either
+            options["runner"] = cablenet_runner
+        return options
+
+    # ------------------------------------------------------------------
     # The three cable net exports: one request writes the workbook, the
     # diagram and the data sheet from one model, so they cannot disagree.
     # ------------------------------------------------------------------
@@ -1504,8 +1592,11 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                     raise HTTPException(
                         400, "cablenet_options.{} must be a number, not {!r}".format(
                             field, cablenet_options[field]))
-        rope_key = str(cablenet_options.get("rope", "rope-4mm"))
-        falsework_key = str(cablenet_options.get("falsework", "plywood-rib-2000"))
+        rope_key = str(cablenet_options.get("rope", CABLENET_DEFAULTS["rope"]))
+        falsework_key = str(
+            cablenet_options.get("falsework", CABLENET_DEFAULTS["falsework"]))
+        prestress = float(
+            cablenet_options.get("prestress", CABLENET_DEFAULTS["prestress"]))
         parts = None
         if include_cablenet:
             import catalogue
@@ -1527,6 +1618,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 "id": run_id, "export": export, "slug": slug,
                 "material": material, "pattern": pattern, "size": size,
                 "thickness": thickness, "source": source,
+                # what this run is, so a 409 on the study can be told apart: the
+                # run that staged it, or the cable net run of its own
+                "kind": "staged",
                 # "of" stays 0 until the cut is known: the number of stages
                 # is the number of courses the cut produced, so nothing can
                 # state it up front the way the old "rings" request
@@ -1562,45 +1656,22 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 # a Skin study's generated cut could never be staged at
                 # all; the run solved the authored cut while the user
                 # watched the generated one, and reported done.
-                contract = geometry.load_contract(pairs[export]["contract"])
-                cut_source = bundle.resolve_cut_source(export, contract, source)
-                key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
+                # The name of the cut, which is cheap, comes first and from the
+                # function the cable net run uses too, so the two key alike.
+                slot = staging.cut_slot(pairs[export], pattern, source)
+                cut_source, key_pattern = slot.cut_source, slot.key_pattern
                 run_options = {}
                 if include_cablenet:
-                    mechanism_document = bundle._read_optional(
-                        bundle.mechanism_sidecar(export))
-                    if mechanism_document is None:
-                        raise ValueError(
-                            "the cable net phase needs this study's mechanism "
-                            "document, and it carries none")
+                    # still before the cut, the slow part: a study with no
+                    # mechanism is told now
                     run_options = {
                         "include_cablenet": True,
-                        "cablenet_options": {
-                            "out_path": bundle.cablenet_path(
-                                slug, material, key_pattern, size, thickness,
-                                density),
-                            "mechanism_document": mechanism_document,
-                            # EA and mass come from the chosen rope's catalogue
-                            # entry; the acceptance is computed from the named
-                            # falsework inside the engine process.
-                            "ea": float(parts["rope"][rope_key]["ea_newtons"]),
-                            "mass_per_metre": float(
-                                parts["rope"][rope_key]["mass_per_metre_kg"]),
-                            "acceptance": None,
-                            "acceptance_source": None,
-                            "falsework": falsework_key,
-                            "study": export,
-                            "ea_provenance": "{}: EA {} N, {}".format(
-                                rope_key, parts["rope"][rope_key]["ea_newtons"],
-                                parts["rope"][rope_key].get("ea_confidence")),
-                            # a starting point for the cut rule, not derived
-                            "prestress": float(cablenet_options.get("prestress", 300.0)),
-                        },
+                        "cablenet_options": _cablenet_phase_options(
+                            export, slot.contract, slug, material, key_pattern,
+                            size, thickness, density, prestress, rope_key,
+                            falsework_key, CABLENET_DEFAULTS["batch"],
+                            CABLENET_DEFAULTS["steps"]),
                     }
-                    if cablenet_runner is not None:
-                        # the test seam, as for the other two runners: a staged
-                        # run under a test never starts the real engine either
-                        run_options["cablenet_options"]["runner"] = cablenet_runner
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, key_pattern, size,
@@ -1630,7 +1701,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         placement, written where GET /cablenet reads it. Not the staged FEA,
         which is the Analysis section's run and takes minutes a stage; this is a
         minute or two in all. Keyed exactly as a staged run with the cable net
-        phase keys it, so the two can never write to different places."""
+        phase keys it, and handed the engine by the same cut (staging.cut_and_plan)
+        and the same assembly (_cablenet_phase_options), so the two can never write
+        to different places or write different documents."""
 
         import catalogue
 
@@ -1642,9 +1715,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             # that both omit it agree on the file; _validate allows 0.02
             thickness = float(body.get("thickness", 0.02))
             density = float(body["density"]) if body.get("density") else None
-            prestress = float(body.get("prestress", 300.0))
-            batch = int(body.get("batch", 20))
-            steps = int(body.get("steps", 40))
+            prestress = float(body.get("prestress", CABLENET_DEFAULTS["prestress"]))
+            batch = int(body.get("batch", CABLENET_DEFAULTS["batch"]))
+            steps = int(body.get("steps", CABLENET_DEFAULTS["steps"]))
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
         if not prestress > 0.0:
@@ -1657,8 +1730,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
                 ", ".join(bundle.CUT_SOURCES)))
-        rope_key = str(body.get("rope", "rope-4mm"))
-        falsework_key = body.get("falsework", "plywood-rib-2000")
+        rope_key = str(body.get("rope", CABLENET_DEFAULTS["rope"]))
+        falsework_key = body.get("falsework", CABLENET_DEFAULTS["falsework"])
         if falsework_key is not None:
             falsework_key = str(falsework_key)
         parts = catalogue.load_parts()
@@ -1677,10 +1750,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 "id": run_id, "export": export, "slug": slug,
                 "material": material, "pattern": pattern, "size": size,
                 "thickness": thickness, "source": source,
+                "kind": "cable net",
                 "state": "queued", "stage": 0, "of": 0, "phase": "queued",
                 "message": "",
             }
-        rope = parts["rope"][rope_key]
 
         def work():
             run = RUNS[run_id]
@@ -1695,46 +1768,26 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 pairs = geometry.available_exports(bundle.UPLOAD_DIR)
                 if export not in pairs:
                     raise ValueError("no export named {!r}".format(export))
-                contract = geometry.load_contract(pairs[export]["contract"])
-                arrays = geometry.mesh_arrays(contract)
-                render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
-                cut_source = bundle.resolve_cut_source(export, contract, source)
-                key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
-                _tess, _surface, binding = bundle.build_tessellation_for(
-                    export, contract, arrays, render, pattern, size, cut_source)
-                plan = staging.stage_plan(
-                    binding["assignment"], binding["order"], binding["keys"])
-                mechanism_document = bundle._read_optional(bundle.mechanism_sidecar(export))
-                if mechanism_document is None:
-                    raise ValueError(
-                        "the cable net analysis needs this study's mechanism "
-                        "document, and it carries none")
-                formwork_document = bundle._read_optional(bundle.frames_sidecar(export))
-                note = None
-                if formwork_document is None:
-                    note = ("no formwork document, so no frames and no column heads: "
-                            "the net is analysed at the finished shape held by its "
-                            "drum ends alone")
-                else:
-                    try:
-                        formwork_document = frames.validate_frames_document(formwork_document)
-                    except ValueError as error:
-                        note = "the formwork document was not read: {}".format(error)
-                        formwork_document = None
+                # The cut is the one a staged run makes, from the same function,
+                # so the two key and cut alike. Its name is cheap and comes first,
+                # and the study's documents are read and checked against it before
+                # the slow part: a study with no mechanism is told now.
+                slot = staging.cut_slot(pairs[export], pattern, source)
+                options = _cablenet_phase_options(
+                    export, slot.contract, slug, material, slot.key_pattern, size,
+                    thickness, density, prestress, rope_key, falsework_key, batch,
+                    steps)
+                cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
                 run["phase"] = "cable net"
                 run["message"] = ("fitting the net at every instant and placing the "
                                   "actuators: about a minute on a large study")
+                # the call run_staging makes for the same phase
+                out_path = options.pop("out_path")
                 cablenet.run_cablenet(
-                    contract, arrays, plan, thickness,
-                    staging.resolve_density(material, density),
-                    bundle.cablenet_path(slug, material, key_pattern, size, thickness, density),
-                    mechanism_document, float(rope["ea_newtons"]), prestress,
-                    None, None, float(rope["mass_per_metre_kg"]),
-                    runner=cablenet_runner, falsework=falsework_key, study=export,
-                    ea_provenance="{}: EA {} N, {}".format(
-                        rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
-                    formwork_document=formwork_document, batch=batch, steps=steps,
-                    note=note)
+                    contract=cut.contract, arrays=cut.arrays, plan=cut.plan,
+                    thickness=thickness,
+                    density=staging.resolve_density(material, density),
+                    out_path=out_path, **options)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""
@@ -1756,6 +1809,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             # phase says what is happening while "of" is still 0, which is
             # the whole duration of the cut.
             "phase": run.get("phase", ""),
+            # "staged" or "cable net": which of the two runs a 409 is naming
+            "kind": run.get("kind", ""),
             "message": run["message"],
             "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}{}".format(
                 urllib.parse.quote(run["export"]), run["material"],

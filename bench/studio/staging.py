@@ -41,7 +41,7 @@ import math
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, NamedTuple, Optional
 
 import bundle
 import geometry
@@ -319,6 +319,112 @@ def _cra_subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
     return run
 
 
+class CutSlot(NamedTuple):
+    """What a cut is called: cheap to learn, and it settles every file name.
+
+    The contract is read, the study's name is recovered from its file, the
+    source the cut will come from is resolved (the study's own Skin when it has
+    one and the caller asked for nothing else) and, from the source, the
+    pattern slot that every cache file of the cut carries (see
+    bundle.cut_cache_pattern). Nothing is cut to learn any of it.
+    """
+
+    contract: dict
+    export_name: str
+    cut_source: str
+    key_pattern: str
+
+
+def cut_slot(export_pair: Dict[str, Path], pattern: str,
+             source: Optional[str] = None) -> CutSlot:
+    """A study's cut, named but not yet made.
+
+    A caller that has something to check about the study before the slow part,
+    such as whether its documents are there, can do it with this in hand and
+    then pass it to cut_and_plan, which does not read the contract twice.
+    """
+
+    contract = geometry.load_contract(export_pair["contract"])
+    # The export name (for the tessellation sidecar path), recovered by
+    # the SAME function available_exports names studies with:
+    # run_staging is only ever handed the file pair, not the name.
+    #
+    # It used to subtract len("-contract.json") here, which was right
+    # while that was the only spelling and wrong the day the exporter
+    # started writing "-form.json". Fourteen characters came off a suffix
+    # that is ten, so every study of the new three-document set lost the
+    # last four letters of its name on the way into the cut.
+    export_name = geometry.export_name_from_contract(export_pair["contract"])
+    # The source is the caller's, resolved here once: None keeps the study's own
+    # default (see the comment in cut_and_plan on why it must be the same source
+    # the bundle is built from).
+    cut_source = bundle.resolve_cut_source(export_name, contract, source)
+    key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
+    return CutSlot(contract, export_name, cut_source, key_pattern)
+
+
+class CutAndPlan(NamedTuple):
+    """The one cut of a study and the stage plan it makes.
+
+    contract and arrays are the study as the cut read it, render the mesh the
+    cut was made on, tess the cut itself and binding how it covers the analysis
+    faces. cut_source and key_pattern name the cut (see CutSlot). plan is
+    stage_plan of the binding: one entry a course, cumulative, rim to crown.
+    """
+
+    contract: dict
+    arrays: dict
+    render: dict
+    tess: dict
+    binding: dict
+    cut_source: str
+    key_pattern: str
+    plan: List[Dict]
+
+
+def cut_and_plan(export_pair: Dict[str, Path], pattern: str, size: float,
+                 source: Optional[str] = None,
+                 slot: Optional[CutSlot] = None) -> CutAndPlan:
+    """Make the study's one cut and the stage plan that comes of it.
+
+    This sequence is defined here and nowhere else. run_staging solves every
+    stage of the plan it returns, and the cable net run hands the engine a plan
+    from the same call, so the two can never be given different cuts. A stage
+    plan that names cells the pieces do not have is the kind of mismatch that
+    only shows up as a crash mid animation, and a second copy of these lines is
+    how it would arrive.
+
+    slot, when the caller has already made one with cut_slot, is used as it
+    stands and the contract is not read twice; without one it is made from
+    source.
+    """
+
+    if slot is None:
+        slot = cut_slot(export_pair, pattern, source)
+    contract = slot.contract
+    arrays = geometry.mesh_arrays(contract)
+    # bundle.render_mesh, not subdivide_quads directly: a triangulated
+    # export raises out of that pass, and staging must absorb exactly
+    # the meshes the bundle does or a study can be drawn but never
+    # staged.
+    render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
+    # bundle.build_tessellation_for is the one cut, built once: staging and
+    # the drawn pieces must never diverge onto two different cuts, or a
+    # stage plan could name cells the pieces do not have.
+    # surface (the render mesh height field) is bundle.py's to use for
+    # drawing pieces; staging only needs the cut and its analysis binding.
+    # The SAME source the caller's bundle will be built from, or the
+    # stage plan is solved on one cut and matched against another: with
+    # the source defaulted here, a Skin study's generated run staged the
+    # AUTHORED cut under the generated cache key, and _staging_matches
+    # then dropped the plan from every generated bundle, silently.
+    tess, _surface, binding = bundle.build_tessellation_for(
+        slot.export_name, contract, arrays, render, pattern, size, slot.cut_source)
+    plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
+    return CutAndPlan(contract, arrays, render, tess, binding, slot.cut_source,
+                      slot.key_pattern, plan)
+
+
 def run_staging(
     export_pair: Dict[str, Path],
     material: str,
@@ -358,36 +464,12 @@ def run_staging(
                 material, ", ".join(sorted(DENSITIES))
             )
         )
-    contract = geometry.load_contract(export_pair["contract"])
-    arrays = geometry.mesh_arrays(contract)
-    # bundle.render_mesh, not subdivide_quads directly: a triangulated
-    # export raises out of that pass, and staging must absorb exactly
-    # the meshes the bundle does or a study can be drawn but never
-    # staged.
-    render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
-    # The export name (for the tessellation sidecar path), recovered by
-    # the SAME function available_exports names studies with:
-    # run_staging is only ever handed the file pair, not the name.
-    #
-    # It used to subtract len("-contract.json") here, which was right
-    # while that was the only spelling and wrong the day the exporter
-    # started writing "-form.json". Fourteen characters came off a suffix
-    # that is ten, so every study of the new three-document set lost the
-    # last four letters of its name on the way into the cut.
-    export_name = geometry.export_name_from_contract(export_pair["contract"])
-    # bundle.build_tessellation_for is the one cut, built once: staging and
-    # the drawn pieces must never diverge onto two different cuts, or a
-    # stage plan could name cells the pieces do not have.
-    # surface (the render mesh height field) is bundle.py's to use for
-    # drawing pieces; staging only needs the cut and its analysis binding.
-    # The SAME source the caller's bundle will be built from, or the
-    # stage plan is solved on one cut and matched against another: with
-    # the source defaulted here, a Skin study's generated run staged the
-    # AUTHORED cut under the generated cache key, and _staging_matches
-    # then dropped the plan from every generated bundle, silently.
-    tess, _surface, binding = bundle.build_tessellation_for(
-        export_name, contract, arrays, render, pattern, size, source)
-    plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
+    # The cut and its stage plan come from cut_and_plan, the one place that makes
+    # them: the cable net run is handed a plan from the same function, and a
+    # second copy of the sequence would be a second cut.
+    cut = cut_and_plan(export_pair, pattern, size, source)
+    contract, arrays, tess, binding, plan = (
+        cut.contract, cut.arrays, cut.tess, cut.binding, cut.plan)
     # One resolution for the whole run, so the curve, the per-stage
     # solves and the orphan check can never weigh the vault differently.
     density = resolve_density(material, density)

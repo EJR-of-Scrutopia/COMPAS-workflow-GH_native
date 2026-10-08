@@ -942,3 +942,102 @@ def test_the_resolved_density_reaches_every_stage_solve_request(tmp_path):
     plain = run("plain-again")
     assert (copper["stages"][-1]["placed_weight_newtons"]
             / plain["stages"][-1]["placed_weight_newtons"]) == pytest.approx(8940.0 / 2400.0)
+
+
+def _pair(tmp_path, name, contract):
+    path = tmp_path / "{}-contract.json".format(name)
+    path.write_text(json.dumps(contract), encoding="utf-8")
+    return {"contract": path}
+
+
+def test_cut_slot_names_the_cut_before_anything_is_cut(tmp_path, monkeypatch):
+    """The source a cut comes from and the pattern slot its files carry are
+    cheap to learn, and a caller with something to check about the study
+    wants them before the slow part, not after it."""
+
+    g, staging = studio()
+    bundle = studio_module("bundle")
+    monkeypatch.setattr(bundle, "UPLOAD_DIR", tmp_path)
+
+    def must_not_cut(*args, **kwargs):
+        raise AssertionError("learning a cut's name must not make the cut")
+
+    monkeypatch.setattr(bundle, "build_tessellation_for", must_not_cut)
+    generated = staging.cut_slot(_pair(tmp_path, "Wide", wide_contract()), "bonded-courses")
+    assert generated.export_name == "Wide"
+    assert generated.cut_source == "generated"
+    assert generated.key_pattern == "bonded-courses"
+    assert len(generated.contract["formGraph"]["faces"]) == 16
+
+    # A study with a Skin is cut from it unless the caller says otherwise, and
+    # an authored cut is filed under "authored", not under the requested pattern.
+    authored = tiny_contract()
+    authored["tessellation"] = {
+        "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+        "pattern": "authored",
+        "cells": [{"key": "a", "course": 0,
+                   "outline": [[0, 0], [2, 0], [2, 2], [0, 2]]}],
+    }
+    pair = _pair(tmp_path, "Skinned", authored)
+    by_default = staging.cut_slot(pair, "bonded-courses")
+    assert (by_default.cut_source, by_default.key_pattern) == ("authored", "authored")
+    asked_for = staging.cut_slot(pair, "bonded-courses", "generated")
+    assert (asked_for.cut_source, asked_for.key_pattern) == ("generated", "bonded-courses")
+    with pytest.raises(ValueError, match="no authored tessellation"):
+        staging.cut_slot(_pair(tmp_path, "Plain", tiny_contract()), "bonded-courses", "authored")
+
+
+def test_cut_and_plan_given_a_slot_reads_the_contract_once(tmp_path, monkeypatch):
+    g, staging = studio()
+    monkeypatch.setattr(studio_module("bundle"), "UPLOAD_DIR", tmp_path)
+    reads = []
+    real = g.load_contract
+
+    def counting(path):
+        reads.append(path)
+        return real(path)
+
+    monkeypatch.setattr(g, "load_contract", counting)
+    pair = _pair(tmp_path, "Wide", wide_contract())
+    slot = staging.cut_slot(pair, "bonded-courses")
+    cut = staging.cut_and_plan(pair, "bonded-courses", 1.2, slot=slot)
+    assert len(reads) == 1, "the slot's contract is the one the cut is made from"
+    assert cut.contract is slot.contract
+    assert (cut.cut_source, cut.key_pattern) == (slot.cut_source, slot.key_pattern)
+    # wide_contract at this size is two courses, both occupied (see its docstring)
+    assert [entry["stage"] for entry in cut.plan] == [1, 2]
+    assert len(cut.plan[-1]["faces"]) == 16
+    # and without a slot the same call makes its own
+    again = staging.cut_and_plan(pair, "bonded-courses", 1.2)
+    assert len(reads) == 2
+    assert again.plan == cut.plan
+
+
+def test_run_staging_takes_its_cut_and_plan_from_cut_and_plan(tmp_path, monkeypatch):
+    """The sequence that makes the one cut and its stage plan is defined once.
+    The cable net run hands the engine a plan from the same function, which is
+    what lets the two writers of a demand document agree."""
+
+    g, staging = studio()
+    monkeypatch.setattr(studio_module("bundle"), "UPLOAD_DIR", tmp_path)
+    made = []
+    real = staging.cut_and_plan
+
+    def counting(*args, **kwargs):
+        result = real(*args, **kwargs)
+        made.append(result)
+        return result
+
+    monkeypatch.setattr(staging, "cut_and_plan", counting)
+    document = staging.run_staging(
+        _pair(tmp_path, "Wide", wide_contract()),
+        material="concrete", pattern="bonded-courses", size=1.2,
+        out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    assert len(made) == 1
+    assert [stage["stage"] for stage in document["stages"]] \
+        == [entry["stage"] for entry in made[0].plan]
+    assert [stage["faces"] for stage in document["stages"]] \
+        == [entry["faces"] for entry in made[0].plan]

@@ -469,3 +469,156 @@ def test_a_falsework_or_a_count_that_cannot_be_read_is_a_400_not_a_500(tmp_path,
                                headers={"content-type": "application/json"})
         assert response.status_code == 400, fragment
         assert word in response.json()["detail"], fragment
+
+
+def _unpaired_formwork():
+    # valid on its own, and written for another solve: its final frame sits half a
+    # metre above the contract's solved state
+    document = _tiny_formwork()
+    final = document["frames"][-1]
+    final["vertices"] = [[x, y, z + 0.5] for x, y, z in final["vertices"]]
+    return document
+
+
+# cut finely enough that the plan has four courses, so a plan that differed
+# between the two paths would show in the request
+_STUDY = {"material": "concrete", "pattern": "bonded-courses", "size": 0.3, "thickness": 0.05}
+_OPTIONS = {"prestress": 250.0, "rope": "rope-5mm", "falsework": "plywood-rib-2000"}
+
+
+@pytest.mark.parametrize("formwork, fragment, frame_count, options", [
+    (_tiny_formwork, None, 5, _OPTIONS),
+    (None, "no formwork document", 0, _OPTIONS),
+    (lambda: {"schema": "bench.formwork/1"}, "formwork document was not read", 0, _OPTIONS),
+    (_unpaired_formwork, "belongs to another solve", 0, _OPTIONS),
+    (_tiny_formwork, None, 5, {}),
+], ids=["a formwork document that pairs", "no formwork document",
+        "an unusable formwork document", "a formwork document for another solve",
+        "every option left to its default"])
+def test_the_staged_run_and_the_cable_net_run_hand_the_engine_the_same_request(
+        tmp_path, monkeypatch, formwork, fragment, frame_count, options):
+    # Two things write cablenet-*.json, and the document must not depend on which
+    # one wrote it. One study, one set of options, one recording engine: every key
+    # of the request it is handed is the same on both paths (the frames, the
+    # column heads, the walk's size and the note included), and so is the file
+    import copy
+
+    requests = []
+
+    def record(request):
+        requests.append(copy.deepcopy(request))
+        return _v2_stub(request)
+
+    client, studies = make_client(tmp_path, monkeypatch, cablenet_runner=record)
+    upload = tmp_path / "upload"
+    (upload / "Tiny-mechanism.json").write_text(json.dumps(_tiny_mechanism()), encoding="utf-8")
+    if formwork is not None:
+        (upload / "Tiny-formwork.json").write_text(json.dumps(formwork()), encoding="utf-8")
+
+    staged = client.post("/api/runs", json={
+        "export": "Tiny", **_STUDY, "cablenet": True, "cablenet_options": options})
+    assert staged.status_code == 202, staged.text
+    state = wait_for(client, staged.json()["run"])
+    assert state["state"] == "done", state["message"]
+    own = client.post("/api/studies/Tiny/cablenet/run", json={**_STUDY, **options})
+    assert own.status_code == 202, own.text
+    state = wait_for(client, own.json()["run"])
+    assert state["state"] == "done", state["message"]
+
+    assert len(requests) == 2
+    staged_request, own_request = requests
+    differing = sorted(key for key in set(staged_request) | set(own_request)
+                       if staged_request.get(key) != own_request.get(key))
+    assert differing == [], "the two paths disagree about {}".format(differing)
+    assert len(own_request["loads_by_stage"]) == 4
+    assert len(own_request["frames"]) == frame_count
+    assert own_request["column_heads"] == ([4] if frame_count else [])
+    if fragment is None:
+        assert own_request["note"] is None
+    else:
+        assert fragment in own_request["note"]
+    if not options:
+        # and the defaults are the ones the panel's first run will rely on
+        assert own_request["prestress"] == 300.0
+        assert own_request["batch"] == 20 and own_request["steps"] == 40
+        assert own_request["falsework"] == "plywood-rib-2000"
+        assert own_request["ea_provenance"].startswith("rope-4mm")
+    written = sorted(path.name for path in
+                     (studies / "tiny" / "studio").glob("cablenet-*.json"))
+    assert written == ["cablenet-concrete-bonded-courses-s300-t50.json"]
+
+
+def test_a_run_says_what_kind_it_is_so_a_409_can_be_told_apart(tmp_path, monkeypatch):
+    import threading
+
+    release = threading.Event()
+
+    def slow(request):
+        release.wait(5.0)
+        return _v2_stub(request)
+
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=slow)
+    (tmp_path / "upload" / "Tiny-mechanism.json").write_text(
+        json.dumps(_tiny_mechanism()), encoding="utf-8")
+    own = client.post("/api/studies/Tiny/cablenet/run", json=_STUDY)
+    assert own.status_code == 202, own.text
+    # a staged run asked for while it is live is sent to wait for THAT run, and
+    # that run says what it is
+    refused = client.post("/api/runs", json={"export": "Tiny", **_STUDY})
+    assert refused.status_code == 409
+    assert refused.json()["run"] == own.json()["run"]
+    assert client.get("/api/runs/{}".format(own.json()["run"])).json()["kind"] == "cable net"
+    release.set()
+    assert wait_for(client, own.json()["run"])["kind"] == "cable net"
+    staged = client.post("/api/runs", json={"export": "Tiny", **_STUDY})
+    assert staged.status_code == 202, staged.text
+    assert wait_for(client, staged.json()["run"])["kind"] == "staged"
+
+
+def test_a_study_with_no_mechanism_is_told_before_the_cut_on_either_path(tmp_path, monkeypatch):
+    import bundle
+
+    cuts = []
+    real = bundle.build_tessellation_for
+
+    def counting(*args, **kwargs):
+        cuts.append(args[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(bundle, "build_tessellation_for", counting)
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
+    for label, url, body in (
+            ("staged", "/api/runs", {"export": "Tiny", **_STUDY, "cablenet": True}),
+            ("cable net", "/api/studies/Tiny/cablenet/run", _STUDY)):
+        started = client.post(url, json=body)
+        assert started.status_code == 202, (label, started.text)
+        state = wait_for(client, started.json()["run"])
+        assert state["state"] == "failed", label
+        assert "mechanism document" in state["message"], label
+    assert cuts == [], "the cut was made before the study was found to have no mechanism"
+
+
+def test_both_writers_file_an_authored_cut_under_the_same_name(tmp_path, monkeypatch):
+    # an authored cut ignores the pattern, so it is filed "authored" whichever
+    # route made it: a staged run and a cable net run on the one study leave one
+    # file, not two
+    from test_app import authored_tiny_contract
+
+    client, studies = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
+    upload = tmp_path / "upload"
+    (upload / "Authored-contract.json").write_text(
+        json.dumps(authored_tiny_contract()), encoding="utf-8")
+    (upload / "Authored-mechanism.json").write_text(
+        json.dumps(_tiny_mechanism()), encoding="utf-8")
+    study = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9,
+             "thickness": 0.05}
+    for url, body in (
+            ("/api/runs", {"export": "Authored", **study, "cablenet": True}),
+            ("/api/studies/Authored/cablenet/run", study)):
+        started = client.post(url, json=body)
+        assert started.status_code == 202, (url, started.text)
+        state = wait_for(client, started.json()["run"])
+        assert state["state"] == "done", (url, state["message"])
+    written = sorted(path.name for path in
+                     (studies / "authored" / "studio").glob("cablenet-*.json"))
+    assert written == ["cablenet-concrete-authored-s900-t50.json"]
