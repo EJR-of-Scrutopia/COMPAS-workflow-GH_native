@@ -2781,7 +2781,12 @@ def test_every_control_the_script_asks_for_exists_on_the_page():
         "" if line.lstrip().startswith("//") else line for line in js.splitlines())
     asked = set(re.findall(r'getElementById\("([a-z0-9-]+)"\)', code))
     present = set(re.findall(r'id="([a-z0-9-]+)"', html))
-    created = set()  # nothing is built by script id today; add names here, never patterns
+    # The old Data-popup panel is gone from the page, but its mount stays in
+    # studio.js until the Cable net section's controller replaces it (the
+    # section's last task). mountCableNet returns at once for a root that is
+    # not there, so the lookup is defensive and nothing breaks. Delete the
+    # name with the mount.
+    created = {"cablenet-panel"}  # add names here, never patterns
     missing = sorted(asked - present - created)
     assert not missing, "the script talks to controls the page does not have: {}".format(missing)
 
@@ -4592,3 +4597,31 @@ def test_space_is_wired_to_play_pause_and_the_rewind():
     assert "state.timeline.playing = false;" in rewind
     assert 'paintPlayButtons("Play");' in rewind
     assert "applyTimeline(0);" in rewind
+
+
+def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    rail = html[html.index('<nav id="tab-rail">'):html.index("</nav>")]
+    buttons = re.findall(r'data-section="([a-z-]+)"', rail)
+    assert buttons == ["import-section", "study-section", "analysis-section",
+                       "cablenet-section", "animation-section", "camera-section",
+                       "scene-section", "output-section"]
+    assert '<details id="cablenet-section">' in html
+    assert "cablenet-panel" not in html
+    for ident in ("cablenet-run", "cablenet-prestress", "cablenet-speed", "cablenet-lenses",
+                  "cablenet-stage", "cablenet-configuration", "cablenet-recommend",
+                  "cablenet-vary-toggle", "cablenet-parts", "cablenet-holds",
+                  "cablenet-grab", "cablenet-export", "cablenet-export-choose"):
+        assert 'id="{}"'.format(ident) in html, ident
+    # the run is the section's one primary action. The slice starts AFTER the
+    # section's own opening tag, or the count of nested <details> below could
+    # never be nought.
+    opening = '<details id="cablenet-section">'
+    section = html[html.index(opening) + len(opening):]
+    section = section[:section.index("</details>")]
+    assert section.count('class="primary"') == 1
+    # nothing in the section leans on a <details> toggle: #panel hides summaries
+    assert section.count("<details") == 0
+    # every button says what it does
+    for tag in re.findall(r"<button[^>]*>", section):
+        assert 'title="' in tag, tag

@@ -354,6 +354,7 @@
   <button data-section="import-section" type="button">Import</button>
   <button data-section="study-section" type="button">Skin</button>
   <button data-section="analysis-section" type="button">Analysis</button>
+  <button data-section="cablenet-section" type="button">Cable net</button>
   <button data-section="animation-section" type="button">Animation</button>
   <button data-section="camera-section" type="button">Camera</button>
   <button data-section="scene-section" type="button">Scene</button>
@@ -499,6 +500,43 @@
     <div id="hud"></div>
     <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
     <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
+  </details>
+  <details id="cablenet-section">
+    <summary>Cable net</summary>
+    <!-- The cable net as a view (spec 2026-10-08). One primary action runs
+         the analysis; five lenses draw on the model through a ghosted skin;
+         the system is a named configuration, not nine parts; one Export
+         writes the configuration with its data. Price stays in the documents.
+         Every readout below is filled by cablenet.js; the lenses by studio.js. -->
+    <button id="cablenet-run" class="primary" title="Fit the net at every instant of the build, hold the column heads, and find where it must be grabbed">Run cable net analysis</button>
+    <div id="cablenet-run-status"></div>
+    <div class="dial-block" id="cablenet-dials">
+    <label title="The least tension every net member is given: the floor the sag is judged at"><span>Prestress</span>
+      <input id="cablenet-prestress" type="range" min="100" max="5000" step="50" value="300">
+      <b id="cablenet-prestress-value">300</b><em>N</em></label>
+    <label title="How fast the rope is wanted to run. Nothing passes or fails on it: no prototype has said what rate the net wants, and finding out is what the machine is for"><span>Rope speed</span>
+      <input id="cablenet-speed" type="range" min="1" max="400" step="1" value="50">
+      <b id="cablenet-speed-value">50</b><em>mm/s</em></label>
+    </div>
+    <div id="cablenet-speed-note" class="layer-note"></div>
+    <div id="cablenet-demand" class="cablenet-readout"></div>
+    <div id="cablenet-lenses" class="lens-list"></div>
+    <div id="cablenet-stage" class="layer-note"></div>
+    <div class="named"><span>System</span><select id="cablenet-configuration" title="A designed, complete, buildable mechanism"></select></div>
+    <div id="cablenet-configuration-note" class="cablenet-readout"></div>
+    <button id="cablenet-recommend" title="Pick the configuration that carries the skin with the largest load factor; among ties, the fewest parts">Recommend</button>
+    <div id="cablenet-recommend-note" class="cablenet-readout"></div>
+    <button id="cablenet-vary-toggle" title="Change one part at a time; the panel then says the system is modified from its configuration">Vary parts</button>
+    <div id="cablenet-parts" class="hidden"></div>
+    <div id="cablenet-settled" class="layer-note"></div>
+    <div id="cablenet-holds" class="cablenet-readout"></div>
+    <div id="cablenet-grab" class="cablenet-readout"></div>
+    <button id="cablenet-export" title="Write the configuration with its data: the spreadsheet, the diagram and the data sheet">Export</button>
+    <div id="cablenet-export-row" class="folder-line">
+      <button id="cablenet-export-choose" title="Choose where the cable net exports are written">Export folder</button>
+      <span id="cablenet-export-path" title="">no folder chosen</span>
+    </div>
+    <div id="cablenet-export-result" class="cablenet-readout"></div>
   </details>
   <details id="animation-section" open>
     <summary>Animation</summary>
@@ -899,12 +937,10 @@
     <button data-tab="data-analysis" class="active" type="button">Analysis</button>
     <button data-tab="data-content" type="button">Overview</button>
     <button data-tab="data-graphs" type="button">Graphs</button>
-    <button data-tab="cablenet-panel" type="button">Cable net</button>
   </div>
   <div id="data-analysis" class="data-tab"></div>
   <div id="data-content" class="data-tab hidden"></div>
   <div id="data-graphs" class="data-tab hidden"></div>
-  <div id="cablenet-panel" class="data-tab hidden"></div>
 </div>
 <!-- Two checks that must not live in studio.js, because the fault they
      exist for is a studio.js the browser is serving from its own cache. The

@@ -252,18 +252,26 @@ body { overflow: hidden;
 #panel #props-row button, #panel #props-row select,
 #panel #mode-row .mode, #panel #day-cycle-row button {
   width: auto; margin: 0; }
-#layer-toggles { display: flex; flex-direction: column; gap: var(--s1); }
-#layer-toggles .layer-btn { text-align: left; margin: 0; }
-#layer-toggles .layer-btn.active { background: var(--accent-bg);
+#layer-toggles, #cablenet-lenses {
+  display: flex; flex-direction: column; gap: var(--s1); }
+#layer-toggles .layer-btn, #cablenet-lenses .layer-btn {
+  text-align: left; margin: 0; }
+#layer-toggles .layer-btn.active, #cablenet-lenses .layer-btn.active {
+  background: var(--accent-bg);
   color: var(--accent-ink); border-color: var(--accent); }
 /* A lens's own dial sits directly under its button, indented, and only
-   while the lens is on. */
-#layer-toggles .layer-slider { display: flex; gap: var(--s2);
+   while the lens is on. The Cable net section's lens list wears the same
+   rules, so its lenses read as the Analysis lenses do. */
+#layer-toggles .layer-slider, #cablenet-lenses .layer-slider {
+  display: flex; gap: var(--s2);
   align-items: center; margin: 0 0 var(--s1) var(--s3);
   color: var(--ink-2); font-size: var(--t-2); }
-#layer-toggles .layer-slider input { flex: 1; width: auto; }
-#layer-toggles .layer-slider.hidden { display: none; }
-#layer-toggles .layer-note { margin: 0 0 var(--s1) var(--s3);
+#layer-toggles .layer-slider input, #cablenet-lenses .layer-slider input {
+  flex: 1; width: auto; }
+#layer-toggles .layer-slider.hidden, #cablenet-lenses .layer-slider.hidden {
+  display: none; }
+#layer-toggles .layer-note, #cablenet-section .layer-note {
+  margin: 0 0 var(--s1) var(--s3);
   color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
 #overlays-tuck { display: flex; gap: var(--s2); align-items: center;
   margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
@@ -1578,3 +1586,20 @@ body.stilling #fixture-panel { display: none; }
    where the choice is made: the readout's own register. */
 #atmosphere-hint { color: var(--ink-3); font-size: var(--t-meta);
   padding: 0 0 var(--s2); }
+
+/* The cable net section's readouts: full sentences in the second ink, the
+   figure in the first, nothing shown while there is nothing to say. */
+#panel .cablenet-readout { color: var(--ink-2); font-size: var(--t-2);
+  line-height: 1.5; margin: var(--s2) 0; }
+#panel .cablenet-readout b { color: var(--ink); }
+#panel .cablenet-readout:empty { display: none; }
+#panel #cablenet-run-status { color: var(--ink-2); min-height: 1.2em; }
+/* The walk: grabbed nodes along the bottom, worst sag up the side, the
+   acceptance line dashed in the one red. Inline SVG, no library. */
+#panel .cablenet-curve { display: block; width: 100%; height: 72px; margin: var(--s1) 0; }
+#panel .cablenet-curve .walk { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+#panel .cablenet-curve .line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; }
+#panel .cablenet-curve .axis { stroke: var(--line); stroke-width: 1; }
+#panel .cablenet-curve text { fill: var(--ink-3); font-size: 9px; }
+#panel #cablenet-parts { margin-left: var(--s3); }
+#panel #cablenet-parts .named { margin: var(--s1) 0; }
