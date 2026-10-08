@@ -586,7 +586,7 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     sizing = {
         "stage": sizing_stage["name"],
         # the figure the wires are judged at, the larger of the two beside it
-        # (see the docstring): worked out once, here, and read everywhere
+        # (see the docstring): worked out here, and the readers read it
         "worst_wire_tension_newtons": max(float(prestress), fitted_wire),
         "fitted_wire_tension_newtons": fitted_wire,
         "prestress_newtons": float(prestress),
