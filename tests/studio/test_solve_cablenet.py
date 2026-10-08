@@ -319,7 +319,8 @@ def test_the_sizing_stage_is_the_worst_wire_or_actuator_force_with_the_actuators
     document = solve_cablenet.solve(_grid_request())
     sizing = document["sizing"]
     worst = 0.0
-    for stage in document["stages"]:
+    # the courses are judged; the raise is shown, not judged
+    for stage in [s for s in document["stages"] if s["course"] is not None]:
         here = max([abs(t) for t in stage["wire_tensions"]]
                    + [sum(c * c for c in f) ** 0.5 for f in stage["actuator_forces"]])
         if here > worst:
@@ -470,3 +471,59 @@ def test_an_actuator_carrying_more_than_any_wire_sets_the_sizing_stage():
     assert sizing["worst_wire_tension_newtons"] == pytest.approx(wire)
     assert sizing["worst_actuator_newtons"] > wire
     assert sizing["load_newtons"] == pytest.approx(818.0)
+
+
+def test_the_sizing_stage_and_its_sag_are_the_courses_even_when_a_frame_pulls_harder():
+    pytest.importorskip("compas_fd")
+    # At 60 the net is lifted 750 mm, its corners 50 mm below the drums, so
+    # each corner wire holds the corner's 2 N at a rise of 50 mm: about 85 N,
+    # more than any wire carries under the skin. Midpoint 1 is also 500 mm in,
+    # so its two level rim members (60 N along x, 30 N along y each, from the
+    # corners' balance) pull it back with 60 N: more than any course actuator.
+    # The raise is shown, not judged: the sizing stage and the sag it is
+    # judged by are the courses'; only the worst wire and actuator forces see
+    # the raise.
+    raised = _grid_request()["vertices"]
+    lifted = [[x, y, z + 0.75] for x, y, z in raised]
+    lifted[1][1] += 0.5
+    document = solve_cablenet.solve(_grid_request(frames=[
+        {"time": 60.0, "phase": "finish", "vertices": lifted},
+        {"time": 100.0, "phase": "hold", "vertices": raised}]))
+    stages = {s["name"]: s for s in document["stages"]}
+    frame_wire = 2.0 * (2 * 1500.0 ** 2 + 50.0 ** 2) ** 0.5 / 50.0
+    assert stages["F60"]["wire_tensions"] == pytest.approx([frame_wire] * 4)
+    assert frame_wire > max(max(stages[n]["wire_tensions"]) for n in ("S1", "S2"))
+    sizing = document["sizing"]
+    # S2's wires (22 N corners at an 800 mm rise) outpull S1's 22 N actuators
+    assert sizing["stage"] == "S2" == document["sizing_stage"]
+    assert sizing["worst_sag_mm"] == max(stages[n]["residual_after"] for n in ("S1", "S2"))
+    assert sizing["load_newtons"] == pytest.approx(198.0)
+    assert sizing["worst_wire_tension_newtons"] == pytest.approx(frame_wire)
+    frame_actuator = (60.0 ** 2 + 2.0 ** 2) ** 0.5
+    assert sizing["worst_actuator_newtons"] == pytest.approx(frame_actuator)
+    assert frame_actuator > max((sum(c * c for c in f) ** 0.5 for n in ("S1", "S2")
+                                 for f in stages[n]["actuator_forces"]))
+
+
+def test_without_frames_the_courses_size_it_and_without_courses_every_instant_does():
+    pytest.importorskip("compas_fd")
+    # No formwork and no actuators: the heavy rim course sags most while the
+    # full course pulls hardest on the wires. The stage is the hardest pull;
+    # the sag is the worst over the courses, not the sizing stage's own.
+    heavy_rim = [[0.0, 0.0, -200.0] if n in (1, 3, 5, 7) else [0.0, 0.0, 0.0]
+                 for n in range(9)]
+    full = [[0.0, 0.0, -20.0] for _ in range(9)]
+    document = solve_cablenet.solve(_grid_request(
+        frames=[], column_heads=[], loads_by_stage=[heavy_rim, full],
+        placed_weights=[800.0, 180.0], steps=0))
+    s1, s2 = document["stages"]
+    assert document["held"]["actuators"] == []
+    assert document["sizing"]["stage"] == "S2" == document["sizing_stage"]
+    assert s1["residual_after"] > s2["residual_after"]
+    assert document["sizing"]["worst_sag_mm"] == s1["residual_after"]
+    # a document with no courses falls back to every instant
+    frames_only = solve_cablenet.solve(_grid_request(loads_by_stage=[], placed_weights=[]))
+    assert [s["name"] for s in frames_only["stages"]] == ["F60", "F100"]
+    assert frames_only["sizing"]["stage"] in ("F60", "F100")
+    assert frames_only["sizing"]["worst_sag_mm"] == max(
+        s["residual_after"] for s in frames_only["stages"])

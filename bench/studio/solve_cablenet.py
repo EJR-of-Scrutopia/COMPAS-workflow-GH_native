@@ -559,7 +559,13 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
         forces += [sum(c * c for c in f) ** 0.5 for f in stage["actuator_forces"]]
         return max(forces) if forces else 0.0
 
-    sizing_stage = max(stages, key=worst_force)
+    # The raise is shown, not judged: the shape verdict reads the courses, so
+    # the stage that sizes the system and the sag it is judged by come from
+    # the courses, and from every instant only when there are none. The rope
+    # and the drum see the raise too, so their worst forces are over every
+    # instant.
+    judged = [s for s in stages if s["course"] is not None] or stages
+    sizing_stage = max(judged, key=worst_force)
     sizing = {
         "stage": sizing_stage["name"],
         "worst_wire_tension_newtons": max(
@@ -568,7 +574,7 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
         "worst_actuator_newtons": max(
             max([sum(c * c for c in f) ** 0.5 for f in s["actuator_forces"]] or [0.0])
             for s in stages),
-        "worst_sag_mm": sizing_stage["residual_after"],
+        "worst_sag_mm": max(s["residual_after"] for s in judged),
         "load_newtons": sizing_stage["node_load_sum_newtons"],
     }
     placement_block = {
