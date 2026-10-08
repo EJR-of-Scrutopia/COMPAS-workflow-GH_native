@@ -817,3 +817,90 @@ def test_a_size_that_is_not_a_finite_number_is_a_400_not_a_500(tmp_path, monkeyp
         response = client.get("/api/studies/Tiny/cablenet", params={"size": size})
         assert response.status_code == 400, size
         assert "unreadable" in response.json()["detail"], size
+
+
+def test_recommend_returns_why_it_has_no_demand_and_says_so_in_its_rule(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    # a study that is not there, one with no demand yet, a source that cannot be
+    # resolved, options that cannot be read and no options at all: each reply
+    # names its own reason, in the note and in the rule
+    cases = (
+        ("nowhere", _STUDY_OPTIONS, "no export named 'nowhere'"),
+        ("Tiny", _STUDY_OPTIONS, "no cable net demand yet"),
+        ("Tiny", {**_STUDY_OPTIONS, "source": "authored"}, "no authored tessellation"),
+        ("Tiny", {**_STUDY_OPTIONS, "size": "wide"}, "unreadable"),
+        ("Tiny", None, "no study options were sent"),
+    )
+    for export, options, reason in cases:
+        body = {"angle_degrees": 10.0}
+        if options is not None:
+            body["options"] = options
+        reply = client.post("/api/studies/{}/cablenet/recommend".format(export),
+                            json=body).json()
+        assert reason in reply["demand_note"], (export, reason)
+        assert reply["rule"].startswith("no demand document: "), (export, reply["rule"])
+        assert reason in reply["rule"], (export, reply["rule"])
+        assert "no sizing in the demand document" not in reply["rule"], export
+        assert reply["sufficient"] is None and reply["key"], export
+
+
+def test_recommend_keeps_its_old_sentence_only_for_a_document_without_a_sizing_block(
+        client, tmp_path, monkeypatch):
+    stale = {"schema": "bench.cablenet/1",
+             "stages": [{"name": "S7", "wire_tensions": [900.0], "wire_reel_commands": [-3.0]}]}
+    _write_demand(tmp_path, monkeypatch, stale)
+    reply = client.post("/api/studies/My Vault/cablenet/recommend", json={
+        "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert reply["demand_note"] is None and reply["sufficient"] is None
+    assert reply["rule"].startswith("no sizing in the demand document")
+    assert "run the cable net analysis" in reply["rule"]
+    # a document that is read, sized, has nothing to say about why there is no demand
+    _write_demand(tmp_path, monkeypatch, _sized_demand())
+    reply = client.post("/api/studies/My Vault/cablenet/recommend", json={
+        "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert reply["demand_note"] is None and reply["sufficient"] is True
+
+
+def test_recommend_over_a_shape_past_the_line_blames_the_shape_and_ranks_by_the_parts(
+        client, tmp_path, monkeypatch):
+    demand = _sized_demand()
+    demand["sizing"]["worst_sag_mm"] = 10.0          # past the 2.18 mm line
+    _write_demand(tmp_path, monkeypatch, demand)
+    reply = client.post("/api/studies/My Vault/cablenet/recommend", json={
+        "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert reply["sufficient"] is False
+    assert "shape" in reply["rule"] and "acceptance line" in reply["rule"]
+    assert "nothing in the catalogue carries" not in reply["rule"]
+    assert all(row["parts_factor"]["limit_factor"] > 0.0 for row in reply["rows"])
+    largest = max(row["parts_factor"]["limit_factor"] for row in reply["rows"])
+    chosen = next(row for row in reply["rows"] if row["key"] == reply["key"])
+    assert chosen["parts_factor"]["limit_factor"] == largest
+    assert reply["configuration"]["motor"] and reply["name"]
+
+
+def test_the_scored_row_is_built_in_one_place():
+    # the scoring route and the exports score through one function: a second copy
+    # of the row drifts (the export rows once carried no load_factor_note while the
+    # scoring rows did)
+    source = Path(studio_app.__file__).read_text(encoding="utf-8")
+    assert source.count('"passes_note":') == 1
+
+
+def test_a_wanted_speed_adds_the_motor_speed_and_a_figure_that_is_not_a_number_refuses_the_row(
+        client):
+    import catalogue
+    parts = catalogue.load_parts()
+    scored = client.post("/api/studies/any/cablenet/configurations", json={
+        "configurations": [_GOOD, {**_GOOD, "motor": "not-a-motor"}], "angle_degrees": 2.0,
+        "rope_speed_mm_s": 120.0}).json()["rows"]
+    assert scored[0]["motor_rpm_for_wanted_speed"] == pytest.approx(
+        catalogue.motor_rpm_for(parts, _GOOD, 120.0))
+    assert "motor_rpm_for_wanted_speed" not in scored[1] and "not-a-motor" in scored[1]["refused"]
+    # a speed, or a rope to wind, that is not a number refuses the rows with the
+    # reason; it does not sink the request
+    for field in ("rope_speed_mm_s", "rope_wound_mm"):
+        response = client.post("/api/studies/any/cablenet/configurations", json={
+            "configurations": [_GOOD, _GOOD], "angle_degrees": 2.0, field: "fast"})
+        assert response.status_code == 200, field
+        for row in response.json()["rows"]:
+            assert row["refused"].startswith("ValueError"), (field, row["refused"])

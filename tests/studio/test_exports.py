@@ -723,6 +723,27 @@ def test_the_scored_rows_carry_the_drive_and_the_load_factor(client, monkeypatch
     assert seen["row"]["load_factor"]["binding"] == "anchor"
 
 
+def test_the_scoring_route_and_the_exports_score_a_configuration_alike(
+        client, monkeypatch, tmp_path):
+    import json
+    sizing = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
+              "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    _plant_demand(monkeypatch, tmp_path, demand=_demand(sizing=sizing))
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    scored = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [_configuration()], "angle_degrees": 10.0,
+        "options": {"material": "tile", "pattern": "herringbone", "size": 1.0,
+                    "thickness": 0.02}}).json()["rows"][0]
+    exported = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration(), "angle_degrees": 10.0})
+    assert exported.status_code == 200, exported.text
+    # one row, built once: the scoring route adds the note on the load factor and
+    # nothing else to what the exports are given
+    assert scored.pop("load_factor_note") is None
+    assert scored == json.loads(json.dumps(seen["row"]))
+
+
 def test_a_rung_the_catalogue_refuses_is_passed_through_with_its_text(
         client, monkeypatch, tmp_path):
     _plant_demand(monkeypatch, tmp_path)

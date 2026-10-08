@@ -514,3 +514,61 @@ def test_lifting_a_term_moves_that_terms_limit_and_nothing_else():
     defaulted = mechanism._replace(spool_rope_mbl=None)
     lifted = catalogue._with_terms_lifted(defaulted, ["rope tension"])
     assert lifted.rope_mbl > 1e100 and lifted.spool_rope_mbl == defaulted.rope_mbl
+
+
+def test_recommend_says_why_there_is_no_demand_when_it_is_told():
+    parts = catalogue.load_parts()
+    reason = "There is no export named 'x', so no cable net demand has been written for it."
+    told = catalogue.recommend(parts, 10.0, None, reason=reason)
+    assert told["sufficient"] is None
+    assert told["rule"].startswith("no demand document: There is no export named 'x'")
+    assert "ceiling" in told["rule"] and "no sizing in the demand document" not in told["rule"]
+    assert ".;" not in told["rule"]
+    assert told["key"] == max(told["rows"], key=lambda r: r["ceiling"])["key"]
+    # a document that exists without a sizing block keeps its own sentence, whatever
+    # reason is passed with it
+    stale = catalogue.recommend(parts, 10.0, {"stages": []}, reason=reason)
+    assert stale["rule"].startswith("no sizing in the demand document")
+    assert "run the cable net analysis" in stale["rule"]
+    # and a block with no tension in it is neither of those
+    quiet = catalogue.recommend(parts, 10.0, _demand(t1=0.0), reason=reason)
+    assert "carries no wire tension" in quiet["rule"] and "ceiling" in quiet["rule"]
+    assert "no sizing in" not in quiet["rule"] and "no demand document" not in quiet["rule"]
+
+
+def test_recommend_blames_the_shape_and_ranks_by_the_parts_when_the_sag_is_past_the_line():
+    parts = catalogue.load_parts()
+    demand = _demand(sag=10.0)
+    result = catalogue.recommend(parts, 10.0, demand)
+    assert result["sufficient"] is False
+    assert "shape" in result["rule"] and "acceptance line at the sizing stage" in result["rule"]
+    assert "no part can change it" in result["rule"]
+    assert "nothing in the catalogue carries" not in result["rule"]
+    # judged on the shape every rig stops at the first rung; with the shape set aside
+    # the parts alone tell them apart
+    for row in result["rows"]:
+        assert row["load_factor"]["binding"] == "deviation"
+        assert row["load_factor"]["limit_factor"] == 0.0
+        alone = catalogue.load_factor(parts, catalogue.configuration_of(parts, row["key"]),
+                                      10.0, _demand(sag=10.0, acceptance=None))
+        assert row["parts_factor"] == alone
+    largest = max(row["parts_factor"]["limit_factor"] for row in result["rows"])
+    assert largest > 0.0
+    chosen = next(row for row in result["rows"] if row["key"] == result["key"])
+    assert chosen["parts_factor"]["limit_factor"] == largest
+    # ties on what the parts carry go to the fewest parts, then the first listed
+    tied = [row for row in result["rows"] if row["parts_factor"]["limit_factor"] == largest]
+    assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
+
+
+def test_recommend_blames_the_shape_only_when_every_rig_is_stopped_by_it():
+    parts = catalogue.load_parts()
+    # a skin heavy enough that the lighter rigs are stopped by their parts on the
+    # first rung as well: the shape is past the line, but it is not what stops
+    # every rig, so the rule is the plain one and the rigs are ranked as judged
+    result = catalogue.recommend(parts, 10.0, _demand(t1=15000.0, sag=10.0))
+    bindings = {row["key"]: row["load_factor"]["binding"] for row in result["rows"]}
+    assert "deviation" in bindings.values() and set(bindings.values()) != {"deviation"}
+    assert result["sufficient"] is False
+    assert "nothing in the catalogue carries" in result["rule"]
+    assert all("parts_factor" not in row for row in result["rows"])

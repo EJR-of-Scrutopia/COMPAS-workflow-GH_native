@@ -511,12 +511,25 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
     }
 
 
-def recommend(parts, angle_degrees, demand):
+def recommend(parts, angle_degrees, demand, reason=None):
     """The configuration to build: the largest load factor among those that
     carry the skin, the fewest parts among ties, the first listed after that.
-    Without a sizing block it ranks by ceiling and says so."""
+
+    With no load factor to rank by it ranks by ceiling and its rule says why.
+    reason, when the caller has one, is why there is no demand document at all (a
+    study that is not there, options that cannot be read); a document that is read
+    but has no sizing block is told to be run again; a block with no tension in it
+    has nothing to scale.
+
+    When every rig is stopped by the shape, the sag at the sizing stage being past
+    the acceptance line, no part can change that and the load factors as judged are
+    all zero. The rule says so, and the rigs are ranked by what their parts alone
+    carry: the same walk with the line set aside, which each row carries as
+    parts_factor beside its load_factor as judged.
+    """
 
     rows = []
+    configured = {}
     for position, key in enumerate(configurations(parts)):
         try:
             configuration = configuration_of(parts, key)
@@ -525,6 +538,7 @@ def recommend(parts, angle_degrees, demand):
         except CatalogueError as error:
             rows.append({"key": key, "refused": str(error)})
             continue
+        configured[key] = configuration
         rows.append({"key": key, "position": position, "parts": part_count(configuration),
                      "ceiling": float(ceiling), "binding": binding, "load_factor": factor})
     usable = [row for row in rows if not row.get("refused")]
@@ -535,7 +549,18 @@ def recommend(parts, angle_degrees, demand):
         raise CatalogueError(message)
     sized = [row for row in usable if row["load_factor"]
              and row["load_factor"].get("limit_factor") is not None]
-    if sized:
+    if sized and all(row["load_factor"]["binding"] == "deviation" for row in sized):
+        parts_alone = {**demand, "acceptance": None}
+        for row in sized:
+            row["parts_factor"] = load_factor(
+                parts, configured[row["key"]], angle_degrees, parts_alone)
+        best = max(sized, key=lambda r: (
+            r["parts_factor"]["limit_factor"], -r["parts"], -r["position"]))
+        rule = ("the shape is past the acceptance line at the sizing stage and no "
+                "part can change it; ranked by what the parts alone carry: the "
+                "largest load factor, then the fewest parts, then the first listed")
+        flag = False
+    elif sized:
         sufficient = [row for row in sized if row["load_factor"]["sufficient"]]
         if sufficient:
             best = max(sufficient, key=lambda r: (
@@ -551,7 +576,15 @@ def recommend(parts, angle_degrees, demand):
             flag = False
     else:
         best = max(usable, key=lambda r: (r["ceiling"], -r["parts"], -r["position"]))
-        rule = ("no sizing in the demand document, so the configuration with the "
-                "highest ceiling; run the cable net analysis for a load factor")
+        if demand is None and reason:
+            rule = ("no demand document: {}; this is the configuration with the "
+                    "highest ceiling, with no load factor".format(str(reason).rstrip(".")))
+        elif sizing_of(demand) is not None:
+            rule = ("the sizing stage of the demand document carries no wire tension, "
+                    "so there is nothing to scale; this is the configuration with the "
+                    "highest ceiling")
+        else:
+            rule = ("no sizing in the demand document, so the configuration with the "
+                    "highest ceiling; run the cable net analysis for a load factor")
         flag = None
     return {"key": best["key"], "sufficient": flag, "rule": rule, "rows": rows}

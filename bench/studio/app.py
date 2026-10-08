@@ -1219,6 +1219,61 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 worst = max(worst, float(tension))
         return worst
 
+    def _demand_for(export: str, options):
+        """The demand the study's options name, and why there is none when there
+        is none: (demand, None) or (None, the reason)."""
+
+        if not isinstance(options, dict):
+            return None, ("no study options were sent, so there is no cable net "
+                          "demand to size against")
+        try:
+            return _cablenet_demand(export, options), None
+        except HTTPException as error:
+            return None, error.detail
+
+    def _refusal(configuration, error) -> dict:
+        # One malformed row must not sink the request; the type stays in the
+        # message so a real defect is still diagnosable.
+        return {"configuration": configuration,
+                "refused": "{}: {}".format(type(error).__name__, error)}
+
+    def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
+                          demand=None):
+        """One scored row. The configurations route and the exports both score
+        through this, so the row is built in one place and cannot drift; a
+        configuration the catalogue refuses keeps its reason as `refused`."""
+
+        try:
+            ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
+            row = {
+                "configuration": configuration,
+                "ceiling": ceiling,
+                "binding": binding,
+                "passes": bool(ceiling >= floor) if floor > 0.0 else None,
+                "passes_note": (
+                    None if floor > 0.0 else
+                    "no prestress floor was given, so there is no demand "
+                    "to compare the ceiling against"),
+                "margin": (ceiling / floor) if floor > 0.0 else None,
+                "price": catalogue.price_of(parts, configuration),
+                "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
+                "refused": None,
+            }
+            row["drive"] = catalogue.drive_for(parts, configuration["motor"])
+            row["load_factor"] = (
+                catalogue.load_factor(parts, configuration, angle, demand)
+                if demand is not None else None)
+            if wound is not None:
+                path = catalogue.drum_and_travel(parts, configuration, wound)
+                row["rope_path"] = path
+                if not (path["drum_fits"] and path["rail_fits"]):
+                    # hard checks: a second drum layer or a carriage past its
+                    # stroke is a rig that cannot be built as drawn
+                    row["passes"] = False
+            return row
+        except Exception as error:
+            return _refusal(configuration, error)
+
     @app.get("/api/studies/{export}/cablenet")
     def study_cablenet(export: str, material: str = "tile", pattern: str = "herringbone",
                        size: float = 1.0, thickness: float = 0.02,
@@ -1242,15 +1297,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         # The study's options, when they are sent, name the demand document, and
         # the floor, the rope to wind and the load factor are read from it.
         # Without them the caller's own figures stand.
-        options = body.get("options")
-        demand = None
-        demand_note = ("no study options were sent, so there is no cable net "
-                       "demand to size against")
-        if isinstance(options, dict):
-            try:
-                demand = _cablenet_demand(export, options)
-            except HTTPException as error:
-                demand_note = error.detail
+        demand, demand_note = _demand_for(export, body.get("options"))
         wanted_speed = body.get("rope_speed_mm_s")
         if demand is not None:
             floor = _demand_floor(demand)
@@ -1261,50 +1308,20 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             wound = body.get("rope_wound_mm")
         rows = []
         for configuration in configurations:
-            try:
-                ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
-                row = {
-                    "configuration": configuration,
-                    "ceiling": ceiling,
-                    "binding": binding,
-                    "passes": bool(ceiling >= floor) if floor > 0.0 else None,
-                    "passes_note": (
-                        None if floor > 0.0 else
-                        "no prestress floor was given, so there is no demand "
-                        "to compare the ceiling against"),
-                    "margin": (ceiling / floor) if floor > 0.0 else None,
-                    "price": catalogue.price_of(parts, configuration),
-                    "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
-                    "refused": None,
-                }
-                row["drive"] = catalogue.drive_for(parts, configuration["motor"])
-                row["load_factor"] = (
-                    catalogue.load_factor(parts, configuration, angle, demand)
-                    if demand is not None else None)
-                row["load_factor_note"] = (
-                    None if row["load_factor"] is not None else
-                    (demand_note if demand is None else
-                     "the demand document has no sizing block; run the cable net "
-                     "analysis again"))
-                if wound is not None:
-                    path = catalogue.drum_and_travel(
-                        parts, configuration, float(wound))
-                    row["rope_path"] = path
-                    if not (path["drum_fits"] and path["rail_fits"]):
-                        # hard checks: a second drum layer or a carriage past
-                        # its stroke is a rig that cannot be built as drawn
-                        row["passes"] = False
-                if wanted_speed:
-                    row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
-                        parts, configuration, float(wanted_speed))
-            except Exception as error:
-                # One malformed row must not sink the request; the type stays
-                # in the message so a real defect is still diagnosable.
-                rows.append({
-                    "configuration": configuration,
-                    "refused": "{}: {}".format(type(error).__name__, error),
-                })
-                continue
+            row = _score_for_export(
+                catalogue, parts, configuration, angle, floor, wound, demand)
+            if not row.get("refused"):
+                try:
+                    row["load_factor_note"] = (
+                        None if row["load_factor"] is not None else
+                        (demand_note if demand is None else
+                         "the demand document has no sizing block; run the cable "
+                         "net analysis again"))
+                    if wanted_speed:
+                        row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
+                            parts, configuration, float(wanted_speed))
+                except Exception as error:
+                    row = _refusal(configuration, error)
             rows.append(row)
         return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
 
@@ -1392,41 +1409,6 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
     # diagram and the data sheet from one model, so they cannot disagree.
     # ------------------------------------------------------------------
 
-    def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
-                          demand=None):
-        """One scored row, shaped as the configurations route shapes it; a
-        configuration the catalogue refuses keeps its reason as `refused`."""
-
-        try:
-            ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
-            row = {
-                "configuration": configuration,
-                "ceiling": ceiling,
-                "binding": binding,
-                "passes": bool(ceiling >= floor) if floor > 0.0 else None,
-                "passes_note": (
-                    None if floor > 0.0 else
-                    "no prestress floor was given, so there is no demand "
-                    "to compare the ceiling against"),
-                "margin": (ceiling / floor) if floor > 0.0 else None,
-                "price": catalogue.price_of(parts, configuration),
-                "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
-                "refused": None,
-            }
-            row["drive"] = catalogue.drive_for(parts, configuration["motor"])
-            row["load_factor"] = (
-                catalogue.load_factor(parts, configuration, angle, demand)
-                if demand is not None else None)
-            if wound is not None:
-                path = catalogue.drum_and_travel(parts, configuration, wound)
-                row["rope_path"] = path
-                if not (path["drum_fits"] and path["rail_fits"]):
-                    row["passes"] = False
-            return row
-        except Exception as error:
-            return {"configuration": configuration,
-                    "refused": "{}: {}".format(type(error).__name__, error)}
-
     def _export_ladder(configuration: dict) -> list:
         """THE definition of the upgrade rungs. The panel fetches them from
         POST /api/cablenet/ladder and the exports use them directly, so the
@@ -1503,19 +1485,16 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         except (TypeError, ValueError) as error:
             raise HTTPException(
                 400, "angle_degrees must be a number: {}".format(error))
-        demand = None
-        options = body.get("options")
-        if isinstance(options, dict):
-            try:
-                demand = _cablenet_demand(export, options)
-            except HTTPException:
-                demand = None
+        # why there is no demand, when there is none, is said in the rule and
+        # returned as demand_note, as the scoring route says it on each row
+        demand, demand_note = _demand_for(export, body.get("options"))
         try:
-            result = catalogue.recommend(parts, angle, demand)
+            result = catalogue.recommend(parts, angle, demand, reason=demand_note)
         except catalogue.CatalogueError as error:
             raise HTTPException(400, str(error))
         result["configuration"] = catalogue.configuration_of(parts, result["key"])
         result["name"] = parts["configurations"][result["key"]]["name"]
+        result["demand_note"] = demand_note
         return result
 
     def _exports_folder() -> Path:
