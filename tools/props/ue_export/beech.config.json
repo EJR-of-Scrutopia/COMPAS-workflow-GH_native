@@ -1,0 +1,14 @@
+{
+  "dir": "C:/Users/Param/AppData/Local/Temp/claude/c--Users-Param-OneDrive---Ananke-eidos-Documents-Ananke-Eidos-Studio-VS-code-Random-comfyui/eef1adad-d09f-4ae7-8695-89370827e60b/scratchpad/ue_export/beech",
+  "group": "planting",
+  "credit": "European Beech by Quixel Megascans (Epic Games), via Fab",
+  "licence": "Fab Standard License",
+  "source": "https://www.fab.com/listings/d11cc01d-9422-41b7-950f-416c9ce79caf",
+  "keyPrefix": "beech",
+  "labelPrefix": "",
+  "sizes": [
+    { "match": "Field|Forest", "size": "canopy" },
+    { "match": "Sapling", "size": "mid" },
+    { "match": "Seedling", "size": "mid" }
+  ]
+}

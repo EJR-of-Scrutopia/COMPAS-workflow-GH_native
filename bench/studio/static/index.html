@@ -1,0 +1,1055 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vaulted</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/studio.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/static/vendor/three.module.js",
+    "three/addons/": "/static/vendor/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<!-- The corner readout renderers have. Bottom LEFT, which was the one
+     clear corner: #event-log already owns bottom right and #legend the
+     lower third beside the panel, so nothing had to move out of the way. -->
+<div id="stats-overlay" class="hidden" title="Click to hide">
+  <div><span>objects</span><b id="stat-objects">0</b></div>
+  <div><span>draws</span><b id="stat-calls">0</b></div>
+  <div><span>tris</span><b id="stat-tris">0</b></div>
+  <div><span>fps</span><b id="stat-fps">0</b></div>
+  <div><span>vram</span><b id="stat-vram">--</b></div>
+  <div><span>gpu</span><b id="stat-gpu">--</b></div>
+  <div><span>cpu</span><b id="stat-cpu">--</b></div>
+</div>
+<!-- The scale bar sits under the stats readout in the same corner, and
+     appears only in an orthographic view, where one metre is the same
+     number of pixels everywhere in the frame. In perspective it would be
+     a lie that looked like a measurement. Its WIDTH is the measurement,
+     so the label rides inside the rule it describes. -->
+<div id="scale-bar" hidden></div>
+<!-- THE CORNER TILES. Param: "with the tiles at the bottom take the
+     overlay tile, graph tile and the full screen tile to the top left.
+     id prefer them up there." They are about LOOKING at the scene
+     rather than about the take, which is what the strip beside the
+     drawers is for, so they read better away from it. Their ids do
+     not change, so every handler that drives them is untouched. -->
+<div id="corner-acts">
+  <button id="shelf-stats" class="shelf-act" title="Show the objects, draw calls, VRAM and CPU readout">&#8801;</button>
+  <button id="shelf-graphs" class="shelf-act" title="Show the live graphs beside the take: cable force, the load on the formwork, column force and the thrust at the supports">&#9601;&#9605;&#9608;</button>
+  <button id="shelf-fullscreen" class="shelf-act" title="Fill the display with the view">&#9974;</button>
+</div>
+<!-- THE HOVER BADGE. Param: "i would like a bounding box with the
+     object type and id so i can reference it in layers, that pops up
+     when i hover over items with the mouse." The box is drawn in the
+     scene; this is the name that goes with it, placed in page
+     coordinates over whatever the pointer is on and following it as
+     the camera moves. -->
+<div id="hover-badge" class="hidden"></div>
+<div id="event-log"></div>
+<div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
+<div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
+<div id="still-cover"><div id="still-spinner"></div><div id="still-cover-text"></div></div>
+<div id="loading-toast" class="hidden"><span id="loading-spin"></span><span id="loading-toast-text">Loading</span></div>
+<!-- The shelf: the bottom asset drawer (the pattern Blender's asset shelf
+     and Quixel Bridge settled on). Collapsed it is three quiet pills;
+     expanded, a four-column grid with category chips and its own scroll,
+     so choosing an asset stops being a squint into the side panel. -->
+<div id="shelf">
+  <div id="shelf-body" class="hidden">
+    <div id="shelf-head">
+      <div id="shelf-cats"></div>
+      <div id="shelf-actions">
+        <button id="shelf-assign-skin" class="hidden" title="Wear this material on the vault">Assign to skin</button>
+        <button id="shelf-assign-ground" class="hidden" title="Lay this material on the floor">Assign to ground</button>
+        <!-- Param, 2026-09-15: "can we add a new scene button to scene
+             tile, where it just gives us a blank scene to start from, not
+             deleting any other saved scenes". Beside Save, which is what
+             follows it. -->
+        <button id="scene-new" class="hidden" title="Start again from a blank scene around this vault: nothing placed, no lights, and the studio's own sky, floor and settings. No saved scene is touched, and Ctrl+Z brings back what was on screen">New scene</button>
+        <button id="scene-save" class="hidden" title="Save the viewport, the floor, the light and everything placed">Save scene</button>
+        <!-- The same toggle as the panel's Edit, put where the props are
+             actually being chosen (Param: "we should also put the edit
+             button on the layers tile too"). Both buttons drive
+             setPropEdit, so they can never disagree. -->
+        <button id="shelf-prop-edit" class="hidden" title="Move, rotate and scale the placed props: click one to pick it up, R rotates, + and - scale, Delete removes">Edit</button>
+        <button id="stamp-group" class="hidden" title="Pick up the selected objects as one stamp: every click places a copy, Escape lets go" disabled>Place copies</button>
+        <button id="layer-group" class="hidden" title="Move the selected objects onto a fresh layer of their own" disabled>Group to new layer</button>
+        <button id="layer-delete-chosen" class="hidden danger" title="Nothing selected to delete: pick a tile here, or a prop in the viewport" disabled>Delete</button>
+      </div>
+      <button id="shelf-close" title="Collapse">&#10005;</button>
+    </div>
+    <div id="shelf-sky-modes" class="hidden">
+      <div id="environment-segments" class="segmented"></div>
+      <label class="hidden">Setting <select id="environment-mode">
+        <option value="studio" selected>Studio</option>
+        <option value="sky">Sky</option>
+        <option value="hdri">HDRI</option>
+      </select></label>
+      <button id="weather-picker" class="picker" type="button" aria-controls="weather-tiles" title="The sky itself: how clear or heavy the day is, and what colour the sun comes in at"><span class="chosen-swatch"></span><span class="chosen-name">Weather</span><span class="chevron"></span></button>
+      <!-- The atmosphere: a height fog in every setting, off until a
+           preset is chosen. Its own picker beside the weather's, because
+           the air and the sky are separate choices. -->
+      <button id="atmosphere-picker" class="picker" type="button" aria-controls="atmosphere-tiles" title="The air between the eye and the distance: a height fog that thickens toward the ground and glows toward the sun, off until a preset is chosen"><span class="chosen-swatch"></span><span class="chosen-name">Atmosphere</span><span class="chevron"></span></button>
+      <div id="weather-tiles" class="tile-grid hidden"></div>
+      <div id="atmosphere-tiles" class="tile-grid hidden"></div>
+      <label id="weather-row" class="hidden">Weather <select id="weather-preset">
+        <option value="clear" selected>Clear</option>
+        <option value="hazy">Hazy</option>
+        <option value="overcast">Overcast</option>
+        <option value="golden-hour">Golden hour</option>
+        <option value="night">Night</option>
+      </select></label>
+      <label id="atmosphere-row" class="hidden">Atmosphere <select id="atmosphere-preset">
+        <option value="none" selected>None</option>
+        <option value="clear-air">Clear air</option>
+        <option value="morning-mist">Morning mist</option>
+        <option value="haze">Haze</option>
+        <option value="valley-fog">Valley fog</option>
+      </select></label>
+    </div>
+    <!-- Brought to the dial language on 2026-09-09: name, dial, reading,
+         unit, in one .dial-block so the columns line up. Every one of
+         these had a slider and no number before, so none of them could
+         be read or typed into. -->
+    <div id="shelf-sky-settings" class="dial-block hidden">
+      <label id="hdri-projection-row" title="A grounded dome puts the photograph&#39;s own floor under the vault; infinite leaves it as a flat backdrop"><span>Projection</span>
+        <select id="hdri-projection">
+          <option value="projected" selected>Projected</option>
+          <option value="infinite">Infinite</option>
+        </select></label>
+      <label id="hdri-scale-row" title="The dome&#39;s radius: how far away the photographed world sits"><span>Scale</span>
+        <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60">
+        <b id="hdri-scale-value">60</b><em>m</em></label>
+      <label id="hdri-height-row" title="Camera height above the ground in the source photograph"><span>Height</span>
+        <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2">
+        <b id="hdri-height-value">2.0</b><em>m</em></label>
+      <label id="hdri-rotation-row" title="Spins the sky about the vertical, and re-aims the sun to match on release"><span>Rotation</span>
+        <input id="hdri-rotation" type="range" data-unit="1" min="0" max="360" step="1" value="0">
+        <b id="hdri-rotation-value">0</b><em>&#176;</em></label>
+    </div>
+    <div id="prop-tiles" class="tile-grid hidden"></div>
+    <!-- The scatter drawer. Param: "we should have a scatter tile next to
+         props that allows us to select the props we want, how often each
+         one appears, the size ratio we pick, and some other relevant
+         settings". A tab of its own rather than a button inside Layers,
+         because choosing species is browsing, and browsing is what the
+         shelf is for. -->
+    <div id="scatter-panel" class="hidden">
+      <div id="scatter-species" class="tile-grid"></div>
+      <div id="scatter-chosen"></div>
+      <!-- One block, one shape: name, dial, reading, unit. Param: "we want
+           to be rigorus with how we place sliders and make sure each tile
+           has the same language in style". -->
+      <div class="dial-block" id="scatter-controls">
+        <label title="The circle that follows the cursor. Click inside it to fill it."><span>Brush</span>
+          <input id="scatter-radius" type="range" min="0.5" max="20" step="0.5" value="4">
+          <b id="scatter-radius-value">4.0</b><em>m</em></label>
+        <label title="The clear gap between items, as a multiple of each one&#39;s own width. Below 1 they touch and overlap, which is what a meadow does. Not metres: the library runs from a 4 cm moss patch to a 30 m tree."><span>Spacing</span>
+          <input id="scatter-spacing" type="range" min="0.3" max="3" step="0.05" value="0.9">
+          <b id="scatter-spacing-value">0.90</b><em>x</em></label>
+        <label title="Every item is scaled somewhere in this range, about its feet, so a stand does not read as one model repeated"><span>Size</span>
+          <span class="range-pair">
+            <input id="scatter-size-min" type="range" min="0.3" max="1" step="0.05" value="0.8">
+            <input id="scatter-size-max" type="range" min="1" max="3" step="0.05" value="1.3"></span>
+          <b id="scatter-size-value">0.80 to 1.30</b><em>x</em></label>
+        <label title="0 spreads them evenly, 100 gathers them into tight stands with clear ground between"><span>Clumping</span>
+          <input id="scatter-clump" type="range" min="0" max="100" step="5" value="30">
+          <b id="scatter-clump-value">30</b><em>%</em></label>
+        <label title="How wide a clump is, across"><span>Clump size</span>
+          <input id="scatter-clump-size" type="range" min="1" max="20" step="0.5" value="6">
+          <b id="scatter-clump-size-value">6.0</b><em>m</em></label>
+        <label title="Nothing is planted inside the vault, or within this much of it"><span>Keep clear</span>
+          <input id="scatter-clearance" type="range" min="0" max="8" step="0.25" value="1.5">
+          <b id="scatter-clearance-value">1.50</b><em>m</em></label>
+        <label><span>Turn</span>
+          <select id="scatter-turn">
+            <option value="360" selected>Any way</option>
+            <option value="0">All the same</option>
+          </select></label>
+        <label title="The same seed lays out the same field. The dice deals a new one."><span>Seed</span>
+          <input id="scatter-seed" type="number" min="1" max="99999" step="1" value="1">
+          <button id="scatter-dice" title="Deal a new arrangement, same rules">Dice</button></label>
+      </div>
+      <div id="scatter-actions">
+        <button id="scatter-brush" class="primary" title="A circle follows the cursor: press and drag to paint, go over ground again to thicken it. Middle-drag orbits, right-drag pans, Escape puts it down">Brush</button>
+        <button id="scatter-area" title="Drag a rectangle on the ground to fill it; click to fill it again, drag another to move on. Escape puts it down">Drag an area</button>
+        <button id="scatter-undo-last" title="Remove the last stroke" disabled>Remove last</button>
+      </div>
+      <div id="scatter-readout">pick one or more species to scatter</div>
+    </div>
+    <!-- The lights drawer. Same shape as the scatter drawer above,
+         deliberately: a scrolling grid of tiles, then ONE aligned block of
+         dials. Param: "we want to be rigorus with how we place sliders and
+         make sure each tile has the same language in style". -->
+    <div id="lights-panel" class="hidden">
+      <div id="lights-kinds" class="tile-grid"></div>
+      <div class="dial-block" id="lights-controls">
+        <label title="How much light the fixture gives, in the lumens printed on the box"><span>Output</span>
+          <input id="lamp-lumens" type="range" min="0" max="20000" step="50" value="4000">
+          <b id="lamp-lumens-value">4000</b><em>lm</em></label>
+        <label title="Candlelight at one end of the dial, overcast noon at the other"><span>Warmth</span>
+          <input id="lamp-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
+          <b id="lamp-kelvin-value">3000</b><em>K</em></label>
+        <label title="A gel held over the fixture's own warmth: white is no gel at all"><span>Colour</span>
+          <input id="lamp-tint" type="color" value="#ffffff">
+          <b id="lamp-tint-value">#ffffff</b><em>gel</em></label>
+        <label title="Stop drawing the fixture's body: its light does not change, and you can still click it where it stands or pick it from the Layers tile"><span>Invisible</span>
+          <input id="lamp-invisible" type="checkbox">
+          <b id="lamp-invisible-value">no</b><em></em></label>
+        <!-- THE SPOT ALONE. Shown only while a spot is under the dials,
+             because a control that does nothing in the current mode is
+             hidden rather than shown dead (the interface language,
+             section 7). The class is on the LABEL, so each row leaves
+             the grid whole when it goes. -->
+        <label class="spot-dial hidden" title="How wide the cone opens, edge to edge: a narrow beam picks out one voussoir, a wide one washes a bay"><span>Aperture</span>
+          <input id="lamp-aperture" type="range" min="5" max="150" step="1" value="45">
+          <b id="lamp-aperture-value">45</b><em>&#176;</em></label>
+        <label class="spot-dial hidden" title="How soft the edge of the pool is: nought a cut edge, a hundred all falloff"><span>Softness</span>
+          <input id="lamp-softness" type="range" min="0" max="100" step="1" value="35">
+          <b id="lamp-softness-value">35</b><em>%</em></label>
+        <label class="spot-dial hidden" title="How far the beam carries before it is gone; nought means no limit, the way a real beam behaves"><span>Reach</span>
+          <input id="lamp-reach" type="range" data-unit="1" min="0" max="60" step="0.5" value="0">
+          <b id="lamp-reach-value">0</b><em>m</em></label>
+        <label class="spot-dial hidden" title="Let the beam be interrupted: a spot with nothing to stop it reads as a glow rather than a beam"><span>Shadow</span>
+          <input id="lamp-shadow" type="checkbox" checked>
+          <b id="lamp-shadow-value">on</b><em></em></label>
+        <label><span>Size</span>
+          <input id="light-size" type="range" min="0.1" max="6" step="0.05" value="1">
+          <b id="light-size-value">1.00</b><em>x</em></label>
+        <label title="Stretches the long axis alone, which is what makes a strip a strip"><span>Length</span>
+          <input id="light-length" type="range" min="0.1" max="12" step="0.1" value="1">
+          <b id="light-length-value">1.0</b><em>x</em></label>
+      </div>
+      <div id="lights-readout">click a fixture to place it, then a placed one to tune it</div>
+    </div>
+    <div id="shelf-grid" class="tile-grid hidden"></div>
+    <div id="scene-list" class="hidden"></div>
+    <div id="prop-credit"></div>
+    <!-- The layer tabs: the drawer's bottom edge. The open tab is where
+         newly placed props land; the eye hides a whole layer. -->
+    <div id="layer-tabs" class="hidden"></div>
+  </div>
+  <div id="shelf-tabs">
+    <button id="shelf-undo" class="shelf-act" title="Nothing to undo yet" disabled>&#8630;</button>
+    <button id="shelf-redo" class="shelf-act" title="Nothing to redo" disabled>&#8631;</button>
+    <button data-shelf="props" title="Browse and place props">Props</button>
+    <button data-shelf="scatter" title="Scatter props over an area: pick the species, how often each appears and how their size varies">Scatter</button>
+    <button data-shelf="lights" title="Place and tune light fixtures: sphere, strip and cube">Lights</button>
+    <button data-shelf="materials" title="Browse materials, assign to the skin or the floor">Materials</button>
+    <button data-shelf="skies" title="Browse skies: click one to light the scene">Skies</button>
+    <button data-shelf="layers" title="Group placed props: show, hide, duplicate whole sets">Layers</button>
+    <button data-shelf="scenes" title="Save, restore and delete whole scenes">Scenes</button>
+    <!-- The Edit tile stood here until 2026-09-12. Param: "we can
+         then after this remove the edit mode tile and just keep it in
+         layers and this double click function." Edit mode is reached
+         from the Layers drawer now; a double click on any prop gives
+         it handles with no mode at all, and the hover badge answers
+         Delete and the arrow keys without one either. -->
+    <button id="shelf-play" class="shelf-act" title="Play the animation (Space; press twice for the start)">&#9654;</button>
+    <button id="shelf-restart" class="shelf-act" title="Play again from the start">&#8635;</button>
+    <button id="shelf-stop" class="shelf-act" title="Stop, and put the scene back as it stood before the take" disabled>&#9632;</button>
+    <button id="shelf-record" class="shelf-act" title="Record the animation at 1080p">&#9679;</button>
+  </div>
+</div>
+<!-- THE LIVE GRAPHS. Param: "3 tiled graphs to the left in a mostly
+     translucent window for each graph, each in a row to the left of the
+     screen ... so we can see live the pre stress per cable building".
+     Cards stacked down the left edge, drawn from live_graphs.js's model
+     as the take plays, scrubbed with it, and clickable to seek. The
+     header row names the study, offers the series as a sheet and closes
+     the window; the notes line states the model's assumptions in full,
+     because a number without its assumption is not a prediction. -->
+<div id="graphs-panel" class="hidden">
+  <header id="graphs-head">
+    <span id="graphs-title">Live</span>
+    <span id="graphs-study"></span>
+    <button id="graphs-csv" title="Download every series as a sheet, one row per instant, with the model's assumptions on top">CSV</button>
+    <button id="graphs-close" title="Hide the live graphs">&#215;</button>
+  </header>
+  <!-- The one number no document states: what the reels put into the net
+       before anything is cast, as a fraction of each cable's final
+       thrust. Set it to the winch a physical model uses. -->
+  <div class="dial-block" id="graphs-dials">
+    <label title="The prestress the machine puts into every cable before the first casting, as a share of that cable's final thrust. No document states it; set it to the winch the physical model uses."><span>Prestress</span>
+      <input id="graphs-prestress" type="range" min="0" max="100" step="5" value="10">
+      <b id="graphs-prestress-value">10</b><em>%</em></label>
+  </div>
+  <div id="graphs-cards"></div>
+  <div id="graphs-notes"></div>
+  <!-- Tucks the column to the side and brings it back, remembered. -->
+  <button id="graphs-collapse" title="Tuck the graphs to the side">&#8249;</button>
+</div>
+<!-- THE PANEL BESIDE THE LIGHT. Param, 2026-09-12: "I have an idea only
+     in edit mode we can move them around, but if we click them when not
+     in edit mode, then a translucent setting pops up next to it where
+     we can control the sliders and options for each type of light, then
+     when we click anywhere not on the light or the menu it disappears."
+
+     So: out of edit mode a left click on a fixture opens this beside it
+     on the screen, holding THAT fixture's own controls and nothing
+     else, and every write goes to that fixture alone. A click anywhere
+     that is not the fixture and not this panel closes it, and so does
+     Escape, before the drawer's own Escape. In edit mode a click still
+     picks the fixture up as it always did and this never opens.
+
+     It sits at the graphs' own height and after them in the document,
+     so it paints over them; it is closed outright for a plate or a
+     take, so it can never be in a picture. -->
+<div id="fixture-panel" class="hidden">
+  <div id="fixture-name">Fixture</div>
+  <div class="dial-block" id="fixture-dials">
+    <label title="How much light this fixture gives, in the lumens printed on the box"><span>Output</span>
+      <input id="fixture-lumens" type="range" min="0" max="20000" step="50" value="4000">
+      <b id="fixture-lumens-value">4000</b><em>lm</em></label>
+    <label title="Candlelight at one end of the dial, overcast noon at the other"><span>Warmth</span>
+      <input id="fixture-kelvin" type="range" min="1800" max="6500" step="50" value="3000">
+      <b id="fixture-kelvin-value">3000</b><em>K</em></label>
+    <label title="A gel held over this fixture's own warmth: white is no gel at all"><span>Colour</span>
+      <input id="fixture-tint" type="color" value="#ffffff">
+      <b id="fixture-tint-value">#ffffff</b><em>gel</em></label>
+    <label title="How big this fixture is, all three axes together"><span>Size</span>
+      <input id="fixture-size" type="range" min="0.1" max="6" step="0.05" value="1">
+      <b id="fixture-size-value">1.00</b><em>x</em></label>
+    <label id="fixture-length-row" title="Stretches the long axis alone, which is what makes a strip a strip"><span>Length</span>
+      <input id="fixture-length" type="range" min="0.1" max="12" step="0.1" value="1">
+      <b id="fixture-length-value">1.0</b><em>x</em></label>
+    <label title="Stop drawing this fixture's body: its light does not change, and you can still click it where it stands or pick it from the Layers tile"><span>Invisible</span>
+      <input id="fixture-invisible" type="checkbox">
+      <b id="fixture-invisible-value">no</b><em></em></label>
+    <label class="fixture-spot hidden" title="How wide the cone opens, edge to edge: a narrow beam picks out one voussoir, a wide one washes a bay"><span>Aperture</span>
+      <input id="fixture-aperture" type="range" min="5" max="150" step="1" value="45">
+      <b id="fixture-aperture-value">45</b><em>&#176;</em></label>
+    <label class="fixture-spot hidden" title="How soft the edge of the pool is: nought a cut edge, a hundred all falloff"><span>Softness</span>
+      <input id="fixture-softness" type="range" min="0" max="100" step="1" value="35">
+      <b id="fixture-softness-value">35</b><em>%</em></label>
+    <label class="fixture-spot hidden" title="How far the beam carries before it is gone; nought means no limit, the way a real beam behaves"><span>Reach</span>
+      <input id="fixture-reach" type="range" data-unit="1" min="0" max="60" step="0.5" value="0">
+      <b id="fixture-reach-value">0</b><em>m</em></label>
+    <label class="fixture-spot hidden" title="Let the beam be interrupted: a spot with nothing to stop it reads as a glow rather than a beam"><span>Shadow</span>
+      <input id="fixture-shadow" type="checkbox" checked>
+      <b id="fixture-shadow-value">on</b><em></em></label>
+  </div>
+  <div id="fixture-readout">click anywhere else to close</div>
+</div>
+<div id="legend" class="hidden">
+  <div id="legend-title"></div>
+  <div id="legend-bar"></div>
+  <div id="legend-labels"><span id="legend-min"></span><span id="legend-zero"></span><span id="legend-max"></span></div>
+</div>
+<!-- One button per panel section, on the viewport beside the panel.
+     Param: "at the top right of the viewport besides the menu we should
+     have a translucentish button one for each section... when a button is
+     clicked that information is all that is shown." The panel keeps a
+     permanent header (theme, build stamp) and footer (views, restart);
+     the middle is whichever section's tab is lit. -->
+<nav id="tab-rail">
+  <button data-section="import-section" type="button">Import</button>
+  <button data-section="study-section" type="button">Skin</button>
+  <button data-section="analysis-section" type="button">Analysis</button>
+  <button data-section="cablenet-section" type="button">Cable net</button>
+  <button data-section="animation-section" type="button">Animation</button>
+  <button data-section="camera-section" type="button">Camera</button>
+  <button data-section="scene-section" type="button">Scene</button>
+  <button data-section="output-section" type="button">Output</button>
+</nav>
+<aside id="panel">
+  <div id="panel-top">
+    <button id="theme-toggle" type="button" title="Light or dark">Light</button>
+    <span id="build-stamp" title="Which build this page is running. If it does not change after an edit, the page is cached.">__BUILD__</span>
+  </div>
+  <details id="import-section">
+    <summary>Import</summary>
+    <div id="folder-row" class="folder-line">
+      <button id="folder-choose" title="Pick the folder your vault JSONs are saved in">Vault folder</button>
+      <span id="folder-path" title="">no folder chosen</span>
+    </div>
+    <div id="vault-row">
+      <select id="study-select"></select>
+      <button id="study-refresh" title="Re-read the folder for new saves">Refresh</button>
+    </div>
+    <!-- The vault wears the mechanism exported with it, and nothing else
+         (Param, 2026-09-15): "the only option should be mechanism or no
+         mechanism and this can be a toggle". Hidden until the vault
+         actually carries a mechanism, so it is never a dead control. -->
+    <label id="machine-row" class="hidden" title="Show the mechanism exported with this vault"><input id="show-machine" type="checkbox" checked> Mechanism</label>
+    <div id="vault-tools">
+      <button id="live-toggle" class="on" title="Live: follow Grasshopper"><span class="beacon"></span>LIVE</button>
+      <button id="delete-study" class="danger" title="Delete this vault's JSON from the folder">Delete</button>
+    </div>
+    <div id="source-row" class="hidden">
+      <span class="row-heading">Cut</span>
+      <div class="switch-line">
+        <span class="toggle-end" id="source-end-authored">Grasshopper</span>
+        <label class="toggle"><input id="source-toggle" type="checkbox"><span class="track"></span></label>
+        <span class="toggle-end" id="source-end-generated">Engine</span>
+      </div>
+    </div>
+    <div id="import-status"></div>
+  </details>
+  <details id="study-section" open>
+    <summary>Skin</summary>
+    <!-- The structural-material picker is gone from view: the weight
+         system derives the material from the chosen skin, and the sprayed
+         distinction moved to the Pattern control. The hidden select below
+         remains the state the server contract reads. -->
+    <button id="material-picker" class="picker hidden" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Material</span><span class="chevron"></span></button>
+    <div id="material-tiles" class="tile-grid hidden"></div>
+    <select id="material-select" class="hidden">
+      <option value="concrete">Concrete C30/37</option>
+      <option value="concrete-c50">Concrete C50/60</option>
+      <option value="concrete-sprayed">Sprayed concrete C25/30</option>
+      <option value="timber">Timber GL24h</option>
+      <option value="brick">Brick masonry</option>
+      <option value="tile">Fired clay tile</option>
+      <option value="stone">Limestone</option>
+    </select>
+    <!-- THE SKIN IS CHOSEN IN THE SHELF'S MATERIALS TILE, by Assign to
+         skin. Param, 2026-09-14: "if theres banner menu items which are captured
+         in the tiles then we dont need them in the menu".
+         The picker here only ever opened that tile, and the grid hidden
+         under it was built, and its built-ins rendered, to lend the picker
+         a swatch. Both are gone. The folder stays: which library the tile
+         shows is a setting, not a picture. -->
+    <div id="material-folder-row" class="folder-line">
+      <button id="material-folder-choose" title="Pick your material library folder">Material folder</button>
+      <span id="material-folder-path" title="">no folder chosen</span>
+    </div>
+    <!-- The three procedural presets (white presentation, basalt, ply) are
+         gone on Param's word: the library is the skin catalogue now, and
+         "None (material)" is the one built-in -- the structural material's
+         own plain look. -->
+    <select id="render-skin" class="hidden">
+      <option value="none" selected>None (material)</option>
+    </select>
+    <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
+    <div class="dial-block" id="skin-appearance-dials">
+    <label title="How glossy the skin reads, from matt to polished"><span>Shine</span>
+      <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5">
+      <b id="material-finish-value">50</b><em>%</em></label>
+    <label title="How deep the skin&#39;s bump reads. QS&#39;s own convention is that 1 means 10 mm."><span>Relief</span>
+      <input id="material-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1">
+      <b id="material-relief-value">10</b><em>mm</em></label>
+    <label title="How strongly the material&#39;s own shadowing reads"><span>Occlusion</span>
+      <input id="material-occlusion" type="range" data-unit="100" min="0" max="2" step="0.05" value="1">
+      <b id="material-occlusion-value">100</b><em>%</em></label>
+    <label title="How much each voussoir&#39;s patch of the sheet differs from its neighbour&#39;s"><span>Variation</span>
+      <input id="material-variation" type="range" data-unit="100" min="0" max="2" step="0.05" value="1">
+      <b id="material-variation-value">100</b><em>%</em></label>
+    </div>
+    <!-- Param: "a outline slider... it will just add a dark line around
+         the vault voussoirs as an outline. the slider goes from a 0 line
+         to thicker line". It rests at zero, which is why it declares its
+         own unit: a slider sitting at 0 cannot say whether its reading is
+         millimetres or metres, so the typed-value factor cannot be
+         derived from it.
+
+         It sat under ENVIRONMENT until Param moved it here, and he was
+         right: it draws on the voussoirs, so it belongs with the other
+         controls that change how they look, not with the sky. -->
+    <div class="dial-block" id="skin-outline-dials">
+    <label id="outline-row" title="A dark line inked around every voussoir. Zero is no line at all."><span>Outline</span>
+      <input id="outline-width" type="range" min="0" max="0.025" step="0.001" value="0" data-unit="1000">
+      <b id="outline-width-value">0</b><em>mm</em></label>
+    </div>
+    <label title="Run the picture's grain up the slope of each voussoir, the way boards would be laid along each leg"><input id="material-grain" type="checkbox"> Match grain</label>
+    <button id="uv-randomise" title="Re-deal every voussoir's window of the sheet so no two wear the same patch">Randomise texture</button>
+    <button id="material-reset">Reset appearance</button>
+    <div id="appearance-note" class="hidden"></div>
+    <div class="named"><span>Pattern</span><select id="pattern-select"></select></div>
+    <div id="pattern-note"></div>
+    <div class="dial-block" id="skin-cut-dials">
+    <label title="The target size of one voussoir. An authored cut ignores it."><span>Piece size</span>
+      <input id="size-slider" type="range" min="0.1" max="3" step="0.05" value="0.9">
+      <b id="size-slider-value">900</b><em><span id="size-units">mm target</span>, <span id="piece-count">0</span> pieces in <span id="course-count">0</span> courses</em></label>
+    <label title="The shell&#39;s thickness, which the analysis weighs it by"><span>Thickness</span>
+      <input id="thickness-input" type="range" min="0.02" max="0.5" step="0.01" value="0.2">
+      <b id="thickness-input-value">200</b><em>mm</em></label>
+    </div>
+    <div id="weight-note" title="Areal load from the skin's density and the thickness: the q a true analysis runs on"></div>
+  </details>
+  <details id="analysis-section">
+    <summary>Analysis</summary>
+    <button id="run-button" class="primary">Run staged analysis</button>
+    <div id="run-status"></div>
+    <div id="layer-toggles"></div>
+    <label class="named"><span>Stress surface</span> <select id="stress-surface">
+      <option value="per" selected>Per surface</option>
+      <option value="worst">Worst of both</option>
+      <option value="top">Top</option>
+      <option value="bottom">Bottom</option>
+    </select></label>
+    <!-- Parked here hidden; buildLayerToggles moves it under the
+         Deflection button when that layer is active, so the slider lives
+         with the thing it exaggerates. -->
+    <div class="dial-block" id="analysis-dials">
+    <label id="exaggeration-row" class="hidden" title="How far the deflection is exaggerated, so a millimetre reads on screen"><span>Deflection</span>
+      <input id="exaggeration" type="range" min="1" max="500" step="1" value="100">
+      <b id="exaggeration-value">100</b><em>x</em></label>
+    </div>
+    <button id="data-button">Data</button>
+    <!-- The old floating overlay card, reading in place under the Data
+         button now (Param: "text that just reads below the data button"). -->
+    <div id="hud"></div>
+    <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
+    <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
+  </details>
+  <details id="cablenet-section">
+    <summary>Cable net</summary>
+    <!-- The cable net as a view (spec 2026-10-08). One primary action runs
+         the analysis; five lenses draw on the model through a ghosted skin;
+         the system is a named configuration, not nine parts; one Export
+         writes the configuration with its data. Price stays in the documents.
+         Every readout below is filled by cablenet.js; the lenses by studio.js. -->
+    <button id="cablenet-run" class="primary" title="Fit the net at every instant of the build, hold the column heads, and find where it must be grabbed">Run cable net analysis</button>
+    <div id="cablenet-run-status"></div>
+    <div class="dial-block" id="cablenet-dials">
+    <label title="The least tension every net member is given: the floor the sag is judged at"><span>Prestress</span>
+      <input id="cablenet-prestress" type="range" min="100" max="5000" step="50" value="300">
+      <b id="cablenet-prestress-value">300</b><em>N</em></label>
+    <label title="How fast the rope is wanted to run. Nothing passes or fails on it: no prototype has said what rate the net wants, and finding out is what the machine is for"><span>Rope speed</span>
+      <input id="cablenet-speed" type="range" min="1" max="400" step="1" value="50">
+      <b id="cablenet-speed-value">50</b><em>mm/s</em></label>
+    </div>
+    <div id="cablenet-speed-note" class="layer-note"></div>
+    <div id="cablenet-demand" class="cablenet-readout"></div>
+    <div id="cablenet-lenses" class="lens-list"></div>
+    <div id="cablenet-stage" class="layer-note"></div>
+    <div class="named"><span>System</span><select id="cablenet-configuration" title="A designed, complete, buildable mechanism"></select></div>
+    <div id="cablenet-configuration-note" class="cablenet-readout"></div>
+    <button id="cablenet-recommend" title="Pick the configuration that carries the skin with the largest margin, its ceiling over the tension the wires are judged at; among ties, the fewest parts">Recommend</button>
+    <div id="cablenet-recommend-note" class="cablenet-readout"></div>
+    <button id="cablenet-vary-toggle" title="Change one part at a time; the panel then says the system is modified from its configuration">Vary parts</button>
+    <div id="cablenet-parts" class="hidden"></div>
+    <div id="cablenet-settled" class="layer-note"></div>
+    <div id="cablenet-holds" class="cablenet-readout"></div>
+    <div id="cablenet-grab" class="cablenet-readout"></div>
+    <button id="cablenet-export" title="Write the configuration with its data: the spreadsheet, the diagram and the data sheet">Export</button>
+    <div id="cablenet-export-row" class="folder-line">
+      <button id="cablenet-export-choose" title="Choose where the cable net exports are written">Export folder</button>
+      <span id="cablenet-export-path" title="">no folder chosen</span>
+    </div>
+    <div id="cablenet-export-result" class="cablenet-readout"></div>
+  </details>
+  <details id="animation-section" open>
+    <summary>Animation</summary>
+    <!-- Play, Restart and Stop are the shelf's icons beside the drawer
+         tabs, and only those since 2026-09-14. Param, 2026-09-14: "if theres banner menu items which are captured
+         in the tiles then we dont need them in the menu".
+         The icons clicked these buttons; they call the take's own
+         functions now. -->
+    <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
+    <div class="dial-block" id="animation-dials">
+    <label title="How fast the build plays back"><span>Timeline speed</span>
+      <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1">
+      <b id="timeline-speed-value">1.00</b><em>x</em></label>
+    <label title="How fast the turntable orbits while the animation plays"><span>Spin rate</span>
+      <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3">
+      <b id="orbit-speed-value">0.3</b><em>x</em></label>
+    </div>
+    <!-- Record moved to the Output section, which is where the still and
+         the take now sit together: they are one job document, and a
+         lens control is not an output control. MOVED, not copied. -->
+  </details>
+  <details id="camera-section">
+    <summary>Camera</summary>
+    <!-- EVERYTHING THAT IS NOT A DIAL SITS ABOVE THE BLOCK.
+         .dial-block is an eight-column grid and .dial-block label is
+         display:contents, so a dial dissolves into exactly four cells
+         and two dials fill a row. That only holds while every child is
+         a label: a bare div takes one cell, shifts every dial after it
+         by one column, and overflows the panel. Three of them had
+         accumulated in here and the Camera section was 302 px of
+         content in a 235 px box, with Front/Back/Right/Plan hanging off
+         the right edge. Section does it correctly at
+         #section-axis-segments and is the pattern to copy. -->
+    <!-- The frame: preset screen ratios, letterboxed live and honoured by
+         the recording. Fill is the whole viewport, as it always was. -->
+    <select id="camera-aspect" class="hidden" title="Frame ratio">
+      <option value="fill" selected>Fill</option>
+      <option value="1.7778">16:9</option>
+      <option value="1.3333">4:3</option>
+      <option value="1">1:1</option>
+      <option value="0.8">4:5</option>
+      <option value="0.5625">9:16</option>
+    </select>
+    <div id="camera-aspect-segments" class="segmented"></div>
+    <!-- Projection, and the standing places a drawing is made from.
+         Orthographic is what turns a picture into a drawing: every bay of
+         an arcade the same width on the page, the springing line straight
+         rather than raked, and an image somebody can measure. The scale
+         bar in the corner appears with it and only with it, because in
+         perspective it would be a lie that looked like a measurement. -->
+    <select id="camera-projection" class="hidden" title="Projection">
+      <option value="perspective" selected>Perspective</option>
+      <option value="orthographic">Orthographic</option>
+    </select>
+    <div id="camera-projection-segments" class="segmented"></div>
+    <div id="camera-views">
+      <button data-view="front" title="Look north along -Y, elevation">Front</button>
+      <button data-view="back" title="Look south along +Y, rear elevation">Back</button>
+      <button data-view="left" title="Look east along -X, side elevation">Left</button>
+      <button data-view="right" title="Look west along +X, side elevation">Right</button>
+      <button data-view="top" title="Look straight down, plan with north up">Plan</button>
+      <button data-view="iso" title="The three-quarter view a model is usually read from">Iso</button>
+    </div>
+    <div class="dial-block" id="camera-dials">
+    <!-- Two rows for one row's worth of space, swapped by the
+         projection. A parallel projection has no focal length, so the
+         lens equivalent is meaningless there; the frame's real width is
+         not, and it is the number an architect reads off a drawing.
+         The lens row is HIDDEN rather than disabled, because the lens is
+         not dead while orthographic: it still decides the frame height
+         on the way back out to perspective. -->
+    <label id="camera-fov-row" title="Narrow reads as a long lens and flattens the vault; wide exaggerates its depth"><span>Field of view</span>
+      <input id="camera-fov" type="range" min="15" max="100" step="1" value="45">
+      <b id="camera-fov-value">45</b><em>&deg; &#8776; <span id="camera-mm">29</span> mm</em></label>
+    <label id="camera-width-row" title="How wide the frame is across the model, which is the number a drawing is measured by. Type into it to set a plate to an exact width."><span>View width</span>
+      <input id="camera-width" type="range" min="0.5" max="200" step="0.01" value="20">
+      <b id="camera-width-value">20.00</b><em>m</em></label>
+    <label title="The grade on the lens, not the light in the scene"><span>Brightness</span>
+      <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1">
+      <b id="brightness-value">100</b><em>%</em></label>
+    <label title="Lifts the blacks or crushes them, after the tone mapper"><span>Contrast</span>
+      <input id="contrast" type="range" data-unit="100" min="-0.5" max="0.5" step="0.02" value="0">
+      <b id="contrast-value">0</b><em>%</em></label>
+    </div>
+</details>
+  <details id="scene-section">
+    <summary>Scene</summary>
+    <!-- Group order is the order a renderer user works in: the light (sun,
+         then the sky feeding it), the image those two produce, then the
+         world under the vault (ground, props), and last the scenes that
+         capture the lot -- a capture-everything control at the boundary of
+         what it captures, not in the middle of it. -->
+    <span class="row-heading">Sun</span>
+    <div id="sun-widget">
+      <canvas id="sun-dial" width="234" height="150"></canvas>
+      <div id="sun-readout"><span id="sun-time">12:00</span><span id="sun-angles">180 / 60</span></div>
+    </div>
+    <canvas id="day-track" width="234" height="24"></canvas>
+    <div id="day-cycle-row">
+      <button id="day-cycle-button">Day cycle</button>
+      <label><input id="day-cycle-record" type="checkbox"> During recordings</label>
+      <input id="day-cycle-seconds" type="range" min="10" max="120" step="5" value="30" class="hidden">
+    </div>
+    <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140" class="hidden">
+    <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40" class="hidden">
+    <input id="sun-colour" type="color" value="#ffffff" class="hidden">
+
+    <!-- WHERE and WHEN the sun is solved for. The solving itself has
+         always been real: fields.js runs the NOAA/Meeus position with
+         the equation of time and Bennett's refraction, good to about a
+         tenth of a degree. What was written into the source rather than
+         offered was the place (London) and the day (whenever the page
+         loaded), which the two comments in studio.js both said would
+         come later. This is later.
+         North is the one that changes a picture most. A model's +Y and
+         the site's north are the same direction only by accident, and
+         until you can say the angle between them, a correctly computed
+         sun still lands on the wrong side of the vault. -->
+    <!-- The cut. Everything the work argues is inside the shell:
+         voussoir joints, thickness varying with thrust, the net under
+         the masonry, where the permanent works meet the plant. A
+         section in parallel projection with the cut faces filled is
+         the one image the studio could not make.
+         Box is offered and refuses, so the control says what is coming
+         rather than pretending a single plane is all there is.
+         There is no cut-fill colour, and that is measured rather than
+         forgotten: every vault material here is already double-sided,
+         so a clipped closed solid draws its own interior and the cut
+         caps itself. A flat poche needs the stencil two-pass, and the
+         colour belongs to that. -->
+    <span class="row-heading">Section</span>
+    <select id="section-mode" class="hidden" title="Cut the works open">
+      <option value="off" selected>Off</option>
+      <option value="plane">Plane</option>
+      <option value="box">Box</option>
+    </select>
+    <div id="section-mode-segments" class="segmented"></div>
+    <select id="section-axis" class="hidden" title="Which way the cut faces">
+      <option value="x">X</option>
+      <option value="y" selected>Y</option>
+      <option value="z">Z</option>
+    </select>
+    <div id="section-axis-segments" class="segmented"></div>
+    <div class="dial-block" id="scene-section-dials">
+      <label title="Where along the axis the cut stands, measured from the model origin"><span>Offset</span>
+        <input id="section-offset" type="range" min="-30" max="30" step="0.05" value="0" data-unit="1">
+        <b id="section-offset-value">0.00</b><em>m</em></label>
+    </div>
+    <div id="section-row">
+      <label title="Cut the machine with the vault, or leave it standing whole beside the section"><input id="section-machine" type="checkbox"> Cut the machine</label>
+    </div>
+
+    <span class="row-heading">Site</span>
+    <div id="site-row">
+      <select id="site-place" title="Jump to a place. Choosing one sets the latitude and longitude; moving either afterwards puts this back to Custom."></select>
+      <input id="site-date" type="date" title="The day the sun is solved for. Noon shadow length changes far more between June and December than it does across a whole afternoon.">
+    </div>
+    <div class="dial-block" id="scene-site-dials">
+      <label title="How far north of the equator the site is. Both the direction of a shadow and the length of the day follow from it."><span>Latitude</span>
+        <input id="site-latitude" type="range" min="-60" max="72" step="0.01" value="51.51">
+        <b id="site-latitude-value">51.51</b><em>&deg;N</em></label>
+      <label title="How far east of Greenwich the site is. This shifts solar noon against the clock, so it moves what time of day a given shadow happens at."><span>Longitude</span>
+        <input id="site-longitude" type="range" min="-180" max="180" step="0.01" value="-0.13">
+        <b id="site-longitude-value">-0.13</b><em>&deg;E</em></label>
+      <label title="Which compass bearing the model's +Y axis points along. Leave it at 0 and the model's north is true north."><span>North</span>
+        <input id="site-north" type="range" min="0" max="359" step="1" value="0" data-unit="1">
+        <b id="site-north-value">0</b><em>&deg;</em></label>
+    </div>
+
+    <!-- THE SETTINGS OF THE AIR AND THE LIGHT, moved here from the Skies
+         drawer on 2026-09-14. Param: "The wind the light rays etc and some
+         of these additional controls need to move to the scene banner menu.
+         We need to do a swap around so we dont repeat many inputs". The
+         drawer keeps what is chosen by picture (the modes, the weathers,
+         the atmospheres, the skies) and the dials that tune the photograph
+         it shows; the settings that hold whatever the picture live here.
+         MOVED, not copied. -->
+    <span class="row-heading">Sky</span>
+    <!-- Studio / Sky / HDRI and the weather moved to the shelf's Skies
+         drawer on Param's word: "in skies tile lets also put the tab to
+         studio and sky modes and choose from the options they have too".
+         MOVED, not copied: two controls over one piece of state is how
+         they come to disagree. -->
+    <div id="hdri-row" class="hidden">
+      <div id="hdri-folder-row" class="folder-line">
+        <button id="hdri-folder-choose" title="Pick the folder your HDRIs are in">Sky folder</button>
+        <span id="hdri-folder-path" title="">no folder chosen</span>
+      </div>
+      <!-- The sky itself is chosen in the shelf's Skies tile; the picker
+           that opened it went on 2026-09-14, with the other openers. -->
+      <label class="hidden">HDRI <select id="hdri-select"></select></label>
+      <div id="hdri-status"></div>
+      <!-- Projection, scale, height and rotation moved to the shelf's
+           Skies drawer: they belong beside the pictures they tune. -->
+    </div>
+    <div class="dial-block" id="scene-background-dials">
+    <label title="How bright the day is: the sky, the sun, the sky light and the backdrop together. Turn it down to let the fixtures read; the clock past dusk is a night of its own."><span>Brightness</span>
+      <input id="sky-brightness" type="range" min="0" max="200" step="1" value="100">
+      <b id="sky-brightness-value">100</b><em>%</em></label>
+    <label id="background-row" title="How light the studio backdrop sits behind the vault"><span>Background</span>
+      <input id="background-tone" type="range" min="0" max="100" step="1" value="85">
+      <b id="background-tone-value">85</b><em>%</em></label>
+    </div>
+    <!-- Outline moved to the Skin section, where the voussoirs it draws
+         around actually live. -->
+
+    <!-- Brightness and contrast moved to the Camera section: they are
+         the grade on the lens, not the light in the scene. -->
+
+    <!-- The light controls moved to the shelf's Lights drawer, beside the
+         fixtures they tune: "the light settings should find itself
+         somewhere else, maybe we need to make a light tile and put all the
+         lights there and not in props". -->
+
+    <span class="row-heading">Atmosphere</span>
+    <!-- The picker is the Skies tile's: with no atmosphere chosen these
+         dials have nothing to tune, so they stand aside and say where the
+         choice is made. -->
+    <div id="atmosphere-hint">No atmosphere: choose one from the Skies tile</div>
+    <div class="dial-block" id="scene-atmosphere-dials">
+    <label class="atmosphere-dial hidden" title="How thick the fog is at its base: the share of each kilometre of view it takes"><span>Density</span>
+      <input id="atmosphere-density" type="range" min="0" max="50" step="0.1" value="1.5">
+      <b id="atmosphere-density-value">1.5</b><em>/km</em></label>
+    <label class="atmosphere-dial hidden" title="How high the fog reaches: every this many metres up it thins to about a third, so a crown can stand clear of a fogged floor"><span>Fog height</span>
+      <input id="atmosphere-height" type="range" min="0.5" max="200" step="0.5" value="60">
+      <b id="atmosphere-height-value">60.0</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="Where the fog lies, in metres above the floor: it is densest here and thins upward"><span>Base</span>
+      <input id="atmosphere-base" type="range" data-unit="1" min="-5" max="50" step="0.5" value="0">
+      <b id="atmosphere-base-value">0.0</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="How far from the eye the fog begins, so what stands close stays crisp"><span>Start</span>
+      <input id="atmosphere-start" type="range" min="0" max="100" step="1" value="30">
+      <b id="atmosphere-start-value">30</b><em>m</em></label>
+    <label class="atmosphere-dial hidden" title="The most the fog may ever hide, so the far distance never vanishes entirely"><span>Max opacity</span>
+      <input id="atmosphere-opacity" type="range" min="0" max="100" step="1" value="50">
+      <b id="atmosphere-opacity-value">50</b><em>%</em></label>
+    <label class="atmosphere-dial hidden" title="How much of the sun&#39;s light the fog throws toward the eye when you look toward the sun; the moon&#39;s at night"><span>Sun glow</span>
+      <input id="atmosphere-glow" type="range" min="0" max="200" step="5" value="40">
+      <b id="atmosphere-glow-value">40</b><em>%</em></label>
+    <label class="atmosphere-dial hidden" title="How tight the glow around the sun is: low spreads it across the sky, high keeps it close about the sun"><span>Sun lobe</span>
+      <input id="atmosphere-lobe" type="range" min="1" max="64" step="1" value="8">
+      <b id="atmosphere-lobe-value">8</b><em>x</em></label>
+    <label class="atmosphere-dial hidden" title="A second layer, of mist lying on the ground, at its base"><span>Ground mist</span>
+      <input id="atmosphere-mist" type="range" data-unit="1" min="0" max="100" step="0.5" value="0">
+      <b id="atmosphere-mist-value">0.0</b><em>/km</em></label>
+    <label class="atmosphere-dial hidden" title="How high the ground mist reaches: every this many metres up it thins to about a third"><span>Mist height</span>
+      <input id="atmosphere-mist-height" type="range" min="0.2" max="20" step="0.1" value="2">
+      <b id="atmosphere-mist-height-value">2.0</b><em>m</em></label>
+    <!-- Desktop only: the pass behind it is a raymarch per pixel, and
+         on the iPad path there is no pass to drive, so studio.js keeps
+         this row hidden there. -->
+    <label id="atmosphere-shafts-row" class="atmosphere-dial hidden" title="Light rays: how strongly the sun lights the air itself -- beams where it gets through the trees, the vault and the net, and darker air where they stand in its way. At nought the frame is exactly as it was"><span>Light rays</span>
+      <input id="atmosphere-shafts" type="range" data-unit="1" min="0" max="100" step="5" value="0">
+      <b id="atmosphere-shafts-value">0</b><em>%</em></label>
+    </div>
+
+    <span class="row-heading">Wind</span>
+    <!-- The wind moves what is placed, and every shadow with it (wind.js),
+         whatever the sky. -->
+    <div class="dial-block" id="scene-wind-dials">
+    <label title="How hard the wind blows through everything placed: grass and leaves flutter, trees lean and sway, and their shadows move with them. At nought nothing moves"><span>Wind</span>
+      <input id="wind-strength" type="range" min="0" max="100" step="5" value="10">
+      <b id="wind-strength-value">10</b><em>%</em></label>
+    <label title="Where the wind comes from, measured the way the sun's azimuth is"><span>Wind from</span>
+      <input id="wind-from" type="range" min="0" max="360" step="5" value="225">
+      <b id="wind-from-value">225</b><em>&deg;</em></label>
+    <label title="How much the wind comes and goes: fronts of stronger air sweeping across the site, so a field moves in waves"><span>Gusts</span>
+      <input id="wind-gusts" type="range" min="0" max="100" step="5" value="50">
+      <b id="wind-gusts-value">50</b><em>%</em></label>
+    </div>
+
+    <span class="row-heading">Ground</span>
+    <div id="ground-folder-row" class="folder-line">
+      <button id="ground-folder-choose" title="Pick your ground material folder">Ground folder</button>
+      <span id="ground-folder-path" title="">no folder chosen</span>
+    </div>
+    <!-- The floor is chosen in the shelf's Materials tile, by Assign to
+         ground; the picker that opened it went on 2026-09-14. -->
+    <!-- Only the neutral studio floor remains built in; every real surface
+         comes from the ground library folder. -->
+    <label class="hidden">Surface <select id="ground-preset">
+      <option value="dark-studio" selected>Dark studio</option>
+    </select></label>
+    <div class="dial-block" id="scene-ground-dials">
+    <label title="The floor disc&#39;s radius: how much flooring there is"><span>Size</span>
+      <input id="ground-radius" type="range" min="2" max="200" step="1" value="60">
+      <b id="ground-radius-value">60</b><em>m radius</em></label>
+    <label title="Stretches the floor pattern, so a paver can read larger or smaller than its photograph"><span>Scale</span>
+      <input id="ground-scale" type="range" min="0.05" max="4" step="0.05" value="1">
+      <b id="ground-scale-value">100</b><em>%</em></label>
+    <label title="How deep the floor&#39;s bump reads. QS&#39;s own convention is that 1 means 10 mm."><span>Relief</span>
+      <input id="ground-relief" type="range" data-unit="10" min="0" max="4" step="0.05" value="1">
+      <b id="ground-relief-value">10</b><em>mm</em></label>
+    </div>
+    <!-- Param, 2026-09-12: "what it should mean is every instance
+         randomises, so that the repeating is different throughout and
+         it helps to hide some of the errors where repetition is too
+         noticable on surfaces". A checkbox rather than a dial: it is on
+         or it is not, and a dial would join section 10's census for a
+         setting with two states. -->
+    <label title="Read every tile of the floor from a different place in its picture, so a large floor stops showing the same pebble in rows. Costs three reads of each map instead of one, on the floor alone. Leave it off for a floor whose pattern is meant to read as a regular grid."><input id="ground-breakup" type="checkbox"> Break up the repeat</label>
+    <button id="ground-randomise" title="Re-lay the floor, and give every tile a fresh place to read its picture from">Randomise floor</button>
+
+    <span class="row-heading">Props</span>
+    <div id="props-folder-row" class="folder-line">
+      <button id="props-folder-choose" title="Pick the folder your prop models are in">Prop folder</button>
+      <span id="props-folder-path" title="">no folder chosen</span>
+    </div>
+    <div id="props-row">
+      <!-- Library opened the Props tile and did nothing else, so it went
+           with the other openers on 2026-09-14. -->
+      <!-- The panel's Edit button is gone with the tab strip's tile
+           (Param: "remove the edit mode tile and just keep it in layers
+           and this double click function"). Edit mode is reached from
+           the Layers drawer, or not at all: a double click on a prop
+           gives it handles without any mode. -->
+      <button id="props-clear" class="danger" title="Remove every placed prop">Clear</button>
+    </div>
+    <!-- How much detail distant props keep in the VIEWPORT. A tuft thirty
+         metres off covers four pixels, and drawing every blade of it was
+         most of what made a scattered field run at two frames a second.
+         A still and a take always render every prop at Full, whatever
+         this says: detail traded for speed while composing never reaches
+         a plate. -->
+    <span class="row-heading">Detail</span>
+    <select id="prop-detail" class="hidden" title="How soon distant props drop detail in the viewport. Stills and takes always render every prop at full detail.">
+      <option value="draft">Draft</option>
+      <option value="balanced" selected>Balanced</option>
+      <option value="full">Full</option>
+    </select>
+    <div id="prop-detail-segments" class="segmented"></div>
+    <!-- The prop grid lives in the shelf now: see #shelf at body level. -->
+    <select id="prop-type" class="hidden"></select>
+
+    <span class="row-heading">Scenes</span>
+    <!-- No viewport-clearing button here any more. Two buttons named Clear
+         sat a row apart and the scene one emptied the whole viewport --
+         vault, ground, the lot. Param: "no just have it remove the props
+         please." The props Clear is the one Clear; clearScene() remains a
+         function for study switching, not a button. -->
+    <!-- Scenes live in the shelf's Scenes drawer now: saving, restoring
+         and deleting all happen beside the pictures of the scenes. -->
+  </details>
+  <details id="output-section">
+    <summary>Output</summary>
+    <!-- THE PLATE. An A3 sheet at 300 dpi is 4961 x 3508 and the
+         recorder stops at 1920, so every figure has gone to press as an
+         upscale, and a 1500-voussoir vault at 1920 wide gives each piece
+         about forty pixels. Named for the page, because 4961 x 3508
+         means something and "8K" does not.
+         The shape comes from the Camera frame ratio; these decide only
+         how many pixels that shape gets. -->
+    <!-- ONE FOLDER FOR BOTH, above both, because it is both's: a still
+         and a take land side by side in it. It sat under Take, and the
+         still went somewhere else entirely. -->
+    <div id="recordings-folder-row" class="folder-line">
+      <button id="recordings-folder-choose" title="Pick where finished stills and recordings are saved">Output folder</button>
+      <span id="recordings-folder-path" title="">no folder chosen</span>
+    </div>
+    <span class="row-heading">Still</span>
+    <select id="still-size" class="hidden" title="How many pixels the composed frame gets. A3 and A2 are those sheets at 300 dpi.">
+      <option value="2k">2K</option>
+      <option value="4k">4K</option>
+      <option value="a3-300" selected>A3</option>
+      <option value="a2-300">A2</option>
+      <option value="8k">8K</option>
+    </select>
+    <div id="still-size-segments" class="segmented"></div>
+    <button id="still-render" class="primary" title="Render the composed frame at print resolution, in tiles, and stitch it">Render still</button>
+    <div id="still-readout"></div>
+    <!-- And the take, which shares the folder and the frame with it. -->
+    <span class="row-heading">Take</span>
+    <!-- Record is the shelf's icon beside Play, and only that since
+         2026-09-14; the take reports here. -->
+    <div id="record-status">Takes record at 1080p, from the record icon beside Play.</div>
+  </details>
+  <div id="mode-row">
+    <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>
+    <button id="show-shell" class="mode" title="The vault alone">Shell</button>
+    <button id="show-both" class="mode active" title="The vault on its formwork">Both</button>
+  </div>
+  <div id="panel-foot">
+    <button id="restart-studio" title="Restart the server and reload this page on the new build">Restart studio</button>
+    <button id="stop-studio" title="Stop the server on the desktop; every open page loses it until it is started again">Stop server</button>
+    <button id="start-studio" hidden title="Ask the desktop to start the studio again, then reload onto it">Start server</button>
+    <span id="restart-status"></span>
+  </div>
+</aside>
+<!-- The panel's own handle: a slim tile on its mid-left edge. One press
+     slides the whole banner (and its tab rail) off to the right, the next
+     brings it back; the handle itself stays put on the screen edge. -->
+<button id="panel-collapse" title="Collapse the panel">&#8250;</button>
+<div id="data-panel" class="hidden"><button id="data-close">Close</button>
+  <!-- Analysis leads (Param: "another tab heading which comes up first...
+       this new analysis tab actually helps us make sense of the data");
+       Overview is the raw sheet as it always was; Graphs draws the staged
+       story with the vendored plotting library, loaded only when asked. -->
+  <div id="data-tabs">
+    <button data-tab="data-analysis" class="active" type="button">Analysis</button>
+    <button data-tab="data-content" type="button">Overview</button>
+    <button data-tab="data-graphs" type="button">Graphs</button>
+  </div>
+  <div id="data-analysis" class="data-tab"></div>
+  <div id="data-content" class="data-tab hidden"></div>
+  <div id="data-graphs" class="data-tab hidden"></div>
+</div>
+<!-- Two checks that must not live in studio.js, because the fault they
+     exist for is a studio.js the browser is serving from its own cache. The
+     page is read from disk by every server on every request, so this is the
+     one place a stale copy cannot reach. -->
+<script>
+(function () {
+  // Styled inline, every property of it. This notice exists for the case
+  // where the stylesheet is the stale file, and a rule in studio.css would
+  // be the first casualty: an unstyled div appended to the end of the body
+  // sits below a panel several screens long, off the bottom of the window.
+  // Reported exactly so -- the check was right, the notice was invisible.
+  function shout(html) {
+    if (document.getElementById("stale-server")) return;
+    var notice = document.createElement("div");
+    notice.id = "stale-server";
+    // The literals mirror the tokens in studio.css (--danger, --radius,
+    // the 4/8/12/16 spacing scale); they cannot reference them, because
+    // this notice exists for the case where that stylesheet never arrived.
+    notice.setAttribute("style", [
+      "position:fixed", "left:50%", "top:12px", "transform:translateX(-50%)",
+      "z-index:2147483647", "max-width:680px", "padding:12px 16px",
+      "border-radius:4px", "background:#7a2b20", "color:#fff",
+      "font:14px/1.5 system-ui,sans-serif",
+      "box-shadow:0 8px 30px rgba(0,0,0,0.5)",
+    ].join(";"));
+    notice.innerHTML = html;
+    (document.body || document.documentElement).appendChild(notice);
+  }
+
+  // A stamp still reading the placeholder was not filled in, which means
+  // the page was not served by the route that fills it in, which means the
+  // server is older than that route. Everything else is downstream: the
+  // folder routes answer 404, and the browser is handed un-versioned asset
+  // URLs its own cache can satisfy with yesterday's files.
+  document.addEventListener("DOMContentLoaded", function () {
+    var stamp = document.getElementById("build-stamp");
+    // Assembled, never written whole. The server fills the placeholder in
+    // with a replace-every-occurrence, so a literal here would be rewritten
+    // to the stamp itself and this test would ask whether the stamp differs
+    // from the stamp: never true, so the warning fired on every load. A
+    // self-check whose own text is rewritten by the thing it checks is a
+    // trap worth two lines of awkwardness to close.
+    var placeholder = "__" + "BUILD" + "__";
+    if (!stamp || stamp.textContent.trim() !== placeholder) return;
+
+    // Two causes, and they need different answers. Either the BROWSER is
+    // holding an old copy of this page, which the page can cure itself by
+    // asking for an address the cache has never seen; or the SERVER is old
+    // and does not fill the stamp in at all, which no reload will fix.
+    // They are indistinguishable until the first is tried, so try it, once.
+    if (location.search.indexOf("fresh=") === -1) {
+      location.replace(location.pathname + "?fresh=" + Date.now());
+      return;
+    }
+
+    // A guaranteed-fresh fetch came back with the placeholder still in it,
+    // so this is the server and not the cache.
+    stamp.textContent = "stale";
+    stamp.className = "stale";
+    shout("<b>The server is older than this page.</b> It is not filling in "
+      + "the build stamp, which means it started before that was added, and "
+      + "it is handing the browser un-versioned files. Close its window and "
+      + "run <code>bench/studio/serve.py</code> again. If its window is "
+      + "already gone, the process is still running: the new one will stop "
+      + "it for you.");
+  });
+
+  // A module-level throw halfway down studio.js leaves half a panel built
+  // and the rest silently never built, which looks merely disappointing
+  // rather than broken. Registered before the module loads, so it catches
+  // one however early it happens. Both roads are watched: a throw arrives
+  // as an error event, an async boot step that died arrives as an
+  // unhandled rejection, and WebKit reports module throws as a bare
+  // "Script error." besides -- so the full story is in the server's
+  // diagnostics log (bench/studio/diagnostics.log), and the banner says
+  // what it can.
+  function bootFault(message) {
+    // Once the studio is up, the same throw means something else
+    // entirely: a fault in one handler, on a page that is fully built.
+    // Saying "half-built" there sent Param hunting a cached script for a
+    // fault that was in a slider's entry box.
+    if (window.__studioReady) {
+      shout("<b>Something in the studio threw.</b> "
+        + (message || "An error was thrown")
+        + ". The page is built and the rest of it still works; whatever you "
+        + "had just done is the thing that failed. The full story is in "
+        + "<code>bench/studio/diagnostics.log</code>.");
+      return;
+    }
+    shout("<b>The studio stopped setting itself up.</b> "
+      + (message || "An error was thrown")
+      + ". The panel is half-built. If the build stamp above is not the one "
+      + "you expect, this is a cached script: hard-reload (Ctrl+Shift+R on "
+      + "a computer, or clear this site's data on a tablet).");
+  }
+  window.addEventListener("error", function (event) {
+    bootFault(event && event.message);
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    // Only while the studio is still assembling itself: a stray rejection
+    // during ordinary use is studio.js's own diagnostics' business, and a
+    // "half-built" banner over a fully built page would be a lie.
+    if (window.__studioReady) return;
+    var reason = event && event.reason;
+    bootFault(reason && reason.message ? reason.message : String(reason || ""));
+  });
+}());
+</script>
+<script type="module" src="/static/studio.js"></script>
+</body>
+</html>

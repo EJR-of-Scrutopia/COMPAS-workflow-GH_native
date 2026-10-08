@@ -3,6 +3,58 @@
 Ananke Equilibrium is a bundle-first COMPAS workflow for form finding,
 graphic statics, structural handoff, and Rhino 8 Grasshopper.
 
+One repository, two surfaces:
+
+- **The Workflow** is the native Grasshopper plugin: design, form-find, and
+  solve on the canvas, then export the result as JSON.
+- **The Bench** is the VS Code side: read those exports headlessly, verify
+  them with finite element analysis, tessellate them into masonry, view
+  them, and write every result back as JSON a person or another tool can
+  read.
+
+The two surfaces share this repository and exchange files on disk. They
+never import each other's runtime: the plugin runs inside Rhino's Python,
+the bench runs in its own environments, and a guard test keeps the
+boundary honest in both directions.
+
+## The workflow, end to end
+
+```text
+1 Design    Grasshopper: Pattern -> Supports -> Loads -> TNA Relax -> TNA Solve
+2 Export    Export component, once with Format=contract and once with
+            Format=compas -> "<name>-contract.json" (the solved numbers)
+            and "<name>-compas.json" (real COMPAS geometry).
+            Drop both into bench/demo/upload from grasshopper/.
+3 Inspect   Bench: `ananke describe` and `ananke check` report units,
+            supports, the solver's own residual, and whether loads and
+            reactions cancel, before anything heavier runs.
+4 Verify    bench/demo/09_structural_verification.py answers the
+            engineer's question: a bar model cross-checked against TNA,
+            then shell stress utilisation, deflection, tension onset
+            under rising load, provisional cable sizing where tension
+            appears, and an honest report where the toolchain cannot
+            answer (buckling at the current pin).
+5 Explore   demos 01 to 08: diagrams, load cases, masonry tessellation,
+            coupled rigid-block stability, robot placement, viewers.
+6 Record    bench/studies/<export-name>/fea-verification.json. Every
+            number carries the assumptions it was computed under:
+            material sources, load provenance, whether self weight was
+            included, what the checks can and cannot falsify.
+7 Decide    Back to Grasshopper: thicken, add the sized cable, change
+            the pattern, re-form-find, export again.
+```
+
+The studio (`bench/studio/serve.py`) presents the verified results: staged
+precast placement on the falsework, FEA layers, and a recordable animation.
+See docs/BENCH.md.
+
+Step 4 is the reason the bench exists. Thrust network analysis finds a
+surface in compression under one load case; it says nothing about bending,
+deflection, changed loads, or buckling. The bench adds those answers and
+refuses to fabricate the ones the toolchain cannot give.
+
+## The Workflow: the Grasshopper plugin
+
 The current v0.2 development milestone is a native Grasshopper plugin:
 
 - the components visible on the canvas are compiled C#/.NET 8
@@ -268,6 +320,55 @@ See [Native v0.2: install and first FD/TNA workflows](docs/native-v02-getting-st
 for custom environment paths, exact canvas wiring, first-result checks, and
 troubleshooting.
 
+## The Bench: the VS Code side
+
+Everything after Export happens here, without Rhino running. The bench is
+documented in depth in [docs/BENCH.md](docs/BENCH.md) and the
+[demo runbook](bench/demo/README.md); the short version:
+
+```text
+src/ananke_equilibrium/cli/  the `ananke` terminal tool: health, check,
+                             describe, solve, plot, view, sweep
+src/ananke_fea/              structural verification: shell and bar models
+                             through OpenSees, tension onset, cable sizing
+bench/demo/                  clickable demos 01 to 09, each self-bootstraps
+                             into the interpreter it needs
+bench/demo/upload from grasshopper/  where exported JSON pairs land
+bench/studies/               analysis outputs, one folder per export
+bench/scripts/               environment setup and measurement scripts
+```
+
+Three Python environments, because the ecosystem's pins are irreconcilable
+in one interpreter:
+
+| Environment | Python | Purpose |
+| --- | --- | --- |
+| `.venv` | 3.12 | Main bench; mirrors Rhino 8's pins (numpy 2.0.2, scipy 1.13.1, compas 2.15.1) |
+| `.venv-cra` | 3.10 | Coupled rigid-block analysis (compas_cra needs old pyomo) |
+| `.venv-fea` | 3.12 | Finite elements (compas_fea2 pinned to a git commit + OpenSees) |
+
+The demos pick their own interpreter at launch, so the play button works
+whatever VS Code has selected. Setup is scripted: `bench/scripts/setup_cra_env.sh`,
+`bench/scripts/setup_fea_env.sh`, `bench/scripts/install_opensees.py`.
+
+## Working copies
+
+Day to day this repository is used through two checkouts of the same clone:
+
+```text
+VS code/COMPAS Workflow/        branch: development
+    .venv                       plugin development and headless plugin tests
+                                -> plugin work happens here
+
+VS code/COMPAS-Workflow-bench/  linked worktree
+    .venv  .venv-cra  .venv-fea all three bench environments
+                                -> bench work and demos happen here
+```
+
+Same repository underneath, so commits made in either appear in both after
+a merge. Grasshopper exports land in the bench checkout's
+`bench/demo/upload from grasshopper/` folder.
+
 ## Python development setup
 
 The Python contracts, adapters, and worker can also be tested independently of
@@ -292,14 +393,24 @@ solver matrix before publishing.
 
 ```text
 docs/                            architecture and workflow documentation
+docs/BENCH.md                    the bench guide: environments, CLI, demos
 plugin/native_v02/               compiled C# Grasshopper plugin source
 plugin/native/                   preserved script-backed v0.1 source
 plugin/legacy_component_scripts/ pasteable Rhino 8 Python 3 components and the
                                  prototype WORKFLOW.md they belong to
 plugin/icons/                    component icon sources
 src/ananke_equilibrium/          public contracts, adapters, codec, and worker
+src/ananke_equilibrium/cli/      the `ananke` bench terminal tool
+src/ananke_fea/                  structural verification (runs in .venv-fea)
 src/tree_forest_compas/          compatibility solver namespace
+bench/demo/                      clickable bench demos 01 to 09
+bench/demo/upload from grasshopper/  exported JSON pairs from the plugin
+bench/studies/                   analysis outputs, one folder per export
+bench/scripts/                   environment setup and measurement
+scripts/                         Rhino-side diagnostic scripts
 tests/                           headless contract, worker, and solver tests
+tests/fea/                       FEA suite; collects only where the OpenSees
+                                 backend is installed (.venv-fea)
 tests/legacy/                    solver-core tests for the compatibility namespace
 pyproject.toml                   Python distribution and dependency groups
 ```

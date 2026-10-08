@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Vaulted: a vault, and its name beneath. The arch is a parabola --
+       close kin to the funicular curves this studio exists to draw. -->
+  <rect x="0" y="0" width="64" height="64" rx="12" fill="#1b1b1b"/>
+  <path d="M 11 42 Q 32 4 53 42" fill="none" stroke="#e6e6e6"
+        stroke-width="6.5" stroke-linecap="round"/>
+  <path d="M 8 45 L 56 45" stroke="#8f9aa8" stroke-width="2.5"
+        stroke-linecap="round"/>
+  <text x="32" y="57" text-anchor="middle" fill="#a8b2c0"
+        font-family="'Segoe UI', system-ui, sans-serif" font-size="9.5"
+        font-weight="600" letter-spacing="1.6">VAULTED</text>
+</svg>

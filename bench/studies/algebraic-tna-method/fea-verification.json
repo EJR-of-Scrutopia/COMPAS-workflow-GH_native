@@ -1,0 +1,119 @@
+{
+  "source": "Algebraic TNA method-contract.json",
+  "export": "Algebraic TNA method",
+  "material": "C30/37 unreinforced",
+  "material_assumptions": "Design compressive strength uses the plain concrete route of EN 1992-1-1 clause 12: an alpha_cc,pl of 0.8 on a characteristic cylinder strength of 30 MPa, divided by the partial factor 1.5, giving 16.0 MPa. Design tensile strength uses an alpha_ct,pl of 0.8 on the five per cent characteristic axial tensile strength fctk,0.05 of 2.0 MPa, divided by the same 1.5, giving 1.07 MPa. The five per cent value is used rather than the mean because unreinforced concrete has no reinforcement to redistribute once it cracks. In practice unreinforced concrete in tension should be treated as having no reliable capacity, and the value is quoted only so that tension onset has something to report against.",
+  "thickness": 0.2,
+  "loads": {
+    "source": "TNA export nodal loads",
+    "export_total_newtons": 189953.3438556058,
+    "self_weight_included": true,
+    "self_weight_total_newtons": 894146.8605703588
+  },
+  "cross_check": {
+    "tolerance": 1899.5334385560582,
+    "residual_from_file": 26.584958869208442,
+    "applied_magnitude": 256437.01420506786,
+    "reaction_magnitude": 256437.014205,
+    "difference": 6.784102879464626e-08,
+    "reactions_agree": true,
+    "agrees": true,
+    "member_count": 4800,
+    "max_member_difference": 19474.823448237206,
+    "mean_member_difference": 1108.4811339907515,
+    "members_agree": false,
+    "member_note": "Per-member equality with TNA is only expected on statically determinate networks. This network admits self-stress, so the elastic and TNA distributions may legitimately differ member by member while both equilibrate the same loads. The reaction check is the wiring falsifier here; the member statistics are reported for scale.",
+    "strict_agrees": false
+  },
+  "displacement": {
+    "count": 2521,
+    "peak_magnitude": 0.0007665409317185874,
+    "peak_vector": [
+      0.000383,
+      0.0,
+      -0.000664
+    ],
+    "peak_node_xyz": [
+      -2.4166066332279477,
+      -6.738042621496986e-15,
+      4.580977964470599
+    ]
+  },
+  "reactions": {
+    "count": 2521,
+    "total": [
+      2.0000102267658804e-06,
+      1.9999806681880727e-06,
+      1463535.2759760001
+    ],
+    "magnitude": 1463535.2759760001
+  },
+  "deflection": {
+    "peak_magnitude": 0.0007665409317185874,
+    "span": 20.3,
+    "span_over_deflection": 26482.6040724105
+  },
+  "stress": {
+    "count": 2400,
+    "peak_tension": 368714.6486849711,
+    "peak_compression": -1264172.366110794,
+    "tension_present": true,
+    "utilisation": 0.07901077288192462,
+    "tension_utilisation": 0.34556199501871704
+  },
+  "tension_sweep": [
+    {
+      "factor": 1.0,
+      "peak_tension": 368714.6486849711,
+      "peak_compression": -1264172.366110794,
+      "tension_present": true,
+      "utilisation": 0.07901077288192462
+    },
+    {
+      "factor": 1.5,
+      "peak_tension": 553071.9730274592,
+      "peak_compression": -1896258.5491661911,
+      "tension_present": true,
+      "utilisation": 0.11851615932288695
+    },
+    {
+      "factor": 2.0,
+      "peak_tension": 737429.2973699422,
+      "peak_compression": -2528344.732221588,
+      "tension_present": true,
+      "utilisation": 0.15802154576384925
+    },
+    {
+      "factor": 3.0,
+      "peak_tension": 1106143.9460549185,
+      "peak_compression": -3792517.0983323823,
+      "tension_present": true,
+      "utilisation": 0.2370323186457739
+    }
+  ],
+  "first_tension_factor": 1.0,
+  "onset_is_bounded": false,
+  "cable": {
+    "tension": 4490944.420982969,
+    "grade": 1770000000.0,
+    "partial_factor": 1.15,
+    "design_strength": 1539130434.7826087,
+    "required_area": 0.0029178452452714204,
+    "diameter": 0.0609517510142001,
+    "caveats": [
+      "No anchorage or end connection design.",
+      "No fatigue check under cyclic or wind loading.",
+      "No allowance for relaxation, creep or prestress losses.",
+      "No check that the cable geometry is compatible with the formwork.",
+      "The tension demand comes from a linear elastic model, so it does not account for redistribution once the shell cracks."
+    ]
+  },
+  "buckling": {
+    "converged": false,
+    "limit_point_found": false,
+    "collapse_factor": null,
+    "increments_run": 0,
+    "message": "the arc-length step could not be constructed, so no solve was attempted: NotImplementedError: ",
+    "path": "C:\\Users\\Param\\AppData\\Local\\Temp\\ananke_riks_0exw7o8a\\riks"
+  }
+}

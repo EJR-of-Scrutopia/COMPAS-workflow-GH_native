@@ -1,0 +1,29 @@
+Prop library
+
+Every model here is CC0 1.0, which asks for nothing. It is credited
+anyway. Downloaded from poly.pizza.
+
+figure-standing  Man                        Quaternius     https://poly.pizza/m/HMnuH5geEG
+figure-walking   Human Dude Guy             hat_my_guy     https://poly.pizza/m/83DpVkzvWk
+tree-pine        Pine                       Quaternius     https://poly.pizza/m/79gmlLnweB
+tree-broadleaf   Tree                       hat_my_guy     https://poly.pizza/m/BiWaLAItBx
+bush             Bush                       Quaternius     https://poly.pizza/m/ooG6CkLyE8
+hedge            Hedge                      Quaternius     https://poly.pizza/m/df8uCl1YpK
+bench            Bench                      Quaternius     https://poly.pizza/m/7uSlZo3n9Y
+table            Table Cross                Kenney         https://poly.pizza/m/wKoIHI7aZE
+planter          Medium Pot                 Isa Lousberg   https://poly.pizza/m/y05UXwo0fM
+lamp-column      Streetlight                Kay Lousberg   https://poly.pizza/m/vPFSLYh6sg
+car              Car Hatchback              Kay Lousberg   https://poly.pizza/m/BG0KAhmGDt
+cone             Traffic Cone               Quaternius     https://poly.pizza/m/aDIrUbMbW3
+fence            Metal Fence                Quaternius     https://poly.pizza/m/qWKhREFj7H
+pallet           Pallet                     Kenney         https://poly.pizza/m/J6bhnc2wFP
+figure-woman     Animated Woman             Quaternius     https://poly.pizza/m/9kF7eTDbhO
+figure-worker    Worker                     Quaternius     https://poly.pizza/m/Yg2bQZO6Hj
+chair            Chair                      Quaternius     https://poly.pizza/m/iMNqRzPwwe
+grass            Grass                      Quaternius     https://poly.pizza/m/vUJjrRsFp4
+flowers          Flowers                    CreativeTrio   https://poly.pizza/m/RP8p3h7JHJ
+scaffold         Scaffolding                lakescorp      https://poly.pizza/m/AYQd5RQ8w4
+ladder           Ladder                     CreativeTrio   https://poly.pizza/m/p1RR8Ls9EH
+bin              Trash Bin                  CreativeTrio   https://poly.pizza/m/AAX1n0Bt0v
+dumpster         Dumpster                   Kay Lousberg   https://poly.pizza/m/QmYKHtUnxb
+bollard          Fence Pillar               Kay Lousberg   https://poly.pizza/m/O8wNXcCDLL

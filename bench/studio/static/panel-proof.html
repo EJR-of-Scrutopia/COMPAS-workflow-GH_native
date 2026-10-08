@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bench Studio: panel proof</title>
+<link rel="stylesheet" href="/static/studio.css">
+<style>
+  /* The proof sheet's own furniture, kept out of the panel's way. */
+  body { margin: 0; background: #202226; }
+  #proof-note { position: fixed; left: 16px; top: 14px; width: 520px;
+    color: #9aa0a6; line-height: 1.6; }
+  #proof-note b { color: #e6e7ea; }
+  #proof-rule { position: fixed; top: 0; bottom: 0; right: 300px; width: 1px;
+    background: #ff4d4d; opacity: 0.5; }
+</style>
+</head>
+<body>
+<div id="proof-note">
+  <b>Panel proof.</b> The real markup and the real stylesheet, with the
+  scene stripped out. The studio itself cannot be screenshotted where it is
+  developed, because software WebGL crashes the GPU process, so this sheet
+  exists to make the panel's layout visible: widths, alignment, spacing,
+  and whether any control has escaped its column. The red line is the
+  panel's own left edge at 300px; nothing should cross it.
+</div>
+<div id="proof-rule"></div>
+<script type="module">
+import {
+  upgradeSliders, buildSegmented, buildGroups, setGroupSummaries,
+} from "/static/panel.js";
+
+// The panel's markup, taken from the studio itself rather than copied, so
+// this sheet cannot drift from the thing it proves.
+const page = await (await fetch("/static/index.html")).text();
+const parsed = new DOMParser().parseFromString(page, "text/html");
+document.body.appendChild(parsed.getElementById("panel"));
+// Every section open: a proof sheet that shows only what happens to be
+// expanded proves only half the panel.
+for (const section of document.querySelectorAll("#panel details")) section.open = true;
+
+// Stand-ins for what the scene would build. Flat colours rather than
+// renders: this sheet is about layout, and a render would need the GPU it
+// exists to do without.
+const FLAT = ["#8a8c88", "#5d646c", "#c8c8c2", "#b07a3c", "#8c4a32",
+              "#c47a52", "#bfb9a6", "#7f8b96", "#4a5a68", "#6f7c66"];
+
+function fillGrid(id, names, round) {
+  const holder = document.getElementById(id);
+  if (!holder) return;
+  holder.innerHTML = "";
+  names.forEach((name, index) => {
+    const tile = document.createElement("button");
+    tile.className = "tile";
+    if (index === 0) tile.classList.add("active");
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 128;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#14161a";
+    context.fillRect(0, 0, 128, 128);
+    context.fillStyle = FLAT[index % FLAT.length];
+    if (round) {
+      context.beginPath();
+      context.arc(64, 64, 52, 0, Math.PI * 2);
+      context.fill();
+    } else {
+      context.fillRect(8, 24, 112, 80);
+    }
+    tile.appendChild(canvas);
+    const label = document.createElement("span");
+    label.textContent = name;
+    tile.appendChild(label);
+    holder.appendChild(tile);
+  });
+}
+
+fillGrid("material-tiles",
+  ["Concrete C30/37", "Concrete C50/60", "Sprayed", "Timber GL24h",
+   "Brick masonry", "Fired clay tile", "Limestone"], true);
+fillGrid("weather-tiles", ["Clear", "Hazy", "Overcast", "Golden hour", "Night"]);
+fillGrid("prop-tiles",
+  ["Figure", "Figure walking", "Pine", "Tree", "Bush", "Hedge", "Bench",
+   "Table", "Planter", "Lamp column", "Car", "Cone"]);
+
+// The sun instrument's canvas, sketched: the compass, the arc and the
+// horizon, at the sizes the real one draws them, so the block's height and
+// its relation to the chips can be judged.
+const dial = document.getElementById("sun-dial");
+if (dial) {
+  const context = dial.getContext("2d");
+  context.strokeStyle = "#262a30";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(74, 76, 54, 0, Math.PI * 2);
+  context.stroke();
+  context.beginPath();
+  context.arc(214, 132, 112, -Math.PI / 2, 0);
+  context.stroke();
+  context.fillStyle = "#ffb76b";
+  context.beginPath();
+  context.arc(112, 40, 6.5, 0, Math.PI * 2);
+  context.fill();
+}
+const track = document.getElementById("day-track");
+if (track) {
+  const context = track.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, track.width, 0);
+  gradient.addColorStop(0, "#0a0d1a");
+  gradient.addColorStop(0.26, "#d98a4e");
+  gradient.addColorStop(0.5, "#cfe0f2");
+  gradient.addColorStop(0.78, "#e59a52");
+  gradient.addColorStop(1, "#0a0d1a");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, track.width, track.height);
+}
+
+// Every select the studio hides behind a grid stays hidden here too, or
+// the sheet would show a fault the studio does not have.
+for (const id of ["material-select", "render-skin", "ground-preset",
+                  "hdri-select", "prop-type", "environment-mode"]) {
+  const element = document.getElementById(id);
+  if (element && element.closest("label")) element.closest("label").classList.add("hidden");
+}
+
+buildSegmented("environment-segments", "environment-mode");
+upgradeSliders();
+setGroupSummaries({});
+buildGroups();
+
+// Boundary check. Anything wider than its column, or hanging outside the
+// panel, is reported here rather than left for somebody to notice.
+const panel = document.getElementById("panel");
+const bounds = panel.getBoundingClientRect();
+const faults = [];
+for (const element of panel.querySelectorAll("button, select, input, canvas, .tile, .scrub")) {
+  const box = element.getBoundingClientRect();
+  if (box.width === 0 && box.height === 0) continue;
+  if (box.right > bounds.right + 0.5 || box.left < bounds.left - 0.5) {
+    faults.push((element.id || element.className || element.tagName)
+      + " escapes the panel: " + Math.round(box.left) + " to " + Math.round(box.right));
+  }
+  if (box.width > bounds.width) {
+    faults.push((element.id || element.className || element.tagName)
+      + " is wider than the panel: " + Math.round(box.width));
+  }
+}
+const note = document.getElementById("proof-note");
+const verdict = document.createElement("p");
+verdict.style.color = faults.length ? "#e0a03a" : "#8fbf8f";
+verdict.textContent = faults.length
+  ? faults.length + " boundary faults: " + faults.slice(0, 6).join("; ")
+  : "No boundary faults: every control sits inside its column.";
+verdict.id = "proof-verdict";
+note.appendChild(verdict);
+</script>
+</body>
+</html>

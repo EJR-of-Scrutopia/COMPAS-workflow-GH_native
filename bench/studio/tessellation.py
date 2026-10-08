@@ -1,0 +1,971 @@
+"""One conforming cut from loose outlines: weld, split, check.
+
+A pattern hands over polygons that only nearly agree: two neighbours name
+the same corner with two different floats, and a long cell below two short
+ones does not even share an edge with either of them. This module turns
+that into a single point table where a shared corner is one id, and a
+single set of facets where a shared cut is one facet with exactly two
+owners. Everything downstream depends on that, because a joint the two
+sides compute from different numbers is a joint that does not close.
+
+T junctions are resolved rather than forbidden. Bonded masonry is made of
+them: the whole point of a staggered course is that its head joints land
+in the middle of the bed below.
+
+Also reads and validates authored tessellations from Grasshopper via
+JSON contract or sidecar file, enforcing geometric and topological rules
+with rejection messages that name the offending cell for author feedback.
+
+Stdlib only: the bundle path imports this.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import spatial
+
+TOL = 1e-6
+
+
+class PointWeld:
+    """Plan points, deduplicated within TOL.
+
+    Buckets are TOL wide, so two points within TOL are at most one bucket
+    apart and the 3 by 3 neighbourhood is the whole search.
+    """
+
+    def __init__(self, tol: float = TOL):
+        self.tol = tol
+        self.points: List[List[float]] = []
+        self.buckets: Dict[Tuple[int, int], List[int]] = {}
+        self.originals: List[Tuple[float, float]] = []
+
+    def _home(self, x: float, y: float) -> Tuple[int, int]:
+        return (int(math.floor(x / self.tol)), int(math.floor(y / self.tol)))
+
+    def add(self, x: float, y: float) -> int:
+        self.originals.append((x, y))
+        i, j = self._home(x, y)
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for index in self.buckets.get((i + di, j + dj), ()):
+                    p = self.points[index]
+                    if abs(p[0] - x) <= self.tol and abs(p[1] - y) <= self.tol:
+                        return index
+        index = len(self.points)
+        self.points.append([x, y])
+        self.buckets.setdefault((i, j), []).append(index)
+        return index
+
+    def reconcile(self) -> Tuple[List[List[float]], List[int]]:
+        """Merge every chain of points within TOL, whatever order they arrived.
+
+        add() only ever compares a new point against the points already in
+        the table, so three points in a chain, each within TOL of the next,
+        weld into one point or two depending only on which arrived first.
+        Union find over the symmetric within TOL relation cannot depend on
+        order, because the relation does not.
+
+        Returns (points, remap): the new point table, and old index to new
+        index for every point the caller is holding.
+        """
+
+        n_orig = len(self.originals)
+        if n_orig == 0:
+            return [], []
+
+        parent: List[int] = list(range(n_orig))
+
+        def find(x: int) -> int:
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+
+        def union(x: int, y: int) -> None:
+            px, py = find(x), find(y)
+            if px != py:
+                parent[py] = px
+
+        orig_buckets: Dict[Tuple[int, int], List[int]] = {}
+        for orig_idx, (x, y) in enumerate(self.originals):
+            i, j = self._home(x, y)
+            orig_buckets.setdefault((i, j), []).append(orig_idx)
+
+        for i, (x_i, y_i) in enumerate(self.originals):
+            bucket_i, bucket_j = self._home(x_i, y_i)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    for j in orig_buckets.get((bucket_i + di, bucket_j + dj), ()):
+                        if i != j:
+                            x_j, y_j = self.originals[j]
+                            if abs(x_j - x_i) <= self.tol and abs(y_j - y_i) <= self.tol:
+                                union(i, j)
+
+        groups: Dict[int, List[int]] = {}
+        for index in range(n_orig):
+            root = find(index)
+            groups.setdefault(root, []).append(index)
+
+        group_reps: List[Tuple[Tuple[float, float], List[int]]] = []
+        for root in sorted(groups.keys()):
+            indices = groups[root]
+            min_point = min((self.originals[i][0], self.originals[i][1]) for i in indices)
+            group_reps.append((min_point, indices))
+
+        group_reps.sort(key=lambda x: x[0])
+
+        new_points = [[float(pt[0]), float(pt[1])] for pt, _ in group_reps]
+
+        orig_to_new: Dict[int, int] = {}
+        for new_idx, (_, orig_indices) in enumerate(group_reps):
+            for orig_idx in orig_indices:
+                orig_to_new[orig_idx] = new_idx
+
+        n_points = len(self.points)
+        remap: List[int] = [0] * n_points
+
+        for point_idx in range(n_points):
+            point_x, point_y = self.points[point_idx][0], self.points[point_idx][1]
+            bucket_i, bucket_j = self._home(point_x, point_y)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    for orig_idx in orig_buckets.get((bucket_i + di, bucket_j + dj), ()):
+                        orig_x, orig_y = self.originals[orig_idx]
+                        if abs(orig_x - point_x) <= self.tol and abs(orig_y - point_y) <= self.tol:
+                            remap[point_idx] = orig_to_new[orig_idx]
+                            break
+                    else:
+                        continue
+                    break
+
+        return new_points, remap
+
+
+def on_segment(p, a, b, tol: float = TOL) -> Optional[float]:
+    """Position along ab if p lies on it, strictly between the ends."""
+
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(ex, ey)
+    if length < tol:
+        return None
+    px, py = p[0] - a[0], p[1] - a[1]
+    across = (px * ey - py * ex) / length
+    if abs(across) > tol:
+        return None
+    along = (px * ex + py * ey) / (length * length)
+    margin = tol / length
+    if along <= margin or along >= 1.0 - margin:
+        return None
+    return along
+
+
+def ring_area(ring: Sequence[int], points: Sequence[Sequence[float]]) -> float:
+    """Twice the signed area. Positive is counter clockwise."""
+
+    total = 0.0
+    for i in range(len(ring)):
+        a = points[ring[i]]
+        b = points[ring[(i + 1) % len(ring)]]
+        total += a[0] * b[1] - b[0] * a[1]
+    return total
+
+
+def point_in_ring(point, ring: Sequence[int], points) -> bool:
+    """Even odd crossing. A point on the ring counts as inside."""
+
+    x, y = point[0], point[1]
+    inside = False
+    for i in range(len(ring)):
+        a = points[ring[i]]
+        b = points[ring[(i + 1) % len(ring)]]
+        if abs(a[0] - x) <= TOL and abs(a[1] - y) <= TOL:
+            return True
+        if on_segment([x, y], a, b) is not None:
+            return True
+        if (a[1] > y) != (b[1] > y):
+            crossing = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            if crossing > x:
+                inside = not inside
+    return inside
+
+
+def point_in_cell(point, cell: Dict, points) -> bool:
+    if not point_in_ring(point, cell["outline"], points):
+        return False
+    return not any(point_in_ring(point, hole, points) for hole in cell["holes"])
+
+
+def point_strictly_in_cell(point, cell: Dict, points) -> bool:
+    """A point strictly inside a cell, not on the boundary.
+
+    The boundary includes edges and corners within TOL. Used for overlap
+    detection where touching boundaries are permitted by design.
+    """
+
+    x, y = point[0], point[1]
+    for ring in [cell["outline"]] + list(cell["holes"]):
+        for i in range(len(ring)):
+            a = points[ring[i]]
+            b = points[ring[(i + 1) % len(ring)]]
+            if abs(a[0] - x) <= TOL and abs(a[1] - y) <= TOL:
+                return False
+            if on_segment(point, a, b) is not None:
+                return False
+    return point_in_cell(point, cell, points)
+
+
+def _apply_remap(ring: List[int], remap: List[int]) -> List[int]:
+    """Remap ring indices and drop consecutive duplicates."""
+    out: List[int] = []
+    for idx in ring:
+        new_idx = remap[idx]
+        if not out or out[-1] != new_idx:
+            out.append(new_idx)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
+def _weld_ring(ring, weld: PointWeld) -> List[int]:
+    out: List[int] = []
+    for x, y in ring:
+        index = weld.add(float(x), float(y))
+        if not out or out[-1] != index:
+            out.append(index)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
+def _resolve(ring: List[int], points, grid: spatial.Grid) -> List[int]:
+    """Split every ring edge at any welded point lying on it."""
+
+    out: List[int] = []
+    for i in range(len(ring)):
+        a, b = ring[i], ring[(i + 1) % len(ring)]
+        out.append(a)
+        pa, pb = points[a], points[b]
+        x0, x1 = (pa[0], pb[0]) if pa[0] <= pb[0] else (pb[0], pa[0])
+        y0, y1 = (pa[1], pb[1]) if pa[1] <= pb[1] else (pb[1], pa[1])
+        hits = []
+        for index in grid.query(x0 - TOL, y0 - TOL, x1 + TOL, y1 + TOL):
+            if index == a or index == b:
+                continue
+            along = on_segment(points[index], pa, pb)
+            if along is not None:
+                hits.append((along, index))
+        hits.sort()
+        out.extend(index for _, index in hits)
+    return out
+
+
+def _facets(cell: Dict) -> List[Tuple[int, int]]:
+    """Every sub-edge of every ring, as a canonical welded pair.
+
+    Both owners of a shared sub-edge see the same two welded ids, just in
+    opposite order, so ordering the pair makes the key side free.
+    """
+
+    out: List[Tuple[int, int]] = []
+    for ring in [cell["outline"]] + list(cell["holes"]):
+        for i in range(len(ring)):
+            a, b = ring[i], ring[(i + 1) % len(ring)]
+            out.append((a, b) if a < b else (b, a))
+    return out
+
+
+def _find_coverage_holes(
+    owners: Dict[Tuple[int, int], int],
+    cells: Sequence[Dict],
+    points: Sequence[Sequence[float]],
+) -> Tuple[List[Dict], List[List[int]]]:
+    """Find loops of facets with exactly one owner.
+
+    Detects regions fully enclosed by cells that no cell covers. A gap open to
+    the outside is topologically part of the rim and cannot be caught here. Such
+    gaps are caught by analysis_binding's orphan_faces, which tests real mesh
+    face centroids against real cells. Gaps thinner than the mesh face spacing
+    pass both checks. Neither check proves the surface is covered everywhere.
+
+    Returns (coverage_holes, broken_boundary) where coverage_holes is a list of
+    dicts with points (no repeated final point), area (real area, not doubled),
+    and cells (sorted keys of owners). broken_boundary lists vertices with
+    degree != 2 among single-owner facets.
+    """
+
+    single_owner = {facet: True for facet, count in owners.items() if count == 1}
+    if not single_owner:
+        return [], []
+
+    edges: Dict[int, List[Tuple[int, Tuple[int, int]]]] = {}
+    for (a, b) in single_owner.keys():
+        edges.setdefault(a, []).append((b, (a, b)))
+        edges.setdefault(b, []).append((a, (a, b)))
+
+    visited_edges: set = set()
+    loops: List[List[int]] = []
+
+    for start in edges.keys():
+        if any((start, next_pt) in visited_edges or (next_pt, start) in visited_edges
+               for next_pt, _ in edges[start]):
+            continue
+
+        current = start
+        loop_points: List[int] = []
+        prev = None
+
+        while True:
+            if len(loop_points) > 0 and current == start:
+                break
+            loop_points.append(current)
+            if not edges[current]:
+                break
+
+            found_next = False
+            for next_pt, facet in edges[current]:
+                facet_tuple = (current, next_pt) if current < next_pt else (next_pt, current)
+                if facet_tuple not in visited_edges and next_pt != prev:
+                    visited_edges.add(facet_tuple)
+                    prev = current
+                    current = next_pt
+                    found_next = True
+                    break
+
+            if not found_next:
+                break
+
+        if current == start and len(loop_points) > 2:
+            loops.append(loop_points)
+
+    areas_and_loops: List[Tuple[float, List[int]]] = []
+    for loop in loops:
+        area = 0.5 * abs(ring_area(loop, points))
+        areas_and_loops.append((area, loop))
+
+    if not areas_and_loops:
+        broken_boundary = [[pt, len(edges.get(pt, []))] for pt in edges if len(edges[pt]) != 2]
+        return [], broken_boundary
+
+    areas_and_loops.sort(key=lambda x: x[0], reverse=True)
+
+    coverage_holes = []
+    for area, loop in areas_and_loops[1:]:
+        cell_keys = set()
+        for i in range(len(loop)):
+            a, b = loop[i], loop[(i + 1) % len(loop)]
+            facet = (a, b) if a < b else (b, a)
+            for cell in cells:
+                if facet in cell["facets"]:
+                    cell_keys.add(cell["key"])
+        coverage_holes.append({
+            "points": loop,
+            "area": area,
+            "cells": sorted(cell_keys),
+        })
+
+    broken_boundary = [[pt, len(edges.get(pt, []))] for pt in edges if len(edges[pt]) != 2]
+
+    return coverage_holes, broken_boundary
+
+
+def build_tessellation(
+    raw_cells: Sequence[Dict],
+    pattern: str,
+    source: str,
+    target_size: Optional[float],
+    courses: int,
+) -> Dict:
+    """Weld, resolve T junctions, and report what does not conform.
+
+    target_size is None for an imported cut: it has no target size at all,
+    not one of zero, the same "not applicable" convention from_document
+    already uses for z_offset_max. A generated cut always passes a float
+    here, identical to what generators.generate was asked for.
+
+    The report includes coverage_holes (regions fully enclosed by cells that
+    no cell covers) and broken_boundary (vertices with anomalous degree among
+    single-owner facets). Note: coverage_holes does not catch gaps open to the
+    outside, which are topologically part of the rim. Such gaps are caught by
+    analysis_binding's orphan_faces, which tests mesh face centroids against
+    real cells. Gaps thinner than the mesh face spacing pass both checks.
+    Neither check proves complete coverage.
+
+    It also includes folded: cells whose own welded rings cross themselves.
+    A fold is the one defect none of the other checks can see. The sliver
+    test reads the algebraic area, which for a bow tie is the difference of
+    its two lobes and so comes out comfortably positive; the facet and
+    coverage checks are topological and a fold changes no facet's owner
+    count; and cutting.ear_clip triangulates the fold rather than raising,
+    shipping one lobe wound inside out. A cell is either a sliver or
+    folded, never listed as both: a ring with no area to speak of trips the
+    simplicity check as well, and the sliver is the more useful name for it.
+    """
+
+    if not raw_cells:
+        raise ValueError("a tessellation with no cells cannot cut anything")
+
+    weld = PointWeld()
+    welded = []
+    for raw in raw_cells:
+        outline = _weld_ring(raw["outline"], weld)
+        holes = [_weld_ring(hole, weld) for hole in raw.get("holes", [])]
+        welded.append((raw, outline, holes))
+
+    points, remap = weld.reconcile()
+    welded = [
+        (raw, _apply_remap(outline, remap), [_apply_remap(hole, remap) for hole in holes])
+        for raw, outline, holes in welded
+    ]
+    spread = max(
+        max(p[0] for p in points) - min(p[0] for p in points),
+        max(p[1] for p in points) - min(p[1] for p in points),
+        1e-6,
+    )
+    grid = spatial.Grid(max(spread / 64.0, 1e-6))
+    for index, point in enumerate(points):
+        grid.insert(index, point[0], point[1], point[0], point[1])
+
+    cells: List[Dict] = []
+    slivers: List[str] = []
+    folded: List[str] = []
+    for raw, outline, holes in welded:
+        outline = _resolve(outline, points, grid)
+        holes = [_resolve(hole, points, grid) for hole in holes]
+        if ring_area(outline, points) < 0:
+            outline.reverse()
+        holes = [h if ring_area(h, points) < 0 else list(reversed(h)) for h in holes]
+        cell = {
+            "key": raw["key"],
+            "course": int(raw["course"]),
+            "index": 0,
+            "outline": outline,
+            "holes": holes,
+        }
+        cell["facets"] = _facets(cell)
+        area = 0.5 * ring_area(outline, points)
+        if len(outline) < 3 or area < TOL * spread * spread:
+            slivers.append(cell["key"])
+        # A fold is invisible to the sliver test above, which reads the
+        # algebraic area: a bow tie's two lobes cancel, so a badly folded
+        # cell can measure a comfortable positive area while half of it is
+        # drawn inside out. ear_clip does not object either, it simply
+        # triangulates the fold. So the ring is checked for simplicity
+        # here, and named rather than raised, because a generated fold is
+        # the studio's own doing on a plan whose rim it has to follow and
+        # the rest of this report degrades honestly the same way. An
+        # authored fold is still a rejection by name in from_document,
+        # which runs its own check before this: an author can fix theirs.
+        elif any(
+            not _is_simple([points[i] for i in ring])
+            for ring in [outline] + holes
+        ):
+            folded.append(cell["key"])
+        cells.append(cell)
+
+    axis = [
+        sum(p[0] for p in points) / len(points),
+        sum(p[1] for p in points) / len(points),
+    ]
+    cells.sort(key=lambda c: (c["course"], _angle_key(c, points, axis)))
+    per_course: Dict[int, int] = {}
+    for cell in cells:
+        cell["index"] = per_course.get(cell["course"], 0)
+        per_course[cell["course"]] = cell["index"] + 1
+
+    owners: Dict[Tuple[int, int], int] = {}
+    for cell in cells:
+        for facet in cell["facets"]:
+            owners[facet] = owners.get(facet, 0) + 1
+    open_facets = [
+        [facet[0], facet[1], count]
+        for facet, count in sorted(owners.items())
+        if count > 2
+    ]
+
+    coverage_holes, broken_boundary = _find_coverage_holes(owners, cells, points)
+
+    return {
+        "points": points,
+        "cells": cells,
+        "pattern": pattern,
+        "source": source,
+        "target_size": target_size,
+        "courses": courses,
+        "report": {
+            "orphan_faces": [],
+            "double_faces": [],
+            "open_facets": open_facets,
+            "slivers": slivers,
+            "folded": folded,
+            "coverage_holes": coverage_holes,
+            "broken_boundary": broken_boundary,
+        },
+    }
+
+
+def _angle_key(cell: Dict, points, axis) -> float:
+    """Placement order within a course: anticlockwise about the cut's own
+    centre, not about the world origin, which a vault need not sit on."""
+
+    ring = cell["outline"]
+    cx = sum(points[i][0] for i in ring) / len(ring)
+    cy = sum(points[i][1] for i in ring) / len(ring)
+    return math.atan2(cy - axis[1], cx - axis[0])
+
+
+def analysis_binding(tess: Dict, centroids: Sequence[Sequence[float]]) -> Dict:
+    """Which cell owns each analysis face, in the shape the binning shipped.
+
+    staging.py and voussoirs.py read a per face [course, index] pair and a
+    placement order of the same pairs, which is exactly what the ring and
+    wedge binning gave them. Keeping that shape is what lets the analysis
+    side stay untouched while the drawing is cut properly.
+    """
+
+    points = tess["points"]
+    cells = tess["cells"]
+    grid = spatial.Grid(_bucket_size(tess))
+    for index, cell in enumerate(cells):
+        ring = [points[i] for i in cell["outline"]]
+        grid.insert(
+            index,
+            min(p[0] for p in ring), min(p[1] for p in ring),
+            max(p[0] for p in ring), max(p[1] for p in ring),
+        )
+
+    assignment: List[Optional[List[int]]] = []
+    orphans: List[int] = []
+    doubles: List[list] = []
+    for face, centroid in enumerate(centroids):
+        found = [
+            index for index in grid.query(centroid[0], centroid[1], centroid[0], centroid[1])
+            if point_in_cell(centroid, cells[index], points)
+        ]
+        if not found:
+            orphans.append(face)
+            assignment.append(None)
+            continue
+        if len(found) > 1:
+            doubles.append([face, [cells[i]["key"] for i in found]])
+        cell = cells[min(found)]
+        assignment.append([cell["course"], cell["index"]])
+
+    order = [[cell["course"], cell["index"]] for cell in cells]
+    keys = [cell["key"] for cell in cells]
+    report = dict(tess["report"])
+    report["orphan_faces"] = orphans
+    report["double_faces"] = doubles
+    return {
+        "assignment": assignment,
+        "order": order,
+        "keys": keys,
+        "report": report,
+    }
+
+
+def _bucket_size(tess: Dict) -> float:
+    points = tess["points"]
+    # A cut with no points is a real state now: a plan no generator can
+    # cover comes back empty and says why, rather than refusing the whole
+    # study, so that the net and the machine can still be looked at. The
+    # bucket size of nothing is arbitrary and never used, because the grid
+    # it sizes is asked about no cells.
+    if not points:
+        return 1e-6
+    spread = max(
+        max(p[0] for p in points) - min(p[0] for p in points),
+        max(p[1] for p in points) - min(p[1] for p in points),
+        1e-6,
+    )
+    return max(spread / 32.0, 1e-6)
+
+
+SCHEMA = "bench.tessellation/1"
+
+
+def read_tessellation(contract, sidecar_path) -> Optional[Dict]:
+    """The authored tessellation for a study, if there is one.
+
+    The contract wins over the sidecar, because the sidecar is the route
+    that exists before the Grasshopper component does.
+    """
+
+    found = (contract or {}).get("tessellation")
+    if isinstance(found, dict):
+        return found
+    path = Path(sidecar_path)
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            # json.JSONDecodeError subclasses ValueError, so app.get_bundle
+            # already turned this into a 400 -- but a bare "Expecting value:
+            # line 1 column 1" names neither the file nor the fact that a
+            # sidecar was involved at all, and the author is looking at a
+            # contract that is perfectly valid. Wrapped so the message says
+            # which file to open.
+            raise ValueError(
+                "the authored tessellation at {} is not valid JSON: {}".format(
+                    path, error)
+            ) from error
+    return None
+
+
+def _segments_cross(a, b, c, d) -> bool:
+    def side(p, q, r):
+        value = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+        if abs(value) < 1e-15:
+            return 0
+        return 1 if value > 0 else -1
+
+    return (
+        side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0
+    )
+
+
+def _drop_repeated_corners(ring, tol: float = TOL):
+    """The ring with consecutive corners closer than tol collapsed to one.
+
+    Consecutive INCLUDING the wrap from last to first, so a ring that
+    closes onto a near-duplicate of its own start loses the repeat too.
+    Geometry preserving: every corner removed sat within tol of the one
+    before it, so only zero-length edges go.
+    """
+
+    out = []
+    for point in ring:
+        if out and abs(out[-1][0] - point[0]) <= tol and abs(out[-1][1] - point[1]) <= tol:
+            continue
+        out.append(point)
+    while len(out) > 1 and abs(out[0][0] - out[-1][0]) <= tol             and abs(out[0][1] - out[-1][1]) <= tol:
+        out.pop()
+    return out
+
+
+def _is_simple(ring) -> bool:
+    """Check that a ring is a simple polygon: no self-intersection.
+
+    Detects proper crossing of non-adjacent edges, duplicate points within TOL,
+    and vertices lying strictly on non-adjacent edges. O(n squared) in the
+    ring's point count, acceptable for author-sized polygons at import time.
+    """
+
+    count = len(ring)
+
+    for i in range(count):
+        for j in range(i + 1, count):
+            pi, pj = ring[i], ring[j]
+            if abs(pi[0] - pj[0]) <= TOL and abs(pi[1] - pj[1]) <= TOL:
+                return False
+
+    for i in range(count):
+        for j in range(i + 2, count):
+            if (j + 1) % count == i:
+                continue
+            a, b = ring[i], ring[(i + 1) % count]
+            c, d = ring[j], ring[(j + 1) % count]
+            if _segments_cross(a, b, c, d):
+                return False
+
+    for vi in range(count):
+        v = ring[vi]
+        for ei in range(count):
+            if vi == ei or vi == (ei + 1) % count:
+                continue
+            if on_segment(v, ring[ei], ring[(ei + 1) % count]) is not None:
+                return False
+
+    return True
+
+
+def validate_document(document: Dict) -> Dict:
+    """Every rule from_document enforces, without building the cut.
+
+    The upload route needs the verdict before the surface exists: an
+    authored cut that would be refused at read time should be refused at
+    the door, naming the offending cell, rather than stored and left to
+    silently override the generated cut on the next bundle GET. Building
+    with a height callback that returns None exercises every structural
+    rule (schema, units, domain, keys, outlines, holes, courses,
+    simplicity, overlap) and measures no z, which is exactly the
+    unmeasured case from_document already documents.
+    """
+
+    return from_document(document, lambda x, y: None)
+
+
+def from_document(document: Dict, surface_height) -> Dict:
+    """Validate an authored tessellation and build the cut from it.
+
+    Every rule is enforced and every rejection names its cell. A pattern
+    is authored in Grasshopper and fixed there, so "cell b7 overlaps cell
+    b8" is the whole difference between a fixable mistake and a mystery.
+
+    Returns a tessellation with z_offset_max set to None if the surface
+    height callback never returns a value (unmeasured), or to a float if
+    any supplied z was compared against the surface. This distinguishes
+    unmeasured from measured and found to be zero.
+    """
+
+    # Shape before value. Every rule below validates a value BY NAME, which
+    # reads the container it was handed; a wrong container type therefore
+    # escaped as a bare AttributeError or TypeError, and app.get_bundle
+    # catches only ValueError, so a Grasshopper author got a 500 with no
+    # body: not the cell key, not even which file. The 400 contract exists
+    # exactly for this, so the shape is checked first and every rejection
+    # names its cell the same way the value rules do.
+    if not isinstance(document, dict):
+        raise ValueError(
+            "a tessellation document must be a JSON object, not a {}".format(
+                type(document).__name__)
+        )
+    schema = document.get("schema")
+    if schema != SCHEMA:
+        raise ValueError(
+            "tessellation schema {!r} is not {!r}".format(schema, SCHEMA)
+        )
+    units = document.get("units")
+    if units != "m":
+        raise ValueError(
+            "tessellation units {!r} are not 'm'. This schema version reads "
+            "metres only, so a conversion is the author's to make.".format(units)
+        )
+    where = document.get("domain")
+    if where != "plan":
+        raise ValueError(
+            "tessellation domain {!r} is not 'plan'. This schema version "
+            "reads plan outlines only.".format(where)
+        )
+    raw_cells = document.get("cells") or []
+    if not isinstance(raw_cells, list):
+        raise ValueError(
+            "tessellation cells must be a list, not a {}".format(
+                type(raw_cells).__name__)
+        )
+    if not raw_cells:
+        raise ValueError("this tessellation has no cells")
+
+    seen = set()
+    inferred = False
+    offset_max = None
+    prepared: List[Dict] = []
+    for position, cell in enumerate(raw_cells):
+        if not isinstance(cell, dict):
+            raise ValueError(
+                "cell {} is not an object, it is a {}".format(
+                    position, type(cell).__name__)
+            )
+        key = cell.get("key")
+        if not isinstance(key, str) or not key:
+            raise ValueError("cell {} has no key".format(position))
+        if key in seen:
+            raise ValueError("cell key {!r} is used more than once".format(key))
+        seen.add(key)
+
+        outline = cell.get("outline") or []
+        if not isinstance(outline, list):
+            raise ValueError(
+                "cell {!r} has an outline that is not a list of points".format(key)
+            )
+        holes = cell.get("holes") or []
+        if not isinstance(holes, list):
+            raise ValueError(
+                "cell {!r} has holes that are not a list of rings".format(key)
+            )
+        rings = [outline] + list(holes)
+        flat_rings = []
+        for ring in rings:
+            if not isinstance(ring, list):
+                raise ValueError(
+                    "cell {!r} has a ring that is not a list of points".format(key)
+                )
+            if len(ring) < 3:
+                raise ValueError(
+                    "cell {!r} has a ring of {} points; a polygon needs "
+                    "3".format(key, len(ring))
+                )
+            plan = []
+            for point in ring:
+                try:
+                    x, y = float(point[0]), float(point[1])
+                except (TypeError, ValueError, IndexError, KeyError):
+                    # KeyError too: a point authored as {"x": .., "y": ..}
+                    # instead of [x, y] subscripts to a KeyError, which is
+                    # the same authoring mistake as any other and must not
+                    # escape as a 500.
+                    raise ValueError(
+                        "cell {!r} has a coordinate that is not a number".format(key)
+                    )
+                plan.append([x, y])
+                if len(point) > 2:
+                    try:
+                        z = float(point[2])
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            "cell {!r} has a z coordinate that is not a number".format(key)
+                        )
+                    surface = surface_height(x, y)
+                    if surface is not None:
+                        if offset_max is None:
+                            offset_max = abs(z - surface)
+                        else:
+                            offset_max = max(offset_max, abs(z - surface))
+            # Repeated corners go before the question is asked. Param's
+            # own Skin export carries corner pairs about 5e-7 m apart in
+            # 28 of its 1074 cells: a zero-length edge, which makes "does
+            # this ring cross itself" ill-defined and refused the whole
+            # cut. The pipeline welds points within TOL a few lines below
+            # (PointWeld, _weld_ring) regardless, so the check was asking
+            # about a ring the cut never builds. This is a normalisation,
+            # not a relaxation: the rule still applies to the welded ring,
+            # and a genuine crossing is still refused by name.
+            plan = _drop_repeated_corners(plan)
+            if len(plan) < 3:
+                raise ValueError(
+                    "cell {!r} has fewer than 3 distinct plan corners "
+                    "once repeated ones are welded".format(key)
+                )
+            if not _is_simple(plan):
+                raise ValueError(
+                    "cell {!r} has an outline that crosses itself".format(key)
+                )
+            flat_rings.append(plan)
+
+        course = cell.get("course")
+        if course is None:
+            inferred = True
+            course = 0
+        try:
+            course = int(course)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "cell {!r} has a course value that is not an integer".format(key)
+            )
+        if course < 0:
+            # A course is an index from the rim up, and the staging plan
+            # walks the courses present. A negatively coursed cell was
+            # welded and drawn as a piece all the same, so its weight left
+            # the formwork curve without a trace: analysis_binding reports
+            # zero orphans (its faces ARE covered by a cell), so the one
+            # disclosure mechanism could not see it either. Measured on the
+            # tiny contract: courses -3 and 0 gave a final formwork of
+            # 13087.1 N against a true 26174.2 N with an entirely empty
+            # report. Rejected here, by cell key, alongside the other
+            # authored rules.
+            raise ValueError(
+                "cell {!r} has course {}; a course is an index from the rim "
+                "up and cannot be negative".format(key, course)
+            )
+        prepared.append({
+            "key": key,
+            "course": course,
+            "outline": flat_rings[0],
+            "holes": flat_rings[1:],
+        })
+
+    courses = max(c["course"] for c in prepared) + 1
+    tess = build_tessellation(
+        prepared,
+        str(document.get("pattern") or "imported"),
+        "imported",
+        None,
+        courses,
+    )
+    _reject_overlaps(tess)
+    tess["provenance"] = dict(document.get("provenance") or {})
+    tess["z_offset_max"] = offset_max
+    tess["courses_inferred"] = inferred
+    return tess
+
+
+def _normalize_outline(outline: List[int]) -> Tuple[int, ...]:
+    """Normalize an outline to a canonical cyclic form.
+
+    Generates all cyclic rotations and their reversal, and returns the
+    lexicographically smallest. Two outlines that define the same polygon
+    (regardless of starting vertex or winding) normalize to the same list.
+    """
+
+    rotations = [tuple(outline[i:] + outline[:i]) for i in range(len(outline))]
+    reversed_outline = list(reversed(outline))
+    reversed_rotations = [tuple(reversed_outline[i:] + reversed_outline[:i]) for i in range(len(reversed_outline))]
+    return min(rotations + reversed_rotations)
+
+
+def _reject_overlaps(tess: Dict) -> None:
+    """Two cells covering the same ground is an authoring mistake, not a cut.
+
+    Two cells overlap if: an edge of A properly crosses an edge of B, a
+    vertex of A lies strictly inside cell B, a vertex of B lies strictly
+    inside cell A, their outlines are identical, or they have the same
+    corners connected in different orders. Strictly inside means inside
+    and not on the boundary. This catches proper crossings and any vertex
+    strictly inside another cell. It does not catch a cell wholly
+    contained in another with every vertex on its boundary, which is caught
+    only if the outlines are identical or share corners with different
+    connectivity. This is a check, not a proof of disjointness.
+    """
+
+    points = tess["points"]
+    cells = tess["cells"]
+    grid = spatial.Grid(_bucket_size(tess))
+    boxes = []
+    for index, cell in enumerate(cells):
+        ring = [points[i] for i in cell["outline"]]
+        box = (
+            min(p[0] for p in ring), min(p[1] for p in ring),
+            max(p[0] for p in ring), max(p[1] for p in ring),
+        )
+        boxes.append(box)
+        grid.insert(index, *box)
+
+    for index, cell in enumerate(cells):
+        outline_a = cell["outline"]
+        for other in grid.query(*boxes[index]):
+            if other == index:
+                continue
+            outline_b = cells[other]["outline"]
+
+            if len(outline_a) == len(outline_b) and set(outline_a) == set(outline_b):
+                if _normalize_outline(outline_a) == _normalize_outline(outline_b):
+                    raise ValueError(
+                        "cell {!r} and cell {!r} have identical outlines; each cell "
+                        "must be unique".format(cell["key"], cells[other]["key"])
+                    )
+                else:
+                    raise ValueError(
+                        "cell {!r} and cell {!r} connect the same corners in "
+                        "different orders; cells must cover the surface once".format(
+                            cell["key"], cells[other]["key"]
+                        )
+                    )
+
+            for i in range(len(outline_a)):
+                a = points[outline_a[i]]
+                b = points[outline_a[(i + 1) % len(outline_a)]]
+                for j in range(len(outline_b)):
+                    c = points[outline_b[j]]
+                    d = points[outline_b[(j + 1) % len(outline_b)]]
+                    if _segments_cross(a, b, c, d):
+                        raise ValueError(
+                            "cell {!r} overlaps cell {!r}; cells must cover the "
+                            "surface once".format(cell["key"], cells[other]["key"])
+                        )
+
+            for point_idx in outline_a:
+                if point_strictly_in_cell(points[point_idx], cells[other], points):
+                    raise ValueError(
+                        "cell {!r} overlaps cell {!r}; cells must cover the "
+                        "surface once".format(cell["key"], cells[other]["key"])
+                    )
+
+            for point_idx in outline_b:
+                if point_strictly_in_cell(points[point_idx], cell, points):
+                    raise ValueError(
+                        "cell {!r} overlaps cell {!r}; cells must cover the "
+                        "surface once".format(cells[other]["key"], cell["key"])
+                    )

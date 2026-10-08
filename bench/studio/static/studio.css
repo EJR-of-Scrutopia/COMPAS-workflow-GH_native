@@ -1,0 +1,1609 @@
+/* Adobe Spectrum, as published token values rather than as a mood.
+   https://opensource.adobe.com/spectrum-design-data/tokens/standard-panel/
+   https://opensource.adobe.com/spectrum-design-data/tokens/card/
+   Adopted 2026-09-04 after a survey of ten renderers and DCC tools; it was
+   the only candidate publishing exact numbers for panel width, control
+   height, thumbnail size and a dark surface ramp, and it is the system
+   behind Substance 3D Painter, whose asset panel is the nearest existing
+   thing to this one. */
+:root {
+  /* Four planes and no more. Everything the panel draws sits on one of
+     them, which is what stops thirty unrelated greys accumulating again. */
+  --ground:   #111111;   /* the viewport, and the well behind a grid */
+  --panel:    #1b1b1b;   /* the panel itself */
+  --raised:   #222222;   /* a control, a popover, a tile */
+  --well:     #2c2c2c;   /* an inset, a track, a hover */
+  --line:     #393939;   /* every border */
+  --line-lit: #5c5c5c;   /* a border under the pointer */
+  --off:      #444444;   /* disabled */
+
+  --ink:      #e6e6e6;   /* what you read */
+  --ink-2:    #a0a0a0;   /* what you read second */
+  --ink-3:    #6f6f6f;   /* metadata, and headings at rest */
+
+  --accent:   #4069fd;   /* selection and focus, Spectrum blue-800 */
+  --accent-bg:#1e2740;   /* the ground under a selected thing */
+  --accent-ink:#cfd9ff;  /* text ON --accent-bg; the pale end of the accent */
+  --accent-hover:#5b80ff; /* the filled button under the pointer */
+
+  --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
+  --pointed:  #d9a441;   /* what the pointer is over: the hover box's amber */
+  --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
+  --scrim-thin:rgba(16, 18, 22, 0.62); /* the same, for glass over its own subject */
+  /* The live graphs' three inks, muted so the picture behind stays the
+     picture: cables, the load, the columns. Charts read these at draw
+     time, so they carry no hex of their own. */
+  --graph-a: #5fb3a6; --graph-a-fill: rgba(95, 179, 166, 0.16);
+  --graph-b: #d9a25f;
+  --graph-c: #d77a8a; --graph-c-fill: rgba(215, 122, 138, 0.16);
+
+  /* component-height-100 and -75. A control is 32; a chip or a list row is
+     24, which is the only other height the panel is allowed. */
+  --h:        32px;
+  --h-small:  24px;
+
+  /* The spacing scale. Nothing in the panel uses a number that is not one
+     of these, which is most of what makes a dense panel look ordered. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  --radius:   4px;       /* corner-radius-100, every control */
+  --radius-s: 3px;       /* thumbnail-corner-radius */
+
+  --t-meta:   11px;      /* a readout, a caption, a size in millimetres */
+  --t-2:      12px;      /* secondary */
+  --t:        14px;      /* body, controls, and a panel title */
+  --t-head:   16px;      /* a section heading */
+
+  --panel-w:  260px;     /* standard-panel-width */
+
+  /* The panel's own ground, translucent. Everything ON it stays opaque. */
+  --panel-veil: rgba(27, 27, 27, 0.72);
+}
+
+/* The light theme. Spectrum's light ramp, not the dark one inverted, which
+   is the difference between a theme and a photographic negative: light
+   surfaces get DARKER as they rise, where dark surfaces get lighter, and
+   the border sits below the surfaces rather than above them. */
+:root[data-theme="light"] {
+  --ground:   #f8f8f8;
+  --panel:    #ffffff;
+  --raised:   #f4f4f4;
+  --well:     #e6e6e6;
+  --line:     #d5d5d5;
+  --line-lit: #8f8f8f;
+  --off:      #c9c9c9;
+
+  --ink:      #1b1b1b;
+  --ink-2:    #5a5a5a;
+  --ink-3:    #8f8f8f;
+
+  --accent:   #2451e0;
+  --accent-bg:#e3eaff;
+  --accent-ink:#2451e0;
+  --accent-hover:#1c46c9;
+
+  --scrim:    rgba(255, 255, 255, 0.88);
+  --scrim-thin:rgba(255, 255, 255, 0.66);
+  --graph-a: #2f8c7e; --graph-a-fill: rgba(47, 140, 126, 0.16);
+  --graph-b: #b0762a;
+  --graph-c: #b84a5f; --graph-c-fill: rgba(184, 74, 95, 0.16);
+
+  --panel-veil: rgba(252, 252, 252, 0.74);
+}
+
+:root { color-scheme: dark; }
+* { margin: 0; box-sizing: border-box; }
+body { overflow: hidden;
+       font-family: "Segoe UI Variable Text", system-ui, "Inter",
+                    -apple-system, "Segoe UI", sans-serif;
+       font-size: var(--t); letter-spacing: 0;
+       background: var(--ground); color: var(--ink); }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+/* Translucent ground, opaque controls. A blurred panel over a moving
+   viewport makes every grey in it depend on what is behind it, which is why
+   only the panel's own ground is see-through: every tile, button and field
+   on top of it is solid, so the surface ramp survives contact with whatever
+   the vault happens to be doing. */
+#panel { position: fixed; top: 0; right: 0; width: var(--panel-w);
+         min-width: 200px; max-width: 400px; height: 100%;
+         overflow-y: auto; padding: var(--s3);
+         background: var(--panel-veil);
+         backdrop-filter: blur(18px) saturate(115%);
+         -webkit-backdrop-filter: blur(18px) saturate(115%);
+         border-left: 1px solid var(--line);
+         /* A column, so the footer rows can fall to the true bottom when
+            the open section is short (Param: the footer belongs "on the
+            bottom of the banner not on the bottom of the menus"). When
+            content overflows, sticky takes over exactly as before. */
+         display: flex; flex-direction: column; }
+#panel > * { flex-shrink: 0; }
+/* Section summaries are hidden: the tab rail carries every section's
+   name, and exactly one section is on show at a time. The details/summary
+   structure stays in the markup -- the machinery that finds sections by
+   id and the self-checks that read the page do not care how a section is
+   revealed. */
+#panel summary { display: none; }
+#panel details { margin-top: var(--s3); }
+
+/* The tab rail: one translucentish button per section, on the viewport
+   beside the panel. The lit tab is the section the panel is showing. */
+#tab-rail { position: fixed; top: var(--s3);
+  right: calc(var(--panel-w) + var(--s3)); z-index: 6;
+  display: flex; flex-direction: column; gap: var(--s1); }
+#tab-rail button { min-width: 96px; height: var(--h-small);
+  padding: 0 var(--s3); text-align: right;
+  background: var(--panel-veil); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font: inherit; font-size: var(--t-2); cursor: pointer; }
+#tab-rail button:hover { border-color: var(--line-lit); color: var(--ink); }
+#tab-rail button.active { background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
+#panel label { display: block; margin: var(--s2) 0; color: var(--ink-2); }
+#panel input[type="range"] { width: 100%; }
+/* One control height for everything the panel offers, which is the single
+   change that makes a column of unlike controls read as a set. */
+#panel select, #panel button { width: 100%; height: var(--h);
+         margin: var(--s1) 0; padding: 0 var(--s3);
+         background: var(--raised); color: var(--ink);
+         border: 1px solid var(--line); border-radius: var(--radius);
+         font: inherit; }
+#panel button { text-align: center; }
+#panel button:hover, #panel select:hover { border-color: var(--line-lit);
+         cursor: pointer; }
+/* A disabled button looks it, not only says so in its title: the explicit
+   ink above overrides the browser's own greying. After :hover, which has
+   the same weight, so a disabled button's edge does not light either. */
+#panel button:disabled { color: var(--ink-3); cursor: default; border-color: var(--line); }
+#panel button:focus-visible, #panel select:focus-visible,
+#panel input:focus-visible { outline: 2px solid var(--accent);
+         outline-offset: 1px; }
+#props-row button.armed { outline: 2px solid var(--accent); }
+/* In the panel now, reading straight under the Data button (Param: "turn
+   the text overlay into text that just reads below the data button") --
+   panel ink, no card, its long struck-now lines wrapping in place. */
+#hud { margin-top: var(--s2); font-size: var(--t-2); line-height: 1.5;
+       white-space: pre-wrap; color: var(--ink-2); }
+#hud:empty { display: none; }
+#data-button.active { background: var(--accent-bg); color: var(--ink); }
+/* F6: clear of the panel plus a margin, derived from the width token so a
+   resized panel cannot overlap it again -- the log used to paint its text
+   underneath the panel itself. */
+#event-log { position: fixed; right: calc(var(--panel-w) + var(--s4));
+  /* Above the shelf strip, not behind it: the newest lines used to land
+     under the bottom tiles (Param's screenshot, the iPad). */
+  bottom: 64px; font-size: 12px;
+  font-family: ui-monospace, monospace; color: #fff; text-align: right;
+  pointer-events: none; opacity: 1; transition: opacity 1.2s; z-index: 15;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
+#event-log.faded { opacity: 0; }
+#banner-close { margin-left: 12px; cursor: pointer; pointer-events: auto; }
+/* White ink stated, not inherited: the ground is the danger red in both
+   themes, and the light theme's inherited ink is near-black on it. */
+#banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
+          padding: 8px 14px; background: var(--danger); color: #fff;
+          border-radius: var(--radius); font-size: var(--t-2); z-index: 10; }
+#run-status, #cut-status, #record-status, #still-readout, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
+/* The panel token, so the data sheet follows the theme: it kept a fixed
+   near-black ground under themed text, which light mode made unreadable. */
+/* A contained, translucent sheet at the top left (Param: "slightly
+   translucent like the banner... contained sized box"), not a full-height
+   column: it sizes to its content up to a ceiling and scrolls inside. */
+/* BELOW THE CORNER TILES, which now hold the top left (#corner-acts).
+   A sheet that opened over them would bury the very buttons that are
+   there to be reached at any moment. */
+#data-panel { position: fixed; left: 16px; top: 58px; width: 420px;
+              max-height: 72vh;
+              overflow: auto; background: var(--scrim);
+              -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+              padding: var(--s4);
+              border: 1px solid var(--line); border-radius: var(--radius); z-index: 20; }
+/* The data sheet's own Close: it sits outside #panel, where the blanket
+   button rule cannot reach, and rendered as bare browser chrome. */
+#data-panel button { height: var(--h-small); padding: 0 var(--s2);
+  background: var(--raised); color: var(--ink); border: 1px solid var(--line);
+  border-radius: var(--radius); font: inherit; font-size: var(--t-2);
+  cursor: pointer; }
+#data-panel button:hover { border-color: var(--line-lit); }
+#data-tabs { display: flex; gap: var(--s1); margin: var(--s2) 0 var(--s3); }
+#data-tabs button { width: auto; padding: 4px 14px; }
+#data-tabs button.active { background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
+.data-tab { font-size: 12px; line-height: 1.55; }
+.data-tab.hidden { display: none; }
+#data-analysis h3 { font-size: var(--t); margin: var(--s3) 0 var(--s1); }
+#data-analysis p { margin: 0 0 var(--s2); color: var(--ink-2); }
+#data-analysis b { color: var(--ink); }
+#data-analysis ul { margin: 0 0 var(--s2); padding-left: var(--s4);
+  color: var(--ink-2); }
+#data-analysis li { margin-bottom: var(--s1); }
+.pill { display: inline-block; padding: 0 8px; border-radius: 9px;
+  font-size: var(--t-meta); line-height: 1.6; vertical-align: 1px; }
+.pill.good { background: #1e3a26; color: #7fd695; }
+.pill.warn { background: #3a331e; color: #d6bd7f; }
+.pill.bad { background: #3a1e1e; color: #d68f7f; }
+:root[data-theme="light"] .pill.good { background: #d9efdf; color: #1d6b34; }
+:root[data-theme="light"] .pill.warn { background: #f2e8cd; color: #7a5f18; }
+:root[data-theme="light"] .pill.bad { background: #f2d5cd; color: #8f2f1c; }
+.data-note { margin-top: var(--s3); padding: var(--s2) var(--s3);
+  border-left: 3px solid var(--line-lit); background: var(--raised);
+  border-radius: var(--radius); color: var(--ink-2);
+  font-size: var(--t-2); }
+#data-graphs > div { margin-bottom: var(--s3); }
+#data-content { font-size: 12px; line-height: 1.5; }
+#data-content h3 { font-size: var(--t); margin: var(--s1) 0 var(--s2); }
+#data-content p { margin: 0 0 var(--s2); color: var(--ink-2); }
+#data-content ul { margin: 0 0 var(--s2); padding-left: var(--s4); }
+#data-content table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
+#data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
+              border-bottom: 1px solid var(--line); }
+/* Specificity, and the bug it caused. "#panel button" is one id plus one
+   element and beats a bare class, so every new component that set its own
+   width lost to it silently: tiles and chips stretched to the full panel
+   width and stacked one per row, and a label carrying .hidden stayed
+   visible, which is why two floor controls appeared at once. Anything the
+   panel styles by element has to be beaten inside the panel by name. */
+.hidden { display: none; }
+#panel .hidden { display: none !important; }
+/* The drawer's twin of the line above, for the same reason. The shelf is
+   outside #panel, and there `.dial-block label { display: contents }`
+   and `.picker { display: grid }` both outrank a bare .hidden: the HDRI
+   Scale and Height rows stayed on screen under the Infinite projection,
+   and the weather chip stayed in HDRI and Studio modes, each tagged
+   hidden and each still showing. */
+#shelf .hidden { display: none !important; }
+#panel .tile, #panel .segmented button,
+#panel #props-row button, #panel #props-row select,
+#panel #mode-row .mode, #panel #day-cycle-row button {
+  width: auto; margin: 0; }
+#layer-toggles, #cablenet-lenses {
+  display: flex; flex-direction: column; gap: var(--s1); }
+#layer-toggles .layer-btn, #cablenet-lenses .layer-btn {
+  text-align: left; margin: 0; }
+#layer-toggles .layer-btn.active, #cablenet-lenses .layer-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
+/* A lens's own dial sits directly under its button, indented, and only
+   while the lens is on. The Cable net section's lens list wears the same
+   rules, so its lenses read as the Analysis lenses do. */
+#layer-toggles .layer-slider, #cablenet-lenses .layer-slider {
+  display: flex; gap: var(--s2);
+  align-items: center; margin: 0 0 var(--s1) var(--s3);
+  color: var(--ink-2); font-size: var(--t-2); }
+#layer-toggles .layer-slider input, #cablenet-lenses .layer-slider input {
+  flex: 1; width: auto; }
+#layer-toggles .layer-slider.hidden, #cablenet-lenses .layer-slider.hidden {
+  display: none; }
+#layer-toggles .layer-note, #cablenet-section .layer-note {
+  margin: 0 0 var(--s1) var(--s3);
+  color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
+#overlays-tuck { display: flex; gap: var(--s2); align-items: center;
+  margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
+/* Bottom right, clear of the panel (derived from its width token), rather
+   than bottom left on top of #hud. Both were anchored left: 16px;
+   bottom: 16px, so turning a heatmap on covered the last lines of the HUD
+   -- and the HUD gained the struck-now line in this branch, which is the
+   line a heatmap is most likely to be read against. */
+/* The key stands in the lower third beside the panel (Param: "to the
+   left of the menus and then slides to the right when it gets
+   retracted... i dont like it sitting to the middle"): mid-height
+   belongs to the collapse handle, the top band to the tab rail, and the
+   bottom corner to the event log -- the lower third is the clear lane.
+   When the panel folds away the key follows the same 0.25s slide the
+   handle and the log take. */
+#legend {
+  position: fixed;
+  right: calc(var(--panel-w) + var(--s4));
+  bottom: 26vh;
+  transition: right 0.25s ease;
+  z-index: 15;
+  padding: 8px 12px;
+  min-width: 180px;
+  background: var(--scrim);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+body.panel-collapsed #legend { right: var(--s4); }
+#legend.hidden { display: none; }
+#legend-bar {
+  height: 10px;
+  border-radius: 3px;
+  /* These three hexes mirror STRESS_SCALE's compression/zero/tension
+     colours in studio.js; keep both in sync or the legend will silently
+     drift from the scale it is meant to describe. */
+  background: linear-gradient(to right, #2255cc, #f2efe8, #cc2211);
+}
+#legend.deflection #legend-bar {
+  background: linear-gradient(to right, #f2efe8, #cc2211);
+}
+#legend-labels { display: flex; justify-content: space-between; }
+#cut-overlay { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
+               display: flex; flex-direction: column; align-items: center; gap: var(--s2);
+               padding: var(--s4) var(--s6); background: var(--scrim);
+               border: 1px solid var(--line); border-radius: var(--radius); z-index: 30;
+               pointer-events: none; }
+#cut-overlay.hidden { display: none; }
+/* A plate is rendered in tiles, and each tile reassigns the canvas
+   backing store while its CSS box stays put, so the picture inside the
+   frame leaps from tile to tile (Param: "it jumps all over the place").
+   The viewport is covered for the duration rather than the render being
+   contorted to avoid it: reading the canvas is the path the recorder
+   already proves, and the composer target is HalfFloatType so reading
+   it into bytes returns black. */
+body.stilling #view { visibility: hidden; }
+body.stilling::after { content: ""; position: fixed; inset: 0; z-index: 12;
+  background: var(--ground); pointer-events: none; }
+/* AND IT SAYS WHAT IT IS DOING. Param: "when it captures a still it had a
+   little center loading animation while it does it instead of a white
+   screen" -- in the light theme the cover is --ground, #f8f8f8, which is a
+   blank sheet for as long as an 8K plate takes. A spinner and the tile
+   count in the middle of it, on the cut overlay's own ring. */
+#still-cover { display: none; }
+body.stilling #still-cover { display: flex; position: fixed; left: 50%; top: 45%;
+  transform: translate(-50%, -50%); z-index: 13; flex-direction: column;
+  align-items: center; gap: var(--s2); padding: var(--s4) var(--s6);
+  background: var(--scrim); color: var(--ink); border: 1px solid var(--line);
+  border-radius: var(--radius); font-size: var(--t-2); pointer-events: none; }
+#still-spinner { width: var(--h-small); height: var(--h-small); border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--ink-2);
+  animation: cut-spin 0.9s linear infinite; }
+#cut-spinner { width: var(--h-small); height: var(--h-small); border-radius: 50%;
+               border: 3px solid var(--line); border-top-color: var(--ink-2);
+               animation: cut-spin 0.9s linear infinite; }
+@keyframes cut-spin { to { transform: rotate(360deg); } }
+
+/* Asset loads announce themselves: a translucent card top-centre of the
+   viewport with the same turning ring, counted so overlapping loads keep
+   one card up until the last of them lands. */
+#loading-toast { position: fixed; top: 14px; left: 50%;
+                 transform: translateX(-50%); display: flex; gap: var(--s2);
+                 align-items: center; padding: 6px 14px;
+                 background: var(--scrim); border: 1px solid var(--line);
+                 border-radius: var(--radius);
+                 -webkit-backdrop-filter: blur(6px);
+                 backdrop-filter: blur(6px);
+                 color: var(--ink); font-size: 12px; z-index: 30;
+                 pointer-events: none; }
+#loading-toast.hidden { display: none; }
+#loading-spin { width: 12px; height: 12px; border-radius: 50%;
+                border: 2px solid var(--line); border-top-color: var(--accent);
+                animation: cut-spin 0.9s linear infinite; flex: none; }
+
+/* Live reads as a state, not a control: the word and a red beacon while
+   it is following Grasshopper, the word alone and dimmed when it is not.
+   The beacon breathes so a still screenshot and a live window are told
+   apart, and flares on the frame a push actually lands. */
+/* Geometry (height, padding, radius) comes from the panel's blanket button
+   rule: the old chip measurements written here lost to it silently and
+   described a control that never rendered. Only what actually applies. */
+#live-toggle { display: inline-flex; align-items: center; gap: 5px;
+  color: #6b7079; letter-spacing: 0.12em; cursor: pointer; }
+#live-toggle .beacon { width: 7px; height: 7px; border-radius: 50%;
+  background: transparent; }
+#live-toggle.on { color: var(--ink); border-color: #6a2f33; }
+#live-toggle.on .beacon { background: #e03a3a; box-shadow: 0 0 5px #e03a3a;
+  animation: live-breathe 2s ease-in-out infinite; }
+#live-toggle.fresh .beacon { background: #ff6b6b; box-shadow: 0 0 10px #ff5252;
+  animation: none; }
+@keyframes live-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Saved scenes: the same tile family as every other grid in the panel.
+   The picker is a grid of stills rather than a select, because a scene is
+   a picture and a name is a poor substitute for one. Frame, caption, hover
+   and selection all come from the shared tile contract in the closing
+   block; only what is scene-specific is said here. */
+#scene-row { display: flex; align-items: center; gap: var(--s2); margin: var(--s2) 0; }
+#scene-count { color: var(--ink-3); }
+#scene-list { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1);
+  margin: var(--s1) 0 var(--s2); padding: var(--s1); border-radius: var(--radius);
+  background: var(--ground); max-height: 320px; overflow-y: auto; }
+.scene-tile { position: relative; cursor: pointer; overflow: hidden; }
+.scene-tile img { display: block; width: 100%; aspect-ratio: 16 / 9;
+  object-fit: cover; border-radius: var(--radius-s); background: var(--ground); }
+.scene-tile .scene-name { display: block; padding: 4px 4px 0;
+  font-size: var(--t-meta); text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-tile .scene-study { display: block; padding: 0 4px;
+  font-size: var(--t-meta); text-align: center; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-tile .scene-elsewhere { color: #c8a44a; }
+.scene-delete { position: absolute; top: var(--s2); right: var(--s2);
+  cursor: pointer; }
+.scene-empty { color: var(--ink-3); grid-column: 1 / -1; }
+
+/* The import panel: where the vaults are, which one is up, which skin cuts
+   it, and whether the studio is following Grasshopper. */
+#folder-row, #vault-row, #vault-tools { display: flex; align-items: center;
+  gap: var(--s2); margin: var(--s1) 0; }
+#vault-row select { flex: 1 1 auto; min-width: 0; }
+#folder-path { flex: 1 1 auto; min-width: 0; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl;
+  text-align: left; }
+
+/* The skin choice is one switch between two named ends, not a list of two:
+   a study either wears the skin Grasshopper authored or the one the studio
+   cuts, and a toggle says that in a glance. */
+#source-row { margin: var(--s2) 0; }
+.toggle-end { color: var(--ink-3); }
+#source-row.authored #source-end-authored,
+#source-row.generated #source-end-generated { color: var(--ink); }
+.toggle { position: relative; display: inline-block; width: 34px; height: 16px; }
+.toggle input { position: absolute; opacity: 0; width: 100%; height: 100%;
+  margin: 0; cursor: pointer; }
+.toggle .track { position: absolute; inset: 0; border-radius: 8px;
+  background: var(--line); transition: background 120ms linear; pointer-events: none; }
+.toggle .track::before { content: ""; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: var(--ink);
+  transition: transform 120ms ease; }
+.toggle input:checked + .track { background: var(--accent); }
+.toggle input:checked + .track::before { transform: translateX(18px); }
+.toggle input:disabled + .track { opacity: 0.4; }
+/* The refusal used to sit here under the control. It goes to the log at
+   the foot of the screen instead: that is what the log is for, and a panel
+   that explains itself in prose is a panel nobody reads. */
+/* A group heading is a control: it folds its group away, and while folded
+   it says what the group is set to, so nothing has to be opened to be
+   read. The chevron is drawn in CSS rather than fetched as an icon. */
+.row-heading { display: flex; align-items: center; gap: var(--s2);
+  height: var(--h-small); margin: var(--s3) 0 var(--s1);
+  font-size: var(--t-2); color: var(--ink-3); text-transform: uppercase;
+  letter-spacing: 0.08em; cursor: pointer; user-select: none; }
+.row-heading::before { content: ""; width: 0; height: 0; flex: 0 0 auto;
+  border-left: 4px solid var(--ink-3); border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent; transition: transform 120ms ease;
+  transform: rotate(90deg); }
+.row-heading.folded::before { transform: rotate(0deg); }
+.row-heading:hover { color: var(--ink); }
+.row-heading .summary { margin-left: auto; font-size: var(--t-meta);
+  color: var(--ink-3); text-transform: none; letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 140px; }
+.group-body.folded { display: none; }
+.switch-line { display: flex; align-items: center; gap: 8px; }
+
+/* The three ways of looking at the vault, at the foot of the panel where
+   the eye returns to them. Equal columns so the words sit level, and the
+   longest of them (Formwork) fits without wrapping at this size. */
+/* The three views are the panel's floor, not its last section: a rule and
+   a band of its own hold them apart from whatever the last panel happens to
+   end with, which is otherwise a column of identical buttons and no way to
+   tell where one thing stops and another starts. */
+#mode-row { position: sticky; bottom: 0; z-index: 5; display: grid;
+  grid-template-columns: repeat(3, 1fr); gap: var(--s1);
+  margin: var(--s6) calc(-1 * var(--s3)) 0;
+  /* In the panel's flex column, auto swallows the free space when the
+     open section is short, dropping this row (and the panel foot after
+     it) to the banner's true bottom. With overflowing content auto
+     resolves to nothing and sticky carries on as before. */
+  margin-top: auto;
+  padding: var(--s2) var(--s3) var(--s3); background: var(--panel);
+  border-top: 1px solid var(--line); }
+/* The panel's blanket button rule would otherwise put a 4px margin between
+   grid cells that already have a gap, and stretch each to the full width. */
+#mode-row .mode { width: auto; margin: 0; }
+#mode-row .mode { height: var(--h); padding: 0 var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink-2); letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; }
+#mode-row .mode:hover { border-color: var(--line-lit); color: var(--ink); }
+/* Nothing is lit while the animation is running: playing is its own way of
+   looking, and none of the three owns the scene then. The .active colours
+   live in the selection rule near the end of the file. */
+
+/* Materials as rendered balls, two to a row, the name centred underneath
+   and nothing beside the picture. This is the shape every rendering tool's
+   material browser has settled on, and for a good reason: a sphere under a
+   fixed rig shows roughness, sheen and colour at once, which no rectangle
+   of flat colour can do. */
+/* Small, round, three to a row. The first cut of these was 110px squares
+   two to a row, which took the whole panel to say seven words; Param's
+   note was that they dominate, and he was right. A material ball wants to
+   be recognised, not admired: 56px of sphere is enough to read roughness
+   and colour, and the name underneath does the rest. */
+/* An inset well behind the grid, which is what tells the eye that a grid
+   is a place to choose from rather than a row of things already chosen. */
+.tile-grid { display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: var(--s1); margin: var(--s1) 0 var(--s2); padding: var(--s1);
+  border-radius: var(--radius); background: var(--ground); }
+.tile { position: relative; width: auto; margin: 0; padding: var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink-2); font-size: var(--t-meta);
+  cursor: pointer; overflow: hidden; }
+/* Square, and the picture fills the tile. A material's picture is one unit
+   of the substance -- one brick, one plank, one tile -- and a circle throws
+   away the two ends that say how long it is. Spectrum's own corner radius
+   for a thumbnail is 3px. */
+.tile canvas, .tile img { display: block; width: 100%; height: auto;
+  aspect-ratio: 1 / 1; border-radius: var(--radius-s); background: var(--ground);
+  object-fit: cover; }
+.tile span { display: block; padding: 4px 4px 0; text-align: center;
+  line-height: 1.2; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+/* Hover, selection and rest colour are stated ONCE, in the closing block at
+   the end of this file, at #panel specificity -- bare-class versions here
+   silently lose to "#panel button" and have already lied twice. */
+/* One aspect per KIND of thing, declared once each, near the end of this
+   section: a material is a unit crop (1:1, the base rule above -- and the
+   ground picker offers the same library, so it shows the same square), and
+   a sky is a panorama (2:1, weather and HDRI alike, below). */
+
+/* Props on one line: what to place, the placing, and the clearing. */
+#props-row { display: grid; grid-template-columns: 1fr auto auto; gap: 5px;
+  align-items: center; margin: 6px 0 4px; }
+#props-row select, #props-row button { width: auto; margin: 0; }
+#props-row button.armed { outline: 2px solid var(--accent); }
+
+/* The sun. One instrument rather than three sliders and a colour picker:
+   a compass for where it is, an arc for how high, a day track painted with
+   the sky it produces, and six moments that are solved rather than named.
+   Nothing is labelled in words because the drawing says which is which. */
+#sun-widget { position: relative; margin: 6px 0 4px; }
+#sun-dial { display: block; width: 100%; height: auto; cursor: crosshair;
+  border-radius: 4px; background: var(--ground); }
+#sun-readout { position: absolute; right: 8px; bottom: 6px; display: flex;
+  gap: 10px; color: var(--ink-2); pointer-events: none;
+  font-variant-numeric: tabular-nums; }
+#sun-readout #sun-time { color: var(--ink); }
+/* The compact control height, and the same number as the canvas buffer in
+   index.html: a 26px buffer shown at 30px smeared the painted sky band. */
+#day-track { display: block; width: 100%; height: var(--h-small); margin: 4px 0;
+  border-radius: var(--radius); cursor: ew-resize; }
+#day-cycle-row { display: grid; grid-template-columns: auto 1fr; gap: 8px;
+  align-items: center; margin: 4px 0 8px; }
+#day-cycle-row button { width: auto; margin: 0; }
+#day-cycle-row label { margin: 0; }
+
+/* The cut's colour and the machine toggle, one row of two under the
+   offset dial. The colour swatch is the width of a control rather than
+   the width of the word beside it, so the two halves balance. */
+#section-row { display: flex; align-items: center; gap: var(--s2);
+  margin: var(--s1) 0 var(--s2); }
+#section-row label { display: flex; align-items: center; gap: var(--s2);
+  margin: 0; color: var(--ink-2); }
+
+/* Place and day sit above the site's dials as one row of two: they are
+   the coarse setting and the dials under them are the fine one. Equal
+   columns, because neither is the more important half -- a June noon in
+   Cardiff and a December noon in Cardiff are different pictures. */
+#site-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2);
+  align-items: center; margin: var(--s1) 0 var(--s2); }
+#site-row select, #site-row input { width: 100%; height: var(--h); margin: 0;
+  box-sizing: border-box; background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0 var(--s2); font: inherit; }
+#site-row select:hover, #site-row input:hover { border-color: var(--line-lit); }
+/* Chromium paints the date picker's indicator near-black on the panel. */
+#site-row input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7); cursor: pointer; }
+
+/* The prop library: the same tiles the materials use, at the same two to a
+   row, because a model is a look too and a name in a dropdown is no way to
+   choose one. Three to a row was tried and the 65px captions truncated
+   almost every prop's name. */
+#props-row { grid-template-columns: auto auto auto auto; }
+/* The Edit toggle wears the accent while props are grabbable, the same
+   dress as an active segment: one look for "this is the mode you are in". */
+#prop-library { margin: 4px 0 8px; }
+#prop-library .tile-grid { max-height: 320px; overflow-y: auto; }
+#prop-credit { color: var(--ink-3); margin-top: 4px; }
+
+/* A slider is one row: its name on the left, its value on the right, and
+   the row itself is the track. This is the shape every serious tool has
+   settled on, and it is what Param asked for when he said no text above and
+   below controls: forty parameters cost forty lines rather than eighty, and
+   the eye reads a column of names and a column of numbers.
+
+   The native input is still there, stretched over the row and invisible, so
+   dragging, arrow keys, focus and every existing handler keep working
+   exactly as they did. Only the appearance is ours. */
+/* A row, not two absolutely positioned labels hoping never to meet. The
+   name keeps its width and the value takes what is left, so a long readout
+   truncates at its own end instead of printing through the name. */
+.scrub { position: relative; display: flex; align-items: center;
+  gap: var(--s2); height: var(--h); margin: var(--s1) 0;
+  padding: 0 var(--s3); border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); overflow: hidden; }
+.scrub input[type="range"] { position: absolute; inset: 0; width: 100%;
+  height: 100%; margin: 0; opacity: 0; cursor: ew-resize; z-index: 2; }
+.scrub .fill { position: absolute; inset: 0; pointer-events: none; }
+/* An underline, not a block. Filling the row behind the name made the
+   name look like a chip and the row look like two controls; a 2px bar at
+   the foot says the same thing and lets the name be a name. */
+.scrub .fill::before { content: ""; position: absolute; bottom: 0;
+  left: 0; height: 2px; width: var(--fill, 0%); background: var(--accent); }
+.scrub .fill::after { content: ""; position: absolute; bottom: 0;
+  left: 0; height: 2px; right: 0; background: var(--line); z-index: -1; }
+.scrub .scrub-name { flex: 0 0 auto; color: var(--ink-2); pointer-events: none;
+  white-space: nowrap; }
+/* 11px is the schema's size for metadata, and a readout is metadata: it is
+   the consequence of the control, not the control. It is also what makes
+   "900 mm target, 1501 pieces in 11 courses" fit a 300 pixel panel at all. */
+.scrub .scrub-value { flex: 1 1 auto; min-width: 0; text-align: right;
+  color: var(--ink-2); pointer-events: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+/* The reading is a click target now (Param: "i would like to be able to
+   click on it and type in my own value"), so it takes back the pointer
+   the row gives away. The cost is that a drag begun exactly on the
+   number does not grab the slider; the number is a small target at the
+   right end and typing into it is the point. */
+/* Above the range input, which is stretched over the whole row at
+   z-index 2 and would otherwise swallow every click aimed at the
+   number. pointer-events alone was not enough: the input was simply on
+   top. This is what made the first attempt look like it did nothing. */
+.scrub .scrub-value.typable { pointer-events: auto; cursor: text;
+  position: relative; z-index: 3; }
+.scrub .scrub-value.typable:hover { color: var(--ink); }
+.scrub .scrub-entry { width: 68px; margin: 0; padding: 0 4px;
+  text-align: right; font: inherit; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+  background: var(--raised); border: 1px solid var(--accent);
+  border-radius: 3px; }
+.scrub:hover .fill::before { background: var(--well); }
+.scrub:hover .scrub-name { color: var(--ink); }
+.scrub input[type="range"]:focus-visible + .fill { outline: 1px solid var(--accent);
+  outline-offset: -1px; }
+
+/* ---------- every slider ----------
+   Param: "the sliders as with all sliders, matching with the grey
+   slider not necessarily the blue. but we can take a nice feature from
+   that with the circle node on the slider to indicate where it is, but
+   change it to something more modern."
+
+   What the browser's own control was: Chromium's accent blue, a fat
+   ball on a two-tone blue track, and the one loud thing in a page of
+   greys. What it got RIGHT is the node -- a mark that says where the
+   value stands without reading the number, which .scrub's underline
+   never had. So the node stays and everything else goes: a 3 px track
+   in the studio's own well grey, the travelled part in the metadata
+   grey, and the node an upright capsule rather than a ball. A ball
+   wide enough to grab covers the track it is marking; a capsule marks
+   a position exactly and is what the last few years of interface
+   design settled on.
+
+   The travelled part is a gradient stopped at --fill, which panel.js
+   writes from the value (settleRangeFills, once a frame at 6 Hz).
+   Firefox draws it with ::-moz-range-progress and needs no variable.
+
+   .scrub's own input is stretched over its row at opacity 0 and is
+   untouched by this: its row draws the fill, and its rules carry a
+   class so they outrank these. */
+input[type="range"] { -webkit-appearance: none; appearance: none;
+  height: 14px; background: transparent; cursor: ew-resize; }
+input[type="range"]::-webkit-slider-runnable-track { height: 3px;
+  border-radius: 2px; background: linear-gradient(to right,
+    var(--ink-3) 0 var(--fill, 0%), var(--well) var(--fill, 0%) 100%); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none;
+  appearance: none; width: 5px; height: 13px; margin-top: -5px; border: 0;
+  border-radius: 3px; background: var(--ink-2);
+  box-shadow: 0 0 0 1px var(--ground); }
+input[type="range"]:hover::-webkit-slider-thumb { background: var(--ink); }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--ground), 0 0 0 3px var(--accent-bg); }
+input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px;
+  background: var(--well); }
+input[type="range"]::-moz-range-progress { height: 3px; border-radius: 2px;
+  background: var(--ink-3); }
+input[type="range"]::-moz-range-thumb { width: 5px; height: 13px; border: 0;
+  border-radius: 3px; background: var(--ink-2); }
+input[type="range"]:hover::-moz-range-thumb { background: var(--ink); }
+
+/* A choice between three things is one control, not a dropdown that hides
+   two of them. Equal segments, the chosen one filled, no caption above. */
+.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 2px; margin: var(--s1) 0; padding: 2px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--ground); }
+.segmented button { width: auto; height: var(--h-small); margin: 0;
+  padding: 0 var(--s1); border: none; border-radius: var(--radius-s);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Hover and active for segments are in the closing block, where they can
+   actually win against "#panel button". */
+/* The weather presets as small skies: "overcast" is a look, and a word in a
+   dropdown is a poor way to offer one. The same 2:1 panorama the HDRI grid
+   uses, because both grids offer skies and a sky keeps one shape. The
+   canvas buffer is cut to the same 2:1 in studio.js, so nothing the
+   painter composed is cropped away by the box it is shown in. */
+#weather-tiles .tile canvas { aspect-ratio: 2 / 1; }
+
+/* A grid of tiles is a choice, not a display, so it hides until it is
+   wanted. The trigger says what is chosen and shows it, which is what a
+   dropdown does, without pretending a picture is a word. */
+.picker { display: grid; grid-template-columns: auto 1fr auto; gap: var(--s2);
+  align-items: center; width: 100%; height: var(--h); margin: var(--s1) 0;
+  padding: 0 var(--s3) 0 var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink); cursor: pointer;
+  text-align: left; }
+.picker:hover { border-color: var(--line-lit); }
+.picker .chosen-swatch { width: var(--h-small); height: var(--h-small);
+  border-radius: var(--radius-s); background: var(--well);
+  border: 1px solid var(--line); }
+.picker .chosen-name { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.picker .chevron { width: 0; height: 0; border-left: 4px solid var(--ink-3);
+  border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  transform: rotate(90deg); }
+.picker.open .chevron { transform: rotate(-90deg); }
+
+/* The sun instrument's readout sits under the dial, level with it. A
+   readout is metadata, so it takes the metadata size like every slider's
+   number does. */
+#sun-widget { margin: 0; }
+#sun-readout { position: static; display: flex; justify-content: space-between;
+  padding: 2px 2px 0; font-size: var(--t-meta); }
+
+/* A select with its name beside it rather than above it, which is the same
+   rule the sliders follow: one row, name left, control right. */
+#panel .named { display: grid; grid-template-columns: auto 1fr; gap: 8px;
+  align-items: center; margin: 4px 0; color: var(--ink-2); }
+#panel .named select { width: 100%; margin: 0; }
+
+/* The folder path is a path, so it is truncated at the START: the end of it
+   is the folder you are in, which is the part worth reading. The rtl trick
+   that did this before also reversed a plain sentence like "no folder
+   chosen" into nonsense, so the truncation is done in script now and this
+   is only the room it sits in. */
+#folder-path { direction: ltr; text-align: left; }
+
+/* A folder row anywhere in the panel, on the shape the vault folder proved:
+   a button that opens the native dialog, and the tail of the chosen path
+   beside it, truncated in script so a plain sentence like "no folder
+   chosen" is not reversed into nonsense by an rtl trick. */
+#panel .folder-line { display: flex; align-items: center; gap: var(--s2);
+  margin: var(--s1) 0; }
+#panel .folder-line button { flex: 0 0 auto; width: auto; }
+#panel .folder-line span { flex: 1 1 auto; min-width: 0; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A family's name across the grid. The library runs to a hundred and fifty
+   materials and eleven families, and without the break a search for "grey"
+   returns a wall of near-identical squares with no way to tell a grey brick
+   from a grey plaster. */
+#panel .tile-family { grid-column: 1 / -1; padding: var(--s2) var(--s1) 0;
+  color: var(--ink-3); font-size: var(--t-2); letter-spacing: 0.04em;
+  text-transform: uppercase; }
+#panel .tile-family:first-child { padding-top: 0; }
+
+/* The search matches family and name at once, which is how the QS picker
+   does it: "brick/stock" is one string and finds what a person means. Both
+   search fields take the one input[type="search"] rule further down; the
+   bespoke double-id rule that used to sit here gave the skin search its
+   own padding and ground while the ground search took the shared ones,
+   which is two looks for one job. */
+
+/* A colour is a colour, so the control is a swatch of it and nothing else.
+   The browser's own input[type=color] is a white rectangle with a chrome
+   border and reads as a broken image beside everything else in this panel.
+   One definition, further down with the schema sizes. */
+#panel input[type="color"] { padding: 0; border: 1px solid var(--line);
+  background: none; cursor: pointer; overflow: hidden; }
+#panel input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+#panel input[type="color"]::-webkit-color-swatch { border: none; }
+
+/* A button beside a path takes the room its own words need and no more.
+   At width 100% it pushed "no folder chosen" down to "no folder ..." and
+   left three quarters of the row to a two word button. */
+#folder-row button, #vault-row button, #vault-tools button {
+  flex: 0 0 auto; width: auto; }
+#vault-row select { flex: 1 1 auto; }
+
+/* ---- the schema's remaining sizes, in one place ---- */
+
+/* Metadata is 11px wherever it appears, and nothing else is. */
+#run-status, #cut-status, #record-status, #import-status,
+#pattern-note, #appearance-note, #prop-credit, #scene-count, #weight-note,
+#panel .folder-line span, .tile span, .scene-tile .scene-study {
+  font-size: var(--t-meta); }
+
+/* Secondary text is 12px: the things beside a control rather than in it. */
+.toggle-end, #panel .named > span, .scene-tile .scene-name {
+  font-size: var(--t-2); }
+
+/* A folder button says two words and should not be 32px tall beside a path
+   that is one line of 11px text. */
+#panel .folder-line button { height: var(--h-small); padding: 0 var(--s2);
+  font-size: var(--t-2); }
+
+/* The search over a library grid is a control like any other, and there is
+   exactly one rule for it: both search fields must look the same. */
+#panel input[type="search"] { width: 100%; height: var(--h);
+  margin: var(--s1) 0; padding: 0 var(--s3); border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); color: var(--ink);
+  font: inherit; }
+#panel input[type="search"]::placeholder { color: var(--ink-3); }
+
+/* Selection, once, in the accent. Every grid and every segmented control
+   used its own idea of "chosen" before this. Tile and segment selection
+   moved into the closing block (bare classes lose to "#panel button");
+   the mode row's stays here because its selector already wins. */
+#mode-row .mode.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+
+/* The three buttons at the foot and the panel share one ground now, so the
+   rule above them is what holds them apart rather than a darker band. */
+#panel .row-heading + .tile-grid { margin-top: 0; }
+
+/* ---- what the first screenshot of the Spectrum panel showed ---- */
+
+/* Specificity, again. "#panel button" is one id plus one element and beats
+   ".picker", so the centring meant for ordinary buttons centred the name on
+   every picker trigger beside a swatch pinned to the left. The panel styles
+   buttons by element, so anything that is a button and not a button has to
+   beat it inside the panel by name. */
+#panel .picker { text-align: left; }
+#panel .picker .chosen-name { text-align: left; }
+
+/* A track you can see both halves of. The filled bar had gone to the accent
+   blue with the rest of the selection colours, and a short blue bar under
+   the word "Shine" reads as an underline on the label rather than as a
+   quantity. The unfilled half comes forward, the filled half steps back to
+   a colour that means amount rather than choice, and both sit at the foot
+   of the row where a track belongs. */
+.scrub .fill::after { height: 3px; right: 0; background: var(--well);
+  z-index: 0; }
+.scrub .fill::before { height: 3px; background: var(--ink-3); z-index: 1; }
+.scrub:hover .fill::before { background: var(--ink-2); }
+
+/* The tint swatch takes the thumbnail radius like every other small square
+   in the panel; a circle was a leftover from when the tiles were round. */
+#panel input[type="color"] { width: var(--h-small); height: var(--h-small);
+  border-radius: var(--radius-s); border: 1px solid var(--line); }
+#panel input[type="color"]::-webkit-color-swatch { border-radius: 2px; }
+
+/* The sticky footer needs the panel's own ground beneath it, or the section
+   below shows through the gap its negative margin opens. */
+#mode-row { box-shadow: 0 -8px 0 var(--panel); }
+
+/* Two buttons on one row, and neither wraps. "Save scene" broke across
+   two lines inside a 32px control and pushed the row to 48. */
+#scene-row { display: grid; grid-template-columns: 1fr 1fr auto;
+  gap: var(--s1); align-items: center; }
+#scene-row button { width: auto; margin: 0; padding: 0 var(--s2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The chosen segment has to be legible at 24px, and an accent GROUND alone
+   is not: all three read the same in a screenshot. The pair Spectrum uses
+   for a selected item -- accent ground, accent ink -- is now applied in the
+   closing block, with --accent-ink themed so light mode keeps contrast. */
+
+/* ---- everything in the panel that is a <button> and is not a button ----
+
+   "#panel button" is one id plus one element, and it sets width, height,
+   margin, padding, background, border and alignment. Every component below
+   is a <button> for the keyboard's sake and a tile, chip, segment, trigger
+   or mode for the eye's, and each is styled by a bare class, which loses to
+   that rule without a word.
+
+   This has now cost three separate faults: tiles stretched to the panel's
+   width, a picker's name centred beside a swatch pinned left, and a
+   112 by 118 tile flattened to 112 by 32 with its picture clipped away
+   inside it. So every one of them states its geometry HERE, at the same
+   specificity, in one place, where the next person can see the whole set
+   at once. */
+
+#panel .tile {
+  height: auto; margin: 0; padding: var(--s1); text-align: center;
+  color: var(--ink-2);
+}
+/* The states too, not only the geometry. The selection rule lived at bare
+   class specificity and lost border-color and background to the blanket,
+   so the chosen tile looked exactly like its neighbours: measured live,
+   the active tile's border was the ordinary line grey. A closing block
+   that restates geometry but not state closes half the trap. */
+#panel .tile:hover { border-color: var(--line-lit); color: var(--ink); }
+#panel .tile.active { border-color: var(--accent);
+  background: var(--accent-bg); color: var(--ink); }
+#panel .segmented button {
+  height: var(--h-small); margin: 0; padding: 0 var(--s1);
+  text-align: center; border: none; border-radius: var(--radius-s);
+  background: transparent; color: var(--ink-3);
+}
+#panel .segmented button:hover { color: var(--ink); }
+#panel .segmented button.active { background: var(--accent-bg);
+  color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+#panel .picker {
+  height: var(--h); padding: 0 var(--s3) 0 var(--s1); text-align: left;
+}
+#panel #mode-row .mode {
+  height: var(--h); margin: 0; padding: 0 var(--s1); text-align: center;
+}
+#panel .folder-line button {
+  height: var(--h-small); padding: 0 var(--s2);
+}
+/* A scene tile is a tile: the same frame, the same caption discipline,
+   stated here because it is a <button> like the rest. Left to the blanket
+   it was 32px tall with its 16:9 still and both text lines clipped away
+   inside it -- the flattening fault, sprung a fifth time. */
+#panel .scene-tile {
+  height: auto; margin: 0; padding: var(--s1); text-align: center;
+  color: var(--ink-2); border-radius: var(--radius);
+}
+#panel .scene-tile:hover { border-color: var(--line-lit); color: var(--ink); }
+/* The update pip, bottom right, diagonally opposite the delete cross so
+   a slip cannot hit the destructive one. It rests invisible and appears
+   on hover: it is a per-tile action, and eight showing at once would read
+   as decoration rather than as controls.
+
+   POSITIONING IS UNSCOPED, the shape .scene-delete already uses, because
+   the scene list is drawn in TWO places -- the panel and the shelf's
+   Scenes drawer -- and a rule scoped to #panel left the shelf's pips
+   unpositioned, flowing out below their tiles at the left. The BOX is
+   restated per container instead, because each has a blanket button rule
+   that would otherwise flatten it: the same fault the scene tile itself
+   hit five times. */
+.scene-holder { position: relative; }
+.scene-update { position: absolute; right: var(--s2); bottom: var(--s2);
+  cursor: pointer; opacity: 0; transition: opacity 120ms ease; }
+.scene-holder:hover .scene-update,
+.scene-update:focus-visible { opacity: 1; }
+
+#panel .scene-update {
+  width: 18px; height: 18px; margin: 0; padding: 0; border: none;
+  border-radius: var(--radius-s); background: var(--scrim);
+  color: #fff; font-size: 12px; line-height: 1; }
+#panel .scene-update:hover { background: var(--accent); color: #fff; }
+
+#shelf-body .scene-update {
+  width: 18px; height: 18px; margin: 0; padding: 0; border: none;
+  border-radius: 3px; background: var(--scrim);
+  color: var(--ink-2); font-size: 12px; line-height: 1; }
+#shelf-body .scene-update:hover { background: var(--accent); color: #fff; }
+
+#panel .scene-delete {
+  width: 18px; height: 18px; margin: 0; padding: 0; border: none;
+  border-radius: var(--radius-s); background: var(--scrim);
+  color: var(--ink); line-height: 18px;
+}
+#panel .scene-delete:hover { background: var(--danger); color: #fff; }
+
+/* Button hierarchy, which every renderer keeps and this panel did not:
+   the one action a section exists for is filled with the accent, and a
+   destructive action turns red only when the pointer commits to it --
+   quiet at rest, unmistakable at the moment of choice. */
+#panel button.primary { background: var(--accent); border-color: var(--accent);
+  color: #fff; }
+#panel button.primary:hover { background: var(--accent-hover);
+  border-color: var(--accent-hover); }
+#panel button.danger:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
+/* Recording is the one state where the destructive colour is worn AT
+   REST rather than on hover: while a take is running, stopping it is the
+   only thing the button does, and he has to be able to see that without
+   hovering to find out. */
+#panel button.recording,
+#panel button.recording:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
+
+/* The theme toggle and the build stamp, on one line above everything. The
+   stamp is there for a specific reported problem: "nothing has changed on
+   the interface" needs an answer that is a fact, and a version that does
+   not move after an edit says the page is cached rather than unchanged. */
+#panel-top { display: flex; align-items: center; gap: var(--s2);
+  margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3) var(--s2);
+  border-bottom: 1px solid var(--line); }
+#panel #theme-toggle { width: auto; height: var(--h-small);
+  padding: 0 var(--s2); font-size: var(--t-2); }
+#build-stamp { margin-left: auto; color: var(--ink-3);
+  font-size: var(--t-meta); font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em; }
+
+/* The HUD and the event log are NOT themed. They sit on the viewport, and
+   the viewport is a rendering surface whose ground comes from the
+   environment the vault is lit by: it stays dark when the panel goes light,
+   so dark text on it would be unreadable. The legend and the cut overlay
+   have grounds of their own, so those do take the theme. */
+:root[data-theme="light"] #live-toggle { background: var(--raised);
+  border-color: var(--line); color: var(--ink-3); }
+:root[data-theme="light"] #live-toggle.on { color: var(--ink);
+  border-color: #d8a0a0; }
+
+/* A colour scheme is a browser-level fact too: it decides what a native
+   scrollbar, a select's popup and a colour picker look like. */
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+
+/* The one message in this studio allowed to be large and in the way. It
+   appears only when the page came from a server too old to version its
+   assets, or when the module threw while wiring itself up. Both leave a
+   panel that looks merely disappointing, and both have now been reported
+   three times as "nothing has changed on the interface". */
+#stale-server { position: fixed; left: 50%; top: 0; transform: translateX(-50%);
+  z-index: 100; max-width: 680px; margin: 12px;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: var(--danger); color: #fff; font-size: 14px; line-height: 1.5;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+#stale-server code { padding: 1px 5px; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.28); font-family: ui-monospace, monospace; }
+#build-stamp.stale { color: #ff8f7a; font-weight: 600; }
+
+/* The very bottom, under the three views, where a thing you press once in a
+   session belongs. It shares the mode row's sticky footer so it is always
+   reachable without scrolling a panel that is several screens long. The
+   same opaque ground as the mode row above it: a translucent veil here,
+   with no blur of its own, let scrolled 11px text ghost through beneath
+   the button, and left an 8px see-through band between the two bars. */
+#panel-foot { position: sticky; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: var(--s2);
+  margin: 0 calc(-1 * var(--s3));
+  padding: var(--s2) var(--s3) var(--s3); background: var(--panel); }
+#panel #restart-studio, #panel #stop-studio, #panel #start-studio {
+  width: auto; height: var(--h-small); margin: 0; padding: 0 var(--s2);
+  font-size: var(--t-2); color: var(--ink-2); white-space: nowrap; }
+/* The width rule above would defeat the hidden attribute. */
+#panel #start-studio[hidden] { display: none; }
+#restart-status { color: var(--ink-3); font-size: var(--t-meta); }
+/* Clearance = the foot's full height (compact button + its two paddings),
+   so the two sticky bars meet with no gap for content to show through. */
+#mode-row { bottom: calc(var(--h-small) + var(--s2) + var(--s3)); }
+
+/* ---------- the shelf ----------
+   The bottom asset drawer, the pattern Blender's asset shelf and Quixel
+   Bridge settled on: collapsed, three quiet pills; expanded, a
+   four-column grid with category chips and its own scroll, so choosing
+   an asset stops being a squint into a 260 px panel. Param: "a little
+   tile at the bottom where if you click it, it expands... 4 columns a
+   row in size, more space to breathe, scroll around it, give it
+   categories to click through". */
+#shelf { position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 14px; z-index: 25; display: flex; flex-direction: column;
+  align-items: center; gap: 6px; width: min(880px, calc(100vw - 380px)); }
+/* BOUNDED TO THE VIEWPORT. The drawer is anchored to the bottom and grows
+   upward, and nothing capped it: the Skies drawer in Sky mode, weather
+   grid open, put its close button 203 px above the top of a 720 px
+   screen (Param: "i cant reach the close button for the open tile").
+   14 px clear at the top as at the bottom; the tab strip is inside
+   #shelf, so the bound already allows for it. The vh line is the
+   fallback for a browser without dvh. */
+#shelf { max-height: calc(100vh - 28px); max-height: calc(100dvh - 28px); }
+#shelf-tabs { display: flex; gap: 6px; flex: 0 0 auto; }
+#shelf-tabs button { width: auto; margin: 0; padding: 5px 16px;
+  font-size: 12px; color: var(--ink-2); background: var(--scrim);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#shelf-tabs button:hover { color: var(--ink); border-color: var(--ink-3); }
+#shelf-tabs button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+#shelf-body { width: 100%; background: var(--scrim);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius); min-height: 0; overflow-y: auto; }
+#shelf-body.hidden { display: none; }
+/* The head, with the close button, never leaves the screen: when the
+   body scrolls, the head stays pinned to its top. It needs an opaque
+   ground, or scrolled tiles show through it, and z above the tiles. */
+#shelf-head { display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 2; background: var(--panel); }
+#shelf-cats { display: flex; gap: 4px; flex: 1 1 auto; flex-wrap: wrap; }
+#shelf-cats button { width: auto; margin: 0; padding: 3px 10px;
+  font-size: 11px; color: var(--ink-2); background: transparent;
+  border: 1px solid var(--line); border-radius: 3px;
+  text-transform: capitalize; }
+#shelf-cats button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+#shelf-actions { display: flex; gap: 6px; }
+#shelf-actions button { width: auto; margin: 0; font-size: 11px;
+  padding: 4px 10px; }
+#shelf-close { width: auto; margin: 0; padding: 2px 8px;
+  color: var(--ink-3); background: transparent; border: none;
+  font-size: 13px; }
+#shelf-close:hover { color: var(--ink); }
+/* Framing only. This rule once set its own two-column grid, and an id
+   outranks .dial-block's eight: every sky dial's four cells poured into
+   two columns and landed in the wrong places (Param: "ui is messed up
+   here"). The grid is .dial-block's alone. */
+#shelf-sky-settings { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+#shelf-sky-settings.hidden { display: none; }
+#shelf-body .tile-grid { display: grid;
+  grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px;
+  max-height: 42vh; overflow-y: auto; }
+#shelf-body .tile-grid.hidden { display: none; }
+#shelf-body .tile-grid.wide { grid-template-columns: repeat(3, 1fr); }
+#shelf-body .tile-family { grid-column: 1 / -1; color: var(--ink-3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 4px 0 0; }
+#shelf-body .tile { display: flex; flex-direction: column; gap: 4px;
+  width: auto; margin: 0; padding: 0; background: transparent;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; color: var(--ink-2); font-size: 11px; }
+#shelf-body .tile img, #shelf-body .tile canvas { width: 100%;
+  aspect-ratio: 1; object-fit: cover; display: block; }
+#shelf-body .wide .tile img { aspect-ratio: 2; }
+/* The weather presets are skies, 2:1 like the HDRI tiles, and the five
+   of them sit on one row. The rule above for squares matched them at
+   the same specificity as the 2:1 rule and later, so it won and they
+   came out 198 px squares; these outrank it by a second id instead of
+   by luck of order. */
+#shelf-body #weather-tiles .tile canvas { aspect-ratio: 2 / 1; }
+#shelf-body #weather-tiles { grid-template-columns: repeat(5, 1fr); }
+/* THE FIXTURES ARE ICONS. Param: "we can make the thumbnails smaller".
+   Four fractional columns gave each fixture a two hundred pixel square
+   and put the fifth on a row of its own; a sphere, a bar, a box, a cone
+   and a slab are told apart at a third of that. Sized rather than
+   fractional, so the row keeps its size whatever the drawer does, and
+   outranking the four-column rule by a second id rather than by luck of
+   source order -- the trap that made the weather tiles square. */
+#shelf-body #lights-kinds { grid-template-columns: repeat(auto-fill, 88px);
+  gap: 8px; padding: 10px 12px; }
+#shelf-body .tile span { padding: 0 6px 6px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; text-align: left; }
+#shelf-body .tile:hover { border-color: var(--ink-3); color: var(--ink); }
+#shelf-body .tile.active { border-color: var(--accent); color: var(--ink); }
+/* THE LAYERS DRAWER is a list of what is placed, to be found rather than
+   chosen from, so its tiles are small like the fixtures'. A tile whose
+   prop the pointer is over in the viewport wears the hover box's amber,
+   after .active so that pointing reads over selecting. */
+#shelf-body #shelf-grid.layers { grid-template-columns: repeat(auto-fill, 96px);
+  gap: 8px; padding: 10px 12px; }
+#shelf-body .tile.pointed { border-color: var(--pointed); color: var(--ink); }
+/* The number is the reference, so a layer tile's label wraps to a second
+   line rather than cutting "Small boulder #98813" off before its number. */
+#shelf-body #shelf-grid.layers .tile span { white-space: normal;
+  overflow-wrap: anywhere; line-height: 1.25; }
+#shelf-actions button.danger:hover:not(:disabled) { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
+#shelf-body #prop-credit { padding: 4px 12px 8px; color: var(--ink-3);
+  font-size: 11px; }
+/* Outside the panel, so the panel's control styling does not reach them:
+   the shelf states its own font and cursor. */
+#shelf button { font: inherit; font-size: var(--t-2); cursor: pointer; }
+#shelf-cats button, #shelf-actions button { font-size: var(--t-meta); }
+#shelf-actions button { background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+#shelf-actions button:hover:not(:disabled) { border-color: var(--line-lit); }
+#shelf-actions button:disabled { color: var(--ink-3); cursor: default; }
+/* The record tile while a take runs: filled red at rest, like the panel's
+   own button, because stopping is the only thing it does then. */
+#shelf-actions button.recording,
+#shelf-actions button.recording:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
+/* The drawer's Edit toggle lights the same way the panel's does, since
+   it is the same mode wearing two faces. */
+#shelf-actions #shelf-prop-edit.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
+/* Scenes in the shelf: the same drawer grid, 16:9 pictures of moments. */
+#shelf-body #scene-list { display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; padding: 12px; max-height: 42vh; overflow-y: auto; }
+#shelf-body #scene-list.hidden { display: none; }
+#shelf-body .scene-tile { width: 100%; margin: 0; padding: 0 0 6px;
+  background: transparent; border: 1px solid var(--line);
+  border-radius: var(--radius); color: var(--ink-2); font-size: 11px;
+  text-align: left; }
+#shelf-body .scene-tile:hover { border-color: var(--ink-3); color: var(--ink); }
+#shelf-body .scene-delete { background: var(--scrim); border: none;
+  border-radius: 3px; width: 18px; height: 18px; padding: 0;
+  color: var(--ink-2); font-size: 11px; }
+#shelf-body .scene-delete:hover { background: var(--danger); color: #fff; }
+/* The layer tabs: the drawer's bottom edge. The open tab is where new
+   props land; a struck-through tab is hidden in the viewport. */
+#layer-tabs { display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-top: 1px solid var(--line); }
+#layer-tabs.hidden { display: none; }
+#layer-tabs .layer-tab { width: auto; margin: 0; padding: 3px 12px;
+  font-size: 11px; background: transparent; color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 3px; }
+#layer-tabs .layer-tab:hover { border-color: var(--line-lit);
+  color: var(--ink); }
+#layer-tabs .layer-tab.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
+#layer-tabs .layer-tab.off { text-decoration: line-through;
+  color: var(--ink-3); }
+#layer-tabs .layer-eye, #layer-tabs .layer-delete { width: auto;
+  margin: 0 0 0 auto; padding: 3px 10px; font-size: 11px;
+  background: var(--raised); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 3px; }
+#layer-tabs .layer-delete { margin-left: 4px; }
+#layer-tabs .layer-eye:hover { border-color: var(--line-lit);
+  color: var(--ink); }
+#layer-tabs .layer-delete:hover { background: var(--danger); color: #fff; }
+
+
+/* ---------- the scatter drawer ----------
+   Its own tab beside Props, because choosing species is browsing and
+   browsing is what the shelf is for. The species grid scrolls; the
+   controls and the readout below it stay in view while he picks. */
+#scatter-panel { display: flex; flex-direction: column; min-height: 0; }
+#scatter-panel.hidden { display: none; }
+#scatter-panel #scatter-species { flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; }
+#scatter-chosen { display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px 0; }
+#scatter-chosen:empty { padding: 0; }
+.scatter-chip { display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 10px; font-size: 11px; color: var(--ink);
+  background: var(--accent-bg); border: 1px solid var(--accent);
+  border-radius: 12px; }
+.scatter-chip input { width: 38px; margin: 0; padding: 1px 4px;
+  font-size: 11px; text-align: center; background: var(--raised);
+  color: var(--ink); border: 1px solid var(--line); border-radius: 3px; }
+.scatter-chip button { width: auto; margin: 0; padding: 0 4px;
+  font-size: 11px; line-height: 1; background: transparent;
+  color: var(--ink-3); border: 0; }
+.scatter-chip button:hover { color: var(--danger); }
+/* ONE SHAPE FOR EVERY DIAL, in both drawers: name, slider, reading,
+   unit, on a four column grid so the columns line up down the block
+   rather than each row finding its own edges. Param: "we want to be
+   rigorus with how we place sliders and make sure each tile has the same
+   language in style". */
+.dial-block { display: grid; grid-template-columns: repeat(2, auto 1fr auto auto);
+  align-items: center; gap: 3px 8px; padding: 8px 10px 0; }
+.dial-block label { display: contents; margin: 0; font-size: 11px; }
+.dial-block label > span { color: var(--ink-2); white-space: nowrap; }
+.dial-block label > input[type="range"] { width: 100%; margin: 0; min-width: 60px; }
+.dial-block label > b { font-weight: 400; text-align: right;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dial-block label > em { font-style: normal; color: var(--ink-3);
+  white-space: nowrap; }
+/* AN UPGRADED ROW TAKES THE WHOLE WIDTH.
+   upgradeSliders scopes to #panel and REPLACES each label containing a
+   range input with a div.scrub (panel.js), so inside the panel there are
+   no labels left for `display: contents` to dissolve and every scrub
+   lands as one item in this eight-column grid. Three dials therefore sat
+   side by side in a 235 px panel reading "Field of v", "Br", "Contrast",
+   and the Skin appearance row read "Shine  Re  Occlu  Varia". Spanning
+   the row restores what these were before they were gathered into
+   blocks, while the shelf drawers, which are outside #panel and keep
+   their labels, go on using the four-column alignment the interface
+   language describes. */
+.dial-block > .scrub { grid-column: 1 / -1; }
+
+/* EVERY DIAL IS FOUR CELLS: name, control, reading, unit. A label
+   dissolves into the eight-column grid, so a label with five things in it
+   pushes every dial after it one cell along. The scatter Size row carried
+   its two grips as two cells (the old rule here said they shared one; a
+   span of 1 shares nothing), and Param's screenshot had the % and m units
+   starting the next row. The pair is ONE cell now, grips side by side. */
+.dial-block label > .range-pair { display: flex; gap: 6px; min-width: 60px; }
+.dial-block label > .range-pair > input[type="range"] { flex: 1; width: 100%;
+  min-width: 0; margin: 0; }
+/* A select or a number field fills the cells its row has no reading or
+   unit for, so Turn and Seed start where every other dial starts. */
+.dial-block label > select { grid-column: span 3; }
+.dial-block label > input[type="number"] { grid-column: span 2; }
+.dial-block label > select, .dial-block label > input[type="number"] {
+  width: 100%; margin: 0; font-size: 11px; }
+.dial-block label > button { width: auto; margin: 0; padding: 2px 8px;
+  font-size: 11px; }
+/* A COLOUR SWATCH IS ONE CELL, like the dial it sits beside. The
+   browser's own input[type=color] is a white rectangle in a chrome
+   border that belongs to no theme at all, so it is given the studio's
+   own well, line and corner. The #panel rules further up do this for the
+   sun's colour; a drawer is outside #panel and had nothing. */
+.dial-block label > input[type="color"] { width: 100%; min-width: 44px;
+  height: var(--h-small); margin: 0; padding: 0;
+  background: var(--well); border: 1px solid var(--line);
+  border-radius: var(--radius-s); cursor: pointer; }
+.dial-block label > input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px; }
+.dial-block label > input[type="color"]::-webkit-color-swatch {
+  border: none; border-radius: 2px; }
+/* A TOGGLE IS A DIAL'S SECOND CELL TOO. It has no track to fill and
+   no unit to name, so it sits at its own width at the left of the
+   cell and leaves the unit column empty rather than breaking the
+   four-cell grid the whole block is read down. */
+.dial-block label > input[type="checkbox"] { width: auto; margin: 0;
+  justify-self: start; accent-color: var(--accent); cursor: pointer; }
+#scatter-deselect { width: auto; margin: 0; padding: 3px 10px;
+  font-size: 11px; background: var(--raised); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 12px; }
+#scatter-deselect:hover { border-color: var(--line-lit); color: var(--ink); }
+#lights-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-2); }
+#lights-panel { display: flex; flex-direction: column; min-height: 0; }
+#lights-panel.hidden { display: none; }
+#lights-panel #lights-kinds { flex: 0 0 auto; }
+#scatter-actions { display: flex; gap: 6px; padding: 8px 10px 0; }
+#scatter-actions button { width: auto; margin: 0; }
+/* Lit while it waits for the drag, so a press that armed it stays
+   visible even after the drawer scrolls. */
+#scatter-actions button.active { background: var(--accent);
+  border-color: var(--accent); color: #fff; }
+#scatter-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-2); }
+
+
+/* ---------- device fit, first pass ----------
+   The studio now travels: the tailnet serves it to an iPad as readily as
+   to this desktop. Two adjustments where one size did not fit: fingers
+   get taller footer buttons and shelf tabs, and on narrow screens the
+   drawer centres itself in the space LEFT of the panel instead of under
+   it (the desktop keeps its numbers untouched). A fuller adaptive pass
+   -- portrait phones, a collapsible panel -- waits on Param's direction. */
+@media (pointer: coarse) {
+  #panel #restart-studio, #panel #stop-studio, #panel #start-studio {
+    height: 32px; }
+  #shelf-tabs button { padding: 9px 18px; }
+  #layer-tabs button { padding: 8px 14px; }
+}
+@media (max-width: 1000px) {
+  #shelf { left: calc((100vw - var(--panel-w)) / 2);
+           width: min(880px, calc(100vw - var(--panel-w) - 24px)); }
+}
+
+/* ---------- the panel's collapse handle ----------
+   Param: "a little tile arrow attached to the mid left side of the banner
+   that can be pressed to collapse the banner to the side and then pressed
+   again to open". The panel and its tab rail slide away together; the
+   handle stays on the screen edge and its arrow reverses. The handle is a
+   SIBLING of the panel, not a child: the panel's own overflow scroll
+   would clip anything hung outside its box. */
+#panel, #tab-rail { transition: transform 0.25s ease, opacity 0.25s ease; }
+body.panel-collapsed #panel { transform: translateX(100%); }
+body.panel-collapsed #tab-rail { opacity: 0; pointer-events: none; }
+#panel-collapse { position: fixed; top: 50%; right: var(--panel-w);
+  transform: translateY(-50%); z-index: 26;
+  width: 20px; height: 64px; padding: 0;
+  display: grid; place-items: center;
+  background: var(--panel-veil); color: var(--ink-2);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+  transition: right 0.25s ease; }
+#panel-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
+body.panel-collapsed #panel-collapse { right: 0; }
+/* The log ties its right edge to the panel's width; a collapsed panel
+   frees that band. */
+body.panel-collapsed #event-log { right: var(--s4); }
+
+/* The take's controls sit beside the drawer tabs but are not tabs: a
+   beat of space says so, and they are square icon tiles -- play,
+   restart, record -- rather than words. */
+#shelf-tabs .shelf-act, #corner-acts .shelf-act { width: 34px;
+  padding: 5px 0; text-align: center; font-size: 13px; line-height: 1.2; }
+/* ---------- the corner tiles ----------
+   Param: "with the tiles at the bottom take the overlay tile, graph
+   tile and the full screen tile to the top left. id prefer them up
+   there." The three that are about LOOKING at the scene, away from the
+   strip that is about the take.
+
+   Dressed exactly like the tiles they came from, so the move is a move
+   and not a new kind of control. Above the drawer's own z-index, since
+   nothing should ever cover them -- reaching a control and finding it
+   behind something is the fault they were moved to avoid. */
+#corner-acts { position: fixed; left: 16px; top: 16px; z-index: 26;
+  display: flex; gap: 6px; }
+#corner-acts button { width: auto; margin: 0; color: var(--ink-2);
+  background: var(--scrim); border: 1px solid var(--line);
+  border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#corner-acts button:hover { color: var(--ink); border-color: var(--ink-3); }
+#corner-acts button.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+#shelf-play { margin-left: 10px; }
+/* THE GRAPHS TILE SAYS WHAT IT OPENS. Param: "maybe the graph icon on
+   the tile can be more telling that its for graphs". It was a sine
+   wave, which reads as a wave; three rising blocks read as a chart at a
+   glance and stay monochrome, which an emoji would not. Tightened so
+   the three sit as one mark rather than as three characters. */
+#shelf-graphs { letter-spacing: -1px; font-size: 12px; }
+#shelf-undo { margin-right: 10px; }
+#shelf-record { color: #d05548; }
+/* Disabled until a take has been started, because with nothing
+   captured there is nowhere for Stop to go back to. Dimmed rather than
+   hidden: a control that comes and goes is harder to find than one
+   that is simply not available yet. */
+#shelf-tabs .shelf-act:disabled, #corner-acts .shelf-act:disabled {
+  opacity: 0.4; cursor: default; }
+
+
+/* ---------- the corner readout ----------
+   Bottom left: #event-log holds bottom right and #legend the lower third
+   beside the panel, so this is the corner nothing had to vacate.
+   Monospace and tabular figures, because a number that shifts its own
+   column every frame is unreadable at a glance. */
+#stats-overlay { position: fixed; left: 12px; bottom: 64px; z-index: 15;
+  display: grid; grid-template-columns: auto auto; gap: 0 10px;
+  padding: 7px 10px; font-size: 11px; line-height: 1.5;
+  font-family: ui-monospace, monospace; color: #fff;
+  background: rgba(12, 14, 17, 0.55); border-radius: 4px;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+#stats-overlay.hidden { display: none; }
+#stats-overlay > div { display: contents; }
+#stats-overlay span { color: rgba(255, 255, 255, 0.55); }
+#stats-overlay b { font-weight: 400; text-align: right;
+  font-variant-numeric: tabular-nums; }
+/* Out of a take: a readout baked into a 56 minute recording is a ruined
+   recording. */
+body.recording #stats-overlay { display: none; }
+
+/* THE LIVE GRAPHS: a column of cards down the left edge on the drawers'
+   own ground (Param: "make the graphs more opaque"), under the stilling
+   cover (z 12) and the data sheet (z 20), over the view. The panel itself lets the pointer through between cards, so
+   the orbit is not fenced off by an invisible rectangle. */
+/* Below the corner tiles as well, and directly under the very tile
+   that opens it, which is the one place the column belongs. */
+#graphs-panel { position: fixed; left: 16px; top: 58px; bottom: 96px; width: 360px;
+  z-index: 11; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+#graphs-panel.hidden { display: none; }
+#graphs-panel > * { pointer-events: auto; }
+/* Tucked to the side: the column slides off the left edge and its handle,
+   hung on its right edge, stays on the screen, the right panel's fold
+   mirrored. Separate rules, so the column's own two lines stand as they
+   are. */
+#graphs-panel { transition: transform 0.25s ease; }
+#graphs-panel.tucked { transform: translateX(calc(-100% - 16px)); }
+#graphs-collapse { position: absolute; left: 100%; top: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 64px; margin: 0; padding: 0;
+  display: grid; place-items: center;
+  background: var(--panel-veil); color: var(--ink-2);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+#graphs-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
+#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+#graphs-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  font-size: 11px; color: var(--ink-2); }
+#graphs-head #graphs-title { color: var(--ink); font-weight: 500; }
+/* The study line wraps rather than clip: its end is the density the
+   graphs are weighed at, and the skin that set it. */
+#graphs-head #graphs-study { flex: 1; min-width: 0; line-height: 1.35;
+  color: var(--ink-3); }
+/* Outside the panel, so they state their own look: the drawer's action
+   buttons for CSV, the drawer's own close for the cross. */
+#graphs-head button { width: auto; margin: 0; height: var(--h-small);
+  padding: 0 var(--s2); background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; font-size: var(--t-meta); cursor: pointer; }
+#graphs-head button:hover { border-color: var(--line-lit); }
+#graphs-head #graphs-close { height: auto; padding: 2px 8px; color: var(--ink-3);
+  background: transparent; border: none; font-size: 13px; }
+#graphs-head #graphs-close:hover { color: var(--ink); }
+#graphs-dials { padding: 2px 10px 6px; grid-template-columns: auto 1fr auto auto; }
+#graphs-cards { flex: 1; min-height: 0; display: grid; grid-auto-rows: 1fr; gap: 8px; }
+.live-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.live-card header { display: flex; align-items: baseline; gap: 6px;
+  padding: 5px 10px 0; font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.live-card .live-name { color: var(--ink); }
+.live-card .live-unit { color: var(--ink-3); font-size: 10px; }
+.live-card .live-reading { margin-left: auto; color: var(--ink); font-size: 12px;
+  font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.live-card .live-label, .live-card .live-aside { color: var(--ink-3); font-size: 10px;
+  font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.live-card .live-plot { flex: 1; min-height: 0; }
+#graphs-notes { padding: 4px 10px; font-size: 10px; line-height: 1.35;
+  color: var(--ink-3); max-height: 5.5em; overflow: auto; }
+/* A narrow window gets narrower cards rather than none. */
+@media (max-width: 900px) { #graphs-panel { width: 280px; } }
+
+/* The orthographic scale bar, in the same corner and below the readout.
+   Its WIDTH is the measurement, set in script from metres per pixel, so
+   the rule is the statement and the label only names it. End ticks
+   rather than a filled block: a bar you can read the ends of measures
+   better than one you have to guess the middle of. */
+/* ---------- the hover badge ----------
+   The name that goes with the box drawn round whatever the pointer is
+   over. Param: "a bounding box with the object type and id so i can
+   reference it in layers". It is a LABEL, so it never takes the
+   pointer: catching a click meant for the prop it names would be the
+   one thing it must not do. Anchored by its own bottom centre just
+   above the prop's top, which is why the translate is -50% and -100%.
+
+   Above the drawers, since it can appear anywhere the pointer goes,
+   and below the stilling cover, so it can never reach a picture. */
+#hover-badge { position: fixed; z-index: 24; pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  padding: 3px 7px; font-size: 11px; line-height: 1.3;
+  white-space: nowrap; color: var(--ink);
+  background: var(--scrim); border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#hover-badge.hidden { display: none; }
+body.stilling #hover-badge { display: none; }
+
+#scale-bar { position: fixed; left: 12px; bottom: 40px; z-index: 15;
+  height: 16px; box-sizing: border-box; padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.75); border-top: 0;
+  font-family: ui-monospace, monospace; font-size: 10px; line-height: 15px;
+  color: #fff; text-align: center; white-space: nowrap;
+  background: rgba(12, 14, 17, 0.45);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); pointer-events: none; }
+/* Same rule as the readout, and for the same reason. */
+body.recording #scale-bar { display: none; }
+
+/* Projection and the snapped views. Six buttons at three to a row read
+   as two rows of elevations rather than a strip of six unrelated ones. */
+#camera-views { display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: var(--s1); margin: var(--s1) 0 0; }
+#camera-views button { width: auto; margin: 0; height: var(--h-small);
+  padding: 0 var(--s1); }
+#camera-views button.active { background: var(--accent-bg);
+  color: var(--ink); border-color: var(--accent); }
+
+
+/* The Skies drawer's mode row: the setting, then the weather that
+   belongs to it, above the dials that tune whichever is chosen. */
+#shelf-sky-modes { display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--s2); padding: var(--s2) var(--s3) 0; }
+#shelf-sky-modes.hidden { display: none; }
+#shelf-sky-modes .segmented { margin: 0; }
+#shelf-sky-modes .picker { width: auto; margin: 0; }
+#shelf-sky-modes #weather-tiles { flex: 1 0 100%; }
+/* The atmosphere's tiles are skies too: one row of five, two to one. */
+#shelf-sky-modes #atmosphere-tiles { flex: 1 0 100%; }
+#shelf-body #atmosphere-tiles .tile canvas { aspect-ratio: 2 / 1; }
+#shelf-body #atmosphere-tiles { grid-template-columns: repeat(5, 1fr); }
+
+/* THE PANEL BESIDE THE LIGHT. Param: "if we click them when not in
+   edit mode, then a translucent setting pops up next to it where we
+   can control the sliders and options for each type of light".
+
+   The graphs' own ground and blur, at the graphs' own height (z 11),
+   and written AFTER them in the document so it paints over them where
+   the two meet. Under the stilling cover (z 12) and the data sheet
+   (z 20) by the same reckoning -- and it is closed outright before a
+   plate or a take, so it can never reach a picture at all.
+
+   It is placed by script, in page coordinates, and follows its
+   fixture while the camera moves. */
+/* A SHADE MORE TRANSLUCENT THAN THE REST. Param: "make the settings
+   display that comes up for the lights slightly more translucent". It
+   stands over the scene beside the fixture it is tuning, so what is
+   behind it is the thing being tuned -- unlike a drawer, which stands
+   over scene it has nothing to do with. The blur is raised with it, or
+   thinner glass would just read as a smeared viewport. */
+#fixture-panel { position: fixed; z-index: 11; width: 256px;
+  max-height: 70vh; overflow: auto;
+  background: var(--scrim-thin);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: var(--ink); font-size: 11px; }
+#fixture-panel.hidden { display: none; }
+/* THE SAME TRAP AS #panel AND #shelf, a third time. A bare .hidden is
+   one class; `.dial-block label { display: contents }` is a class and
+   an element, and it wins. Photographed on the first run: the spot's
+   four rows and Length were all marked hidden on a sphere's card and
+   all five were on the screen. Anything the block styles by element
+   has to be beaten inside the card by name. */
+#fixture-panel .hidden { display: none !important; }
+body.stilling #fixture-panel { display: none; }
+#fixture-name { padding: 8px 10px 0; color: var(--ink);
+  font-size: 12px; }
+#fixture-readout { padding: 6px 10px 10px; font-size: 11px;
+  color: var(--ink-3); }
+/* ONE DIAL A ROW. The eight-column default puts two dials side by
+   side, which a 256 px card has no room for: photographed on the
+   first run, Warmth showed a sliver of track and no reading at all
+   while Size, Invisible, Softness and Shadow were cut off past the
+   right edge. The four-column form is the other shape the language
+   allows (#graphs-dials is the precedent), and it keeps the four
+   cells and their alignment while taking the whole width. */
+#fixture-dials { grid-template-columns: auto 1fr auto auto; }
+
+/* The one control that fixes a stale server, lit while the server is stale. */
+#restart-studio.attention { border-color: var(--danger); color: var(--ink);
+  background: var(--danger); }
+
+/* Where the atmosphere's dials stand aside, the line that says why and
+   where the choice is made: the readout's own register. */
+#atmosphere-hint { color: var(--ink-3); font-size: var(--t-meta);
+  padding: 0 0 var(--s2); }
+
+/* The cable net section's readouts: full sentences in the second ink, the
+   figure in the first, nothing shown while there is nothing to say. */
+#panel .cablenet-readout { color: var(--ink-2); font-size: var(--t-2);
+  line-height: 1.5; margin: var(--s2) 0; }
+#panel .cablenet-readout b { color: var(--ink); }
+#panel .cablenet-readout:empty { display: none; }
+#panel #cablenet-run-status { color: var(--ink-2); min-height: 1.2em; }
+/* The walk: grabbed nodes along the bottom, worst sag up the side, the
+   acceptance line dashed in the one red. Inline SVG, no library. */
+#panel .cablenet-curve { display: block; width: 100%; height: 72px; margin: var(--s1) 0; }
+#panel .cablenet-curve .walk { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+#panel .cablenet-curve .line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; }
+#panel .cablenet-curve .axis { stroke: var(--line); stroke-width: 1; }
+#panel .cablenet-curve text { fill: var(--ink-3); font-size: 9px; }
+#panel #cablenet-parts { margin-left: var(--s3); }
+#panel #cablenet-parts .named { margin: var(--s1) 0; }

@@ -1,15 +1,15 @@
 # Documentation
 
-This repository holds the Grasshopper plugin (the Workflow): the
-components, the native worker, and the contracts they exchange. The root
-README tells the end-to-end story; these documents go deeper.
+Two surfaces share this repository: the Grasshopper plugin (the Workflow)
+and the VS Code side (the Bench). The root README tells the end-to-end
+story; these documents go deeper.
 
-Downstream of an export sits
-[Bench Studio](https://github.com/EJR-of-Scrutopia/COMPAS_UI-integration-tool),
-a separate local web UI that turns a solved thrust network into masonry,
-lets you view and cut it stage by stage, and renders the result. It ran
-inside this repository as `bench/` during development; it now ships as its
-own tool, and does not live here.
+## The Bench
+
+- [The Bench](BENCH.md) is the guide to the VS Code side: the three
+  environments and why they exist, the `ananke` terminal tool, the demos,
+  the structural verification strand, and where results land.
+- The [demo runbook](../bench/demo/README.md) documents every clickable demo.
 
 ## The Workflow
 

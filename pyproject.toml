@@ -44,6 +44,10 @@ fea = [
 ifc = [
     "compas_ifc==2.1.0",
 ]
+# The studio's cable net spreadsheet; without it the export falls back to CSV.
+exports = [
+    "openpyxl>=3.1",
+]
 # Masonry: block tessellation, contact assembly, and coupled rigid-block
 # stability. compas_dem pulls compas_cgal, compas_libigl, and compas_model.
 # Backs the "04 Masonry" tab.
@@ -77,6 +81,12 @@ viz = [
 studio = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",
+    # Stitches a print-resolution plate out of the tiles the browser
+    # renders, because a 4961 px canvas is not something to ask a tab to
+    # hold in one piece. Already present transitively; said out loud so a
+    # fresh environment cannot install a studio whose Render still button
+    # fails on its last step.
+    "Pillow>=10,<14",
 ]
 dev = [
     "build>=1.2,<2",

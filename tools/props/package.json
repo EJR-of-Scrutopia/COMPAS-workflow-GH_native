@@ -1,0 +1,17 @@
+{
+  "name": "bench-studio-props",
+  "private": true,
+  "type": "module",
+  "description": "Build-time only. Turns Poly Haven's film-weight models into props a browser can hold.",
+  "//": "The override is load-bearing. @gltf-transform/functions pulls ndarray-pixels, which depends on its OWN sharp at a different version, so npm installs two. Two native libvips builds in one process is not a conflict that fails loudly: the second .node fails to dlopen, and thereafter the FIRST one's every resize throws 'colourspace: parameter space not set' while metadata() goes on working perfectly. Pinning both to one version is the whole fix, and without it every texture in this library silently keeps its full size.",
+  "dependencies": {
+    "@gltf-transform/core": "^4.2.0",
+    "@gltf-transform/extensions": "^4.2.0",
+    "@gltf-transform/functions": "^4.2.0",
+    "meshoptimizer": "^0.25.0",
+    "sharp": "0.35.4"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}
