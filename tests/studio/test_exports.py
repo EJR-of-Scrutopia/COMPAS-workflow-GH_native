@@ -1791,14 +1791,27 @@ def test_a_demand_that_lacks_a_block_never_throws_and_never_prints_none(
         assert "Whether it carries the skin is not established" in text
     if "placement" in dropped:
         assert "Where to grab the net is not established" in text
+    if "held" in dropped and "placement" not in dropped:
+        # the placement is there and the held set is not: an empty set is not assumed
+        assert ("Where to grab the net is not established: the demand document has "
+                "no held set") in text
+        for sentence in ("No node needs grabbing", "With none grabbed", "With them held",
+                         "0 heads"):
+            assert sentence not in text, (sentence, dropped, bare_stages)
+        chosen = {r[0]: r for r in sheets["Chosen"] if r}
+        assert chosen["Actuators needed"][1] == ""
+        assert "no held set" in chosen["Actuators needed"][2]
 
 
-def test_a_column_with_no_force_in_it_leaves_its_cell_blank():
+def test_a_column_with_no_force_in_it_leaves_its_cells_blank():
+    # a column with no force is not the worst column of its stage, in the sheet
+    # as in the summary, so the sheet names no node for it either
     stages = _v2_demand()["stages"]
     stages[1]["column_forces"] = [{"node": 4}]
     model = _sized_model(stages=stages)
     hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
-    assert hold["S7"][3] == "" and hold["S7"][4] == 4
+    assert hold["S7"][3] == "" and hold["S7"][4] == ""
+    assert model["columns"]["stage"] == "S1"
 
 
 # ---------------------------------------------------------------------------
@@ -1826,3 +1839,294 @@ def test_the_route_writes_the_weight_and_the_grab_into_all_three(client, monkeyp
         assert book.sheetnames[-1] == "Hold"
         hold = [[c.value for c in row] for row in book["Hold"].iter_rows()]
         assert hold[1][0] == weight and hold[2][0].startswith(grab)
+
+
+# ---------------------------------------------------------------------------
+# A held set that is not there is not an empty one
+# ---------------------------------------------------------------------------
+
+def test_a_missing_held_set_is_not_read_as_an_empty_one():
+    # a placement, a curve whose first figure is 9.00 mm against a 2.18 mm line,
+    # column forces, and no held set: nothing here says that no node is grabbed
+    model = _sized_model(held=None)
+    sentence = exports.grab_sentence(model)
+    assert sentence == ("Where to grab the net is not established: the demand document "
+                        "has no held set; run the cable net analysis again.")
+    text = exports.datasheet_markdown(model)
+    assert sentence in _section(text, "grab the net")
+    assert "No node needs grabbing" not in text and "already inside" not in text
+    assert "With none grabbed" not in text and "With them held" not in text
+    assert "0 heads" not in text
+    weight = _section(text, "hold the weight")
+    assert ("How many heads the columns prop is not recorded, because the demand "
+            "document's held set does not list them.") in weight
+    assert "The worst column force is 2500.0 N at node 4 at stage S7" in weight
+    sheets = exports._sheet_rows(model)
+    chosen = {r[0]: r for r in sheets["Chosen"] if r}
+    assert chosen["Actuators needed"][1] == "" and chosen["Actuators needed"][2] == sentence
+    assert sheets["Hold"][2] == [sentence]
+    assert all(row[6] == "" for row in sheets["Hold"][4:] if len(row) == 7)
+    # what the document does record is still said, without a claim about the held set
+    grab = _section(text, "grab the net")
+    assert "The worst first-order sag is 1.40 mm at stage S7, and 0 of 6 free nodes are past the line." in grab
+    assert "equilibrium state" not in grab
+
+
+@pytest.mark.parametrize("held", [
+    None, {}, {"wire_nodes": [0, 2], "column_heads": [4]}, {"actuators": None},
+    {"actuators": "abc"}, {"actuators": 3}])
+def test_an_actuator_list_that_is_not_a_list_is_not_established(held):
+    model = _sized_model(held=held)
+    sentence = exports.grab_sentence(model)
+    assert sentence.startswith("Where to grab the net is not established")
+    assert "no held set" in sentence
+    chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
+    assert chosen["Actuators needed"][1] == ""
+    assert "No node needs grabbing" not in exports.datasheet_markdown(model)
+
+
+@pytest.mark.parametrize("heads", [None, "abc", 4])
+def test_a_held_set_with_no_list_of_heads_does_not_count_them(heads):
+    held = {"wire_nodes": [0, 2], "column_heads": heads, "actuators": [1, 3]}
+    text = exports.datasheet_markdown(_sized_model(held=held))
+    weight = _section(text, "hold the weight")
+    assert "does not list them" in weight and "0 heads" not in text
+    assert "The worst column force is 2500.0 N at node 4 at stage S7" in weight
+    # the actuators are known, so the grab says what it said before
+    grab = _section(text, "grab the net")
+    assert "With them held, the worst first-order sag is 1.40 mm" in grab
+    # and a known empty list is a count of none, not an unknown
+    none = _section(exports.datasheet_markdown(_sized_model(
+        held={"wire_nodes": [0, 2], "column_heads": [], "actuators": [1, 3]})), "hold the weight")
+    assert "The columns prop the net at 0 heads." in none
+
+
+# ---------------------------------------------------------------------------
+# One reader per stage: the summaries and the Hold sheet cannot disagree
+# ---------------------------------------------------------------------------
+
+def test_the_model_holds_one_entry_per_stage_read_once():
+    model = _sized_model(stages=_with_frames(_v2_demand()))
+    hold = model["hold"]
+    assert [entry["name"] for entry in hold] == ["F45", "F100", "S1", "S7"]
+    assert [entry["frame"] for entry in hold] == [True, True, False, False]
+    s7 = hold[-1]
+    assert s7["worst_sag_mm"] == pytest.approx(1.4) and s7["nodes"] == 6
+    assert s7["nodes_over_line"] == 0
+    assert s7["worst_column"] == {"node": 4, "newtons": 2500.0, "vertical": 2500.0}
+    assert s7["worst_actuator_newtons"] == pytest.approx(120.0)
+    assert hold[0]["nodes_over_line"] == 3 and hold[0]["worst_column"]["newtons"] == 3000.0
+    # a v1 stage has nothing to read, and every figure says so
+    bare = exports.export_model(*_sized_model_args_without_v2())["hold"]
+    assert [entry["name"] for entry in bare] == ["S1", "S7"]
+    assert all(entry["worst_sag_mm"] is None and entry["nodes_over_line"] is None
+               and entry["worst_column"] is None and entry["worst_actuator_newtons"] is None
+               for entry in bare)
+
+
+def test_the_chosen_and_hold_sheets_read_one_figure_per_stage():
+    stages = _with_frames(_v2_demand())
+    course = next(s for s in stages if s["name"] == "S7")
+    course["node_sag_mm"] = [None, 3.0, 2.5, None, None, 0.1, 2.0, 0.0, 0.2]   # two past 2.18
+    model = _sized_model(stages=stages)
+    rows = exports._sheet_rows(model)
+    hold = {r[0]: r for r in rows["Hold"][4:] if len(r) == 7}
+    chosen = {r[0]: r for r in rows["Chosen"] if r}
+    # the same cell and the same count for the stage the summary names
+    assert model["sag"]["stage"] == "S7"
+    assert hold["S7"][1] == chosen["Worst sag (mm)"][1] == pytest.approx(3.0)
+    assert hold["S7"][2] == 2
+    assert chosen["Worst sag (mm)"][2] == "at stage S7; {} past the line".format(
+        exports._count(hold["S7"][2], "node"))
+    # and the column the summary names is the column the sheet names for that stage
+    named = model["columns"]
+    assert chosen["Worst column force (N)"][1] == hold[named["stage"]][3]
+    assert chosen["Worst column force (N)"][2] == "at node {} at stage {}".format(
+        hold[named["stage"]][4], named["stage"])
+
+
+def test_the_summaries_and_the_hold_sheet_read_the_one_stage_reader(monkeypatch):
+    def doctored(stage, acceptance):
+        return {"name": stage.get("name"), "frame": False, "nodes": 4, "nodes_over_line": 3,
+                "worst_sag_mm": 11.0 if stage.get("name") == "S7" else 5.0,
+                "worst_column": {"node": 9, "newtons": 777.0, "vertical": 700.0},
+                "worst_actuator_newtons": 66.0}
+
+    monkeypatch.setattr(exports, "_stage_hold", doctored)
+    model = _sized_model()
+    assert model["sag"] == {"worst_mm": 11.0, "stage": "S7", "nodes_over_line": 3,
+                            "nodes": 4, "acceptance_mm": 2.18}
+    assert model["columns"] == {"newtons": 777.0, "node": 9, "stage": "S1", "vertical": 700.0}
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert float(hold["S7"][1]) == 11.0 and hold["S7"][2] == 3
+    assert float(hold["S7"][3]) == 777.0 and hold["S7"][4] == 9 and float(hold["S7"][5]) == 66.0
+
+
+def test_the_hold_sheet_prints_what_the_model_holds_and_computes_nothing():
+    model = _sized_model()
+    for entry in model["hold"]:
+        entry.update(worst_sag_mm=123.0, nodes_over_line=7, worst_actuator_newtons=45.0,
+                     worst_column={"node": 8, "newtons": 999.0, "vertical": 1.0})
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    for name in ("S1", "S7"):
+        assert [float(hold[name][1]), hold[name][2], float(hold[name][3]), hold[name][4],
+                float(hold[name][5])] == [123.0, 7, 999.0, 8, 45.0]
+
+
+# ---------------------------------------------------------------------------
+# A value that is not a number is skipped, by every reader, and never raised on
+# ---------------------------------------------------------------------------
+
+def test_a_column_force_that_is_not_a_number_is_skipped_and_not_raised(tmp_path):
+    stages = _v2_demand()["stages"]
+    stages[1]["column_forces"] = [
+        {"node": 4, "force": [0.0, 0.0, 1.0], "newtons": "abc", "vertical": 1.0},
+        {"node": 6, "force": [0.0, 0.0, 1.0], "newtons": True, "vertical": 1.0},
+        {"node": 7, "force": [0.0, 0.0, 1.0], "newtons": float("nan"), "vertical": 1.0},
+        {"node": 8, "force": [0.0, 0.0, 1.0], "newtons": None, "vertical": 1.0},
+        {"node": 5, "force": [0.0, 0.0, 700.0], "newtons": 700.0, "vertical": 700.0}]
+    model = _sized_model(stages=stages)
+    # every document is written, and the summary and the sheet name the same column
+    exports.write_spreadsheet(model, tmp_path, "x")
+    exports.write_diagram(model, tmp_path, "x")
+    exports.write_datasheet(model, tmp_path, "x")
+    assert model["columns"] == {"newtons": 700.0, "node": 5, "stage": "S7", "vertical": 700.0}
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert float(hold["S7"][3]) == 700.0 and hold["S7"][4] == 5
+    # a stage whose columns are all junk leaves its cells blank and the summary alone
+    stages[1]["column_forces"] = [{"node": 4, "newtons": "abc"}, {"node": 6, "newtons": [1]}]
+    model = _sized_model(stages=stages)
+    exports.write_spreadsheet(model, tmp_path, "y")
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert hold["S7"][3] == "" and hold["S7"][4] == ""
+    assert model["columns"]["stage"] == "S1" and model["columns"]["newtons"] == 300.0
+
+
+def test_a_sag_or_an_actuator_force_that_is_not_a_number_is_skipped(tmp_path):
+    stages = _v2_demand()["stages"]
+    stages[1]["node_sag_mm"] = [None, "x", True, float("nan"), float("inf"), 1.0, 3.0]
+    stages[1]["actuator_forces"] = [[0.0, 0.0, "x"], [3.0, 4.0, 0.0], None, "abc", [1.0, None, 2.0]]
+    model = _sized_model(stages=stages)
+    exports.write_spreadsheet(model, tmp_path, "x")
+    s7 = {entry["name"]: entry for entry in model["hold"]}["S7"]
+    # only 1.0 and 3.0 are numbers: two free nodes, one of them past the 2.18 line
+    assert s7["worst_sag_mm"] == 3.0 and s7["nodes"] == 2 and s7["nodes_over_line"] == 1
+    assert s7["worst_actuator_newtons"] == 5.0
+    assert model["sag"]["worst_mm"] == 3.0 and model["sag"]["nodes"] == 2
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert float(hold["S7"][1]) == 3.0 and hold["S7"][2] == 1 and float(hold["S7"][5]) == 5.0
+    # a stage that carries only junk has nothing to say, and says it with blanks
+    stages[1]["node_sag_mm"] = ["x", None, True]
+    stages[1]["actuator_forces"] = ["abc"]
+    model = _sized_model(stages=stages)
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert hold["S7"][1] == "" and hold["S7"][2] == "" and hold["S7"][5] == ""
+    assert model["sag"]["stage"] == "S1"
+
+
+def test_a_stage_whose_arrays_are_not_lists_is_read_as_having_none():
+    stages = _v2_demand()["stages"]
+    stages[1].update(node_sag_mm="abc", column_forces=5, actuator_forces={"a": 1})
+    model = _sized_model(stages=stages)
+    entry = {e["name"]: e for e in model["hold"]}["S7"]
+    assert entry["worst_sag_mm"] is None and entry["worst_column"] is None
+    assert entry["worst_actuator_newtons"] is None
+    exports._sheet_rows(model)
+    exports.datasheet_markdown(model)
+
+
+def test_the_worst_column_is_found_by_its_force_and_named_by_its_own_node():
+    # the engine's order is [9, 4, 7] and held.column_heads is [4, 7, 9]: the worst
+    # is the one with the force, and it is named by the node its own entry carries
+    stages = _v2_demand()["stages"]
+    stages[1]["column_forces"] = [
+        {"node": 9, "force": [0.0, 0.0, 100.0], "newtons": 100.0, "vertical": 100.0},
+        {"node": 4, "force": [0.0, 0.0, 2500.0], "newtons": 2500.0, "vertical": 2400.0},
+        {"node": 7, "force": [0.0, 0.0, 900.0], "newtons": 900.0, "vertical": 900.0}]
+    held = {"wire_nodes": [0, 2], "column_heads": [4, 7, 9], "actuators": [1, 3]}
+    model = _sized_model(stages=stages, held=held)
+    assert model["columns"] == {"newtons": 2500.0, "node": 4, "stage": "S7", "vertical": 2400.0}
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert float(hold["S7"][3]) == 2500.0 and hold["S7"][4] == 4
+    assert ("The columns prop the net at 3 heads. The worst column force is 2500.0 N at "
+            "node 4 at stage S7, of which 2400.0 N is vertical.") in exports.datasheet_markdown(model)
+
+
+def test_a_column_entry_that_is_not_an_entry_is_skipped():
+    stages = _v2_demand()["stages"]
+    stages[1]["column_forces"] = [5, "abc", None, [1, 2],
+                                  {"node": 5, "force": [0.0, 0.0, 700.0],
+                                   "newtons": 700.0, "vertical": 700.0}]
+    model = _sized_model(stages=stages)
+    assert model["columns"]["newtons"] == 700.0 and model["columns"]["node"] == 5
+    exports._sheet_rows(model)
+
+
+# ---------------------------------------------------------------------------
+# The floor is where the largest wire tension occurs, and the stage that sizes
+# the parts is another clause
+# ---------------------------------------------------------------------------
+
+def test_the_floor_names_the_instant_where_the_largest_wire_tension_occurs():
+    # the raise carries the largest wire tension in the document, and the stage
+    # that sizes the parts is a course
+    stages = _with_frames(_v2_demand())
+    stages[0]["wire_tensions"] = [1500.0]            # F45, a frame of the raise
+    model = _sized_model(stages=stages)
+    assert model["demand"]["prestress_floor_newtons"] == 1500.0
+    assert model["demand"]["prestress_floor_instant"] == {"name": "F45", "frame": True}
+    section = _section(exports.datasheet_markdown(model), "demands")
+    assert ("The net must be held at a prestress floor of 1500.0 N, which is the largest "
+            "tension any wire carries at any stage of the build, reached at the raise's "
+            "instant F45. The stage that sizes the parts is S7.") in section
+    assert "sizes it" not in section
+
+
+def test_a_floor_reached_in_a_course_reads_as_a_stage():
+    section = _section(exports.datasheet_markdown(_sized_model()), "demands")
+    assert ("which is the largest tension any wire carries at any stage of the build, "
+            "reached at stage S7. The stage that sizes the parts is S7.") in section
+    # and the stage that sizes the parts can be another course than the one that
+    # reaches the floor
+    stages = _v2_demand()["stages"]
+    stages[0]["wire_tensions"] = [1000.0]            # S1 carries more than S7's 900.0
+    model = _sized_model(stages=stages)
+    assert model["demand"]["prestress_floor_instant"] == {"name": "S1", "frame": False}
+    section = _section(exports.datasheet_markdown(model), "demands")
+    assert "reached at stage S1. The stage that sizes the parts is S7." in section
+
+
+def test_a_floor_two_instants_share_is_named_at_the_first_in_the_documents_order():
+    stages = _with_frames(_v2_demand())
+    stages[0]["wire_tensions"] = [1500.0]
+    stages[1]["wire_tensions"] = [1500.0]
+    assert _sized_model(stages=stages)["demand"]["prestress_floor_instant"] == {
+        "name": "F45", "frame": True}
+
+
+def test_the_instant_is_the_one_whose_own_worst_tension_is_the_floor():
+    # several wires: the stage is found by its worst wire, not by its first
+    stages = _v2_demand()["stages"]
+    stages[0]["wire_tensions"] = [100.0, 1200.0, 50.0]
+    stages[1]["wire_tensions"] = [900.0, 1100.0]
+    model = _sized_model(stages=stages)
+    assert model["demand"]["prestress_floor_newtons"] == 1200.0
+    assert model["demand"]["prestress_floor_instant"] == {"name": "S1", "frame": False}
+
+
+def test_a_document_with_no_wire_tension_names_no_instant_for_the_floor():
+    for stages in ([], [{"stage": 1, "name": "S1", "wire_tensions": []}]):
+        model = _sized_model(stages=stages)
+        assert model["demand"]["prestress_floor_newtons"] is None
+        assert model["demand"]["prestress_floor_instant"] is None
+        section = _section(exports.datasheet_markdown(model), "demands")
+        assert "reached at" not in section and "The stage that sizes the parts is S7." in section
+
+
+def test_the_other_two_documents_still_name_the_stage_that_sizes_the_parts():
+    stages = _with_frames(_v2_demand())
+    stages[0]["wire_tensions"] = [1500.0]
+    model = _sized_model(stages=stages)
+    assert "sized at stage S7" in exports.diagram_svg(model)
+    chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
+    assert float(chosen["Prestress the build demands (N)"][1]) == 1500.0
