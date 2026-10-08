@@ -38,6 +38,96 @@ class HoldResult(NamedTuple):
     units: str
 
 
+class FitResult(NamedTuple):
+    """The best tension-only state, and what it leaves unbalanced.
+
+    residual[i] is the force an actuator at free vertex i would have to add for
+    equilibrium, zero at a held vertex. reactions[i] is the force held vertex i
+    supplies, zero at a free vertex. residual_norm is the Euclidean norm of the
+    whole residual field, the quantity the non-negative least squares minimised,
+    so it never rises when a vertex is moved from free to held.
+    """
+
+    force_densities: tuple
+    tensions: tuple
+    residual: tuple
+    reactions: tuple
+    residual_norm: float
+    units: str
+
+
+def _equilibrium_operator(xyz, edges):
+    """Rows 3i..3i+2 of a times q is the pull of every member on vertex i."""
+
+    a = np.zeros((3 * len(xyz), len(edges)), dtype=float)
+    for column, (u, v) in enumerate(edges):
+        a[3 * u:3 * u + 3, column] = xyz[v] - xyz[u]
+        a[3 * v:3 * v + 3, column] = xyz[u] - xyz[v]
+    return a
+
+
+def fit_tension_state(vertices, edges, fixed, loads):
+    """The best tension-only state the net can carry, with the shortfall named.
+
+    The same non-negative least squares as hold_force_densities, but a net that
+    cannot be held is answered rather than refused: the force left unbalanced
+    at each free vertex is reported, because on an actuated net that force is
+    what the actuator must supply and where it must go. An unloaded net is
+    answered with zeros.
+    """
+
+    xyz = np.asarray(vertices, dtype=float)
+    if xyz.ndim != 2 or xyz.shape[1] != 3:
+        raise HoldError("vertices must be an n by 3 array of coordinates.")
+    edges = [(int(u), int(v)) for u, v in edges]
+    p = np.asarray(loads, dtype=float)
+    if p.shape != xyz.shape:
+        raise HoldError("loads must have one row per vertex.")
+    if not np.all(np.isfinite(p)) or not np.all(np.isfinite(xyz)):
+        raise HoldError("vertices and loads must be finite numbers.")
+    count = len(xyz)
+    fixed_set = {int(f) for f in fixed}
+    for index in fixed_set:
+        if not 0 <= index < count:
+            raise HoldError("Fixed index {} is outside the {} vertices.".format(index, count))
+    for u, v in edges:
+        if not (0 <= u < count and 0 <= v < count):
+            raise HoldError("Edge ({}, {}) refers to a vertex outside 0..{}.".format(u, v, count - 1))
+
+    free = [index for index in range(count) if index not in fixed_set]
+    a = _equilibrium_operator(xyz, edges)
+    b = -p.reshape(-1)
+    q = np.zeros(len(edges), dtype=float)
+    if free and edges:
+        rows = np.asarray([[3 * i, 3 * i + 1, 3 * i + 2] for i in free]).reshape(-1)
+        try:
+            q, _ = nnls(a[rows], b[rows])
+        except Exception as error:  # scipy raises its own types; report ours
+            raise HoldError(
+                "The non-negative least squares solve failed: {}".format(error)
+            ) from error
+    # member pulls plus load at every vertex: zero where the state balances
+    balance = (a.dot(q) + p.reshape(-1)).reshape(-1, 3)
+    residual = np.zeros_like(p)
+    reactions = np.zeros_like(p)
+    if free:
+        residual[free] = -balance[free]
+    held = sorted(fixed_set)
+    if held:
+        reactions[held] = -balance[held]
+    lengths = np.array(
+        [float(np.linalg.norm(xyz[v] - xyz[u])) for u, v in edges], dtype=float
+    )
+    return FitResult(
+        force_densities=tuple(float(value) for value in q),
+        tensions=tuple(float(value) for value in (q * lengths)),
+        residual=tuple(tuple(float(c) for c in row) for row in residual),
+        reactions=tuple(tuple(float(c) for c in row) for row in reactions),
+        residual_norm=float(np.linalg.norm(residual)),
+        units="N, mm",
+    )
+
+
 def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6):
     """One set of force densities that holds every free node in place.
 

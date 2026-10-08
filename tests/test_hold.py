@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("scipy")
 
 from tree_forest_compas.hold import HoldError
+from tree_forest_compas.hold import fit_tension_state
 from tree_forest_compas.hold import hold_force_densities
 
 
@@ -290,3 +291,70 @@ def test_mismatched_inputs_are_refused_with_hold_error():
             problem, [0, 2], [1030.0, 1030.0], 2.0e5, loads,
             target[:2], target[:2],
         )
+
+
+def _flat_line():
+    # a taut-looking line that cannot carry a transverse load in tension
+    vertices = [(0.0, 0.0, 0.0), (1000.0, 0.0, 0.0), (2000.0, 0.0, 0.0)]
+    edges = [(0, 1), (1, 2)]
+    return vertices, edges
+
+
+def test_the_fit_balances_a_holdable_node_and_reports_the_reactions():
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = -1000.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    assert np.allclose(fit.residual[2], (0.0, 0.0, 0.0), atol=1e-6)
+    assert fit.residual_norm < 1e-6
+    assert np.allclose(fit.force_densities[0], fit.force_densities[1])
+    # the two anchors together hold the kilonewton up
+    assert np.allclose(np.sum(np.asarray(fit.reactions), axis=0), (0.0, 0.0, 1000.0), atol=1e-6)
+    assert fit.units == "N, mm"
+
+
+def test_an_unholdable_node_is_answered_with_the_force_it_needs():
+    vertices, edges = _flat_line()
+    loads = np.zeros((3, 3))
+    loads[1, 2] = -10.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 2], loads=loads)
+    # horizontal cables cannot lift: nothing is carried, the actuator must
+    # supply the whole 10 N upward
+    assert np.allclose(fit.residual[1], (0.0, 0.0, 10.0), atol=1e-9)
+    assert np.allclose(fit.residual[0], (0.0, 0.0, 0.0))
+    assert max(fit.tensions) == 0.0
+
+
+def test_a_pushed_node_needs_an_actuator_pulling_down():
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = +1000.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    assert np.allclose(fit.residual[2], (0.0, 0.0, -1000.0), atol=1e-6)
+
+
+def test_residual_reactions_and_loads_balance_globally():
+    for vertices, edges, loaded in ((_vee()[0], _vee()[1], 2), (_flat_line()[0], _flat_line()[1], 1)):
+        loads = np.zeros((3, 3))
+        loads[loaded] = (3.0, -2.0, -10.0)
+        fixed = [0, 1] if loaded == 2 else [0, 2]
+        fit = fit_tension_state(vertices, edges, fixed=fixed, loads=loads)
+        total = (np.sum(np.asarray(fit.residual), axis=0)
+                 + np.sum(np.asarray(fit.reactions), axis=0)
+                 + np.sum(loads, axis=0))
+        assert np.allclose(total, (0.0, 0.0, 0.0), atol=1e-6)
+
+
+def test_an_unloaded_net_is_answered_with_zeros_not_refused():
+    vertices, edges = _vee()
+    fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=np.zeros((3, 3)))
+    assert fit.residual_norm == 0.0
+    assert max(fit.tensions) == 0.0
+
+
+def test_the_fit_refuses_bad_indices_like_the_hold_solve_does():
+    vertices, edges = _vee()
+    with pytest.raises(HoldError):
+        fit_tension_state(vertices, edges, fixed=[7], loads=np.zeros((3, 3)))
+    with pytest.raises(HoldError):
+        fit_tension_state(vertices, edges, fixed=[0, 1], loads=np.zeros((2, 3)))
