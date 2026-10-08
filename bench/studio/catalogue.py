@@ -16,6 +16,7 @@ from pathlib import Path
 
 from tree_forest_compas.mechanism import Mechanism
 from tree_forest_compas.mechanism import ceiling_terms
+from tree_forest_compas.mechanism import CurvePoint, TensionCurve, capacity_from_curve
 
 PARTS_PATH = Path(__file__).resolve().parent / "parts.json"
 GRAVITY = 9.80665
@@ -34,6 +35,8 @@ def load_parts(path=None):
     newtons are computed here so the file never holds a number nobody published.
     The same is true of family B and C motor torque, which comes from power and
     the speed for that family's supply.
+
+    Every designed configuration is proved buildable here too, once.
     """
 
     parts = json.loads(Path(path or PARTS_PATH).read_text(encoding="utf-8"))
@@ -55,6 +58,21 @@ def load_parts(path=None):
                 9550.0 * float(entry["power_kw"]) / float(entry["rated_speed_rpm"])
                 * 1000.0
             )
+    # A designed rig that cannot be built fails here, with its part named, and
+    # not on a panel the first time somebody chooses it.
+    for key in configurations(parts):
+        try:
+            configuration = configuration_of(parts, key)
+            drive_for(parts, configuration["motor"])
+            mechanism_for(parts, configuration, AXIAL_ANGLE)
+        except CatalogueError as error:
+            raise CatalogueError(
+                "The configuration {!r} cannot be built: {}".format(key, error)
+            ) from None
+        except KeyError as error:
+            raise CatalogueError(
+                "The configuration {!r} names no {}.".format(key, error.args[0])
+            ) from None
     return parts
 
 
@@ -289,3 +307,198 @@ def drum_and_travel(parts, configuration, rope_wound_mm):
         "rail_fits": bool(travel <= stroke),
         "sheave_over_rope_diameter": ratio,
     }
+
+
+PART_KEYS = ("motor", "drive", "gearbox", "drum", "rope", "rail", "sheave", "spool_rope")
+# keys that mean "none of this part", which price_of and the chooser already
+# treat as absence
+NO_PART = {"gearbox": "direct", "drive": "none"}
+
+
+def configurations(parts):
+    """The designed, complete, buildable mechanisms, each with its description."""
+
+    return parts.get("configurations") or {}
+
+
+def configuration_of(parts, key):
+    """A named configuration in the shape every route takes."""
+
+    entry = configurations(parts).get(key)
+    if entry is None:
+        raise CatalogueError("There is no configuration called {!r}.".format(key))
+    configuration = dict(entry["parts"])
+    configuration["chain"] = list(configuration.get("chain") or [])
+    configuration.setdefault("sheave", None)
+    configuration.setdefault("reeve_factor", 1)
+    return configuration
+
+
+def drive_for(parts, motor_key):
+    """The drive a motor is paired with: named on the motor, same family.
+
+    The pairing is written once, on the motor, because a stepper cannot be run
+    by an inverter or the reverse; a panel that offered the pair as two free
+    choices would offer people rigs that cannot run.
+    """
+
+    motor = _part(parts, "motor", motor_key)
+    drive = motor.get("drive")
+    if drive not in parts["drive"]:
+        raise CatalogueError(
+            "Motor {!r} names no drive in the catalogue.".format(motor_key))
+    if parts["drive"][drive]["family"] != motor["family"]:
+        raise CatalogueError(
+            "Motor {!r} is paired with {!r}, a different family.".format(motor_key, drive))
+    return drive
+
+
+def gearboxes_for(parts, motor_key):
+    """The gearboxes a motor's family is used with: planetary (or none) for a
+    stepper, worm for a three-phase motor; a capacitor motor is refused."""
+
+    motor = _part(parts, "motor", motor_key)
+    if motor["family"] == "C":
+        raise CatalogueError(
+            "{} is a single-phase capacitor motor and cannot be inverter "
+            "controlled; no gearbox makes it hold a net.".format(motor_key))
+    kinds = ("planetary", "none") if motor["family"] == "A" else ("worm",)
+    return [key for key, entry in parts["gearbox"].items() if entry["kind"] in kinds]
+
+
+def part_count(configuration):
+    """How many separate parts a configuration is built from: the fewer, the
+    less there is to buy, fit and fail. A direct gearbox and a direct-on-line
+    drive are absences, not parts."""
+
+    count = 0
+    for key in PART_KEYS:
+        value = configuration.get(key)
+        if value and value != NO_PART.get(key):
+            count += 1
+    return count + len(configuration.get("chain") or [])
+
+
+def part_for_term(configuration, name):
+    """The configuration key a ceiling term belongs to.
+
+    "anchor" is answered by chain_limit, not here, so it is None; "deviation"
+    is the shape and no part; "none" is nothing binding.
+    """
+
+    if name == "deviation":
+        return "shape"
+    if name == "spool rope tension":
+        return configuration.get("spool_rope") or configuration.get("rope")
+    key = {"rope tension": "rope", "motor torque": "motor", "sheave": "sheave"}.get(name)
+    return configuration.get(key) if key else None
+
+
+def sizing_of(demand):
+    """The demand document's sizing block, or None when it carries none (a
+    document from before the block existed, or no document at all)."""
+
+    sizing = (demand or {}).get("sizing")
+    return sizing if isinstance(sizing, dict) else None
+
+
+def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_factor=20.0):
+    """How many times the sizing stage's load this configuration carries.
+
+    The tensions are taken to scale with the load, the owner's hypothesis for an
+    actuated net and exact for the fit, so the curve capacity_from_curve reads
+    is worst_tension = f * t1 with the sag constant. None when the demand has
+    no sizing block.
+    """
+
+    sizing = sizing_of(demand)
+    if sizing is None:
+        return None
+    mechanism = mechanism_for(parts, configuration, angle_degrees)
+    t1 = float(sizing["worst_wire_tension_newtons"])
+    sag = float(sizing["worst_sag_mm"])
+    acceptance = demand.get("acceptance")
+    ceiling, _ = ceiling_for(parts, configuration, angle_degrees)
+    if not t1 > 0.0:
+        return {
+            "limit_factor": None, "breaching_factor": None, "binding": "none",
+            "binding_part": None,
+            "detail": "no wire carries tension at the sizing stage, so there is nothing to scale",
+            "ceiling_newtons": float(ceiling), "worst_wire_tension_newtons": t1,
+            "worst_sag_mm": sag, "skin_newtons": sizing.get("load_newtons"),
+            "stage": sizing.get("stage"), "margin": None, "sufficient": None,
+            "acceptance_mm": acceptance,
+        }
+    points = tuple(
+        CurvePoint(factor=max_factor * k / steps,
+                   worst_tension=t1 * max_factor * k / steps, deviation=sag)
+        for k in range(1, int(steps) + 1)
+    )
+    result = capacity_from_curve(
+        mechanism, TensionCurve(points, int(steps), float(max_factor)),
+        None if acceptance is None else float(acceptance))
+    if result.binding == "anchor":
+        _, part = chain_limit(parts, configuration["chain"], angle_degrees)
+    else:
+        part = part_for_term(configuration, result.binding)
+    return {
+        "limit_factor": float(result.limit_factor),
+        "breaching_factor": result.breaching_factor,
+        "binding": result.binding,
+        "binding_part": part,
+        "detail": result.detail,
+        "ceiling_newtons": float(ceiling),
+        "worst_wire_tension_newtons": t1,
+        "worst_sag_mm": sag,
+        "skin_newtons": sizing.get("load_newtons"),
+        "stage": sizing.get("stage"),
+        "margin": float(ceiling) / t1,
+        "sufficient": bool(result.limit_factor >= 1.0),
+        "acceptance_mm": acceptance,
+    }
+
+
+def recommend(parts, angle_degrees, demand):
+    """The configuration to build: the largest load factor among those that
+    carry the skin, the fewest parts among ties, the first listed after that.
+    Without a sizing block it ranks by ceiling and says so."""
+
+    rows = []
+    for position, key in enumerate(configurations(parts)):
+        try:
+            configuration = configuration_of(parts, key)
+            ceiling, binding = ceiling_for(parts, configuration, angle_degrees)
+            factor = load_factor(parts, configuration, angle_degrees, demand)
+        except CatalogueError as error:
+            rows.append({"key": key, "refused": str(error)})
+            continue
+        rows.append({"key": key, "position": position, "parts": part_count(configuration),
+                     "ceiling": float(ceiling), "binding": binding, "load_factor": factor})
+    usable = [row for row in rows if not row.get("refused")]
+    if not usable:
+        message = "No configuration in the catalogue can be built."
+        if rows:
+            message += " The first was refused: {}".format(rows[0]["refused"])
+        raise CatalogueError(message)
+    sized = [row for row in usable if row["load_factor"]
+             and row["load_factor"].get("limit_factor") is not None]
+    if sized:
+        sufficient = [row for row in sized if row["load_factor"]["sufficient"]]
+        if sufficient:
+            best = max(sufficient, key=lambda r: (
+                r["load_factor"]["limit_factor"], -r["parts"], -r["position"]))
+            rule = ("the configuration that carries the skin with the largest load "
+                    "factor; among ties the fewest parts, then the first listed")
+            flag = True
+        else:
+            best = max(sized, key=lambda r: (
+                r["load_factor"]["limit_factor"], -r["parts"], -r["position"]))
+            rule = ("nothing in the catalogue carries the skin; this is the "
+                    "configuration with the highest load factor")
+            flag = False
+    else:
+        best = max(usable, key=lambda r: (r["ceiling"], -r["parts"], -r["position"]))
+        rule = ("no sizing in the demand document, so the configuration with the "
+                "highest ceiling; run the cable net analysis for a load factor")
+        flag = None
+    return {"key": best["key"], "sufficient": flag, "rule": rule, "rows": rows}

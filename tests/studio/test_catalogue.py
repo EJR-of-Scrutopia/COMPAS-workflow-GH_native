@@ -218,3 +218,210 @@ def test_the_sheave_to_rope_ratio_is_a_number_with_no_verdict():
     result = catalogue.drum_and_travel(parts, configuration, 100.0)
     assert result["sheave_over_rope_diameter"] == 30.0
     assert not any("verdict" in k or "ok" == k for k in result)
+
+
+def _demand(t1=500.0, sag=1.0, acceptance=2.18, load=66890.0):
+    return {"acceptance": acceptance,
+            "sizing": {"stage": "S7", "worst_wire_tension_newtons": t1,
+                       "worst_actuator_newtons": 0.0, "worst_sag_mm": sag,
+                       "load_newtons": load}}
+
+
+def test_every_configuration_in_the_catalogue_is_buildable_and_described():
+    parts = catalogue.load_parts()
+    keys = list(catalogue.configurations(parts))
+    assert len(keys) >= 6
+    for key in keys:
+        entry = parts["configurations"][key]
+        assert entry["name"] and entry["for"]
+        configuration = catalogue.configuration_of(parts, key)
+        for field in ("motor", "drive", "gearbox", "drum", "rope", "rail", "chain", "reeve_factor"):
+            assert field in configuration, (key, field)
+        catalogue.mechanism_for(parts, configuration, 10.0)
+        assert configuration["drive"] == catalogue.drive_for(parts, configuration["motor"])
+        assert configuration["gearbox"] in catalogue.gearboxes_for(parts, configuration["motor"])
+    with pytest.raises(catalogue.CatalogueError, match="no configuration"):
+        catalogue.configuration_of(parts, "not-a-rig")
+
+
+def test_the_drive_follows_the_motor_by_family():
+    parts = catalogue.load_parts()
+    for key, motor in parts["motor"].items():
+        drive = catalogue.drive_for(parts, key)
+        assert parts["drive"][drive]["family"] == motor["family"], key
+    assert catalogue.drive_for(parts, "23HS45") == "CL57Y"
+    assert catalogue.drive_for(parts, "34HS46") == "CL86Y"
+    assert catalogue.drive_for(parts, "ac-1r1-3ph") == "vfd-1ph-in"
+    with pytest.raises(catalogue.CatalogueError):
+        catalogue.drive_for(parts, "not-a-motor")
+
+
+def test_gearboxes_are_offered_by_family_and_a_capacitor_motor_is_refused():
+    parts = catalogue.load_parts()
+    stepper = catalogue.gearboxes_for(parts, "34HS46")
+    assert "EG23-G20" in stepper and "direct" in stepper and "worm-20" not in stepper
+    inverter = catalogue.gearboxes_for(parts, "ac-1r1-3ph")
+    assert "worm-20" in inverter and "EG23-G20" not in inverter
+    with pytest.raises(catalogue.CatalogueError, match="single-phase"):
+        catalogue.gearboxes_for(parts, "boatlift-1hp")
+
+
+def test_part_count_counts_real_parts_and_part_for_term_names_them():
+    configuration = {"motor": "34HS46", "drive": "CL86Y", "gearbox": "EG23-G20",
+                     "drum": "drum-72", "rope": "rope-4mm", "rail": "MGN15H-300",
+                     "sheave": None, "reeve_factor": 1,
+                     "chain": ["eye-M12", TURNBUCKLE]}
+    assert catalogue.part_count(configuration) == 8
+    assert catalogue.part_count({**configuration, "sheave": "WZ-11-K", "reeve_factor": 2}) == 9
+    assert catalogue.part_count({**configuration, "gearbox": "direct", "drive": "none"}) == 6
+    assert catalogue.part_for_term(configuration, "motor torque") == "34HS46"
+    assert catalogue.part_for_term(configuration, "rope tension") == "rope-4mm"
+    assert catalogue.part_for_term(configuration, "spool rope tension") == "rope-4mm"
+    assert catalogue.part_for_term({**configuration, "spool_rope": "rope-5mm"},
+                                   "spool rope tension") == "rope-5mm"
+    assert catalogue.part_for_term(configuration, "sheave") is None
+    assert catalogue.part_for_term(configuration, "deviation") == "shape"
+    assert catalogue.part_for_term(configuration, "anchor") is None
+    assert catalogue.part_for_term(configuration, "none") is None
+
+
+def test_the_load_factor_is_the_capacity_walk_over_the_scaled_fit():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    factor = catalogue.load_factor(parts, configuration, 10.0, _demand())
+    # the hook-and-hook turnbuckle's 1471 N against 500 N per unit skin:
+    # 2.9 passes (1450), 3.0 breaches (1500), the anchor binds
+    assert factor["limit_factor"] == pytest.approx(2.9)
+    assert factor["breaching_factor"] == pytest.approx(3.0)
+    assert factor["binding"] == "anchor"
+    assert factor["binding_part"] == TURNBUCKLE
+    assert round(factor["ceiling_newtons"]) == 1471
+    assert factor["margin"] == pytest.approx(1471.0 / 500.0, rel=1e-3)
+    assert factor["sufficient"] is True
+    assert factor["skin_newtons"] == 66890.0 and factor["stage"] == "S7"
+    assert factor["acceptance_mm"] == 2.18
+
+
+def test_a_sag_past_the_line_binds_on_the_shape_at_the_first_rung():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    factor = catalogue.load_factor(parts, configuration, 10.0, _demand(sag=10.0))
+    assert factor["limit_factor"] == 0.0
+    assert factor["binding"] == "deviation" and factor["binding_part"] == "shape"
+    assert factor["sufficient"] is False
+
+
+def test_no_acceptance_line_judges_the_parts_alone():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    factor = catalogue.load_factor(parts, configuration, 10.0,
+                                   _demand(sag=10.0, acceptance=None))
+    assert factor["binding"] == "anchor" and factor["acceptance_mm"] is None
+
+
+def test_a_demand_without_sizing_gives_no_load_factor():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    assert catalogue.load_factor(parts, configuration, 10.0, {"stages": []}) is None
+    assert catalogue.load_factor(parts, configuration, 10.0, None) is None
+    assert catalogue.sizing_of({"sizing": None}) is None
+
+
+def test_recommend_takes_the_largest_load_factor_then_the_fewest_parts_then_the_first_listed():
+    parts = catalogue.load_parts()
+    base = catalogue.configuration_of(parts, "stepper-seven-spool")
+    # an identical rig with a named spool rope: the same ceiling, one more part
+    parts["configurations"] = {
+        "b-more-parts": {"name": "B", "for": "nine parts",
+                         "parts": {**base, "spool_rope": "rope-4mm"}},
+        "a-fewer-parts": {"name": "A", "for": "eight parts", "parts": dict(base)},
+        "c-same-again": {"name": "C", "for": "eight parts too", "parts": dict(base)},
+    }
+    result = catalogue.recommend(parts, 10.0, _demand())
+    assert result["key"] == "a-fewer-parts"
+    assert result["sufficient"] is True
+    assert "fewest parts" in result["rule"]
+    assert [row["key"] for row in result["rows"]] == ["b-more-parts", "a-fewer-parts", "c-same-again"]
+    assert all(row["load_factor"]["limit_factor"] == pytest.approx(2.9) for row in result["rows"])
+
+
+def test_recommend_says_plainly_when_nothing_carries_the_skin():
+    parts = catalogue.load_parts()
+    result = catalogue.recommend(parts, 10.0, _demand(t1=100000.0))
+    assert result["sufficient"] is False
+    assert "nothing in the catalogue carries" in result["rule"]
+    best = max((r for r in result["rows"] if r.get("load_factor")),
+               key=lambda r: r["load_factor"]["limit_factor"])
+    assert result["key"] == best["key"]
+
+
+def test_recommend_without_a_demand_ranks_by_ceiling_and_says_so():
+    parts = catalogue.load_parts()
+    result = catalogue.recommend(parts, 10.0, None)
+    assert result["sufficient"] is None
+    assert "ceiling" in result["rule"] and "run the cable net analysis" in result["rule"]
+    best = max(result["rows"], key=lambda r: r["ceiling"])
+    assert result["key"] == best["key"]
+    stale = catalogue.recommend(parts, 10.0, {"schema": "bench.cablenet/1", "stages": []})
+    assert stale["sufficient"] is None and "sizing" in stale["rule"]
+
+
+def test_a_designed_rig_that_cannot_be_built_fails_at_load_naming_it_and_the_part(tmp_path):
+    import json
+
+    source = json.loads(catalogue.PARTS_PATH.read_text(encoding="utf-8"))
+
+    def load_with(change):
+        document = json.loads(json.dumps(source))
+        change(document)
+        path = tmp_path / "parts.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return catalogue.load_parts(path)
+
+    def drawn_rig(document):
+        return document["configurations"]["stepper-seven-spool"]["parts"]
+
+    with pytest.raises(catalogue.CatalogueError, match="stepper-seven-spool.*EG99"):
+        load_with(lambda d: drawn_rig(d).update(gearbox="EG99"))
+    with pytest.raises(catalogue.CatalogueError, match="stepper-seven-spool.*names no drum"):
+        load_with(lambda d: drawn_rig(d).pop("drum"))
+    with pytest.raises(catalogue.CatalogueError, match="stepper-seven-spool.*names no parts"):
+        load_with(lambda d: d["configurations"]["stepper-seven-spool"].pop("parts"))
+    # a motor whose drive is not in the catalogue is caught through the rig that uses it
+    with pytest.raises(catalogue.CatalogueError, match="stepper-seven-spool.*34HS46.*no drive"):
+        load_with(lambda d: d["motor"]["34HS46"].update(drive="CL99"))
+    # a motor paired with a drive of another family cannot run it
+    with pytest.raises(catalogue.CatalogueError, match="stepper-seven-spool.*different family"):
+        load_with(lambda d: d["motor"]["34HS46"].update(drive="vfd-1ph-in"))
+    # and a catalogue with no designed rigs still loads
+    assert load_with(lambda d: d.pop("configurations"))["motor"]
+
+
+def test_a_rig_is_sufficient_when_it_carries_exactly_the_sizing_stages_load():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    ceiling, _ = catalogue.ceiling_for(parts, configuration, 10.0)
+    exact = catalogue.load_factor(parts, configuration, 10.0, _demand(t1=ceiling))
+    assert exact["limit_factor"] == pytest.approx(1.0) and exact["sufficient"] is True
+    over = catalogue.load_factor(parts, configuration, 10.0, _demand(t1=ceiling * 1.001))
+    assert over["limit_factor"] == pytest.approx(0.9) and over["sufficient"] is False
+
+
+def test_a_net_with_no_tension_at_the_sizing_stage_has_nothing_to_scale():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    factor = catalogue.load_factor(parts, configuration, 10.0, _demand(t1=0.0))
+    assert factor["limit_factor"] is None and factor["sufficient"] is None
+    assert factor["binding"] == "none" and factor["binding_part"] is None
+    assert factor["margin"] is None and "nothing to scale" in factor["detail"]
+    assert round(factor["ceiling_newtons"]) == 1471
+    # no rig has a load factor, so Recommend falls back to the ceiling and says so
+    result = catalogue.recommend(parts, 10.0, _demand(t1=0.0))
+    assert result["sufficient"] is None and "ceiling" in result["rule"]
+
+
+def test_a_sizing_that_is_not_a_block_is_no_sizing():
+    for odd in (None, "S7", [], 0, 4.2):
+        assert catalogue.sizing_of({"sizing": odd}) is None
+    block = {"stage": "S7"}
+    assert catalogue.sizing_of({"sizing": block}) is block
