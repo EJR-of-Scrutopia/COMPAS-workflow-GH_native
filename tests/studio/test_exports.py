@@ -559,7 +559,15 @@ def _plant_demand(monkeypatch, tmp_path, name="My Vault", demand=None):
     import json
     import bundle
     import geometry
+    from conftest_data import tiny_contract
 
+    # The demand is found by the cut the study would be run with, which is read
+    # from the study's own contract, so the study has to be there.
+    upload = tmp_path / "upload"
+    upload.mkdir(exist_ok=True)
+    (upload / "{}-contract.json".format(name)).write_text(
+        json.dumps(tiny_contract()), encoding="utf-8")
+    monkeypatch.setattr(bundle, "UPLOAD_DIR", upload)
     monkeypatch.setattr(bundle, "STUDIES_DIR", tmp_path / "studies")
     path = bundle.cablenet_path(geometry.slugify(name), "tile", "herringbone",
                                 1.0, 0.02, None)
@@ -695,6 +703,24 @@ def test_the_route_scores_the_panels_ladder(client, monkeypatch, tmp_path):
     assert ladder[4]["configuration"]["chain"] == ["eye-M20", "turnbuckle-eye-eye-M12"]
     assert ladder[4]["configuration"]["rope"] == "rope-8mm"
     assert all(rung["refused"] is None and rung["ceiling"] > 0 for rung in ladder)
+
+
+def test_the_scored_rows_carry_the_drive_and_the_load_factor(client, monkeypatch, tmp_path):
+    # the documents read the row, so the exports score with the demand in hand
+    sizing = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
+              "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    _plant_demand(monkeypatch, tmp_path, demand=_demand(sizing=sizing))
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    for row in [seen["row"]] + seen["ladder"]:
+        assert row["drive"] == "CL86Y"
+        assert row["load_factor"]["stage"] == "S7"
+    # 1471 N against 900 N per unit skin: 1.6 passes, 1.7 breaches
+    assert seen["row"]["load_factor"]["limit_factor"] == pytest.approx(1.6)
+    assert seen["row"]["load_factor"]["binding"] == "anchor"
 
 
 def test_a_rung_the_catalogue_refuses_is_passed_through_with_its_text(

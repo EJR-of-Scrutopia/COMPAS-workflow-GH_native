@@ -1128,17 +1128,43 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
 
         return catalogue.load_parts()
 
-    @app.get("/api/studies/{export}/cablenet")
-    def study_cablenet(export: str, material: str = "tile", pattern: str = "herringbone",
-                       size: float = 1.0, thickness: float = 0.02,
-                       density: Optional[float] = None,
-                       source: Optional[str] = None):
-        # The demand document is written beside the staging document, which
-        # start_run keys by geometry.slugify(export) and by the cache
-        # pattern for the cut source; this resolves it the same way.
-        path = bundle.cablenet_path(
-            geometry.slugify(export), material,
-            bundle.cut_cache_pattern(pattern, source), size, thickness, density)
+    # ------------------------------------------------------------------
+    # The cable net demand, read once for everything that reads it: the panel's
+    # GET, the scoring and recommending POSTs and the three exports.
+    #
+    # The file is found by the key it was filed under. Both writers (the staged
+    # run and the cable net run) file it by the cut the run actually made, which
+    # is the study's own authored cut unless the caller asked for the generated
+    # one. So the readers resolve the cut exactly as the writers do, through
+    # staging.cut_slot, and do not key by the source as it was requested: a read
+    # that did looked for cablenet-<material>-<pattern>-... while the run had
+    # written cablenet-<material>-authored-..., and told the owner of an
+    # authored study that nothing had been run.
+    # ------------------------------------------------------------------
+
+    def _read_cablenet_demand(export, material, pattern, size, thickness, density,
+                              source) -> dict:
+        """The demand document the cable net run wrote for this study and these
+        options, or an HTTPException that says what is missing."""
+
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(
+                404, "There is no export named {!r}, so no cable net demand has "
+                "been written for it. Upload the export, then run the cable net "
+                "phase and the engine will write one.".format(export))
+        try:
+            slot = staging.cut_slot(pairs[export], pattern, source)
+        except ValueError as error:
+            # an unknown source, or the authored cut of a study that has none:
+            # the refusal the bundle route gives, carried through unchanged
+            raise HTTPException(400, str(error))
+        try:
+            path = bundle.cablenet_path(
+                geometry.slugify(export), material, slot.key_pattern, size,
+                thickness, density)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise HTTPException(400, "the study options are unreadable: {}".format(error))
         if not path.is_file():
             raise HTTPException(
                 status_code=404,
@@ -1148,6 +1174,58 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 ),
             )
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _cablenet_demand(export: str, body: dict) -> dict:
+        # The study options as GET /api/studies/{export}/cablenet takes them,
+        # read from a request body, through the same reader.
+        try:
+            density = float(body["density"]) if body.get("density") else None
+            material = str(body.get("material", "tile"))
+            pattern = str(body.get("pattern", "herringbone"))
+            size = float(body.get("size", 1.0))
+            thickness = float(body.get("thickness", 0.02))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "the study options are unreadable: {}".format(error))
+        return _read_cablenet_demand(
+            export, material, pattern, size, thickness, density, body.get("source"))
+
+    def _rope_wound_mm(demand: dict):
+        """Per wire, the sum of |reel command| over every stage; the worst wire.
+
+        The same figure the panel works out (ropeWound in cablenet.js)."""
+
+        totals = []
+        for stage in demand.get("stages") or []:
+            for wire, command in enumerate(stage.get("wire_reel_commands") or []):
+                while len(totals) <= wire:
+                    totals.append(0.0)
+                totals[wire] += abs(float(command or 0.0))
+        return max(totals) if totals else None
+
+    def _demand_floor(demand: dict) -> float:
+        """The worst wire tension the net asks of a configuration.
+
+        The sizing block carries it as the engine measured it; a document from
+        before the block is read stage by stage, as it always was."""
+
+        import catalogue
+
+        sizing = catalogue.sizing_of(demand)
+        if sizing is not None and sizing.get("worst_wire_tension_newtons") is not None:
+            return float(sizing["worst_wire_tension_newtons"])
+        worst = 0.0
+        for stage in demand.get("stages") or []:
+            for tension in stage.get("wire_tensions") or []:
+                worst = max(worst, float(tension))
+        return worst
+
+    @app.get("/api/studies/{export}/cablenet")
+    def study_cablenet(export: str, material: str = "tile", pattern: str = "herringbone",
+                       size: float = 1.0, thickness: float = 0.02,
+                       density: Optional[float] = None,
+                       source: Optional[str] = None):
+        return _read_cablenet_demand(
+            export, material, pattern, size, thickness, density, source)
 
     @app.post("/api/studies/{export}/cablenet/configurations")
     def score_configurations(export: str, body: dict):
@@ -1161,10 +1239,26 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             )
         parts = catalogue.load_parts()
         angle = float(body.get("angle_degrees", 10.0))
-        floor = float(body.get("prestress_floor") or 0.0)
+        # The study's options, when they are sent, name the demand document, and
+        # the floor, the rope to wind and the load factor are read from it.
+        # Without them the caller's own figures stand.
+        options = body.get("options")
+        demand = None
+        demand_note = ("no study options were sent, so there is no cable net "
+                       "demand to size against")
+        if isinstance(options, dict):
+            try:
+                demand = _cablenet_demand(export, options)
+            except HTTPException as error:
+                demand_note = error.detail
         wanted_speed = body.get("rope_speed_mm_s")
-        # Total rope one wire must wind over the whole build, millimetres.
-        wound = body.get("rope_wound_mm")
+        if demand is not None:
+            floor = _demand_floor(demand)
+            wound = _rope_wound_mm(demand)
+        else:
+            floor = float(body.get("prestress_floor") or 0.0)
+            # Total rope one wire must wind over the whole build, millimetres.
+            wound = body.get("rope_wound_mm")
         rows = []
         for configuration in configurations:
             try:
@@ -1183,6 +1277,15 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                     "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
                     "refused": None,
                 }
+                row["drive"] = catalogue.drive_for(parts, configuration["motor"])
+                row["load_factor"] = (
+                    catalogue.load_factor(parts, configuration, angle, demand)
+                    if demand is not None else None)
+                row["load_factor_note"] = (
+                    None if row["load_factor"] is not None else
+                    (demand_note if demand is None else
+                     "the demand document has no sizing block; run the cable net "
+                     "analysis again"))
                 if wound is not None:
                     path = catalogue.drum_and_travel(
                         parts, configuration, float(wound))
@@ -1289,50 +1392,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
     # diagram and the data sheet from one model, so they cannot disagree.
     # ------------------------------------------------------------------
 
-    def _cablenet_demand(export: str, body: dict) -> dict:
-        # Resolved exactly as GET /api/studies/{export}/cablenet resolves it:
-        # the slug and the cache key the staging document was written under.
-        try:
-            density = float(body["density"]) if body.get("density") else None
-            path = bundle.cablenet_path(
-                geometry.slugify(export), str(body.get("material", "tile")),
-                bundle.cut_cache_pattern(
-                    str(body.get("pattern", "herringbone")), body.get("source")),
-                float(body.get("size", 1.0)),
-                float(body.get("thickness", 0.02)), density)
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, "the study options are unreadable: {}".format(error))
-        if not path.is_file():
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "This study has no cable net demand yet. Run it again with "
-                    "the cable net phase enabled and the engine will write one."
-                ),
-            )
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    def _rope_wound_mm(demand: dict):
-        """Per wire, the sum of |reel command| over every stage; the worst wire.
-
-        The same figure the panel works out (ropeWound in cablenet.js)."""
-
-        totals = []
-        for stage in demand.get("stages") or []:
-            for wire, command in enumerate(stage.get("wire_reel_commands") or []):
-                while len(totals) <= wire:
-                    totals.append(0.0)
-                totals[wire] += abs(float(command or 0.0))
-        return max(totals) if totals else None
-
-    def _demand_floor(demand: dict) -> float:
-        worst = 0.0
-        for stage in demand.get("stages") or []:
-            for tension in stage.get("wire_tensions") or []:
-                worst = max(worst, float(tension))
-        return worst
-
-    def _score_for_export(catalogue, parts, configuration, angle, floor, wound):
+    def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
+                          demand=None):
         """One scored row, shaped as the configurations route shapes it; a
         configuration the catalogue refuses keeps its reason as `refused`."""
 
@@ -1352,6 +1413,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
                 "refused": None,
             }
+            row["drive"] = catalogue.drive_for(parts, configuration["motor"])
+            row["load_factor"] = (
+                catalogue.load_factor(parts, configuration, angle, demand)
+                if demand is not None else None)
             if wound is not None:
                 path = catalogue.drum_and_travel(parts, configuration, wound)
                 row["rope_path"] = path
@@ -1428,6 +1493,31 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             raise HTTPException(400, "No configuration was sent to build rungs from.")
         return {"rungs": _export_ladder(configuration)}
 
+    @app.post("/api/studies/{export}/cablenet/recommend")
+    def recommend_configuration(export: str, body: dict):
+        import catalogue
+
+        parts = catalogue.load_parts()
+        try:
+            angle = float(body.get("angle_degrees", 10.0))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(
+                400, "angle_degrees must be a number: {}".format(error))
+        demand = None
+        options = body.get("options")
+        if isinstance(options, dict):
+            try:
+                demand = _cablenet_demand(export, options)
+            except HTTPException:
+                demand = None
+        try:
+            result = catalogue.recommend(parts, angle, demand)
+        except catalogue.CatalogueError as error:
+            raise HTTPException(400, str(error))
+        result["configuration"] = catalogue.configuration_of(parts, result["key"])
+        result["name"] = parts["configurations"][result["key"]]["name"]
+        return result
+
     def _exports_folder() -> Path:
         return Path(read_settings().get("cablenet_exports_folder")
                     or CABLENET_EXPORTS_DIR)
@@ -1465,7 +1555,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         floor = _demand_floor(demand)
         parts = catalogue.load_parts()
         ladder_rows = [
-            _score_for_export(catalogue, parts, rung, angle, floor, wound)
+            _score_for_export(catalogue, parts, rung, angle, floor, wound, demand)
             for rung in [dict(configuration)] + _export_ladder(configuration)]
         row = ladder_rows[0]
 

@@ -18,6 +18,20 @@ def client():
     return TestClient(studio_app.create_app(runner=lambda request: {}))
 
 
+def _plant_export(tmp_path, monkeypatch, name="My Vault"):
+    # The demand readers find the file by the cut the study would be run with,
+    # which they learn from the study's own contract, so the study has to exist.
+    import json
+    import bundle
+    from conftest_data import tiny_contract
+
+    upload = tmp_path / "upload"
+    upload.mkdir(exist_ok=True)
+    (upload / "{}-contract.json".format(name)).write_text(
+        json.dumps(tiny_contract()), encoding="utf-8")
+    monkeypatch.setattr(bundle, "UPLOAD_DIR", upload)
+
+
 def test_the_catalogue_is_served_with_its_provenance(client):
     body = client.get("/api/catalogue").json()
     assert "motor" in body and "turnbuckle" in body
@@ -31,6 +45,7 @@ def test_a_study_with_no_demand_document_says_how_to_make_one(client):
     response = client.get("/api/studies/does-not-exist/cablenet")
     assert response.status_code == 404
     assert "cable net" in response.json()["detail"].lower()
+    assert "does-not-exist" in response.json()["detail"]
 
 
 def test_scoring_configurations_returns_a_row_each_and_names_a_bad_part(client):
@@ -63,6 +78,7 @@ def test_the_demand_is_found_under_the_slug_the_run_wrote_it_to(client, tmp_path
     import bundle
     import geometry
 
+    _plant_export(tmp_path, monkeypatch)
     monkeypatch.setattr(bundle, "STUDIES_DIR", tmp_path)
     path = bundle.cablenet_path(geometry.slugify("My Vault"), "tile", "herringbone",
                                 1.0, 0.02, None)
@@ -622,3 +638,176 @@ def test_both_writers_file_an_authored_cut_under_the_same_name(tmp_path, monkeyp
     written = sorted(path.name for path in
                      (studies / "authored" / "studio").glob("cablenet-*.json"))
     assert written == ["cablenet-concrete-authored-s900-t50.json"]
+
+
+def _write_demand(tmp_path, monkeypatch, demand):
+    import bundle
+    import geometry
+    _plant_export(tmp_path, monkeypatch)
+    monkeypatch.setattr(bundle, "STUDIES_DIR", tmp_path)
+    path = bundle.cablenet_path(geometry.slugify("My Vault"), "tile", "herringbone",
+                                1.0, 0.02, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(demand), encoding="utf-8")
+
+
+def _sized_demand():
+    return {"schema": "bench.cablenet/2", "acceptance": 2.18,
+            "sizing": {"stage": "S7", "worst_wire_tension_newtons": 500.0,
+                       "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.0,
+                       "load_newtons": 66890.0},
+            "stages": [{"name": "S7", "wire_tensions": [500.0], "wire_reel_commands": [-3.0],
+                        "residual_after": 1.0, "reachable": True}]}
+
+
+def test_scored_rows_carry_the_drive_and_the_load_factor_from_the_demand(client, tmp_path, monkeypatch):
+    _write_demand(tmp_path, monkeypatch, _sized_demand())
+    configuration = {"motor": "34HS46", "drive": "CL86Y", "gearbox": "EG23-G20",
+                     "drum": "drum-72", "rope": "rope-4mm", "rail": "MGN15H-300",
+                     "chain": ["eye-M12", "turnbuckle-hook-hook-M10"], "sheave": None,
+                     "reeve_factor": 1}
+    body = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [configuration], "angle_degrees": 10.0,
+        "options": {"material": "tile", "pattern": "herringbone", "size": 1.0,
+                    "thickness": 0.02}}).json()
+    row = body["rows"][0]
+    assert row["drive"] == "CL86Y"
+    assert row["load_factor"]["limit_factor"] == pytest.approx(2.9)
+    assert row["load_factor"]["binding_part"] == "turnbuckle-hook-hook-M10"
+    # the floor and the rope wound come from the demand, not the body
+    assert body["prestress_floor"] == 500.0
+    assert row["passes"] is True
+
+
+def test_without_a_demand_the_rows_say_why_there_is_no_load_factor(client):
+    configuration = {"motor": "34HS46", "drive": "CL86Y", "gearbox": "EG23-G20",
+                     "drum": "drum-72", "rope": "rope-4mm", "rail": "MGN15H-300",
+                     "chain": ["eye-M12", "turnbuckle-hook-hook-M10"], "sheave": None,
+                     "reeve_factor": 1}
+    body = client.post("/api/studies/nowhere/cablenet/configurations", json={
+        "configurations": [configuration], "options": {"material": "tile"}}).json()
+    row = body["rows"][0]
+    assert row["load_factor"] is None
+    assert "no cable net demand" in row["load_factor_note"]
+
+
+def test_recommend_returns_the_key_the_configuration_and_the_rule(client, tmp_path, monkeypatch):
+    _write_demand(tmp_path, monkeypatch, _sized_demand())
+    body = client.post("/api/studies/My Vault/cablenet/recommend", json={
+        "angle_degrees": 10.0,
+        "options": {"material": "tile", "pattern": "herringbone", "size": 1.0,
+                    "thickness": 0.02}}).json()
+    assert body["key"] in body["rows"][0]["key"] or any(r["key"] == body["key"] for r in body["rows"])
+    assert body["configuration"]["motor"]
+    assert body["sufficient"] is True
+    assert "load factor" in body["rule"]
+    assert body["name"]
+
+
+def test_a_demand_filed_under_the_authored_key_is_found_with_no_source_named(
+        tmp_path, monkeypatch):
+    # An authored cut ignores the requested pattern, so both writers file its demand
+    # under "authored". A reader that names no source must resolve the cut as they
+    # do: keyed by the pattern instead, it looks for a file that was never written
+    # and tells the owner of an authored study that nothing has been run.
+    import bundle
+    from test_app import authored_tiny_contract
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    (tmp_path / "upload" / "Tiny-contract.json").write_text(
+        json.dumps(authored_tiny_contract()), encoding="utf-8")
+    filed = bundle.cablenet_path("tiny", "tile", "authored", 1.0, 0.02, None)
+    assert filed.parent == studies / "tiny" / "studio"
+    filed.parent.mkdir(parents=True)
+    filed.write_text(json.dumps(_sized_demand()), encoding="utf-8")
+
+    got = client.get("/api/studies/Tiny/cablenet")
+    assert got.status_code == 200, got.text
+    assert got.json()["sizing"]["worst_wire_tension_newtons"] == 500.0
+
+    # and so is the demand the scoring route reads for itself from the options
+    body = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0,
+        "options": {"material": "tile", "pattern": "herringbone", "size": 1.0,
+                    "thickness": 0.02}}).json()
+    assert body["prestress_floor"] == 500.0
+    assert body["rows"][0]["load_factor"]["limit_factor"] == pytest.approx(2.9)
+
+    # the generated cut is a different file, which this study never wrote
+    other = client.get("/api/studies/Tiny/cablenet", params={"source": "generated"})
+    assert other.status_code == 404
+    assert "cable net phase" in other.json()["detail"]
+
+
+_STUDY_OPTIONS = {"material": "tile", "pattern": "herringbone", "size": 1.0, "thickness": 0.02}
+
+
+def test_the_floor_follows_the_sizing_block_and_a_stale_document_names_the_re_run(
+        client, tmp_path, monkeypatch):
+    # the sizing block carries the worst wire tension as the engine measured it,
+    # whatever the stages list; a document from before the block has the stages alone
+    sized = _sized_demand()
+    sized["sizing"]["worst_wire_tension_newtons"] = 700.0
+    _write_demand(tmp_path, monkeypatch, sized)
+    body = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert body["prestress_floor"] == 700.0
+
+    stale = {"schema": "bench.cablenet/1",
+             "stages": [{"name": "S7", "wire_tensions": [900.0], "wire_reel_commands": [-3.0]}]}
+    _write_demand(tmp_path, monkeypatch, stale)
+    body = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    row = body["rows"][0]
+    assert body["prestress_floor"] == 900.0
+    assert row["load_factor"] is None
+    assert "no sizing block" in row["load_factor_note"]
+    assert "run the cable net analysis again" in row["load_factor_note"]
+    recommended = client.post("/api/studies/My Vault/cablenet/recommend", json={
+        "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert recommended["sufficient"] is None and "sizing" in recommended["rule"]
+
+
+def test_a_source_that_cannot_be_resolved_is_a_400_that_says_why(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    for source, reason in (("bogus", "unknown cut source"),
+                           ("authored", "no authored tessellation")):
+        response = client.get("/api/studies/Tiny/cablenet", params={"source": source})
+        assert response.status_code == 400, source
+        assert reason in response.json()["detail"], source
+    # the scoring route carries the reader's reason into the rows instead of failing
+    body = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0,
+        "options": {**_STUDY_OPTIONS, "source": "bogus"}})
+    assert body.status_code == 200
+    assert "unknown cut source" in body.json()["rows"][0]["load_factor_note"]
+    unreadable = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0,
+        "options": {**_STUDY_OPTIONS, "size": "wide"}}).json()
+    assert "unreadable" in unreadable["rows"][0]["load_factor_note"]
+
+
+def test_without_options_the_callers_figures_stand_and_recommend_ranks_by_ceiling(client):
+    body = client.post("/api/studies/any/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 2.0, "prestress_floor": 900.0}).json()
+    row = body["rows"][0]
+    assert body["prestress_floor"] == 900.0 and row["passes"] is True
+    assert row["drive"] == "CL86Y"
+    assert row["load_factor"] is None and "no study options" in row["load_factor_note"]
+
+    ranked = client.post("/api/studies/any/cablenet/recommend", json={}).json()
+    assert ranked["sufficient"] is None and "ceiling" in ranked["rule"]
+
+    bad = client.post("/api/studies/any/cablenet/recommend", json={"angle_degrees": "steep"})
+    assert bad.status_code == 400 and "angle_degrees" in bad.json()["detail"]
+    # past the published table every rig is refused, and the reason is the table's
+    past = client.post("/api/studies/any/cablenet/recommend", json={"angle_degrees": 50.0})
+    assert past.status_code == 400 and "45" in past.json()["detail"]
+
+
+def test_a_size_that_is_not_a_finite_number_is_a_400_not_a_500(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    for size in ("nan", "inf"):
+        response = client.get("/api/studies/Tiny/cablenet", params={"size": size})
+        assert response.status_code == 400, size
+        assert "unreadable" in response.json()["detail"], size
