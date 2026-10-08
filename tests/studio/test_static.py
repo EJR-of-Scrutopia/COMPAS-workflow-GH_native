@@ -1751,10 +1751,12 @@ def test_every_clock_reads_the_drop_order_at_the_same_rate():
     )
     # timelineDuration reads it through strikeEndSeconds since 2026-09-15.
     assert "strikeEndSeconds()" in _function_body(js, "timelineDuration")
-    for name in ("applySceneAtTime", "strikeEndSeconds", "currentStageIndex"):
+    for name in ("applySceneAtTime", "strikeEndSeconds", "coursesDropped"):
         assert "placementStep()" in _function_body(js, name), (
             "{} must read the stagger from the one helper".format(name)
         )
+    # the HUD's stage line walks the pieces through the one walk the lenses read
+    assert "coursesDropped(build)" in _function_body(js, "currentStageIndex")
     # The per-piece fall time is a constant now; the old user setting and
     # every mention of it are gone, comments included.
     assert "dropSeconds" not in js
@@ -4675,7 +4677,7 @@ def test_a_cable_net_lens_ghosts_the_skin_without_touching_visibility_or_the_ray
 def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     at = _function_body(js, "cablenetStageAt")
-    for call in ("instantAt(", "machineTime(", "currentStageIndex(", "duringFormworkAct("):
+    for call in ("instantAt(", "machineTime(", "cablenetCourseIndex(build)", "duringFormworkAct("):
         assert call in at, call
     paint = _function_body(js, "applyCableNetPaint")
     for key in ("member_tensions", "node_sag_mm", "setColorAt", "sagBand("):
@@ -4694,6 +4696,45 @@ def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
     availability = _function_body(js, "layerAvailability")
     assert "run the cable net analysis from this section" in availability
     assert "earlier analysis" in availability
+
+
+def test_without_a_staging_document_the_lenses_follow_the_pieces_dropping():
+    """With no staging document for the loaded options the lenses used to show
+    the last course for the whole build. The course is then read from the
+    pieces, by the walk the HUD's stage line makes (coursesDropped), and
+    instantAt clamps it to the demand's courses; a staging document, when there
+    is one, still decides."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    course = _function_body(js, "cablenetCourseIndex")
+    staged = course.index("if (state.bundle.staging) return currentStageIndex(build);")
+    walked = course.index("return Math.max(0, coursesDropped(build) - 1);")
+    assert staged < walked
+    assert "state.bundle.pieces" in course[staged:walked]
+    assert "courseIndex: cablenetCourseIndex(build)" in _function_body(js, "cablenetStageAt")
+    assert "state.bundle.staging ? currentStageIndex(build) : null" not in js
+    walk = _function_body(js, "coursesDropped")
+    assert "for (const piece of state.bundle.pieces)" in walk
+    assert "piece.course + 1" in walk and "placementStep()" in walk
+
+
+def test_the_principal_bars_step_aside_for_every_lens_that_paints_the_wires():
+    """The bars lie over the wires, so they hid under Wire forces only and stayed
+    drawn over the colours Wire tension and Sag paint. They step aside for all
+    three, the cable net's two while their document can be drawn, which is the
+    test applyCableNetPaint makes before it paints."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "principal.visible = netOn && !wiresPainted();" in _function_body(js, "applyShowMode")
+    painted = _function_body(js, "wiresPainted")
+    for test in ("state.layers.forces", 'state.layers.tension && layerAvailability("tension").on',
+                 'state.layers.sag && layerAvailability("sag").on'):
+        assert test in painted, test
+    paint = _function_body(js, "applyCableNetPaint")
+    assert 'state.layers.tension && layerAvailability("tension").on' in paint
+    assert 'state.layers.sag && layerAvailability("sag").on' in paint
+    # every lens change and every new demand runs applyShowMode, so the bars follow
+    assert "if (cableLens) applyShowMode();" in _function_body(js, "setLayer")
 
 
 def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():

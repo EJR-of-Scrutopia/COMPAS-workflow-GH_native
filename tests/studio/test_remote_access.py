@@ -2648,7 +2648,8 @@ def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
     scene_time = _js_function(js, "function applySceneAtTime(t)")
     assert '["principal", clearance.wires]' in scene_time
     show_mode = _js_function(js, "function applyShowMode()")
-    assert "netOn && !state.layers.forces" in show_mode
+    assert "netOn && !wiresPainted()" in show_mode
+    assert "state.layers.forces" in _js_function(js, "function wiresPainted()")
     dispose = _js_function(js, "function disposeWiresAndNodes()")
     assert '"principal"' in dispose
     reload = _js_function(js, "async function reloadColumns(names)")

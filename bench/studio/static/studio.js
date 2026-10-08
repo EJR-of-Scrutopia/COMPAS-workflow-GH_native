@@ -12117,8 +12117,21 @@ function cablenetStageAt(t) {
   return instantAt(demand.stages, {
     duringFormwork: duringFormworkAct(t),
     machineTime: machineTime(t, formworkSeconds()),
-    courseIndex: state.bundle && state.bundle.staging ? currentStageIndex(build) : null,
+    courseIndex: cablenetCourseIndex(build),
   });
+}
+
+// The course the lenses read during the build: the staging document's stage
+// when the loaded options have one (currentStageIndex), and otherwise the last
+// course a dropped piece belongs to, by the same walk over the pieces, so the
+// build follows the pieces dropping instead of showing the last course
+// throughout. instantAt clamps it to the demand's own courses (courseInstant).
+// Null with no bundle or no clock, which instantAt reads as the last course.
+function cablenetCourseIndex(build) {
+  if (!state.bundle || !state.timeline) return null;
+  if (state.bundle.staging) return currentStageIndex(build);
+  if (!Array.isArray(state.bundle.pieces) || !state.bundle.pieces.length) return null;
+  return Math.max(0, coursesDropped(build) - 1);
 }
 
 function paintCableNetStageLine() {
@@ -12186,6 +12199,16 @@ function paintScalarLegend(title, low, zero, high) {
   document.getElementById("legend-min").textContent = low;
   document.getElementById("legend-zero").textContent = zero;
   document.getElementById("legend-max").textContent = high;
+}
+
+// Whether a lens is painting the wires' own colours: Wire forces, or Wire
+// tension or Sag while its document can be drawn (the test applyCableNetPaint
+// makes). The principal bars lie over those wires and step aside for any of
+// them, or they would hide the colours they lie over.
+function wiresPainted() {
+  return !!state.layers.forces
+    || !!(state.layers.tension && layerAvailability("tension").on)
+    || !!(state.layers.sag && layerAvailability("sag").on);
 }
 
 // The two painting lenses: Wire tension colours the members, Sag colours the
@@ -12344,15 +12367,10 @@ function updateCableNetVectors() {
 }
 
 // ---------- the build stage index ----------
-function currentStageIndex(build) {
-  // Which build stage the timeline is inside: stages are courses, and a
-  // course's segments occupy a contiguous run of the drop order. build is
-  // elapsed time since the net finished inflating (see applySceneAtTime),
-  // so the stage reported here always matches the segments actually on
-  // screen.
-  if (!state.bundle.staging || !state.timeline) return null;
-  const stages = state.bundle.staging.stages;
-  if (!stages || !stages.length) return null;
+// How many courses have a piece down at build time: one past the highest
+// course of any piece that has dropped. The HUD's stage line and the cable
+// net lenses both read it, so the two cannot quote different courses.
+function coursesDropped(build) {
   // placementStep, the one shared stagger: the HUD's stage line hangs off
   // this number, and reading the picture at a different rate once had a
   // finished sprayed vault quoting a stage still halfway down the drop
@@ -12366,7 +12384,19 @@ function currentStageIndex(build) {
     if (count > placed) break;
     coursesDone = Math.max(coursesDone, piece.course + 1);
   }
-  return Math.max(0, Math.min(stages.length - 1, coursesDone - 1));
+  return coursesDone;
+}
+
+function currentStageIndex(build) {
+  // Which build stage the timeline is inside: stages are courses, and a
+  // course's segments occupy a contiguous run of the drop order. build is
+  // elapsed time since the net finished inflating (see applySceneAtTime),
+  // so the stage reported here always matches the segments actually on
+  // screen.
+  if (!state.bundle.staging || !state.timeline) return null;
+  const stages = state.bundle.staging.stages;
+  if (!stages || !stages.length) return null;
+  return Math.max(0, Math.min(stages.length - 1, coursesDropped(build) - 1));
 }
 
 // The integrity pulse lived here until 2026-09-06 (Param: "no more green
@@ -17978,9 +18008,10 @@ function applyShowMode() {
   state.objects.nodes.position.z = lifted ? clearance.nodes : 0;
   const principal = state.objects.principal;
   if (principal) {
-    // Net dressing: the bars follow the net, and they step aside while
-    // the forces lens is painting data on those same segments.
-    principal.visible = netOn && !state.layers.forces;
+    // Net dressing: the bars follow the net, and they step aside while a
+    // lens is painting data on those same segments: Wire forces, or the
+    // cable net's Wire tension or Sag when its document can be drawn.
+    principal.visible = netOn && !wiresPainted();
     principal.material.opacity = 1;
     principal.position.z = lifted ? clearance.wires : 0;
     syncNetShadow(principal);
