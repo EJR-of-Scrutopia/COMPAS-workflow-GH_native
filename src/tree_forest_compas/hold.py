@@ -45,7 +45,9 @@ class FitResult(NamedTuple):
     equilibrium, zero at a held vertex. reactions[i] is the force held vertex i
     supplies, zero at a free vertex. residual_norm is the Euclidean norm of the
     whole residual field, the quantity the non-negative least squares minimised,
-    so it never rises when a vertex is moved from free to held.
+    so it never rises when a vertex is moved from free to held. On a redundant
+    net force_densities, tensions and reactions are one member of a family of
+    equally good states; residual and residual_norm are the same for every member.
     """
 
     force_densities: tuple
@@ -54,6 +56,30 @@ class FitResult(NamedTuple):
     reactions: tuple
     residual_norm: float
     units: str
+
+
+def _checked_inputs(vertices, edges, fixed, loads):
+    """The coordinates, edges, loads and fixed set, or a HoldError saying what is wrong."""
+
+    xyz = np.asarray(vertices, dtype=float)
+    if xyz.ndim != 2 or xyz.shape[1] != 3:
+        raise HoldError("vertices must be an n by 3 array of coordinates.")
+    edges = [(int(u), int(v)) for u, v in edges]
+    p = np.asarray(loads, dtype=float)
+    if p.shape != xyz.shape:
+        raise HoldError("loads must have one row per vertex.")
+    if not np.all(np.isfinite(p)) or not np.all(np.isfinite(xyz)):
+        raise HoldError("vertices and loads must be finite numbers.")
+
+    count = len(xyz)
+    fixed_set = {int(f) for f in fixed}
+    for index in fixed_set:
+        if not 0 <= index < count:
+            raise HoldError("Fixed index {} is outside the {} vertices.".format(index, count))
+    for u, v in edges:
+        if not (0 <= u < count and 0 <= v < count):
+            raise HoldError("Edge ({}, {}) refers to a vertex outside 0..{}.".format(u, v, count - 1))
+    return xyz, edges, p, fixed_set
 
 
 def _equilibrium_operator(xyz, edges):
@@ -66,6 +92,64 @@ def _equilibrium_operator(xyz, edges):
     return a
 
 
+def _rows_of(nodes):
+    """The rows of the equilibrium operator that belong to these vertices."""
+
+    return np.asarray([[3 * i, 3 * i + 1, 3 * i + 2] for i in nodes], dtype=int).reshape(-1)
+
+
+def _member_lengths(xyz, edges):
+    """Each member length, in the order of the edges."""
+
+    return np.array(
+        [float(np.linalg.norm(xyz[v] - xyz[u])) for u, v in edges], dtype=float
+    )
+
+
+def _floats(values):
+    """Plain Python floats in a tuple, so a result carries no numpy scalars."""
+
+    return tuple(float(value) for value in values)
+
+
+def _non_negative_solve(a, b):
+    """The q >= 0 that minimises the norm of a q - b, and that norm.
+
+    The SciPy non-negative least squares goes first. On a redundant net it can
+    cycle and give up however many iterations it is given, or meet a singular
+    matrix, even when the net holds its load exactly (seen with SciPy 1.13). A
+    bounded-variable least squares then takes over: it reaches the same optimum
+    and is not troubled by members that are not independent. A HoldError is
+    raised only when both fail.
+    """
+
+    try:
+        q, norm = nnls(a, b)
+    except Exception as error:  # scipy raises its own types; report ours
+        reason = str(error)
+    else:
+        return q, float(norm)
+
+    try:
+        solution = lsq_linear(a, b, bounds=(0.0, np.inf), method="bvls")
+    except Exception as error:
+        raise HoldError(
+            "The non-negative least squares solve failed: {}; the bounded "
+            "fallback failed too: {}".format(reason, error)
+        ) from error
+    if not solution.success or not np.all(np.isfinite(solution.x)):
+        raise HoldError(
+            "The non-negative least squares solve failed: {}; the bounded "
+            "fallback did not converge either (status {}): {}".format(
+                reason, solution.status, solution.message
+            )
+        )
+    # bvls steps onto a bound by arithmetic and can land a rounding error below
+    # it, and a cable never pushes
+    q = np.maximum(solution.x, 0.0)
+    return q, float(np.linalg.norm(a.dot(q) - b))
+
+
 def fit_tension_state(vertices, edges, fixed, loads):
     """The best tension-only state the net can carry, with the shortfall named.
 
@@ -76,36 +160,14 @@ def fit_tension_state(vertices, edges, fixed, loads):
     answered with zeros.
     """
 
-    xyz = np.asarray(vertices, dtype=float)
-    if xyz.ndim != 2 or xyz.shape[1] != 3:
-        raise HoldError("vertices must be an n by 3 array of coordinates.")
-    edges = [(int(u), int(v)) for u, v in edges]
-    p = np.asarray(loads, dtype=float)
-    if p.shape != xyz.shape:
-        raise HoldError("loads must have one row per vertex.")
-    if not np.all(np.isfinite(p)) or not np.all(np.isfinite(xyz)):
-        raise HoldError("vertices and loads must be finite numbers.")
-    count = len(xyz)
-    fixed_set = {int(f) for f in fixed}
-    for index in fixed_set:
-        if not 0 <= index < count:
-            raise HoldError("Fixed index {} is outside the {} vertices.".format(index, count))
-    for u, v in edges:
-        if not (0 <= u < count and 0 <= v < count):
-            raise HoldError("Edge ({}, {}) refers to a vertex outside 0..{}.".format(u, v, count - 1))
-
-    free = [index for index in range(count) if index not in fixed_set]
+    xyz, edges, p, fixed_set = _checked_inputs(vertices, edges, fixed, loads)
+    free = [index for index in range(len(xyz)) if index not in fixed_set]
     a = _equilibrium_operator(xyz, edges)
     b = -p.reshape(-1)
     q = np.zeros(len(edges), dtype=float)
     if free and edges:
-        rows = np.asarray([[3 * i, 3 * i + 1, 3 * i + 2] for i in free]).reshape(-1)
-        try:
-            q, _ = nnls(a[rows], b[rows])
-        except Exception as error:  # scipy raises its own types; report ours
-            raise HoldError(
-                "The non-negative least squares solve failed: {}".format(error)
-            ) from error
+        rows = _rows_of(free)
+        q, _ = _non_negative_solve(a[rows], b[rows])
     # member pulls plus load at every vertex: zero where the state balances
     balance = (a.dot(q) + p.reshape(-1)).reshape(-1, 3)
     residual = np.zeros_like(p)
@@ -115,14 +177,11 @@ def fit_tension_state(vertices, edges, fixed, loads):
     held = sorted(fixed_set)
     if held:
         reactions[held] = -balance[held]
-    lengths = np.array(
-        [float(np.linalg.norm(xyz[v] - xyz[u])) for u, v in edges], dtype=float
-    )
     return FitResult(
-        force_densities=tuple(float(value) for value in q),
-        tensions=tuple(float(value) for value in (q * lengths)),
-        residual=tuple(tuple(float(c) for c in row) for row in residual),
-        reactions=tuple(tuple(float(c) for c in row) for row in reactions),
+        force_densities=_floats(q),
+        tensions=_floats(q * _member_lengths(xyz, edges)),
+        residual=tuple(_floats(row) for row in residual),
+        reactions=tuple(_floats(row) for row in reactions),
         residual_norm=float(np.linalg.norm(residual)),
         units="N, mm",
     )
@@ -132,31 +191,13 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
     """One set of force densities that holds every free node in place.
 
     The result satisfies equilibrium under the given load with every density
-    non-negative. It is one solution among many when the net is redundant:
-    non-negative least squares returns a single sparse vertex of the family, so
-    only equilibrium is guaranteed, not uniqueness.
+    non-negative. It is one solution among many when the net is redundant: the
+    solve returns a single member of the family, so only equilibrium is
+    guaranteed, not uniqueness.
     """
 
-    xyz = np.asarray(vertices, dtype=float)
-    if xyz.ndim != 2 or xyz.shape[1] != 3:
-        raise HoldError("vertices must be an n by 3 array of coordinates.")
-    edges = [(int(u), int(v)) for u, v in edges]
-    p = np.asarray(loads, dtype=float)
-    if p.shape != xyz.shape:
-        raise HoldError("loads must have one row per vertex.")
-    if not np.all(np.isfinite(p)) or not np.all(np.isfinite(xyz)):
-        raise HoldError("vertices and loads must be finite numbers.")
-
-    count = len(xyz)
-    fixed_set = {int(f) for f in fixed}
-    for index in fixed_set:
-        if not 0 <= index < count:
-            raise HoldError("Fixed index {} is outside the {} vertices.".format(index, count))
-    for u, v in edges:
-        if not (0 <= u < count and 0 <= v < count):
-            raise HoldError("Edge ({}, {}) refers to a vertex outside 0..{}.".format(u, v, count - 1))
-
-    free = [index for index in range(count) if index not in fixed_set]
+    xyz, edges, p, fixed_set = _checked_inputs(vertices, edges, fixed, loads)
+    free = [index for index in range(len(xyz)) if index not in fixed_set]
     if not free:
         raise HoldError("Every vertex is fixed, so there is nothing to hold.")
 
@@ -168,19 +209,9 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
             "not from this solve."
         )
 
-    row_of = {node: row for row, node in enumerate(free)}
-    a = np.zeros((3 * len(free), len(edges)), dtype=float)
-    for column, (u, v) in enumerate(edges):
-        if u in row_of:
-            a[3 * row_of[u]:3 * row_of[u] + 3, column] = xyz[v] - xyz[u]
-        if v in row_of:
-            a[3 * row_of[v]:3 * row_of[v] + 3, column] = xyz[u] - xyz[v]
+    a = _equilibrium_operator(xyz, edges)[_rows_of(free)]
     b = -p[free].reshape(-1)
-
-    try:
-        q, residual = nnls(a, b)
-    except Exception as error:  # scipy raises its own types; report ours
-        raise HoldError("The non-negative least squares solve failed: {}".format(error)) from error
+    q, residual = _non_negative_solve(a, b)
     relative = float(residual) / load_size
     if relative > float(residual_tolerance):
         worst = int(np.argmax(np.abs(a.dot(q) - b)))
@@ -191,12 +222,9 @@ def hold_force_densities(vertices, edges, fixed, loads, residual_tolerance=1e-6)
             "shape.".format(float(residual), free[worst // 3], relative)
         )
 
-    lengths = np.array(
-        [float(np.linalg.norm(xyz[v] - xyz[u])) for u, v in edges], dtype=float
-    )
     return HoldResult(
-        force_densities=tuple(float(value) for value in q),
-        tensions=tuple(float(value) for value in (q * lengths)),
+        force_densities=_floats(q),
+        tensions=_floats(q * _member_lengths(xyz, edges)),
         residual=float(residual),
         units="N, mm",
     )

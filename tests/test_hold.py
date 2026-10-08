@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -358,3 +360,152 @@ def test_the_fit_refuses_bad_indices_like_the_hold_solve_does():
         fit_tension_state(vertices, edges, fixed=[7], loads=np.zeros((3, 3)))
     with pytest.raises(HoldError):
         fit_tension_state(vertices, edges, fixed=[0, 1], loads=np.zeros((2, 3)))
+
+
+def _redundant_hanging_node():
+    # one free node on four cables from four anchors: three equations in four
+    # unknowns, so the net is redundant. It holds its load exactly, yet SciPy's
+    # non-negative least squares cycles on it and never converges.
+    vertices = [
+        (266.0, 75.0, -152.0), (313.0, -1778.0, 912.0), (1102.0, -800.0, 5.0),
+        (1334.0, -860.0, 499.0), (-1100.0, 1494.0, 821.0),
+    ]
+    edges = [(0, 1), (0, 2), (0, 3), (0, 4)]
+    loads = np.zeros((5, 3))
+    loads[0] = (-148.0, 118.0, -989.0)
+    return vertices, edges, loads
+
+
+def _square_fan():
+    # a node hung from the four corners of a square: one cable more than the
+    # three equations need. At this geometry SciPy's non-negative least squares
+    # meets a singular matrix, though the net holds its load exactly.
+    vertices = [
+        (0.0, 0.0, -300.0), (1000.0, 0.0, 200.0), (-1000.0, 0.0, 200.0),
+        (0.0, 1000.0, 200.0), (0.0, -1000.0, 200.0),
+    ]
+    edges = [(0, 1), (0, 2), (0, 3), (0, 4)]
+    loads = np.zeros((5, 3))
+    loads[0] = (100.0, 100.0, -1000.0)
+    return vertices, edges, loads
+
+
+REDUNDANT_NETS = pytest.mark.parametrize(
+    "make_net",
+    [_redundant_hanging_node, _square_fan],
+    ids=["iteration-limit", "singular-matrix"],
+)
+
+
+def _nnls_gives_up(a, b):
+    raise RuntimeError("Maximum number of iterations reached.")
+
+
+@REDUNDANT_NETS
+def test_the_fit_holds_a_redundant_net_instead_of_refusing_it(make_net):
+    vertices, edges, loads = make_net()
+    fit = fit_tension_state(vertices, edges, fixed=[1, 2, 3, 4], loads=loads)
+    assert fit.residual_norm < 1e-6
+    assert min(fit.force_densities) >= 0.0
+    # the four anchors together carry the whole load
+    assert np.allclose(np.sum(np.asarray(fit.reactions), axis=0), -loads.sum(axis=0), atol=1e-6)
+
+
+@REDUNDANT_NETS
+def test_the_hold_solve_holds_those_redundant_nets_too(make_net):
+    vertices, edges, loads = make_net()
+    result = hold_force_densities(vertices, edges, fixed=[1, 2, 3, 4], loads=loads)
+    assert result.residual < 1e-6
+    assert min(result.force_densities) >= 0.0
+    # equilibrium at the free node, worked out here and not read from the result
+    xyz = np.asarray(vertices)
+    pull = sum(q * (xyz[k + 1] - xyz[0]) for k, q in enumerate(result.force_densities))
+    assert np.allclose(pull + loads[0], 0.0, atol=1e-6)
+
+
+def test_when_nnls_gives_up_a_bounded_solve_returns_the_same_optimum(monkeypatch):
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = -1000.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    held = hold_force_densities(vertices, edges, fixed=[0, 1], loads=loads)
+
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", _nnls_gives_up)
+    by_fallback = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    held_by_fallback = hold_force_densities(vertices, edges, fixed=[0, 1], loads=loads)
+
+    assert np.allclose(by_fallback.force_densities, fit.force_densities, atol=1e-9)
+    assert np.allclose(held_by_fallback.force_densities, held.force_densities, atol=1e-9)
+    assert held_by_fallback.residual < 1e-9
+
+
+def test_the_fallback_reaches_the_exact_optimum_when_members_go_slack(monkeypatch):
+    # two loaded nodes on four members; the best state leaves two members slack
+    # and about 1100 N unbalanced. SciPy default trf solver misses this optimum
+    # by about 1e-6 in density, which is why the fallback is bvls.
+    vertices = [
+        (1409.0, 747.0, -1184.0), (388.0, 1334.0, -972.0),
+        (-1058.0, 793.0, 365.0), (-744.0, 1129.0, 94.0),
+    ]
+    edges = [(0, 1), (0, 2), (1, 2), (1, 3)]
+    loads = np.zeros((4, 3))
+    loads[0] = (357.0, 545.0, -526.0)
+    loads[1] = (-332.0, -76.0, -944.0)
+    by_nnls = fit_tension_state(vertices, edges, fixed=[2, 3], loads=loads)
+    assert max(by_nnls.force_densities[0], by_nnls.force_densities[2]) < 1e-9
+
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", _nnls_gives_up)
+    by_fallback = fit_tension_state(vertices, edges, fixed=[2, 3], loads=loads)
+    assert np.allclose(by_fallback.force_densities, by_nnls.force_densities, rtol=0.0, atol=1e-10)
+    assert abs(by_fallback.residual_norm - by_nnls.residual_norm) < 1e-8
+
+
+def test_the_fallback_keeps_the_fit_answering_and_the_hold_solve_refusing(monkeypatch):
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", _nnls_gives_up)
+    vertices, edges = _flat_line()
+    loads = np.zeros((3, 3))
+    loads[1, 2] = -10.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 2], loads=loads)
+    assert np.allclose(fit.residual[1], (0.0, 0.0, 10.0), atol=1e-9)
+    with pytest.raises(HoldError, match="tension"):
+        hold_force_densities(vertices, edges, fixed=[0, 2], loads=loads)
+
+
+def _bounded_solve_raises(a, b, **options):
+    raise RuntimeError("no progress")
+
+
+def _bounded_solve_does_not_converge(a, b, **options):
+    return SimpleNamespace(
+        x=np.zeros(a.shape[1]), success=False, status=0,
+        message="The maximum number of iterations is exceeded.",
+    )
+
+
+@pytest.mark.parametrize("bounded", [_bounded_solve_raises, _bounded_solve_does_not_converge])
+def test_a_net_neither_solver_can_solve_is_refused_with_hold_error(monkeypatch, bounded):
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", _nnls_gives_up)
+    monkeypatch.setattr("tree_forest_compas.hold.lsq_linear", bounded)
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = -1000.0
+    with pytest.raises(HoldError, match="non-negative least squares solve failed"):
+        fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    with pytest.raises(HoldError, match="non-negative least squares solve failed"):
+        hold_force_densities(vertices, edges, fixed=[0, 1], loads=loads)
+
+
+def test_a_density_the_bounded_solve_leaves_just_below_zero_is_clamped(monkeypatch):
+    # bvls steps onto a bound by arithmetic and can overshoot it by rounding
+    # (seen at about -2e-16 of the largest density); a cable never pushes
+    def lands_just_below_zero(a, b, **options):
+        return SimpleNamespace(x=np.array([1.0, -3e-17]), success=True, status=1, message="")
+
+    monkeypatch.setattr("tree_forest_compas.hold.nnls", _nnls_gives_up)
+    monkeypatch.setattr("tree_forest_compas.hold.lsq_linear", lands_just_below_zero)
+    vertices, edges = _vee()
+    loads = np.zeros((3, 3))
+    loads[2, 2] = -1000.0
+    fit = fit_tension_state(vertices, edges, fixed=[0, 1], loads=loads)
+    assert min(fit.force_densities) == 0.0
+    assert min(fit.tensions) == 0.0
