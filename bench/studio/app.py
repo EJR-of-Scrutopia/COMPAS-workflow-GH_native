@@ -152,6 +152,59 @@ CABLENET_DEFAULTS = {
     "batch": 20, "steps": 40,
 }
 
+
+def _greatest_reach_mm(contract) -> float:
+    """The greatest distance between two of the study's supports, in millimetres.
+
+    The rule solve_cablenet.resolve_acceptance applies, read from the contract
+    itself (its support ids and its equilibrium vertices, which are in metres),
+    so the falsework chosen here and the refusal made there are of one number.
+    Fewer than two supports have no reach.
+    """
+
+    supports = geometry.support_ids(contract)
+    vertices = contract["equilibrium"].get("vertices", [])
+    points = [[float(vertices[node][axis]) * 1000.0 for axis in ("x", "y", "z")]
+              for node in supports]
+    return max((math.dist(p, q) for i, p in enumerate(points) for q in points[i + 1:]),
+               default=0.0)
+
+
+def _choose_falsework(ribs, requested, reach_mm):
+    """The falsework to run with and the sentence to carry in the demand's note.
+
+    Returns (key, note); the note is None when nothing was changed.
+
+    The engine takes the acceptance line from the deflection of a timber rib and
+    refuses a rib that spans less than half the study's greatest anchor-to-anchor
+    distance, because a rib that short describes a different building
+    (solve_cablenet.resolve_acceptance). That refusal stays as the backstop. This
+    applies the same rule first, so a large vault is not refused for asking for
+    the catalogue's small rib: the rib asked for stands when it spans the vault;
+    else the shortest rib in the catalogue that does is used and the note says
+    which and why; else the run has no acceptance line and the note says so. No
+    rib asked for is no line asked for, and nothing is chosen.
+    """
+
+    # no rib asked for is no line asked for; a name the catalogue lacks is left
+    # for the routes and the engine to refuse, which both do by name
+    if requested is None or requested not in ribs:
+        return requested, None
+    half = reach_mm / 2.0
+    spans = {key: float(entry["span"]) for key, entry in ribs.items()}
+    if spans[requested] >= half:
+        return requested, None
+    reach = "{:.1f} m".format(reach_mm / 1000.0)
+    spanning = sorted((span, key) for key, span in spans.items() if span >= half)
+    if not spanning:
+        return None, ("no catalogue falsework spans half the vault's {} reach; "
+                      "no acceptance line is set".format(reach))
+    chosen = spanning[0][1]
+    return chosen, ("falsework {} was used in place of {}, which spans {:g} mm, less "
+                    "than half the vault's {} reach".format(
+                        chosen, requested, spans[requested], reach))
+
+
 MATERIALS = sorted(staging.DENSITIES)
 # 0.1 on his word: "I would like to make the piece size go down to
 # 100mm target". A 100 mm target on a real vault is tens of
@@ -1348,6 +1401,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         reason to refuse: missing, unreadable, or written for another solve than
         the contract beside it, it costs the run its frames and its column heads
         and leaves a sentence in the document saying so.
+
+        The falsework is chosen here too (_choose_falsework), from the study's
+        reach, so what the engine is handed is a rib it will not refuse or none;
+        a change from the rib asked for is said in the same note.
         """
 
         import catalogue
@@ -1375,7 +1432,16 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             if unread is not None:
                 note = "the formwork document was not read: {}".format(unread)
                 formwork_document = None
-        rope = catalogue.load_parts()["rope"][rope_key]
+        parts = catalogue.load_parts()
+        rope = parts["rope"][rope_key]
+        # The rib the acceptance line is taken from is chosen here, before the
+        # engine runs, by the rule the engine would refuse it on: a rib that spans
+        # less than half the study's reach is changed for the shortest that does,
+        # or for none, and the note says so after the formwork's.
+        falsework_key, falsework_note = _choose_falsework(
+            parts.get("falsework") or {}, falsework_key, _greatest_reach_mm(contract))
+        if falsework_note:
+            note = "; ".join(part for part in (note, falsework_note) if part)
         options = {
             "out_path": bundle.cablenet_path(
                 slug, material, key_pattern, size, thickness, density),
