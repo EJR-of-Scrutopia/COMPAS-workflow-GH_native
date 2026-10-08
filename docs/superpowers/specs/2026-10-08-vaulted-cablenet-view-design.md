@@ -1,7 +1,8 @@
 # Vaulted: the cable net as a view, and where to grab the net
 
 Design specification, 8 October 2026. Branch `feature/studio-finish`.
-Revised the same day after the owner read the first draft.
+Revised the same day after the owner read the first draft, and again on 8 October
+after the formulation was measured against the real export (section 13).
 
 This replaces the cable net panel shipped on 7 October rather than extending it.
 That panel was a tab inside the Data popup and reported in prose. The owner's
@@ -44,7 +45,7 @@ them, which is the mistake this spec exists to correct.
 | the net coloured by force | `applyWireForces` |
 | vectors drawn per node | `updateVectorLayers` and `arrowField(entries, colour, anchor, scale)` |
 | view switching and restoring | `SHOW_BUTTONS`, `setShowMode`, `state.showModeBeforeForces` |
-| how much load a mechanism can carry | `capacity.tension_curve` and `capacity_from_curve`, already built and tested |
+| how much load a mechanism can carry | `capacity_from_curve` and its checks, already built and tested, moved whole into the standard-library `mechanism.py` so the server can call them; the curve they read is built from the fit of section 8, because the forward solve behind `tension_curve` refuses the real study (section 13) |
 | refusing a mismatched motor and drive | `catalogue.mechanism_for`, which already raises naming both families |
 
 Nothing in this spec may reimplement any of those.
@@ -57,47 +58,66 @@ Animation because that is the order of the work.
 
 Its contents, in this order, which is the order the questions are asked:
 
-1. **What the build demands** (section 7)
-2. **The lenses** (section 4)
-3. **The system** (section 5)
-4. **Can it hold it** (section 6)
-5. **Where to grab** (section 8)
-6. **Export** (section 9)
+1. **Run**: the section's one primary action, `Run cable net analysis`, with
+   the prestress floor and the rope speed as dials beside it. Nothing in the
+   studio today sends the cable net phase, so no study has a demand document
+   until this exists. It runs the cut and the analysis of section 8 only, not
+   the staged FEA, and reports progress through the same run registry.
+2. **What the build demands** (section 7)
+3. **The lenses** (section 4)
+4. **The system** (section 5)
+5. **Can it hold it** (section 6)
+6. **Where to grab** (section 8)
+7. **Export** (section 9)
 
 The Data popup's Cable net tab and its markup are **removed**. One place, not
 two.
 
 ## 4. The lenses
 
-Five, added to `LAYERS` or a sibling table read by the same builder, each
-drawing on the model:
+Five, in a sibling table of `LAYERS` read by the same builder, each drawing on
+the model. Every figure they draw comes from the demand document of section 8;
+nothing is computed in the browser beyond colour and scale.
 
-**Wire tension.** The net coloured by the tension each member carries at the
-selected stage, through `applyWireForces`. Raising it shows the net, so it joins
+**Wire tension.** The net coloured by the tension each member carries in the
+best tension-only state at the selected instant (`member_tensions`). A painting
+lens, so it joins `EXCLUSIVE_LAYERS`.
+
+**Node force.** The force left unbalanced at each node by that state, drawn as
+an arrow at the node (`node_residual`). It is what an actuator there must
+supply, and it is the field that chose the grabbed nodes.
+
+**Sag.** The net coloured by how far each node would move under that unbalanced
+force, with the direction drawn where the move is large (`node_sag_mm`). It is a
+first-order figure: the unbalanced force divided by the net's tangent stiffness
+at the fitted tensions, with the entered prestress as a floor on every member.
+It is not a re-solve of the net, and where the net is slack and flat the figure
+is large and says so. Red past the acceptance line, falling to neutral well
+inside it, so the eye goes to the problem. A painting lens, so it joins
 `EXCLUSIVE_LAYERS`.
 
-**Node force.** The force at each node drawn as an arrow at that node, through
-`arrowField`. This is the live force per node, and it is what section 8
-computes.
+**Prestress.** Tagged at the terminations: at each mechanism wire's net end an
+arrow along the wire, its length the tension and its colour the margin against
+the chosen system's ceiling, so the margin reads where the part is. With no
+system chosen the tags show tension alone and the note says so.
 
-**Sag.** The net coloured by how far each node is from where it should be, with
-the direction of the miss drawn where the miss is large. This is the lens the
-owner asked for by name: it shows where too few grabbed nodes are letting the
-form go, and equally where the support is ample. Red where the deviation exceeds
-the acceptance line, falling to neutral where it is comfortably inside, so the
-eye goes to the problem. It is a painting lens, so it joins `EXCLUSIVE_LAYERS`.
+**Reel.** How much each mechanism wire pays out or takes in between the previous
+computed instant and this one, drawn along the wire: the change in its length
+from the exported frames, plus the elastic take-up when its tension changes. On
+this export the rim never moves, so those figures are the take-up alone, which
+is a result and is shown as one. At a grabbed node, where no drum point is
+known, the node's own travel between instants is drawn instead and the note
+names it as travel, not rope.
 
-**Prestress.** Tagged at the terminations: each wire's tension at its net end,
-and at the anchor rows the chain's working limit, so the margin reads where the
-part is.
-
-**Reel.** How much each wire pays out or takes in between the previous stage and
-this one, drawn along the wire.
+The lenses draw on the finished net at its exported shape whichever instant is
+selected; the stage line under the buttons names the instant the figures belong
+to (a frame of the raise, or a course of the skin) and says they are drawn on
+the finished net. Scrubbing the timeline moves the instant.
 
 Each gets one note under it when active, in the voice of the Support thrust
 note. Each gets a `layerAvailability` answer naming what is missing when it
 cannot draw, which for all five is "this study has no cable net demand yet; run
-it with the cable net phase enabled".
+the cable net analysis from this section".
 
 ## 5. The system: pick a configuration, not nine parts
 
@@ -166,17 +186,33 @@ tension curve, so it is instant; it never re-solves.
 
 The question the shipped panel never answered.
 
-`capacity.tension_curve` walks the load upward and records what the net does;
-`capacity_from_curve` applies one mechanism's checks to that walk. Both exist,
-are tested, and are already used by the chooser. Pointed at the staged skin load
-rather than an abstract pattern, they answer directly:
+The forward solve cannot answer it on the real study: with the column heads and
+the rim held, `solve_prescribed_lengths` refuses at every prestress from 100 N
+to 5000 N because the net goes slack (section 13). So the curve
+`capacity_from_curve` reads is built from the fit of section 8 instead, on one
+stated assumption: **the tensions scale with the load**. That is the owner's own
+hypothesis for the machine, that the actuators re-tension the net to hold its
+shape as the skin arrives, and it is exact for the fit, whose feasible set is a
+cone. The net's own weight is scaled with the skin, which overstates the demand
+slightly and is conservative.
+
+So at the sizing stage the document records the worst wire tension and the
+worst sag under the full load. The curve has `worst_tension = f * t1` and
+`deviation = sag` at every factor `f`, and `capacity_from_curve` applies the
+chosen mechanism's checks to it unchanged. It answers:
 
 - **the load factor**: how many times the real skin weight this system can carry
   before something binds, where 1.0 means it carries the skin exactly and no
   more
 - **what binds**, named as the part, not the constraint: the turnbuckle, the
-  sheave, the motor
+  sheave, the motor; or the shape, when the sag is past the acceptance line at
+  any load, which no part can cure
 - **the margin** against the skin as specified
+
+`capacity_from_curve` and its checks move whole into `mechanism.py`, which is
+standard library only, so the server can call them without numpy; `capacity.py`
+keeps exporting the same names, the result is identical and the existing curve
+tests prove it.
 
 The panel states the skin it is judging: the thickness, the density and the
 total weight in kilonewtons, because a load factor against an unnamed load means
@@ -196,41 +232,66 @@ skin, not of the chosen parts.
 
 ## 8. Where to grab the net, and how many
 
-The computation the owner asked for, and the reason the Sag and Node force
-lenses have anything to draw.
+The computation the owner asked for, and the reason every lens has something to
+draw.
 
-**What it computes.** At the target shape, with the columns holding their nodes
-and the rim held, fit the best tension-only state the net can carry under the
-stage's load. The force left unbalanced at each free node is what an actuator
-there would have to supply. That residual field is the Node force lens, and the
-deviation it produces is the Sag lens.
+**What is held.** The drum end of each of the 105 mechanism wires, which
+`build_problem` already fixes, with the wires as tension members so each can
+pull only along its own line; and the 46 column heads, read from the formwork
+document's `columns.headNode`, which are the net nodes the columns prop. A
+column is not a member: it is a node whose position is prescribed, and the
+force it carries is the reaction there.
 
-Then place actuators greedily: take the nodes with the largest residual, add
-them to the held set, refit, repeat. Report the curve of **number of actuated
-nodes against worst deviation**, with the chosen nodes lit on the vault, and the
-count needed to bring the whole net inside the acceptance line.
+**What it computes.** At the shape the export gives for the instant, fit the
+best tension-only state the net can carry under the instant's load: a
+non-negative least squares over every member's force density
+(`hold.fit_tension_state`, measured at 1.4 s on the real net). The force left
+unbalanced at each free node is what an actuator there would have to supply:
+that field is the Node force lens. The reaction at each column head is the
+column force, reported with its vertical part. The movement each unbalanced
+force would cause, to first order through the net's tangent stiffness with the
+entered prestress as a floor on every member (`stiffness.first_order_sag`,
+measured at 0.1 s), is the Sag lens.
+
+**Then place actuators greedily**, at the heaviest instant: take the nodes with
+the largest unbalanced force, in batches of twenty, add them to the held set,
+refit, repeat, until the worst sag is inside the acceptance line or forty
+batches have been tried. Report the curve of **number of actuated nodes against
+worst sag and worst unbalanced force**, with the chosen nodes lit on the vault,
+and whether the line was reached. Every stage's figures and every lens are then
+given with the actuators at the chosen count; the curve tells the story of
+fewer.
+
+**The instants.** Five frames of the raise, at machine times 45, 60, 75, 90 and
+100, under the net's own weight; and every course of the skin at the finished
+shape. The lenses snap to the nearest computed instant and the stage line names
+it.
 
 **Honesty about the method.** Greedy placement by residual is a heuristic, not
 an optimum, and the panel says so. It answers "a good place to put the next
-twenty", not "the best possible twenty". A test pins that more actuators never
-make the reported deviation worse, because a curve that wandered would mean the
-fit is at fault rather than the placement.
+twenty", not "the best possible twenty". A test pins that the residual norm
+never rises as actuators are added, which is provable: holding a node removes
+its equations and leaves every member free to do what it did. A curve that rose
+would mean the fit is at fault rather than the placement.
 
-**Cost.** A forward solve on the real 1101-node study takes about a second, so
-re-solving per candidate is not affordable. The loop uses the cheap linear
-non-negative fit; a true forward solve runs only at the handful of counts the
-curve reports, and the panel says which figures came from which.
+**Cost.** One fit is 1.4 s and a refit after holding a batch is 0.1 s, so the
+whole analysis of a 1101-node study is a minute or two in a subprocess, run once
+per study and cached in the demand document. The panel never re-solves.
 
 **Where it runs.** In `solve_cablenet.py`, under the solver interpreter, like
 every other solve. `bench/studio/**` stays free of numpy and the solver stack,
-and `tests/studio/test_studio_guard.py` still enforces it.
+and `tests/studio/test_studio_guard.py` still enforces it. `walk_stages`, the
+forward walk, stays in the module with its tests and is no longer what the
+route runs; the demand document it wrote is replaced by this analysis under
+schema `bench.cablenet/2`, keeping the name and meaning of every field the
+exports read.
 
 ## 9. Export
 
 **One button.** It writes the configuration together with its data: the parts
 chosen, the load factor and what binds, the prestress demanded against the
-ceiling, the reeling per wire per stage, the sag and where it is worst, and the
-actuator count with the chosen nodes.
+ceiling, the reeling per wire per stage, the sag and where it is worst, the
+column forces, and the actuator count with the chosen nodes.
 
 The three documents from the 7 October spec remain and are what that button
 produces, unchanged in behaviour, because they already agree with each other and
@@ -259,10 +320,14 @@ automatic, so there is nothing new to press.
 
 ## 11. What must not regress
 
-The engine, the catalogue, the three exports and their agreement tests are
-untouched in behaviour. `studio.js` gains only what the rail and the lenses
-require. The rope speed slider still cannot change a verdict. The three
-documents still agree byte for byte and the test that proves it still runs.
+The catalogue's existing functions, the three exports' existing content and
+their agreement tests are unchanged in behaviour; `capacity_from_curve` keeps
+its name and its result; `walk_stages` stays with its tests. The demand document
+grows and every field the exports already read keeps its name and meaning.
+`studio.js` gains only what the rail and the lenses require. The rope speed
+slider still cannot change a verdict. The three documents still agree byte for
+byte and the test that proves it still runs. The interface language's dial
+census is updated for the two new dials rather than worked around.
 
 ## 12. Open items
 
@@ -275,3 +340,38 @@ documents still agree byte for byte and the test that proves it still runs.
 4. **Recommend ranks by margin, then by part count.** That is a defensible rule
    and not the only one; cost, resolution and speed could each lead instead, and
    the sweep already reports three fronts for exactly that reason.
+5. **The load factor assumes the tensions scale with the load.** It is the
+   owner's hypothesis for an actuated net and exact for the fit; a net with
+   fixed rest lengths behaves differently, and that is what the forward solve
+   would have measured had it run.
+6. **Sag is first order.** The real net stiffens as it sags, so large figures
+   are upper bounds on the movement and small ones are close.
+7. **The lenses draw on the finished net.** At a frame of the raise the figures
+   belong to a different shape than the one they are drawn on; drawing them on
+   the formwork net is a later refinement.
+
+## 13. What the real export settled, 8 October
+
+Measured before this revision, on `5 sided form` (1101 vertices, 2000 members,
+105 wires, 46 column heads), with scripts in the session scratchpad:
+
+- With the column heads and the rim held, the forward prescribed-length solve
+  refuses at every prestress from 100 N to 5000 N: the net goes slack. The
+  uniform cut rule is not an equilibrium state on this shape, so
+  `tension_curve` cannot be pointed at it.
+- The best tension-only self-stress state at the exported shape balances to
+  7.6e-07 but is degenerate: the median member carries nothing, and forcing
+  every member to carry a floor leaves a residual that grows in proportion to
+  the floor. The shape cannot be held taut throughout by the net alone.
+- Under the 66.9 kN tile skin, with only the columns and the rim holding, the
+  fit leaves every one of the 950 free nodes unbalanced by 47 to 83 N: the net
+  at this shape carries almost none of the skin, and the first-order sag is of
+  the order of a metre at 300 N prestress and 200 mm at 3000 N.
+- The 105 rim wires reel nothing across the 51 frames: the rim never moves. The
+  raise is the columns; the finish phase moves 985 of 1101 nodes by more than
+  100 mm, which is the cross-axis tightening the machine does not yet have.
+- The dense non-negative solve converges in 1.4 s; the sparse bounded solver
+  stops at its iteration cap unconverged and is not used.
+
+So the deliverable of this spec is exactly the finding the owner feared: the
+actuators are necessary, and the computation says how many and where.
