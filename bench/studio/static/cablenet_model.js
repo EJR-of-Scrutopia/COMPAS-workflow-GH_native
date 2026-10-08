@@ -80,13 +80,17 @@ export function shapeOf(demand) {
            holds: known && allReachable && withinLine };
 }
 
-// The greatest tension any wire or actuator carries: the sizing block when
-// the document has one, else the worst wire over the stages.
+// The greatest tension any wire carries: the sizing block's figure when the
+// document has one, else the worst wire over the stages. Wires only, as the
+// server reads the demand (_demand_floor in app.py, which decides whether a
+// row passes) and as the exports do (_prestress_floor). The force a grabbed
+// node's actuator supplies is another figure, said in a sentence of its own
+// by demandSentences; folded in here it would be a number on the panel that
+// no document agrees with, and a verdict that disagrees with the server's.
 export function prestressFloor(demand) {
   const sizing = sizingOf(demand);
   if (sizing && sizing.worst_wire_tension_newtons != null) {
-    return Math.max(Number(sizing.worst_wire_tension_newtons),
-                    Number(sizing.worst_actuator_newtons || 0));
+    return Number(sizing.worst_wire_tension_newtons);
   }
   let worst = 0;
   for (const stage of (demand && demand.stages) || []) {
@@ -99,8 +103,9 @@ export function prestressFloor(demand) {
 // greatest wire tension is the floor, with whether it is a frame of the raise.
 // It is not the sizing stage, which is chosen among the courses; the floor is
 // the greatest over every instant, the raise included. Null when no stage
-// carries it (the floor can be an actuator's) or the stage has no name: an
-// instant is named only when the document says which it is.
+// carries it (a hand-edited document whose sizing block and stages disagree)
+// or the stage has no name: an instant is named only when the document says
+// which it is.
 function floorInstant(demand, floor) {
   if (!(floor > 0)) return null;
   for (const stage of (demand && demand.stages) || []) {
@@ -189,6 +194,14 @@ export function demandSentences(demand) {
   const held = demand.held || {};
   out.push("Held by " + counted((held.wire_nodes || []).length, "wire") + " and " +
     counted((held.column_heads || []).length, "column head") + ".");
+  // The grabbed nodes' own figure, apart from the wires' floor above: it is
+  // said when the document carries one above zero (exports._grab_section).
+  const pull = sizing && sizing.worst_actuator_newtons != null
+    ? Number(sizing.worst_actuator_newtons) : 0;
+  if (Number.isFinite(pull) && pull > 0) {
+    out.push("The grabbed nodes need up to " + newtons(pull) + " N each, " +
+      "which a wire there would have to carry.");
+  }
   const note = demand.note == null ? "" : String(demand.note).trim();
   if (note) out.push(esc(sentenceOf(note)));
   return out;

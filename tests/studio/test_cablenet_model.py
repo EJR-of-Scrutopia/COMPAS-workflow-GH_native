@@ -117,6 +117,24 @@ const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2
 blank.note = "   ";
 out.sentBlankNote = m.demandSentences(blank);
 out.sentTopLevel = m.demandSentences({ ...demandOf([1], [1], [1], "S2"), sizing: undefined, sizing_stage: "S9" });
+// An actuator that pulls harder than any wire does not move the wires' floor:
+// the floor and the first sentence stay the wires', the instant is found, the
+// verdict follows the wires as the server's row does, and the grabbed nodes'
+// own figure is a sentence of its own.
+const dominant = demandOf([900, 1000, 200], [700, 900, 100], [800, 950, 100], "S2");
+dominant.sizing = { stage: "S2", worst_wire_tension_newtons: 1000, worst_actuator_newtons: 2800 };
+out.sentDominant = m.demandSentences(dominant);
+out.floorDominant = m.prestressFloor(dominant);
+out.verdictDominant = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.47, rope_path: null },
+  floor: m.prestressFloor(dominant),
+  shape: { known: true, holds: true, worst: { residual: 1.4, name: "S2" }, acceptance: 2.18, allReachable: true },
+  capacity: { limit_factor: 1.6, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
+const calm = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+calm.sizing.worst_actuator_newtons = 0;
+out.sentNoPull = m.demandSentences(calm);
+const unsaid = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+delete unsaid.sizing.worst_actuator_newtons;
+out.sentPullAbsent = m.demandSentences(unsaid);
 out.sentSlack = m.demandSentences({ schema: "bench.cablenet/2", acceptance: 2.18, stages: [
   { name: "S1", kind: "tile", time: null, course: 0, wire_tensions: [0, 0], skin_load_sum_newtons: 0, net_weight_newtons: 0 } ] });
 out.sentNone = m.demandSentences(null);
@@ -125,7 +143,8 @@ out.floors = [
   m.prestressFloor(demandOf([1], [1], [1], "S2")),
   m.prestressFloor({ sizing: { worst_wire_tension_newtons: 500, worst_actuator_newtons: 900 }, stages: [] }),
   m.prestressFloor({ stages: [{ wire_tensions: [100, 700] }, { wire_tensions: [300] }] }),
-  m.prestressFloor(null) ];
+  m.prestressFloor(null),
+  m.prestressFloor({ sizing: { worst_wire_tension_newtons: null, worst_actuator_newtons: 900 }, stages: [{ wire_tensions: [100, 300] }] }) ];
 out.wound = [
   m.ropeWound({ stages: [{ wire_reel_commands: [10, -5] }, { wire_reel_commands: [-20, 5] }] }),
   m.ropeWound({ stages: [] }) ];
@@ -273,7 +292,8 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     assert frame[1] == "The acceptance line is 2.18 mm, from the rib and its skin."
     assert frame[2] == "The skin weighs <b>12.0 kN</b> placed, 20 mm at 2200 kg/m3; the net itself weighs 0.9 kN."
     assert frame[3] == "Held by 3 wires and 1 column head."
-    assert len(frame) == 4, "no note, no fifth sentence"
+    assert frame[4] == "The grabbed nodes need up to 800.0 N each, which a wire there would have to carry."
+    assert len(frame) == 5, "no note, no sixth sentence"
     # In a course: the stage, and the sizing stage is a different one.
     course = out["sentCourse"][0]
     assert "<b>1471.0 N</b>, reached at stage S2." in course
@@ -285,7 +305,7 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     assert "reached at the raise's instant F60." in out["sentTopLevel"][0]
     # A net with no tension in it has no instant at which the tension is greatest.
     assert out["sentSlack"][0].startswith("The greatest tension any wire carries is <b>0.0 N</b>. That is")
-    # No stage carries the floor (it is an actuator's): no instant is invented.
+    # No stage carries the floor (the sizing block and the stages disagree): no instant is invented.
     assert "reached" not in out["sentNoInstant"][0]
     assert out["sentNoInstant"][0].startswith("The greatest tension any wire carries is <b>1471.0 N</b>. That is")
 
@@ -300,16 +320,37 @@ def test_every_server_string_in_the_demand_is_escaped_and_the_note_is_its_own_se
     assert hostile[-1] == "no formwork &lt;i&gt;document&lt;/i&gt; &amp; frames."
     assert "<i>" not in joined and "<script" not in joined
     assert joined.count("<b>") == joined.count("</b>") == 2, "only the figures the model wrote carry a tag"
-    assert out["sentNoted"][-1] == "the formwork document was not read." and len(out["sentNoted"]) == 5
-    assert len(out["sentBlankNote"]) == 4, "a blank note says nothing"
+    assert out["sentNoted"][-1] == "the formwork document was not read." and len(out["sentNoted"]) == 6
+    assert len(out["sentBlankNote"]) == 5, "a blank note says nothing"
     assert out["sentNone"][0].startswith("This study has no cable net demand yet")
     assert "an earlier analysis (bench.cablenet/1&lt;x&gt;)" in out["sentStale"][0]
 
 
 @needs_node
 def test_the_floor_and_the_rope_wound(out):
-    assert out["floors"] == [1471, 900, 700, 0]
+    # wires only: a sizing block that names an actuator pulling harder than any wire
+    # still gives the wires' figure, and a block with no wire figure falls to the stages
+    assert out["floors"] == [1471, 500, 700, 0, 300]
     assert out["wound"] == [30, None]
+
+
+@needs_node
+def test_an_actuator_that_pulls_harder_than_any_wire_leaves_the_floor_to_the_wires(out):
+    # the sizing block: wire 1000 N, grabbed node 2800 N. The server's row passes against 1000 N.
+    assert out["floorDominant"] == 1000
+    dominant = out["sentDominant"]
+    assert dominant[0].startswith(
+        "The greatest tension any wire carries is <b>1000.0 N</b>, reached at the raise's instant F60. That is")
+    assert "The grabbed nodes need up to 2800.0 N each, which a wire there would have to carry." in dominant
+    assert "<b>2800" not in " ".join(dominant), "the actuator's figure is not the wires' floor"
+    # the verdict follows the wires as the server's row does: a ceiling of 1471 N passes 1000 N
+    verdict = out["verdictDominant"]
+    assert verdict["headline"] == "It holds."
+    assert any("the ceiling is 1471.0 N, set by turnbuckle-hook-hook-M10, 1.47 times the demand" in r
+               for r in verdict["reasons"])
+    # no pull recorded, or none above zero: nothing is said about the grabbed nodes' force
+    assert not any("grabbed nodes need" in s for s in out["sentNoPull"])
+    assert not any("grabbed nodes need" in s for s in out["sentPullAbsent"])
 
 
 # The panel and the documents say the load factor and the grab in the same
