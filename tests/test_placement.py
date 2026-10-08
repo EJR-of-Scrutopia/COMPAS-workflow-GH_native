@@ -168,3 +168,35 @@ def test_vertices_left_equally_unbalanced_are_grabbed_in_index_order():
     # sixteen interior vertices are each left needing the same 10 N, so ties
     # decide the batches, and they go to the lowest index on every machine
     assert [point.added for point in result.points[1:]] == [(7, 8, 9), (10, 13, 14)]
+
+
+def test_a_residual_within_a_millionth_of_the_largest_load_ends_the_walk(monkeypatch):
+    # Above 400 members the fit's fast path leaves about 1e-5 N on a net it
+    # holds. The vee holds its load exactly, so the stub adds what such a fit
+    # would leave at the free vertex while it is free. The line is a millionth
+    # of the largest load, or 1e-9 N when that is larger: within it the walk
+    # ends at once, outside it the vertex is grabbed.
+    import tree_forest_compas.placement as placement
+
+    exact_fit = placement.fit_tension_state
+
+    def walk(scale, left):
+        def fit(vertices, edges, fixed, loads):
+            state = exact_fit(vertices, edges, fixed, loads)
+            residual = [list(row) for row in state.residual]
+            if 2 not in fixed:
+                residual[2][2] += left
+            return state._replace(residual=tuple(tuple(row) for row in residual))
+
+        monkeypatch.setattr(placement, "fit_tension_state", fit)
+        vertices, edges, fixed, loads = _vee()
+        return greedy_actuators(vertices, edges, fixed, loads * scale, 2.0e5, 0.1,
+                                acceptance=None, batch=1, steps=3)
+
+    # 1000 N on the vee: the line is 1e-3 N; half of it ends the walk at once
+    within = walk(1.0, 5.0e-4)
+    assert len(within.points) == 1 and within.actuators == ()
+    assert walk(1.0, 2.0e-3).actuators == (2,)
+    # 1e-4 N on the vee: a millionth is 1e-10 N, so the 1e-9 N floor is the line
+    assert walk(1.0e-7, 5.0e-10).actuators == ()
+    assert walk(1.0e-7, 2.0e-9).actuators == (2,)

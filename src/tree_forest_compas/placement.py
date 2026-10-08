@@ -48,7 +48,10 @@ def greedy_actuators(vertices, edges, fixed, loads, ea, floor, acceptance,
 
     acceptance None means there is no line to reach, so the walk runs to its
     cap and reached is False. A step that finds no unbalanced node left ends
-    the walk early.
+    the walk early, and a node is unbalanced only when it is left needing a
+    millionth of the largest load or more (1e-9 N if that is larger): above
+    400 members the fit's fast path leaves about 1e-5 N on a net it holds,
+    and that is no reason to grab a node.
     """
 
     batch = int(batch)
@@ -58,6 +61,8 @@ def greedy_actuators(vertices, edges, fixed, loads, ea, floor, acceptance,
     if steps < 0:
         raise HoldError("steps cannot be negative.")
     held = set(int(f) for f in fixed)
+    largest = np.linalg.norm(np.asarray(loads, dtype=float), axis=-1)
+    balanced = max(1.0e-6 * float(np.max(largest, initial=0.0)), 1.0e-9)
     actuators = []
     points = []
     added = ()
@@ -80,7 +85,7 @@ def greedy_actuators(vertices, edges, fixed, loads, ea, floor, acceptance,
         if step == steps:
             break
         order = [int(i) for i in np.argsort(-magnitude, kind="stable") if int(i) not in held
-                 and magnitude[int(i)] > 0.0]
+                 and magnitude[int(i)] >= balanced]
         chosen = order[:batch]
         if not chosen:
             break
