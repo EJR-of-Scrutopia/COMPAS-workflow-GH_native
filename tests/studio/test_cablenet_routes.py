@@ -452,6 +452,12 @@ def test_an_authored_cut_is_written_under_the_slot_a_staged_run_would_use(tmp_pa
         "material": "concrete", "pattern": "bonded-courses", "size": 0.9,
         "source": "authored"})
     assert got.status_code == 200, got.text
+    # and a read that names no source finds the same file: the study's own
+    # authored cut is what it is run with when nothing else is asked for
+    default = client.get("/api/studies/Authored/cablenet", params={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9})
+    assert default.status_code == 200, default.text
+    assert default.json() == got.json()
 
 
 def test_the_run_says_cable_net_while_the_engine_works_and_done_after(tmp_path, monkeypatch):
