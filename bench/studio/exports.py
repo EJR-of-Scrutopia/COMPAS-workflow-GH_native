@@ -93,12 +93,29 @@ def _chain_rows(parts, configuration):
     return rows
 
 
+def _is_frame_instant(stage):
+    """A frame of the raise: an instant with a machine time and no course.
+
+    The net is slack by design while the formwork is raised, so a frame is
+    shown in every document and judged in none: the shape verdict, and the sag
+    the grab reads, are the courses' alone. An instant with neither a time nor
+    a course comes from a document written before frames existed, and is a
+    course. A course is told by `is not None` and never by truth, because the
+    first course is course 0.
+    """
+
+    return stage.get("course") is None and stage.get("time") is not None
+
+
 def _shape_verdict(demand):
     """Whether the net keeps its shape, which is the half the parts cannot fix.
 
     A stage is satisfied when the correction reached it AND the residual it
     could not remove is inside the acceptance line. Both must hold at every
-    stage: a vault that strays at one course is a vault that strayed.
+    course of the skin: a vault that strays at one course is a vault that
+    strayed. The frames of the raise are not courses (see _is_frame_instant):
+    they are named under ``frame_instants`` and enter neither the worst
+    residual, nor the unreachable stages, nor ``within``.
 
     ``within`` has three states.  True and False are findings.  None means NOT
     ESTABLISHED: nothing was measured, or there is no line to judge it
@@ -110,7 +127,11 @@ def _shape_verdict(demand):
     worst = None
     worst_stage = None
     unreachable = []
+    frames = []
     for stage in demand.get("stages") or []:
+        if _is_frame_instant(stage):
+            frames.append(stage.get("name"))
+            continue
         residual = stage.get("residual_after")
         if (isinstance(residual, (int, float)) and not isinstance(residual, bool)
                 and math.isfinite(residual) and (worst is None or residual > worst)):
@@ -140,6 +161,7 @@ def _shape_verdict(demand):
         "acceptance_mm": acceptance,
         "acceptance_source": demand.get("acceptance_source"),
         "unreachable_stages": unreachable,
+        "frame_instants": frames,
         "within": within,
         "why_unknown": why_unknown,
     }
@@ -253,7 +275,8 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
     _, chain_part = catalogue.chain_limit(parts, configuration["chain"], angle_degrees)
     term_rows = []
     for name, newtons in terms.items():
-        part_id = chain_part if name == "anchor" else _term_part(configuration, name)
+        part_id = (chain_part if name == "anchor"
+                   else catalogue.part_for_term(configuration, name))
         term_rows.append({
             "name": name,
             "part_id": part_id,
@@ -304,6 +327,12 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         },
         "stages": demand.get("stages") or [],
         "ladder": _ladder(configuration, ladder_rows),
+        "capacity": row.get("load_factor"),
+        "sizing": catalogue.sizing_of(demand),
+        "placement": demand.get("placement"),
+        "held": demand.get("held"),
+        "columns": _column_summary(demand),
+        "sag": _sag_summary(demand),
         "verdict": {
             "tension": tension,
             "shape": shape,
@@ -325,20 +354,6 @@ NOT_CHECKED = [
 ]
 
 
-def _term_part(configuration, name):
-    """The configuration key that supplies a ceiling term, or None."""
-
-    if name == "rope tension":
-        return configuration.get("rope")
-    if name == "spool rope tension":
-        return configuration.get("spool_rope") or configuration.get("rope")
-    if name == "sheave":
-        return configuration.get("sheave")
-    if name == "motor torque":
-        return configuration.get("motor")
-    return None
-
-
 def _prestress_floor(demand):
     values = [
         float(t) for stage in demand.get("stages") or []
@@ -354,6 +369,52 @@ def _total_placed(demand):
         if stage.get("placed_weight_newtons") is not None
     ]
     return max(values) if values else None
+
+
+def _column_summary(demand):
+    """The worst column force over every stage, or None when no stage has one.
+
+    A column carries what it carries at every instant, the raise included, so
+    this reads the frames as well as the courses. Each entry is keyed on its own
+    node: column_forces is in the engine's order, not held.column_heads'."""
+
+    worst = None
+    for stage in demand.get("stages") or []:
+        for column in stage.get("column_forces") or []:
+            newtons = column.get("newtons")
+            if (isinstance(newtons, (int, float)) and not isinstance(newtons, bool)
+                    and (worst is None or newtons > worst["newtons"])):
+                worst = {"newtons": float(newtons), "node": column.get("node"),
+                         "stage": stage.get("name"), "vertical": column.get("vertical")}
+    return worst
+
+
+def _sag_summary(demand):
+    """The worst first-order sag over the courses of the skin, and how many
+    nodes at that stage are past the acceptance line; None when no course
+    carries sag.
+
+    These are the instants the shape verdict judges, so the verdict's worst
+    residual and this worst sag are one figure and cannot be two. The frames of
+    the raise are slack by design (see _is_frame_instant) and are in the Hold
+    sheet stage by stage, not here."""
+
+    acceptance = demand.get("acceptance")
+    worst = None
+    for stage in demand.get("stages") or []:
+        if _is_frame_instant(stage):
+            continue
+        values = [v for v in (stage.get("node_sag_mm") or []) if isinstance(v, (int, float))]
+        if not values:
+            continue
+        here = max(values)
+        if worst is None or here > worst["worst_mm"]:
+            over = (sum(1 for v in values if v > float(acceptance))
+                    if acceptance is not None else None)
+            worst = {"worst_mm": float(here), "stage": stage.get("name"),
+                     "nodes_over_line": over, "nodes": len(values),
+                     "acceptance_mm": acceptance}
+    return worst
 
 
 # confidence fields whose figure is reported as a named assumption below, so
@@ -425,7 +486,7 @@ def _assumptions(parts, configuration, demand, angle_degrees):
 # The spreadsheet. A renderer: it reads the model and computes nothing.
 # ---------------------------------------------------------------------------
 
-SHEETS = ("Read this", "Chosen", "Parts", "Stages", "Ladder")
+SHEETS = ("Read this", "Chosen", "Parts", "Stages", "Ladder", "Hold")
 
 _last_note = None
 
@@ -466,6 +527,106 @@ def _millimetres(value):
 
 def _money(value):
     return "\u00a3{:.2f}".format(float(value))
+
+
+def _factor(value):
+    return "{:.1f}".format(float(value))
+
+
+def _mm_text(value):
+    """A length with its unit, or the words that say it is missing: never
+    "not recorded mm"."""
+
+    return "not recorded" if value is None else "{} mm".format(_millimetres(value))
+
+
+def _skin_words(capacity):
+    """The skin, with its weight in kilonewtons when the sizing block gave one."""
+
+    newtons = capacity.get("skin_newtons")
+    if isinstance(newtons, bool) or not isinstance(newtons, (int, float)):
+        return "skin"
+    return "{:.1f} kN skin".format(float(newtons) / 1000.0)
+
+
+def _binder(capacity):
+    """What stops the factor rising, as a clause that follows "before"."""
+
+    part = capacity.get("binding_part") or capacity.get("binding")
+    if part == "shape":
+        return ("the shape binds, because the net sags past the acceptance line "
+                "at any load")
+    return "{} binds".format(part)
+
+
+def load_factor_sentence(model):
+    """One sentence, the same in every document, on whether the parts carry
+    the skin and how many times over. It reads the capacity block the scored
+    row carries; it never computes a factor."""
+
+    capacity = model.get("capacity")
+    if not capacity or capacity.get("limit_factor") is None:
+        why = (capacity or {}).get("detail") or (
+            "the demand document has no sizing block; run the cable net "
+            "analysis again")
+        return "Whether it carries the skin is not established: {}.".format(why.rstrip("."))
+    skin = _skin_words(capacity)
+    factor = _factor(capacity["limit_factor"])
+    if capacity.get("binding") == "none":
+        # the walk ran to its end with nothing past a limit: a floor, not a ceiling
+        return ("Carries at least {} times the {}: nothing binds up to that "
+                "load.".format(factor, skin))
+    if capacity.get("sufficient"):
+        return "Carries {} times the {} before {}.".format(
+            factor, skin, _binder(capacity))
+    return ("Carries only {} times the {}, so it does not hold the skin: "
+            "{}.".format(factor, skin, _binder(capacity)))
+
+
+def _acceptance_of(model):
+    """The acceptance line the grab is judged against: the sag summary's, or
+    the verdict's when no course carries a sag. Both read it off the demand."""
+
+    line = (model.get("sag") or {}).get("acceptance_mm")
+    if line is None:
+        line = ((model.get("verdict") or {}).get("shape") or {}).get("acceptance_mm")
+    return line
+
+
+def grab_sentence(model):
+    """One sentence, the same in every document, on how many nodes to grab and
+    whether grabbing them brings the net inside the line. It reads the
+    placement block and the held set; it never places a node."""
+
+    placement = model.get("placement")
+    held = model.get("held") or {}
+    if not placement:
+        return ("Where to grab the net is not established: the demand document has "
+                "no placement; run the cable net analysis again.")
+    count = len(held.get("actuators") or [])
+    batch = int(placement.get("batch") or 1)
+    batches = (count + batch - 1) // batch if count else 0
+    # the last batch is short when the count is not a multiple of the size
+    how = "{} of {}{}".format(_count(batches, "batch"),
+                              "up to " if count % batch else "", batch)
+    line = _acceptance_of(model)
+    line_text = ("the {} mm line".format(_millimetres(line)) if line is not None
+                 else "a line nobody set")
+    curve = placement.get("curve") or []
+    worst_none = _mm_text(curve[0].get("worst_sag_mm")) if curve else "not recorded"
+    worst_last = _mm_text(curve[-1].get("worst_sag_mm")) if curve else "not recorded"
+    method = ("The placement is greedy by unbalanced force, a heuristic and not "
+              "an optimum.")
+    if placement.get("reached"):
+        if not count:
+            return ("No node needs grabbing: with none grabbed the worst sag is {}, "
+                    "already inside {}.".format(worst_none, line_text))
+        return ("Grab {} ({}) to bring the net inside {}; the worst sag with none "
+                "grabbed is {}. {}".format(
+                    _count(count, "node"), how, line_text, worst_none, method))
+    return ("Grabbing {} ({}) did not reach the line: the worst sag is still {} "
+            "against {}, from {} with none grabbed. {}".format(
+                _count(count, "node"), how, worst_last, line_text, worst_none, method))
 
 
 def _blank(value):
@@ -568,6 +729,25 @@ def _chosen_rows(model):
         rows.append(["Shape: unreachable stages", ", ".join(
             str(n) for n in shape["unreachable_stages"])])
     rows.append(["Both halves hold", _tri(verdict.get("holds"))])
+    capacity = model.get("capacity") or {}
+    columns = model.get("columns") or {}
+    sag = model.get("sag") or {}
+    actuators = (model.get("held") or {}).get("actuators")
+    rows += [
+        ["Load factor", _blank(None if capacity.get("limit_factor") is None
+                               else _factor(capacity["limit_factor"])),
+         load_factor_sentence(model)],
+        ["Binds on", _blank(capacity.get("binding_part")), _blank(capacity.get("detail"))],
+        # an unknown count is blank: a zero here would say that none is needed
+        ["Actuators needed", "" if actuators is None else len(actuators),
+         grab_sentence(model)],
+        ["Worst column force (N)", _force_cell(columns.get("newtons")),
+         "at node {} at stage {}".format(_blank(columns.get("node")), _blank(columns.get("stage")))
+         if columns else "no column force is recorded"],
+        ["Worst sag (mm)", _length_cell(sag.get("worst_mm")),
+         "at stage {}; {}".format(_blank(sag.get("stage")), _past_the_line(sag))
+         if sag else "no sag is recorded"],
+    ]
     return rows
 
 
@@ -645,6 +825,44 @@ def _ladder_rows(model):
     return rows
 
 
+def _past_the_line(sag):
+    """How many free nodes are past the acceptance line, said so the noun
+    agrees with the count, or that no line is set to count them against."""
+
+    over = sag.get("nodes_over_line")
+    if over is None:
+        return "no acceptance line is set"
+    return "{} past the line".format(_count(over, "node"))
+
+
+def _hold_rows(model):
+    """The weight and the grab, stage by stage. Every stage is listed, the
+    frames of the raise as well as the courses: a frame is shown here and
+    judged nowhere."""
+
+    actuators = (model.get("held") or {}).get("actuators")
+    rows = [["Hold"], [load_factor_sentence(model)], [grab_sentence(model)],
+            ["Stage", "Worst sag (mm)", "Nodes past the line", "Worst column force (N)",
+             "At node", "Worst actuator force (N)", "Actuators held"]]
+    acceptance = _acceptance_of(model)
+    for stage in model.get("stages") or []:
+        sag = [v for v in (stage.get("node_sag_mm") or []) if isinstance(v, (int, float))]
+        columns = stage.get("column_forces") or []
+        worst_column = max(columns, key=lambda c: c.get("newtons") or 0.0) if columns else None
+        forces = [sum(c * c for c in f) ** 0.5 for f in (stage.get("actuator_forces") or [])]
+        rows.append([
+            _blank(stage.get("name")),
+            _length_cell(max(sag)) if sag else _blank(None),
+            (sum(1 for v in sag if v > float(acceptance)) if sag and acceptance is not None
+             else _blank(None)),
+            _force_cell(worst_column.get("newtons")) if worst_column else _blank(None),
+            _blank(worst_column.get("node")) if worst_column else _blank(None),
+            _force_cell(max(forces)) if forces else _blank(None),
+            "" if actuators is None else len(actuators),
+        ])
+    return rows
+
+
 def _sheet_rows(model):
     """Every sheet as rows of plain values: built once, written either way."""
 
@@ -654,6 +872,7 @@ def _sheet_rows(model):
         "Parts": _parts_rows(model),
         "Stages": _stages_rows(model),
         "Ladder": _ladder_rows(model),
+        "Hold": _hold_rows(model),
     }
 
 
@@ -740,9 +959,10 @@ def _text(x, y, content, size=12, weight="normal", anchor="start"):
 
 
 def _count(number, noun):
-    """"1 wire", "2 wires": the noun agrees with the count."""
+    """"1 wire", "2 wires", "2 batches": the noun agrees with the count."""
 
-    return "{} {}".format(number, noun if number == 1 else noun + "s")
+    plural = noun + ("es" if noun.endswith(("ch", "sh", "s", "x", "z")) else "s")
+    return "{} {}".format(number, noun if number == 1 else plural)
 
 
 def _estimated_width(content, size):
@@ -768,15 +988,17 @@ def _box_width(lines):
 _BOX_MIN = 120
 
 
-def _svg_verdict(verdict, shape):
-    """One line that keeps pass, fail and not-established apart."""
+def _svg_verdict(verdict, shape, weight_sentence):
+    """The lines under the net band: one that keeps pass, fail and
+    not-established apart, then the sentence on the weight, which the data
+    sheet and the spreadsheet print word for word."""
 
     outcome = {True: "holds", False: "does not hold",
                None: NOT_ESTABLISHED + " (shape unchecked)"}[verdict.get("holds")]
-    return "Verdict: {}. Tension {}; shape {}.".format(
+    return ["Verdict: {}. Tension {}; shape {}.".format(
         outcome, _tri(verdict["tension"].get("passes")),
         {True: "within the line", False: "outside the line",
-         None: NOT_ESTABLISHED}[shape.get("within")])
+         None: NOT_ESTABLISHED}[shape.get("within")]), weight_sentence]
 
 
 def diagram_svg(model):
@@ -804,9 +1026,11 @@ def diagram_svg(model):
     width = max(width, left * 2 + _estimated_width(heading, 14))
     band = top + box_h + 44
     warning = (model.get("rope_mismatch") or {}).get("lines") or []
-    for line in warning:
+    shape = model["verdict"]["shape"]
+    verdict_lines = _svg_verdict(model["verdict"], shape, load_factor_sentence(model))
+    for line in warning + verdict_lines:
         width = max(width, left * 2 + _estimated_width(line, 12))
-    height = (band + 30 + len(wires) * 14 + 20
+    height = (band + 30 + len(wires) * 14 + 20 + (len(verdict_lines) - 1) * 16
               + (len(warning) * 16 + 8 if warning else 0))
     width = int(round(width))
 
@@ -849,10 +1073,11 @@ def diagram_svg(model):
     for row, wire in enumerate(wires):
         parts.append(_text(left, band + 24 + row * 14, "{} pulls net vertex {}".format(
             wire.get("name"), wire.get("net_vertex")), 11))
-    shape = model["verdict"]["shape"]
-    parts.append(_text(left, band + 24 + len(wires) * 14 + 14,
-                       _svg_verdict(model["verdict"], shape), 12, "bold"))
-    base = band + 24 + len(wires) * 14 + 14
+    verdict_y = band + 24 + len(wires) * 14 + 14
+    for index, line in enumerate(verdict_lines):
+        parts.append(_text(left, verdict_y + index * 16, line, 12,
+                           "bold" if index == 0 else "normal"))
+    base = verdict_y + (len(verdict_lines) - 1) * 16
     for index, line in enumerate(warning):
         parts.append(_text(left, base + 22 + index * 16, line, 12,
                            "bold" if index == 0 else "normal"))
@@ -946,6 +1171,105 @@ def _verdict_opening(verdict):
     return ("This configuration does not hold, because the net does not keep "
             "its shape within the acceptance line, although the parts do "
             "carry the tension.")
+
+
+def _frame_sentence(frames):
+    """The one sentence that tells the reader the frames of the raise are
+    shown and not judged."""
+
+    if len(frames) == 1:
+        lead = ("The frame instant of the raise ({}) is shown below and in the "
+                "spreadsheet but is not judged here".format(frames[0]))
+    else:
+        lead = ("The {} frame instants of the raise ({}) are shown below and in "
+                "the spreadsheet but are not judged here".format(
+                    len(frames), ", ".join(str(name) for name in frames)))
+    return (lead + ": the net is slack by design while it is raised, so only the "
+            "courses of the skin are held to the acceptance line.")
+
+
+def _weight_section(model):
+    """## Can it hold the weight: the load factor, and the columns."""
+
+    held = model.get("held") or {}
+    columns = model.get("columns")
+    paragraphs = [
+        load_factor_sentence(model),
+        ("The load factor is how many times the sizing stage's load the chosen "
+         "parts carry before one of them binds, with the tensions taken to scale "
+         "with the load, which is what an actuated net does when it is "
+         "re-tensioned to hold its shape. A factor of 1.0 carries the skin exactly "
+         "and no more."),
+    ]
+    if columns:
+        vertical = columns.get("vertical")
+        paragraphs.append(
+            "The columns prop the net at {}. The worst column force is {} N at "
+            "node {} at stage {}{}.".format(
+                _count(len(held.get("column_heads") or []), "head"),
+                _newtons(columns["newtons"]), columns.get("node"), columns.get("stage"),
+                "" if vertical is None
+                else ", of which {} N is vertical".format(_newtons(vertical))))
+        paragraphs.append(
+            "The column forces are the reactions of one equilibrium state, the one "
+            "the fit chose, and not a measurement: a member with both ends held "
+            "carries nothing in the fit, so a real net might share the load between "
+            "its supports differently. The sag and the unbalanced force at the free "
+            "nodes are the same for every such state.")
+    else:
+        paragraphs.append(
+            "No column force is recorded: the analysis held no column heads.")
+    return "## Can it hold the weight\n\n" + "\n\n".join(paragraphs)
+
+
+def _grab_section(model):
+    """## Where to grab the net: how many nodes, which, and what that leaves."""
+
+    actuators = (model.get("held") or {}).get("actuators")
+    sag = model.get("sag")
+    paragraphs = [grab_sentence(model)]
+    if actuators:
+        paragraphs.append(
+            "The nodes to grab, in the order the walk chose them: {} {}.".format(
+                "node" if len(actuators) == 1 else "nodes",
+                ", ".join(str(n) for n in actuators)))
+    elif actuators is not None:
+        paragraphs.append("No node is grabbed.")
+    if sag:
+        over = sag.get("nodes_over_line")
+        free = _count(sag.get("nodes"), "free node")
+        if over is None:
+            judged = ("no acceptance line is set, so none of the {} is judged "
+                      "against one".format(free))
+        else:
+            judged = "{} of {} {} past the line".format(
+                over, free, "is" if over == 1 else "are")
+        paragraphs.append("{}, the worst first-order sag is {} mm at stage {}, and {}."
+                          .format("With them held" if actuators else "With none grabbed",
+                                  _millimetres(sag["worst_mm"]), sag.get("stage"), judged))
+    else:
+        paragraphs.append("No sag is recorded.")
+    paragraphs.append(
+        "Sag is a first-order figure: the unbalanced force at a node divided by "
+        "the net's tangent stiffness at the fitted tensions, with the entered "
+        "prestress as a floor on every member. Large figures are upper bounds; "
+        "small ones are close.")
+    if actuators:
+        worst = (model.get("sizing") or {}).get("worst_actuator_newtons")
+        if isinstance(worst, (int, float)) and not isinstance(worst, bool):
+            figure = ("The largest force any grabbed node must supply, at any "
+                      "stage, is {} N; the figure for each stage is in the Hold "
+                      "sheet of the spreadsheet.".format(_newtons(worst)))
+        else:
+            figure = ("The force each grabbed node must supply at each stage is "
+                      "in the Hold sheet of the spreadsheet.")
+        paragraphs.append(
+            figure + " The actuator forces are the reactions of one equilibrium "
+            "state, the one the fit chose, and not a measurement: a member with "
+            "both ends held carries nothing in the fit, so the force at a grabbed "
+            "node could be shared differently. The sag and the unbalanced force at "
+            "the free nodes are the same for every such state.")
+    return "## Where to grab the net\n\n" + "\n\n".join(paragraphs)
 
 
 def _datasheet_sections(model):
@@ -1063,6 +1387,9 @@ def _datasheet_sections(model):
                 shape.get("worst_stage") or "not recorded",
                 _millimetres(shape.get("acceptance_mm")),
                 "within it" if shape.get("within") else "outside it", reach))
+    frames = shape.get("frame_instants") or []
+    if frames:
+        halves.append(_frame_sentence(frames))
     stage_lines = []
     for stage in model.get("stages") or []:
         stage_lines.append(
@@ -1082,6 +1409,12 @@ def _datasheet_sections(model):
         + (["\n\n".join(stage_lines)] if stage_lines else [])))
 
     # 5
+    out.append(_weight_section(model))
+
+    # 6
+    out.append(_grab_section(model))
+
+    # 7
     term_lines = []
     ceiling = tension.get("ceiling_newtons")
     for term in model.get("terms") or []:
@@ -1103,7 +1436,7 @@ def _datasheet_sections(model):
         "\n\n".join(term_lines) if term_lines else "No terms are recorded.",
     ]))
 
-    # 6
+    # 8
     assumed = []
     for item in model.get("assumptions") or []:
         assumed.append("**{}.** Value: {}. {}".format(
@@ -1118,7 +1451,7 @@ def _datasheet_sections(model):
         "\n\n".join(assumed) if assumed else "No assumptions are recorded.",
     ]))
 
-    # 7
+    # 9
     out.append("## What is not checked\n\n" + "\n\n".join([
         "The verdict above is silent on the following. Silence here is not "
         "a pass.",
@@ -1128,7 +1461,7 @@ def _datasheet_sections(model):
 
 
 def datasheet_markdown(model):
-    """The data sheet as Markdown, seven sections in the specified order."""
+    """The data sheet as Markdown, nine sections in the specified order."""
 
     head = "# {}: winch machine data sheet\n\nFigures taken {}. Units: {}.".format(
         model.get("study") or "Cable-net study", model.get("generated_at"),

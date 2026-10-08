@@ -220,13 +220,14 @@ def test_every_assumption_names_what_it_is():
     assert model["not_checked"]
 
 
-def test_the_workbook_has_the_five_sheets_in_order(tmp_path):
+def test_the_workbook_has_the_six_sheets_in_order(tmp_path):
     openpyxl = pytest.importorskip("openpyxl")
     model = _model()
     written = exports.write_spreadsheet(model, tmp_path, "Test Vault-cablenet")
     assert len(written) == 1 and written[0].suffix == ".xlsx"
     book = openpyxl.load_workbook(written[0])
-    assert book.sheetnames == ["Read this", "Chosen", "Parts", "Stages", "Ladder"]
+    assert exports.SHEETS == ("Read this", "Chosen", "Parts", "Stages", "Ladder", "Hold")
+    assert book.sheetnames == ["Read this", "Chosen", "Parts", "Stages", "Ladder", "Hold"]
 
 
 def test_an_unpriced_line_marks_the_total_a_floor(tmp_path):
@@ -243,7 +244,7 @@ def test_an_unpriced_line_marks_the_total_a_floor(tmp_path):
 def test_without_openpyxl_it_writes_csvs_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(exports, "_openpyxl", None)
     written = exports.write_spreadsheet(_model(), tmp_path, "x")
-    assert len(written) == 5
+    assert len(written) == 6
     assert all(path.suffix == ".csv" for path in written)
     assert exports.last_spreadsheet_note() and "openpyxl" in exports.last_spreadsheet_note()
 
@@ -467,12 +468,12 @@ def test_the_assumptions_are_a_section_and_not_a_footnote():
     assert "450000" in text or "450,000" in text      # the rope EA is named
 
 
-def test_the_sheet_has_the_seven_sections_in_the_specified_order():
+def test_the_sheet_has_the_nine_sections_in_the_specified_order():
     text = exports.datasheet_markdown(_model())
     headings = [l[3:].lower() for l in text.splitlines() if l.startswith("## ")]
-    words = ["replaces", "demands", "chosen", "holds", "load path",
-             "assumptions", "not checked"]
-    assert len(headings) == 7
+    words = ["replaces", "demands", "chosen", "holds", "hold the weight",
+             "grab the net", "load path", "assumptions", "not checked"]
+    assert len(headings) == 9
     for heading, word in zip(headings, words):
         assert word in heading
 
@@ -963,14 +964,16 @@ def test_the_chosen_sheet_says_not_established_and_never_yes_for_the_shape(tmp_p
 
 
 def test_the_diagram_says_not_established_and_never_that_it_holds():
-    svg = exports.diagram_svg(_unknown_model())
-    assert "not established" in svg
+    # every case is sized, so the load factor line has a figure to give and
+    # whatever the diagram says is unknown, it says of the verdict alone
+    svg = exports.diagram_svg(_sized_model(stages=[]))
+    assert "Verdict: not established" in svg
     assert "Verdict: holds" not in svg and "does not hold" not in svg
-    passing = exports.diagram_svg(_model())
+    passing = exports.diagram_svg(_sized_model())
     assert "Verdict: holds" in passing and "not established" not in passing
-    demand = _demand()
+    demand = _v2_demand()
     demand["stages"][1]["residual_after"] = 7.4
-    failing = exports.diagram_svg(_model(demand=demand))
+    failing = exports.diagram_svg(_sized_model(stages=demand["stages"]))
     assert "does not hold" in failing and "not established" not in failing
 
 
@@ -1207,3 +1210,593 @@ def test_a_folder_that_cannot_be_listed_is_a_400_naming_it_not_a_500(
     assert response.status_code == 400, response.text
     assert str(folder) in response.json()["detail"]
     assert "Access is denied" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# The weight, the columns, the sag and the grab: one model, said the same way
+# in all three documents
+# ---------------------------------------------------------------------------
+
+def _v2_demand(**kwargs):
+    demand = _demand()
+    demand["schema"] = "bench.cablenet/2"
+    demand["sizing"] = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
+                        "worst_actuator_newtons": 120.0, "worst_sag_mm": 1.4,
+                        "load_newtons": 12000.0}
+    demand["held"] = {"wire_nodes": [0, 2], "column_heads": [4], "actuators": [1, 3]}
+    demand["placement"] = {
+        "stage": "S7", "batch": 1, "steps": 10, "reached": True,
+        "method": "greedy by unbalanced force, in batches: a heuristic, not an optimum",
+        "stranded": [],
+        "curve": [{"count": 0, "worst_residual_newtons": 40.0, "worst_sag_mm": 9.0,
+                   "residual_norm_newtons": 60.0, "added": []},
+                  {"count": 1, "worst_residual_newtons": 20.0, "worst_sag_mm": 4.0,
+                   "residual_norm_newtons": 30.0, "added": [1]},
+                  {"count": 2, "worst_residual_newtons": 0.0, "worst_sag_mm": 1.4,
+                   "residual_norm_newtons": 0.0, "added": [3]}]}
+    for stage, sag, column in zip(demand["stages"], (0.5, 1.4), (300.0, 2500.0)):
+        stage["node_sag_mm"] = [None, sag, sag / 2, None, None, 0.1, sag / 3, 0.0, 0.2]
+        stage["column_forces"] = [{"node": 4, "force": [0.0, 0.0, column],
+                                   "newtons": column, "vertical": column}]
+        stage["actuator_forces"] = [[0.0, 0.0, 50.0], [0.0, 0.0, 120.0]]
+        stage["member_tensions"] = [100.0] * 12
+    demand.update(kwargs)
+    return demand
+
+
+def _sized_model(**demand_overrides):
+    import catalogue
+    demand = _v2_demand(**demand_overrides)
+    parts = catalogue.load_parts()
+    configuration = _configuration()
+    row = _row(parts, configuration,
+               load_factor=catalogue.load_factor(parts, configuration, 10.0, demand),
+               drive="CL86Y")
+    return exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
+
+
+def test_the_three_documents_say_the_same_load_factor():
+    model = _sized_model()
+    sentence = exports.load_factor_sentence(model)
+    # 1471 N against 900 N: 1.6 passes (1440), 1.7 breaches (1530)
+    assert sentence.startswith("Carries 1.6 times the 12.0 kN skin")
+    assert "turnbuckle-hook-hook-M10" in sentence
+    assert sentence in exports.datasheet_markdown(model)
+    hold = exports._sheet_rows(model)["Hold"]
+    assert hold[1] == [sentence]
+    assert sentence in exports.diagram_svg(model)
+    assert model["capacity"]["limit_factor"] == pytest.approx(1.6)
+
+
+def test_a_load_factor_below_one_leads_with_the_failure_everywhere():
+    model = _sized_model(sizing={"stage": "S7", "worst_wire_tension_newtons": 3000.0,
+                                 "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4,
+                                 "load_newtons": 12000.0})
+    sentence = exports.load_factor_sentence(model)
+    assert sentence.startswith("Carries only 0.4 times the 12.0 kN skin, so it does not hold the skin")
+    text = exports.datasheet_markdown(model)
+    assert text.index(sentence) < text.index("## The load path")
+    assert "does not hold" in exports.diagram_svg(model)
+
+
+def test_without_sizing_every_document_says_not_established_and_names_the_rerun():
+    demand = _v2_demand()
+    demand.pop("sizing")
+    import catalogue
+    parts = catalogue.load_parts()
+    row = _row(parts, _configuration(), load_factor=None, drive="CL86Y")
+    model = exports.export_model(parts, demand, row, _configuration(), 10.0, "2026-10-08")
+    sentence = exports.load_factor_sentence(model)
+    assert sentence.startswith("Whether it carries the skin is not established")
+    assert "run the cable net analysis" in sentence
+    assert sentence in exports.datasheet_markdown(model)
+    assert exports._sheet_rows(model)["Hold"][1] == [sentence]
+    assert sentence in exports.diagram_svg(model)
+
+
+def test_the_hold_sheet_lists_every_stage_with_its_sag_and_column_force():
+    rows = exports._sheet_rows(_sized_model())["Hold"]
+    header = rows[3]
+    assert header == ["Stage", "Worst sag (mm)", "Nodes past the line",
+                      "Worst column force (N)", "At node", "Worst actuator force (N)",
+                      "Actuators held"]
+    by_name = {row[0]: row for row in rows[4:] if len(row) == 7}
+    # cells may be the workbook's float subclasses or the CSV's strings; the
+    # number is what is pinned, and the rounding is the data sheet's
+    assert float(by_name["S1"][1]) == pytest.approx(0.5) and float(by_name["S7"][1]) == pytest.approx(1.4)
+    assert by_name["S7"][2] == 0 and by_name["S1"][2] == 0
+    assert float(by_name["S7"][3]) == pytest.approx(2500.0) and by_name["S7"][4] == 4
+    assert float(by_name["S7"][5]) == pytest.approx(120.0) and by_name["S7"][6] == 2
+    assert rows[2][0].startswith("Grab 2 nodes")
+
+
+def test_where_to_grab_names_the_count_the_batches_and_the_heuristic():
+    model = _sized_model()
+    sentence = exports.grab_sentence(model)
+    assert sentence.startswith("Grab 2 nodes (2 batches of 1) to bring the net inside the 2.18 mm line")
+    assert "heuristic" in sentence
+    text = exports.datasheet_markdown(model)
+    assert "## Where to grab the net" in text and sentence in text
+    assert "nodes 1, 3" in text
+    unreached = _sized_model(placement={**_v2_demand()["placement"], "reached": False})
+    assert "did not reach the line" in exports.grab_sentence(unreached)
+
+
+def test_the_data_sheet_has_nine_sections_in_order():
+    text = exports.datasheet_markdown(_sized_model())
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    assert headings == [
+        "## What this machine replaces", "## What the vault demands", "## What was chosen",
+        "## Whether it holds", "## Can it hold the weight", "## Where to grab the net",
+        "## The load path", "## The assumptions, listed as assumptions",
+        "## What is not checked"]
+
+
+def test_the_chosen_sheet_gains_the_weight_rows():
+    rows = exports._sheet_rows(_sized_model())["Chosen"]
+    labels = [row[0] for row in rows if row]
+    for label in ("Load factor", "Binds on", "Actuators needed", "Worst column force (N)",
+                  "Worst sag (mm)"):
+        assert label in labels, label
+    load = next(row for row in rows if row and row[0] == "Load factor")
+    assert load[1] == "1.6"
+
+
+def test_the_summaries_read_the_demand_and_compute_nothing_new():
+    model = _sized_model()
+    assert model["columns"] == {"newtons": 2500.0, "node": 4, "stage": "S7", "vertical": 2500.0}
+    assert model["sag"] == {"worst_mm": 1.4, "stage": "S7", "nodes_over_line": 0,
+                            "nodes": 6, "acceptance_mm": 2.18}
+    assert model["held"]["actuators"] == [1, 3]
+    assert model["placement"]["reached"] is True
+    bare = exports.export_model(*_sized_model_args_without_v2())
+    assert bare["columns"] is None and bare["sag"] is None and bare["placement"] is None
+
+
+def _sized_model_args_without_v2():
+    import catalogue
+    parts = catalogue.load_parts()
+    return parts, _demand(), _row(parts, _configuration()), _configuration(), 10.0, "2026-10-08"
+
+
+# ---------------------------------------------------------------------------
+# The frames of the raise are shown, and never judged
+# ---------------------------------------------------------------------------
+
+def _with_frames(demand):
+    """The stages as the engine writes them for a study with a formwork
+    document: two frames of the raise first, each with a machine time and no
+    course, then every course of the skin, each with a course and no time. The
+    net is slack by design in a frame, so its sag is far past the line."""
+
+    frames = []
+    for number, time in enumerate((45.0, 100.0), start=1):
+        frames.append({
+            "stage": number, "name": "F{:g}".format(time), "kind": "raise",
+            "time": time, "course": None, "placed_weight_newtons": None,
+            "skin_load_sum_newtons": 0.0, "wire_rest_lengths": [2100.0],
+            "wire_reel_commands": [0.0], "wire_tensions": [60.0],
+            "deviation": 40.0, "reachable": False, "residual_after": 40.0,
+            "node_sag_mm": [None, 40.0, 20.0, None, None, 0.1, 13.0, 0.0, 0.2],
+            "column_forces": [{"node": 4, "force": [0.0, 0.0, 3000.0],
+                               "newtons": 3000.0, "vertical": 3000.0}],
+            "actuator_forces": [[0.0, 0.0, 10.0], [0.0, 0.0, 20.0]],
+        })
+    for index, stage in enumerate(demand["stages"]):
+        stage.update(stage=len(frames) + index + 1, time=None, course=index)
+    return frames + demand["stages"]
+
+
+def test_a_frame_instant_of_the_raise_never_enters_the_holds_verdict():
+    model = _sized_model(stages=_with_frames(_v2_demand()))
+    shape = model["verdict"]["shape"]
+    # the frames sit 40 mm past a 2.18 mm line and cannot be reached, and the
+    # verdict is the courses', which are inside it
+    assert shape["within"] is True
+    assert shape["unreachable_stages"] == []
+    assert shape["worst_stage"] == "S7" and shape["worst_residual_mm"] == pytest.approx(1.4)
+    assert shape["frame_instants"] == ["F45", "F100"]
+    assert model["verdict"]["holds"] is True
+    text = exports.datasheet_markdown(model)
+    section = _section(text, "whether it holds")
+    assert ("The 2 frame instants of the raise (F45, F100) are shown below and in the "
+            "spreadsheet but are not judged here") in section
+    assert "only the courses of the skin are held to the acceptance line" in section
+    assert "Stage 1 (F45, raise): residual 40.00 mm, not reachable." in section
+    assert "Verdict: holds" in exports.diagram_svg(model)
+    # a document with no frames says nothing of them
+    assert "frame instant" not in exports.datasheet_markdown(_sized_model())
+    assert _sized_model()["verdict"]["shape"]["frame_instants"] == []
+
+
+def test_one_frame_is_said_in_the_singular():
+    stages = _with_frames(_v2_demand())[1:]
+    section = _section(exports.datasheet_markdown(_sized_model(stages=stages)),
+                       "whether it holds")
+    assert ("The frame instant of the raise (F100) is shown below and in the "
+            "spreadsheet but is not judged here") in section
+
+
+def test_a_course_is_judged_though_its_index_is_zero():
+    # the first course is course 0: a test of "is there a course" by truth would
+    # read it as a frame (here it also carries a time, as a frame does) and let a
+    # stage the correction cannot reach go unjudged
+    stages = _with_frames(_v2_demand())
+    first = next(s for s in stages if s["course"] == 0)
+    first.update(reachable=False, time=45.0)
+    shape = _sized_model(stages=stages)["verdict"]["shape"]
+    assert shape["within"] is False and shape["unreachable_stages"] == [first["name"]]
+    # and a course past the line fails whatever the frames do
+    stages = _with_frames(_v2_demand())
+    stages[-1]["residual_after"] = 7.4
+    shape = _sized_model(stages=stages)["verdict"]["shape"]
+    assert shape["within"] is False and shape["worst_stage"] == "S7"
+
+
+def test_a_stage_with_a_course_is_a_course_whatever_its_time():
+    # the rule is the ruling's: only an instant with no course is a frame
+    stages = _with_frames(_v2_demand())
+    last = stages[-1]
+    last.update(time=100.0, reachable=False)
+    shape = _sized_model(stages=stages)["verdict"]["shape"]
+    assert shape["within"] is False and shape["unreachable_stages"] == ["S7"]
+    assert shape["frame_instants"] == ["F45", "F100"]
+
+
+def test_the_frames_are_shown_in_the_hold_sheet_stage_by_stage():
+    rows = exports._sheet_rows(_sized_model(stages=_with_frames(_v2_demand())))["Hold"]
+    by_name = {row[0]: row for row in rows[4:] if len(row) == 7}
+    assert list(by_name) == ["F45", "F100", "S1", "S7"]
+    assert float(by_name["F45"][1]) == pytest.approx(40.0)
+    assert by_name["F45"][2] == 3 and by_name["S7"][2] == 0
+    assert float(by_name["F45"][3]) == pytest.approx(3000.0)
+
+
+def test_the_sag_summary_judges_the_instants_the_verdict_judges():
+    # one worst, not two: the line the verdict reads and the line the grab reads
+    # are the same instants, so no sheet says 1.40 mm in one row and 40.00 in the next
+    model = _sized_model(stages=_with_frames(_v2_demand()))
+    assert model["sag"]["stage"] == "S7"
+    assert model["sag"]["worst_mm"] == model["verdict"]["shape"]["worst_residual_mm"]
+    assert model["sag"]["nodes_over_line"] == 0
+    # a column carries what it carries at every instant, the raise included
+    assert model["columns"]["stage"] == "F45" and model["columns"]["newtons"] == 3000.0
+
+
+# ---------------------------------------------------------------------------
+# What a column force and an actuator force are
+# ---------------------------------------------------------------------------
+
+def test_the_column_and_actuator_forces_are_said_to_be_one_state_the_fit_chose():
+    text = exports.datasheet_markdown(_sized_model())
+    for heading in ("hold the weight", "grab the net"):
+        section = _section(text, heading)
+        assert section.count("one equilibrium state, the one the fit chose") == 1, heading
+        assert "not a measurement" in section, heading
+        assert "the same for every such state" in section, heading
+    columns = _section(text, "hold the weight")
+    assert "a member with both ends held carries nothing in the fit" in columns
+    assert "The column forces are" in columns
+    assert "The actuator forces are" in _section(text, "grab the net")
+    # a force that is not reported is not explained
+    bare = exports.datasheet_markdown(exports.export_model(*_sized_model_args_without_v2()))
+    assert "equilibrium state" not in bare
+
+
+def test_no_actuator_force_is_explained_when_no_node_is_grabbed():
+    model = _sized_model(held={"wire_nodes": [0, 2], "column_heads": [4], "actuators": []})
+    text = exports.datasheet_markdown(model)
+    assert "equilibrium state" in _section(text, "hold the weight")
+    assert "equilibrium state" not in _section(text, "grab the net")
+
+
+# ---------------------------------------------------------------------------
+# Counts agree with their nouns, and what is unknown is blank and not zero
+# ---------------------------------------------------------------------------
+
+def test_one_head_is_said_in_the_singular():
+    text = exports.datasheet_markdown(_sized_model())
+    assert "The columns prop the net at 1 head." in text and "1 heads" not in text
+    many = _sized_model(held={"wire_nodes": [0, 2], "column_heads": [4, 5, 6], "actuators": [1, 3]})
+    assert "prop the net at 3 heads." in exports.datasheet_markdown(many)
+
+
+def test_one_node_is_grabbed_in_one_batch_of_up_to_the_size():
+    held = {"wire_nodes": [0, 2], "column_heads": [4], "actuators": [1]}
+    placement = {**_v2_demand()["placement"], "batch": 20}
+    model = _sized_model(held=held, placement=placement)
+    sentence = exports.grab_sentence(model)
+    assert sentence.startswith(
+        "Grab 1 node (1 batch of up to 20) to bring the net inside the 2.18 mm line")
+    section = _section(exports.datasheet_markdown(model), "grab the net")
+    assert "nodes to grab, in the order the walk chose them: node 1." in section
+    assert "nodes 1." not in section
+
+
+def test_a_last_batch_that_is_not_full_is_not_called_a_full_one():
+    held = {"wire_nodes": [0, 2], "column_heads": [4], "actuators": [1, 3, 5]}
+    sentence = exports.grab_sentence(
+        _sized_model(held=held, placement={**_v2_demand()["placement"], "batch": 2}))
+    assert sentence.startswith("Grab 3 nodes (2 batches of up to 2) to bring")
+    full = exports.grab_sentence(_sized_model(
+        held={**held, "actuators": [1, 3, 5, 7]},
+        placement={**_v2_demand()["placement"], "batch": 2}))
+    assert full.startswith("Grab 4 nodes (2 batches of 2) to bring")
+
+
+def test_a_net_that_needs_no_grab_says_so_and_does_not_grab_nothing():
+    held = {"wire_nodes": [0, 2], "column_heads": [4], "actuators": []}
+    placement = {**_v2_demand()["placement"], "reached": True,
+                 "curve": [{"count": 0, "worst_residual_newtons": 0.0, "worst_sag_mm": 1.4,
+                            "residual_norm_newtons": 0.0, "added": []}]}
+    model = _sized_model(held=held, placement=placement)
+    sentence = exports.grab_sentence(model)
+    assert sentence.startswith("No node needs grabbing")
+    assert "1.40 mm" in sentence and "2.18 mm line" in sentence
+    assert "Grab 0" not in sentence and "0 batches" not in sentence
+    section = _section(exports.datasheet_markdown(model), "grab the net")
+    assert "No node is grabbed." in section
+    chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
+    assert chosen["Actuators needed"][1] == 0          # a known zero is a zero
+
+
+def test_an_unknown_count_of_actuators_is_blank_and_not_zero():
+    model = exports.export_model(*_sized_model_args_without_v2())
+    rows = exports._sheet_rows(model)
+    chosen = {r[0]: r for r in rows["Chosen"] if r}
+    assert chosen["Actuators needed"][1] == ""
+    assert chosen["Actuators needed"][2].startswith("Where to grab the net is not established")
+    assert all(row[6] == "" for row in rows["Hold"][4:] if len(row) == 7)
+    text = exports.datasheet_markdown(model)
+    assert "No node is grabbed." not in text
+    assert "not established" in _section(text, "grab the net")
+
+
+def test_an_unknown_column_and_an_unknown_sag_read_as_unknown_in_the_chosen_sheet():
+    chosen = {r[0]: r for r in exports._sheet_rows(
+        exports.export_model(*_sized_model_args_without_v2()))["Chosen"] if r}
+    assert chosen["Worst column force (N)"][1] == ""
+    assert chosen["Worst column force (N)"][2] == "no column force is recorded"
+    assert chosen["Worst sag (mm)"][1] == ""
+    assert chosen["Worst sag (mm)"][2] == "no sag is recorded"
+
+
+def test_nodes_past_the_line_agree_with_their_noun():
+    stages = _v2_demand()["stages"]
+    stages[1]["node_sag_mm"] = [None, 3.0, 1.0, None, None, 0.1, 2.0, 0.0, 0.2]
+    one = {r[0]: r for r in exports._sheet_rows(
+        _sized_model(stages=stages))["Chosen"] if r}["Worst sag (mm)"]
+    assert one[2] == "at stage S7; 1 node past the line"
+    section = _section(exports.datasheet_markdown(_sized_model(stages=stages)), "grab the net")
+    assert "and 1 of 6 free nodes is past the line" in section
+    stages[1]["node_sag_mm"] = [None, 3.0, 2.5, None, None, 0.1, 2.0, 0.0, 0.2]
+    two = {r[0]: r for r in exports._sheet_rows(
+        _sized_model(stages=stages))["Chosen"] if r}["Worst sag (mm)"]
+    assert two[2] == "at stage S7; 2 nodes past the line"
+    section = _section(exports.datasheet_markdown(_sized_model(stages=stages)), "grab the net")
+    assert "and 2 of 6 free nodes are past the line" in section
+    none = {r[0]: r for r in exports._sheet_rows(_sized_model())["Chosen"] if r}["Worst sag (mm)"]
+    assert none[2] == "at stage S7; 0 nodes past the line"
+
+
+def test_with_no_acceptance_line_no_node_is_counted_against_one():
+    model = _sized_model(acceptance=None)
+    assert model["sag"]["nodes_over_line"] is None
+    section = _section(exports.datasheet_markdown(model), "grab the net")
+    assert "no acceptance line is set" in section
+    assert "of 6 free nodes" not in section and "None" not in section
+    chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
+    assert chosen["Worst sag (mm)"][2] == "at stage S7; no acceptance line is set"
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert hold["S7"][2] == ""
+
+
+def test_the_line_is_the_demands_even_when_no_stage_carries_a_sag():
+    stages = _v2_demand()["stages"]
+    for stage in stages:
+        stage.pop("node_sag_mm")
+    model = _sized_model(stages=stages)
+    assert model["sag"] is None
+    sentence = exports.grab_sentence(model)
+    assert "the 2.18 mm line" in sentence and "nobody set" not in sentence
+
+
+# ---------------------------------------------------------------------------
+# The load factor sentence for what else can bind
+# ---------------------------------------------------------------------------
+
+def test_a_net_that_nothing_binds_is_not_said_to_be_bound_by_nothing():
+    light = {"stage": "S7", "worst_wire_tension_newtons": 10.0, "worst_actuator_newtons": 0.0,
+             "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    sentence = exports.load_factor_sentence(_sized_model(sizing=light))
+    assert sentence == ("Carries at least 20.0 times the 12.0 kN skin: nothing binds "
+                        "up to that load.")
+
+
+def test_a_net_that_sags_past_the_line_says_the_shape_binds_with_one_colon():
+    sagging = {"stage": "S7", "worst_wire_tension_newtons": 900.0, "worst_actuator_newtons": 0.0,
+               "worst_sag_mm": 5.0, "load_newtons": 12000.0}
+    model = _sized_model(sizing=sagging)
+    assert model["capacity"]["binding_part"] == "shape"
+    sentence = exports.load_factor_sentence(model)
+    assert sentence == ("Carries only 0.0 times the 12.0 kN skin, so it does not hold "
+                        "the skin: the shape binds, because the net sags past the "
+                        "acceptance line at any load.")
+    assert sentence in exports.datasheet_markdown(model)
+
+
+def test_a_skin_whose_weight_is_not_recorded_is_not_given_a_weight():
+    model = _sized_model()
+    model["capacity"] = dict(model["capacity"], skin_newtons=None)
+    sentence = exports.load_factor_sentence(model)
+    assert sentence.startswith("Carries 1.6 times the skin before") and "kN" not in sentence
+
+
+def test_a_net_with_no_tension_to_scale_is_not_established_and_says_why():
+    still = {"stage": "S7", "worst_wire_tension_newtons": 0.0, "worst_actuator_newtons": 0.0,
+             "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    sentence = exports.load_factor_sentence(_sized_model(sizing=still))
+    assert sentence == ("Whether it carries the skin is not established: no wire carries "
+                        "tension at the sizing stage, so there is nothing to scale.")
+
+
+# ---------------------------------------------------------------------------
+# One figure, one way to write it, in every document
+# ---------------------------------------------------------------------------
+
+def test_the_worst_column_force_reads_the_same_in_all_three_documents():
+    model = _sized_model()
+    shown = exports._newtons(model["columns"]["newtons"])
+    assert shown == "2500.0"
+    rows = exports._sheet_rows(model)
+    chosen = next(r for r in rows["Chosen"] if r and r[0] == "Worst column force (N)")
+    hold = {r[0]: r for r in rows["Hold"][4:] if len(r) == 7}["S7"]
+    assert exports._newtons(chosen[1]) == shown == exports._newtons(hold[3])
+    assert "{} N at node 4 at stage S7".format(shown) in exports.datasheet_markdown(model)
+    assert chosen[2] == "at node 4 at stage S7"
+
+
+def test_the_new_sections_write_every_force_through_the_one_formatter():
+    import re
+    model = _sized_model()
+    for text in (exports.datasheet_markdown(model), exports.diagram_svg(model)):
+        assert not re.search(r"\b\d{4,} N\b", text)
+        assert _grouped_figures(text) == [], _grouped_figures(text)
+    md = exports.datasheet_markdown(model)
+    assert "2500.0 N" in md and "120.0 N" in md and "12.0 kN" in md
+    assert "\u2014" not in md and "$" not in md
+
+
+def test_the_hold_sheet_survives_the_csv_fallback(tmp_path, monkeypatch):
+    import csv
+    monkeypatch.setattr(exports, "_openpyxl", None)
+    model = _sized_model()
+    written = exports.write_spreadsheet(model, tmp_path, "x")
+    path = next(p for p in written if p.name.endswith("-hold.csv"))
+    with open(path, newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[1] == [exports.load_factor_sentence(model)]
+    assert rows[2] == [exports.grab_sentence(model)]
+    s7 = next(r for r in rows if r[:1] == ["S7"])
+    assert s7 == ["S7", "1.40", "0", "2500.0", "4", "120.0", "2"]
+
+
+def test_the_hold_sheet_carries_forces_and_lengths_as_numbers(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    written = exports.write_spreadsheet(_sized_model(), tmp_path, "x")
+    sheet = openpyxl.load_workbook(written[0])["Hold"]
+    row = next(r for r in sheet.iter_rows() if r[0].value == "S7")
+    assert row[3].value == 2500.0 and row[3].number_format == "0.0"
+    assert row[1].value == pytest.approx(1.4) and row[1].number_format == "0.00"
+    assert sheet.cell(row=1, column=1).font.bold
+
+
+def test_the_diagram_is_wide_enough_for_the_line_it_adds():
+    import re
+    model = _sized_model()
+    model["capacity"] = {"limit_factor": None, "detail": "x" * 300}
+    sentence = exports.load_factor_sentence(model)
+    svg = exports.diagram_svg(model)
+    width = int(re.search(r'<svg[^>]* width="(\d+)"', svg).group(1))
+    # the width is rounded to a whole pixel, as it is for the heading and the warning
+    assert exports._estimated_width(sentence, 12) + 32 <= width + 0.5
+    assert 'viewBox="0 0 {} '.format(width) in svg
+    assert sentence in svg
+
+
+def test_the_load_factor_line_sits_under_the_verdict_and_above_the_rope_warning():
+    import re
+    import catalogue
+    parts = catalogue.load_parts()
+    configuration = _configuration(rope="rope-8mm")
+    demand = _v2_demand()
+    row = _row(parts, configuration, drive="CL86Y",
+               load_factor=catalogue.load_factor(parts, configuration, 10.0, demand))
+    model = exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
+    assert model["rope_mismatch"]
+    svg = exports.diagram_svg(model)
+    placed = {text: float(y) for y, text in re.findall(
+        r'<text x="[^"]*" y="([^"]*)"[^>]*>([^<]*)</text>', svg)}
+    verdict = next(y for text, y in placed.items() if text.startswith("Verdict:"))
+    warning = next(y for text, y in placed.items() if text.startswith("Warning:"))
+    assert verdict < placed[exports.load_factor_sentence(model)] < warning
+    height = float(re.search(r'<svg[^>]* height="(\d+)"', svg).group(1))
+    assert max(placed.values()) < height
+
+
+def test_the_term_to_part_map_is_the_catalogues_alone():
+    assert not hasattr(exports, "_term_part")
+
+
+# ---------------------------------------------------------------------------
+# A document that lacks a block says so, in every renderer, and nothing throws
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dropped", [
+    (), ("sizing",), ("held",), ("placement",), ("sizing", "held"),
+    ("sizing", "placement"), ("held", "placement"), ("sizing", "held", "placement")])
+@pytest.mark.parametrize("bare_stages", [False, True])
+def test_a_demand_that_lacks_a_block_never_throws_and_never_prints_none(
+        dropped, bare_stages, tmp_path):
+    import re
+    import catalogue
+    parts = catalogue.load_parts()
+    configuration = _configuration()
+    demand = _v2_demand()
+    for key in dropped:
+        demand.pop(key)
+    if bare_stages:
+        for stage in demand["stages"]:
+            for key in ("node_sag_mm", "column_forces", "actuator_forces"):
+                stage.pop(key)
+    row = _row(parts, configuration, drive="CL86Y",
+               load_factor=catalogue.load_factor(parts, configuration, 10.0, demand))
+    model = exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
+    exports.write_spreadsheet(model, tmp_path, "x")
+    exports.write_diagram(model, tmp_path, "x")
+    exports.write_datasheet(model, tmp_path, "x")
+    sheets = exports._sheet_rows(model)
+    for name in ("Chosen", "Hold"):
+        flat = " ".join(str(cell) for row in sheets[name] for cell in row)
+        assert "None" not in flat, (name, dropped, bare_stages)
+    text = exports.datasheet_markdown(model)
+    assert "None" not in text and not re.search(r"\bnan\b", text.lower()), dropped
+    if "sizing" in dropped:
+        assert "Whether it carries the skin is not established" in text
+    if "placement" in dropped:
+        assert "Where to grab the net is not established" in text
+
+
+def test_a_column_with_no_force_in_it_leaves_its_cell_blank():
+    stages = _v2_demand()["stages"]
+    stages[1]["column_forces"] = [{"node": 4}]
+    model = _sized_model(stages=stages)
+    hold = {r[0]: r for r in exports._sheet_rows(model)["Hold"][4:] if len(r) == 7}
+    assert hold["S7"][3] == "" and hold["S7"][4] == 4
+
+
+# ---------------------------------------------------------------------------
+# The route: one request, three documents, one sentence
+# ---------------------------------------------------------------------------
+
+def test_the_route_writes_the_weight_and_the_grab_into_all_three(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path, demand=_v2_demand())
+    folder = tmp_path / "out"
+    _into(monkeypatch, folder)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    written = [Path(p) for p in response.json()["paths"]]
+    md = next(p for p in written if p.suffix == ".md").read_text(encoding="utf-8")
+    svg = next(p for p in written if p.suffix == ".svg").read_text(encoding="utf-8")
+    weight = "Carries 1.6 times the 12.0 kN skin before turnbuckle-hook-hook-M10 binds."
+    grab = "Grab 2 nodes (2 batches of 1) to bring the net inside the 2.18 mm line"
+    assert weight in md and weight in svg
+    assert grab in md
+    assert "## Can it hold the weight" in md and "## Where to grab the net" in md
+    if exports._openpyxl is not None:
+        import openpyxl
+        book = openpyxl.load_workbook(next(p for p in written if p.suffix == ".xlsx"))
+        assert book.sheetnames[-1] == "Hold"
+        hold = [[c.value for c in row] for row in book["Hold"].iter_rows()]
+        assert hold[1][0] == weight and hold[2][0].startswith(grab)
