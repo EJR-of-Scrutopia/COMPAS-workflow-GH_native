@@ -980,7 +980,7 @@ def test_the_diagram_says_not_established_and_never_that_it_holds():
 def test_the_panel_and_the_documents_agree_on_what_is_unknown():
     import re
     js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet.js").read_text(encoding="utf-8")
+          / "cablenet_model.js").read_text(encoding="utf-8")
     for demand in _degenerate_demands().values():
         why = _model(demand=demand)["verdict"]["shape"]["why_unknown"]
         assert why in js          # the panel carries the documents' wording
@@ -1025,7 +1025,7 @@ def test_a_stage_that_is_false_is_unreachable_in_every_document():
 
 def test_the_panel_tests_reachable_against_false_only():
     js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet.js").read_text(encoding="utf-8")
+          / "cablenet_model.js").read_text(encoding="utf-8")
     assert "stage.reachable === false" in js
     assert "stage.reachable ===" not in js.replace("stage.reachable === false", "")
 
@@ -1132,16 +1132,22 @@ def test_the_route_exports_a_different_rope_and_says_so(client, monkeypatch, tmp
 # The panel writes a force the way the documents do
 # ---------------------------------------------------------------------------
 
+# newtons() lives in the model, where the panel's sentences are made; the
+# controller beside it writes the rest and is held to the same rule.
 _CABLENET_JS = (Path(__file__).resolve().parents[2] / "bench" / "studio"
-                / "static" / "cablenet.js")
+                / "static" / "cablenet_model.js")
+_CABLENET_CONTROLLER_JS = _CABLENET_JS.with_name("cablenet.js")
 
 
 def test_the_panel_never_rounds_a_force_to_whole_newtons():
     import re
-    js = _CABLENET_JS.read_text(encoding="utf-8")
+    model = _CABLENET_JS.read_text(encoding="utf-8")
+    controller = _CABLENET_CONTROLLER_JS.read_text(encoding="utf-8")
     # a number followed by " N" must come out of newtons(), not toFixed
-    assert not re.search(r"toFixed\(\d\)\}? N\b", js)
-    assert len(re.findall(r"\$\{newtons\(", js)) >= 4
+    for js in (model, controller):
+        assert not re.search(r"toFixed\(\d\)\}? N\b", js)
+    # the calls, across both files (not the definition, nor kilonewtons)
+    assert len(re.findall(r"(?<![A-Za-z])(?<!function )newtons\(", model + controller)) >= 4
 
 
 def test_the_panels_formatter_renders_what_exports_newtons_renders():

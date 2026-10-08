@@ -3170,7 +3170,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         # importing them by the plain path it always did.
         for module in ("panel.js", "pbr.js", "fields.js",
                        "data_analysis.js", "live_graphs.js", "atmosphere.js",
-                       "cablenet.js"):
+                       "cablenet.js", "cablenet_model.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

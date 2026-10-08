@@ -1455,6 +1455,21 @@ def test_the_atmosphere_module_is_remapped_to_its_versioned_address(
         page), "atmosphere.js must be remapped to its versioned address"
 
 
+def test_the_cable_net_modules_are_remapped_to_their_versioned_addresses(
+        tmp_path, monkeypatch):
+    """The section's controller imports its model, so a stale model file would
+    put old sentences and old verdicts on a new page: the exact fault this
+    remap exists for. Both files are versioned like the rest."""
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    page = client.get("/").text
+    for module in ("cablenet.js", "cablenet_model.js"):
+        escaped = re.escape(module)
+        assert re.search(
+            r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',
+            page), "{} must be remapped to its versioned address".format(module)
+
+
 def test_a_still_goes_to_the_output_folder_and_leaves_no_tiles(tmp_path, monkeypatch):
     """Param, 2026-09-13: "the output folder for the image still is not
     taking the output folder we set, its got its own random location? the

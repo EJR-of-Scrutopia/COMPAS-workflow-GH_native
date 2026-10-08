@@ -74,6 +74,18 @@ def load_parts(path=None):
             raise CatalogueError(
                 "The configuration {!r} names no {}.".format(key, error.args[0])
             ) from None
+    # The pairings, said once by the functions that own them and handed to the
+    # panel as data, so the browser never reimplements them: the drive a motor
+    # follows, and the gearboxes its family is used with (none for a capacitor
+    # motor, which no gearbox makes hold a net).
+    pairing = {"drive_for": {}, "gearboxes_for": {}}
+    for key, entry in parts["motor"].items():
+        pairing["drive_for"][key] = drive_for(parts, key)
+        try:
+            pairing["gearboxes_for"][key] = gearboxes_for(parts, key)
+        except CatalogueError:
+            pairing["gearboxes_for"][key] = []
+    parts["pairing"] = pairing
     return parts
 
 

@@ -599,3 +599,13 @@ def test_the_shape_rule_needs_a_line_and_a_sag_past_it():
     assert heavy["sufficient"] is False and "nothing in the catalogue carries" in heavy["rule"]
     assert "shape" not in heavy["rule"]
     assert all("parts_factor" not in row for row in heavy["rows"])
+
+
+def test_the_pairing_block_is_the_catalogue_functions_precomputed():
+    parts = catalogue.load_parts()
+    pairing = parts["pairing"]
+    for key in parts["motor"]:
+        assert pairing["drive_for"][key] == catalogue.drive_for(parts, key)
+    assert pairing["gearboxes_for"]["34HS46"] == catalogue.gearboxes_for(parts, "34HS46")
+    assert pairing["gearboxes_for"]["ac-1r1-3ph"] == catalogue.gearboxes_for(parts, "ac-1r1-3ph")
+    assert pairing["gearboxes_for"]["boatlift-1hp"] == []
