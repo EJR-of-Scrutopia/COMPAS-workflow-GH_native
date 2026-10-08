@@ -340,6 +340,13 @@ def test_no_formwork_means_courses_only_with_the_drum_ends_alone_held():
     assert document["placement"]["note"].startswith("no formwork document")
 
 
+def test_the_callers_note_is_copied_into_the_document_and_is_null_without_one():
+    pytest.importorskip("compas_fd")
+    said = "no formwork document, so no frames and no column heads"
+    assert solve_cablenet.solve(_grid_request(note=said))["note"] == said
+    assert solve_cablenet.solve(_grid_request())["note"] is None
+
+
 def test_no_acceptance_line_leaves_reachable_unknown_and_never_reached():
     pytest.importorskip("compas_fd")
     document = solve_cablenet.solve(_grid_request(acceptance=None, acceptance_source=None))

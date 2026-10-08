@@ -803,7 +803,7 @@ def _aligned(values, raw_count, kept):
     return out
 
 
-def create_app(runner=None, cra_runner=None) -> FastAPI:
+def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
     def _study_stamp(name: str) -> float:
@@ -1597,6 +1597,10 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                             "prestress": float(cablenet_options.get("prestress", 300.0)),
                         },
                     }
+                    if cablenet_runner is not None:
+                        # the test seam, as for the other two runners: a staged
+                        # run under a test never starts the real engine either
+                        run_options["cablenet_options"]["runner"] = cablenet_runner
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, key_pattern, size,
@@ -1609,6 +1613,126 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 bundle.build_bundle(
                     export, material, pattern, size, thickness, cut_source,
                     density)
+                run["state"] = "done"
+                run["phase"] = "done"
+                run["message"] = ""
+            except Exception as error:
+                run["state"] = "failed"
+                run["phase"] = "failed"
+                run["message"] = "{}: {}".format(type(error).__name__, error)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"run": run_id}
+
+    @app.post("/api/studies/{export}/cablenet/run", status_code=202)
+    def start_cablenet_run(export: str, body: dict):
+        """The cable net analysis alone: the cut, the fit at every instant, the
+        placement, written where GET /cablenet reads it. Not the staged FEA,
+        which is the Analysis section's run and takes minutes a stage; this is a
+        minute or two in all. Keyed exactly as a staged run with the cable net
+        phase keys it, so the two can never write to different places."""
+
+        import catalogue
+
+        material = str(body.get("material", "tile"))
+        pattern = str(body.get("pattern", "herringbone"))
+        try:
+            size = float(body.get("size", 1.0))
+            # the same default GET /cablenet reads with, so a run and a read
+            # that both omit it agree on the file; _validate allows 0.02
+            thickness = float(body.get("thickness", 0.02))
+            density = float(body["density"]) if body.get("density") else None
+            prestress = float(body.get("prestress", 300.0))
+            batch = int(body.get("batch", 20))
+            steps = int(body.get("steps", 40))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "a number was unreadable: {}".format(error))
+        if not prestress > 0.0:
+            raise HTTPException(400, "prestress must be greater than zero newtons")
+        if batch < 1:
+            raise HTTPException(400, "batch must be at least one node")
+        if steps < 0:
+            raise HTTPException(400, "steps cannot be negative")
+        source = body.get("source")
+        if source is not None and source not in bundle.CUT_SOURCES:
+            raise HTTPException(400, "source must be one of {} when given".format(
+                ", ".join(bundle.CUT_SOURCES)))
+        rope_key = str(body.get("rope", "rope-4mm"))
+        falsework_key = body.get("falsework", "plywood-rib-2000")
+        parts = catalogue.load_parts()
+        if rope_key not in parts["rope"]:
+            raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
+        if falsework_key is not None and falsework_key not in (parts.get("falsework") or {}):
+            raise HTTPException(400, "no falsework named {!r} in the catalogue".format(falsework_key))
+        _validate(export, material, pattern, size, thickness)
+        slug = geometry.slugify(export)
+        with RUNS_LOCK:
+            for run in RUNS.values():
+                if run["slug"] == slug and run["state"] in ("queued", "running"):
+                    return JSONResponse({"run": run["id"]}, status_code=409)
+            run_id = uuid.uuid4().hex[:12]
+            RUNS[run_id] = {
+                "id": run_id, "export": export, "slug": slug,
+                "material": material, "pattern": pattern, "size": size,
+                "thickness": thickness, "source": source,
+                "state": "queued", "stage": 0, "of": 0, "phase": "queued",
+                "message": "",
+            }
+        rope = parts["rope"][rope_key]
+
+        def work():
+            run = RUNS[run_id]
+            try:
+                # inside the try: an import that fails is a failed run with its
+                # reason, not a run left queued that locks the study with 409s
+                import cablenet
+
+                run["state"] = "running"
+                run["phase"] = "cutting"
+                run["message"] = "cutting the tessellation"
+                pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+                if export not in pairs:
+                    raise ValueError("no export named {!r}".format(export))
+                contract = geometry.load_contract(pairs[export]["contract"])
+                arrays = geometry.mesh_arrays(contract)
+                render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
+                cut_source = bundle.resolve_cut_source(export, contract, source)
+                key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
+                _tess, _surface, binding = bundle.build_tessellation_for(
+                    export, contract, arrays, render, pattern, size, cut_source)
+                plan = staging.stage_plan(
+                    binding["assignment"], binding["order"], binding["keys"])
+                mechanism_document = bundle._read_optional(bundle.mechanism_sidecar(export))
+                if mechanism_document is None:
+                    raise ValueError(
+                        "the cable net analysis needs this study's mechanism "
+                        "document, and it carries none")
+                formwork_document = bundle._read_optional(bundle.frames_sidecar(export))
+                note = None
+                if formwork_document is None:
+                    note = ("no formwork document, so no frames and no column heads: "
+                            "the net is analysed at the finished shape held by its "
+                            "drum ends alone")
+                else:
+                    try:
+                        formwork_document = frames.validate_frames_document(formwork_document)
+                    except ValueError as error:
+                        note = "the formwork document was not read: {}".format(error)
+                        formwork_document = None
+                run["phase"] = "cable net"
+                run["message"] = ("fitting the net at every instant and placing the "
+                                  "actuators: about a minute on a large study")
+                cablenet.run_cablenet(
+                    contract, arrays, plan, thickness,
+                    staging.resolve_density(material, density),
+                    bundle.cablenet_path(slug, material, key_pattern, size, thickness, density),
+                    mechanism_document, float(rope["ea_newtons"]), prestress,
+                    None, None, float(rope["mass_per_metre_kg"]),
+                    runner=cablenet_runner, falsework=falsework_key, study=export,
+                    ea_provenance="{}: EA {} N, {}".format(
+                        rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
+                    formwork_document=formwork_document, batch=batch, steps=steps,
+                    note=note)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

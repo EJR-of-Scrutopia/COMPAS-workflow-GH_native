@@ -707,6 +707,7 @@ def solve(request: dict) -> dict:
         except CableNetError as error:
             document["forward"] = {"refused": str(error)}
     document["study"] = request.get("study")
+    document["note"] = request.get("note")
     document["density"] = request.get("density")
     document["thickness"] = request.get("thickness")
     document["net"]["ea_provenance"] = request.get("ea_provenance")

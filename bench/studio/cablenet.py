@@ -329,7 +329,7 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
                  acceptance_source, mass_per_metre, runner=None, python_exe=None,
                  falsework=None, study=None, ea_provenance=None,
-                 formwork_document=None, batch=20, steps=40):
+                 formwork_document=None, batch=20, steps=40, note=None):
     """Everything step A does, from a contract to a written demand document.
 
     The engine runs in solve_cablenet.py under a solver interpreter, never in
@@ -340,8 +340,11 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     falsework, when given, is the KEY of a parts.json falsework entry. The
     acceptance line is then computed in the engine process, where the geometry
     is, from that rib and this skin, and acceptance and acceptance_source are
-    ignored (pass None). prestress is an input: a starting point for the cut
-    rule, not a value derived from anything.
+    ignored (pass None). With neither a falsework nor an acceptance (both
+    None) the run has no acceptance line: the document's acceptance is null,
+    every instant's reachable is unknown and placement never reaches.
+    prestress is an input: a starting point for the cut rule, not a value
+    derived from anything.
 
     formwork_document, when given, is the study's formwork document as
     frames.py reads it: its frames are sampled at FRAME_SAMPLE_TIMES and sent
@@ -350,6 +353,12 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     no heads: the analysis runs on the courses alone, with the drum ends
     alone held. batch and steps size the actuator walk: the nodes grabbed a
     step, and the most steps tried.
+
+    note, when given, is a sentence the demand document carries as its own
+    "note": the caller's word on what the run did not have, such as a study
+    with no formwork document, so a reader of the document is told rather
+    than left to infer it. The engine copies it through and reads nothing
+    from it.
     """
 
     if falsework is not None and not (acceptance is None and acceptance_source is None):
@@ -410,8 +419,12 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "net_weight": net_weight,
         "ea": float(ea),
         "prestress": float(prestress),
-        "acceptance": None if falsework else float(acceptance),
-        "acceptance_source": None if falsework else str(acceptance_source),
+        # None is no line at all: a falsework computes one in the engine, an
+        # explicit acceptance is one the caller gives, and a run with neither
+        # has no line to hold the net to, which the document says as null
+        "acceptance": None if falsework or acceptance is None else float(acceptance),
+        "acceptance_source": (None if falsework or acceptance_source is None
+                              else str(acceptance_source)),
         "falsework": falsework,
         "thickness": float(thickness),
         "density": float(density),
@@ -422,6 +435,7 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "column_heads": heads,
         "batch": int(batch),
         "steps": int(steps),
+        "note": None if note is None else str(note),
     }
     if runner is None:
         runner = _subprocess_runner(python_exe or CABLENET_PYTHON)

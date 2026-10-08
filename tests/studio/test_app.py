@@ -15,7 +15,7 @@ from conftest_data import tiny_contract
 REPO = Path(__file__).resolve().parents[2]
 
 
-def make_client(tmp_path, monkeypatch, runner=None):
+def make_client(tmp_path, monkeypatch, runner=None, cablenet_runner=None):
     import sys
 
     path = str(REPO / "bench" / "studio")
@@ -51,7 +51,7 @@ def make_client(tmp_path, monkeypatch, runner=None):
     if runner is None:
         runner = lambda request: {"converged": True, "message": ""}
     return TestClient(app_module.create_app(
-        runner=runner,
+        runner=runner, cablenet_runner=cablenet_runner,
         cra_runner=lambda request: {
             "stands": True, "status": "optimal", "message": "",
             "blocks": len(request["blocks"]), "interfaces": 1,
