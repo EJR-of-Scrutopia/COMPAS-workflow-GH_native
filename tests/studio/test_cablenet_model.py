@@ -123,6 +123,21 @@ out.sentHostile = m.demandSentences(hostile);
 const noted = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 noted.note = "the formwork document was not read.";
 out.sentNoted = m.demandSentences(noted);
+// The acceptance source as the engine records a catalogue rib, "falsework
+// <key>: <the entry as JSON>": the data sheet quotes it, the sentence names it.
+const ribbed = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+ribbed.acceptance_source = 'falsework glulam-rib-9000: {"depth": 400.0, "description": "glulam GL24h rib 9000 x 600, 400 x 90 deep", "e_modulus": 11600.0, "spacing": 600.0, "span": 9000.0, "width": 90.0}';
+out.sentRibbed = m.demandSentences(ribbed);
+out.sources = [
+  m.acceptanceSourceText(ribbed.acceptance_source),
+  m.acceptanceSourceText('falsework plywood-rib-2000: {"span": 2000.0}'),
+  m.acceptanceSourceText("falsework broken: {not json"),
+  m.acceptanceSourceText("the rib and its skin"),
+  m.acceptanceSourceText('falsework odd-rib: {"description": "a <b>rib</b> & more"}'),
+];
+const oddRib = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+oddRib.acceptance_source = 'falsework odd-rib: {"description": "a <b>rib</b> & more"}';
+out.sentOddRib = m.demandSentences(oddRib);
 const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 blank.note = "   ";
 out.sentBlankNote = m.demandSentences(blank);
@@ -423,6 +438,24 @@ def test_every_server_string_in_the_demand_is_escaped_and_the_note_is_its_own_se
     assert len(out["sentBlankNote"]) == 5, "a blank note says nothing"
     assert out["sentNone"][0].startswith("This study has no cable net demand yet")
     assert "an earlier analysis (bench.cablenet/1&lt;x&gt;)" in out["sentStale"][0]
+
+
+@needs_node
+def test_a_catalogue_rib_is_named_in_words_not_as_its_catalogue_entry(out):
+    # the engine records the rib as "falsework <key>: <entry as JSON>" so the data
+    # sheet can quote it verbatim; the panel's sentence names the rib and its words
+    assert out["sentRibbed"][1] == ("The acceptance line is 2.18 mm, from falsework "
+                                    "glulam-rib-9000 (glulam GL24h rib 9000 x 600, 400 x 90 deep).")
+    assert "{" not in " ".join(out["sentRibbed"])
+    assert out["sources"] == [
+        "falsework glulam-rib-9000 (glulam GL24h rib 9000 x 600, 400 x 90 deep)",
+        "falsework plywood-rib-2000",
+        "falsework broken: {not json",
+        "the rib and its skin",
+        "falsework odd-rib (a <b>rib</b> & more)",
+    ]
+    # the description is still the server's string, so the sentence escapes it
+    assert "from falsework odd-rib (a &lt;b&gt;rib&lt;/b&gt; &amp; more)." in out["sentOddRib"][1]
 
 
 @needs_node

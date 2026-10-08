@@ -222,6 +222,21 @@ function sentenceOf(text) {
   return /[.!?]$/.test(plain) ? plain : plain + ".";
 }
 
+// Where the acceptance line came from, in words. The engine records a
+// catalogue rib as "falsework <key>: <the catalogue entry as JSON>"
+// (solve_cablenet.resolve_acceptance) so the data sheet can quote it verbatim;
+// a sentence names the rib and its description instead. Any other source is
+// the study's own words, given as they are. Not escaped: the caller escapes.
+export function acceptanceSourceText(source) {
+  const text = String(source);
+  const match = /^falsework ([^:]+): (\{[\s\S]*\})$/.exec(text);
+  if (!match) return text;
+  let entry;
+  try { entry = JSON.parse(match[2]); } catch (error) { return text; }
+  const description = entry && typeof entry.description === "string" ? entry.description.trim() : "";
+  return "falsework " + match[1].trim() + (description ? " (" + description + ")" : "");
+}
+
 // The demand, in sentences. They carry <b> tags the model writes itself, so
 // every string the server supplied (the stage names, the acceptance source,
 // the run's note, the schema) is escaped here, and the caller sets the result
@@ -247,7 +262,7 @@ export function demandSentences(demand) {
   out.push(demand.acceptance == null
     ? "No acceptance line is set for this run, so sag has nothing to be judged against."
     : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
-      (demand.acceptance_source ? ", from " + esc(demand.acceptance_source) : "") + ".");
+      (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
   const courses = (demand.stages || []).filter((s) => !isFrame(s));
   const last = courses[courses.length - 1];
   if (last) {
