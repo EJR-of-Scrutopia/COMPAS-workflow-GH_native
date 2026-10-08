@@ -38,117 +38,25 @@ gearbox only; the blocks are covered by sheave_efficiency.
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import numpy as np
 
+from tree_forest_compas.mechanism import Capacity            # noqa: F401  re-exported
 from tree_forest_compas.mechanism import CapacityError
-from tree_forest_compas.mechanism import Mechanism
-from tree_forest_compas.mechanism import _mechanical_advantage
+from tree_forest_compas.mechanism import CurvePoint
+from tree_forest_compas.mechanism import Mechanism           # noqa: F401  re-exported
+from tree_forest_compas.mechanism import TensionCurve
 from tree_forest_compas.mechanism import _validate
-from tree_forest_compas.mechanism import ceiling_terms
-from tree_forest_compas.mechanism import spool_rope_mbl_of
+from tree_forest_compas.mechanism import capacity_from_curve  # noqa: F401  re-exported
+from tree_forest_compas.mechanism import ceiling_terms        # noqa: F401  re-exported
+from tree_forest_compas.mechanism import checks
 from tree_forest_compas.prescribed import PrescribedError
 from tree_forest_compas.prescribed import solve_prescribed_lengths
-
-
-class Capacity(NamedTuple):
-    """limit_factor is the last load factor that passed (a multiple of the
-    load pattern, not newtons). breaching_factor is the first factor that
-    failed, or None when nothing failed; the true limit lies between the two,
-    so a breaching_factor of max_factor / steps with limit_factor 0.0 means
-    "below one step", not "cannot carry anything". The binding names
-    "net went slack" and "numerical failure" are solver outcomes, not
-    constraints of the mechanism."""
-
-    limit_factor: float
-    breaching_factor: object
-    binding: str
-    detail: str
-    torque_margin: float
-    safety_factor: float
-    sheave_efficiency: float
-    steps: int
-    max_factor: float
-    units: str = "N, mm"            # torque is N mm, never N m
-
-
-class CurvePoint(NamedTuple):
-    """One rung of the load walk, with no mechanism in sight.
-
-    failure is None for a rung the solver answered; otherwise it is the binding
-    name capacity_of would have reported and detail is the solver's message.
-    worst_tension and deviation are None on a failed rung.
-    """
-
-    factor: float
-    worst_tension: object
-    deviation: object
-    failure: object = None
-    detail: str = ""
-
-
-class TensionCurve(NamedTuple):
-    """The net's response to load, independent of any mechanism."""
-
-    points: tuple
-    steps: int
-    max_factor: float
-    units: str = "N, mm"
 
 
 def _checks(mechanism, tensions, deviation, acceptance):
     """Return the name of the first constraint breached, or None."""
 
-    worst = float(np.max(tensions))
-    allowed_rope = float(mechanism.rope_mbl) / float(mechanism.safety_factor)
-    if worst > allowed_rope:
-        return "rope tension", (
-            "net cable: {:.6g} N against {:.6g} N allowed".format(worst, allowed_rope)
-        )
-    if worst > float(mechanism.anchor_wll):
-        return "anchor", "{:.6g} N against {:.6g} N working load".format(
-            worst, float(mechanism.anchor_wll)
-        )
-
-    lead = worst / _mechanical_advantage(
-        mechanism.reeve_factor, mechanism.sheave_efficiency
-    )
-    allowed_spool = float(spool_rope_mbl_of(mechanism)) / float(mechanism.safety_factor)
-    if lead > allowed_spool:
-        return "spool rope tension", (
-            "spool rope: {:.6g} N lead tension against {:.6g} N allowed".format(
-                lead, allowed_spool
-            )
-        )
-    if int(mechanism.reeve_factor) > 1 and mechanism.sheave_swl is not None:
-        on_sheave = worst * float(mechanism.reeve_factor) / _mechanical_advantage(
-            mechanism.reeve_factor, mechanism.sheave_efficiency
-        )
-        allowed_sheave = float(mechanism.sheave_swl)
-        if on_sheave > allowed_sheave:
-            return "sheave", (
-                "{:.6g} N on the moving block against {:.6g} N safe working "
-                "load".format(on_sheave, allowed_sheave)
-            )
-    drum_torque = lead * float(mechanism.drum_radius)
-    available = (
-        float(mechanism.motor_torque)
-        * float(mechanism.gear_ratio)
-        * float(mechanism.gear_efficiency)
-        * float(mechanism.torque_margin)
-    )
-    if drum_torque > available:
-        return "motor torque", "{:.6g} N mm needed against {:.6g} N mm".format(
-            drum_torque, available
-        )
-
-    if deviation > float(acceptance):
-        return "deviation", (
-            "{:.6g} mm of movement from the unloaded shape at these rest "
-            "lengths against {:.6g} mm allowed".format(deviation, float(acceptance))
-        )
-    return None, ""
+    return checks(mechanism, float(np.max(tensions)), deviation, acceptance)
 
 
 def tension_curve(problem, fixed, rest_lengths, ea, load_pattern,
@@ -200,46 +108,6 @@ def tension_curve(problem, fixed, rest_lengths, ea, load_pattern,
 
     points = rungs() if lazy else tuple(rungs())
     return TensionCurve(points, int(steps), float(max_factor))
-
-
-def capacity_from_curve(mechanism, curve, acceptance):
-    """Apply one mechanism's checks to a walk. No solving of its own.
-
-    curve.points may be a lazy generator (see tension_curve); it is consumed
-    in order and abandoned at the first breach."""
-
-    _validate(mechanism, curve.steps, curve.max_factor, acceptance)
-
-    def result(limit, breaching, binding, detail):
-        return Capacity(
-            limit_factor=limit,
-            breaching_factor=breaching,
-            binding=binding,
-            detail=detail,
-            torque_margin=float(mechanism.torque_margin),
-            safety_factor=float(mechanism.safety_factor),
-            sheave_efficiency=float(mechanism.sheave_efficiency),
-            steps=int(curve.steps),
-            max_factor=float(curve.max_factor),
-        )
-
-    last_good = 0.0
-    for point in curve.points:
-        if point.failure is not None:
-            return result(last_good, point.factor, point.failure, point.detail)
-        name, detail = _checks(
-            mechanism, np.array([point.worst_tension]), point.deviation, acceptance
-        )
-        if name is not None:
-            return result(last_good, point.factor, name, detail)
-        last_good = point.factor
-
-    return result(
-        last_good,
-        None,
-        "none",
-        "nothing bound up to {:.6g} times the load pattern".format(curve.max_factor),
-    )
 
 
 def capacity_of(
