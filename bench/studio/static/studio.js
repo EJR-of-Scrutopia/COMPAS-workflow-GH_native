@@ -173,8 +173,15 @@ const state = {
   cablenet: null,
   cablenetCeiling: null,
   cablenetGhost: false,
+  // Whether the demand fits the net on screen, worked out once per demand
+  // and bundle (demandFitsNet), and what the lenses last drew: the instant
+  // and the raised lenses, so a clock that has not left the instant does not
+  // repaint (paintCableNetLenses).
+  cablenetFit: null,
+  cablenetPainted: null,
   // The exact options the bundle on screen was fetched with, so the cable
   // net section asks for the demand under the same key the run wrote it to.
+  // The study's name rides with them (studyName in the section's mount).
   loadedOptions: null,
   showMode: "both",    // "framework" | "shell" | "both" chosen by the three buttons; "timeline" is what playing switches to on its own (see setShowMode)
   // Fixed 2026-09-04 (Param: "remove the formwork dropdown all together...
@@ -5453,12 +5460,15 @@ function netInstances(edgeCount, vertexCount) {
   // all leaves it null.
   if (wires.instanceColor) wires.instanceColor.needsUpdate = true;
   const nodeMaterial = materials.steel.clone();
-  // Per-instance colour on the nodes too, for the Sag lens: the same opt-in
-  // the wires make, every node white until a lens paints it.
-  nodeMaterial.vertexColors = true;
   nodeMaterial.transparent = true;
   const nodes = new THREE.InstancedMesh(
     new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
+  // Per-instance colour on the nodes too, for the Sag lens, every node white
+  // until a lens paints it. The instance colour reaches the fragment on its
+  // own (three 0.185 defines USE_INSTANCING_COLOR, and USE_COLOR in the
+  // fragment, from it alone). The material's vertexColors flag is left off:
+  // it would also multiply by a colour attribute this sphere does not have,
+  // whose generic value is black, so the nodes could draw black at rest.
   for (let i = 0; i < vertexCount; i++) nodes.setColorAt(i, white);
   if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true;
   // Born not casting: syncNetShadow at every visibility/opacity writer
@@ -9238,6 +9248,7 @@ function seekLiveGraphs(t) {
   applyTimeline(Math.max(0, Math.min(timelineDuration(), t)));
   scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   updateHud();
+  if (cableNetLensUp()) paintCableNetLenses();
   tickLiveGraphs(true);
 }
 
@@ -11466,6 +11477,10 @@ function layerAvailability(name) {
       return { on: false, why: "this demand document is from an earlier analysis; "
         + "run the cable net analysis again" };
     }
+    if (!demandFitsNet()) {
+      return { on: false,
+        why: "this demand is from an earlier geometry; run the cable net analysis again" };
+    }
     if (name === "prestress" && state.cablenetCeiling == null) {
       return { on: true, why: "no system scored yet: the tags show tension alone" };
     }
@@ -11518,7 +11533,7 @@ function buildLensButtons(holder, table, notes, alwaysShown) {
         // Each slider redraws its own lens: the wire girth is not a vector
         // field, and the cable net lenses repaint together.
         if (name === "forces") applyWireForces();
-        else if (CABLENET_LENS_NAMES.includes(name)) paintCableNetLenses();
+        else if (CABLENET_LENS_NAMES.includes(name)) paintCableNetLenses(true);
         else updateVectorLayers();
       });
       row.appendChild(caption);
@@ -11558,14 +11573,12 @@ function setLayer(name, on) {
   // vault without a fourth view button.
   const cableLens = CABLENET_LENS_NAMES.includes(name);
   state.cablenetGhost = cableNetLensUp();
-  if (["loads", "reactions", "thrust", "nodeforce", "reel", "prestress"].includes(name)) updateVectorLayers();
+  if (name === "loads" || name === "reactions" || name === "thrust") {
+    updateVectorLayers();
+  }
   if (EXCLUSIVE_LAYERS.includes(name)) {
     recolourSegments();
     applyWireForces();
-    applyCableNetPaint();
-    // Sag draws arrows as well as colours, and raising any of these puts it
-    // down, so the arrows are redrawn with the paint.
-    updateVectorLayers();
     // Wire forces ARE the net's lens, so raising it shows the bare net
     // (Param: "i cant see the wire forces becuase it doesnt change
     // geometry to formwork") and lowering it -- by its own button or by
@@ -11580,10 +11593,12 @@ function setLayer(name, on) {
       applyShowMode();
     }
   }
+  // Any lens can change what the cable net lenses draw (a painter puts Wire
+  // tension or Sag down, and Sag draws arrows as well as colours), so they
+  // repaint, colours, arrows and stage line, whichever button was pressed:
+  // after applyWireForces above, which gives the wires back first.
+  paintCableNetLenses(true);
   if (cableLens) applyShowMode();
-  // Any painting lens can put Wire tension or Sag down, so the stage line is
-  // said again whichever button was pressed.
-  paintCableNetStageLine();
   buildLayerToggles();
   updateHud();
 }
@@ -11926,11 +11941,24 @@ function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage)
 }
 
 // ---------- vector layers ----------
+// An arrow field owns what arrowField built for it (a cone, an instanced
+// head set and a line set, each with its own material), and three keeps
+// their GPU buffers until they are disposed, so a field taken off the
+// scene is freed with it. Every lens repaint replaces its fields.
+function disposeArrowField(key) {
+  const field = state.objects[key];
+  if (!field) return;
+  scene.remove(field);
+  field.traverse((object) => {
+    if (object.geometry) object.geometry.dispose();
+    if (object.material) object.material.dispose();
+    if (object.isInstancedMesh) object.dispose();
+  });
+  state.objects[key] = null;
+}
+
 function updateVectorLayers() {
-  for (const key of ["loadArrows", "reactionArrows", "thrustArrows", "nodeforceArrows",
-                     "sagArrows", "reelArrows", "prestressArrows"]) {
-    if (state.objects[key]) { scene.remove(state.objects[key]); state.objects[key] = null; }
-  }
+  for (const key of ["loadArrows", "reactionArrows", "thrustArrows"]) disposeArrowField(key);
   if (!state.bundle) return;
   const bundle = state.bundle;
   if (state.layers.loads) {
@@ -11975,90 +12003,7 @@ function updateVectorLayers() {
     state.objects.thrustArrows = group;
     scene.add(group);
   }
-  // The cable net's vector lenses, every entry read from the demand document
-  // at the instant the timeline is at. Ids are contract node ids, which is
-  // what arrowField indexes analysis_mesh with.
-  const stage = cableNetLensUp() ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
-  if (!stage) return;
-  const demand = state.cablenet;
-  const vertices = bundle.analysis_mesh.vertices;
-  const held = demand.held || {};
-  const wireDirection = (wire) => {
-    const at = vertices[wire.net_vertex];
-    const drum = wire.frame_point.map((c) => c / 1000);
-    const d = [drum[0] - at[0], drum[1] - at[1], drum[2] - at[2]];
-    const length = Math.hypot(d[0], d[1], d[2]) || 1;
-    return d.map((c) => c / length);
-  };
-  if (state.layers.nodeforce && Array.isArray(stage.node_residual)) {
-    // A balanced node has no direction to draw, as a reel that did not turn
-    // has none below: arrowField would stand a zero vector straight down.
-    const entries = [];
-    stage.node_residual.forEach((vector, id) => {
-      if (vector && Math.hypot(vector[0], vector[1], vector[2])) entries.push([String(id), vector]);
-    });
-    state.objects.nodeforceArrows = arrowField(entries, 0xd97a4a, "tail",
-      state.analysisSliders.nodeforceScale);
-    scene.add(state.objects.nodeforceArrows);
-  }
-  if (state.layers.sag && Array.isArray(stage.node_sag) && demand.acceptance != null) {
-    const entries = [];
-    stage.node_sag.forEach((vector, id) => {
-      if (vector && sagBand(stage.node_sag_mm[id], Number(demand.acceptance)) === "over") {
-        entries.push([String(id), vector]);
-      }
-    });
-    if (entries.length) {
-      state.objects.sagArrows = arrowField(entries, 0xc24936, "tail", state.analysisSliders.sagScale);
-      scene.add(state.objects.sagArrows);
-    }
-  }
-  if (state.layers.reel && Array.isArray(demand.wires)) {
-    const paysOut = [], takesIn = [], travel = [];
-    let magnitudeMax = 1e-9;
-    demand.wires.forEach((wire, i) => {
-      const reel = Number((stage.wire_reel_commands || [])[i]) || 0;
-      if (!reel) return;
-      const direction = wireDirection(wire);
-      const vector = direction.map((c) => c * Math.abs(reel));
-      magnitudeMax = Math.max(magnitudeMax, Math.abs(reel));
-      (reel > 0 ? paysOut : takesIn).push([String(wire.net_vertex), vector]);
-    });
-    (held.actuators || []).forEach((id, k) => {
-      const vector = (stage.actuator_travel || [])[k];
-      if (!vector) return;
-      const size = Math.hypot(vector[0], vector[1], vector[2]);
-      if (!size) return;
-      magnitudeMax = Math.max(magnitudeMax, size);
-      travel.push([String(id), vector]);
-    });
-    const group = new THREE.Group();
-    for (const [rows, colour] of [[paysOut, 0xc99a2e], [takesIn, 0x66aaff], [travel, 0x4069fd]]) {
-      if (rows.length) group.add(arrowField(rows, colour, "tail", state.analysisSliders.reelScale, magnitudeMax));
-    }
-    state.objects.reelArrows = group;
-    scene.add(group);
-  }
-  if (state.layers.prestress && Array.isArray(demand.wires)) {
-    const ceiling = state.cablenetCeiling;
-    const buckets = { within: [], near: [], over: [], plain: [] };
-    let magnitudeMax = 1e-9;
-    demand.wires.forEach((wire, i) => {
-      const tension = Number((stage.wire_tensions || [])[i]) || 0;
-      magnitudeMax = Math.max(magnitudeMax, tension);
-      const vector = wireDirection(wire).map((c) => c * tension);
-      const bucket = ceiling == null ? "plain"
-        : tension > ceiling ? "over" : tension > 0.6 * ceiling ? "near" : "within";
-      buckets[bucket].push([String(wire.net_vertex), vector]);
-    });
-    const group = new THREE.Group();
-    for (const [rows, colour] of [[buckets.within, 0x3f9e57], [buckets.near, 0xc99a2e],
-        [buckets.over, 0xc24936], [buckets.plain, 0x9aa4b2]]) {
-      if (rows.length) group.add(arrowField(rows, colour, "tail", state.analysisSliders.prestressScale, magnitudeMax));
-    }
-    state.objects.prestressArrows = group;
-    scene.add(group);
-  }
+  updateCableNetVectors();
 }
 
 function arrowField(entries, colour, anchor, lengthScale = 1,
@@ -12128,6 +12073,39 @@ function cableNetLensUp() {
   return CABLENET_LENS_NAMES.some((name) => state.layers[name] && layerAvailability(name).on);
 }
 
+// Whether the demand was written for the net on screen: every per-node array
+// as long as analysis_mesh has vertices, every member array as long as it has
+// edges, every wire and grabbed node on a vertex it has. A study re-imported
+// with another net still has the old document under the same key, and a node
+// past the mesh would throw where an arrow is drawn, so this is asked, not
+// assumed. Worked out once per demand and bundle, and it never throws: a
+// document it cannot read does not fit.
+function demandFitsNet() {
+  const demand = state.cablenet, bundle = state.bundle;
+  if (!demand || !bundle) return false;
+  const memo = state.cablenetFit;
+  if (memo && memo.demand === demand && memo.bundle === bundle) return memo.fits;
+  let fits = false;
+  try {
+    const vertexCount = bundle.analysis_mesh.vertices.length;
+    const edgeCount = bundle.analysis_mesh.edges.length;
+    // an array a stage does not carry draws nothing; one it carries must fit
+    const sized = (list, count) => list == null || (Array.isArray(list) && list.length === count);
+    const onNet = (id) => Number.isInteger(id) && id >= 0 && id < vertexCount;
+    fits = Array.isArray(demand.stages)
+      && demand.stages.every((stage) => sized(stage.node_residual, vertexCount)
+        && sized(stage.node_sag, vertexCount) && sized(stage.node_sag_mm, vertexCount)
+        && sized(stage.member_tensions, edgeCount))
+      && (demand.wires || []).every((wire) => onNet(wire.net_vertex)
+        && Array.isArray(wire.frame_point) && wire.frame_point.length === 3)
+      && ((demand.held || {}).actuators || []).every(onNet);
+  } catch (error) {
+    fits = false;
+  }
+  state.cablenetFit = { demand, bundle, fits };
+  return fits;
+}
+
 // Which computed instant the timeline is at: the nearest sampled frame during
 // the formwork act, the course during the build, clamped at both ends. The
 // rule itself is instantAt in cablenet_model.js, tested under node; this only
@@ -12150,9 +12128,19 @@ function paintCableNetStageLine() {
   line.textContent = stage ? stageCaption(stage) + " Drawn on the finished net." : "";
 }
 
-function paintCableNetLenses() {
+// The lenses are drawn for one instant and one set of raised lenses. The
+// clock (the scrubber, a take, Stop, the rewind, a seek) asks often and
+// moves between instants rarely, so it repaints only when the instant or
+// the lenses differ from what was last drawn. Anything else that changes
+// the picture (a lens pressed, a dial, a new demand, a new ceiling) forces.
+function paintCableNetLenses(force = false) {
+  const stage = cableNetLensUp() ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
+  const drawn = (stage ? stage.name : "") + "|"
+    + CABLENET_LENS_NAMES.filter((name) => state.layers[name]).join(",");
+  if (!force && drawn === state.cablenetPainted) return;
+  state.cablenetPainted = drawn;
   applyCableNetPaint();
-  updateVectorLayers();
+  updateCableNetVectors();
   paintCableNetStageLine();
 }
 
@@ -12208,9 +12196,13 @@ function paintScalarLegend(title, low, zero, high) {
 function applyCableNetPaint() {
   const wires = state.objects.wires, nodes = state.objects.nodes;
   if (!wires || !nodes || !wires.userData.baseMatrices || !state.bundle) return;
-  const stage = cablenetStageAt(state.timeline ? state.timeline.t : 0);
-  const tensionOn = !!(state.layers.tension && layerAvailability("tension").on && stage);
-  const sagOn = !!(state.layers.sag && layerAvailability("sag").on && stage);
+  // The instant is read only for a painter that can draw: a document that
+  // does not fit the net (demandFitsNet) is never walked, so it cannot throw.
+  const tensionUp = !!(state.layers.tension && layerAvailability("tension").on);
+  const sagUp = !!(state.layers.sag && layerAvailability("sag").on);
+  const stage = tensionUp || sagUp ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
+  const tensionOn = tensionUp && !!stage;
+  const sagOn = sagUp && !!stage;
   if (!tensionOn && !sagOn) {
     resetNodeColours();
     if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
@@ -12252,6 +12244,103 @@ function applyCableNetPaint() {
       : "sag, mm (red past the " + acceptance.toFixed(2) + " mm line)", "0", "", worst.toFixed(1));
   }
   wires.instanceColor.needsUpdate = true;
+}
+
+// The cable net's vector lenses, every entry read from the demand document
+// at the instant the timeline is at. Ids are contract node ids, which is
+// what arrowField indexes analysis_mesh with. Drawn apart from Load,
+// Reaction and Thrust, so a repaint at a new instant leaves those alone.
+function updateCableNetVectors() {
+  for (const key of ["nodeforceArrows", "sagArrows", "reelArrows", "prestressArrows"]) {
+    disposeArrowField(key);
+  }
+  if (!state.bundle) return;
+  const bundle = state.bundle;
+  const stage = cableNetLensUp() ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
+  if (!stage) return;
+  const demand = state.cablenet;
+  const vertices = bundle.analysis_mesh.vertices;
+  const held = demand.held || {};
+  const wireDirection = (wire) => {
+    const at = vertices[wire.net_vertex];
+    const drum = wire.frame_point.map((c) => c / 1000);
+    const d = [drum[0] - at[0], drum[1] - at[1], drum[2] - at[2]];
+    const length = Math.hypot(d[0], d[1], d[2]) || 1;
+    return d.map((c) => c / length);
+  };
+  if (state.layers.nodeforce && Array.isArray(stage.node_residual)) {
+    // A balanced node has no direction to draw, as a reel that did not turn
+    // has none below: arrowField would stand a zero vector straight down.
+    const entries = [];
+    stage.node_residual.forEach((vector, id) => {
+      if (vector && Math.hypot(vector[0], vector[1], vector[2])) entries.push([String(id), vector]);
+    });
+    state.objects.nodeforceArrows = arrowField(entries, 0xd97a4a, "tail",
+      state.analysisSliders.nodeforceScale);
+    scene.add(state.objects.nodeforceArrows);
+  }
+  if (state.layers.sag && Array.isArray(stage.node_sag) && Array.isArray(stage.node_sag_mm)
+      && demand.acceptance != null) {
+    const entries = [];
+    stage.node_sag.forEach((vector, id) => {
+      if (vector && sagBand(stage.node_sag_mm[id], Number(demand.acceptance)) === "over") {
+        entries.push([String(id), vector]);
+      }
+    });
+    if (entries.length) {
+      state.objects.sagArrows = arrowField(entries, 0xc24936, "tail", state.analysisSliders.sagScale);
+      scene.add(state.objects.sagArrows);
+    }
+  }
+  if (state.layers.reel && Array.isArray(demand.wires)) {
+    const paysOut = [], takesIn = [], travel = [];
+    let magnitudeMax = 1e-9;
+    demand.wires.forEach((wire, i) => {
+      const reel = Number((stage.wire_reel_commands || [])[i]) || 0;
+      if (!reel) return;
+      const direction = wireDirection(wire);
+      const vector = direction.map((c) => c * Math.abs(reel));
+      magnitudeMax = Math.max(magnitudeMax, Math.abs(reel));
+      (reel > 0 ? paysOut : takesIn).push([String(wire.net_vertex), vector]);
+    });
+    (held.actuators || []).forEach((id, k) => {
+      const vector = (stage.actuator_travel || [])[k];
+      if (!vector) return;
+      const size = Math.hypot(vector[0], vector[1], vector[2]);
+      if (!size) return;
+      magnitudeMax = Math.max(magnitudeMax, size);
+      travel.push([String(id), vector]);
+    });
+    const group = new THREE.Group();
+    for (const [rows, colour] of [[paysOut, 0xc99a2e], [takesIn, 0x66aaff], [travel, 0x4069fd]]) {
+      if (rows.length) group.add(arrowField(rows, colour, "tail", state.analysisSliders.reelScale, magnitudeMax));
+    }
+    state.objects.reelArrows = group;
+    scene.add(group);
+  }
+  if (state.layers.prestress && Array.isArray(demand.wires)) {
+    const ceiling = state.cablenetCeiling;
+    const buckets = { within: [], near: [], over: [], plain: [] };
+    let magnitudeMax = 1e-9;
+    demand.wires.forEach((wire, i) => {
+      const tension = Number((stage.wire_tensions || [])[i]) || 0;
+      // A slack wire, or one the instant does not record, has nothing to
+      // draw: arrowField would stand its zero vector straight down.
+      if (!tension) return;
+      magnitudeMax = Math.max(magnitudeMax, tension);
+      const vector = wireDirection(wire).map((c) => c * tension);
+      const bucket = ceiling == null ? "plain"
+        : tension > ceiling ? "over" : tension > 0.6 * ceiling ? "near" : "within";
+      buckets[bucket].push([String(wire.net_vertex), vector]);
+    });
+    const group = new THREE.Group();
+    for (const [rows, colour] of [[buckets.within, 0x3f9e57], [buckets.near, 0xc99a2e],
+        [buckets.over, 0xc24936], [buckets.plain, 0x9aa4b2]]) {
+      if (rows.length) group.add(arrowField(rows, colour, "tail", state.analysisSliders.prestressScale, magnitudeMax));
+    }
+    state.objects.prestressArrows = group;
+    scene.add(group);
+  }
 }
 
 // ---------- the build stage index ----------
@@ -12979,8 +13068,8 @@ async function loadStudy(exportName) {
   // load wins they are state.loadedOptions, the key the cable net section
   // reads its demand under. The state cannot be asked afterwards: applyCut
   // adopts the bundle's own size, pattern and source.
-  const fetchedWith = { material, pattern: state.pattern, size: state.size,
-    thickness: state.thickness, density: null, source: null };
+  const fetchedWith = { study: exportName, material, pattern: state.pattern,
+    size: state.size, thickness: state.thickness, density: null, source: null };
   // The vault is weighed as what it WEARS, not as the class it is cut
   // like (Param: "if i am picking a copper say, we need to use that
   // material density in the calculations"). Sent only when a skin
@@ -13077,6 +13166,10 @@ async function loadStudy(exportName) {
       const row = document.getElementById("source-row");
       if (row) row.classList.add("hidden");
     }
+    // The cable net section let go when this load began. The study still on
+    // screen is the one state.loadedOptions names (a refused load never
+    // adopted its own), so the section reads that study's demand again.
+    if (state.bundle) cableNet.reload();
   }
   return loaded;
 }
@@ -15595,11 +15688,24 @@ for (const button of document.querySelectorAll("#data-tabs button")) {
 // is open (the section loads its catalogue at mount), so the lenses paint
 // only once there is a scene to paint on.
 function cablenetStudyOptions() {
-  return state.bundle ? state.loadedOptions : null;
+  if (!state.bundle || !state.loadedOptions) return null;
+  // The study's name rides with the options for studyName below; the
+  // server is sent the cut's own keys.
+  const { study, ...options } = state.loadedOptions;
+  return options;
+}
+
+// The study the bundle on screen belongs to, which the select may no longer
+// name (a load that was refused, or one still on its way): the section must
+// run and read the study it is drawn on. The select only before any study
+// has loaded.
+function cablenetStudyName() {
+  return state.bundle && state.loadedOptions ? state.loadedOptions.study
+    : document.getElementById("study-select").value;
 }
 
 const cableNet = mountCableNet({
-  studyName: () => document.getElementById("study-select").value,
+  studyName: cablenetStudyName,
   studyOptions: cablenetStudyOptions,
   onDemand: (demand) => {
     state.cablenet = demand;
@@ -15609,12 +15715,12 @@ const cableNet = mountCableNet({
     // The wires go back to rest first, as setLayer has them, so a painter
     // the new document cannot feed leaves nothing of the old one behind.
     applyWireForces();
-    paintCableNetLenses();
+    paintCableNetLenses(true);
     applyShowMode();
   },
   onCeiling: (ceiling) => {
     state.cablenetCeiling = ceiling;
-    if (state.layers.prestress && state.bundle && state.objects.wires) updateVectorLayers();
+    if (state.layers.prestress && state.bundle && state.objects.wires) paintCableNetLenses(true);
     buildLayerToggles();
   },
 });
@@ -18120,6 +18226,9 @@ async function recordAnimation() {
       // The take's own clock, so the same take blows the same way twice.
       windAir.windTime.value = frameIndex / fps;
       applyTimeline(frameIndex * speed / fps);
+      // A lens up is in the picture, so it follows the take's clock; it
+      // repaints only when the take reaches another computed instant.
+      if (cableNetLensUp()) paintCableNetLenses();
       renderView();
       spent.render += performance.now() - at;
       at = performance.now();
@@ -18370,6 +18479,7 @@ function stopTake() {
   controls.update();
   // The scrubber reads the clock, and nothing else has told it.
   updateHud();
+  if (cableNetLensUp()) paintCableNetLenses();
   logStudio("stopped: the scene is back as it stood before the take");
 }
 
@@ -18428,6 +18538,7 @@ function rewindTake() {
   paintPlayButtons("Play");
   applyTimeline(0);
   updateHud();
+  if (cableNetLensUp()) paintCableNetLenses();
   logStudio("back to the start of the take, paused");
 }
 
@@ -18806,7 +18917,12 @@ function frame(now) {
     // best not repeated every single frame, so it runs at a throttled
     // cadence instead of unthrottled per frame.
     playingFrameCount += 1;
-    if (playingFrameCount % 15 === 0) updateHud();
+    if (playingFrameCount % 15 === 0) {
+      updateHud();
+      // The lenses follow the take as the HUD does, and repaint only when
+      // the take reaches another computed instant.
+      if (cableNetLensUp()) paintCableNetLenses();
+    }
   }
   // The fixture's own card rides its fixture across the screen, and
   // closes itself if the fixture has gone (a delete, a scene, a

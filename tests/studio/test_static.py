@@ -4660,10 +4660,14 @@ def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
     paint = _function_body(js, "applyCableNetPaint")
     for key in ("member_tensions", "node_sag_mm", "setColorAt", "sagBand("):
         assert key in paint, key
-    vectors = _function_body(js, "updateVectorLayers")
+    # Re-pinned in review: the cable net arrows are drawn by a function of
+    # their own, which updateVectorLayers calls, so the clock repaints them
+    # without rebuilding Load, Reaction and Thrust.
+    vectors = _function_body(js, "updateCableNetVectors")
     for key in ("node_residual", "node_sag", "actuator_travel", "wire_reel_commands",
                 "wire_tensions", "cablenetStageAt(", "state.cablenetCeiling"):
         assert key in vectors, key
+    assert "updateCableNetVectors();" in _function_body(js, "updateVectorLayers")
     scrub = js[js.index('scrubber.addEventListener("input"'):]
     scrub = scrub[:scrub.index("\n});")]
     assert "paintCableNetLenses()" in scrub
@@ -4674,7 +4678,12 @@ def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
 
 def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "nodeMaterial.vertexColors = true" in _function_body(js, "netInstances")
+    # Inverted in review: instanceColor alone reaches the fragment in three
+    # 0.185, and the vertexColors flag on a sphere with no colour attribute
+    # multiplies by a missing one, which can draw the nodes black at rest.
+    instances = _function_body(js, "netInstances")
+    assert "nodeMaterial.vertexColors" not in instances
+    assert "nodes.setColorAt(i, white)" in instances
     options = _function_body(js, "cablenetStudyOptions")
     assert "state.loadedOptions" in options
     assert "state.loadedOptions = " in js
@@ -4700,10 +4709,13 @@ def test_a_lens_that_cannot_draw_does_not_ghost_and_an_unchanged_ghost_costs_not
 def test_a_painter_put_down_takes_its_arrows_key_and_caption_with_it():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     layer = _function_body(js, "setLayer")
-    branch = layer[layer.index("if (EXCLUSIVE_LAYERS.includes(name)) {"):]
-    assert branch.index("applyCableNetPaint();") < branch.index("updateVectorLayers();") < branch.index(
-        'if (name === "forces" && on)'), "Sag draws arrows, and any painter puts it down"
-    assert "\n  paintCableNetStageLine();" in layer, "the caption is said again on every press"
+    # every press repaints colours, arrows and caption, after the force lens
+    # has given the wires back: Sag draws arrows, and any painter puts it down
+    assert "\n  paintCableNetLenses(true);" in layer
+    assert layer.index("applyWireForces();") < layer.index("paintCableNetLenses(true);")
+    repaint = _function_body(js, "paintCableNetLenses")
+    for call in ("applyCableNetPaint();", "updateCableNetVectors();", "paintCableNetStageLine();"):
+        assert call in repaint, call
     legend = _function_body(js, "updateLegend")
     assert 'if (!state.layers.tension && !state.layers.sag) legend.classList.add("hidden");' in legend
     assert 'legend.classList.add("deflection");' in _function_body(js, "paintScalarLegend"), (
@@ -4722,3 +4734,73 @@ def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_w
     assert won < load.index("state.loadedOptions = fetchedWith;") < load.index("buildScene(fresh, preserve);")
     assert load.index("buildScene(fresh, preserve);") < load.index("cableNet.reload();")
     assert load.index("cableNet.clear();") < load.index("let url =")
+    # the study's name rides with them, so the section runs and reads the
+    # study on screen whatever the select says by then
+    assert "study: exportName" in load[load.index("const fetchedWith = {"):][:120]
+    assert "state.loadedOptions.study" in _function_body(js, "cablenetStudyName")
+    assert "studyName: cablenetStudyName," in js
+    assert "const { study, ...options } = state.loadedOptions;" in _function_body(js, "cablenetStudyOptions")
+    # a refused load: the section describes the study still on screen again
+    refused = load[load.index("} catch (error) {"):]
+    assert refused.index("if (sequence !== state.loadSequence) return;") < refused.index(
+        "if (state.bundle) cableNet.reload();")
+
+
+def test_a_lens_repaint_frees_what_it_replaces_and_waits_for_another_instant():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # what is taken off the scene is freed: three keeps the buffers otherwise
+    free = _function_body(js, "disposeArrowField")
+    for call in ("scene.remove(field)", "geometry.dispose()", "material.dispose()",
+                 "isInstancedMesh) object.dispose()"):
+        assert call in free, call
+    vectors = _function_body(js, "updateVectorLayers")
+    assert "disposeArrowField(key)" in vectors
+    assert "scene.remove(state.objects[key])" not in vectors
+    assert "node_residual" not in vectors, "the cable net arrows are drawn apart"
+    assert "disposeArrowField(key)" in _function_body(js, "updateCableNetVectors")
+    # the clock repaints only at another instant; everything else forces
+    repaint = _function_body(js, "paintCableNetLenses")
+    assert "(stage ? stage.name : \"\")" in repaint
+    assert "if (!force && drawn === state.cablenetPainted) return;" in repaint
+    assert "paintCableNetLenses(true)" in _function_body(js, "buildLensButtons"), "a dial"
+    mount = js[js.index("const cableNet = mountCableNet({"):]
+    mount = mount[:mount.index("\n});")]
+    assert mount.count("paintCableNetLenses(true)") == 2, "a new demand and a new ceiling"
+    # every clock asks: the scrubber, a take (on the HUD's throttle), Stop,
+    # the rewind, a seek from the live graphs, and a recorded take
+    for name in ("stopTake", "rewindTake", "seekLiveGraphs"):
+        assert "if (cableNetLensUp()) paintCableNetLenses();" in _function_body(js, name), name
+    frame = js[js.index("function frame(now)"):]
+    frame = frame[:frame.index("\n}")]
+    throttled = frame[frame.index("if (playingFrameCount % 15 === 0) {"):]
+    assert "if (cableNetLensUp()) paintCableNetLenses();" in throttled[:throttled.index("    }")]
+    take = js[js.index("async function recordAnimation()"):]
+    take = take[:take.index("\n}")]
+    assert take.index("applyTimeline(frameIndex * speed / fps);") < take.index(
+        "if (cableNetLensUp()) paintCableNetLenses();") < take.index("renderView();")
+
+
+def test_a_demand_for_another_net_or_a_slack_wire_draws_nothing():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    availability = _function_body(js, "layerAvailability")
+    assert "this demand is from an earlier geometry; run the cable net analysis again" in availability
+    assert availability.index('"bench.cablenet/2"') < availability.index("demandFitsNet()")
+    fits = _function_body(js, "demandFitsNet")
+    for key in ("analysis_mesh.vertices.length", "analysis_mesh.edges.length", "node_residual",
+                "node_sag,", "node_sag_mm", "member_tensions", "net_vertex", "actuators",
+                "state.cablenetFit", "try {", "} catch (error) {"):
+        assert key in fits, key
+    assert "if (!tension) return;" in _function_body(js, "updateCableNetVectors"), (
+        "a slack wire is not a 0.4 m arrow straight down")
+    # the instant is read only for a lens that can draw, so a document that
+    # does not fit is never walked (found in the browser: a null stage threw)
+    calls = [line for line in js.splitlines() if "cablenetStageAt(" in line
+             and "function cablenetStageAt(" not in line and not line.strip().startswith("//")]
+    assert len(calls) == 4 and all(" ? cablenetStageAt(" in line for line in calls), calls
+
+
+def test_a_disabled_panel_button_looks_disabled():
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    rule = "#panel button:disabled { color: var(--ink-3); cursor: default; border-color: var(--line); }"
+    assert rule in css
+    assert css.index("#panel button:hover") < css.index(rule), "after :hover, which weighs the same"

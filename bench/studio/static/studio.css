@@ -151,6 +151,10 @@ body { overflow: hidden;
 #panel button { text-align: center; }
 #panel button:hover, #panel select:hover { border-color: var(--line-lit);
          cursor: pointer; }
+/* A disabled button looks it, not only says so in its title: the explicit
+   ink above overrides the browser's own greying. After :hover, which has
+   the same weight, so a disabled button's edge does not light either. */
+#panel button:disabled { color: var(--ink-3); cursor: default; border-color: var(--line); }
 #panel button:focus-visible, #panel select:focus-visible,
 #panel input:focus-visible { outline: 2px solid var(--accent);
          outline-offset: 1px; }
