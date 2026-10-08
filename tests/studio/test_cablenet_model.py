@@ -148,6 +148,30 @@ out.floors = [
 out.wound = [
   m.ropeWound({ stages: [{ wire_reel_commands: [10, -5] }, { wire_reel_commands: [-20, 5] }] }),
   m.ropeWound({ stages: [] }) ];
+
+// The rope the analysis ran for against the rope chosen here: exports._rope_mismatch's
+// test, said in the panel's words. Empty whenever there is nothing to compare.
+const ropeParts = { rope: { "rope-4mm": { ea_newtons: 450000 }, "rope-5mm": { ea_newtons: 700000 },
+  "rope-6mm": { ea_newtons: 1010000 } } };
+const analysedWith = (ea) => ({ schema: "bench.cablenet/2", ea_newtons: ea });
+out.ropeSame = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-4mm" });
+out.ropeInside = m.ropeMismatch(ropeParts, analysedWith(450000.4), { rope: "rope-4mm" });
+out.ropeOutside = m.ropeMismatch(ropeParts, analysedWith(450000.5), { rope: "rope-4mm" });
+out.ropeOther = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-6mm" });
+out.ropeNoDemand = m.ropeMismatch(ropeParts, null, { rope: "rope-6mm" });
+out.ropeNoEa = m.ropeMismatch(ropeParts, { schema: "bench.cablenet/2" }, { rope: "rope-6mm" });
+out.ropeUnknown = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-9mm" });
+out.ropeNoParts = m.ropeMismatch(null, analysedWith(450000), { rope: "rope-6mm" });
+out.ropeNoConfiguration = m.ropeMismatch(ropeParts, analysedWith(450000), null);
+out.ropeHostile = m.ropeMismatch({ rope: { "<i>x</i>": { ea_newtons: 700000 } } }, analysedWith(450000), { rope: "<i>x</i>" });
+
+// The dial against the prestress the analysis on screen was run with.
+out.noteSame = m.prestressNote({ prestress: 300 }, 300);
+out.noteDiffers = m.prestressNote({ prestress: 300 }, 500);
+out.noteFraction = m.prestressNote({ prestress: 275.5 }, 300);
+out.noteNoDemand = m.prestressNote(null, 500);
+out.noteNoRecord = [m.prestressNote({}, 500), m.prestressNote({ prestress: null }, 500)];
+out.noteNotANumber = [m.prestressNote({ prestress: "soft" }, 500), m.prestressNote({ prestress: 300 }, NaN)];
 console.log(JSON.stringify(out));
 """
 
@@ -353,6 +377,44 @@ def test_an_actuator_that_pulls_harder_than_any_wire_leaves_the_floor_to_the_wir
     assert not any("grabbed nodes need" in s for s in out["sentPullAbsent"])
 
 
+ROPE_SENTENCE = (
+    "<b>The chosen rope is not the rope that was analysed.</b> The analysis used EA {} N; {} is EA {} N. "
+    "The ceiling below is for the chosen rope. The prestress floor, the residuals and the cut lengths "
+    "are for the analysed rope and do not describe this one.")
+
+
+@needs_node
+def test_a_rope_that_is_not_the_analysed_one_is_said_and_only_then(out):
+    assert out["ropeOther"] == ROPE_SENTENCE.format("450000.0", "rope-6mm", "1010000.0")
+    assert out["ropeOther"].count("<b>") == out["ropeOther"].count("</b>") == 1
+    # a millionth of the larger stiffness is the tolerance, as in the documents
+    assert out["ropeSame"] == "" and out["ropeInside"] == ""
+    assert out["ropeOutside"].startswith(
+        "<b>The chosen rope is not the rope that was analysed.</b> "
+        "The analysis used EA 450000.5 N; rope-4mm is EA 450000.0 N.")
+    # nothing to compare: no demand, no stiffness in it, a rope the catalogue lacks,
+    # no catalogue, no system chosen
+    for name in ("ropeNoDemand", "ropeNoEa", "ropeUnknown", "ropeNoParts", "ropeNoConfiguration"):
+        assert out[name] == "", name
+    # the rope's key is the server's string
+    assert "<i>" not in out["ropeHostile"]
+    assert "&lt;i&gt;x&lt;/i&gt; is EA 700000.0 N" in out["ropeHostile"]
+
+
+@needs_node
+def test_the_prestress_note_is_said_only_when_the_dial_has_left_the_analysis(out):
+    assert out["noteSame"] == ""
+    assert out["noteDiffers"] == (
+        "The analysis on screen used a prestress of <b>300.0 N</b>; the dial reads 500.0 N. "
+        "Run again to use the dial's value.")
+    assert out["noteFraction"].startswith(
+        "The analysis on screen used a prestress of <b>275.5 N</b>; the dial reads 300.0 N.")
+    # nothing recorded, or nothing that can be compared: nothing is said
+    assert out["noteNoDemand"] == ""
+    assert out["noteNoRecord"] == ["", ""]
+    assert out["noteNotANumber"] == ["", ""]
+
+
 # The panel and the documents say the load factor and the grab in the same
 # words. The two runtimes share no code, so this puts the Python sentences
 # beside the JavaScript ones over every branch they have.
@@ -434,3 +496,50 @@ def test_the_panel_says_the_load_factor_and_the_grab_as_the_documents_do(tmp_pat
         model = {"placement": case["placement"], "held": case["held"],
                  "sag": {"acceptance_mm": case["line"]}}
         assert said == exports.grab_sentence(model), case
+
+
+ROPE_PARITY = """
+import * as m from %(module)r;
+import { readFileSync } from "node:fs";
+const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
+console.log(JSON.stringify(cases.map((c) => m.ropeMismatch(c.parts, c.demand, c.configuration))));
+"""
+
+
+@needs_node
+def test_the_panel_warns_about_the_rope_in_the_cases_the_documents_do(tmp_path):
+    studio = str(STATIC.parent)
+    if studio not in sys.path:
+        sys.path.insert(0, studio)
+    exports = pytest.importorskip("exports")
+    catalogue = pytest.importorskip("catalogue")
+    parts = {"rope": catalogue.load_parts()["rope"]}
+    keys = list(parts["rope"])
+    stiffness = [parts["rope"][key]["ea_newtons"] for key in keys]
+    first = stiffness[0]
+    # each rope's own stiffness, a millionth either side of the tolerance, none at all,
+    # zero, a string and a boolean (which is not a number to either runtime)
+    analysed = stiffness + [first * (1 + 5e-7), first * (1 + 2e-6), first * (1 - 2e-6),
+                            None, 0, "450000", True]
+    cases = [{"parts": parts, "demand": {"ea_newtons": ea}, "configuration": {"rope": key}}
+             for key in keys + ["rope-nope"] for ea in analysed]
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps(cases), encoding="utf-8")
+    script = tmp_path / "ropes.mjs"
+    module = (STATIC / "cablenet_model.js").resolve().as_uri()
+    script.write_text(ROPE_PARITY % {"module": module, "cases": str(path)}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    said = json.loads(result.stdout)
+
+    warned = 0
+    for case, sentence in zip(cases, said):
+        document = exports._rope_mismatch(parts, case["demand"], case["configuration"])
+        assert bool(sentence) == (document is not None), case
+        if document is not None:
+            warned += 1
+            # the same figures, to the same decimal, and the same rope named
+            assert exports._newtons(document["analysed_ea_newtons"]) in sentence, case
+            assert exports._newtons(document["chosen_ea_newtons"]) in sentence, case
+            assert case["configuration"]["rope"] in sentence, case
+    assert 0 < warned < len(cases), "the cases must include both answers"

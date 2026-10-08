@@ -207,6 +207,44 @@ export function demandSentences(demand) {
   return out;
 }
 
+// The rope the analysis ran for, against the rope chosen here. The rope sets the
+// stiffness the net was solved and cut for, so another rope leaves the ceiling
+// (parts arithmetic) valid and quietly invalidates the prestress floor, the
+// residuals and the cut lengths. It is said and not refused: trying another rope
+// is how the choice is made. The test is exports._rope_mismatch's (both
+// stiffnesses numbers, differing by more than a millionth of the larger), so the
+// panel and the three documents warn in the same cases; the words are the
+// panel's own. The sentence carries a <b> the model wrote, and the rope's key, a
+// server string, is escaped. Empty when there is nothing to compare: no demand,
+// no stiffness in it, a rope the catalogue does not have.
+const EA_TOLERANCE = 1e-6;
+
+export function ropeMismatch(parts, demand, configuration) {
+  const key = configuration && configuration.rope;
+  const chosen = (((parts && parts.rope) || {})[key] || {}).ea_newtons;
+  const analysed = demand && demand.ea_newtons;
+  const number = (value) => typeof value === "number" && Number.isFinite(value);
+  if (!number(chosen) || !number(analysed)) return "";
+  const larger = Math.max(Math.abs(chosen), Math.abs(analysed));
+  if (Math.abs(chosen - analysed) <= EA_TOLERANCE * larger) return "";
+  return "<b>The chosen rope is not the rope that was analysed.</b> The analysis used EA " +
+    newtons(analysed) + " N; " + esc(key) + " is EA " + newtons(chosen) + " N. " +
+    "The ceiling below is for the chosen rope. The prestress floor, the residuals and " +
+    "the cut lengths are for the analysed rope and do not describe this one.";
+}
+
+// Whether the prestress dial still matches the analysis on screen. The document
+// records the prestress it was run with; the dial is only the next run's, so
+// when they differ the panel says which of the two the figures came from.
+export function prestressNote(demand, dialNewtons) {
+  if (!demand || demand.prestress == null) return "";
+  const used = Number(demand.prestress);
+  const dial = Number(dialNewtons);
+  if (!Number.isFinite(used) || !Number.isFinite(dial) || used === dial) return "";
+  return "The analysis on screen used a prestress of <b>" + newtons(used) + " N</b>; the dial reads " +
+    newtons(dial) + " N. Run again to use the dial's value.";
+}
+
 // The skin, with its weight in kilonewtons when the sizing block gave one:
 // an unknown weight is left out of the sentence, never written as zero
 // (exports._skin_words).

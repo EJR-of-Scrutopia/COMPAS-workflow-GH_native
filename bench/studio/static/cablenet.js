@@ -10,8 +10,9 @@
 // the exported documents, where a supplier or a supervisor needs it.
 
 import {
-  curveSvg, demandSentences, fallbackKey, grabText, isStale, modifiedFrom, newtons,
-  prestressFloor, ropeWound, rpmText, settledText, shapeOf, verdictOf,
+  curveSvg, demandSentences, fallbackKey, grabText, isStale, modifiedFrom,
+  prestressFloor, prestressNote, ropeMismatch, ropeWound, rpmText, settledText, shapeOf,
+  verdictOf,
 } from "./cablenet_model.js";
 
 // The wire's angle to its eye bolt's axis is not recorded in the export, so
@@ -95,15 +96,16 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   const missing = Object.keys(el).filter((name) => !el[name]);
   if (missing.length) {
     console.warn(`the cable net section is not on this page: no element for ${missing.join(", ")}`);
-    return { reload: async () => {} };
+    return { reload: async () => {}, clear: () => {} };
   }
 
-  // Two tickets keep a late answer from overwriting a newer one: the verdict's,
-  // which the parts and the demand move, and the speed note's.
+  // A ticket for each kind of answer keeps a late one from overwriting a newer:
+  // the verdict's (which the parts and the demand move), the speed note's, and
+  // the demand's own. watcher is the interval watching a run, if one is.
   const panel = {
     parts: null, key: null, configuration: null, modified: false,
-    demand: null, demandNote: null, row: null,
-    ticket: 0, speedTicket: 0, speed: Number(el.speed.value),
+    demand: null, demandNote: null, row: null, watcher: null,
+    ticket: 0, speedTicket: 0, demandTicket: 0, speed: Number(el.speed.value),
   };
 
   let remembered = null;
@@ -235,22 +237,28 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     refresh();
   }
 
-  function renderDemand() {
-    const demand = panel.demand;
-    let html = panel.demandNote
-      ? `<p>The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.</p>`
-      : demandSentences(demand).map((s) => `<p>${s.replace(/<(?!\/?b>)/g, "&lt;")}</p>`).join("");
-    if (demand && demand.prestress != null &&
-        Number(demand.prestress) !== Number(el.prestress.value)) {
-      html += `<p>The analysis on screen used a prestress of ` +
-        `<b>${newtons(demand.prestress)} N</b>; the dial reads ${esc(el.prestress.value)} N. ` +
-        `Run again to use the dial's value.</p>`;
-    }
-    el.demand.innerHTML = html;
-    el.exportButton.disabled = !demand;
-    el.exportButton.title = demand
+  // Export is there while there is a demand to describe, and says why when not.
+  function showExport() {
+    el.exportButton.disabled = !panel.demand;
+    el.exportButton.title = panel.demand
       ? "Write the configuration with its data: the spreadsheet, the diagram and the data sheet"
       : "Nothing to export: this study has no cable net demand yet";
+  }
+
+  // The demand in sentences, then what the chosen rope and the dial say about
+  // the analysis on screen. All of it is the model's words, escaped there; the
+  // rope note follows the system chosen, so every change of system redraws this.
+  function renderDemand() {
+    const demand = panel.demand;
+    const sentences = panel.demandNote
+      ? [`The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.`]
+      : demandSentences(demand);
+    for (const note of [ropeMismatch(panel.parts, demand, panel.configuration),
+                        prestressNote(demand, Number(el.prestress.value))]) {
+      if (note) sentences.push(note);
+    }
+    el.demand.innerHTML = sentences.map((s) => `<p>${s.replace(/<(?!\/?b>)/g, "&lt;")}</p>`).join("");
+    showExport();
   }
 
   function renderGrab() {
@@ -300,12 +308,14 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     onCeiling(row && !row.refused ? row.ceiling : null);
   }
 
-  // The parts changed, or the demand did: the verdict is redrawn.
+  // The parts changed, or the demand did: the verdict is redrawn, and the demand
+  // readout with it, because its rope note follows the chosen rope.
   async function refresh() {
     if (!panel.configuration) return;
     const mine = ++panel.ticket;
     panel.speedTicket += 1;           // this answer writes the speed note too
     const speed = panel.speed;
+    renderDemand();
     if (!studyName()) {
       // nothing to score against until a study is open
       panel.row = null;
@@ -394,48 +404,87 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   }
   el.recommend.addEventListener("click", recommend);
 
+  // The newest answer is the one on screen: a reload begun while an older one
+  // was still reading is not undone when the older one comes back. The state is
+  // replaced after the wait, so what is shown and what is judged stay one thing.
+  // False says a newer load, or a clear, owns the panel now: the caller leaves
+  // the rescoring to it.
   async function loadDemand() {
+    const mine = ++panel.demandTicket;
     const options = studyOptions();
-    panel.demand = null;
-    panel.demandNote = null;
-    if (!options || !studyName()) {
-      renderDemand();
-      renderGrab();
-      onDemand(null);
-      return;
+    let demand = null;
+    let note = null;
+    if (options && studyName()) {
+      try {
+        demand = await getJson(demandUrl(studyName(), options));
+      } catch (error) {
+        if (error.status !== 404) note = error.message;
+      }
+      if (mine !== panel.demandTicket) return false;
     }
-    try {
-      panel.demand = await getJson(demandUrl(studyName(), options));
-    } catch (error) {
-      if (error.status !== 404) panel.demandNote = error.message;
-    }
+    panel.demand = demand;
+    panel.demandNote = note;
     renderDemand();
     renderGrab();
     onDemand(panel.demand);
+    return true;
+  }
+
+  function stopWatching() {
+    if (panel.watcher != null) clearInterval(panel.watcher);
+    panel.watcher = null;
   }
 
   function watch(runId) {
+    stopWatching();
     const poll = setInterval(async () => {
       try {
         const run = await getJson(`/api/runs/${encodeURIComponent(runId)}`);
+        if (panel.watcher !== poll) return;       // let go while the answer was on its way
         el.runStatus.textContent = `${run.state} (${run.phase}) ${run.message || ""}`;
         if (run.state === "done") {
-          clearInterval(poll);
+          stopWatching();
           el.run.disabled = false;
           el.runStatus.textContent = "the cable net analysis is in";
-          await loadDemand();
-          await refresh();
+          if (await loadDemand()) await refresh();
         }
         if (run.state === "failed") {
-          clearInterval(poll);
+          stopWatching();
           el.run.disabled = false;
         }
       } catch (error) {
-        clearInterval(poll);
+        if (panel.watcher !== poll) return;
+        stopWatching();
         el.run.disabled = false;
         el.runStatus.textContent = `lost contact with the server: ${error.message}`;
       }
     }, 1000);
+    panel.watcher = poll;
+  }
+
+  // The study on screen is going, or a new one is loading: nothing the panel
+  // holds describes it any more. An answer still on its way cannot paint over
+  // the emptiness (the tickets), and a run being watched is let go of: it goes on
+  // at the server, and pressing Run for that study picks it up again (the 409).
+  // The caller reloads once the new study is in.
+  function clear() {
+    panel.ticket += 1;
+    panel.speedTicket += 1;
+    panel.demandTicket += 1;
+    stopWatching();
+    panel.demand = null;
+    panel.row = null;
+    panel.demandNote = null;
+    el.demand.innerHTML = "";
+    el.holds.innerHTML = "";
+    el.grab.innerHTML = "";
+    el.runStatus.textContent = "";
+    el.recommendNote.innerHTML = "";
+    el.result.innerHTML = "";
+    el.run.disabled = false;
+    showExport();
+    onDemand(null);
+    onCeiling(null);
   }
 
   async function startRun() {
@@ -518,7 +567,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     } catch (error) {
       el.result.innerHTML = `<p>${esc(error.message)}</p>`;
     } finally {
-      el.exportButton.disabled = !panel.demand;
+      showExport();
     }
   }
   el.exportButton.addEventListener("click", runExport);
@@ -526,8 +575,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   async function reload() {
     try {
       await loadParts();
-      await loadDemand();
-      await refresh();
+      if (await loadDemand()) await refresh();
     } catch (error) {
       el.holds.innerHTML = `<p>The cable net section could not load: ${esc(error.message)}</p>`;
     }
@@ -535,5 +583,5 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
 
   loadFolder();
   reload();
-  return { reload };
+  return { reload, clear };
 }

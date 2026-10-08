@@ -38,8 +38,11 @@ def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
                   "cablenet-export-path", "cablenet-export-result"):
         assert '"{}"'.format(ident) in JS, ident
     assert 'from "./cablenet_model.js"' in JS
+    # newtons is not among them: the controller writes no force of its own, the
+    # prestress sentence having moved into the model beside the rope's
     for name in ("verdictOf", "demandSentences", "grabText", "curveSvg", "modifiedFrom",
-                 "fallbackKey", "settledText", "rpmText", "newtons", "shapeOf"):
+                 "fallbackKey", "settledText", "rpmText", "shapeOf",
+                 "ropeMismatch", "prestressNote"):
         assert name in JS, name
     assert "export function mountCableNet({" in JS
 
@@ -173,6 +176,60 @@ def test_the_reason_there_is_no_load_factor_is_said_once_through_the_model():
     body = _function_body(JS, "renderHolds")
     assert "detail: row.load_factor_note" in body
     assert "<p>${esc(row.load_factor_note)}</p>" not in body
+
+
+def test_the_demand_readout_carries_the_models_two_notes_and_follows_the_chosen_rope():
+    """The rope the analysis ran for and the prestress it ran at are said in the
+    model's words beside the demand. The rope note depends on the system chosen
+    here, so every change of system redraws the readout: each of them ends in
+    refresh."""
+
+    body = _function_body(JS, "renderDemand")
+    assert "ropeMismatch(panel.parts, demand, panel.configuration)" in body
+    assert "prestressNote(demand, Number(el.prestress.value))" in body
+    assert "the dial reads" not in JS, "that sentence is the model's, not the controller's"
+    assert "renderDemand();" in _function_body(JS, "refresh")
+
+
+def test_a_late_demand_cannot_replace_a_newer_one():
+    body = _function_body(JS, "loadDemand")
+    assert "++panel.demandTicket" in body
+    # the answer is applied after the wait, and only if it is still the newest
+    assert body.index("mine !== panel.demandTicket") < body.index("panel.demand = demand")
+    assert "if (mine !== panel.demandTicket) return false;" in body
+    # a load that was overtaken (or cleared) leaves the rescoring to whoever overtook it
+    for name in ("reload", "watch"):
+        assert "if (await loadDemand()) await refresh();" in _function_body(JS, name), name
+
+
+def test_clear_empties_everything_that_belongs_to_the_study_on_screen():
+    assert "return { reload, clear };" in JS
+    # and a page without the section hands back one too, so the studio's call cannot throw
+    assert "return { reload: async () => {}, clear: () => {} };" in JS
+    body = _function_body(JS, "clear")
+    for dropped in ("panel.demand = null", "panel.row = null", "panel.demandNote = null"):
+        assert dropped + ";" in body, dropped
+    for emptied in ('el.demand.innerHTML = ""', 'el.holds.innerHTML = ""', 'el.grab.innerHTML = ""',
+                    'el.runStatus.textContent = ""', 'el.recommendNote.innerHTML = ""',
+                    'el.result.innerHTML = ""'):
+        assert emptied + ";" in body, emptied
+    # Export is disabled, with its reason, because there is no demand left
+    assert "showExport();" in body
+    assert "el.exportButton.disabled = !panel.demand" in _function_body(JS, "showExport")
+    assert "onDemand(null);" in body and "onCeiling(null);" in body
+    # an answer still in flight cannot paint over the emptiness, and neither can a run being watched
+    for ticket in ("panel.ticket += 1", "panel.speedTicket += 1", "panel.demandTicket += 1"):
+        assert ticket + ";" in body, ticket
+    assert "stopWatching();" in body and "el.run.disabled = false;" in body
+    watch = _function_body(JS, "watch")
+    assert watch.count("panel.watcher !== poll") == 2
+    stop = _function_body(JS, "stopWatching")
+    assert "clearInterval(panel.watcher)" in stop and "panel.watcher = null" in stop
+
+
+def test_export_is_off_while_it_writes_and_given_back_with_its_reason():
+    body = _function_body(JS, "runExport")
+    assert body.index("el.exportButton.disabled = true;") < body.index("} finally {\n      showExport();")
 
 
 def test_every_server_string_is_escaped_and_nothing_is_rounded_to_whole_newtons():
