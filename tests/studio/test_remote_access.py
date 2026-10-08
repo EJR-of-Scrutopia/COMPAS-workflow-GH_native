@@ -569,9 +569,10 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     translucent box; the key stands mid-height beside the panel."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    # Three since the pulse left (2026-09-06, his word).
+    # Three since the pulse left (2026-09-06, his word); five since the cable
+    # net lenses (2026-10-08): Wire tension and Sag paint the same wires.
     assert ('const EXCLUSIVE_LAYERS = '
-            '["stress", "deflection", "forces"];') in js
+            '["stress", "deflection", "forces", "tension", "sag"];') in js
     set_layer = _js_function(js, "function setLayer(name, on)")
     assert "state.layers[other] = false;" in set_layer
     # Round two of his walk: wire forces ARE the net's lens, so raising it
@@ -580,7 +581,7 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'setShowMode("framework");' in set_layer
     assert 'setShowMode(state.showModeBeforeForces || "both");' in set_layer
 
-    build = _js_function(js, "function buildLayerToggles()")
+    build = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
@@ -604,8 +605,13 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     magnitude = _js_function(js, "function forceMagnitude()")
     assert "0.95 *" in magnitude
     wire_lens = _js_function(js, "function applyWireForces()")
-    assert "forceMaterial" in wire_lens
-    assert "toneMapped: false" in wire_lens
+    # The unlit material is built in one place, which the cable net
+    # painters wear too (2026-10-08), and the force lens puts it on.
+    unlit = _js_function(js, "function unlitWireMaterial(wires)")
+    assert "wires.material = unlitWireMaterial(wires);" in wire_lens
+    assert "forceMaterial" in unlit
+    assert "toneMapped: false" in unlit
+    assert "vertexColors" not in unlit
     assert "baseMaterial" in wire_lens, "the steel comes back when the lens drops"
     # The black-lattice bug (his screenshot): vertexColors on a geometry
     # with no colour attribute samples BLACK and multiplies every
@@ -634,9 +640,11 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert "state.analysisSliders.thrustScale, magnitudeMax" in vectors
     # And the lens explains itself ON the panel (the pulse taught this
     # panel that much; a tooltip was not the answer).
-    build2 = _js_function(js, "function buildLayerToggles()")
+    build2 = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
     assert '"layer-note"' in build2
-    assert 'name === "thrust"' in build2
+    assert ("buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true)"
+            in _js_function(js, "function buildLayerToggles()")), (
+        "the thrust note is always shown under its button")
 
     arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1,")
     assert "depthTest: false" in arrows

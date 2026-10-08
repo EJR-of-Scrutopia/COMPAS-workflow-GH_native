@@ -2011,8 +2011,11 @@ def test_three_buttons_replace_the_show_select():
     # Re-pinned 2026-09-04: the two locals became the one netClearance()
     # record that the finished net, Both mode and the formwork act all read.
     # Still two lifts, still one per object's own radius.
-    assert 'position.z = state.showMode === "both" ? clearance.wires' in body
-    assert 'position.z = state.showMode === "both" ? clearance.nodes' in body
+    # Re-pinned 2026-10-08: a cable net lens draws the shell ghosted over the
+    # net in every mode, so the net clears it then too, as in Both.
+    assert 'const lifted = state.showMode === "both" || ghost;' in body
+    assert 'position.z = lifted ? clearance.wires' in body
+    assert 'position.z = lifted ? clearance.nodes' in body
 
 
 def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():
@@ -2781,11 +2784,7 @@ def test_every_control_the_script_asks_for_exists_on_the_page():
         "" if line.lstrip().startswith("//") else line for line in js.splitlines())
     asked = set(re.findall(r'getElementById\("([a-z0-9-]+)"\)', code))
     present = set(re.findall(r'id="([a-z0-9-]+)"', html))
-    # The old Data-popup panel is gone from the page, but its mount stays in
-    # studio.js until the Cable net section's own mount replaces it.
-    # mountCableNet returns at once for a root that is not there, so the
-    # lookup is defensive and nothing breaks. Delete the name with the mount.
-    created = {"cablenet-panel"}  # add names here, never patterns
+    created = set()  # nothing is built by script id today; add names here, never patterns
     missing = sorted(asked - present - created)
     assert not missing, "the script talks to controls the page does not have: {}".format(missing)
 
@@ -4624,3 +4623,102 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     # every button says what it does
     for tag in re.findall(r"<button[^>]*>", section):
         assert 'title="' in tag, tag
+
+
+def test_the_cable_net_lenses_are_a_sibling_table_read_by_the_same_builder():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("const CABLENET_LAYERS = [") + len("const CABLENET_LAYERS = [")
+    body = js[start:js.index("];", start)]
+    for name in ("tension", "nodeforce", "sag", "prestress", "reel"):
+        assert '"{}"'.format(name) in body, name
+    toggles = _function_body(js, "buildLayerToggles")
+    assert toggles.count("buildLensButtons(") == 2
+    assert '"cablenet-lenses"' in toggles and "CABLENET_LAYERS" in toggles
+    exclusive = js[js.index("const EXCLUSIVE_LAYERS = ["):]
+    exclusive = exclusive[:exclusive.index("];")]
+    assert '"tension"' in exclusive and '"sag"' in exclusive
+    assert '"nodeforce"' not in exclusive and '"reel"' not in exclusive
+
+
+def test_a_cable_net_lens_ghosts_the_skin_without_touching_visibility_or_the_raycast():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    show = _function_body(js, "applyShowMode")
+    assert "state.cablenetGhost" in show and "ghostPiece(" in show
+    ghost = _function_body(js, "ghostPiece")
+    assert ".visible" not in ghost and "raycast" not in ghost
+    assert "opacity" in ghost and "depthWrite" in ghost
+    layer = _function_body(js, "setLayer")
+    assert "state.cablenetGhost = cableNetLensUp()" in layer
+    assert "applyTimeline(" not in layer
+
+
+def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    at = _function_body(js, "cablenetStageAt")
+    for call in ("instantAt(", "machineTime(", "currentStageIndex(", "duringFormworkAct("):
+        assert call in at, call
+    paint = _function_body(js, "applyCableNetPaint")
+    for key in ("member_tensions", "node_sag_mm", "setColorAt", "sagBand("):
+        assert key in paint, key
+    vectors = _function_body(js, "updateVectorLayers")
+    for key in ("node_residual", "node_sag", "actuator_travel", "wire_reel_commands",
+                "wire_tensions", "cablenetStageAt(", "state.cablenetCeiling"):
+        assert key in vectors, key
+    scrub = js[js.index('scrubber.addEventListener("input"'):]
+    scrub = scrub[:scrub.index("\n});")]
+    assert "paintCableNetLenses()" in scrub
+    availability = _function_body(js, "layerAvailability")
+    assert "run the cable net analysis from this section" in availability
+    assert "earlier analysis" in availability
+
+
+def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "nodeMaterial.vertexColors = true" in _function_body(js, "netInstances")
+    options = _function_body(js, "cablenetStudyOptions")
+    assert "state.loadedOptions" in options
+    assert "state.loadedOptions = " in js
+    assert "cablenet-panel" not in js
+    assert "mountCableNet({" in js
+
+
+def test_a_lens_that_cannot_draw_does_not_ghost_and_an_unchanged_ghost_costs_nothing():
+    # Found on the page (2026-10-08): a lens left up when the demand went (a new
+    # cut, a restored scene) ghosted the skin with nothing drawn, behind a
+    # button too greyed to put it down; and a ghost asked of every piece on
+    # every applyShowMode, lens or none, re-asked each material's program.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "state.layers[name] && layerAvailability(name).on" in _function_body(js, "cableNetLensUp")
+    ghost = _function_body(js, "ghostPiece")
+    assert ghost.index("return;", ghost.index("const kept")) < ghost.index("needsUpdate"), (
+        "a piece already in the state asked for is left alone")
+    show = _function_body(js, "applyShowMode")
+    assert show.index("ghostPiece(") < show.index('if (state.showMode === "timeline") return;'), (
+        "the ghost follows the lens in a take as well")
+
+
+def test_a_painter_put_down_takes_its_arrows_key_and_caption_with_it():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    layer = _function_body(js, "setLayer")
+    branch = layer[layer.index("if (EXCLUSIVE_LAYERS.includes(name)) {"):]
+    assert branch.index("applyCableNetPaint();") < branch.index("updateVectorLayers();") < branch.index(
+        'if (name === "forces" && on)'), "Sag draws arrows, and any painter puts it down"
+    assert "\n  paintCableNetStageLine();" in layer, "the caption is said again on every press"
+    legend = _function_body(js, "updateLegend")
+    assert 'if (!state.layers.tension && !state.layers.sag) legend.classList.add("hidden");' in legend
+    assert 'legend.classList.add("deflection");' in _function_body(js, "paintScalarLegend"), (
+        "the tension and sag keys wear the one-sided bar")
+    assert "magnitude.toFixed(1)" in _function_body(js, "applyCableNetPaint")
+
+
+def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_winner():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    load = js[js.index("async function loadStudy("):]
+    load = load[:load.index("\n}")]
+    # each value is recorded where it goes into the URL, and only then
+    assert "fetchedWith.density = weighAs;" in load[load.index('url += "&density="'):][:120]
+    assert "fetchedWith.source = state.source;" in load[load.index('url += "&source="'):][:120]
+    won = load.rindex('if (sequence !== state.loadSequence) return "superseded";')
+    assert won < load.index("state.loadedOptions = fetchedWith;") < load.index("buildScene(fresh, preserve);")
+    assert load.index("buildScene(fresh, preserve);") < load.index("cableNet.reload();")
+    assert load.index("cableNet.clear();") < load.index("let url =")
