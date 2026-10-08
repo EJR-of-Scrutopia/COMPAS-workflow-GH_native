@@ -382,7 +382,7 @@ def test_a_demand_without_sizing_gives_no_load_factor():
     assert catalogue.sizing_of({"sizing": None}) is None
 
 
-def test_recommend_takes_the_largest_load_factor_then_the_fewest_parts_then_the_first_listed():
+def test_recommend_takes_the_largest_margin_then_the_fewest_parts_then_the_first_listed():
     parts = catalogue.load_parts()
     base = catalogue.configuration_of(parts, "stepper-seven-spool")
     # an identical rig with a named spool rope: the same ceiling, one more part
@@ -395,7 +395,7 @@ def test_recommend_takes_the_largest_load_factor_then_the_fewest_parts_then_the_
     result = catalogue.recommend(parts, 10.0, _demand())
     assert result["key"] == "a-fewer-parts"
     assert result["sufficient"] is True
-    assert "fewest parts" in result["rule"]
+    assert "fewest parts" in result["rule"] and "the largest margin" in result["rule"]
     assert [row["key"] for row in result["rows"]] == ["b-more-parts", "a-fewer-parts", "c-same-again"]
     assert all(row["load_factor"]["limit_factor"] == pytest.approx(2.9) for row in result["rows"])
 
@@ -607,12 +607,13 @@ def test_recommend_blames_the_shape_and_ranks_by_the_parts_when_the_sag_is_past_
         alone = catalogue.load_factor(parts, catalogue.configuration_of(parts, row["key"]),
                                       10.0, _demand(sag=10.0, acceptance=None))
         assert row["parts_factor"] == alone
-    largest = max(row["parts_factor"]["limit_factor"] for row in result["rows"])
-    assert largest > 0.0
+    assert max(row["parts_factor"]["limit_factor"] for row in result["rows"]) > 0.0
+    largest = max(row["parts_factor"]["margin"] for row in result["rows"])
     chosen = next(row for row in result["rows"] if row["key"] == result["key"])
-    assert chosen["parts_factor"]["limit_factor"] == largest
+    assert chosen["parts_factor"]["margin"] == largest
+    assert "the largest margin" in result["rule"]
     # ties on what the parts carry go to the fewest parts, then the first listed
-    tied = [row for row in result["rows"] if row["parts_factor"]["limit_factor"] == largest]
+    tied = [row for row in result["rows"] if row["parts_factor"]["margin"] == largest]
     assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
 
 
@@ -631,10 +632,71 @@ def test_recommend_decides_the_shape_from_the_document_not_from_how_the_rigs_bin
     # the heavy skin shows in the parts factors, which are low, and the best is chosen
     factors = {row["key"]: row["parts_factor"]["limit_factor"] for row in result["rows"]}
     assert all(0.0 <= value < 1.0 for value in factors.values())
-    largest = max(factors.values())
-    assert largest > 0.0 and factors[result["key"]] == largest
-    tied = [row for row in result["rows"] if row["parts_factor"]["limit_factor"] == largest]
+    assert max(factors.values()) > 0.0
+    margins = {row["key"]: row["parts_factor"]["margin"] for row in result["rows"]}
+    largest = max(margins.values())
+    assert margins[result["key"]] == largest
+    tied = [row for row in result["rows"] if row["parts_factor"]["margin"] == largest]
     assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
+
+
+def _real_scale(sag):
+    """The real study as the engine now sizes it: the wires judged at the 300 N
+    entered (the fit found 14.6 N), the glulam rib's 3.25 mm line, a 67.5 kN skin."""
+
+    return {"acceptance": 3.25, "prestress": 300.0,
+            "sizing": {"stage": "S17", "worst_wire_tension_newtons": 300.0,
+                       "fitted_wire_tension_newtons": 14.6, "prestress_newtons": 300.0,
+                       "worst_actuator_newtons": 435.1, "worst_sag_mm": sag,
+                       "load_newtons": 67459.0}}
+
+
+def test_the_shipped_catalogue_recommends_its_largest_margin_at_real_scale():
+    parts = catalogue.load_parts()
+    # inside the line every rig carries the skin and is judged as it is; past the
+    # line (the real study's 12.3 mm) the parts alone are ranked
+    for sag, judged, sufficient in ((1.0, "load_factor", True), (12.3, "parts_factor", False)):
+        result = catalogue.recommend(parts, 10.0, _real_scale(sag))
+        assert result["sufficient"] is sufficient, sag
+        assert "the largest margin, the ceiling over the tension the wires are judged at" in (
+            result["rule"]), sag
+        rows = [row for row in result["rows"] if not row.get("refused")]
+        assert len(rows) == len(result["rows"]) >= 6
+        margins = {row["key"]: row[judged]["margin"] for row in rows}
+        for row in rows:
+            assert row[judged]["worst_wire_tension_newtons"] == 300.0
+            assert row[judged]["margin"] == pytest.approx(row["ceiling"] / 300.0)
+        largest = max(margins.values())
+        assert margins[result["key"]] == largest, sag
+        # the largest is not shared with the weaker rigs, and among equals the rule's
+        # own order decides
+        assert sum(1 for value in margins.values() if value == largest) < len(margins)
+        tied = [row for row in rows if margins[row["key"]] == largest]
+        assert result["key"] == min(tied, key=lambda r: (r["parts"], r["position"]))["key"]
+
+
+def test_rigs_that_all_reach_the_cap_are_still_ranked_by_their_margin():
+    import exports
+    parts = catalogue.load_parts()
+    # the fit's own 14.6 N, which the real study was judged at before the floor rule:
+    # every rig reaches the walk's cap of 20 and its load factor ties with the rest
+    result = catalogue.recommend(parts, 10.0, _demand(t1=14.6, sag=1.0, acceptance=3.25))
+    rows = {row["key"]: row for row in result["rows"]}
+    assert {row["load_factor"]["limit_factor"] for row in rows.values()} == {20.0}
+    assert all(row["load_factor"]["breaching_factor"] is None for row in rows.values())
+    # the rigs that carry 7.5 times a 500 N wire no longer tie with those that carry 2.9
+    at_500 = {key: catalogue.load_factor(parts, catalogue.configuration_of(parts, key), 10.0,
+                                         _demand())["limit_factor"] for key in rows}
+    strong = [key for key, value in at_500.items() if value == pytest.approx(7.5)]
+    weak = [key for key, value in at_500.items() if value == pytest.approx(2.9)]
+    assert len(strong) == 2 and len(weak) == 2
+    assert (min(rows[key]["load_factor"]["margin"] for key in strong)
+            > max(rows[key]["load_factor"]["margin"] for key in weak))
+    assert result["key"] in strong
+    # the factor keeps its cap, and the sentence says it is a floor
+    chosen = rows[result["key"]]["load_factor"]
+    assert exports.load_factor_sentence({"capacity": chosen}) == (
+        "Carries at least 20.0 times the 66.9 kN skin: nothing binds up to that load.")
 
 
 def test_the_shape_rule_needs_a_line_and_a_sag_past_it():

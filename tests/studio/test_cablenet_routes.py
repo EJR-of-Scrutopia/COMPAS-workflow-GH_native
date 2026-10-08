@@ -868,7 +868,7 @@ def test_recommend_returns_the_key_the_configuration_and_the_rule(client, tmp_pa
     assert body["key"] in body["rows"][0]["key"] or any(r["key"] == body["key"] for r in body["rows"])
     assert body["configuration"]["motor"]
     assert body["sufficient"] is True
-    assert "load factor" in body["rule"]
+    assert "the largest margin" in body["rule"]
     assert body["name"]
 
 

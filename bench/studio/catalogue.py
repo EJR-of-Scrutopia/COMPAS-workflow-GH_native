@@ -586,8 +586,15 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
 
 
 def recommend(parts, angle_degrees, demand, reason=None):
-    """The configuration to build: the largest load factor among those that
-    carry the skin, the fewest parts among ties, the first listed after that.
+    """The configuration to build: the largest margin among those that carry
+    the skin, the fewest parts among ties, the first listed after that.
+
+    The margin is the ceiling over the tension the wires are judged at, which
+    every row's load factor carries uncapped. The load factor itself is capped
+    at the walk's largest factor (20), so at a small tension every rig reached
+    the cap, they tied, and the first listed won over a rig with two and a half
+    times its ceiling. The margin keeps them apart, and the reported load factor
+    keeps its cap ("at least 20.0 times").
 
     With no load factor to rank by it ranks by ceiling and its rule says why.
     reason, when the caller has one, is why there is no demand document at all (a
@@ -634,18 +641,20 @@ def recommend(parts, angle_degrees, demand, reason=None):
             row["parts_factor"] = load_factor(
                 parts, configured[row["key"]], angle_degrees, parts_alone)
         best = max(sized, key=lambda r: (
-            r["parts_factor"]["limit_factor"], -r["parts"], -r["position"]))
+            r["parts_factor"]["margin"], -r["parts"], -r["position"]))
         rule = ("the shape is past the acceptance line at the sizing stage and no "
                 "part can change it; ranked by what the parts alone carry: the "
-                "largest load factor, then the fewest parts, then the first listed")
+                "largest margin, the ceiling over the tension the wires are judged "
+                "at, then the fewest parts, then the first listed")
         flag = False
     elif sized:
         sufficient = [row for row in sized if row["load_factor"]["sufficient"]]
         if sufficient:
             best = max(sufficient, key=lambda r: (
-                r["load_factor"]["limit_factor"], -r["parts"], -r["position"]))
-            rule = ("the configuration that carries the skin with the largest load "
-                    "factor; among ties the fewest parts, then the first listed")
+                r["load_factor"]["margin"], -r["parts"], -r["position"]))
+            rule = ("the configuration that carries the skin with the largest margin, "
+                    "the ceiling over the tension the wires are judged at; among ties "
+                    "the fewest parts, then the first listed")
             flag = True
         else:
             best = max(sized, key=lambda r: (
