@@ -125,6 +125,60 @@ class Wire(NamedTuple):
     permanence: object = None
 
 
+# The machine times the analysis is computed at, on the writer's 0 to 100
+# clock (frames.py): mid raise, raise done, mid finish, finish done, hold.
+# Nothing before the raise: a net lying on the ground is held by the ground,
+# and a fit there would only report that it is flat.
+FRAME_SAMPLE_TIMES = (45.0, 60.0, 75.0, 90.0, 100.0)
+
+
+def _triple(value):
+    if isinstance(value, dict):
+        return [float(value["x"]), float(value["y"]), float(value["z"])]
+    return [float(value[0]), float(value[1]), float(value[2])]
+
+
+def sample_frames(document, times=FRAME_SAMPLE_TIMES):
+    """The net at the asked machine times, interpolated between exported frames.
+
+    Linear between the two frames that bracket each time, the way the studio
+    plays them (fields.js interpolateFormworkFrame), clamped to the first and
+    last frame beyond the ends. Vertices come back in metres, contract order.
+    An empty or missing frames list gives an empty sample.
+    """
+
+    frames = sorted(((document or {}).get("frames") or []),
+                    key=lambda frame: float(frame["time"]))
+    if not frames:
+        return []
+    out = []
+    for wanted in times:
+        wanted = float(wanted)
+        if wanted <= float(frames[0]["time"]):
+            a, b, u = frames[0], frames[0], 0.0
+        elif wanted >= float(frames[-1]["time"]):
+            a, b, u = frames[-1], frames[-1], 0.0
+        else:
+            a = [f for f in frames if float(f["time"]) <= wanted][-1]
+            b = [f for f in frames if float(f["time"]) > wanted][0]
+            span = float(b["time"]) - float(a["time"])
+            u = (wanted - float(a["time"])) / span if span > 0.0 else 0.0
+        vertices = []
+        for p, q in zip(a["vertices"], b["vertices"]):
+            p, q = _triple(p), _triple(q)
+            vertices.append([p[k] + (q[k] - p[k]) * u for k in range(3)])
+        out.append({"time": wanted, "phase": str(a.get("phase", "")),
+                    "vertices": vertices})
+    return out
+
+
+def column_heads_of(document):
+    """The net nodes the columns prop: columns.headNode, contract ids."""
+
+    columns = ((document or {}).get("columns") or {})
+    return [int(node) for node in (columns.get("headNode") or [])]
+
+
 def frame_to_world(frame, local):
     """Map a point from a machine instance's local space into world space.
 
@@ -274,7 +328,8 @@ def wires_from_mechanism(document, vertex_count, supports):
 def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
                  acceptance_source, mass_per_metre, runner=None, python_exe=None,
-                 falsework=None, study=None, ea_provenance=None):
+                 falsework=None, study=None, ea_provenance=None,
+                 formwork_document=None, batch=20, steps=40):
     """Everything step A does, from a contract to a written demand document.
 
     The engine runs in solve_cablenet.py under a solver interpreter, never in
@@ -287,6 +342,14 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     is, from that rib and this skin, and acceptance and acceptance_source are
     ignored (pass None). prestress is an input: a starting point for the cut
     rule, not a value derived from anything.
+
+    formwork_document, when given, is the study's formwork document as
+    frames.py reads it: its frames are sampled at FRAME_SAMPLE_TIMES and sent
+    as the frame instants, and its columns.headNode are the net nodes the
+    columns prop, which the analysis holds. No document means no frames and
+    no heads: the analysis runs on the courses alone, with the drum ends
+    alone held. batch and steps size the actuator walk: the nodes grabbed a
+    step, and the most steps tried.
     """
 
     if falsework is not None and not (acceptance is None and acceptance_source is None):
@@ -302,6 +365,20 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     edges = [tuple(edge) for edge in arrays["edges"]]
     anchors = geometry.support_ids(contract)
     wires = wires_from_mechanism(mechanism_document, len(vertices), anchors)
+    heads = column_heads_of(formwork_document)
+    for head in heads:
+        if not 0 <= head < len(vertices):
+            raise CableNetError(
+                "The formwork document names column head {} but the net has "
+                "{} nodes; the two documents disagree about which nodes exist."
+                .format(head, len(vertices)))
+    frames = sample_frames(formwork_document) if formwork_document else []
+    for sample in frames:
+        if len(sample["vertices"]) != len(vertices):
+            raise CableNetError(
+                "A formwork frame carries {} vertices and the net has {}; the "
+                "frames belong to another net.".format(
+                    len(sample["vertices"]), len(vertices)))
 
     loads_by_stage = stage_node_loads(
         vertices, arrays["faces"], plan, thickness, density
@@ -341,6 +418,10 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "stage_names": {
             str(i): "S{}".format(entry["stage"]) for i, entry in enumerate(plan)
         },
+        "frames": frames,
+        "column_heads": heads,
+        "batch": int(batch),
+        "steps": int(steps),
     }
     if runner is None:
         runner = _subprocess_runner(python_exe or CABLENET_PYTHON)

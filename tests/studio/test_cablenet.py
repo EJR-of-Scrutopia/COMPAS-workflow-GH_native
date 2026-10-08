@@ -12,6 +12,12 @@ import cablenet
 import staging
 
 
+def tmp_demand_path():
+    import os
+    import tempfile
+    return os.path.join(tempfile.mkdtemp(), "demand.json")
+
+
 def _two_quads():
     # two unit squares side by side in the z = 0 plane, metres
     vertices = [
@@ -309,3 +315,108 @@ def test_the_request_carries_the_placed_weight_study_and_ea_provenance():
         cablenet.geometry.support_ids = original
     assert abs(seen["placed_weights"][0] - 0.02 * 1800.0 * staging.GRAVITY) < 1e-9
     assert seen["study"] == "My Vault" and seen["ea_provenance"] == "rope-4mm: assumed"
+
+
+def _formwork_fixture():
+    # the net flat on the ground at time 0, half raised at 30, raised from 60
+    flat = [[float(i), float(j), 0.0] for j in range(3) for i in range(3)]
+    raised = [[float(i), float(j), 1.0 if (i, j) == (1, 1) else 0.0]
+              for j in range(3) for i in range(3)]
+    half = [[x, y, z * 0.5] for x, y, z in raised]
+    frame = lambda t, phase, v: {"time": t, "phase": phase, "vertices": v,
+                                 "columnNodes": [[1.0, 1.0, 0.0], [1.0, 1.0, v[4][2]]]}
+    return {
+        "schema": "bench.formwork/1", "units": "m", "study": "grid",
+        "vertexCount": 9, "columnNodeCount": 2,
+        "columns": {"nodes": [{"x": 1.0, "y": 1.0, "z": 0.0}, {"x": 1.0, "y": 1.0, "z": 1.0}],
+                    "members": [{"u": 0, "v": 1}], "heads": [1], "feet": [0],
+                    "headNode": [4]},
+        "frames": [frame(0.0, "reel", flat), frame(30.0, "raise", half),
+                   frame(60.0, "finish", raised), frame(90.0, "hold", raised),
+                   frame(100.0, "hold", raised)],
+    }
+
+
+def test_frames_are_sampled_at_the_five_machine_times_by_interpolation():
+    sampled = cablenet.sample_frames(_formwork_fixture())
+    assert [f["time"] for f in sampled] == [45.0, 60.0, 75.0, 90.0, 100.0]
+    assert sampled[0]["phase"] == "raise"
+    # 45 is halfway from the half-raised frame to the raised one
+    assert sampled[0]["vertices"][4] == pytest.approx([1.0, 1.0, 0.75])
+    assert sampled[1]["vertices"][4] == pytest.approx([1.0, 1.0, 1.0])
+    assert sampled[4]["phase"] == "hold"
+    assert cablenet.sample_frames({"frames": []}) == []
+    assert cablenet.column_heads_of(_formwork_fixture()) == [4]
+    assert cablenet.column_heads_of(None) == []
+
+
+def test_a_sample_time_before_the_first_frame_or_after_the_last_clamps():
+    sampled = cablenet.sample_frames(_formwork_fixture(), times=(-5.0, 500.0))
+    assert sampled[0]["vertices"][4] == pytest.approx([1.0, 1.0, 0.0])
+    assert sampled[1]["vertices"][4] == pytest.approx([1.0, 1.0, 1.0])
+
+
+def test_the_request_carries_the_sampled_frames_the_heads_and_the_walk_sizes():
+    seen = {}
+
+    def fake(request):
+        seen.update(request)
+        return {"schema": "bench.cablenet/2", "stages": [{}]}
+
+    import geometry
+    arrays = {
+        "vertices": [[float(i), float(j), 1.0 if (i, j) == (1, 1) else 0.0]
+                     for j in range(3) for i in range(3)],
+        "edges": [[0, 1], [1, 2], [3, 4], [4, 5], [6, 7], [7, 8], [0, 3], [3, 6],
+                  [1, 4], [4, 7], [2, 5], [5, 8]],
+        "faces": [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7]],
+    }
+    contract = {"equilibrium": {"resolvedSupportNodeIds": [0, 2, 6, 8]}}
+    mech = {"mechanism": {"wires": [
+        {"name": "w0", "net_vertex": 0, "frame_point": {"x": -1.5, "y": -1.5, "z": 0.8}},
+        {"name": "w2", "net_vertex": 2, "frame_point": {"x": 3.5, "y": -1.5, "z": 0.8}},
+        {"name": "w6", "net_vertex": 6, "frame_point": {"x": -1.5, "y": 3.5, "z": 0.8}},
+        {"name": "w8", "net_vertex": 8, "frame_point": {"x": 3.5, "y": 3.5, "z": 0.8}},
+    ]}}
+    out = tmp_demand_path()
+    cablenet.run_cablenet(contract, arrays, [], 0.02, 1800.0, out, mech, 2.0e5,
+                          300.0, 5.0, "test", 0.061, runner=fake,
+                          formwork_document=_formwork_fixture(), batch=3, steps=7)
+    assert [f["time"] for f in seen["frames"]] == [45.0, 60.0, 75.0, 90.0, 100.0]
+    assert seen["column_heads"] == [4]
+    assert seen["batch"] == 3 and seen["steps"] == 7
+    assert geometry.support_ids(contract) == [0, 2, 6, 8]
+
+
+def test_without_a_formwork_document_the_request_says_no_heads_and_no_frames():
+    seen = {}
+
+    def fake(request):
+        seen.update(request)
+        return {"schema": "bench.cablenet/2", "stages": [{}]}
+
+    arrays = {"vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, -0.3], [2.0, 0.0, 0.0]],
+              "edges": [[0, 1], [2, 1]], "faces": []}
+    contract = {"equilibrium": {"resolvedSupportNodeIds": [0, 2]}}
+    mech = {"mechanism": {"wires": [
+        {"name": "w0", "net_vertex": 0, "frame_point": {"x": -3.0, "y": 0.0, "z": 0.9}},
+        {"name": "w2", "net_vertex": 2, "frame_point": {"x": 5.0, "y": 0.0, "z": 0.9}}]}}
+    cablenet.run_cablenet(contract, arrays, [], 0.02, 1800.0, tmp_demand_path(), mech,
+                          2.0e5, 300.0, 5.0, "test", 0.061, runner=fake)
+    assert seen["frames"] == [] and seen["column_heads"] == []
+    assert seen["batch"] == 20 and seen["steps"] == 40
+
+
+def test_a_column_head_outside_the_net_is_refused_by_name():
+    arrays = {"vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, -0.3], [2.0, 0.0, 0.0]],
+              "edges": [[0, 1], [2, 1]], "faces": []}
+    contract = {"equilibrium": {"resolvedSupportNodeIds": [0, 2]}}
+    mech = {"mechanism": {"wires": [
+        {"name": "w0", "net_vertex": 0, "frame_point": {"x": -3.0, "y": 0.0, "z": 0.9}},
+        {"name": "w2", "net_vertex": 2, "frame_point": {"x": 5.0, "y": 0.0, "z": 0.9}}]}}
+    formwork = {"frames": [], "columns": {"headNode": [7]}}
+    with pytest.raises(cablenet.CableNetError, match="head 7"):
+        cablenet.run_cablenet(contract, arrays, [], 0.02, 1800.0, tmp_demand_path(),
+                              mech, 2.0e5, 300.0, 5.0, "test", 0.061,
+                              runner=lambda request: {"stages": []},
+                              formwork_document=formwork)
