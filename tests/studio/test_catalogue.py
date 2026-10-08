@@ -302,6 +302,61 @@ def test_the_load_factor_is_the_capacity_walk_over_the_scaled_fit():
     assert factor["acceptance_mm"] == 2.18
 
 
+def test_the_load_factor_judges_the_wires_at_no_less_than_the_entered_prestress():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool")
+    # as the engine writes it on the real study: the fit found 14.6 N in its worst
+    # wire, the study entered 300 N, and the wires are judged at the larger
+    demand = {"acceptance": 3.25, "prestress": 300.0,
+              "sizing": {"stage": "S17", "worst_wire_tension_newtons": 300.0,
+                         "fitted_wire_tension_newtons": 14.6, "prestress_newtons": 300.0,
+                         "worst_actuator_newtons": 435.1, "worst_sag_mm": 1.0,
+                         "load_newtons": 67459.0}}
+    factor = catalogue.load_factor(parts, configuration, 10.0, demand)
+    assert factor["worst_wire_tension_newtons"] == 300.0
+    # the hook-and-hook turnbuckle's 1471 N against 300 N: 4.9 passes, 5.0 breaches
+    assert factor["limit_factor"] == pytest.approx(4.9)
+    assert factor["breaching_factor"] == pytest.approx(5.0)
+    assert factor["margin"] == pytest.approx(1471.0 / 300.0, rel=1e-3)
+    # a block written before the two figures carries the fit's alone, and is read by
+    # the same rule against the prestress the document records
+    older = {**demand, "sizing": {"stage": "S17", "worst_wire_tension_newtons": 14.6,
+                                  "worst_actuator_newtons": 435.1, "worst_sag_mm": 1.0,
+                                  "load_newtons": 67459.0}}
+    assert catalogue.wire_floor(older) == {"newtons": 300.0, "fitted_newtons": 14.6,
+                                           "prestress_newtons": 300.0}
+    assert catalogue.load_factor(parts, configuration, 10.0, older)[
+        "worst_wire_tension_newtons"] == 300.0
+    # with no prestress recorded the fit's figure is all there is
+    assert catalogue.load_factor(parts, configuration, 10.0, {**older, "prestress": None})[
+        "worst_wire_tension_newtons"] == 14.6
+
+
+def test_the_floor_reads_the_engines_figure_and_works_out_an_older_documents_by_its_rule():
+    engine = {"prestress": 300.0, "sizing": {"worst_wire_tension_newtons": 900.0,
+                                             "fitted_wire_tension_newtons": 900.0,
+                                             "prestress_newtons": 300.0}}
+    assert catalogue.wire_floor(engine) == {"newtons": 900.0, "fitted_newtons": 900.0,
+                                            "prestress_newtons": 300.0}
+    # the engine's three figures are read, never worked out again
+    hand = {"prestress": 300.0, "sizing": {"worst_wire_tension_newtons": 50.0,
+                                           "fitted_wire_tension_newtons": 900.0,
+                                           "prestress_newtons": 300.0}}
+    assert catalogue.wire_floor(hand)["newtons"] == 50.0
+    # no block: the wires stage by stage, against the prestress where it is recorded
+    stages = [{"wire_tensions": [100.0, 700.0]}, {"wire_tensions": [300.0, "x", None, True]}]
+    assert catalogue.wire_floor({"stages": stages}) == {
+        "newtons": 700.0, "fitted_newtons": 700.0, "prestress_newtons": None}
+    assert catalogue.wire_floor({"prestress": 1000.0, "stages": stages})["newtons"] == 1000.0
+    assert catalogue.wire_floor({"prestress": 1000.0, "stages": []}) == {
+        "newtons": 1000.0, "fitted_newtons": None, "prestress_newtons": 1000.0}
+    # a block with no figure for the wires falls to the stages
+    assert catalogue.wire_floor({"sizing": {"worst_wire_tension_newtons": None},
+                                 "stages": stages})["newtons"] == 700.0
+    for nothing in (None, {}, {"stages": "x"}, {"prestress": "300", "stages": [5]}):
+        assert catalogue.wire_floor(nothing)["newtons"] is None, nothing
+
+
 def test_a_sag_past_the_line_binds_on_the_shape_at_the_first_rung():
     parts = catalogue.load_parts()
     configuration = catalogue.configuration_of(parts, "stepper-seven-spool")

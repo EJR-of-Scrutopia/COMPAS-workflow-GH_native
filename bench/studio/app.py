@@ -1256,21 +1256,15 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         return max(totals) if totals else None
 
     def _demand_floor(demand: dict) -> float:
-        """The worst wire tension the net asks of a configuration.
-
-        The sizing block carries it as the engine measured it; a document from
-        before the block is read stage by stage, as it always was."""
+        """The tension the net asks of a configuration's every wire: the larger of
+        the entered prestress and the greatest tension the fit found, as the
+        engine's sizing block carries it (catalogue.wire_floor, which reads an
+        older document by the same rule); 0.0 when the document gives neither."""
 
         import catalogue
 
-        sizing = catalogue.sizing_of(demand)
-        if sizing is not None and sizing.get("worst_wire_tension_newtons") is not None:
-            return float(sizing["worst_wire_tension_newtons"])
-        worst = 0.0
-        for stage in demand.get("stages") or []:
-            for tension in stage.get("wire_tensions") or []:
-                worst = max(worst, float(tension))
-        return worst
+        floor = catalogue.wire_floor(demand)["newtons"]
+        return 0.0 if floor is None else float(floor)
 
     def _demand_for(export: str, options):
         """The demand the study's options name, and why there is none when there

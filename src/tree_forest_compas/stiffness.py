@@ -18,8 +18,10 @@ and a plain solve returns an enormous finite figure without complaint. So the
 free block is judged by an estimate of its 1-norm condition number, and
 refused at 1e12 or more.
 
-This is a first-order figure. The real net stiffens as it sags, so a large
-answer is an upper bound on the movement and a small one is close.
+This is a first-order figure; the real net stiffens as it sags. It is not a
+bound either way: a member that would go slack keeps its EA / L here, so the
+real net can also be softer. A large answer is a guide to the movement and a
+small one is close.
 
 Units are newtons and millimetres.
 """

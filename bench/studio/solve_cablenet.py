@@ -402,6 +402,20 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     A HoldError or a StiffnessError from the fit, the sag or the walk is
     refused as a CableNetError carrying its message and naming the instant,
     so a mechanism in the net is a refusal that says so, not a traceback.
+
+    The sizing block's worst_wire_tension_newtons is the figure every wire is
+    judged at: the larger of the entered prestress and the greatest tension
+    the fit found in any wire at any instant, with the two kept beside it as
+    prestress_newtons and fitted_wire_tension_newtons. The shape half gives
+    every member the prestress as a floor on its stiffness, and the sag is
+    judged at that floor, so the tension half judges no wire at less: the
+    fit's own wire tensions can be far below it (14.6 N on the real study at
+    300 N), and a rig judged at those would be said to hold a net the analysis
+    held at the prestress. It is worked out here and the readers read it
+    (catalogue.wire_floor, and cablenet_model.prestressFloor on the panel);
+    only a document written before the block carried the two figures has its
+    floor taken by the same rule from what it does carry. The stages keep the
+    fit's own wire tensions, which the lenses draw.
     """
 
     import numpy as np
@@ -566,11 +580,16 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     # instant.
     judged = [s for s in stages if s["course"] is not None] or stages
     sizing_stage = max(judged, key=worst_force)
+    fitted_wire = max(
+        max(abs(t) for t in s["wire_tensions"]) if s["wire_tensions"] else 0.0
+        for s in stages)
     sizing = {
         "stage": sizing_stage["name"],
-        "worst_wire_tension_newtons": max(
-            max(abs(t) for t in s["wire_tensions"]) if s["wire_tensions"] else 0.0
-            for s in stages),
+        # the figure the wires are judged at, the larger of the two beside it
+        # (see the docstring): worked out once, here, and read everywhere
+        "worst_wire_tension_newtons": max(float(prestress), fitted_wire),
+        "fitted_wire_tension_newtons": fitted_wire,
+        "prestress_newtons": float(prestress),
         "worst_actuator_newtons": max(
             max([sum(c * c for c in f) ** 0.5 for f in s["actuator_forces"]] or [0.0])
             for s in stages),

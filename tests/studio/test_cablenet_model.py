@@ -94,8 +94,10 @@ out.bothCaption = m.stageCaption(both);
 // found by scanning the stages, and the stage that sizes the parts apart.
 const demandOf = (frame, first, second, sizing) => ({
   schema: "bench.cablenet/2", acceptance: 2.18, acceptance_source: "the rib and its skin",
-  thickness: 0.02, density: 2200,
-  sizing: { stage: sizing, worst_wire_tension_newtons: 1471, worst_actuator_newtons: 800 },
+  thickness: 0.02, density: 2200, prestress: 300,
+  // as the engine writes it: the fit's 1471 N is the larger of it and the 300 N entered
+  sizing: { stage: sizing, worst_wire_tension_newtons: 1471, fitted_wire_tension_newtons: 1471,
+            prestress_newtons: 300, worst_actuator_newtons: 800 },
   held: { wire_nodes: [1, 2, 3], column_heads: [9], actuators: [4, 5] },
   stages: [
     { name: "F60", kind: "finish", time: 60, course: null, wire_tensions: frame, skin_load_sum_newtons: 0, net_weight_newtons: 900 },
@@ -116,13 +118,33 @@ out.sentNoted = m.demandSentences(noted);
 const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 blank.note = "   ";
 out.sentBlankNote = m.demandSentences(blank);
-out.sentTopLevel = m.demandSentences({ ...demandOf([1], [1], [1], "S2"), sizing: undefined, sizing_stage: "S9" });
+out.sentTopLevel = m.demandSentences({ ...demandOf([1], [1], [1], "S2"), sizing: undefined,
+  sizing_stage: "S9", prestress: undefined });
+// The wires are judged at no less than the entered prestress: a re-run at 3000 N
+// of a net whose fit finds 1471 N in its worst wire is held at 3000 N, and a rig
+// whose ceiling is 1471 N does not hold it, whatever the fit found.
+const held = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+held.prestress = 3000;
+held.sizing = { ...held.sizing, worst_wire_tension_newtons: 3000, prestress_newtons: 3000 };
+out.sentHeld = m.demandSentences(held);
+out.floorHeld = m.prestressFloor(held);
+out.verdictHeld = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 0.49, rope_path: null },
+  floor: m.prestressFloor(held),
+  shape: { known: true, holds: true, worst: { residual: 1.4, name: "S2" }, acceptance: 2.18, allReachable: true },
+  capacity: { limit_factor: 0.4, sufficient: false, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
+// A document written before the block carried the two figures: its one figure
+// is the fit's (the real study's 14.6 N), judged against the 300 N it records.
+const beforeTheRule = demandOf([10, 14.6, 2], [7, 12, 1], [8, 13, 1], "S2");
+beforeTheRule.sizing = { stage: "S2", worst_wire_tension_newtons: 14.6, worst_actuator_newtons: 435.1 };
+out.sentOlder = m.demandSentences(beforeTheRule);
+out.floorOlder = m.wireFloor(beforeTheRule);
 // An actuator that pulls harder than any wire does not move the wires' floor:
 // the floor and the first sentence stay the wires', the instant is found, the
 // verdict follows the wires as the server's row does, and the grabbed nodes'
 // own figure is a sentence of its own.
 const dominant = demandOf([900, 1000, 200], [700, 900, 100], [800, 950, 100], "S2");
-dominant.sizing = { stage: "S2", worst_wire_tension_newtons: 1000, worst_actuator_newtons: 2800 };
+dominant.sizing = { stage: "S2", worst_wire_tension_newtons: 1000, fitted_wire_tension_newtons: 1000,
+                    prestress_newtons: 300, worst_actuator_newtons: 2800 };
 out.sentDominant = m.demandSentences(dominant);
 out.floorDominant = m.prestressFloor(dominant);
 out.verdictDominant = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.47, rope_path: null },
@@ -310,9 +332,11 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     # The largest tension is in a frame of the raise: it says so.
     frame = out["sentFrame"]
     assert frame[0] == (
-        "The greatest tension any wire carries is <b>1471.0 N</b>, reached at the raise's instant F60. "
-        "That is a property of the vault and the skin, so it does not move when parts change. "
-        "The stage that sizes the parts is S2.")
+        "The net is held at a prestress floor of <b>1471.0 N</b>, the larger of the entered "
+        "prestress (300.0 N) and the greatest tension the fit found in any wire (1471.0 N), "
+        "reached at the raise's instant F60. "
+        "That is a property of the vault, the skin and the prestress, so it does not move when "
+        "parts change. The stage that sizes the parts is S2.")
     assert frame[1] == "The acceptance line is 2.18 mm, from the rib and its skin."
     assert frame[2] == "The skin weighs <b>12.0 kN</b> placed, 20 mm at 2200 kg/m3; the net itself weighs 0.9 kN."
     assert frame[3] == "Held by 3 wires and 1 column head."
@@ -320,7 +344,7 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     assert len(frame) == 5, "no note, no sixth sentence"
     # In a course: the stage, and the sizing stage is a different one.
     course = out["sentCourse"][0]
-    assert "<b>1471.0 N</b>, reached at stage S2." in course
+    assert "in any wire (1471.0 N), reached at stage S2." in course
     assert course.endswith("The stage that sizes the parts is S1.")
     # Two instants share the figure: the first in the document's order is named.
     assert "reached at the raise's instant F60." in out["sentTie"][0]
@@ -328,10 +352,37 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     assert out["sentTopLevel"][0].endswith("The stage that sizes the parts is S9.")
     assert "reached at the raise's instant F60." in out["sentTopLevel"][0]
     # A net with no tension in it has no instant at which the tension is greatest.
-    assert out["sentSlack"][0].startswith("The greatest tension any wire carries is <b>0.0 N</b>. That is")
+    assert out["sentSlack"][0].startswith(
+        "The net is held at a prestress floor of <b>0.0 N</b>, the larger of the entered prestress "
+        "(not recorded) and the greatest tension the fit found in any wire (0.0 N). That is")
     # No stage carries the floor (the sizing block and the stages disagree): no instant is invented.
     assert "reached" not in out["sentNoInstant"][0]
-    assert out["sentNoInstant"][0].startswith("The greatest tension any wire carries is <b>1471.0 N</b>. That is")
+    assert out["sentNoInstant"][0].startswith(
+        "The net is held at a prestress floor of <b>1471.0 N</b>, the larger of the entered prestress "
+        "(300.0 N) and the greatest tension the fit found in any wire (1471.0 N). That is")
+
+
+@needs_node
+def test_the_wires_are_judged_at_no_less_than_the_entered_prestress(out):
+    # the engine's block when the prestress is the larger: the floor is set by it,
+    # and no instant is named, since the prestress holds the wires at every one
+    assert out["floorHeld"] == 3000
+    assert out["sentHeld"][0] == (
+        "The net is held at a prestress floor of <b>3000.0 N</b>, the larger of the entered "
+        "prestress (3000.0 N) and the greatest tension the fit found in any wire (1471.0 N), "
+        "set by the entered prestress. That is a property of the vault, the skin and the "
+        "prestress, so it does not move when parts change. The stage that sizes the parts is S2.")
+    # the ceiling of 1471 N does not carry it, whatever the fit found
+    verdict = out["verdictHeld"]
+    assert verdict["headline"] == "It does not hold."
+    assert ("The parts cannot carry the tension: the ceiling is 1471.0 N against 3000.0 N "
+            "demanded.") in verdict["reasons"]
+    # an older block carries the fit's figure alone, and is read by the same rule
+    assert out["floorOlder"] == {"newtons": 300, "fitted": 14.6, "prestress": 300}
+    assert out["sentOlder"][0].startswith(
+        "The net is held at a prestress floor of <b>300.0 N</b>, the larger of the entered "
+        "prestress (300.0 N) and the greatest tension the fit found in any wire (14.6 N), set by "
+        "the entered prestress. That is")
 
 
 @needs_node
@@ -364,7 +415,9 @@ def test_an_actuator_that_pulls_harder_than_any_wire_leaves_the_floor_to_the_wir
     assert out["floorDominant"] == 1000
     dominant = out["sentDominant"]
     assert dominant[0].startswith(
-        "The greatest tension any wire carries is <b>1000.0 N</b>, reached at the raise's instant F60. That is")
+        "The net is held at a prestress floor of <b>1000.0 N</b>, the larger of the entered "
+        "prestress (300.0 N) and the greatest tension the fit found in any wire (1000.0 N), "
+        "reached at the raise's instant F60. That is")
     assert "The grabbed nodes need up to 2800.0 N each, which a wire there would have to carry." in dominant
     assert "<b>2800" not in " ".join(dominant), "the actuator's figure is not the wires' floor"
     # the verdict follows the wires as the server's row does: a ceiling of 1471 N passes 1000 N
@@ -496,6 +549,108 @@ def test_the_panel_says_the_load_factor_and_the_grab_as_the_documents_do(tmp_pat
         model = {"placement": case["placement"], "held": case["held"],
                  "sag": {"acceptance_mm": case["line"]}}
         assert said == exports.grab_sentence(model), case
+
+
+# The floor every wire is judged at, read by the server's row and the load factor
+# (catalogue.wire_floor), the exports (exports._floor_block) and the panel
+# (prestressFloor, wireFloor): one figure on every document shape, with and
+# without the engine's block, and one sentence for it on the panel and the data
+# sheet.
+FLOOR_PARITY = """
+import * as m from %(module)r;
+import { readFileSync } from "node:fs";
+const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
+console.log(JSON.stringify(cases.map((d) => ({
+  floor: m.prestressFloor(d), wire: m.wireFloor(d), sentence: m.floorSentence(d) }))));
+"""
+
+
+def _stages(*tops):
+    """F60 a frame of the raise, then the courses S1, S2, ..., each with its wires."""
+    stages = [{"stage": 1, "name": "F60", "time": 60, "course": None, "wire_tensions": tops[0]}]
+    for index, wires in enumerate(tops[1:]):
+        stages.append({"stage": index + 2, "name": "S{}".format(index + 1), "time": None,
+                       "course": index, "wire_tensions": wires})
+    return stages
+
+
+def _block(judged, fitted, prestress):
+    return {"stage": "S2", "worst_wire_tension_newtons": judged,
+            "fitted_wire_tension_newtons": fitted, "prestress_newtons": prestress,
+            "worst_actuator_newtons": 800.0, "worst_sag_mm": 1.0, "load_newtons": 12000.0}
+
+
+FLOOR_CASES = [
+    # the engine's block: the fit's figure the larger, in a frame and in a course
+    {"schema": "bench.cablenet/2", "prestress": 300.0, "sizing": _block(1471.0, 1471.0, 300.0),
+     "stages": _stages([900.0, 1471.0], [700.0], [1300.0])},
+    {"schema": "bench.cablenet/2", "prestress": 300.0, "sizing": _block(1300.0, 1300.0, 300.0),
+     "stages": _stages([900.0], [700.0], [1300.0])},
+    # the prestress the larger, and a tie, which the prestress sets
+    {"schema": "bench.cablenet/2", "prestress": 3000.0, "sizing": _block(3000.0, 14.6, 3000.0),
+     "stages": _stages([2.0], [7.0], [14.6])},
+    {"schema": "bench.cablenet/2", "prestress": 900.0, "sizing": _block(900.0, 900.0, 900.0),
+     "stages": _stages([900.0], [700.0], [800.0])},
+    # a block from before the two figures: the real study's, and one the fit wins
+    {"schema": "bench.cablenet/2", "prestress": 300.0,
+     "sizing": {"stage": "S17", "worst_wire_tension_newtons": 14.6},
+     "stages": _stages([2.0], [14.6])},
+    {"schema": "bench.cablenet/2", "prestress": 300.0,
+     "sizing": {"stage": "S2", "worst_wire_tension_newtons": 900.0},
+     "stages": _stages([400.0], [900.0])},
+    # no block: the wires stage by stage against the prestress, either way round
+    {"schema": "bench.cablenet/2", "prestress": 1000.0, "stages": _stages([400.0], [900.0])},
+    {"schema": "bench.cablenet/2", "prestress": 300.0, "stages": _stages([400.0], [900.0])},
+    {"schema": "bench.cablenet/2", "stages": _stages([400.0], [900.0])},
+    {"schema": "bench.cablenet/2", "prestress": 300.0, "stages": []},
+    {"schema": "bench.cablenet/2", "stages": []},
+    {"schema": "bench.cablenet/2", "stages": _stages([0.0], [0.0, 0.0])},
+    # a block with no figure for the wires, and figures that are not forces
+    {"schema": "bench.cablenet/2", "prestress": 300.0,
+     "sizing": {"stage": "S2", "worst_wire_tension_newtons": None},
+     "stages": _stages([400.0], [900.0])},
+    {"schema": "bench.cablenet/2", "prestress": "300",
+     "stages": _stages([400.0, "x", None, True], [900.0, False])},
+    # a stage with no name is named by its number, and one with neither is not named
+    {"schema": "bench.cablenet/2", "stages": [{"stage": 4, "wire_tensions": [50.0]}]},
+    {"schema": "bench.cablenet/2", "stages": [{"wire_tensions": [50.0]}]},
+    {"schema": "bench.cablenet/1", "prestress": 300.0, "stages": _stages([400.0], [900.0])},
+    None,
+]
+
+
+@needs_node
+def test_the_panel_judges_the_wires_at_the_floor_the_server_and_the_documents_do(tmp_path):
+    studio = str(STATIC.parent)
+    if studio not in sys.path:
+        sys.path.insert(0, studio)
+    exports = pytest.importorskip("exports")
+    catalogue = pytest.importorskip("catalogue")
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps(FLOOR_CASES), encoding="utf-8")
+    script = tmp_path / "floors.mjs"
+    module = (STATIC / "cablenet_model.js").resolve().as_uri()
+    script.write_text(FLOOR_PARITY % {"module": module, "cases": str(path)}, encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    said = json.loads(result.stdout)
+
+    for case, panel in zip(FLOOR_CASES, said):
+        floor = catalogue.wire_floor(case)
+        assert panel["wire"] == {"newtons": floor["newtons"], "fitted": floor["fitted_newtons"],
+                                 "prestress": floor["prestress_newtons"]}, case
+        # the server's row judges a configuration against this figure (app._demand_floor)
+        assert panel["floor"] == (0.0 if floor["newtons"] is None else floor["newtons"]), case
+        block = exports._floor_block(case)
+        assert block["prestress_floor_newtons"] == floor["newtons"], case
+        plain = panel["sentence"].replace("<b>", "").replace("</b>", "")
+        assert plain == exports.floor_sentence(block, True), case
+    sentences = [panel["sentence"] for panel in said]
+    assert any("set by the entered prestress" in s for s in sentences)
+    assert any("reached at the raise's instant F60" in s for s in sentences)
+    assert any("reached at stage S2" in s for s in sentences)
+    assert any("reached at stage 4" in s for s in sentences)
+    assert any(s.startswith("No prestress floor is recorded") for s in sentences)
 
 
 ROPE_PARITY = """

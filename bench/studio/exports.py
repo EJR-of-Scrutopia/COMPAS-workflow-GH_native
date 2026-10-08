@@ -294,11 +294,11 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
     shape = _shape_verdict(demand)
     acceptance = demand.get("acceptance")
     hold = [_stage_hold(stage, acceptance) for stage in demand.get("stages") or []]
-    floor = _prestress_floor(demand)
+    floor = _floor_block(demand)
     tension = {
         "ceiling_newtons": float(ceiling),
         "binding": binding,
-        "prestress_floor_newtons": floor,
+        "prestress_floor_newtons": floor["prestress_floor_newtons"],
         "passes": row.get("passes"),
         "passes_note": row.get("passes_note"),
         "margin": row.get("margin"),
@@ -306,6 +306,7 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
     return {
         "generated_at": generated_at,
         "study": demand.get("study"),
+        "schema": demand.get("schema"),
         "units": "N, mm; torque N mm; prices pounds",
         "rope_mismatch": _rope_mismatch(parts, demand, configuration),
         "configuration": dict(configuration),
@@ -316,8 +317,7 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "rope_path": row.get("rope_path"),
         "demand": {
             "prestress_input_newtons": demand.get("prestress"),
-            "prestress_floor_newtons": floor,
-            "prestress_floor_instant": _floor_instant(demand, floor),
+            **floor,
             "sizing_stage": demand.get("sizing_stage"),
             "density": demand.get("density"),
             "thickness": demand.get("thickness"),
@@ -359,28 +359,101 @@ NOT_CHECKED = [
 ]
 
 
+# the analysis that fits the net and grabs nodes; anything else is described in
+# the words of the forward walk that came before it
+SCHEMA_2 = "bench.cablenet/2"
+
+
+def _version2(model):
+    return model.get("schema") == SCHEMA_2
+
+
 def _prestress_floor(demand):
-    values = [
-        float(t) for stage in demand.get("stages") or []
-        for t in stage.get("wire_tensions") or []
-    ]
-    return max(values) if values else None
+    """The tension every wire is judged at, with the two figures it is the
+    larger of: catalogue.wire_floor, which the server's row and the load factor
+    read as well, so no document can judge the wires at another figure."""
+
+    return catalogue.wire_floor(demand)
 
 
 def _floor_instant(demand, floor):
-    """Where the prestress floor, the largest tension any wire carries, occurs:
-    the first stage in the document's order whose own worst wire tension is the
-    floor, as its name and whether it is a frame of the raise; None when there
-    is no floor. It is not the sizing stage: that is chosen among the courses,
-    while the floor is the greatest over every instant, the raise included."""
+    """Where the prestress floor is set, read off the larger of its two figures.
 
-    if floor is None:
+    When the entered prestress is the larger (a tie included) it sets the floor
+    at every instant and no stage is named: {"prestress": True}. When the fit's
+    figure is, the first stage in the document's order whose own worst wire
+    tension is that figure, as its name and whether it is a frame of the raise.
+    None when there is no floor, when the fit's figure is not above zero, or
+    when no named stage carries it. It is not the sizing stage: that is chosen
+    among the courses, while the fit's figure is the greatest over every
+    instant, the raise included. cablenet_model.floorInstant reads it the same
+    way."""
+
+    if floor["newtons"] is None:
         return None
-    for stage in demand.get("stages") or []:
-        tensions = [float(t) for t in stage.get("wire_tensions") or []]
-        if tensions and max(tensions) == floor:
-            return {"name": stage.get("name"), "frame": _is_frame_instant(stage)}
+    entered, fitted = floor["prestress_newtons"], floor["fitted_newtons"]
+    if entered is not None and (fitted is None or entered >= fitted):
+        return {"prestress": True}
+    if fitted is None or not fitted > 0.0:
+        return None          # a net with no tension in it has no instant where it is greatest
+    for stage in _items(demand.get("stages")):
+        if not isinstance(stage, dict):
+            continue
+        tensions = [v for v in map(_number, _items(stage.get("wire_tensions")))
+                    if v is not None]
+        if tensions and max(tensions) == fitted:
+            name = stage.get("name") if stage.get("name") is not None else stage.get("stage")
+            return None if name is None else {"name": name,
+                                              "frame": _is_frame_instant(stage)}
     return None
+
+
+def _floor_block(demand):
+    """The floor, its two figures and where it is set, as the model carries
+    them under "demand"."""
+
+    floor = _prestress_floor(demand)
+    return {
+        "prestress_floor_newtons": floor["newtons"],
+        "entered_prestress_newtons": floor["prestress_newtons"],
+        "fitted_wire_tension_newtons": floor["fitted_newtons"],
+        "prestress_floor_instant": _floor_instant(demand, floor),
+    }
+
+
+def _force_text(value):
+    """A force with its unit, or the words that say it is missing: never
+    "not recorded N"."""
+
+    return "not recorded" if value is None else "{} N".format(_newtons(value))
+
+
+def floor_sentence(block, version2=True):
+    """One sentence on the floor every wire is judged at: the larger of the
+    entered prestress and the greatest tension the analysis found in any wire,
+    and where it is set. The panel says it in the same words for a version 2
+    document (cablenet_model.floorSentence, with the floor in bold). It reads
+    the model's demand block and computes nothing."""
+
+    floor = block.get("prestress_floor_newtons")
+    if floor is None:
+        return ("No prestress floor is recorded: the document gives neither an "
+                "entered prestress nor a wire tension.")
+    instant = block.get("prestress_floor_instant") or {}
+    if instant.get("prestress"):
+        where = ", set by the entered prestress"
+    elif instant.get("name") is None:
+        where = ""
+    elif instant.get("frame"):
+        where = ", reached at the raise's instant {}".format(instant["name"])
+    else:
+        where = ", reached at stage {}".format(instant["name"])
+    found = ("the greatest tension the fit found in any wire" if version2
+             else "the largest tension any wire carries at any stage of the build")
+    return ("The net is held at a prestress floor of {} N, the larger of the entered "
+            "prestress ({}) and {} ({}){}.".format(
+                _newtons(floor), _force_text(block.get("entered_prestress_newtons")),
+                found, _force_text(block.get("fitted_wire_tension_newtons")), where))
 
 
 def _total_placed(demand):
@@ -1341,8 +1414,9 @@ def _grab_section(model):
     paragraphs.append(
         "Sag is a first-order figure: the unbalanced force at a node divided by "
         "the net's tangent stiffness at the fitted tensions, with the entered "
-        "prestress as a floor on every member. Large figures are upper bounds; "
-        "small ones are close.")
+        "prestress as a floor on every member. The real net stiffens as it sags, "
+        "but a member that would go slack keeps its stiffness here, so a large "
+        "figure is a guide and not a bound; small ones are close.")
     if actuators:
         worst = (model.get("sizing") or {}).get("worst_actuator_newtons")
         if isinstance(worst, (int, float)) and not isinstance(worst, bool):
@@ -1387,22 +1461,18 @@ def _datasheet_sections(model):
 
     # 2
     wires = demand.get("wires") or []
-    instant = demand.get("prestress_floor_instant") or {}
-    if instant.get("name") is None:
-        reached = ""
-    elif instant.get("frame"):
-        reached = ", reached at the raise's instant {}".format(instant["name"])
+    version2 = _version2(model)
+    if version2:
+        rule = ("The prestress is the floor every member is given; the sag is "
+                "judged at it.")
     else:
-        reached = ", reached at stage {}".format(instant["name"])
+        rule = ("The study entered a uniform prestress of {} N for the cut rule; "
+                "the staged analysis then found what the wires actually have to "
+                "carry.".format(_newtons(demand.get("prestress_input_newtons"))))
     out.append("## What the vault demands\n\n" + "\n\n".join([
-        "The net must be held at a prestress floor of {} N, which is the "
-        "largest tension any wire carries at any stage of the build{}. The "
-        "stage that sizes the parts is {}. The study entered a uniform "
-        "prestress of {} N for the cut rule; the floor is what the staged "
-        "analysis then found the wires actually have to carry.".format(
-            _newtons(demand.get("prestress_floor_newtons")), reached,
-            demand.get("sizing_stage") or "not recorded",
-            _newtons(demand.get("prestress_input_newtons"))),
+        "{} The stage that sizes the parts is {}. {}".format(
+            floor_sentence(demand, version2),
+            demand.get("sizing_stage") or "not recorded", rule),
         "The skin is laid at a density of {} kg/m3 and a thickness of {} m, "
         "and the largest weight placed on the net at any stage is {} N. The net is held by {} "
         "anchors and driven by {} {}.".format(

@@ -80,46 +80,112 @@ export function shapeOf(demand) {
            holds: known && allReachable && withinLine };
 }
 
-// The greatest tension any wire carries: the sizing block's figure when the
-// document has one, else the worst wire over the stages. Wires only, as the
-// server reads the demand (_demand_floor in app.py, which decides whether a
-// row passes) and as the exports do (_prestress_floor). The force a grabbed
-// node's actuator supplies is another figure, said in a sentence of its own
-// by demandSentences; folded in here it would be a number on the panel that
-// no document agrees with, and a verdict that disagrees with the server's.
-export function prestressFloor(demand) {
-  const sizing = sizingOf(demand);
-  if (sizing && sizing.worst_wire_tension_newtons != null) {
-    return Number(sizing.worst_wire_tension_newtons);
-  }
-  let worst = 0;
-  for (const stage of (demand && demand.stages) || []) {
-    for (const tension of stage.wire_tensions || []) worst = Math.max(worst, tension);
-  }
-  return worst;
+// A finite number, else null: a boolean, a string, a null and a NaN are not a
+// force to any reader of the floor (catalogue._force).
+function force(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-// Where the floor occurs: the first stage, in the document's order, whose own
-// greatest wire tension is the floor, with whether it is a frame of the raise.
-// It is not the sizing stage, which is chosen among the courses; the floor is
-// the greatest over every instant, the raise included. Null when no stage
-// carries it (a hand-edited document whose sizing block and stages disagree)
-// or the stage has no name: an instant is named only when the document says
-// which it is.
-function floorInstant(demand, floor) {
-  if (!(floor > 0)) return null;
-  for (const stage of (demand && demand.stages) || []) {
-    let top = null;
-    for (const tension of stage.wire_tensions || []) {
-      const value = Number(tension);
-      if (Number.isFinite(value) && (top === null || value > top)) top = value;
+function listed(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+// The tension every wire is judged at, and the two figures it is the larger
+// of: { newtons, fitted, prestress }, each null when the document does not
+// give it. This is catalogue.wire_floor, read the same way, and the server's
+// row, the load factor and the three documents all read that. The engine's
+// sizing block carries all three: worst_wire_tension_newtons is the larger of
+// the entered prestress and the greatest tension the fit found in any wire,
+// and the two are beside it. A document written before the block carried the
+// two is read by the same rule from what it does carry (the block's one figure
+// is the fit's, or the wires stage by stage when there is no block), with the
+// prestress it records. Wires only: the force a grabbed node's actuator
+// supplies is another figure, said in a sentence of its own by
+// demandSentences; folded in here it would be a number on the panel that no
+// document agrees with, and a verdict that disagrees with the server's.
+export function wireFloor(demand) {
+  const sizing = sizingOf(demand);
+  const judged = sizing ? force(sizing.worst_wire_tension_newtons) : null;
+  if (judged !== null && Object.prototype.hasOwnProperty.call(sizing, "fitted_wire_tension_newtons")) {
+    return { newtons: judged, fitted: force(sizing.fitted_wire_tension_newtons),
+             prestress: force(sizing.prestress_newtons) };
+  }
+  let fitted = judged;
+  if (fitted === null) {
+    for (const stage of listed(demand && demand.stages)) {
+      if (!stage || typeof stage !== "object") continue;
+      for (const tension of listed(stage.wire_tensions)) {
+        const value = force(tension);
+        if (value !== null && (fitted === null || value > fitted)) fitted = value;
+      }
     }
-    if (top !== null && top === floor) {
+  }
+  const prestress = force(demand && typeof demand === "object" ? demand.prestress : null);
+  const known = [prestress, fitted].filter((value) => value !== null);
+  return { newtons: known.length ? Math.max(...known) : null, fitted, prestress };
+}
+
+// The floor as one figure for the verdict: 0 when the document gives none.
+export function prestressFloor(demand) {
+  const floor = wireFloor(demand).newtons;
+  return floor === null ? 0 : floor;
+}
+
+// Where the floor is set, read off the larger of its two figures
+// (exports._floor_instant). When the entered prestress is the larger, a tie
+// included, it sets the floor at every instant and no stage is named:
+// { prestress: true }. When the fit's figure is, the first stage in the
+// document's order whose own greatest wire tension is that figure, with
+// whether it is a frame of the raise. It is not the sizing stage, which is
+// chosen among the courses; the fit's figure is the greatest over every
+// instant, the raise included. Null when there is no floor, when the fit's
+// figure is not above zero, when no stage carries it (a hand-edited document
+// whose sizing block and stages disagree), or when the stage has no name: an
+// instant is named only when the document says which it is.
+function floorInstant(demand, floor) {
+  if (floor.newtons === null) return null;
+  if (floor.prestress !== null && (floor.fitted === null || floor.prestress >= floor.fitted)) {
+    return { prestress: true };
+  }
+  // a net with no tension in it has no instant at which the tension is greatest
+  if (!(floor.fitted > 0)) return null;
+  for (const stage of listed(demand && demand.stages)) {
+    if (!stage || typeof stage !== "object") continue;
+    let top = null;
+    for (const tension of listed(stage.wire_tensions)) {
+      const value = force(tension);
+      if (value !== null && (top === null || value > top)) top = value;
+    }
+    if (top !== null && top === floor.fitted) {
       const name = stage.name == null ? stage.stage : stage.name;
       return name == null ? null : { name, frame: isFrame(stage) };
     }
   }
   return null;
+}
+
+// A force with its unit, or the words that say it is missing
+// (exports._force_text).
+function forceText(value) {
+  return value == null ? "not recorded" : newtons(value) + " N";
+}
+
+// One sentence on the floor every wire is judged at, the two figures it is the
+// larger of and where it is set: exports.floor_sentence for a version 2
+// document, word for word, with the floor in bold. The stage name is the
+// server's string and is escaped.
+export function floorSentence(demand) {
+  const floor = wireFloor(demand);
+  if (floor.newtons === null) {
+    return "No prestress floor is recorded: the document gives neither an entered " +
+      "prestress nor a wire tension.";
+  }
+  const instant = floorInstant(demand, floor);
+  const where = !instant ? "" : instant.prestress ? ", set by the entered prestress"
+    : (instant.frame ? ", reached at the raise's instant " : ", reached at stage ") + esc(instant.name);
+  return "The net is held at a prestress floor of <b>" + newtons(floor.newtons) + " N</b>, " +
+    "the larger of the entered prestress (" + forceText(floor.prestress) + ") and the " +
+    "greatest tension the fit found in any wire (" + forceText(floor.fitted) + ")" + where + ".";
 }
 
 // Total rope one wire winds over the whole build, taken at the worst wire.
@@ -170,13 +236,9 @@ export function demandSentences(demand) {
   const sizing = sizingOf(demand);
   // the document names the stage twice, in the sizing block and at the top level
   const sizingStage = (sizing && sizing.stage) || demand.sizing_stage;
-  const floor = prestressFloor(demand);
-  const instant = floorInstant(demand, floor);
-  const reached = !instant ? "" : (instant.frame
-    ? ", reached at the raise's instant " : ", reached at stage ") + esc(instant.name);
-  out.push("The greatest tension any wire carries is <b>" + newtons(floor) + " N</b>" +
-    reached + ". That is a property of the vault and the skin, so it does not move " +
-    "when parts change." +
+  out.push(floorSentence(demand) +
+    (wireFloor(demand).newtons === null ? "" : " That is a property of the vault, the " +
+      "skin and the prestress, so it does not move when parts change.") +
     (sizingStage ? " The stage that sizes the parts is " + esc(sizingStage) + "." : ""));
   out.push(demand.acceptance == null
     ? "No acceptance line is set for this run, so sag has nothing to be judged against."

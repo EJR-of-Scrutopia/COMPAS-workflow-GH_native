@@ -935,6 +935,35 @@ def test_the_floor_follows_the_sizing_block_and_a_stale_document_names_the_re_ru
     assert recommended["sufficient"] is None and "sizing" in recommended["rule"]
 
 
+def test_the_server_judges_the_wires_at_no_less_than_the_entered_prestress(
+        client, tmp_path, monkeypatch):
+    # the engine's block when the prestress is the larger: a re-run at 3000 N of a
+    # net whose fit finds 14.6 N is judged at 3000 N, so the hook-and-hook
+    # turnbuckle's 1471 N does not pass, whatever the fit found
+    held = _sized_demand()
+    held["prestress"] = 3000.0
+    held["sizing"] = {**held["sizing"], "worst_wire_tension_newtons": 3000.0,
+                      "fitted_wire_tension_newtons": 14.6, "prestress_newtons": 3000.0}
+    _write_demand(tmp_path, monkeypatch, held)
+    body = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    row = body["rows"][0]
+    assert body["prestress_floor"] == 3000.0
+    assert row["passes"] is False
+    assert row["load_factor"]["worst_wire_tension_newtons"] == 3000.0
+    assert row["load_factor"]["sufficient"] is False
+    # a block from before the two figures carries the fit's alone (the real study's
+    # 14.6 N at 300 N entered): it is judged by the same rule
+    older = _sized_demand()
+    older["prestress"] = 300.0
+    older["sizing"] = {**older["sizing"], "worst_wire_tension_newtons": 14.6}
+    _write_demand(tmp_path, monkeypatch, older)
+    body = client.post("/api/studies/My Vault/cablenet/configurations", json={
+        "configurations": [_GOOD], "angle_degrees": 10.0, "options": _STUDY_OPTIONS}).json()
+    assert body["prestress_floor"] == 300.0
+    assert body["rows"][0]["load_factor"]["worst_wire_tension_newtons"] == 300.0
+
+
 def test_a_source_that_cannot_be_resolved_is_a_400_that_says_why(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     for source, reason in (("bogus", "unknown cut source"),

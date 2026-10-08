@@ -415,6 +415,65 @@ def sizing_of(demand):
     return sizing if isinstance(sizing, dict) else None
 
 
+def _listed(value):
+    """The entries of a list, or none when the document put something else there."""
+
+    return value if isinstance(value, list) else []
+
+
+def _force(value):
+    """A finite number as a float, else None: a bool, a string, a null and a
+    NaN are not a force to any reader of the floor below."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def wire_floor(demand):
+    """The tension every wire is judged at, and the two figures it is the
+    larger of: {"newtons", "fitted_newtons", "prestress_newtons"}, each None
+    when the document does not give it.
+
+    The engine's sizing block carries all three (solve_cablenet.hold_analysis):
+    worst_wire_tension_newtons is the larger of the entered prestress and the
+    greatest tension the fit found in any wire at any instant, and the two are
+    beside it as prestress_newtons and fitted_wire_tension_newtons. They are
+    read here, never worked out again.
+
+    A document written before the block carried the two figures is read by the
+    same rule from what it does carry: a block from before then holds the fit's
+    figure alone as worst_wire_tension_newtons, and a document with no block, or
+    a block with no figure for the wires, has its wires read stage by stage. The
+    floor is then the larger of that figure and the prestress the document
+    records, where it records one. The server's row, the load factor and the
+    three exports read the floor here, and the panel's prestressFloor
+    (cablenet_model.js) reads a document the same way.
+    """
+
+    demand = demand if isinstance(demand, dict) else {}
+    sizing = sizing_of(demand)
+    judged = None if sizing is None else _force(sizing.get("worst_wire_tension_newtons"))
+    if judged is not None and "fitted_wire_tension_newtons" in sizing:
+        return {"newtons": judged,
+                "fitted_newtons": _force(sizing.get("fitted_wire_tension_newtons")),
+                "prestress_newtons": _force(sizing.get("prestress_newtons"))}
+    if judged is not None:
+        fitted = judged
+    else:
+        values = [
+            value for stage in _listed(demand.get("stages")) if isinstance(stage, dict)
+            for value in map(_force, _listed(stage.get("wire_tensions")))
+            if value is not None
+        ]
+        fitted = max(values) if values else None
+    prestress = _force(demand.get("prestress"))
+    known = [value for value in (prestress, fitted) if value is not None]
+    return {"newtons": max(known) if known else None,
+            "fitted_newtons": fitted, "prestress_newtons": prestress}
+
+
 # a limit too large for any load to reach; finite because capacity_from_curve
 # refuses a mechanism with an infinite one
 _UNBOUND = 1e300
@@ -447,8 +506,10 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
 
     The tensions are taken to scale with the load, the owner's hypothesis for an
     actuated net and exact for the fit, so the curve capacity_from_curve reads
-    is worst_tension = f * t1 with the sag constant. None when the demand has
-    no sizing block.
+    is worst_tension = f * t1 with the sag constant, where t1 is the tension
+    every wire is judged at (wire_floor: the larger of the entered prestress and
+    the greatest tension the fit found). None when the demand has no sizing
+    block.
 
     On that curve every part term grows with the load, so the first part term
     to bind is the ceiling's own tightest term. The walk's rungs are
@@ -464,7 +525,8 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
     if sizing is None:
         return None
     mechanism = mechanism_for(parts, configuration, angle_degrees)
-    t1 = float(sizing["worst_wire_tension_newtons"])
+    judged = wire_floor(demand)["newtons"]
+    t1 = 0.0 if judged is None else float(judged)
     sag = float(sizing["worst_sag_mm"])
     acceptance = demand.get("acceptance")
     terms = ceiling_terms(mechanism)

@@ -1226,7 +1226,10 @@ def test_a_folder_that_cannot_be_listed_is_a_400_naming_it_not_a_500(
 def _v2_demand(**kwargs):
     demand = _demand()
     demand["schema"] = "bench.cablenet/2"
+    # as the engine writes it: the wires are judged at the larger of the entered
+    # prestress (300 N) and the fit's greatest wire tension (900 N), here the fit's
     demand["sizing"] = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
+                        "fitted_wire_tension_newtons": 900.0, "prestress_newtons": 300.0,
                         "worst_actuator_newtons": 120.0, "worst_sag_mm": 1.4,
                         "load_newtons": 12000.0}
     demand["held"] = {"wire_nodes": [0, 2], "column_heads": [4], "actuators": [1, 3]}
@@ -1612,9 +1615,10 @@ def test_the_line_is_the_demands_even_when_no_stage_carries_a_sag():
 # ---------------------------------------------------------------------------
 
 def test_a_net_that_nothing_binds_is_not_said_to_be_bound_by_nothing():
-    light = {"stage": "S7", "worst_wire_tension_newtons": 10.0, "worst_actuator_newtons": 0.0,
-             "worst_sag_mm": 1.4, "load_newtons": 12000.0}
-    sentence = exports.load_factor_sentence(_sized_model(sizing=light))
+    light = {"stage": "S7", "worst_wire_tension_newtons": 10.0,
+             "fitted_wire_tension_newtons": 4.0, "prestress_newtons": 10.0,
+             "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    sentence = exports.load_factor_sentence(_sized_model(sizing=light, prestress=10.0))
     assert sentence == ("Carries at least 20.0 times the 12.0 kN skin: nothing binds "
                         "up to that load.")
 
@@ -1639,9 +1643,11 @@ def test_a_skin_whose_weight_is_not_recorded_is_not_given_a_weight():
 
 
 def test_a_net_with_no_tension_to_scale_is_not_established_and_says_why():
+    # only a document that records no prestress can have nothing to scale: the
+    # engine refuses a prestress of zero, and the wires are judged at no less
     still = {"stage": "S7", "worst_wire_tension_newtons": 0.0, "worst_actuator_newtons": 0.0,
              "worst_sag_mm": 1.4, "load_newtons": 12000.0}
-    sentence = exports.load_factor_sentence(_sized_model(sizing=still))
+    sentence = exports.load_factor_sentence(_sized_model(sizing=still, prestress=None))
     assert sentence == ("Whether it carries the skin is not established: no wire carries "
                         "tension at the sizing stage, so there is nothing to scale.")
 
@@ -2069,34 +2075,44 @@ def test_a_column_entry_that_is_not_an_entry_is_skipped():
 
 
 # ---------------------------------------------------------------------------
-# The floor is where the largest wire tension occurs, and the stage that sizes
-# the parts is another clause
+# The floor every wire is judged at: the larger of the entered prestress and the
+# greatest tension the fit found, where it is set, and the stage that sizes the
+# parts as another clause
 # ---------------------------------------------------------------------------
+
+def _fit_wins(figure):
+    """The sizing block as the engine writes it when the fit's greatest wire
+    tension, `figure`, is above the 300 N the study entered."""
+
+    return {**_v2_demand()["sizing"], "worst_wire_tension_newtons": figure,
+            "fitted_wire_tension_newtons": figure}
+
 
 def test_the_floor_names_the_instant_where_the_largest_wire_tension_occurs():
     # the raise carries the largest wire tension in the document, and the stage
     # that sizes the parts is a course
     stages = _with_frames(_v2_demand())
     stages[0]["wire_tensions"] = [1500.0]            # F45, a frame of the raise
-    model = _sized_model(stages=stages)
+    model = _sized_model(stages=stages, sizing=_fit_wins(1500.0))
     assert model["demand"]["prestress_floor_newtons"] == 1500.0
     assert model["demand"]["prestress_floor_instant"] == {"name": "F45", "frame": True}
     section = _section(exports.datasheet_markdown(model), "demands")
-    assert ("The net must be held at a prestress floor of 1500.0 N, which is the largest "
-            "tension any wire carries at any stage of the build, reached at the raise's "
-            "instant F45. The stage that sizes the parts is S7.") in section
+    assert ("The net is held at a prestress floor of 1500.0 N, the larger of the entered "
+            "prestress (300.0 N) and the greatest tension the fit found in any wire "
+            "(1500.0 N), reached at the raise's instant F45. The stage that sizes the "
+            "parts is S7.") in section
     assert "sizes it" not in section
 
 
 def test_a_floor_reached_in_a_course_reads_as_a_stage():
     section = _section(exports.datasheet_markdown(_sized_model()), "demands")
-    assert ("which is the largest tension any wire carries at any stage of the build, "
-            "reached at stage S7. The stage that sizes the parts is S7.") in section
+    assert ("the greatest tension the fit found in any wire (900.0 N), reached at stage "
+            "S7. The stage that sizes the parts is S7.") in section
     # and the stage that sizes the parts can be another course than the one that
     # reaches the floor
     stages = _v2_demand()["stages"]
     stages[0]["wire_tensions"] = [1000.0]            # S1 carries more than S7's 900.0
-    model = _sized_model(stages=stages)
+    model = _sized_model(stages=stages, sizing=_fit_wins(1000.0))
     assert model["demand"]["prestress_floor_instant"] == {"name": "S1", "frame": False}
     section = _section(exports.datasheet_markdown(model), "demands")
     assert "reached at stage S1. The stage that sizes the parts is S7." in section
@@ -2106,8 +2122,8 @@ def test_a_floor_two_instants_share_is_named_at_the_first_in_the_documents_order
     stages = _with_frames(_v2_demand())
     stages[0]["wire_tensions"] = [1500.0]
     stages[1]["wire_tensions"] = [1500.0]
-    assert _sized_model(stages=stages)["demand"]["prestress_floor_instant"] == {
-        "name": "F45", "frame": True}
+    model = _sized_model(stages=stages, sizing=_fit_wins(1500.0))
+    assert model["demand"]["prestress_floor_instant"] == {"name": "F45", "frame": True}
 
 
 def test_the_instant_is_the_one_whose_own_worst_tension_is_the_floor():
@@ -2115,24 +2131,109 @@ def test_the_instant_is_the_one_whose_own_worst_tension_is_the_floor():
     stages = _v2_demand()["stages"]
     stages[0]["wire_tensions"] = [100.0, 1200.0, 50.0]
     stages[1]["wire_tensions"] = [900.0, 1100.0]
-    model = _sized_model(stages=stages)
+    model = _sized_model(stages=stages, sizing=_fit_wins(1200.0))
     assert model["demand"]["prestress_floor_newtons"] == 1200.0
     assert model["demand"]["prestress_floor_instant"] == {"name": "S1", "frame": False}
 
 
 def test_a_document_with_no_wire_tension_names_no_instant_for_the_floor():
+    # no sizing block and no wire tension: the entered prestress is the floor, set by
+    # it at every instant, and with no prestress either there is no floor at all
     for stages in ([], [{"stage": 1, "name": "S1", "wire_tensions": []}]):
-        model = _sized_model(stages=stages)
-        assert model["demand"]["prestress_floor_newtons"] is None
-        assert model["demand"]["prestress_floor_instant"] is None
+        model = _sized_model(stages=stages, sizing=None)
+        assert model["demand"]["prestress_floor_newtons"] == 300.0
+        assert model["demand"]["prestress_floor_instant"] == {"prestress": True}
         section = _section(exports.datasheet_markdown(model), "demands")
         assert "reached at" not in section and "The stage that sizes the parts is S7." in section
+        assert ("the greatest tension the fit found in any wire (not recorded), set by the "
+                "entered prestress.") in section
+        bare = _sized_model(stages=stages, sizing=None, prestress=None)
+        assert bare["demand"]["prestress_floor_newtons"] is None
+        assert bare["demand"]["prestress_floor_instant"] is None
+        section = _section(exports.datasheet_markdown(bare), "demands")
+        assert ("No prestress floor is recorded: the document gives neither an entered "
+                "prestress nor a wire tension. The stage that sizes the parts is S7.") in section
+        assert "not recorded N" not in section.split("\n\n")[1]
 
 
 def test_the_other_two_documents_still_name_the_stage_that_sizes_the_parts():
     stages = _with_frames(_v2_demand())
     stages[0]["wire_tensions"] = [1500.0]
-    model = _sized_model(stages=stages)
+    model = _sized_model(stages=stages, sizing=_fit_wins(1500.0))
     assert "sized at stage S7" in exports.diagram_svg(model)
     chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
     assert float(chosen["Prestress the build demands (N)"][1]) == 1500.0
+
+
+def _held_at_the_prestress(prestress=3000.0, fitted=14.6):
+    """The sizing block the engine writes when the fit's wires carry less than the
+    prestress entered, which is the real study's case (14.6 N at 300 N)."""
+
+    return {**_v2_demand()["sizing"], "worst_wire_tension_newtons": prestress,
+            "fitted_wire_tension_newtons": fitted, "prestress_newtons": prestress}
+
+
+def test_the_wires_are_judged_at_the_entered_prestress_when_the_fit_finds_less():
+    # a re-run at 3000 N of a net whose fit carries 14.6 N in its worst wire: the
+    # turnbuckle's 1471 N does not carry it, however little the fit finds
+    import catalogue
+    parts = catalogue.load_parts()
+    demand = _v2_demand(prestress=3000.0, sizing=_held_at_the_prestress())
+    floor = catalogue.wire_floor(demand)
+    assert floor == {"newtons": 3000.0, "fitted_newtons": 14.6, "prestress_newtons": 3000.0}
+    row = _row(parts, _configuration(), passes=1471.0 >= floor["newtons"],
+               margin=1471.0 / floor["newtons"],
+               load_factor=catalogue.load_factor(parts, _configuration(), 10.0, demand))
+    model = exports.export_model(parts, demand, row, _configuration(), 10.0, "2026-10-08")
+    assert model["demand"]["prestress_floor_newtons"] == 3000.0
+    assert model["verdict"]["tension"]["prestress_floor_newtons"] == 3000.0
+    assert model["demand"]["prestress_floor_instant"] == {"prestress": True}
+    assert model["capacity"]["worst_wire_tension_newtons"] == 3000.0
+    assert model["capacity"]["sufficient"] is False
+    assert model["verdict"]["holds"] is False
+    text = exports.datasheet_markdown(model)
+    section = _section(text, "demands")
+    assert ("The net is held at a prestress floor of 3000.0 N, the larger of the entered "
+            "prestress (3000.0 N) and the greatest tension the fit found in any wire "
+            "(14.6 N), set by the entered prestress. The stage that sizes the parts is S7. "
+            "The prestress is the floor every member is given; the sag is judged at it."
+            ) in section
+    assert "against a prestress floor of 3000.0 N" in _section(text, "whether it holds")
+    assert exports.load_factor_sentence(model).startswith("Carries only 0.4 times")
+    chosen = {r[0]: r for r in exports._sheet_rows(model)["Chosen"] if r}
+    assert float(chosen["Prestress the build demands (N)"][1]) == 3000.0
+
+
+def test_a_document_from_before_the_two_figures_is_judged_by_the_same_rule():
+    # the real study's block carries the fit's figure alone: 14.6 N at 300 N entered
+    older = {"stage": "S17", "worst_wire_tension_newtons": 14.6,
+             "worst_actuator_newtons": 435.1, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
+    model = _sized_model(sizing=older)
+    assert model["demand"]["prestress_floor_newtons"] == 300.0
+    assert model["demand"]["fitted_wire_tension_newtons"] == 14.6
+    assert model["demand"]["entered_prestress_newtons"] == 300.0
+    assert model["capacity"]["worst_wire_tension_newtons"] == 300.0
+    assert ("a prestress floor of 300.0 N, the larger of the entered prestress (300.0 N) "
+            "and the greatest tension the fit found in any wire (14.6 N), set by the "
+            "entered prestress.") in exports.datasheet_markdown(model)
+    # and the fit's figure stands when it is the larger
+    assert _sized_model(sizing={**older, "worst_wire_tension_newtons": 900.0})[
+        "demand"]["prestress_floor_newtons"] == 900.0
+
+
+def test_a_first_version_document_says_the_floor_rule_in_its_own_words():
+    # no sizing block: the wires are read stage by stage (900 N at S7) against the
+    # prestress the study entered, and the cut rule is still the cut rule
+    model = _model()
+    assert model["demand"]["prestress_floor_newtons"] == 900.0
+    section = _section(exports.datasheet_markdown(model), "demands")
+    assert ("The net is held at a prestress floor of 900.0 N, the larger of the entered "
+            "prestress (300.0 N) and the largest tension any wire carries at any stage of "
+            "the build (900.0 N), reached at stage S7. The stage that sizes the parts is S7. "
+            "The study entered a uniform prestress of 300.0 N for the cut rule; the staged "
+            "analysis then found what the wires actually have to carry.") in section
+    assert "the fit" not in section
+    heavy = _model(demand=_demand(prestress=1000.0))
+    assert heavy["demand"]["prestress_floor_newtons"] == 1000.0
+    assert ("(900.0 N), set by the entered prestress. The stage that sizes the parts is S7."
+            in _section(exports.datasheet_markdown(heavy), "demands"))

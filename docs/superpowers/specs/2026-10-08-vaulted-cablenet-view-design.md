@@ -197,7 +197,13 @@ cone. The net's own weight is scaled with the skin, which overstates the demand
 slightly and is conservative.
 
 So at the sizing stage the document records the worst wire tension and the
-worst sag under the full load. The curve has `worst_tension = f * t1` and
+worst sag under the full load. The wires are judged at the larger of the
+entered prestress and the greatest tension the fit finds in any wire, and that
+larger figure is the worst wire tension the sizing block records, with the two
+kept beside it. The shape half gives every member the prestress as a floor on
+its stiffness and judges the sag at it, so a wire judged at the fit's own
+tension (14.6 N on the real study, at 300 N) would let a rig pass for a net the
+analysis holds at the prestress. The curve has `worst_tension = f * t1` and
 `deviation = sag` at every factor `f`, and `capacity_from_curve` applies the
 chosen mechanism's checks to it unchanged. It answers:
 
@@ -344,8 +350,9 @@ census is updated for the two new dials rather than worked around.
    owner's hypothesis for an actuated net and exact for the fit; a net with
    fixed rest lengths behaves differently, and that is what the forward solve
    would have measured had it run.
-6. **Sag is first order.** The real net stiffens as it sags, so large figures
-   are upper bounds on the movement and small ones are close.
+6. **Sag is first order.** The real net stiffens as it sags, but a member that
+   would go slack keeps its stiffness in the linearisation, so a large figure
+   is a guide and not a bound on the movement; small ones are close.
 7. **The lenses draw on the finished net.** At a frame of the raise the figures
    belong to a different shape than the one they are drawn on; drawing them on
    the formwork net is a later refinement.

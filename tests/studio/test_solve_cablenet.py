@@ -326,10 +326,30 @@ def test_the_sizing_stage_is_the_worst_wire_or_actuator_force_with_the_actuators
         if here > worst:
             worst, name = here, stage["name"]
     assert sizing["stage"] == name == document["sizing_stage"]
-    assert sizing["worst_wire_tension_newtons"] == pytest.approx(
+    assert sizing["fitted_wire_tension_newtons"] == pytest.approx(
         max(max(abs(t) for t in s["wire_tensions"]) for s in document["stages"]))
     assert sizing["load_newtons"] > 0.0
     assert sizing["worst_sag_mm"] >= 0.0
+
+
+def test_the_wires_are_judged_at_no_less_than_the_prestress_with_the_fit_beside_it():
+    pytest.importorskip("compas_fd")
+    # 100 N entered; the fit's wires carry at most about 62 N (22 N up each corner
+    # at an 800 mm rise over 2267 mm), far below it
+    document = solve_cablenet.solve(_grid_request())
+    sizing = document["sizing"]
+    fitted = max(max(abs(t) for t in s["wire_tensions"]) for s in document["stages"])
+    assert fitted == pytest.approx(22.0 * (2 * 1500.0 ** 2 + 800.0 ** 2) ** 0.5 / 800.0)
+    assert sizing["worst_wire_tension_newtons"] == 100.0
+    assert sizing["fitted_wire_tension_newtons"] == pytest.approx(fitted)
+    assert sizing["prestress_newtons"] == 100.0
+    # the stages keep the fit's own tensions, which the lenses draw
+    assert all(max(s["wire_tensions"]) <= fitted for s in document["stages"])
+    # and the fit's figure is the one judged when it is the larger
+    low = solve_cablenet.solve(_grid_request(prestress=10.0))["sizing"]
+    assert low["worst_wire_tension_newtons"] == pytest.approx(fitted)
+    assert low["fitted_wire_tension_newtons"] == pytest.approx(fitted)
+    assert low["prestress_newtons"] == 10.0
 
 
 def test_no_formwork_means_courses_only_with_the_drum_ends_alone_held():
@@ -468,7 +488,8 @@ def test_an_actuator_carrying_more_than_any_wire_sets_the_sizing_stage():
     sizing = document["sizing"]
     wire = 22.0 * (2 * 1500.0 ** 2 + 800.0 ** 2) ** 0.5 / 800.0
     assert sizing["stage"] == "S1" == document["sizing_stage"]
-    assert sizing["worst_wire_tension_newtons"] == pytest.approx(wire)
+    assert sizing["fitted_wire_tension_newtons"] == pytest.approx(wire)
+    assert sizing["worst_wire_tension_newtons"] == 100.0          # the prestress, the larger
     assert sizing["worst_actuator_newtons"] > wire
     assert sizing["load_newtons"] == pytest.approx(818.0)
 
@@ -498,7 +519,7 @@ def test_the_sizing_stage_and_its_sag_are_the_courses_even_when_a_frame_pulls_ha
     assert sizing["stage"] == "S2" == document["sizing_stage"]
     assert sizing["worst_sag_mm"] == max(stages[n]["residual_after"] for n in ("S1", "S2"))
     assert sizing["load_newtons"] == pytest.approx(198.0)
-    assert sizing["worst_wire_tension_newtons"] == pytest.approx(frame_wire)
+    assert sizing["fitted_wire_tension_newtons"] == pytest.approx(frame_wire)
     frame_actuator = (60.0 ** 2 + 2.0 ** 2) ** 0.5
     assert sizing["worst_actuator_newtons"] == pytest.approx(frame_actuator)
     assert frame_actuator > max((sum(c * c for c in f) ** 0.5 for n in ("S1", "S2")
