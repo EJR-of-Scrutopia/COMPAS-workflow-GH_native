@@ -11,6 +11,13 @@ out of its own plane, which is why callers pass the entered prestress as a
 floor on q. The displacement under a residual force field r is the solution
 of K_ff d = r_f over the free vertices, one sparse solve.
 
+A net with a mechanism has no answer, and the solve says so instead of giving
+one. K_ff is then singular, but rounding seldom leaves it exactly so: the
+factorisation meets pivots of about 1e-16 of the stiffness rather than zero,
+and a plain solve returns an enormous finite figure without complaint. So the
+free block is judged by an estimate of its 1-norm condition number, and
+refused at 1e12 or more.
+
 This is a first-order figure. The real net stiffens as it sags, so a large
 answer is an upper bound on the movement and a small one is close.
 
@@ -19,12 +26,12 @@ Units are newtons and millimetres.
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 from scipy.sparse import coo_matrix
-from scipy.sparse.linalg import MatrixRankWarning
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import LinearOperator
+from scipy.sparse.linalg import norm as sparse_norm
+from scipy.sparse.linalg import onenormest
+from scipy.sparse.linalg import splu
 
 
 class StiffnessError(RuntimeError):
@@ -71,12 +78,48 @@ def tangent_stiffness(vertices, edges, force_densities, ea):
     return coo_matrix((values, (rows, cols)), shape=(3 * count, 3 * count)).tocsr()
 
 
+# Measured: mechanisms (slack strings, flat slack patches, floating triangles, in
+# random orientations) estimate at 3e16 or above, or infinite; healthy blocks at
+# 3e5 or below with a floor of 0.5 N/mm, the top figure being a flat net of 2141
+# members. A healthy figure grows as the floor falls, and that flat net reaches
+# the limit only near a floor of 1e-7 N/mm, which is no prestress at all. At 1e12
+# about four digits of a double survive the solve in any case.
+_CONDITION_LIMIT = 1.0e12
+
+_MECHANISM = (
+    "The net has a mechanism nothing stiffens: a free vertex can move without "
+    "stretching or tensioning any member, or a piece of the net is held by "
+    "nothing. Give the members a prestress floor and hold every piece.")
+
+
+def _solve_free(kff, rhs):
+    """K_ff d = rhs, or a StiffnessError saying the net has a mechanism."""
+
+    try:
+        lu = splu(kff)
+    except RuntimeError as error:  # SuperLU met an exactly zero pivot
+        raise StiffnessError("{} ({})".format(_MECHANISM, error)) from error
+    size = kff.shape[0]
+    inverse = LinearOperator(
+        (size, size), matvec=lu.solve,
+        rmatvec=lambda b: lu.solve(b, trans="T"), dtype=float)
+    condition = sparse_norm(kff, 1) * onenormest(inverse)
+    # written so that a condition that is not a number is refused as well
+    if not condition < _CONDITION_LIMIT:
+        raise StiffnessError(
+            "{} (condition estimate {:.1e})".format(_MECHANISM, condition))
+    return lu.solve(rhs)
+
+
 def first_order_sag(vertices, edges, fixed, force_densities, ea, residual, floor=0.0):
     """Millimetres each free vertex moves under `residual`, zero at held ones.
 
     floor is a force density applied as a minimum to every member, one number
     or one per member: the prestress the net is given, which is what makes a
     slack patch stiff across itself.
+
+    A net with a mechanism is refused with StiffnessError: a free vertex that
+    nothing stiffens, or a piece of the net that nothing holds, has no answer.
     """
 
     xyz = np.asarray(vertices, dtype=float)
@@ -103,19 +146,10 @@ def first_order_sag(vertices, edges, fixed, force_densities, ea, residual, floor
         return out
     dof = np.asarray([[3 * i, 3 * i + 1, 3 * i + 2] for i in free]).reshape(-1)
     kff = k[dof][:, dof].tocsc()
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", MatrixRankWarning)
-        try:
-            d = spsolve(kff, r.reshape(-1)[dof])
-        except (MatrixRankWarning, RuntimeError) as error:
-            raise StiffnessError(
-                "The net has a mechanism nothing stiffens: a free vertex can move "
-                "without stretching or tensioning any member. Give the members a "
-                "prestress floor. ({})".format(error)) from error
-    d = np.asarray(d, dtype=float).reshape(-1)
+    d = _solve_free(kff, r.reshape(-1)[dof])
     if not np.all(np.isfinite(d)):
         raise StiffnessError(
-            "The net has a mechanism nothing stiffens: the displacement is not "
-            "finite. Give the members a prestress floor.")
+            "The displacement is not finite: the residual or a coordinate holds "
+            "a NaN or an infinity.")
     out[free] = d.reshape(-1, 3)
     return out
