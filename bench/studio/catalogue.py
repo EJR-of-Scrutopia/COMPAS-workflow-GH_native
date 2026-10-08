@@ -17,6 +17,7 @@ from pathlib import Path
 from tree_forest_compas.mechanism import Mechanism
 from tree_forest_compas.mechanism import ceiling_terms
 from tree_forest_compas.mechanism import CurvePoint, TensionCurve, capacity_from_curve
+from tree_forest_compas.mechanism import spool_rope_mbl_of
 
 PARTS_PATH = Path(__file__).resolve().parent / "parts.json"
 GRAVITY = 9.80665
@@ -402,6 +403,33 @@ def sizing_of(demand):
     return sizing if isinstance(sizing, dict) else None
 
 
+# a limit too large for any load to reach; finite because capacity_from_curve
+# refuses a mechanism with an infinite one
+_UNBOUND = 1e300
+
+
+def _with_terms_lifted(mechanism, names):
+    """The mechanism with the named part terms taken out of the way: each one's
+    limit made too large to bind (the sheave's removed), the others untouched.
+
+    capacity_from_curve then words a breach in the first term that is left. That
+    is how load_factor gets the sentence of the tightest term when an earlier
+    term in checks' order was past its limit on the same rung.
+    """
+
+    # the spool rope defaults to the net rope, so say which it is before the net rope moves
+    changes = {"spool_rope_mbl": spool_rope_mbl_of(mechanism)}
+    if "rope tension" in names:
+        changes["rope_mbl"] = _UNBOUND
+    if "anchor" in names:
+        changes["anchor_wll"] = _UNBOUND
+    if "spool rope tension" in names:
+        changes["spool_rope_mbl"] = _UNBOUND
+    if "sheave" in names:
+        changes["sheave_swl"] = None
+    return mechanism._replace(**changes)
+
+
 def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_factor=20.0):
     """How many times the sizing stage's load this configuration carries.
 
@@ -409,6 +437,15 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
     actuated net and exact for the fit, so the curve capacity_from_curve reads
     is worst_tension = f * t1 with the sag constant. None when the demand has
     no sizing block.
+
+    On that curve every part term grows with the load, so the first part term
+    to bind is the ceiling's own tightest term. The walk's rungs are
+    max_factor / steps wide (0.1 by default) and several terms can be past their
+    limit on one rung, and checks() then names the first of them in its own
+    order, not the tightest. A part term is therefore reported as the ceiling's,
+    with the part ceiling_for names and the sentence of that term's own check,
+    so the load factor and the ceiling line cannot name different parts. The
+    shape, and nothing binding, are reported as the walk found them.
     """
 
     sizing = sizing_of(demand)
@@ -418,7 +455,9 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
     t1 = float(sizing["worst_wire_tension_newtons"])
     sag = float(sizing["worst_sag_mm"])
     acceptance = demand.get("acceptance")
-    ceiling, _ = ceiling_for(parts, configuration, angle_degrees)
+    terms = ceiling_terms(mechanism)
+    tightest = min(terms, key=terms.get)        # the term ceiling_for names
+    ceiling = terms[tightest]
     if not t1 > 0.0:
         return {
             "limit_factor": None, "breaching_factor": None, "binding": "none",
@@ -434,19 +473,33 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
                    worst_tension=t1 * max_factor * k / steps, deviation=sag)
         for k in range(1, int(steps) + 1)
     )
-    result = capacity_from_curve(
-        mechanism, TensionCurve(points, int(steps), float(max_factor)),
-        None if acceptance is None else float(acceptance))
-    if result.binding == "anchor":
+    curve = TensionCurve(points, int(steps), float(max_factor))
+    line = None if acceptance is None else float(acceptance)
+    result = capacity_from_curve(mechanism, curve, line)
+    binding, detail = result.binding, result.detail
+    if binding in terms:
+        if binding != tightest:
+            # past its limit on this rung as well as the tightest term: word the
+            # breach in the tightest, by walking again with the terms checks()
+            # tests before it out of the way. The same rung must breach, or the
+            # walk's own sentence stands.
+            order = list(terms)
+            lifted = _with_terms_lifted(mechanism, order[:order.index(tightest)])
+            again = capacity_from_curve(lifted, curve, line)
+            if (again.binding == tightest
+                    and again.breaching_factor == result.breaching_factor):
+                detail = again.detail
+        binding = tightest
+    if binding == "anchor":
         _, part = chain_limit(parts, configuration["chain"], angle_degrees)
     else:
-        part = part_for_term(configuration, result.binding)
+        part = part_for_term(configuration, binding)
     return {
         "limit_factor": float(result.limit_factor),
         "breaching_factor": result.breaching_factor,
-        "binding": result.binding,
+        "binding": binding,
         "binding_part": part,
-        "detail": result.detail,
+        "detail": detail,
         "ceiling_newtons": float(ceiling),
         "worst_wire_tension_newtons": t1,
         "worst_sag_mm": sag,

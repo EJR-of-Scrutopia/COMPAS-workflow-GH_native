@@ -425,3 +425,92 @@ def test_a_sizing_that_is_not_a_block_is_no_sizing():
         assert catalogue.sizing_of({"sizing": odd}) is None
     block = {"stage": "S7"}
     assert catalogue.sizing_of({"sizing": block}) is block
+
+
+def test_when_two_terms_breach_on_one_rung_the_load_factor_names_the_ceilings_own_part():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-eye-eye")
+    ceiling, named = catalogue.ceiling_for(parts, configuration, 10.0)
+    # The motor allows 2350 N and the M12 eye bolt 2353.6 N. The walk's rungs are
+    # 0.1 wide, so both are past their limit at 4.8 (2400 N), and checks() alone
+    # names the eye bolt because it tests the anchor first. The ceiling line says
+    # the motor, so the load factor says the motor too.
+    assert round(ceiling, 1) == 2350.0 and named == "motor torque"
+    factor = catalogue.load_factor(parts, configuration, 10.0, _demand())
+    assert factor["limit_factor"] == pytest.approx(4.7)
+    assert factor["breaching_factor"] == pytest.approx(4.8)
+    assert factor["binding"] == "motor torque"
+    assert factor["binding_part"] == "34HS46"
+    # and the sentence beside it is the motor's, not the eye bolt's
+    assert "N mm" in factor["detail"] and "working load" not in factor["detail"]
+
+
+# a phrase that only each part term's own sentence carries (mechanism.checks words them)
+_TERM_WORDS = {"rope tension": "net cable", "anchor": "N working load",
+               "spool rope tension": "spool rope", "sheave": "moving block",
+               "motor torque": "N mm"}
+
+
+def test_the_load_factor_and_the_ceiling_line_never_name_different_parts():
+    parts = catalogue.load_parts()
+    seen = set()
+    for key in catalogue.configurations(parts):
+        configuration = catalogue.configuration_of(parts, key)
+        ceiling, named = catalogue.ceiling_for(parts, configuration, 10.0)
+        # from a skin far lighter than any rig's ceiling to one far past every rig's,
+        # so the first rung to breach is cleared by one term, by several, by all
+        for t1 in [5.0 * 1.25 ** step for step in range(50)]:
+            factor = catalogue.load_factor(parts, configuration, 10.0, _demand(t1=t1))
+            if factor["binding"] in ("none", "deviation"):
+                continue
+            seen.add(factor["binding"])
+            # ceiling_for names the chain part for the anchor and the term otherwise
+            if factor["binding"] == "anchor":
+                assert factor["binding_part"] == named, (key, t1)
+            else:
+                assert factor["binding"] == named, (key, t1)
+                assert factor["binding_part"] == catalogue.part_for_term(
+                    configuration, named), (key, t1)
+            assert _TERM_WORDS[factor["binding"]] in factor["detail"], (key, t1)
+            # the walk resolves a rung, so the true limit lies between the two it reports
+            assert factor["limit_factor"] <= factor["margin"] * (1 + 1e-9), (key, t1)
+            assert factor["breaching_factor"] >= factor["margin"] * (1 - 1e-9), (key, t1)
+    assert {"anchor", "rope tension", "sheave", "motor torque"} <= seen
+
+
+@pytest.mark.parametrize("disagreement", [{"binding": "anchor"}, {"breaching_factor": 99.0}],
+                         ids=["another term", "another rung"])
+def test_the_ceilings_term_is_named_even_when_its_own_wording_cannot_be_had(
+        monkeypatch, disagreement):
+    real = catalogue.capacity_from_curve
+
+    def walk_with_the_earlier_terms_lifted_disagrees(mechanism, curve, acceptance):
+        result = real(mechanism, curve, acceptance)
+        if mechanism.anchor_wll > 1e100:
+            return result._replace(**disagreement)
+        return result
+
+    monkeypatch.setattr(catalogue, "capacity_from_curve",
+                        walk_with_the_earlier_terms_lifted_disagrees)
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-eye-eye")
+    factor = catalogue.load_factor(parts, configuration, 10.0, _demand())
+    # the part is the ceiling's whatever happens; the walk's own sentence stands
+    assert factor["binding"] == "motor torque" and factor["binding_part"] == "34HS46"
+    assert factor["limit_factor"] == pytest.approx(4.7)
+    assert "N working load" in factor["detail"]
+
+
+def test_lifting_a_term_moves_that_terms_limit_and_nothing_else():
+    parts = catalogue.load_parts()
+    configuration = catalogue.configuration_of(parts, "stepper-seven-spool-block")
+    mechanism = catalogue.mechanism_for(parts, configuration, 10.0)
+    for name, field in (("rope tension", "rope_mbl"), ("anchor", "anchor_wll"),
+                        ("spool rope tension", "spool_rope_mbl"), ("sheave", "sheave_swl")):
+        lifted = catalogue._with_terms_lifted(mechanism, [name])
+        moved = {f for f in mechanism._fields if getattr(lifted, f) != getattr(mechanism, f)}
+        assert moved == {field}, name
+    # a spool rope that defaults to the net rope keeps the rope it was when the net rope is lifted
+    defaulted = mechanism._replace(spool_rope_mbl=None)
+    lifted = catalogue._with_terms_lifted(defaulted, ["rope tension"])
+    assert lifted.rope_mbl > 1e100 and lifted.spool_rope_mbl == defaulted.rope_mbl
