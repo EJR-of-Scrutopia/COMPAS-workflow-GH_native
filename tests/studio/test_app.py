@@ -753,6 +753,37 @@ def test_reupload_with_changed_geometry_invalidates_bundle_and_staging_caches(tm
     assert fresh.json()["analysis_mesh"]["vertices"][0][2] == 9.0
 
 
+def test_reupload_invalidates_the_cable_net_demand_beside_the_bundle_and_staging(
+        tmp_path, monkeypatch):
+    """The cable net demand is filed by the cut's options, not by the geometry, so
+    a re-export with the same counts kept it under the same key and the lenses
+    drew the old analysis on the new net. Every upload drops it with the bundle
+    and the staging caches; the recording is untouched."""
+    import bundle
+
+    client, studies = make_client(tmp_path, monkeypatch)
+    studio_dir = studies / "tiny" / "studio"
+    studio_dir.mkdir(parents=True)
+    demand = bundle.cablenet_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
+    assert demand.parent == studio_dir and demand.name.startswith("cablenet-")
+    kept = studio_dir / "recording.mp4"
+    kept.write_bytes(b"kept")
+    for kind, document in (("contract", tiny_contract()), ("compas", {"thrustMesh": {}})):
+        demand.write_text(json.dumps({"schema": "bench.cablenet/2"}), encoding="utf-8")
+        (studio_dir / "bundle-tile-bonded-courses-s1000-t20.json").write_text("{}", encoding="utf-8")
+        response = client.put("/api/uploads/exports/Tiny/{}".format(kind),
+                              content=json.dumps(document).encode())
+        assert response.status_code == 200, (kind, response.text)
+        assert not demand.is_file(), kind
+        assert not list(studio_dir.glob("bundle-*.json")), kind
+        assert kept.is_file(), kind
+    # and the demand route then says there is none to read
+    missing = client.get("/api/studies/Tiny/cablenet", params={
+        "material": "tile", "pattern": "bonded-courses", "size": 1.0, "thickness": 0.02})
+    assert missing.status_code == 404
+    assert "no cable net demand yet" in missing.json()["detail"]
+
+
 def test_upload_during_a_live_run_is_409(tmp_path, monkeypatch):
     """I1: uploading over an export name with a queued or running run must
     409 with the live run's id, mirroring start_run's own liveness check."""

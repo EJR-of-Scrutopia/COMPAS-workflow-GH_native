@@ -263,18 +263,22 @@ def _ffmpeg_present() -> bool:
 
 
 def _invalidate_studio_cache(slug: str) -> None:
-    """Drop every cached bundle/staging file for a study after re-import.
+    """Drop every cached bundle, staging and cable net file for a study after
+    re-import.
 
     A changed export must never keep serving a stale bundle built from the
-    old geometry. Frames and recording.mp4 are untouched: they belong to a
-    recording, not to a geometry snapshot.
+    old geometry, and the cable net demand is the same: it is keyed by the
+    cut's options, not by the geometry, so after a re-export with the same
+    counts the lenses would draw the old analysis on the new net. Frames and
+    recording.mp4 are untouched: they belong to a recording, not to a
+    geometry snapshot.
     """
 
     bundle.clear_cut_memo(slug)
     studio_dir = bundle.STUDIES_DIR / slug / "studio"
     if not studio_dir.is_dir():
         return
-    for pattern in ("bundle-*.json", "staging-*.json"):
+    for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json"):
         for stale in studio_dir.glob(pattern):
             stale.unlink()
 
