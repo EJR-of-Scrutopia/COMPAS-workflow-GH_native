@@ -807,7 +807,8 @@ def test_a_study_with_no_demand_document_cannot_export(client):
     response = client.post("/api/studies/nothing-here/cablenet/exports",
                            json={"configuration": _configuration()})
     assert response.status_code == 404
-    assert "cable net phase" in response.json()["detail"]
+    assert ("Upload the export, then press Run cable net analysis in the Cable net "
+            "section and the engine will write one.") in response.json()["detail"]
 
 
 def test_an_unwritable_folder_is_reported_and_not_swallowed(client, monkeypatch, tmp_path):
@@ -2237,3 +2238,95 @@ def test_a_first_version_document_says_the_floor_rule_in_its_own_words():
     assert heavy["demand"]["prestress_floor_newtons"] == 1000.0
     assert ("(900.0 N), set by the entered prestress. The stage that sizes the parts is S7."
             in _section(exports.datasheet_markdown(heavy), "demands"))
+
+
+# ---------------------------------------------------------------------------
+# A version 2 document is described in its own words: the net is held by its
+# wires, its column heads and its grabbed nodes, and nothing is corrected or cut.
+# The first version's words are untouched.
+# ---------------------------------------------------------------------------
+
+def _chosen_row(model, label):
+    return next(r for r in exports._sheet_rows(model)["Chosen"] if r and r[0] == label)
+
+
+def test_the_shape_half_of_a_version_2_document_is_the_sag_with_the_grabbed_nodes_held():
+    section = _section(exports.datasheet_markdown(_sized_model()), "whether it holds")
+    assert ("The shape half asks whether the net, with the grabbed nodes held, stays within "
+            "the acceptance line. The worst sag with the grabbed nodes held is 1.40 mm, at "
+            "stage S7, against an acceptance line of 2.18 mm, which is within it.") in section
+    assert "once corrected" not in section and "after correction" not in section
+    stages = _v2_demand()["stages"]
+    stages[1].update(residual_after=3.0, reachable=False)
+    section = _section(exports.datasheet_markdown(_sized_model(stages=stages)),
+                       "whether it holds")
+    assert ("which is outside it. The grabbed nodes do not bring stage S7 inside the line, "
+            "which fails the half outright.") in section
+    assert "The correction does not reach" not in section
+    unknown = _section(exports.datasheet_markdown(_sized_model(acceptance=None)),
+                       "whether it holds")
+    assert ("The shape half asks whether the net, with the grabbed nodes held, stays within "
+            "the acceptance line. That has not been established, because no acceptance "
+            "line is set") in unknown
+
+
+def test_the_first_versions_shape_half_keeps_its_own_words():
+    model = _model()
+    model["verdict"]["shape"]["unreachable_stages"] = ["S7"]
+    section = _section(exports.datasheet_markdown(model), "whether it holds")
+    assert ("The shape half asks whether the net, once corrected, stays within the "
+            "acceptance line. The worst residual after correction is 1.40 mm") in section
+    assert "The correction does not reach stage S7, which fails the half outright." in section
+    assert "grabbed" not in section
+
+
+def test_a_version_2_net_is_held_by_its_wires_its_column_heads_and_its_grabbed_nodes():
+    section = _section(exports.datasheet_markdown(_sized_model()), "demands")
+    assert "The net is held by 2 wires, 1 column head and 2 grabbed nodes." in section
+    assert "anchors" not in section and "for the cut rule" not in section
+    # the real study's counts, from its held set
+    held = {"wire_nodes": list(range(105)), "column_heads": list(range(46)),
+            "actuators": list(range(800))}
+    section = _section(exports.datasheet_markdown(_sized_model(held=held)), "demands")
+    assert "The net is held by 105 wires, 46 column heads and 800 grabbed nodes." in section
+    # a list the set does not carry is not counted as none
+    section = _section(exports.datasheet_markdown(
+        _sized_model(held={"wire_nodes": [0, 2], "actuators": [1]})), "demands")
+    assert ("The net is held by 2 wires, an unrecorded number of column heads and 1 "
+            "grabbed node.") in section
+    missing = _sized_model()
+    missing["held"] = None
+    assert "Which nodes hold the net is not recorded." in _section(
+        exports.datasheet_markdown(missing), "demands")
+    # the first version keeps its anchors and its cut rule
+    first = _section(exports.datasheet_markdown(_model()), "demands")
+    assert "The net is held by 36 anchors and driven by 1 wire." in first
+    assert "for the cut rule" in first
+
+
+def test_a_version_2_document_assumes_a_prestress_floor_not_a_cut_rule():
+    by_what = {a["what"]: a for a in _sized_model()["assumptions"]}
+    assert by_what["uniform prestress"]["why"] == (
+        "The prestress is the floor every member is given; the sag is judged at it.")
+    assert by_what["rope EA"]["why"].endswith(
+        "The net's stiffness, through which the sag is worked out, scales with it, so a "
+        "different EA means a different sag.")
+    text = exports.datasheet_markdown(_sized_model())
+    assert "cut lengths" not in _section(text, "assumptions")
+    assert "The cut rule" not in text
+    first = {a["what"]: a for a in _model()["assumptions"]}
+    assert first["uniform prestress"]["why"] == (
+        "The cut rule assumes one uniform prestress across the net.")
+    assert first["rope EA"]["why"].endswith("so a different EA means different cut lengths.")
+
+
+def test_what_binds_is_said_at_the_sizing_stage_in_a_version_2_document():
+    model = _sized_model()
+    detail = model["capacity"]["detail"]
+    assert detail and not detail.startswith("at the sizing stage")
+    assert _chosen_row(model, "Binds on")[2] == "at the sizing stage: {}".format(detail)
+    # the engine's sentence itself is unchanged, and so is the first version's cell
+    import catalogue
+    first = _model(row=dict(_row(catalogue.load_parts(), _configuration()),
+                            load_factor={"binding_part": "x", "detail": "y"}))
+    assert _chosen_row(first, "Binds on")[2] == "y"

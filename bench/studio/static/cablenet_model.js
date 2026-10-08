@@ -76,7 +76,11 @@ export function shapeOf(demand) {
   }
   const known = whyUnknown === null;
   const withinLine = worst !== null && acceptance !== null && worst.residual <= acceptance;
-  return { known, whyUnknown, worst, allReachable, acceptance,
+  // A version 2 residual is the sag with the grabbed nodes held, and a stage
+  // is unreachable when that sag stays past the line; the first version's was
+  // what its wires could not correct. verdictOf says each in its own words.
+  const grabbed = !!demand && demand.schema === SCHEMA;
+  return { known, whyUnknown, worst, allReachable, acceptance, grabbed,
            holds: known && allReachable && withinLine };
 }
 
@@ -392,7 +396,9 @@ export function verdictOf({ row, floor, shape, capacity }) {
     if (!shape.holds) {
       reasons.push("The net misses the shape by " + millimetres(shape.worst.residual) +
         " mm at stage " + String(shape.worst.name) + " against a " + line +
-        (shape.allReachable ? "" : " and at least one stage cannot be corrected at all") +
+        (shape.allReachable ? "" : shape.grabbed
+          ? " and at least one stage stays past the line with the grabbed nodes held"
+          : " and at least one stage cannot be corrected at all") +
         ". This comes from the vault, the wires and the prestress, so no change of parts here will cure it.");
     } else {
       reasons.push("The net stays within the shape: the worst miss is " +

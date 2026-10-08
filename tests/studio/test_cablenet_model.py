@@ -78,6 +78,14 @@ out.shapeFramesOnly = m.shapeOf({ acceptance: 2.18, stages: [raise] });
 out.shapeNoLine = m.shapeOf({ acceptance: null, stages: inside });
 out.shapeEmpty = m.shapeOf({ acceptance: 2.18, stages: [] });
 out.shapeNoDemand = m.shapeOf(null);
+// A stage past the line: a version 2 document says it stays past it with the
+// grabbed nodes held; the first version said its wires could not correct it.
+const unreached = [raise, ...inside, third(3.1, false)];
+const verdictWith = (shape) => m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.63, rope_path: null },
+  floor: 900, shape,
+  capacity: { limit_factor: 1.6, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
+out.verdictGrabbed = verdictWith(m.shapeOf({ schema: "bench.cablenet/2", acceptance: 2.18, stages: unreached }));
+out.verdictCorrected = verdictWith(m.shapeOf({ schema: "bench.cablenet/1", acceptance: 2.18, stages: unreached }));
 
 // The same reading in the timeline: an older stage is a course there too.
 const older = [{ name: "A", skin_load_sum_newtons: 1000 }, { name: "B", skin_load_sum_newtons: 2000 }];
@@ -318,6 +326,22 @@ def test_a_stage_with_neither_a_time_nor_a_course_is_a_course(out):
     assert out["olderCaption"] == "Stage A: 1.0 kN placed.", "no course number to count, so none is invented"
     # one definition of a frame everywhere: a stage that carries a course is a course
     assert out["bothKeys"] == "F60" and out["bothCaption"] == "Course 1 of the skin (X): 1.0 kN placed."
+
+
+@needs_node
+def test_a_stage_past_the_line_is_said_in_the_words_of_its_own_version(out):
+    grabbed = out["verdictGrabbed"]
+    assert grabbed["headline"] == "It does not hold."
+    assert ("The net misses the shape by 3.10 mm at stage S3 against a 2.18 mm acceptance line "
+            "and at least one stage stays past the line with the grabbed nodes held. This comes "
+            "from the vault, the wires and the prestress, so no change of parts here will cure "
+            "it.") in grabbed["reasons"]
+    assert not any("cannot be corrected" in r for r in grabbed["reasons"])
+    corrected = out["verdictCorrected"]
+    assert any(r.startswith("The net misses the shape by 3.10 mm at stage S3 against a 2.18 mm "
+                            "acceptance line and at least one stage cannot be corrected at all.")
+               for r in corrected["reasons"])
+    assert out["shapeFrame"]["grabbed"] is False and out["shapeNoDemand"]["grabbed"] is False
 
 
 @needs_node

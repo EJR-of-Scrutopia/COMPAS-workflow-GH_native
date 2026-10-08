@@ -1204,8 +1204,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         if export not in pairs:
             raise HTTPException(
                 404, "There is no export named {!r}, so no cable net demand has "
-                "been written for it. Upload the export, then run the cable net "
-                "phase and the engine will write one.".format(export))
+                "been written for it. Upload the export, then press Run cable net "
+                "analysis in the Cable net section and the engine will write "
+                "one.".format(export))
         try:
             slot = staging.cut_slot(pairs[export], pattern, source)
         except ValueError as error:
@@ -1219,11 +1220,13 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "the study options are unreadable: {}".format(error))
         if not path.is_file():
+            # the Cable net section's own Run is the way to one now; the staged
+            # run's cable net phase still writes the same document
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "This study has no cable net demand yet. Run it again with "
-                    "the cable net phase enabled and the engine will write one."
+                    "This study has no cable net demand yet. Press Run cable net "
+                    "analysis in the Cable net section and the engine will write one."
                 ),
             )
         return json.loads(path.read_text(encoding="utf-8"))

@@ -44,7 +44,8 @@ def test_the_catalogue_is_served_with_its_provenance(client):
 def test_a_study_with_no_demand_document_says_how_to_make_one(client):
     response = client.get("/api/studies/does-not-exist/cablenet")
     assert response.status_code == 404
-    assert "cable net" in response.json()["detail"].lower()
+    assert ("Upload the export, then press Run cable net analysis in the Cable net "
+            "section and the engine will write one.") in response.json()["detail"]
     assert "does-not-exist" in response.json()["detail"]
 
 
@@ -903,7 +904,10 @@ def test_a_demand_filed_under_the_authored_key_is_found_with_no_source_named(
     # the generated cut is a different file, which this study never wrote
     other = client.get("/api/studies/Tiny/cablenet", params={"source": "generated"})
     assert other.status_code == 404
-    assert "cable net phase" in other.json()["detail"]
+    # the section's own Run is named, not the staged run's phase
+    assert other.json()["detail"] == (
+        "This study has no cable net demand yet. Press Run cable net analysis in the "
+        "Cable net section and the engine will write one.")
 
 
 _STUDY_OPTIONS = {"material": "tile", "pattern": "herringbone", "size": 1.0, "thickness": 0.02}

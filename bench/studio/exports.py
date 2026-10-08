@@ -421,6 +421,22 @@ def _floor_block(demand):
     }
 
 
+def _held_sentence(model):
+    """What holds a version 2 net, counted from its held set: the wires, the
+    column heads and the grabbed nodes. A list the set does not carry is said
+    to be unrecorded and never counted as none."""
+
+    if not isinstance(model.get("held"), dict):
+        return "Which nodes hold the net is not recorded."
+    words = []
+    for key, noun in (("wire_nodes", "wire"), ("column_heads", "column head"),
+                      ("actuators", "grabbed node")):
+        nodes = _held_nodes(model, key)
+        words.append(_count(len(nodes), noun) if nodes is not None
+                     else "an unrecorded number of {}s".format(noun))
+    return "The net is held by {}, {} and {}.".format(*words)
+
+
 def _force_text(value):
     """A force with its unit, or the words that say it is missing: never
     "not recorded N"."""
@@ -602,10 +618,16 @@ def _assumptions(parts, configuration, demand, angle_degrees):
                 entry.get("note") or "marked assumed in the catalogue",
                 unit="N" if base.endswith("newtons") else None)
 
+    # a version 2 analysis cuts nothing: it fits the net, grabs nodes, and judges
+    # the sag through the net's stiffness at the prestress floor
+    version2 = demand.get("schema") == SCHEMA_2
     rope = parts["rope"][configuration["rope"]]
     add("rope EA", rope.get("ea_newtons"),
-        "Not a measured figure ({}). The manufactured net lengths scale with "
-        "it, so a different EA means different cut lengths.".format(
+        ("Not a measured figure ({}). The net's stiffness, through which the sag "
+         "is worked out, scales with it, so a different EA means a different sag."
+         if version2 else
+         "Not a measured figure ({}). The manufactured net lengths scale with "
+         "it, so a different EA means different cut lengths.").format(
             rope.get("ea_confidence") or "unconfirmed"), unit="N")
     gearbox = parts["gearbox"][configuration["gearbox"]]
     add("gearbox efficiency", gearbox.get("gear_efficiency"),
@@ -623,7 +645,8 @@ def _assumptions(parts, configuration, demand, angle_degrees):
         "Assumed off-axis, because the bolt's orientation is not in the export "
         "and so the angle cannot be derived from it.")
     add("uniform prestress", demand.get("prestress"),
-        "The cut rule assumes one uniform prestress across the net.",
+        "The prestress is the floor every member is given; the sag is judged at it."
+        if version2 else "The cut rule assumes one uniform prestress across the net.",
         unit="N")
     return out
 
@@ -897,7 +920,11 @@ def _chosen_rows(model):
         ["Load factor", _blank(None if capacity.get("limit_factor") is None
                                else _factor(capacity["limit_factor"])),
          load_factor_sentence(model)],
-        ["Binds on", _blank(capacity.get("binding_part")), _blank(capacity.get("detail"))],
+        # the engine's sentence, in the walk's own words; in a version 2 document
+        # the walk scales the sizing stage, so the figures in it are that stage's
+        ["Binds on", _blank(capacity.get("binding_part")),
+         "at the sizing stage: {}".format(capacity["detail"])
+         if _version2(model) and capacity.get("detail") else _blank(capacity.get("detail"))],
         # an unknown count is blank: a zero here would say that none is needed
         ["Actuators needed", "" if actuators is None else len(actuators),
          grab_sentence(model)],
@@ -1474,13 +1501,14 @@ def _datasheet_sections(model):
             floor_sentence(demand, version2),
             demand.get("sizing_stage") or "not recorded", rule),
         "The skin is laid at a density of {} kg/m3 and a thickness of {} m, "
-        "and the largest weight placed on the net at any stage is {} N. The net is held by {} "
-        "anchors and driven by {} {}.".format(
+        "and the largest weight placed on the net at any stage is {} N. {}".format(
             _num(demand.get("density_kg_m3")),
             _num(demand.get("thickness_m"), 3),
             _newtons(demand.get("placed_weight_newtons")),
-            demand.get("anchors", 0), len(wires),
-            "wire" if len(wires) == 1 else "wires"),
+            _held_sentence(model) if version2 else
+            "The net is held by {} anchors and driven by {} {}.".format(
+                demand.get("anchors", 0), len(wires),
+                "wire" if len(wires) == 1 else "wires")),
         "These figures come from the staged cable-net analysis of the study "
         "named {}, taken on {}. They are results of that analysis and not "
         "measurements of a built vault.".format(
@@ -1532,23 +1560,31 @@ def _datasheet_sections(model):
                 _sentence(tension["passes_note"]))
             if tension.get("passes_note") else ""),
     ]
+    # A version 2 stage is reachable when its sag with the grabbed nodes held is
+    # inside the line, and its residual is that sag; the first version corrected
+    # the net by its wires, and its words stay as they were.
+    held = "with the grabbed nodes held" if version2 else "once corrected"
+    worst = ("The worst sag with the grabbed nodes held" if version2
+             else "The worst residual after correction")
     reach = ""
     if shape.get("unreachable_stages"):
-        reach = (" The correction does not reach stage {}, which fails the "
-                 "half outright.".format(
-                     ", ".join(str(s) for s in shape["unreachable_stages"])))
+        named = ", ".join(str(s) for s in shape["unreachable_stages"])
+        reach = (" The grabbed nodes do not bring stage {} inside the line, which "
+                 "fails the half outright.".format(named) if version2 else
+                 " The correction does not reach stage {}, which fails the "
+                 "half outright.".format(named))
     if shape.get("within") is None:
         halves.append(
-            "The shape half asks whether the net, once corrected, stays "
-            "within the acceptance line. That has not been established, "
-            "because {}. Nothing here counts as a pass for it.".format(
-                shape.get("why_unknown") or "nothing was checked"))
+            "The shape half asks whether the net, {}, stays within the acceptance "
+            "line. That has not been established, because {}. Nothing here counts "
+            "as a pass for it.".format(
+                held, shape.get("why_unknown") or "nothing was checked"))
     else:
         halves.append(
-            "The shape half asks whether the net, once corrected, stays within "
-            "the acceptance line. The worst residual after correction is {} mm, "
-            "at stage {}, against an acceptance line of {} mm, which is {}.{}"
-            .format(
+            "The shape half asks whether the net, {}, stays within the acceptance "
+            "line. {} is {} mm, at stage {}, against an acceptance line of {} mm, "
+            "which is {}.{}".format(
+                held, worst,
                 _millimetres(shape.get("worst_residual_mm")),
                 shape.get("worst_stage") or "not recorded",
                 _millimetres(shape.get("acceptance_mm")),
