@@ -163,6 +163,8 @@ export function demandSentences(demand) {
   }
   const out = [];
   const sizing = sizingOf(demand);
+  // the document names the stage twice, in the sizing block and at the top level
+  const sizingStage = (sizing && sizing.stage) || demand.sizing_stage;
   const floor = prestressFloor(demand);
   const instant = floorInstant(demand, floor);
   const reached = !instant ? "" : (instant.frame
@@ -170,7 +172,7 @@ export function demandSentences(demand) {
   out.push("The greatest tension any wire carries is <b>" + newtons(floor) + " N</b>" +
     reached + ". That is a property of the vault and the skin, so it does not move " +
     "when parts change." +
-    (sizing && sizing.stage ? " The stage that sizes the parts is " + esc(sizing.stage) + "." : ""));
+    (sizingStage ? " The stage that sizes the parts is " + esc(sizingStage) + "." : ""));
   out.push(demand.acceptance == null
     ? "No acceptance line is set for this run, so sag has nothing to be judged against."
     : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +

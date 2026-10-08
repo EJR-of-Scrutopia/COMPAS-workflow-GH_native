@@ -116,6 +116,7 @@ out.sentNoted = m.demandSentences(noted);
 const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 blank.note = "   ";
 out.sentBlankNote = m.demandSentences(blank);
+out.sentTopLevel = m.demandSentences({ ...demandOf([1], [1], [1], "S2"), sizing: undefined, sizing_stage: "S9" });
 out.sentSlack = m.demandSentences({ schema: "bench.cablenet/2", acceptance: 2.18, stages: [
   { name: "S1", kind: "tile", time: null, course: 0, wire_tensions: [0, 0], skin_load_sum_newtons: 0, net_weight_newtons: 0 } ] });
 out.sentNone = m.demandSentences(null);
@@ -279,6 +280,9 @@ def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
     assert course.endswith("The stage that sizes the parts is S1.")
     # Two instants share the figure: the first in the document's order is named.
     assert "reached at the raise's instant F60." in out["sentTie"][0]
+    # The sizing stage is read from the top level when the block is not there.
+    assert out["sentTopLevel"][0].endswith("The stage that sizes the parts is S9.")
+    assert "reached at the raise's instant F60." in out["sentTopLevel"][0]
     # A net with no tension in it has no instant at which the tension is greatest.
     assert out["sentSlack"][0].startswith("The greatest tension any wire carries is <b>0.0 N</b>. That is")
     # No stage carries the floor (it is an actuator's): no instant is invented.
