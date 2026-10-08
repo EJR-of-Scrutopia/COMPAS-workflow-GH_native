@@ -1256,6 +1256,26 @@ def test_a_refused_run_reports_the_reason_the_server_gave():
     assert "body.detail" in body, "the server's own reason must be shown"
 
 
+def test_the_analysis_section_watches_a_409_only_when_the_live_run_is_staged():
+    """The Analysis section's watcher reloads the study when the run it watches
+    ends and logs "analysis finished", so a cable net run named by a 409 is never
+    watched from here: the run's kind is read, the status line says a cable net
+    run is live, and nothing is watched. The Cable net section does the same the
+    other way round (test_cablenet_panel.py)."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "startRun")
+    branch = body[body.index("response.status === 409"):body.index("if (!response.ok)")]
+    checked = branch.index('live.kind !== "staged"')
+    assert branch.index('fetchJson("/api/runs/" + encodeURIComponent(body.run))') < checked
+    assert checked < branch.index("watchRun(body.run, exportName, status, params)")
+    # in the refusing branch itself: the sentence, then a return before any watch
+    refusal = branch[checked:branch.index("watchRun(")]
+    assert ('"a cable net run is live on this study; " +\n'
+            '          "run the analysis when it finishes"') in refusal
+    assert refusal.index("run the analysis when it finishes") < refusal.index("return;")
+
+
 def test_hdri_mode_loads_estimates_and_persists():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "HDRLoader" in js and "three/addons/loaders/HDRLoader.js" in js

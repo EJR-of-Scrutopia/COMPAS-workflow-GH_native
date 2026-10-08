@@ -15824,6 +15824,15 @@ async function startRun() {
     });
     const body = await response.json();
     if (response.status === 409) {
+      // A run is already live on this study. A staged run is watched from here;
+      // a cable net run belongs to the Cable net section, and watching it here
+      // would reload the study when it ends and log an analysis that never ran.
+      const live = await fetchJson("/api/runs/" + encodeURIComponent(body.run));
+      if (live.kind !== "staged") {
+        status.textContent = "a cable net run is live on this study; " +
+          "run the analysis when it finishes";
+        return;
+      }
       status.textContent = "watching the live run";
       watchRun(body.run, exportName, status, params);
       return;
