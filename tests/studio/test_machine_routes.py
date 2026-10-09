@@ -232,3 +232,19 @@ def test_an_export_of_a_refused_or_older_configuration_is_a_400_or_a_document(
     assert done.status_code == 200, done.text
     sheet = next(Path(p) for p in done.json()["paths"] if p.endswith(".md"))
     assert "Cabinet, machine 1" in sheet.read_text(encoding="utf-8")
+
+
+def test_a_number_that_is_not_finite_is_a_400(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    url = "/api/studies/Tiny/cablenet/configurations"
+    for field, value, detail in (("angle_degrees", "nan", "angle_degrees must be a number, not 'nan'"),
+                                 ("angle_degrees", "inf", "angle_degrees must be a number, not 'inf'"),
+                                 ("rope_speed_mm_s", "nan", "rope_speed_mm_s: 'nan', not a number")):
+        response = client.post(url, json={"choices": [CHOICE], "options": OPTIONS, field: value})
+        assert response.status_code == 400, (field, value)
+        assert response.json()["detail"] == detail
+    nan = client.post("/api/studies/Tiny/cablenet/recommend",
+                      json={"options": OPTIONS, "angle_degrees": "nan"})
+    assert nan.status_code == 400
+    assert nan.json()["detail"] == "angle_degrees must be a number, not 'nan'"

@@ -1268,6 +1268,19 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         floor = catalogue.wire_floor(demand)["newtons"]
         return 0.0 if floor is None else float(floor)
 
+    def _finite_angle(body: dict) -> float:
+        """The wire's angle to its eye bolt, a finite number of degrees, or the
+        400 that says what was sent instead."""
+
+        value = body.get("angle_degrees", 10.0)
+        try:
+            angle = float(value)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "angle_degrees must be a number: {}".format(error))
+        if not math.isfinite(angle):
+            raise HTTPException(400, "angle_degrees must be a number, not {!r}".format(value))
+        return angle
+
     def _machine_inputs(export: str, options, parts) -> dict:
         """Everything the five choices are judged with on a study (spec
         2026-10-09 mechanism choices, sections 3 and 4): the cable net demand,
@@ -1400,16 +1413,16 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices:
             raise HTTPException(400, "choices: none sent")
-        try:
-            angle = float(body.get("angle_degrees", 10.0))
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, "angle_degrees must be a number: {}".format(error))
+        angle = _finite_angle(body)
         speed = body.get("rope_speed_mm_s")
         if speed is not None:
             try:
                 speed = float(speed)
             except (TypeError, ValueError):
-                raise HTTPException(400, "rope_speed_mm_s: {!r}, not a number".format(speed))
+                speed = None
+            if speed is None or not math.isfinite(speed):
+                raise HTTPException(400, "rope_speed_mm_s: {!r}, not a number".format(
+                    body.get("rope_speed_mm_s")))
         parts = catalogue.load_parts()
         inputs = _machine_inputs(export, body.get("options"), parts)
         return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
@@ -1593,11 +1606,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         import catalogue
 
         parts = catalogue.load_parts()
-        try:
-            angle = float(body.get("angle_degrees", 10.0))
-        except (TypeError, ValueError) as error:
-            raise HTTPException(
-                400, "angle_degrees must be a number: {}".format(error))
+        angle = _finite_angle(body)
         # every combination of the five choices (spec 2026-10-09 mechanism
         # choices, section 6)
         import cabinet
