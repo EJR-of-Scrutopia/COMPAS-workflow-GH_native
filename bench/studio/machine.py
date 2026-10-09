@@ -106,11 +106,25 @@ def pulley_refusal(parts, pulley, rope_key):
         float(_part(parts, "rope", rope_key)["diameter_mm"]))
 
 
+# each wire's chain at an angle, for the one catalogue in hand: Recommend
+# derives thousands of machines on a handful of wires
+_CHAINS = {"parts": None, "chains": {}}
+
+
 def lightest_chain(parts, rope_key, angle_degrees):
     """The eye bolt and turnbuckle that hold the rope's working load at the
     wire's angle with the least to spare, so the chain never gives way before
     the rope; the strongest pair when none does."""
 
+    if _CHAINS["parts"] is not parts:
+        _CHAINS["parts"], _CHAINS["chains"] = parts, {}
+    key = (rope_key, float(angle_degrees))
+    if key not in _CHAINS["chains"]:
+        _CHAINS["chains"][key] = _lightest_chain(parts, rope_key, angle_degrees)
+    return list(_CHAINS["chains"][key])
+
+
+def _lightest_chain(parts, rope_key, angle_degrees):
     rope = _part(parts, "rope", rope_key)
     working = float(rope["rope_mbl"]) / 5.0
     pairs = []

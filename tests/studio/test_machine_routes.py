@@ -256,3 +256,31 @@ def test_wires_a_motor_of_true_is_not_one_wire(tmp_path, monkeypatch):
     rows = client.post("/api/studies/Tiny/cablenet/configurations", json={
         "choices": [dict(CHOICE, wires_per_motor=True)], "options": OPTIONS}).json()["rows"]
     assert rows[0]["refused"] == "wires per motor: True, not 1 to 7"
+
+
+def test_the_lightest_chain_is_worked_out_once_per_wire_and_angle(monkeypatch):
+    """Recommend derives 15 thousand machines; each wire's anchor chain is
+    worked out once for a catalogue and an angle, not once a machine."""
+
+    import catalogue
+    import machine
+
+    parts = catalogue.load_parts()
+    calls = []
+    real = catalogue.chain_limit
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(catalogue, "chain_limit", counted)
+    first = machine.lightest_chain(parts, "rope-4mm", 10.0)
+    worked = len(calls)
+    assert worked > 0
+    assert machine.lightest_chain(parts, "rope-4mm", 10.0) == first
+    assert len(calls) == worked                       # nothing worked out again
+    machine.lightest_chain(parts, "rope-5mm", 10.0)
+    assert len(calls) == 2 * worked                   # another wire is its own
+    # another catalogue, as a reload gives, is worked out afresh
+    machine.lightest_chain(catalogue.load_parts(), "rope-4mm", 10.0)
+    assert len(calls) == 3 * worked
