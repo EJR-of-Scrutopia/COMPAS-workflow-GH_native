@@ -382,3 +382,39 @@ Measured before this revision, on `5 sided form` (1101 vertices, 2000 members,
 
 So the deliverable of this spec is exactly the finding the owner feared: the
 actuators are necessary, and the computation says how many and where.
+
+## 14. Amendment, 9 October 2026: a tolerance, not a rib
+
+The owner's ruling, on reading the morning report: the acceptance line is a
+tolerance from the designed form, not the deflection of a falsework rib.
+
+Why. The falsework the machine does away with is a waffle of CNC-cut ribs cut
+to the vault's exact surface and propped from below, as on the falsework slide
+of his presentation (images: Block Research Group; Davis et al. 2012). A mould
+like that barely moves, so judging the net against it says only that the mould
+is stiffer. The run of 8 October had strayed further from it still: the
+catalogue's one rib was a 2 m plywood former, the engine refused it for a 16 m
+vault, and the server swapped in a 9 m glulam beam nobody designed, straight
+and simply supported, whose 3.25 mm sag became the line. The claim worth making
+is the slide's own: the machine holds the designed form within a tolerance,
+without the mould.
+
+What changed:
+
+- The run takes `tolerance_mm`, default 20 mm, the full-scale placement
+  tolerance in the T1 brief (5 mm on the 1:4 rig). It is handed to the engine
+  as the acceptance line with the source "a tolerance of 20 mm from the
+  designed form, set for this run", and the document records `tolerance_mm`.
+- The Cable net section has a Tolerance dial, 1 to 100 mm. When it differs
+  from the run's, the panel says so and reads the walk the run recorded. The
+  greedy walk picks the same nodes whatever the line and stops only where the
+  line is met, so the curve gives a looser tolerance's grab count; a tighter
+  one than the walk reached needs a new run.
+- The rib chooser, the reach rule, the engine's `resolve_acceptance` and the
+  catalogue's two ribs are gone, and a request that names a falsework is
+  refused with the reason. `tree_forest_compas.falsework` stays in the engine
+  library, which the studio no longer calls.
+- A document written before keeps its line in its own recorded words.
+
+This reverses decision 6 of the 6 October spec ("not a tolerance chosen by
+hand").
