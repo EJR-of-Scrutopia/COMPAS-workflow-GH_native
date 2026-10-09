@@ -347,7 +347,7 @@ def test_the_verdict_leads_with_the_weight_and_keeps_both_halves(out):
 @needs_node
 def test_forces_rpm_and_the_settled_block(out):
     assert out["newtons"] == ["1471.0", "1471.0", "0.0", "not recorded"]
-    assert out["rpm"][0] == "50 mm/s is 318 rpm at the motor with this gearbox and drum"
+    assert out["rpm"][0] == "50 mm/s, 318 rpm at the motor"
     assert out["rpm"][1] == "50 mm/s" and out["rpm"][2] == "50 mm/s"
     assert "CL86Y" in out["settled"] and "carry no mechanical load" in out["settled"]
 

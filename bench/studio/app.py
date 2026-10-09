@@ -1313,7 +1313,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         return {"demand": demand, "facts": facts, "demands": demands,
                 "take_ups": take_ups, "machines": machines}
 
-    def _choice_row(parts, inputs, choices, angle) -> dict:
+    def _choice_row(parts, inputs, choices, angle, speed=None) -> dict:
         """One set of five choices judged on the study: the machine they make,
         each wire's limit and verdict, the drum and carriage, the wire to buy,
         every cabinet and the study's price."""
@@ -1327,7 +1327,12 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             built = machine.derive(parts, choices, inputs["facts"], angle)
             paid = [max(0.0, -min([0.0] + list(series))) for series in inputs["take_ups"]]
             cuts = machine.cut_lengths(parts, built, inputs["facts"]["routes_mm"], paid)
+            row_speed = {"rope_speed_mm_s": catalogue.rope_speed(parts, built)}
+            if speed:
+                row_speed["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
+                    parts, built, float(speed))
             return {
+                **row_speed,
                 "choices": choices, "configuration": built,
                 "described": machine.describe(parts, built),
                 "verdict": machine.judge(parts, built, inputs["demands"], inputs["machines"],
@@ -1405,7 +1410,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             parts = catalogue.load_parts()
             angle = float(body.get("angle_degrees", 10.0))
             inputs = _machine_inputs(export, body.get("options"), parts)
-            return {"rows": [_choice_row(parts, inputs, item, angle) for item in choices],
+            speed = body.get("rope_speed_mm_s")
+            return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
                     "angle_degrees": angle}
         configurations = body.get("configurations")
         if not isinstance(configurations, list) or not configurations:

@@ -32,18 +32,19 @@ def _function_body(js, name):
 def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
     for ident in ("cablenet-run", "cablenet-run-status", "cablenet-prestress", "cablenet-speed",
                   "cablenet-tolerance", "cablenet-tolerance-value",
-                  "cablenet-speed-note", "cablenet-demand", "cablenet-configuration",
-                  "cablenet-configuration-note", "cablenet-recommend", "cablenet-recommend-note",
-                  "cablenet-vary-toggle", "cablenet-parts", "cablenet-settled", "cablenet-holds",
+                  "cablenet-speed-note", "cablenet-demand", "cablenet-motor", "cablenet-ratio",
+                  "cablenet-pulley", "cablenet-rope", "cablenet-wires", "cablenet-recommend",
+                  "cablenet-recommend-note", "cablenet-machine", "cablenet-holds",
+                  "cablenet-travel", "cablenet-buy", "cablenet-price",
                   "cablenet-grab", "cablenet-export", "cablenet-export-choose",
                   "cablenet-export-path", "cablenet-export-result"):
         assert '"{}"'.format(ident) in JS, ident
     assert 'from "./cablenet_model.js"' in JS
     # newtons is not among them: the controller writes no force of its own, the
     # prestress sentence having moved into the model beside the rope's
-    for name in ("verdictOf", "demandSentences", "grabText", "curveSvg", "modifiedFrom",
-                 "fallbackKey", "settledText", "rpmText", "shapeOf",
-                 "ropeMismatch", "prestressNote", "toleranceNote"):
+    for name in ("demandSentences", "grabText", "curveSvg", "rpmText", "choiceOptions",
+                 "validChoices", "machineHtml", "verdictHtml", "travelHtml", "buyHtml",
+                 "priceHtml", "recommendHtml", "ropeMismatch", "prestressNote", "toleranceNote"):
         assert name in JS, name
     assert "export function mountCableNet({" in JS
 
@@ -59,11 +60,15 @@ def test_the_run_sends_the_tolerance_dial_and_the_demand_says_when_it_has_moved(
     assert '<b id="cablenet-tolerance-value">20</b><em>mm</em>' in html
 
 
-def test_price_never_reaches_the_panel():
-    assert "money(" not in JS
-    assert "unit_price" not in JS
-    assert ".price" not in JS
-    assert "£" not in JS
+def test_prices_show_in_the_panel_through_the_model():
+    """The owner's ruling of 9 October 2026 reverses 8 October's: the panel shows
+    each part's price, the cabinet list and the study total, a floor where a
+    line is unpriced, in the model's words."""
+
+    body = _function_body(JS, "renderHolds")
+    assert "priceHtml(row.price)" in body
+    assert "buyHtml(row.price, row.cut_lengths)" in body
+    assert "£" not in JS, "the controller writes no money of its own"
 
 
 def test_the_demand_run_score_and_export_all_carry_the_study_options():
@@ -139,20 +144,25 @@ def test_a_late_answer_cannot_overwrite_a_newer_one_nor_the_speed_dial_swallow_a
     assert speed.count("mine !== panel.speedTicket") == 2
 
 
-def test_the_drive_is_shown_not_chosen_and_the_gearbox_follows_the_family():
-    body = _function_body(JS, "renderParts")
-    assert "pairing.drive_for" in body and "pairing.gearboxes_for" in body
-    assert "parts.pairing || { drive_for: {}, gearboxes_for: {} }" in body
-    assert "entries.filter(([key]) => allowed.includes(key))" in body
-    kinds = body.split("const kinds")[1].split("];")[0]
-    assert '"drive"' not in kinds
-    assert "follows the motor" in JS
+def test_the_five_selects_offer_only_what_the_catalogue_can_build():
+    assert "choiceOptions(panel.options, panel.parts, panel.choices)" in _function_body(
+        JS, "renderChoices")
+    # every change is made valid before it is kept: a ratio the new motor's frame
+    # does not offer, or a pulley the new wire does not fit, gives way
+    assert "validChoices(panel.options," in JS
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for ident in ("cablenet-motor", "cablenet-ratio", "cablenet-pulley", "cablenet-rope",
+                  "cablenet-wires"):
+        assert 'id="{}"'.format(ident) in html, ident
+    for gone in ("cablenet-configuration", "cablenet-vary-toggle", "cablenet-parts",
+                 "cablenet-settled"):
+        assert gone not in html and gone not in JS, gone
 
 
-def test_vary_parts_opens_and_closes_the_block_and_the_button_wears_the_state():
-    assert 'id="cablenet-parts" class="hidden"' in (STATIC / "index.html").read_text(encoding="utf-8")
-    assert 'el.parts.classList.toggle("hidden")' in JS
-    assert 'el.varyToggle.classList.toggle("active", !el.parts.classList.contains("hidden"))' in JS
+def test_the_choices_are_remembered_per_study_in_this_browser():
+    assert "REMEMBERED_PREFIX + studyName()" in _function_body(JS, "restoreChoices")
+    assert "REMEMBERED_PREFIX + studyName()" in _function_body(JS, "saveChoices")
+    assert "restoreChoices();" in _function_body(JS, "reload")
 
 
 def test_a_409_is_watched_only_when_the_live_run_is_a_cable_net_run():
@@ -171,23 +181,19 @@ def test_a_409_is_watched_only_when_the_live_run_is_a_cable_net_run():
     assert "el.run.disabled = false" in staged[:staged.index("return;")]
 
 
-def test_the_recommend_note_gives_the_servers_reason_after_the_rule():
+def test_recommend_searches_the_choices_and_fills_the_selects():
     body = _function_body(JS, "recommend")
-    assert '(body.demand_note ? `<p>${esc(body.demand_note)}</p>` : "")' in body
-    assert body.index("esc(body.rule)") < body.index("esc(body.demand_note)")
+    assert 'search: "choices"' in body
+    assert "recommendHtml(body)" in body
+    assert "panel.choices = validChoices(panel.options, body.choices)" in body
 
 
-def test_the_reason_there_is_no_load_factor_is_said_once_through_the_model():
-    """A row with no load factor carries the reason in load_factor_note: no demand
-    at all, or one with no sizing block. The model words a missing capacity from
-    its detail, so the reason goes in there and the first line says what is true.
-    Printed as a paragraph of its own it said the same thing twice for an old
-    document, and for a study with no demand at all the first line blamed a
-    sizing block that was not there."""
-
+def test_the_machine_verdict_travel_wire_and_price_are_the_models_tables():
     body = _function_body(JS, "renderHolds")
-    assert "detail: row.load_factor_note" in body
-    assert "<p>${esc(row.load_factor_note)}</p>" not in body
+    for call in ("machineHtml(row, panel.parts)", "verdictHtml(row.verdict)",
+                 "travelHtml(row.travel)"):
+        assert call in body, call
+    assert "verdictOf" not in JS
 
 
 def test_the_demand_readout_carries_the_models_two_notes_and_follows_the_chosen_rope():
@@ -197,7 +203,7 @@ def test_the_demand_readout_carries_the_models_two_notes_and_follows_the_chosen_
     refresh."""
 
     body = _function_body(JS, "renderDemand")
-    assert "ropeMismatch(panel.parts, demand, panel.configuration)" in body
+    assert "ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope })" in body
     assert "prestressNote(demand, Number(el.prestress.value))" in body
     assert "the dial reads" not in JS, "that sentence is the model's, not the controller's"
     assert "renderDemand();" in _function_body(JS, "refresh")
@@ -245,7 +251,8 @@ def test_export_is_off_while_it_writes_and_given_back_with_its_reason():
 
 
 def test_every_server_string_is_escaped_and_nothing_is_rounded_to_whole_newtons():
-    assert JS.count("esc(") >= 12
+    # the tables escape inside the model (test_cablenet_choices.py)
+    assert JS.count("esc(") >= 11
     assert not re.search(r"toFixed\(\d\)\}? N\b", JS)
 
 

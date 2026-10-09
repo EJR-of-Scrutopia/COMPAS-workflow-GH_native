@@ -657,6 +657,172 @@ export function settledText(drive) {
 // Annotation only: a number and its unit, never a comparison.
 export function rpmText(speed, row) {
   const rpm = row && !row.refused ? row.motor_rpm_for_wanted_speed : null;
-  return rpm == null ? speed + " mm/s"
-    : speed + " mm/s is " + rpm.toFixed(0) + " rpm at the motor with this gearbox and drum";
+  return rpm == null ? speed + " mm/s" : speed + " mm/s, " + rpm.toFixed(0) + " rpm at the motor";
+}
+
+// ---------------------------------------------------------------------------
+// The five choices (spec 2026-10-09 mechanism choices, sections 2 and 7.3).
+// The panel is a tool, not a text: numbers with their units, marks, tables and
+// part names; no sentence says why.
+// ---------------------------------------------------------------------------
+
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+export function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+}
+
+export function pounds(value) {
+  return value == null ? "no price" : "£" + Number(value).toFixed(2);
+}
+
+export function mark(holds) {
+  return holds ? "✓" : "✗";
+}
+
+function ratioLabel(ratio) {
+  return ratio == null ? "none" : Number(ratio).toFixed(0) + ":1";
+}
+
+// What each select offers, from the server's choices block (GET /api/catalogue):
+// a ratio only if the motor's frame offers it, a pulley only if it takes the wire.
+export function choiceOptions(options, parts, choices) {
+  const motors = options.motors.map((m) => ({
+    value: m.key, label: `${m.key}, ${Number(m.torque_nm)} N m ${m.torque_basis}` }));
+  const ratios = (options.ratios[choices.motor] || []).map((r) => ({
+    value: r.ratio, label: ratioLabel(r.ratio) }));
+  const ropes = options.ropes.map((r) => ({
+    value: r.key, label: `${Number(r.diameter_mm)} mm ${r.construction || ""} ${r.material || ""}`.trim() }));
+  const pulleys = [{ value: null, label: "none" }].concat(
+    (options.pulleys[choices.rope] || []).map((key) => ({
+      value: key, label: (parts.sheave[key] && (parts.sheave[key].name || parts.sheave[key].model)) || key })));
+  const wires = options.wires_per_motor.map((n) => ({ value: n, label: String(n) }));
+  return { motor: motors, ratio: ratios, rope: ropes, pulley: pulleys, wires_per_motor: wires };
+}
+
+// Choices the catalogue can build: each kept where it is still offered, else
+// the first that is (a rated ratio before none, the export's reeving before
+// none, one wire a motor).
+export function validChoices(options, choices) {
+  const c = { ...(choices || {}) };
+  const motors = options.motors.map((m) => m.key);
+  if (!motors.includes(c.motor)) c.motor = motors[0];
+  const ratios = (options.ratios[c.motor] || []).map((r) => r.ratio);
+  if (!ratios.some((r) => r === c.ratio)) {
+    c.ratio = ratios.find((r) => r != null) ?? null;
+  }
+  const ropes = options.ropes.map((r) => r.key);
+  if (!ropes.includes(c.rope)) c.rope = ropes.includes("rope-4mm") ? "rope-4mm" : ropes[0];
+  const pulleys = options.pulleys[c.rope] || [];
+  if (c.pulley !== null && !pulleys.includes(c.pulley)) c.pulley = pulleys[0] ?? null;
+  if (!options.wires_per_motor.includes(c.wires_per_motor)) c.wires_per_motor = 1;
+  return c;
+}
+
+function table(head, rows) {
+  return "<table><tr>" + head.map((h) => `<th>${escapeHtml(h)}</th>`).join("") + "</tr>" +
+    rows.map((r) => "<tr>" + r.map((cell) => `<td>${cell}</td>`).join("") + "</tr>").join("") +
+    "</table>";
+}
+
+export function machineHtml(row, parts) {
+  if (!row) return "";
+  if (row.refused) return `<p>${escapeHtml(row.refused)}</p>`;
+  const c = row.configuration;
+  const chain = (c.chain || []).map(escapeHtml).join(" + ");
+  return `<p><b>${escapeHtml(row.described)}</b></p>` + table(["Part", "Value"], [
+    ["Driver", escapeHtml(c.drive)],
+    ["Gearbox", escapeHtml(c.gearbox)],
+    ["Pulleys", c.sheave == null ? "none, 1 fall" : `${escapeHtml(c.sheave)}, ${c.reeve_factor} falls`],
+    ["Anchor chain", chain],
+    ["Winding radius", `${millimetres(c.winding_radius_mm)} mm`],
+    ["Groove pitch", `${millimetres(c.groove_pitch_mm)} mm`],
+    ["Wires a motor", String(c.wires_per_motor)],
+  ]);
+}
+
+export function verdictHtml(verdict) {
+  if (!verdict) return "";
+  const worst = verdict.worst;
+  const head = worst
+    ? `<p><b>${mark(verdict.holds)} ${factor(worst.margin)}x</b> ${escapeHtml(worst.limit)}, ` +
+      `${escapeHtml(worst.part)}, wire ${worst.wire}, pairing ${escapeHtml(verdict.pairing)}</p>`
+    : `<p><b>${mark(verdict.holds)}</b> no tension</p>`;
+  const rows = verdict.machines.map((m) => {
+    const w = verdict.wires[m.worst_wire];
+    return [String(m.machine + 1), String(m.worst_wire), newtons(w.tension),
+            m.margin == null ? "" : factor(m.margin), escapeHtml(m.limit), escapeHtml(m.part),
+            mark(m.holds)];
+  });
+  return head + table(["Machine", "Worst wire", "Tension, N", "Margin", "Limit", "Part", ""], rows);
+}
+
+export function travelHtml(travel) {
+  if (!travel) return "";
+  const drum = travel.worst_drum;
+  const carriage = travel.worst_carriage;
+  const most = Math.max(0, ...travel.wires.map((w) => w.in_and_out_mm));
+  return table(["Check", "Value", "Limit", ""], [
+    ["Rope on drum, mm", millimetres(drum && drum.drum_rope_mm), millimetres(drum && drum.drum_capacity_mm),
+     mark(!drum || drum.drum_fits)],
+    ["Carriage, mm", millimetres(carriage && carriage.carriage_mm), millimetres(carriage && carriage.stroke_mm),
+     mark(!carriage || carriage.rail_fits)],
+    ["In and out, mm", millimetres(most), "", ""],
+    ["Drum D/d", factor(travel.drum_over_rope), "", ""],
+    ["Pulley D/d", travel.pulley_over_rope == null ? "" : factor(travel.pulley_over_rope), "", ""],
+  ]);
+}
+
+export function buyHtml(price, cuts) {
+  if (!price || !price.rope) return "";
+  const lengths = (cuts || []).map((c) => c.length_mm / 1000);
+  const floor = (cuts || []).some((c) => c.is_floor) || price.rope.is_floor;
+  const best = price.rope.best;
+  const bought = best == null ? "no price"
+    : `${escapeHtml(best.buy)}${best.reels ? `, ${best.reels} reels` : ""}, ${pounds(best.cost_gbp)}`;
+  return table(["Wire", "Value"], [
+    ["Total, m", millimetres(price.rope.total_m) + (floor ? " (floor)" : "")],
+    ["Cut lengths, m", lengths.length ? `${millimetres(Math.min(...lengths))} to ${millimetres(Math.max(...lengths))}` : ""],
+    ["Bought", bought],
+  ]);
+}
+
+// Who quoted a line, linked to its page when the source is one, else with the
+// source as the cell's title (spec section 5.5).
+function sourced(line) {
+  const who = escapeHtml(line.supplier || "");
+  const source = line.source ? String(line.source) : "";
+  if (/^https?:\/\//.test(source)) {
+    return `<a href="${escapeHtml(source)}" target="_blank" rel="noopener">${who || "source"}</a>`;
+  }
+  return source ? `<span title="${escapeHtml(source)}">${who}</span>` : who;
+}
+
+export function priceHtml(price) {
+  if (!price) return "";
+  const floor = price.unpriced.length > 0 || price.cabinet_unpriced > 0;
+  const study = price.lines.map((l) => [escapeHtml(l.part), String(l.count), pounds(l.unit_gbp),
+                                       pounds(l.line_gbp)]);
+  const first = price.cabinets.cabinets[0];
+  const cabinet = first ? first.lines.map((l) => [escapeHtml(l.model), String(l.count),
+    escapeHtml(l.rule), pounds(l.unit_gbp), l.in_total ? pounds(l.line_gbp) : "not in total",
+    sourced(l), escapeHtml(l.quoted || "")]) : [];
+  return `<p><b>${pounds(price.priced_gbp)}${floor ? " floor" : ""}</b>, ` +
+    `${price.cabinets.cabinets.length} cabinets, exc VAT</p>` +
+    table(["Part", "Count", "Unit", "Line"], study) +
+    (first ? `<p>Cabinet, each: ${pounds(first.priced_gbp)}, ${first.unpriced} lines unpriced</p>` +
+      table(["Part", "Count", "Rule", "Unit", "Line", "Supplier", "Quoted"], cabinet) : "");
+}
+
+export function recommendHtml(result) {
+  if (!result) return "";
+  if (result.holds) {
+    return `<p><b>${escapeHtml(result.described)}</b>, ${pounds(result.priced_gbp)}, ` +
+      `${escapeHtml(result.limit || "")} ${escapeHtml(result.part || "")} ` +
+      `${result.margin == null ? "" : factor(result.margin) + "x"}` +
+      `${result.confirm_run ? ", run to confirm" : ""}</p>`;
+  }
+  const c = result.closest;
+  return `<p><b>none holds</b>${c ? `; closest ${escapeHtml(c.described)}, ` +
+    `${escapeHtml(c.limit)} ${escapeHtml(c.part)} ${factor(c.margin)}x` : ""}</p>`;
 }

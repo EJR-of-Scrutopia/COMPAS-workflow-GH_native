@@ -4629,8 +4629,8 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     assert '<details id="cablenet-section">' in html
     assert "cablenet-panel" not in html
     for ident in ("cablenet-run", "cablenet-prestress", "cablenet-speed", "cablenet-lenses",
-                  "cablenet-stage", "cablenet-configuration", "cablenet-recommend",
-                  "cablenet-vary-toggle", "cablenet-parts", "cablenet-holds",
+                  "cablenet-stage", "cablenet-motor", "cablenet-recommend",
+                  "cablenet-wires", "cablenet-price", "cablenet-holds",
                   "cablenet-grab", "cablenet-export", "cablenet-export-choose"):
         assert 'id="{}"'.format(ident) in html, ident
     # the run is the section's one primary action. The slice starts AFTER the

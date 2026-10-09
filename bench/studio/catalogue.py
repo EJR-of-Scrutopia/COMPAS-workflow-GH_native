@@ -375,9 +375,11 @@ def rope_speed(parts, configuration):
         return None
     gearbox = _part(parts, "gearbox", configuration["gearbox"])
     drum = _part(parts, "drum", configuration["drum"])
+    # the wire at the net moves the drum's surface speed over its falls
     return (
         float(motor["rated_speed_rpm"]) / float(gearbox["gear_ratio"]) / 60.0
-        * 2.0 * math.pi * float(drum["drum_radius"])
+        * 2.0 * math.pi * _winding_radius(configuration, drum)
+        / int(configuration.get("reeve_factor", 1))
     )
 
 
@@ -387,8 +389,8 @@ def motor_rpm_for(parts, configuration, rope_speed_mm_s):
     gearbox = _part(parts, "gearbox", configuration["gearbox"])
     drum = _part(parts, "drum", configuration["drum"])
     return (
-        float(rope_speed_mm_s) * 60.0 * float(gearbox["gear_ratio"])
-        / (2.0 * math.pi * float(drum["drum_radius"]))
+        float(rope_speed_mm_s) * int(configuration.get("reeve_factor", 1)) * 60.0
+        * float(gearbox["gear_ratio"]) / (2.0 * math.pi * _winding_radius(configuration, drum))
     )
 
 
