@@ -379,3 +379,111 @@ def bring_to_rest(x, held, net, loads, wires=None, on_ground=()):
     reaction[~supported] = 0.0
     check_balance(loads, reaction)
     return Rest(x_rest, tension, reaction, iterations, worst, solver)
+
+
+class Contacts(NamedTuple):
+    heads: dict             # net node -> (3,) the head or hold under it, where it stands now
+    engaged: frozenset      # the net nodes a head or hold is holding in its notch
+    resting: dict           # net node -> (3,) the point on the ground where it rests
+    seated: frozenset = frozenset()   # the nodes on wires their foundations hold on the anchor
+    left: frozenset = frozenset()     # nodes a head let go of that have not been above it since
+
+
+def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, slide=False):
+    """The net at rest with its contacts kept up to date (spec sections 3.2 and
+    3.5).
+
+    fixed maps the nodes always held to where they are held. A head or a hold
+    holds its node in its notch, in every direction, while it pushes it up,
+    and lets go the moment holding it would mean pulling it down. The ground
+    holds a node resting on it where it rests while it pushes it up, and lets
+    go when it would have to pull. wires maps a node on a wire to its Wire:
+    the node slides along its wire, let out of the anchor until its wire
+    balances it, and its foundation holds it on the anchor while the wire
+    would pull it in further, pushing back what the net does not take, and
+    lets go when it would have to pull. A node that would pass down through
+    its head is taken by the head; one that would pass into the ground is
+    taken by the ground where it crossed; one its wire would pull into the
+    anchor is taken by the foundation. A node let go in a round is not taken
+    back in the same round, and a node its head lets go of is not taken back
+    by that head until it has been above the head again: it left the notch
+    sideways, so only coming down onto the head from above puts it back.
+    With slide, the ground holds its nodes up but not in place, as when the
+    net is laid out by hand: they slide until nothing pulls them along it,
+    and rest where they came to. Returns (Rest, Contacts)."""
+
+    x = np.array(x, dtype=float, copy=True)
+    loads = np.asarray(loads, dtype=float)
+    fixed = {int(node): np.asarray(point, dtype=float) for node, point in fixed.items()}
+    wires = {int(node): wire for node, wire in (wires or {}).items() if int(node) not in fixed}
+    engaged = set(int(node) for node in contacts.engaged)
+    resting = {int(node): np.asarray(point, dtype=float) for node, point in contacts.resting.items()}
+    seated = set(int(node) for node in contacts.seated)
+    left = set(int(node) for node in contacts.left)
+    iterations = 0
+    changes = []
+    for _ in range(rounds):
+        held = np.zeros(len(x), dtype=bool)
+        for node, point in fixed.items():
+            x[node] = point
+            held[node] = True
+        for node in engaged:
+            resting.pop(node, None)
+            x[node] = contacts.heads[node]
+            held[node] = True
+        for node, point in resting.items():
+            x[node] = point
+            held[node] = not slide
+        for node in seated:
+            if node in wires:
+                x[node] = wires[node].anchor
+                held[node] = True
+        rest = bring_to_rest(x, held, net, loads,
+                             {node: wire for node, wire in wires.items() if not held[node]},
+                             [node for node in resting if not held[node]])
+        iterations += rest.iterations
+        x = rest.x
+        for node in resting:                               # where a sliding node came to
+            resting[node] = np.array([x[node, 0], x[node, 1], 0.0])
+        changes = []
+        released = set()
+        for node in sorted(engaged):
+            if rest.reaction[node, 2] < -LEFTOVER_N:       # the head would have to pull
+                engaged.discard(node)
+                released.add(node)
+                left.add(node)
+        for node in sorted(resting):
+            if rest.reaction[node, 2] < -LEFTOVER_N:       # the ground would have to pull
+                del resting[node]
+                released.add(node)
+        for node in sorted(seated & set(wires)):
+            wire = wires[node]
+            push = (float(wire.stiffness) * max(0.0, float(wire.reel))
+                    - float(rest.reaction[node] @ np.asarray(wire.into, dtype=float)))
+            if push < -LEFTOVER_N:                         # the foundation would have to pull
+                seated.discard(node)
+                released.add(node)
+        changes.extend(sorted(released))
+        for node, point in contacts.heads.items():
+            node = int(node)
+            if node in left and x[node, 2] > float(point[2]) + 1.0e-6:
+                left.discard(node)                         # above its head again
+            if (node not in engaged and node not in fixed and node not in released
+                    and node not in left and x[node, 2] <= float(point[2]) + 1.0e-6):
+                engaged.add(node)
+                changes.append(node)
+        for node in np.nonzero(x[:, 2] < -1.0e-6)[0]:
+            node = int(node)
+            if node not in resting and node not in engaged and node not in fixed and node not in wires:
+                resting[node] = np.array([x[node, 0], x[node, 1], 0.0])
+                changes.append(node)
+        for node, wire in wires.items():
+            if node not in seated and node not in released and let_out(x[node], wire) < -1.0e-6:
+                seated.add(node)
+                changes.append(node)
+        if not changes:
+            return (rest._replace(iterations=iterations),
+                    Contacts(contacts.heads, frozenset(engaged), resting, frozenset(seated),
+                             frozenset(left)))
+    raise EngineError("the contacts did not settle in {} rounds; still changing at nodes "
+                      "{}".format(rounds, sorted(set(changes))[:20]))
