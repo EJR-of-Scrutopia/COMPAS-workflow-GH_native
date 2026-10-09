@@ -147,3 +147,13 @@ def test_the_machine_is_named_by_its_parts_never_as_a_rig():
     plain = machine.derive(parts, _choices(ratio=None, pulley=None, wires_per_motor=1),
                            FACTS, 10.0)
     assert machine.describe(parts, plain) == "23HS45 direct, no pulleys, 4 mm 7x19, one wire a motor"
+
+
+def test_the_facts_name_each_wires_node_in_the_exports_order():
+    import formwork_sim
+    from test_formwork_sim import EA, _design_mm, _route_mechanism
+
+    document = dict(_route_mechanism(), mechanism={"spoolRadius": 0.0339})
+    facts = machine.facts_from(document, _design_mm(), [0, 2, 6, 8], EA)
+    rim = formwork_sim.rim_wires(document, _design_mm(), [0, 2, 6, 8], EA)
+    assert facts["nodes"] == [wire["node"] for wire in rim]

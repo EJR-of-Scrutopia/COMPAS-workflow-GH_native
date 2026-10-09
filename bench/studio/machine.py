@@ -435,8 +435,8 @@ def choice_options(parts):
 def facts_from(document, design_mm, supports, ea):
     """What the export says about the machine, from the study's mechanism
     document with its cited machine folded in: the spool's winding radius, each
-    wire's reeve factor and route length, which wires each machine carries, and
-    how many spools a machine has."""
+    wire's node, reeve factor and route length, which wires each machine
+    carries, and how many spools a machine has."""
 
     import formwork_sim
 
@@ -454,6 +454,7 @@ def facts_from(document, design_mm, supports, ea):
     cited = (document or {}).get("machine") or {}
     return {"winding_radius_mm": None if radius is None else float(radius) * scale * 1000.0,
             "reeve_factor": max(set(reeves), key=reeves.count) if reeves else 1,
+            "nodes": [wire["node"] for wire in rim],
             "reeves": reeves, "routes_mm": [wire["route_mm"] for wire in rim],
             "machines": machines, "spools": int(cited.get("wireCount") or SPOOLS)}
 
