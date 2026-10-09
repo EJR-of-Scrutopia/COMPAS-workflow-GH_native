@@ -157,18 +157,19 @@ surface and propped from below, which barely moves. The 3.25 mm line above was
 the sag of a straight 9 m glulam beam that the server had swapped in for the
 catalogue's 2 m plywood rib, a beam nobody designed for this vault. The run was
 repeated with the same options and a tolerance of 20 mm, the placement
-tolerance the T1 brief sets at full scale; it took 90 s. The quoted lines are
-the run's own, copied by a program.
+tolerance the T1 brief sets at full scale; it took 80 s. The quoted lines
+are the run's own, copied by a program.
 
 ```
-schema bench.cablenet/2  prestress 300.0 N  EA 450000.0 N  acceptance 20.00 mm (a tolerance of 20 mm from the designed form, set for this run)
+schema bench.cablenet/2  prestress 300.0 N  EA 450000.0 N  acceptance 20.00 mm (a tolerance of 20.00 mm from the designed form, set for this run)
 held: 105 wire nodes, 46 column heads, 740 actuators
 net: 1101 nodes, 2000 members; 1055 are not column heads, of which 740 were grabbed and 315 were not
 placement at S17: batch 20 steps 40 reached True
 ```
 
-The walk picks the same nodes whatever the line and stops only where it is
-met, so its curve is the one above, point for point, ending at 740:
+The walk picks the same nodes whatever the line, and this time it stopped at
+the first point within 20.00 mm, so its curve is the one above, point for
+point, ending at 740:
 
 ```
     680 grabbed  worst sag       37.4 mm  worst unbalanced     24.0 N  norm      256.1 N
