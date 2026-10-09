@@ -310,21 +310,28 @@ pushes (section 3.5). Held: the tree nodes, which follow their prescribed
 motion. A frame that moves a head by more than 25 mm is solved in sub-steps
 of at most 25 mm, so contacts are gained and lost one small move at a time.
 
-Each step is solved by Newton's method from the previous capture's state:
+Each step finds the shape that minimises the net's stored energy less the
+work of its loads, from the previous capture's state, by damped Newton steps:
 
 ```
-R(x)  = f_ext - f_int(x)                residual force at every free node
-K(x) dx = R(x)                          K: tangent stiffness, material plus
+Pi(x) = sum over taut ropes of EA / (2 L0) * (L - L0)^2  -  loads . x
+R(x)  = - grad Pi(x)                    the force left over at every free node
+(K + mu I) dx = R                       K: tangent stiffness, material plus
                                         geometric; slack ropes add nothing;
-                                        nodes in contact are held, and their
-                                        contact forces are the reactions
-x     <- x + a dx                       a in (0, 1], line search on |R|
-done  when max |R_i| < 0.01 N and max |dx_i| < 0.001 mm
+                                        mu damps the step where K is soft
+                                        (Levenberg-Marquardt)
+x     <- x + a dx                       a halved until Pi falls (Armijo)
+done  when max |R_i| < 0.01 N
 ```
+
+Nodes in contact are held, and their contact forces are the reactions. A
+step judged by the energy always makes progress, whether ropes go slack or
+taut; judged by the leftover force, as the first prototype did, it stalled
+(section 12).
 
 It reuses the sparse assembly and the sparse factorisation, with its
-condition check, that the stiffness module already has. When Newton fails to
-reduce the residual, finds the stiffness singular, or reaches 30 iterations,
+condition check, that the stiffness module already has. When the damped
+steps stall (the damping grows past its limit) or reach 60 iterations,
 dynamic relaxation with kinetic damping takes over from the last good state
 and runs to the same test. The capture records which finished it.
 
@@ -433,4 +440,13 @@ product code) was run on the real study, held at its 105 rim nodes and its
   iterations; followed frame by frame it does, once contacts are exact.
 - Modelled as stiff springs, the heads diverged the solve as the trees rose,
   which is why section 3.5 makes contacts exact.
+- Judged by the leftover force, the Newton steps stalled at their cap on 13
+  of the 20 courses, with up to 5.7 kN of the load unaccounted. Judged by the
+  energy, with damped steps (section 5), every course converged in 5 to 38
+  iterations, 0.03 to 0.26 s each, and the vertical forces closed to 0.000 N.
+- The whole sequence from machine time 30, with exact contacts and 25 mm
+  sub-steps: about 120 s for the raise, nearly all of it where the net peels
+  off the ground between machine time 40 and 50, and about 1 s for the 20
+  courses taken whole. At 300 N on the 46 heads the net drapes about 0.9 m at
+  the start of the tiling and 1.5 m under the full skin.
 
