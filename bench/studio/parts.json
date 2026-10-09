@@ -4,7 +4,8 @@
     "source": "Bank of England daily spot rates XUDLUSS and XUDLERS",
     "source_url": "https://www.bankofengland.co.uk/boeapps/database/Rates.asp?TD=8&TM=Oct&TY=2026&into=GBP&rateview=D"},
   "rules": {"vat_rate": 0.2, "efficiency_ball": 0.98, "efficiency_plain": 0.95,
-    "groove_pitch_factor": 1.1},
+    "groove_pitch_factor": 1.1, "dead_turns": 2,
+    "dead_turns_source": "BS EN 14492-1:2006 clause 5.7.6: at least two rope windings remain on the drum"},
   "motor": {
     "23HS45-4204D-E1000": {"family": "A", "kind": "closed-loop stepper",
       "frame": "NEMA 23", "model": "23HS45-4204D-E1000", "torque_nm": 3.0,

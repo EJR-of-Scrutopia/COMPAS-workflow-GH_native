@@ -283,7 +283,7 @@ def mechanism_for(parts, configuration, angle_degrees):
         )
 
     return Mechanism(
-        drum_radius=float(drum["drum_radius"]),
+        drum_radius=_winding_radius(configuration, drum),
         reeve_factor=falls,
         gear_ratio=float(gearbox["gear_ratio"]),
         motor_torque=float(motor["motor_torque"]),
@@ -298,7 +298,17 @@ def mechanism_for(parts, configuration, angle_degrees):
                   or configuration["rope"])["rope_mbl"]
         ),
         sheave_swl=float(sheave["sheave_swl"]) if sheave else None,
+        gearbox_torque=gearbox.get("gearbox_torque"),
+        wires_per_motor=int(configuration.get("wires_per_motor", 1)),
     )
+
+
+def _winding_radius(configuration, drum):
+    """The radius the rope winds at: the machine's own spool, when the machine
+    document gives it (spec section 3), else the catalogue drum's."""
+
+    radius = configuration.get("winding_radius_mm")
+    return float(radius) if radius is not None else float(drum["drum_radius"])
 
 
 def ceiling_for(parts, configuration, angle_degrees):
@@ -405,8 +415,9 @@ def drum_and_travel(parts, configuration, rope_wound_mm):
     if wound < 0.0:
         raise CatalogueError("The rope wound cannot be negative.")
     falls = int(configuration.get("reeve_factor", 1))
-    radius = float(drum["drum_radius"])
-    wraps = math.floor(float(drum["width_mm"]) / float(drum["groove_pitch_mm"]))
+    radius = _winding_radius(configuration, drum)
+    pitch = configuration.get("groove_pitch_mm") or drum["groove_pitch_mm"]
+    wraps = math.floor(float(drum["width_mm"]) / float(pitch))
     capacity = wraps * 2.0 * math.pi * radius
     travel = wound / falls
     stroke = float(rail["stroke_mm"])

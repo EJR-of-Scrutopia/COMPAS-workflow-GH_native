@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 
 import catalogue
+from tree_forest_compas.mechanism import _mechanical_advantage
 
 CHOICE_KEYS = ("motor", "ratio", "pulley", "rope", "wires_per_motor")
 SPOOLS = 7                       # a seven-spool machine, as the owner's machines are
@@ -182,3 +183,156 @@ def describe(parts, configuration):
     return "{}, {}, {}, {} wire{} a motor".format(
         drive_text, pulley_text, rope_text.strip(), words.get(per, str(per)),
         "" if per == 1 else "s")
+
+
+SHARED_TERMS = ("gearbox torque", "motor torque")
+
+
+def _term_part(parts, configuration, name, angle_degrees):
+    if name == "anchor":
+        return catalogue.chain_limit(parts, configuration["chain"], angle_degrees)[1]
+    if name == "gearbox torque":
+        return configuration["gearbox"]
+    return catalogue.part_for_term(configuration, name)
+
+
+def judge(parts, configuration, demands, machines, angle_degrees, motors=None, reeves=None):
+    """Each wire's limit against its demand, and the worst wire of each machine
+    (spec section 4).
+
+    demands: each wire's peak tension, in N. machines: each machine's wire
+    indices. motors: per machine, the wire indices on each motor, as the run
+    paired them; None checks the worst any pairing could do, every motor of a
+    machine carrying that machine's largest demands. reeves: each wire's own
+    reeve factor where the export gives one, else the configuration's; one
+    without pulleys."""
+
+    mechanism = catalogue.mechanism_for(parts, configuration, angle_degrees)
+    per = int(configuration.get("wires_per_motor", 1))
+    available = {"motor torque": (float(mechanism.motor_torque) * float(mechanism.gear_ratio)
+                                  * float(mechanism.gear_efficiency)
+                                  * float(mechanism.torque_margin))}
+    if mechanism.gearbox_torque is not None:
+        available["gearbox torque"] = float(mechanism.gearbox_torque)
+    shaft = min(available, key=available.get)
+
+    def alone(w):
+        reeve = 1 if configuration.get("sheave") is None else int(
+            (reeves[w] if reeves is not None else None) or configuration["reeve_factor"])
+        return mechanism._replace(reeve_factor=reeve, wires_per_motor=1)
+
+    def drum_torque(w):
+        # the wire's pull at the drum, its tension over the reeving's advantage,
+        # on the drum's radius
+        single = alone(w)
+        return (float(demands[w])
+                / _mechanical_advantage(single.reeve_factor, single.sheave_efficiency)
+                * float(single.drum_radius))
+
+    wires, machine_rows = [None] * len(demands), []
+    for m, members in enumerate(machines):
+        if motors is not None:
+            groups = [(list(group), list(group)) for group in motors[m]]
+        elif per == 1:
+            # one wire a motor: each motor carries its own wire and nothing else
+            groups = [([w], [w]) for w in members]
+        else:
+            largest = sorted(members, key=lambda w: -float(demands[w]))[:per]
+            groups = [(largest, list(members))]
+        shared = {}
+        for carried, judged in groups:
+            torque = sum(drum_torque(w) for w in carried)
+            margin = None if torque <= 0.0 else available[shaft] / torque
+            for w in judged:
+                shared[w] = margin
+        for w in members:
+            terms = {name: value for name, value in catalogue.ceiling_terms(alone(w)).items()
+                     if name not in SHARED_TERMS}
+            own = min(terms, key=terms.get)
+            tension = float(demands[w])
+            options = [(None if tension <= 0.0 else terms[own] / tension, own),
+                       (shared.get(w), shaft)]
+            options = [option for option in options if option[0] is not None]
+            margin, limit = min(options) if options else (None, own)
+            wires[w] = {"wire": w, "machine": m, "tension": tension, "ceiling": terms[own],
+                        "margin": margin, "limit": limit,
+                        "part": _term_part(parts, configuration, limit, angle_degrees),
+                        "holds": margin is None or margin >= 1.0}
+        rows = [wires[w] for w in members]
+        worst = min(rows, key=lambda row: (row["margin"] is None,
+                                           row["margin"] if row["margin"] is not None else 0.0))
+        machine_rows.append({"machine": m, "worst_wire": worst["wire"], "margin": worst["margin"],
+                             "limit": worst["limit"], "part": worst["part"],
+                             "holds": all(row["holds"] for row in rows)})
+    judged = [row for row in wires if row is not None]
+    worst = min((row for row in judged if row["margin"] is not None),
+                key=lambda row: row["margin"], default=None)
+    pairing = "run" if motors is not None else ("own" if per == 1 else "bound")
+    return {"pairing": pairing, "wires": wires,
+            "machines": machine_rows, "worst": worst,
+            "holds": all(row["holds"] for row in judged)}
+
+
+def take_ups_from_commands(stage_commands):
+    """Each wire's rope taken in at its anchor, stage by stage, from the cable
+    net run's reel commands (changes of each wire's rest length, negative
+    reeling in): the running total, sign turned so taking in is positive."""
+
+    totals, series = None, None
+    for commands in stage_commands:
+        if totals is None:
+            totals = [0.0] * len(commands)
+            series = [[] for _ in commands]
+        for w, command in enumerate(commands):
+            totals[w] -= float(command or 0.0)
+            series[w].append(totals[w])
+    return series or []
+
+
+def travel(parts, configuration, take_ups):
+    """The drum and the carriage of each wire (spec section 4.5): the most rope
+    ever on the drum at once against its single layer, the carriage's travel
+    against the rail's stroke, and, with no verdict, the rope turned in and out
+    over the whole sequence and the drum's and pulley's diameter over the
+    rope's.
+
+    take_ups: each wire's rope taken in at its anchor over the sequence, in mm,
+    from where it started."""
+
+    drum = parts["drum"][configuration["drum"]]
+    rail = parts["rail"][configuration["rail"]]
+    rope = parts["rope"][configuration["rope"]]
+    radius = float(configuration["winding_radius_mm"])
+    pitch = float(configuration["groove_pitch_mm"])
+    turns = math.floor(float(drum["width_mm"]) / pitch)
+    turn = 2.0 * math.pi * radius
+    capacity = turns * turn
+    dead = int(parts["rules"]["dead_turns"]) * turn
+    reeve = int(configuration["reeve_factor"])
+    stroke = float(rail["stroke_mm"])
+    pulley = configuration.get("sheave")
+    rows = []
+    for w, series in enumerate(take_ups):
+        values = [0.0] + [float(v) for v in series]
+        most, least = max(values), min(values)
+        stored = reeve * max(0.0, -least)
+        on_drum = dead + stored + reeve * most
+        carriage = most - least
+        rows.append({
+            "wire": w, "taken_in_mm": most, "paid_out_mm": max(0.0, -least),
+            "drum_rope_mm": on_drum, "drum_capacity_mm": capacity, "drum_turns": turns,
+            "drum_fits": on_drum <= capacity, "carriage_mm": carriage, "stroke_mm": stroke,
+            "rail_fits": carriage <= stroke,
+            "in_and_out_mm": reeve * sum(abs(b - a) for a, b in zip(values, values[1:]))})
+    worst_drum = max(rows, key=lambda row: row["drum_rope_mm"], default=None)
+    worst_carriage = max(rows, key=lambda row: row["carriage_mm"], default=None)
+    return {
+        "wires": rows,
+        "dead_turns_mm": dead,
+        "drum_over_rope": 2.0 * radius / float(rope["diameter_mm"]),
+        "pulley_over_rope": (None if pulley is None else
+                             float(parts["sheave"][pulley]["diameter_mm"])
+                             / float(rope["diameter_mm"])),
+        "worst_drum": worst_drum, "worst_carriage": worst_carriage,
+        "fits": all(row["drum_fits"] and row["rail_fits"] for row in rows),
+    }
