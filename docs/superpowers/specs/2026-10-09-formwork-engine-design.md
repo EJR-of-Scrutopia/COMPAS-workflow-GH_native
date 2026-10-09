@@ -281,15 +281,16 @@ Every solved state is one capture. It holds:
 
 ### 4.4 The build clock and the replay
 
-Each capture carries a time on the real build's clock. Between raise frames
-that is the largest reel change of any motor divided by the rope speed (the
-Rope speed dial). The rows take the studio animation's own timing, one row
-at a time as it plays them now, so the replay and the studio's animation stay
-in step.
+Each capture carries its place on the studio's own timeline: the machine
+time of its frame during the raise, and its row and quarter during the
+tiling. Play replays the captures in step with the studio's animation, one
+row at a time as it plays them now; scrubbing jumps to any capture. Nothing
+is recomputed to play.
 
-Play replays the captures at that clock, so the raise is seen at the speed
-the machine would really run it; scrubbing jumps to any capture. Nothing is
-recomputed to play. A new run recomputes everything and replaces the
+A duration in seconds cannot be read from this mechanism for the raise: the
+reels only take up stretch while the trees lift the net, and how fast the
+trees extend is not in the export. Real seconds wait for that figure (section
+11). A new run recomputes everything and replaces the
 captures. The captures are kept per study and options, beside the cable net
 demand documents, and an upload of the study clears them, as it does those.
 
@@ -329,8 +330,9 @@ step judged by the energy always makes progress, whether ropes go slack or
 taut; judged by the leftover force, as the first prototype did, it stalled
 (section 12).
 
-It reuses the sparse assembly and the sparse factorisation, with its
-condition check, that the stiffness module already has. When the damped
+The engine assembles its own tangent stiffness, with a rope's material
+stiffness only while it is taut (the stiffness module's is built for force
+densities), and factorises it with scipy's sparse LU. When the damped
 steps stall (the damping grows past its limit) or reach 60 iterations,
 dynamic relaxation with kinetic damping takes over from the last good state
 and runs to the same test. The capture records which finished it.
@@ -418,7 +420,9 @@ script's findings and images.
    need more thought, in the owner's words.
 2. Whether the machine re-reels between rows to win back the shape is part
    3's.
-3. Bending at the forks is reported, not modelled.
+3. How fast the trees extend during the raise, so the replay can also say how
+   long the raise takes in seconds (section 4.4).
+4. Bending at the forks is reported, not modelled.
 
 ## 12. What a throwaway prototype on the real net showed
 
