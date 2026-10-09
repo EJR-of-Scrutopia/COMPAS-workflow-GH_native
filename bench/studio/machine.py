@@ -404,3 +404,66 @@ def rope_to_buy(parts, configuration, lengths_mm):
     best = min(options, key=lambda option: option["cost_gbp"], default=None)
     return {"total_m": total_m, "options": options, "best": best,
             "is_floor": best is None}
+
+
+def choice_options(parts):
+    """What the page's five selects offer, worked out here so the browser never
+    reimplements it: the motors, the ratios each motor's frame offers, the
+    wires, the pulleys that take each wire, and the wires per motor."""
+
+    motors = []
+    for key in offered_motors(parts):
+        entry = parts["motor"][key]
+        motors.append({"key": key, "model": entry["model"], "kind": entry["kind"],
+                       "frame": entry["frame"], "torque_nm": entry["torque_nm"],
+                       "torque_basis": entry["torque_basis"]})
+    ropes = [{"key": key, "diameter_mm": entry["diameter_mm"],
+              "construction": entry.get("construction"), "material": entry.get("material")}
+             for key, entry in parts["rope"].items()]
+    return {"motors": motors,
+            "ratios": {item["key"]: ratio_options(parts, item["key"]) for item in motors},
+            "ropes": ropes,
+            "pulleys": {item["key"]: pulleys_for(parts, item["key"]) for item in ropes},
+            "wires_per_motor": list(range(1, SPOOLS + 1))}
+
+
+def facts_from(document, design_mm, supports, ea):
+    """What the export says about the machine, from the study's mechanism
+    document with its cited machine folded in: the spool's winding radius, each
+    wire's reeve factor and route length, which wires each machine carries, and
+    how many spools a machine has."""
+
+    import formwork_sim
+
+    try:
+        rim = formwork_sim.rim_wires(document, design_mm, supports, ea)
+    except formwork_sim.FormworkError as error:
+        raise MachineError(str(error)) from error
+    body = (document or {}).get("mechanism") or {}
+    radius = body.get("spoolRadius")
+    scale = float((document or {}).get("lengthUnitToMetres") or 1.0)
+    index = {wire["node"]: w for w, wire in enumerate(rim)}
+    machines = [[index[node] for node in nodes]
+                for nodes in formwork_sim.machines_of(document, rim)]
+    reeves = [int(wire["reeve"]) for wire in rim]
+    cited = (document or {}).get("machine") or {}
+    return {"winding_radius_mm": None if radius is None else float(radius) * scale * 1000.0,
+            "reeve_factor": max(set(reeves), key=reeves.count) if reeves else 1,
+            "reeves": reeves, "routes_mm": [wire["route_mm"] for wire in rim],
+            "machines": machines, "spools": int(cited.get("wireCount") or SPOOLS)}
+
+
+def cable_net_demands(demand):
+    """Each wire's peak tension over the cable net run's stages, never below the
+    prestress it was cut at, and each wire's take-up from its reel commands."""
+
+    stages = (demand or {}).get("stages") or []
+    prestress = float((demand or {}).get("prestress") or 0.0)
+    count = max((len(stage.get("wire_tensions") or []) for stage in stages), default=0)
+    peaks = [prestress] * count
+    for stage in stages:
+        for w, tension in enumerate(stage.get("wire_tensions") or []):
+            peaks[w] = max(peaks[w], float(tension or 0.0))
+    take_ups = take_ups_from_commands(
+        [stage.get("wire_reel_commands") or [0.0] * count for stage in stages])
+    return peaks, (take_ups or [[0.0] for _ in range(count)])
