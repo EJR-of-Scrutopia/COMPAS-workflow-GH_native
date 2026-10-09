@@ -123,12 +123,17 @@ hang free; they hold the rim at the anchors from inside them, and what sags,
 tightens and lifts is the net. The engine models each rim node's hold as:
 
 - **The wire**, a link that only pulls: if the net draws the rim node away
-  from its anchor, the wire's rope inside stretches and resists, with the
-  stiffness of the whole reeved route,
+  from its anchor, the node moves out along the wire's line (the anchor holds
+  it sideways where the wire enters), and the wire's rope inside stretches and
+  resists, with the stiffness of the whole reeved route,
 
   ```
   k = MA^2 * EA / L_route        MA: the reeve factor (4), L_route: the rope
                                  inside the anchor and machine (about 12.6 m)
+  T = k * max(0, u + r)          u: how far the node is let out of its
+                                 anchor; r: what the drum has reeled past
+                                 the wire being just taut with its node on
+                                 the anchor
   ```
 
   and with the length the drum has paid out as its unstretched length.
@@ -140,25 +145,35 @@ tightens and lifts is the net. The engine models each rim node's hold as:
 The machine reels to hold the rim on its anchor: as the tension in a wire
 changes, its drum takes up or pays out the rope's stretch so the node stays
 where it was designed to be. That take-up is each wire's required reel
-(section 3.3). The permanent tension ties connect the five anchors; because
-the anchors do not move, the ties change nothing in the net's motion. The
-anchor forces are what the ties and the foundations must resist together, and
-how that is shared between them is an open item (section 11).
+(section 3.3). That is the raise. From the hold frame on, the drums hold
+where they are (section 4.2), so the skin's weight stretches the wires and
+lets the rim out of its anchors by the added tension over k.
+
+The permanent tension ties connect the five anchors; because the anchors do
+not move, the ties change nothing in the net's motion. The anchor forces are
+what the ties and the foundations must resist together, and how that is
+shared between them is an open item (section 11).
 
 Should a mechanism ever leave a free span of wire between an anchor and its
-rim node, that span is split into segments of at most 250 mm, each a rope
-element with its own weight, so it droops as a real wire would. The real
-study has none.
+rim node, this part refuses the run, naming the wire and the gap: a span
+modelled as if it were not there would hide its sag. Splitting it into
+segments of at most 250 mm, each a rope element with its own weight, so it
+droops as a real wire would, waits for a study that has one. The real study
+has none: every rim node is within 0.01 mm of where its wire enters the
+anchor.
 
 ### 3.3 Motors, drums, pulleys and pairing
 
 - A motor drives one drum. Every spool on a drum reels the same length change
   (equal spool diameters are assumed).
 - Which spools share a motor is chosen per machine. With N wires per motor,
-  every way of splitting the machine's seven spools into groups of at most N
-  is tried (877 ways at most), and the split kept is the one whose shared
-  reels stray least from what each wire needs over the whole sequence, a
-  wire's need being the take-up that holds its rim node on its anchor:
+  the machine has the fewest motors that carry its seven spools at N each,
+  ceil(7 / N), and every way of splitting the spools onto them is tried (at
+  most 877 splits of seven spools in all); the split kept is the one whose
+  shared reels stray least from what each wire needs over the whole
+  sequence, a wire's need being the take-up that holds its rim node on its
+  anchor (one motor a wire would cost nothing, so the motor count is the
+  choice and only the pairing is searched):
 
   ```
   cost(split) = sum over frames, over motors, over the motor's wires of
@@ -167,9 +182,13 @@ study has none.
   ```
 
 - A motor's shared reel leaves each of its wires a little long or a little
-  short of its own need, and the engine lets the rim nodes move by exactly
-  that, through each wire's stiffness: the cost of fewer motors, measured in
-  millimetres at the rim.
+  short of its own need. A wire left long lets its rim node out of the anchor
+  until the wire and the net agree; a wire left short pulls its node onto the
+  anchor, and the foundation pushes back the difference. That is the cost of
+  fewer motors, measured in millimetres at the rim. The needs come from a
+  first pass of the whole sequence with every wire on its own motor; the
+  spools are paired on them, and a second pass reels each motor's mean of
+  its wires' needs, step by step.
 - With a pulley, the drum reels MA times the line's length change and feels
   the line tension divided by MA, MA being the pulley's mechanical advantage.
   Part 2 owns the choice; until it lands the engine takes MA, N, the drum
@@ -207,6 +226,10 @@ Where a tree's head meets its net node, the net rests on the head: the head
 pushes and never pulls. While it pushes, it holds its node in its notch, in
 every direction, as the columns' "every notch held" means; the moment
 holding the node would mean pulling it, the head lets it go and the two part.
+A node its head has let go of left the notch sideways, so that head takes it
+back only once it has been above the head again and comes down onto it. On
+the real net a head that took back a node from beside it, below its top, let
+it go and took it back round after round (section 12).
 An extra hold at a highlighted node (part 3) behaves the same way; in this
 part it stands on the ground under its node, vertically, and is marked as
 provisional until the plugin grows the real branch (part 5).
@@ -243,9 +266,21 @@ bending stiffness; winding layers on a drum; friction in pulleys; inertia
 
 The formwork export's 51 frames run from machine time 0 to 100 in four
 phases: reel (15 frames), raise (15), finish (15) and hold (6). The reel
-phase is the net being laid out by people (section 2), so the engine places
-the net where the frame at machine time 30 has it, and simulates the 36
-frames from 30 to 100. At every one of them:
+phase is the net being laid out by people (section 2), so the engine lays the
+net out where the frame at machine time 30 has it, as near as the net allows,
+and simulates the 36 frames from 30 to 100.
+
+On the real study that frame is not a layout a real net can take. Its 950
+inner nodes hover up to 421 mm above the ground, and against the cut lengths
+its members run from 44 per cent short to 130 per cent stretched, because the
+animation draws the net in with the heads, which start up to a metre inside
+their final places (section 12). Held there, the net would carry over a
+meganewton. So the people's layout is taken literally: every node but the
+rim's and the heads' is put on the ground under where that frame has it, the
+rim on its anchors and each head node in its head's notch, and the nodes
+slide on the ground, without friction, until no member is stretched. Then the
+ground's friction takes hold and the raise begins. How far each node moved
+from the frame is the first capture's deviation. At every frame after that:
 
 1. the trees stand at that frame's node positions;
 2. each wire's required reel is the take-up that keeps its rim node on its
@@ -304,18 +339,24 @@ that is about 130 captures of about 60 kB each, roughly 8 MB.
 
 ## 5. The solver
 
-Unknowns: the positions of every net node not in contact. The rim nodes are
-held to their anchors by their wires and the foundations; nodes in contact
-with a head, a hold or the ground are held there exactly while the contact
-pushes (section 3.5). Held: the tree nodes, which follow their prescribed
-motion. A frame that moves a head by more than 25 mm is solved in sub-steps
-of at most 25 mm, so contacts are gained and lost one small move at a time.
+Unknowns: the positions of every net node not in contact; for each rim node
+off its anchor, how far it is let out along its wire, its one unknown, since
+the anchor holds it sideways; and while the net is laid out (section 4.1),
+the x and y of each node sliding on the ground. A rim node is held on its
+anchor while its drum reels exactly what holds it there, and while its
+foundation pushes; nodes in contact with a head, a hold or the ground are
+held there exactly while the contact pushes (section 3.5). Held: the tree
+nodes, which follow their prescribed motion. A frame that moves a head by
+more than 25 mm is solved in sub-steps of at most 25 mm, so contacts are
+gained and lost one small move at a time.
 
 Each step finds the shape that minimises the net's stored energy less the
 work of its loads, from the previous capture's state, by damped Newton steps:
 
 ```
-Pi(x) = sum over taut ropes of EA / (2 L0) * (L - L0)^2  -  loads . x
+Pi(x) = sum over taut ropes of EA / (2 L0) * (L - L0)^2
+        + sum over rim nodes off their anchors of k / 2 * max(0, u + r)^2
+        - loads . x
 R(x)  = - grad Pi(x)                    the force left over at every free node
 (K + mu I) dx = R                       K: tangent stiffness, material plus
                                         geometric; slack ropes add nothing;
@@ -333,7 +374,7 @@ taut; judged by the leftover force, as the first prototype did, it stalled
 The engine assembles its own tangent stiffness, with a rope's material
 stiffness only while it is taut (the stiffness module's is built for force
 densities), and factorises it with scipy's sparse LU. When the damped
-steps stall (the damping grows past its limit) or reach 60 iterations,
+steps stall (the damping grows past its limit) or reach 300 iterations,
 dynamic relaxation with kinetic damping takes over from the last good state
 and runs to the same test. The capture records which finished it.
 
@@ -349,13 +390,17 @@ this engine.
 
 ## 7. Where it lives
 
-- `src/tree_forest_compas/net_engine.py`: the model, the solver and the
-  sequence, numpy and scipy only, tested headless.
+- In `src/tree_forest_compas`, numpy and scipy only, tested headless:
+  `net_engine.py` (the ropes, the wires, the solver and the contacts),
+  `trees.py` (the column trees and the steel tube), `pairing.py` (which
+  spools share a motor) and `formwork_sequence.py` (the cut, the sequence
+  and the captures).
 - `bench/studio/solve_formwork.py`: the subprocess entry, request in and
   capture document out, as `solve_cablenet.py` is for the Cable net run.
-- A run route of its own (kind "formwork"), sharing the cut-and-plan and the
-  options assembly with the other two runs, as they share them with each
-  other.
+- A run route of its own (kind "formwork"), cut by the same
+  staging.cut_and_plan as the other two runs, so all three run on the same
+  cut, and reading the study's documents before the cut, as the cable net
+  run does.
 - `bench/scripts/formwork_real.py`: runs the real study through the route and
   writes the findings, with images of the net at the end of the raise and at
   the last course, coloured by tension and by deviation, rendered so the
@@ -389,8 +434,10 @@ owner's vault:
     designed shape; how close is reported, not judged.
 11. A rim node on its anchor: pulled away, its wire stretches by the pull
     over MA^2 EA / L; pushed in, the foundation stops it; the anchor's force
-    is the two together. Two wires sharing one reel: their nodes move by
-    exactly the mismatch the stiffness predicts.
+    is the two together. Two wires sharing one reel: the long wire's node is
+    let out until its wire and the net agree, the short wire's node stays on
+    its anchor with the foundation pushing back. Through the tiling the
+    reels hold, and the skin lets the rim out by the added tension over k.
 12. The cut: with the net held exactly at the designed shape and no skin, each
     member carries the larger of its fitted tension and P, within 0.1 N.
 13. The tiling order: a row's four steps add its tiles in the animation's
@@ -454,3 +501,35 @@ product code) was run on the real study, held at its 105 rim nodes and its
   courses taken whole. At 300 N on the 46 heads the net drapes about 0.9 m at
   the start of the tiling and 1.5 m under the full skin.
 
+While the plan was written, the engine it specifies was run on the real study
+through the whole sequence, and what it found changed the design:
+
+- The frame at machine time 30 is not a layout a net can take: its 950 inner
+  nodes hover up to 421 mm above the ground, and against the cut lengths its
+  members run from 44 per cent short to 130 per cent stretched. Held where it
+  is drawn, the net carried 1.1 MN and put the trees at 21 times their
+  resistance. Hence the laying out of section 4.1: laid out, no member is
+  taut at machine time 30, and the worst node is 445 mm from where the frame
+  drew it.
+- In the finish phase, machine time 60 to 90, 45 of the 46 heads slide
+  outward, level, by up to 994 mm, to their final places. At machine time 62,
+  at full height but up to a metre inside them, they pull a rope to about
+  67 kN and a wire to about 34 kN, and put the trees at 1.9 times the
+  resistance of a 3.2 mm wall; all of it falls away as the heads slide out,
+  to 30 N in a wire by the hold. A 4 mm rope breaks at about 10 kN. No
+  standard wall holds every capture, because of machine time 62.
+- Each wire on the real mechanism drops straight down 30 mm into its anchor,
+  so it feels only the net's uplift at its rim node, and the anchor body takes
+  the sideways pull. Every route is drawn in its machine instance's own frame,
+  and only that frame puts it on its rim node.
+- The net slides off the lower heads as the higher ones lift it into a tent:
+  all 46 touch until machine time 46, 21 from 50 and 11 at the hold, the rest
+  48 to 725 mm to one side and below. At the hold the worst node is 1.6 m from
+  the designed form, and 1.75 m under the last course. A head that took back
+  a node from beside it, below its top, let it go and took it back round after
+  round, hence section 3.5's rule.
+- The whole sequence ran in 114 s at one wire a motor and 243 s at two, once
+  Newton was allowed 300 damped steps. At 60, relaxation took over a dozen
+  times in the first ten frames, at about 12,000 steps each, and doubled the
+  time. At two wires a motor the shared reels let the rim out by at most
+  0.72 mm.
