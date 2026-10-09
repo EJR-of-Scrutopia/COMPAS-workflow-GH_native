@@ -29,6 +29,81 @@ class CatalogueError(RuntimeError):
     """Raised when a configuration is not one that could be built."""
 
 
+PRICED_KINDS = ("motor", "drive", "gearbox", "drum", "rope", "turnbuckle", "eye_bolt",
+                "sheave", "rail")
+
+
+def _sheave_rating_kg(entry):
+    """The working load a pulley is judged at, in kilograms. A pulley in a
+    reeving block is wrapped half round, so its 180 degree rating applies; where
+    the maker prints a lower figure at 90 degrees the two conflict, and the lower
+    stands. A maker that gives one load with no angle is taken at it."""
+
+    if entry.get("swl_kg") is not None:
+        return float(entry["swl_kg"])
+    at_180, at_90 = entry.get("wll_kg_180"), entry.get("wll_kg_90")
+    if at_180 is not None:
+        return float(at_180) if at_90 is None else min(float(at_180), float(at_90))
+    if entry.get("wll_kg") is not None:
+        return float(entry["wll_kg"])
+    return None
+
+
+def price_gbp(parts, key, entry):
+    """A part's price in pounds, exclusive of VAT, or None when it is unpriced
+    (spec section 6): a price in another currency is converted at the
+    catalogue's dated rate, and one that includes VAT has it taken off at its own
+    rate (the UK's unless the entry gives another). A price whose VAT basis is
+    unclear is taken as published."""
+
+    price = entry.get("unit_price")
+    if price is None:
+        return None
+    value = float(price)
+    currency = entry.get("currency", "GBP")
+    if currency != "GBP":
+        rate = (parts.get("currency") or {}).get("{}_per_GBP".format(currency))
+        if rate is None:
+            raise CatalogueError("{}: no {} rate".format(key, currency))
+        value /= float(rate)
+    if entry.get("vat") == "inc":
+        value /= 1.0 + float(entry.get("vat_rate", (parts.get("rules") or {}).get("vat_rate", 0.2)))
+    return value
+
+
+def _check_offered(parts):
+    """Refuse, by name and when the studio starts, any part the five choices
+    offer that lacks a figure the rules need (spec section 7.1)."""
+
+    def need(key, entry, *names):
+        for name in names:
+            if entry.get(name) is None:
+                raise CatalogueError("{}: no {}".format(key, name.replace("_", " ")))
+
+    for key, entry in parts["motor"].items():
+        if not entry.get("frame"):
+            continue
+        need(key, entry, "torque_nm", "torque_basis", "rated_current_a", "drive")
+        drive = parts["drive"].get(entry["drive"])
+        if drive is None:
+            raise CatalogueError("{}: no drive {}".format(key, entry["drive"]))
+        need(entry["drive"], drive, "supply", "volts_min", "volts_max")
+        if drive["supply"] == "dc":
+            # the 48 V supply is sized from each motor's resistive loss (note 14)
+            need(key, entry, "phase_resistance_ohm")
+        if entry["family"] == "S":
+            need(key, entry, "rated_speed_rpm")
+    for key, entry in parts["gearbox"].items():
+        if entry.get("frame"):
+            need(key, entry, "gear_ratio", "gear_efficiency", "series")
+    for key, entry in parts["sheave"].items():
+        if entry.get("wire_min_mm") is not None and entry.get("wire_max_mm") is not None:
+            if entry.get("sheave_swl") is None:
+                raise CatalogueError("{}: no working load".format(key))
+    for key, entry in parts["rope"].items():
+        need(key, entry, "diameter_mm", "rope_mbl", "mass_per_metre_kg", "ea_newtons")
+
+
 def load_parts(path=None):
     """The catalogue with every derived figure resolved once.
 
@@ -48,17 +123,48 @@ def load_parts(path=None):
     for entry in parts["eye_bolt"].values():
         entry["axial_newtons"] = float(entry["axial_kg"]) * gravity
         entry["angled_newtons"] = float(entry["angled_kg"]) * gravity
+    rules = parts.get("rules") or {}
     for entry in parts["sheave"].values():
-        entry["sheave_swl"] = float(entry["swl_kg"]) * gravity
+        rating = _sheave_rating_kg(entry)
+        if rating is not None:
+            entry["sheave_swl"] = rating * gravity
+        if entry.get("sheave_efficiency") is None:
+            if entry.get("efficiency") is not None:
+                entry["sheave_efficiency"] = float(entry["efficiency"])
+                entry["efficiency_assumed"] = False
+            else:
+                # a maker that publishes no efficiency: the usual figure for the
+                # bearing, said to be assumed (spec section 2.3)
+                entry["sheave_efficiency"] = float(rules.get(
+                    "efficiency_ball" if entry.get("bearing") == "ball" else
+                    "efficiency_plain", 0.95))
+                entry["efficiency_assumed"] = True
     for entry in parts["motor"].values():
+        if entry.get("torque_nm") is not None:
+            entry["motor_torque"] = float(entry["torque_nm"]) * 1000.0
         if entry["family"] == "A":
             entry["torque_margin"] = 0.5
+        elif entry["family"] == "S":
+            # a servo is quoted at its rated continuous torque, derated as a
+            # continuous-rated motor is
+            entry["torque_margin"] = 0.8
         else:
             entry["torque_margin"] = 0.8
             entry["motor_torque"] = (
                 9550.0 * float(entry["power_kw"]) / float(entry["rated_speed_rpm"])
                 * 1000.0
             )
+    for entry in parts["gearbox"].values():
+        if entry.get("output_torque_nm") is not None:
+            entry["gearbox_torque"] = float(entry["output_torque_nm"]) * 1000.0
+        else:
+            entry.setdefault("gearbox_torque", None)
+    for kind in PRICED_KINDS:
+        for key, entry in (parts.get(kind) or {}).items():
+            entry["price_gbp"] = price_gbp(parts, key, entry)
+            for reel in entry.get("reels") or []:
+                reel["price_gbp"] = price_gbp(parts, key, dict(entry, unit_price=reel["price"]))
+    _check_offered(parts)
     # A designed rig that cannot be built fails here, with its part named, and
     # not on a panel the first time somebody chooses it.
     for key in configurations(parts):
@@ -375,7 +481,7 @@ def gearboxes_for(parts, motor_key):
         raise CatalogueError(
             "{} is a single-phase capacitor motor and cannot be inverter "
             "controlled; no gearbox makes it hold a net.".format(motor_key))
-    kinds = ("planetary", "none") if motor["family"] == "A" else ("worm",)
+    kinds = ("planetary", "none") if motor["family"] in ("A", "S") else ("worm",)
     return [key for key, entry in parts["gearbox"].items() if entry["kind"] in kinds]
 
 
