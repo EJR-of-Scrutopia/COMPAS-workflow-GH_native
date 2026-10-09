@@ -1352,6 +1352,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         """A tolerance in millimetres, or the 400 that says why it is none: the
         line the sag is judged against is a finite number greater than zero."""
 
+        # a JSON true is not one millimetre, though float() would take it
+        if isinstance(value, bool):
+            raise HTTPException(400, "{} must be a number of millimetres, not {!r}".format(
+                name, value))
         try:
             tolerance = float(value)
         except (TypeError, ValueError, OverflowError):

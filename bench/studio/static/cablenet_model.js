@@ -263,7 +263,7 @@ export function demandSentences(demand) {
   out.push(demand.acceptance == null
     ? "No acceptance line is set for this run, so sag has nothing to be judged against."
     : demand.tolerance_mm != null
-      ? "The acceptance line is a tolerance of " + toleranceWords(demand.tolerance_mm) +
+      ? "The acceptance line is a tolerance of " + millimetres(demand.tolerance_mm) +
         " mm from the designed form, set for this run."
       : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
         (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
@@ -330,17 +330,13 @@ export function prestressNote(demand, dialNewtons) {
     newtons(dial) + " N. Run again to use the dial's value.";
 }
 
-// A tolerance as it was asked for: the figure, with no padding (the server's
-// "{:g}", cablenet.tolerance_source).
-function toleranceWords(value) {
-  return String(Number(value));
-}
-
 // Whether the tolerance dial still matches the analysis on screen. The run
 // records the tolerance it was asked for; the dial is only the next run's. The
-// greedy walk picks the same nodes whatever the line and stops only where the
-// line is met, so the curve it recorded says how many grabbed nodes a looser
-// tolerance needs; a tighter one than the walk reached needs a new run.
+// greedy walk picks the same nodes whatever the line, and stops at the first
+// point within it, at its cap of batches, or when no node is left unbalanced
+// (placement.greedy_actuators). So the curve it recorded gives the grab count
+// of any looser tolerance. A tighter one needs a new run only when the walk
+// stopped at its own line; otherwise a new run would end where this one did.
 export function toleranceNote(demand, dialMm) {
   if (!demand || isStale(demand)) return "";
   const dial = Number(dialMm);
@@ -349,29 +345,37 @@ export function toleranceNote(demand, dialMm) {
   if (used !== null && used === dial) return "";
   const line = demand.acceptance == null ? null : Number(demand.acceptance);
   const opening = used !== null
-    ? "The analysis on screen used a tolerance of <b>" + toleranceWords(used) +
-      " mm</b>; the dial reads " + toleranceWords(dial) + " mm."
+    ? "The analysis on screen used a tolerance of <b>" + millimetres(used) +
+      " mm</b>; the dial reads " + millimetres(dial) + " mm."
     : line !== null
       ? "The analysis on screen judged the sag against a line of " + millimetres(line) +
-        " mm; the dial reads a tolerance of " + toleranceWords(dial) + " mm."
+        " mm; the dial reads a tolerance of " + millimetres(dial) + " mm."
       : "The analysis on screen had no acceptance line; the dial reads a tolerance of " +
-        toleranceWords(dial) + " mm.";
-  const curve = ((demand.placement || {}).curve || [])
+        millimetres(dial) + " mm.";
+  const placement = demand.placement || {};
+  const curve = (placement.curve || [])
     .filter((point) => Number.isFinite(Number(point.worst_sag_mm)));
   const met = curve.find((point) => Number(point.worst_sag_mm) <= dial);
   const last = curve[curve.length - 1];
   if (met) {
-    return opening + " At " + toleranceWords(dial) + " mm, this run's walk would " +
+    return opening + " At " + millimetres(dial) + " mm, this run's walk would " +
       (Number(met.count) === 0 ? "grab no node"
         : "stop at " + counted(Number(met.count), "grabbed node")) +
       "; run again for the forces and the verdict.";
   }
-  if (last) {
-    return opening + " This run's walk stopped at " + counted(Number(last.count), "grabbed node") +
-      " with the worst sag at " + millimetres(last.worst_sag_mm) + " mm, so only a new run " +
-      "can say how many grabbed nodes " + toleranceWords(dial) + " mm needs.";
+  if (!last) return opening + " Run again to use the dial's value.";
+  const where = counted(Number(last.count), "grabbed node") + " with the worst sag at " +
+    millimetres(last.worst_sag_mm) + " mm";
+  if (placement.reached) {
+    return opening + " This run's walk stopped at its own line, at " + where +
+      ", so only a new run can say how many grabbed nodes " + millimetres(dial) +
+      " mm needs.";
   }
-  return opening + " Run again to use the dial's value.";
+  const ended = curve.length === Number(placement.steps) + 1
+    ? "ended at its cap of " + counted(Number(placement.steps), "batch")
+    : "ended with no unbalanced node left to grab";
+  return opening + " This run's walk " + ended + ", at " + where + ", so a run at " +
+    millimetres(dial) + " mm would end at the same place without meeting it.";
 }
 
 // The skin, with its weight in kilonewtons when the sizing block gave one:

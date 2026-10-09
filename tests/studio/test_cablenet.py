@@ -429,13 +429,15 @@ def test_a_tolerance_is_handed_to_the_engine_as_the_line_and_said_in_words():
     run(tolerance_mm=20.0)
     assert seen["tolerance_mm"] == 20.0 and seen["acceptance"] == 20.0
     assert seen["acceptance_source"] == (
-        "a tolerance of 20 mm from the designed form, set for this run")
+        "a tolerance of 20.00 mm from the designed form, set for this run")
     assert "falsework" not in seen
     # a tolerance AND an explicit line would leave one of the two unused, unsaid
     with pytest.raises(cablenet.CableNetError, match="tolerance"):
         run(5.0, "test", tolerance_mm=20.0)
-    # no tolerance is a line that is zero, negative or not a finite number
-    for bad in (0.0, -1.0, float("nan"), float("inf")):
+    # no tolerance is a line that is zero, negative or not a finite number; a
+    # boolean is no number of millimetres, and one too large for a float is said
+    # as a refusal, not raised as an OverflowError
+    for bad in (0.0, -1.0, float("nan"), float("inf"), True, False, 10 ** 400):
         with pytest.raises(cablenet.CableNetError, match="tolerance"):
             run(tolerance_mm=bad)
     # an explicit line with no tolerance records none

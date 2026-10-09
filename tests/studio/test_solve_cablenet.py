@@ -150,10 +150,10 @@ def test_the_document_records_the_tolerance_it_was_judged_against():
     # the line it became, and a request with none records none
     document = solve_cablenet.solve(_grid_request(
         acceptance=20.0, tolerance_mm=20.0,
-        acceptance_source="a tolerance of 20 mm from the designed form, set for this run"))
+        acceptance_source="a tolerance of 20.00 mm from the designed form, set for this run"))
     assert document["tolerance_mm"] == 20.0 and document["acceptance"] == 20.0
     assert document["acceptance_source"] == (
-        "a tolerance of 20 mm from the designed form, set for this run")
+        "a tolerance of 20.00 mm from the designed form, set for this run")
     assert solve_cablenet.solve(_grid_request())["tolerance_mm"] is None
 
 

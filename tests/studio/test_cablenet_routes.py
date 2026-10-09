@@ -317,6 +317,9 @@ def test_bad_run_options_are_400s_that_name_the_option(tmp_path, monkeypatch):
     for bad, word in (({"prestress": 0}, "prestress"), ({"batch": 0}, "batch"),
                       ({"rope": "string"}, "rope"), ({"tolerance_mm": 0}, "tolerance"),
                       ({"tolerance_mm": -5}, "tolerance"),
+                      # a JSON true is not one millimetre, and false is not a line
+                      ({"tolerance_mm": True}, "tolerance"),
+                      ({"tolerance_mm": False}, "tolerance"),
                       ({"falsework": "plywood-rib-2000"}, "falsework"),
                       ({"size": "wide"}, "number")):
         response = client.post("/api/studies/Tiny/cablenet/run", json={**base, **bad})
@@ -351,7 +354,7 @@ def test_a_staged_run_refuses_a_tolerance_that_is_no_line(tmp_path, monkeypatch)
     client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
     study = {"export": "Tiny", "material": "concrete", "pattern": "bonded-courses",
              "size": 0.9, "cablenet": True}
-    for bad in (0, -5, "wide"):
+    for bad in (0, -5, "wide", True):
         response = client.post("/api/runs", json={
             **study, "cablenet_options": {"tolerance_mm": bad}})
         assert response.status_code == 400, bad
@@ -731,7 +734,7 @@ def test_the_tolerance_is_the_acceptance_line_the_engine_is_handed(
     seen = _request_the_engine_sees(tmp_path, monkeypatch, path)
     assert seen["tolerance_mm"] == 20.0 and seen["acceptance"] == 20.0
     assert seen["acceptance_source"] == (
-        "a tolerance of 20 mm from the designed form, set for this run")
+        "a tolerance of 20.00 mm from the designed form, set for this run")
     assert "falsework" not in seen
 
 
@@ -741,7 +744,7 @@ def test_a_tolerance_asked_for_is_the_one_the_engine_is_handed(tmp_path, monkeyp
         tmp_path, monkeypatch, path, options={"tolerance_mm": 12.5})
     assert seen["tolerance_mm"] == 12.5 and seen["acceptance"] == 12.5
     assert seen["acceptance_source"] == (
-        "a tolerance of 12.5 mm from the designed form, set for this run")
+        "a tolerance of 12.50 mm from the designed form, set for this run")
 
 
 @_BOTH_PATHS

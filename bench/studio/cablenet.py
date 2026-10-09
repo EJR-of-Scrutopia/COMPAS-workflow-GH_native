@@ -327,9 +327,10 @@ def wires_from_mechanism(document, vertex_count, supports):
 
 def tolerance_source(tolerance_mm):
     """The acceptance line's source when it is a tolerance, in the words the
-    panel and the documents print: the figure as it was asked for."""
+    panel and the documents print, its millimetres in two decimals as every
+    length is written there (exports._millimetres)."""
 
-    return "a tolerance of {:g} mm from the designed form, set for this run".format(
+    return "a tolerance of {:.2f} mm from the designed form, set for this run".format(
         float(tolerance_mm))
 
 
@@ -379,9 +380,13 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                 "discarded without saying so, and the figure on screen would not be "
                 "the figure that was asked for. Give one or the other.".format(
                     tolerance_mm))
+        # a boolean is no number of millimetres, though float() would take it
+        if isinstance(tolerance_mm, bool):
+            raise CableNetError("The tolerance must be a number of millimetres, not "
+                                "{!r}.".format(tolerance_mm))
         try:
             tolerance_mm = float(tolerance_mm)
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError, OverflowError) as error:
             raise CableNetError("The tolerance must be a number of millimetres, not "
                                 "{!r}.".format(tolerance_mm)) from error
         if not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0):

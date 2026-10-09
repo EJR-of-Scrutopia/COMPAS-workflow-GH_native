@@ -393,9 +393,10 @@ to the vault's exact surface and propped from below, as on the falsework slide
 of his presentation (images: Block Research Group; Davis et al. 2012). A mould
 like that barely moves, so judging the net against it says only that the mould
 is stiffer. The run of 8 October had strayed further from it still: the
-catalogue's one rib was a 2 m plywood former, the engine refused it for a 16 m
-vault, and the server swapped in a 9 m glulam beam nobody designed, straight
-and simply supported, whose 3.25 mm sag became the line. The claim worth making
+catalogue held one rib, a 2 m plywood former, which the engine refused for a
+16 m vault, so the build added a 9 m glulam beam nobody designed and the server
+swapped it in; the 3.25 mm sag of that beam, straight and simply supported,
+became the line. The claim worth making
 is the slide's own: the machine holds the designed form within a tolerance,
 without the mould.
 
@@ -403,13 +404,15 @@ What changed:
 
 - The run takes `tolerance_mm`, default 20 mm, the full-scale placement
   tolerance in the T1 brief (5 mm on the 1:4 rig). It is handed to the engine
-  as the acceptance line with the source "a tolerance of 20 mm from the
+  as the acceptance line with the source "a tolerance of 20.00 mm from the
   designed form, set for this run", and the document records `tolerance_mm`.
 - The Cable net section has a Tolerance dial, 1 to 100 mm. When it differs
   from the run's, the panel says so and reads the walk the run recorded. The
-  greedy walk picks the same nodes whatever the line and stops only where the
-  line is met, so the curve gives a looser tolerance's grab count; a tighter
-  one than the walk reached needs a new run.
+  greedy walk picks the same nodes whatever the line, and stops at the first
+  point within it, at its cap of batches, or when no node is left unbalanced.
+  So the curve gives a looser tolerance's grab count; a tighter one needs a new
+  run when the walk stopped at its own line, and otherwise a new run would end
+  where this one did.
 - The rib chooser, the reach rule, the engine's `resolve_acceptance` and the
   catalogue's two ribs are gone, and a request that names a falsework is
   refused with the reason. `tree_forest_compas.falsework` stays in the engine

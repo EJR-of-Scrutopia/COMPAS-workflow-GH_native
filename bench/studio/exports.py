@@ -675,25 +675,28 @@ def _notes(demand):
 
 
 def _line_words(demand, shape):
-    """The acceptance line in one sentence: the tolerance this run was asked
-    for; or, in a document written before the tolerance (9 October 2026), the
-    line as that document recorded it, quoted and not re-derived; or the plain
-    absence of one."""
+    """The acceptance line, said after the falsework the machine replaces: why a
+    tolerance, and the tolerance this run was asked for; or, in a document
+    written before the line became a tolerance (9 October 2026), the line as
+    that document recorded it, quoted and not re-derived; or the plain absence
+    of one."""
 
     tolerance = demand.get("tolerance_mm")
     line = shape.get("acceptance_mm")
     source = shape.get("acceptance_source")
     if isinstance(tolerance, (int, float)) and not isinstance(tolerance, bool):
-        return ("This run holds the net to a tolerance of {:g} mm from the designed "
-                "form, set for this run, and that tolerance is the acceptance "
-                "line.".format(tolerance))
+        return ("A mould like that barely moves, so the machine is not judged against it "
+                "but against a tolerance: the most the net may stray from its designed "
+                "form while the skin goes on. This run holds the net to a tolerance of {} "
+                "mm from the designed form, set for this run, and that tolerance is the "
+                "acceptance line.".format(_millimetres(tolerance)))
     if line is None:
         return "No acceptance line is set for this run, so the net's shape is not judged."
     if source:
-        return ("This document was written before the tolerance: its acceptance line "
-                "of {} mm was recorded in these words, quoted verbatim: \"{}\". It is "
-                "taken from that record and is not re-derived here.".format(
-                    _millimetres(line), source))
+        return ("This document was written before the line became a tolerance from the "
+                "designed form: its acceptance line of {} mm was recorded in these words, "
+                "quoted verbatim: \"{}\". It is taken from that record and is not "
+                "re-derived here.".format(_millimetres(line), source))
     return ("The acceptance line is {} mm. No source was recorded for it, so the reader "
             "should treat the line with caution.".format(_millimetres(line)))
 
@@ -1350,7 +1353,7 @@ def _assumed_value(item):
         return "{} N".format(_newtons(value))
     if (item.get("unit") == "mm" and isinstance(value, (int, float))
             and not isinstance(value, bool)):
-        return "{:g} mm".format(value)
+        return "{} mm".format(_millimetres(value))
     return _num(value, 2)
 
 
@@ -1530,10 +1533,7 @@ def _datasheet_sections(model):
     out.append("## What this machine replaces\n\n" + "\n\n".join([
         "The winch machine described here stands in for the timber falsework "
         "that would otherwise hold the vault up while it is built: a mould cut "
-        "to the vault's exact surface and propped from below. A mould like that "
-        "barely moves, so the machine is not judged against it. It is judged "
-        "against a tolerance: the most the net may stray from its designed form "
-        "while the skin goes on.",
+        "to the vault's exact surface and propped from below.",
         _line_words(demand, shape),
     ] + noted))
 

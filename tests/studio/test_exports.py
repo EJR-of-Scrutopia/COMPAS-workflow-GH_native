@@ -2340,7 +2340,7 @@ def test_what_binds_is_said_at_the_sizing_stage_in_a_version_2_document():
 # own recorded words.
 # ---------------------------------------------------------------------------
 
-_TOLERANCE_SOURCE = "a tolerance of 20 mm from the designed form, set for this run"
+_TOLERANCE_SOURCE = "a tolerance of 20.00 mm from the designed form, set for this run"
 # the real study's line before the ruling: a catalogue rib nobody designed
 _GLULAM_SOURCE = (
     'falsework glulam-rib-9000: {"depth": 400.0, "description": "glulam GL24h rib 9000 x '
@@ -2355,8 +2355,9 @@ def test_the_first_section_says_why_a_tolerance_then_the_tolerance_then_the_note
                          tolerance_mm=20.0, note=_FORMWORK_NOTE)
     section = _section(exports.datasheet_markdown(model), "replaces")
     why = section.index("A mould like that barely moves, so the machine is not judged "
-                        "against it.")
-    tolerance = section.index("This run holds the net to a tolerance of 20 mm from the "
+                        "against it but against a tolerance: the most the net may stray "
+                        "from its designed form while the skin goes on.")
+    tolerance = section.index("This run holds the net to a tolerance of 20.00 mm from the "
                               "designed form, set for this run, and that tolerance is the "
                               "acceptance line.")
     note = section.index("The analysis carries this note, quoted verbatim: \"{}\".".format(
@@ -2366,8 +2367,8 @@ def test_the_first_section_says_why_a_tolerance_then_the_tolerance_then_the_note
     assert not re.search(r"\brib\b|catalogue", section), "a tolerance names no rib"
     # a tolerance that is not a whole millimetre keeps its figure
     half = _sized_model(acceptance=12.5, tolerance_mm=12.5, acceptance_source=(
-        "a tolerance of 12.5 mm from the designed form, set for this run"))
-    assert "a tolerance of 12.5 mm from the designed form" in _section(
+        "a tolerance of 12.50 mm from the designed form, set for this run"))
+    assert "a tolerance of 12.50 mm from the designed form" in _section(
         exports.datasheet_markdown(half), "replaces")
 
 
@@ -2376,9 +2377,12 @@ def test_a_document_from_before_the_tolerance_keeps_its_line_in_its_own_words():
     # engine's own words
     older = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE)
     section = _section(exports.datasheet_markdown(older), "replaces")
-    assert ("This document was written before the tolerance: its acceptance line of "
-            "3.25 mm was recorded in these words, quoted verbatim: \"{}\". It is taken "
-            "from that record and is not re-derived here.".format(_GLULAM_SOURCE)) in section
+    assert ("This document was written before the line became a tolerance from the "
+            "designed form: its acceptance line of 3.25 mm was recorded in these words, "
+            "quoted verbatim: \"{}\". It is taken from that record and is not re-derived "
+            "here.".format(_GLULAM_SOURCE)) in section
+    # and nothing before it says this document's line is a tolerance
+    assert "barely moves" not in section and "against a tolerance" not in section
     # a line with no source, and no line at all, are each said plainly
     unsourced = _section(exports.datasheet_markdown(
         _sized_model(acceptance=3.25, acceptance_source=None)), "replaces")
@@ -2397,7 +2401,7 @@ def test_the_tolerance_is_listed_under_the_assumptions_in_both_documents():
     assert entry["why"] == ("The most the net may stray from its designed form, set for this "
                             "run: the line its sag is judged against.")
     sheet = _section(exports.datasheet_markdown(model), "assumptions")
-    assert ("**acceptance tolerance.** Value: 20 mm. The most the net may stray from its "
+    assert ("**acceptance tolerance.** Value: 20.00 mm. The most the net may stray from its "
             "designed form, set for this run: the line its sag is judged against.") in sheet
     rows = exports._sheet_rows(model)["Read this"]
     assert any(row and row[0] == "acceptance tolerance" for row in rows)
