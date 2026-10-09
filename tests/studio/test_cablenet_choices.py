@@ -112,18 +112,24 @@ def test_the_machine_is_named_by_its_parts_with_every_derived_part_in_a_table(ou
     html = out["machine"]
     assert ("23HS45-4204D-E1000 on EG23 20:1, Pfaff DSRB 90/4 pulleys, 4 mm 7x19, "
             "two wires a motor") in html
+    assert html.startswith("<table><tr><th>Part</th><th>Value</th></tr><tr><td>Machine</td>")
     for cell in ("Driver", "Gearbox", "EG23-G20-D8", "Pfaff-DSRB-90-4, 4 falls",
                  "Winding radius", "Groove pitch", "Wires a motor"):
         assert cell in html, cell
-    assert out["refused"] == "<p>NEMA 23: no 30:1 &lt;b&gt;</p>"
+    # a machine the catalogue cannot build is one line, as every warning is
+    assert out["refused"] == '<div class="cablenet-warning">NEMA 23: no 30:1 &lt;b&gt;</div>'
 
 
 def test_the_verdict_is_the_worst_margin_and_a_row_per_machine(out):
     html = out["verdict"]
     verdict = out["given"]["row"]["verdict"]
-    assert html.startswith("<p><b>" + ("✓" if verdict["holds"] else "✗"))
-    assert "pairing bound" in html
-    assert html.count("<tr>") == 1 + len(verdict["machines"])
+    worst = verdict["worst"]
+    assert html.startswith("<table><tr><th>Holds</th><td>" + ("✓" if verdict["holds"] else "✗"))
+    assert "<th>Margin</th><td>{:.1f}x</td>".format(worst["margin"]) in html
+    assert "<th>Worst wire</th><td>{}</td>".format(worst["wire"]) in html
+    assert "<th>Pairing</th><td>bound</td>" in html
+    # the machines' table: its head and a row per machine
+    assert html.count("<tr><td>") == len(verdict["machines"])
     assert "800.0" in html            # the worst wire's tension, one decimal
 
 
@@ -135,9 +141,9 @@ def test_travel_wire_and_price_are_numbers_against_their_limits(out):
     assert "Total, m" in buy and "Cut lengths, m" in buy and "Bought" in buy
     price = out["price"]
     total = out["given"]["row"]["price"]["priced_gbp"]
-    assert "£{:.2f}".format(total) in price
-    assert "1 cabinets, exc VAT" in price
-    assert "23HS45-4204D-E1000" in price and "Cabinet, machine 1" in price
+    assert "<th>Study total</th><td>£{:.2f} floor</td>".format(total) in price
+    assert "<th>Cabinets</th><td>1</td>" in price and "<th>VAT</th><td>excluded</td>" in price
+    assert "23HS45-4204D-E1000" in price and "<th>Cabinet, machine 1</th>" in price
     # the workshop drum has no price, so the total is a floor
     assert "floor" in price and "no price" in price
 
@@ -157,10 +163,20 @@ def test_each_cabinet_line_says_who_quoted_it_in_what_and_links_its_source(out):
 
 def test_recommend_reads_as_its_pick_or_the_closest_and_its_part(out):
     best = out["given"]["recommend"]
-    assert out["recommend"].startswith("<p><b>" + best["described"])
-    assert "£{:.2f}".format(best["priced_gbp"]) in out["recommend"]
-    assert out["none"] == ("<p><b>none holds</b>; closest rope &lt;b&gt;, rope tension "
-                           "rope-8mm 0.2x</p>")
+    assert out["recommend"].startswith("<table><tr><th>Pick</th><td>" + best["described"])
+    assert "<th>Price</th><td>£{:.2f}</td>".format(best["priced_gbp"]) in out["recommend"]
+    assert out["none"] == ("<table><tr><th>Pick</th><td>none holds</td></tr>"
+                           "<tr><th>Closest</th><td>rope &lt;b&gt;</td></tr>"
+                           "<tr><th>Binds</th><td>rope tension, rope-8mm</td></tr>"
+                           "<tr><th>Margin</th><td>0.2x</td></tr></table>")
+
+
+def test_no_readout_in_the_pop_up_is_a_paragraph(out):
+    # spec 2026-10-09 Cable net display, section 8: tables, values and the
+    # one-line warnings; never a <p>
+    for key in ("machine", "refused", "verdict", "travel", "buy", "price", "recommend", "none",
+                "twoCabinets", "limits", "motors", "eye"):
+        assert "<p" not in out[key], key
 
 
 def test_nothing_is_written_without_escaping_and_no_sentence_says_why(out):
@@ -179,7 +195,7 @@ def test_every_cabinet_has_its_own_total_and_the_lines_say_whose_they_are(out):
     assert "<th>Machine</th><th>Motors</th><th>Total</th><th>Unpriced</th>" in html
     assert "£{:.2f}".format(first["priced_gbp"]) in html
     assert "£{:.2f}".format(first["priced_gbp"] + 100) in html
-    assert "<p>Cabinet, machine 1: " in html
+    assert "<tr><th>Cabinet, machine 1</th><td>£{:.2f}</td></tr>".format(first["priced_gbp"]) in html
 
 
 def test_the_limits_a_wire_name_each_part_and_mark_the_one_that_binds(out):

@@ -616,6 +616,14 @@ function table(head, rows) {
     "</table>";
 }
 
+// A readout of named values, one row each: the pop-up's headline figures
+// (spec 2026-10-09 Cable net display, section 8: tables, never a paragraph).
+// Each value comes escaped by its caller.
+function keyed(rows) {
+  return "<table>" + rows.map(([name, value]) =>
+    `<tr><th>${escapeHtml(name)}</th><td>${value}</td></tr>`).join("") + "</table>";
+}
+
 // The chosen machine's limits a wire, N, each with its part; the one that
 // binds is marked (spec 2026-10-09 Cable net display, section 4.1).
 const TERM_NAMES = { "rope tension": "Wire", anchor: "Anchor chain", "spool rope tension": "Spool rope",
@@ -653,10 +661,11 @@ export function eyeBoltHtml(angle) {
 
 export function machineHtml(row, parts) {
   if (!row) return "";
-  if (row.refused) return `<p>${escapeHtml(row.refused)}</p>`;
+  if (row.refused) return `<div class="cablenet-warning">${escapeHtml(row.refused)}</div>`;
   const c = row.configuration;
   const chain = (c.chain || []).map(escapeHtml).join(" + ");
-  return `<p><b>${escapeHtml(row.described)}</b></p>` + table(["Part", "Value"], [
+  return table(["Part", "Value"], [
+    ["Machine", escapeHtml(row.described)],
     ["Driver", escapeHtml(c.drive)],
     ["Gearbox", escapeHtml(c.gearbox)],
     ["Pulleys", c.sheave == null ? "none, 1 fall" : `${escapeHtml(c.sheave)}, ${c.reeve_factor} falls`],
@@ -670,10 +679,11 @@ export function machineHtml(row, parts) {
 export function verdictHtml(verdict) {
   if (!verdict) return "";
   const worst = verdict.worst;
-  const head = worst
-    ? `<p><b>${mark(verdict.holds)} ${factor(worst.margin)}x</b> ${escapeHtml(worst.limit)}, ` +
-      `${escapeHtml(worst.part)}, wire ${worst.wire}, pairing ${escapeHtml(verdict.pairing)}</p>`
-    : `<p><b>${mark(verdict.holds)}</b> no tension</p>`;
+  const head = keyed(worst
+    ? [["Holds", mark(verdict.holds)], ["Margin", factor(worst.margin) + "x"],
+       ["Limit", escapeHtml(worst.limit)], ["Part", escapeHtml(worst.part)],
+       ["Worst wire", String(worst.wire)], ["Pairing", escapeHtml(verdict.pairing)]]
+    : [["Holds", mark(verdict.holds)], ["Tension", "none"]]);
   const rows = verdict.machines.map((m) => {
     const w = verdict.wires[m.worst_wire];
     return [String(m.machine + 1), String(m.worst_wire), newtons(w.tension),
@@ -735,23 +745,25 @@ export function priceHtml(price) {
     sourced(l), escapeHtml(l.quoted || "")]) : [];
   const boxes = price.cabinets.cabinets.map((c, i) => [String(i + 1), String(c.motors),
     pounds(c.priced_gbp), String(c.unpriced)]);
-  return `<p><b>${pounds(price.priced_gbp)}${floor ? " floor" : ""}</b>, ` +
-    `${price.cabinets.cabinets.length} cabinets, exc VAT</p>` +
+  return keyed([["Study total", pounds(price.priced_gbp) + (floor ? " floor" : "")],
+                 ["Cabinets", String(price.cabinets.cabinets.length)], ["VAT", "excluded"]]) +
     table(["Part", "Count", "Unit", "Line"], study) +
     (first ? table(["Machine", "Motors", "Total", "Unpriced"], boxes) +
-      `<p>Cabinet, machine 1: ${pounds(first.priced_gbp)}, ${first.unpriced} lines unpriced</p>` +
+      keyed([["Cabinet, machine 1", pounds(first.priced_gbp)],
+             ["Unpriced lines", String(first.unpriced)]]) +
       table(["Part", "Count", "Rule", "Unit", "Line", "Supplier", "Quoted"], cabinet) : "");
 }
 
 export function recommendHtml(result) {
   if (!result) return "";
+  const binds = (pick) => escapeHtml([pick.limit, pick.part].filter(Boolean).join(", "));
   if (result.holds) {
-    return `<p><b>${escapeHtml(result.described)}</b>, ${pounds(result.priced_gbp)}, ` +
-      `${escapeHtml(result.limit || "")} ${escapeHtml(result.part || "")} ` +
-      `${result.margin == null ? "" : factor(result.margin) + "x"}` +
-      `${result.confirm_run ? ", run to confirm" : ""}</p>`;
+    return keyed([["Pick", escapeHtml(result.described)], ["Price", pounds(result.priced_gbp)],
+                  ["Binds", binds(result)],
+                  ["Margin", result.margin == null ? "" : factor(result.margin) + "x"],
+                  ...(result.confirm_run ? [["Run to confirm", "yes"]] : [])]);
   }
   const c = result.closest;
-  return `<p><b>none holds</b>${c ? `; closest ${escapeHtml(c.described)}, ` +
-    `${escapeHtml(c.limit)} ${escapeHtml(c.part)} ${factor(c.margin)}x` : ""}</p>`;
+  return keyed([["Pick", "none holds"], ...(c ? [["Closest", escapeHtml(c.described)],
+    ["Binds", binds(c)], ["Margin", factor(c.margin) + "x"]] : [])]);
 }
