@@ -66,6 +66,9 @@ All from 9 October 2026, in conversation:
 - The skin goes on one row of tiles at a time, from the bottom, each row
   placed going around, as the studio's animation does now.
 - The net is judged on whatever force really goes through each member.
+- The reel phase of the formwork animation (machine time 0 to 28) is people
+  laying the net out by hand. The physics starts when the trees begin to
+  rise, at machine time 30, from the net where the animation has it then.
 - Several wires may share one motor, and the studio chooses which spools of
   each machine share it, so that sharing costs the least deviation.
 - Prestress is computed, not dialled (part 3 searches it). The engine takes it
@@ -201,21 +204,25 @@ needed.
 ### 3.5 Heads, holds and the ground
 
 Where a tree's head meets its net node, the net rests on the head: the head
-pushes up and never pulls, and if the net lifts away the two part.
+pushes and never pulls. While it pushes, it holds its node in its notch, in
+every direction, as the columns' "every notch held" means; the moment
+holding the node would mean pulling it, the head lets it go and the two part.
+An extra hold at a highlighted node (part 3) behaves the same way; in this
+part it stands on the ground under its node, vertically, and is marked as
+provisional until the plugin grows the real branch (part 5).
 
-```
-gap  g = (net node - head node) . n        n: the head member's direction
-push F = k_c * max(0, -g)
-```
+The ground behaves the same way. The net is laid out on it, so no node may go
+below the ground plane, z = 0. A node resting on the ground is held where it
+rests while the ground pushes it (the friction of a net lying on the ground),
+and let go when it lifts.
 
-k_c is stiff enough that a node sinks less than 0.01 mm into its head at the
-head's working load. An extra hold at a highlighted node (part 3) behaves the
-same way; in this part it stands on the ground under its node, vertically,
-and is marked as provisional until the plugin grows the real branch (part 5).
-
-The ground pushes the same way. The net starts the sequence lying on it (the
-first frames of the reel phase), so no node may go below the ground plane,
-z = 0, and a node resting on the ground is pushed up by it as by a head.
+These are exact constraints, not stiff springs. A node in contact sits exactly
+on its head, its hold or the ground, and the contact's force is whatever
+holding it there takes; the solver keeps the set of nodes in contact up to
+date, releasing any whose contact would pull and taking on any that would
+pass through. A throwaway prototype on the real net (section 12) showed why:
+modelled as stiff springs, the heads answered a frame's 0.33 m lift with
+millions of newtons and the solve diverged.
 
 ### 3.6 Loads
 
@@ -235,8 +242,10 @@ bending stiffness; winding layers on a drum; friction in pulleys; inertia
 ### 4.1 The raise
 
 The formwork export's 51 frames run from machine time 0 to 100 in four
-phases: reel (15 frames), raise (15), finish (15) and hold (6). At every
-frame:
+phases: reel (15 frames), raise (15), finish (15) and hold (6). The reel
+phase is the net being laid out by people (section 2), so the engine places
+the net where the frame at machine time 30 has it, and simulates the 36
+frames from 30 to 100. At every one of them:
 
 1. the trees stand at that frame's node positions;
 2. each wire's required reel is the take-up that keeps its rim node on its
@@ -294,10 +303,12 @@ that is about 130 captures of about 60 kB each, roughly 8 MB.
 
 ## 5. The solver
 
-Unknowns: the positions of every net node. None of them is fixed: the rim
-nodes are held to their anchors by their wires and the foundations, the
-nodes on heads, holds and the ground are pushed by contact. Held: the tree
-nodes, which follow their prescribed motion.
+Unknowns: the positions of every net node not in contact. The rim nodes are
+held to their anchors by their wires and the foundations; nodes in contact
+with a head, a hold or the ground are held there exactly while the contact
+pushes (section 3.5). Held: the tree nodes, which follow their prescribed
+motion. A frame that moves a head by more than 25 mm is solved in sub-steps
+of at most 25 mm, so contacts are gained and lost one small move at a time.
 
 Each step is solved by Newton's method from the previous capture's state:
 
@@ -305,7 +316,8 @@ Each step is solved by Newton's method from the previous capture's state:
 R(x)  = f_ext - f_int(x)                residual force at every free node
 K(x) dx = R(x)                          K: tangent stiffness, material plus
                                         geometric; slack ropes add nothing;
-                                        contacts add k_c while pushing
+                                        nodes in contact are held, and their
+                                        contact forces are the reactions
 x     <- x + a dx                       a in (0, 1], line search on |R|
 done  when max |R_i| < 0.01 N and max |dx_i| < 0.001 mm
 ```
@@ -377,9 +389,11 @@ owner's vault:
 
 ## 9. Performance
 
-About 51 raise solves and 80 tiling solves on the real study. The target is
-five minutes or less on the owner's machine, measured before the plan is
-final; if it is exceeded, fewer tiling steps per course before anything else.
+About 36 raise frames, in sub-steps, and 80 tiling steps on the real study.
+The prototype measured one Newton iteration on the real net at about 15 ms;
+with exact contacts a step should take well under a second, so the whole
+sequence a minute or two. The target is five minutes or less on the owner's
+machine; if it is exceeded, fewer tiling steps per row before anything else.
 
 ## 10. Out of scope here
 
@@ -398,3 +412,25 @@ script's findings and images.
 2. Whether the machine re-reels between rows to win back the shape is part
    3's.
 3. Bending at the forks is reported, not modelled.
+
+## 12. What a throwaway prototype on the real net showed
+
+Before the plan, a prototype of the solver (written to be thrown away, not
+product code) was run on the real study, held at its 105 rim nodes and its
+46 heads, at the hold frame and then through the raise:
+
+- The tension the net needs to sit exactly on the designed shape under its
+  own weight is at most 0.3 N in any member. A dome-shaped net in tension
+  pulls every node down, so tension can only hold the dome where nearly every
+  node is propped. Section 3.1's cut therefore puts every member at the
+  prestress P.
+- At 300 N and with only the 46 heads, the net drapes 1.0 to 1.5 m between
+  them under the full skin, against the 2.0 m the first-order estimate gave.
+  The heads push up 92.0 kN while the rim pulls down 24.5 kN against 67.5 kN
+  of load: the forces close.
+- One Newton iteration on the real net takes about 15 ms. Jumped straight from
+  the designed shape to the draped one, Newton did not converge in 60
+  iterations; followed frame by frame it does, once contacts are exact.
+- Modelled as stiff springs, the heads diverged the solve as the trees rose,
+  which is why section 3.5 makes contacts exact.
+
