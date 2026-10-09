@@ -216,18 +216,24 @@ def judge(parts, configuration, demands, machines, angle_degrees, motors=None, r
         available["gearbox torque"] = float(mechanism.gearbox_torque)
     shaft = min(available, key=available.get)
 
+    figures = {}
+
     def alone(w):
+        """A wire's own terms and its reeving's advantage, worked out once for
+        each reeve factor, since Recommend judges thousands of machines."""
         reeve = 1 if configuration.get("sheave") is None else int(
             (reeves[w] if reeves is not None else None) or configuration["reeve_factor"])
-        return mechanism._replace(reeve_factor=reeve, wires_per_motor=1)
+        if reeve not in figures:
+            single = mechanism._replace(reeve_factor=reeve, wires_per_motor=1)
+            terms = {name: value for name, value in catalogue.ceiling_terms(single).items()
+                     if name not in SHARED_TERMS}
+            figures[reeve] = (terms, _mechanical_advantage(reeve, single.sheave_efficiency))
+        return figures[reeve]
 
     def drum_torque(w):
         # the wire's pull at the drum, its tension over the reeving's advantage,
         # on the drum's radius
-        single = alone(w)
-        return (float(demands[w])
-                / _mechanical_advantage(single.reeve_factor, single.sheave_efficiency)
-                * float(single.drum_radius))
+        return float(demands[w]) / alone(w)[1] * float(mechanism.drum_radius)
 
     wires, machine_rows = [None] * len(demands), []
     for m, members in enumerate(machines):
@@ -246,8 +252,7 @@ def judge(parts, configuration, demands, machines, angle_degrees, motors=None, r
             for w in judged:
                 shared[w] = margin
         for w in members:
-            terms = {name: value for name, value in catalogue.ceiling_terms(alone(w)).items()
-                     if name not in SHARED_TERMS}
+            terms = alone(w)[0]
             own = min(terms, key=terms.get)
             tension = float(demands[w])
             options = [(None if tension <= 0.0 else terms[own] / tension, own),
