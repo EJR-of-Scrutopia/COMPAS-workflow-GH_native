@@ -107,29 +107,45 @@ force the engine finds in each member.
 
 ### 3.2 The machine wires and the anchors
 
-All 105 wires run from their spool, on one of the 15 seven-spool machine
-instances in the mechanism export, through their side's anchor, to their rim
-node: each of the five anchors lists the 21 rim nodes its wires reach.
+All 105 wires run from a rim node, into its side's anchor, through the
+anchor's body and the machine's reeving, to a drum on one of the 15
+seven-spool machine instances: each of the five anchors lists the 21 rim
+nodes its wires hold. Each wire's route is in the mechanism export, a
+polyline of about a thousand points per wire, alternating between the body
+and the reels, about 12.6 m of rope inside, reeved 4 to 1.
 
-- An anchor is a foundation: immovable. A wire passes through it as through a
-  fixed fairlead and slides through as it is reeled, with the same tension on
-  both sides (no friction at the fairlead in this part). The anchor takes the
-  vector sum of the two pulls, and that force is reported, frame by frame, as
-  the load its foundation must resist.
-- The run from the anchor to the rim node is split into segments of at most
-  250 mm, each a rope element like the net's, with the wire rope's EA and its
-  own weight lumped at the segment nodes, so a slack wire droops as the real
-  one would. The short run from the spool to the anchor stays taut inside the
-  machine and is taken as straight.
-- The drum pays out the whole wire; the anchor-to-node run receives that
-  length less the straight spool-to-anchor run.
-- The permanent tension ties connect the five anchors. Because the anchors do
-  not move, the ties change nothing in the net's motion. The anchor forces are
-  what the ties and the foundations must resist together; how that is shared
-  between them is an open item (section 11).
-- Where on its anchor each wire passes is taken from the mechanism export,
-  the anchor's frame and its wire order; if that does not fix the point, the
-  plan resolves it from the machine's own document.
+On the real study every rim node sits on the point where its wire enters the
+anchor at all 51 frames (0.000 m away at every frame). So the wires never
+hang free; they hold the rim at the anchors from inside them, and what sags,
+tightens and lifts is the net. The engine models each rim node's hold as:
+
+- **The wire**, a link that only pulls: if the net draws the rim node away
+  from its anchor, the wire's rope inside stretches and resists, with the
+  stiffness of the whole reeved route,
+
+  ```
+  k = MA^2 * EA / L_route        MA: the reeve factor (4), L_route: the rope
+                                 inside the anchor and machine (about 12.6 m)
+  ```
+
+  and with the length the drum has paid out as its unstretched length.
+- **The foundation**, which pushes and never pulls: the rim node cannot go
+  into the anchor. An anchor is a foundation, immovable.
+- **The anchor's force**, the wire's pull and the foundation's push together,
+  reported frame by frame as the load that foundation must resist.
+
+The machine reels to hold the rim on its anchor: as the tension in a wire
+changes, its drum takes up or pays out the rope's stretch so the node stays
+where it was designed to be. That take-up is each wire's required reel
+(section 3.3). The permanent tension ties connect the five anchors; because
+the anchors do not move, the ties change nothing in the net's motion. The
+anchor forces are what the ties and the foundations must resist together, and
+how that is shared between them is an open item (section 11).
+
+Should a mechanism ever leave a free span of wire between an anchor and its
+rim node, that span is split into segments of at most 250 mm, each a rope
+element with its own weight, so it droops as a real wire would. The real
+study has none.
 
 ### 3.3 Motors, drums, pulleys and pairing
 
@@ -138,7 +154,8 @@ node: each of the five anchors lists the 21 rim nodes its wires reach.
 - Which spools share a motor is chosen per machine. With N wires per motor,
   every way of splitting the machine's seven spools into groups of at most N
   is tried (877 ways at most), and the split kept is the one whose shared
-  reels stray least from what each wire needs over the whole raise:
+  reels stray least from what each wire needs over the whole sequence, a
+  wire's need being the take-up that holds its rim node on its anchor:
 
   ```
   cost(split) = sum over frames, over motors, over the motor's wires of
@@ -146,6 +163,10 @@ node: each of the five anchors lists the 21 rim nodes its wires reach.
   common change of a motor = the mean of its wires' required changes
   ```
 
+- A motor's shared reel leaves each of its wires a little long or a little
+  short of its own need, and the engine lets the rim nodes move by exactly
+  that, through each wire's stiffness: the cost of fewer motors, measured in
+  millimetres at the rim.
 - With a pulley, the drum reels MA times the line's length change and feels
   the line tension divided by MA, MA being the pulley's mechanical advantage.
   Part 2 owns the choice; until it lands the engine takes MA, N, the drum
@@ -177,7 +198,7 @@ use and the thinnest standard wall of 60.3 mm tube that keeps every member
 within its resistance, so a run says whether a thinner or a thicker wall is
 needed.
 
-### 3.5 Heads and holds
+### 3.5 Heads, holds and the ground
 
 Where a tree's head meets its net node, the net rests on the head: the head
 pushes up and never pulls, and if the net lifts away the two part.
@@ -191,6 +212,10 @@ k_c is stiff enough that a node sinks less than 0.01 mm into its head at the
 head's working load. An extra hold at a highlighted node (part 3) behaves the
 same way; in this part it stands on the ground under its node, vertically,
 and is marked as provisional until the plugin grows the real branch (part 5).
+
+The ground pushes the same way. The net starts the sequence lying on it (the
+first frames of the reel phase), so no node may go below the ground plane,
+z = 0, and a node resting on the ground is pushed up by it as by a head.
 
 ### 3.6 Loads
 
@@ -214,10 +239,9 @@ phases: reel (15 frames), raise (15), finish (15) and hold (6). At every
 frame:
 
 1. the trees stand at that frame's node positions;
-2. each wire's required paid-out length is the straight distance from its
-   spool through its anchor to its rim node's designed position at that
-   frame;
-3. each motor reels its common change (section 3.3);
+2. each wire's required reel is the take-up that keeps its rim node on its
+   anchor at that frame's tension (section 3.2);
+3. each motor reels its common change, from its wires' needs (section 3.3);
 4. the engine solves for the shape the net takes, and the state is captured.
 
 The difference between where the net settles and where the frame designed it
@@ -270,10 +294,10 @@ that is about 130 captures of about 60 kB each, roughly 8 MB.
 
 ## 5. The solver
 
-Unknowns: the positions of every node not held. Held: the anchors' fairleads,
-where each wire's sagging run begins (how much wire lies beyond them is set
-by its reel), and the tree nodes (prescribed). Net nodes on heads or holds
-are free and pushed by contact, not fixed.
+Unknowns: the positions of every net node. None of them is fixed: the rim
+nodes are held to their anchors by their wires and the foundations, the
+nodes on heads, holds and the ground are pushed by contact. Held: the tree
+nodes, which follow their prescribed motion.
 
 Each step is solved by Newton's method from the previous capture's state:
 
@@ -342,9 +366,10 @@ owner's vault:
 9. Every capture's loads and reactions sum to zero within 0.1 N.
 10. On the real study, before the skin, the end of the raise sits close to the
     designed shape; how close is reported, not judged.
-11. A wire through a fixed fairlead: the tension is the same on both sides, the
-    wire slides through as it is reeled, and the anchor's force is the vector
-    sum of the two pulls.
+11. A rim node on its anchor: pulled away, its wire stretches by the pull
+    over MA^2 EA / L; pushed in, the foundation stops it; the anchor's force
+    is the two together. Two wires sharing one reel: their nodes move by
+    exactly the mismatch the stiffness predicts.
 12. The cut: with the net held exactly at the designed shape and no skin, each
     member carries the larger of its fitted tension and P, within 0.1 N.
 13. The tiling order: a row's four steps add its tiles in the animation's
@@ -367,8 +392,9 @@ script's findings and images.
 ## 11. Open items
 
 1. How the anchor forces are shared between the tension ties and the
-   foundations, and how the wires move through an anchor (a plain fairlead
-   here, with no friction), need more thought, in the owner's words.
+   foundations, and how the wires move through an anchor (here a link with
+   the stiffness of the reeved rope inside, and no friction in the reeving),
+   need more thought, in the owner's words.
 2. Whether the machine re-reels between rows to win back the shape is part
    3's.
 3. Bending at the forks is reported, not modelled.
