@@ -1344,6 +1344,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 **row_speed,
                 "choices": choices, "configuration": built,
                 "described": machine.describe(parts, built),
+                "terms": machine.limit_terms(parts, built, angle),
                 "verdict": machine.judge(parts, built, inputs["demands"], inputs["machines"],
                                          angle, reeves=inputs["facts"]["reeves"]),
                 "travel": machine.travel(parts, built, inputs["take_ups"], reeves),
@@ -1428,7 +1429,21 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         parts = catalogue.load_parts()
         inputs = _machine_inputs(export, body.get("options"), parts)
         return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
-                "angle_degrees": angle}
+                "angle_degrees": angle, "strongest": _strongest(parts, inputs["facts"], angle)}
+
+    # the most any machine makes, worked out once for a machine, an angle and
+    # the catalogue as it stands on disk
+    _strongest_cache = {}
+
+    def _strongest(parts, facts, angle):
+        import catalogue
+        import machine
+
+        key = (facts.get("winding_radius_mm"), facts.get("reeve_factor"), facts.get("spools"),
+               angle, catalogue.PARTS_PATH.stat().st_mtime_ns)
+        if key not in _strongest_cache:
+            _strongest_cache[key] = machine.strongest(parts, facts, angle)
+        return _strongest_cache[key]
 
     # ------------------------------------------------------------------
     # The cable net phase, assembled once. Two things write cablenet-*.json: the
