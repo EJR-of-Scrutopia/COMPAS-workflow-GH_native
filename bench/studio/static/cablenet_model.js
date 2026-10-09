@@ -300,6 +300,105 @@ export function curveSvg(points, acceptance, width = 240, height = 72) {
     "</svg>";
 }
 
+// The lenses (spec 2026-10-09 Cable net display, section 5) ----------------
+
+// A force as a label on the model: short, with its unit.
+export function forceLabel(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  const n = Number(value);
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + " kN";
+  return (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1)) + " N";
+}
+
+// A wire's tension against the chosen machine's ceiling: within up to 0.6 of
+// it, near below it, over above it; plain with no ceiling or no tension.
+export function prestressBand(tension, ceiling) {
+  if (tension == null || ceiling == null) return "plain";
+  if (tension > ceiling) return "over";
+  if (tension > 0.6 * ceiling) return "near";
+  return "within";
+}
+
+// Each wire's reel commands summed from the first stage to the instant on
+// screen, mm: negative reeled in, positive paid out. Zeros with no instant.
+export function reelSoFar(stages, stage) {
+  const list = stages || [];
+  const width = Math.max(0, ...list.map((s) => (s.wire_reel_commands || []).length));
+  const sums = new Array(width).fill(0);
+  const at = stage ? list.indexOf(stage) : -1;
+  for (let i = 0; i <= at; i += 1) {
+    (list[i].wire_reel_commands || []).forEach((command, w) => {
+      const value = Number(command);
+      if (Number.isFinite(value)) sums[w] += value;
+    });
+  }
+  return sums.map((value) => Math.round(value * 1e9) / 1e9);
+}
+
+export function reelSide(mm) {
+  if (mm == null || !(Number(mm) !== 0)) return "still";
+  return Number(mm) < 0 ? "in" : "out";
+}
+
+function largest(values, count) {
+  return values.map((value, index) => ({ value, index }))
+    .filter((item) => item.value != null && item.value > 0)
+    .sort((a, b) => b.value - a.value || a.index - b.index)
+    .slice(0, count);
+}
+
+// The points a lens labels, with their text: every machine wire at its rim node
+// under Prestress and Reel, the largest node forces under Node force, the
+// largest member tensions under Wire tension. Sag labels nothing.
+export function labelTargets(lens, demand, stage, ceiling, count = 20) {
+  if (!stage || !demand) return [];
+  const wires = demand.wires || [];
+  if (lens === "prestress") {
+    const out = [];
+    (stage.wire_tensions || []).forEach((tension, index) => {
+      if (tension == null || !wires[index]) return;
+      out.push({ kind: "wire", index, node: wires[index].net_vertex, text: forceLabel(tension),
+                 band: prestressBand(tension, ceiling) });
+    });
+    return out;
+  }
+  if (lens === "reel") {
+    return reelSoFar(demand.stages, stage).map((mm, index) => (!wires[index] ? null : {
+      kind: "wire", index, node: wires[index].net_vertex, text: mm.toFixed(1) + " mm",
+      side: reelSide(mm) })).filter(Boolean);
+  }
+  if (lens === "nodeforce") {
+    return largest((stage.node_residual || []).map(magnitude), count)
+      .map(({ value, index }) => ({ kind: "node", index, text: forceLabel(value) }));
+  }
+  if (lens === "tension") {
+    return largest((stage.member_tensions || []).map((v) => (v == null ? null : Number(v))), count)
+      .map(({ value, index }) => ({ kind: "member", index, text: forceLabel(value) }));
+  }
+  return [];
+}
+
+// The legend a lens draws: its quantity and unit, and its range at the
+// instant. Wire tension and Sag keep the legends they draw today: null.
+export function lensLegend(lens, demand, stage, ceiling) {
+  if (!stage) return null;
+  if (lens === "nodeforce") {
+    const top = finiteMax((stage.node_residual || []).map(magnitude));
+    return { title: "node force, N", min: "0", max: top == null ? "0" : newtons(top) };
+  }
+  if (lens === "prestress") {
+    const top = finiteMax(stage.wire_tensions);
+    return { title: "wire tension, N" + (ceiling == null ? "" : ": within / near / over " + newtons(ceiling)),
+             min: "0", max: top == null ? "0" : newtons(top) };
+  }
+  if (lens === "reel") {
+    const sums = reelSoFar(demand && demand.stages, stage);
+    return { title: "reel, mm: in / out", min: Math.min(0, ...sums).toFixed(1),
+             max: Math.max(0, ...sums).toFixed(1) };
+  }
+  return null;
+}
+
 // The Graphs tab (spec 2026-10-09 Cable net display, section 4.3) ---------
 
 function finiteMax(values) {
