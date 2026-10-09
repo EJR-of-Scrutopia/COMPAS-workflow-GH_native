@@ -48,6 +48,7 @@ def _part_row(parts, kind, key):
         "supplier": entry.get("supplier") or "",
         "part_number": entry.get("part_number") or "",
         "unit_price": entry.get("unit_price"),
+        "price_gbp": entry.get("price_gbp"),
         "vat": entry.get("vat") or "",
         "price_seen": entry.get("price_seen") or "",
         "confidence": entry.get("confidence") or "",
@@ -259,8 +260,12 @@ def _rope_mismatch(parts, demand, configuration):
 
 
 def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
-                 ladder_rows=None):
-    """Everything the three documents print, gathered once."""
+                 ladder_rows=None, machine=None, cabinets=None, cabinets_note=None):
+    """Everything the three documents print, gathered once.
+
+    machine: the machine named by its parts (machine.describe); cabinets: every
+    machine's cabinet (cabinet.cabinets), or None with cabinets_note saying why
+    there is none."""
 
     if row.get("refused"):
         raise ExportError(
@@ -307,8 +312,11 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "generated_at": generated_at,
         "study": demand.get("study"),
         "schema": demand.get("schema"),
-        "units": "N, mm; torque N mm; prices pounds",
+        "units": "N, mm; torque N mm; prices pounds without VAT",
         "rope_mismatch": _rope_mismatch(parts, demand, configuration),
+        "machine": machine,
+        "cabinets": cabinets,
+        "cabinets_note": cabinets_note,
         "configuration": dict(configuration),
         "terms": term_rows,
         "parts": part_rows,
@@ -866,6 +874,12 @@ def _blank(value):
     return "" if value is None else value
 
 
+def _gbp(value):
+    """Pounds to the penny for a sheet cell, or blank where there is no price."""
+
+    return "" if value is None else round(float(value), 2)
+
+
 def _force_cell(value):
     return "" if value is None else Newtons(_newtons(value))
 
@@ -912,7 +926,8 @@ def _read_this_rows(model):
         [],
         ["Prices"],
         ["A line with no price leaves every total a floor, not a forecast."],
-        ["VAT is not normalised between suppliers; read the VAT column per line."],
+        ["Pounds without VAT: other currencies at the catalogue's dated rate; VAT "
+         "taken off where a price included it; an unclear VAT basis taken as published."],
         ["Delivery is excluded."],
         [],
         ["Assumptions", "Value", "Why"],
@@ -927,9 +942,17 @@ def _read_this_rows(model):
 
 
 def _chosen_rows(model):
-    rows = _mismatch_rows(model) + [["Configuration"]]
+    rows = _mismatch_rows(model)
+    if model.get("machine"):
+        rows += [["Machine", model["machine"]], []]
+    rows += [["Configuration"]]
     for key, value in (model.get("configuration") or {}).items():
-        shown = ", ".join(value) if isinstance(value, (list, tuple)) else value
+        if isinstance(value, dict):
+            shown = ", ".join("{}: {}".format(k, _blank(v)) for k, v in value.items())
+        elif isinstance(value, (list, tuple)):
+            shown = ", ".join(str(item) for item in value)
+        else:
+            shown = value
         rows.append([key, _blank(shown)])
     rows += [[], ["Ceiling term", "Part", "Tension it permits (N)", "Binds"]]
     for term in model.get("terms") or []:
@@ -988,15 +1011,15 @@ def _chosen_rows(model):
     return rows
 
 
-PARTS_HEADER = ["Kind", "Id", "Model", "Supplier", "Part number", "Unit price",
-                "VAT", "Date seen", "Confidence", "Source URL"]
+PARTS_HEADER = ["Kind", "Id", "Model", "Supplier", "Part number", "Unit price, GBP exc VAT",
+                "Source VAT", "Date seen", "Confidence", "Source URL"]
 
 
 def _parts_rows(model):
     rows = [list(PARTS_HEADER)]
     for part in model.get("parts") or []:
         rows.append([part["kind"], part["id"], part["model"], part["supplier"],
-                     part["part_number"], _blank(part.get("unit_price")),
+                     part["part_number"], _gbp(part.get("price_gbp")),
                      part["vat"], part["price_seen"], part["confidence"],
                      part["source_url"]])
     price = model.get("price") or {}
@@ -1010,6 +1033,31 @@ def _parts_rows(model):
         total = ""
     rows.append(["Total (a floor, not a forecast)" if price.get("is_floor")
                  else "Total", total])
+    return rows + _cabinet_rows(model)
+
+
+def _cabinet_rows(model):
+    """Each machine's cabinet (T1 note 14), every line with the rule that
+    counted it; or the one line that says why there is none."""
+
+    boxes = model.get("cabinets")
+    if boxes is None:
+        note = model.get("cabinets_note")
+        return [[], ["Cabinets", note]] if note else []
+    rows = []
+    for index, box in enumerate(boxes["cabinets"]):
+        rows += [[], ["Cabinet, machine {}".format(index + 1), _count(box["motors"], "motor")],
+                 ["Part", "Count", "Rule", "Unit, GBP", "Line, GBP", "In total", "Supplier",
+                  "Quoted", "Source"]]
+        for line in box["lines"]:
+            rows.append([line["model"], line["count"], line["rule"],
+                         _gbp(line["unit_gbp"]), _gbp(line["line_gbp"]),
+                         "yes" if line["in_total"] else "no", _blank(line.get("supplier")),
+                         _blank(line.get("quoted")), _blank(line.get("source"))])
+        rows.append(["Cabinet total, GBP", _gbp(box["priced_gbp"]),
+                     _count(box["unpriced"], "line") + " unpriced"])
+    rows += [[], ["Cabinets, all machines, GBP", _gbp(boxes["priced_gbp"]),
+                  _count(boxes["unpriced"], "line") + " unpriced"]]
     return rows
 
 
@@ -1116,7 +1164,7 @@ def _write_workbook(sheets, model, path):
     book.remove(book.active)
     shade = PatternFill("solid", fgColor="FFF2CC")
     unpriced = {part["id"] for part in model.get("parts") or []
-                if part.get("unit_price") is None}
+                if part.get("price_gbp") is None}
     for name in SHEETS:
         sheet = book.create_sheet(name)
         for row in sheets[name]:
@@ -1257,6 +1305,8 @@ def diagram_svg(model):
     heading = "{}: load path, tension each part permits (N)".format(
         model.get("study") or "Study")
     width = max(width, left * 2 + _estimated_width(heading, 14))
+    if model.get("machine"):
+        width = max(width, left * 2 + _estimated_width(model["machine"], 12))
     band = top + box_h + 44
     warning = (model.get("rope_mismatch") or {}).get("lines") or []
     shape = model["verdict"]["shape"]
@@ -1277,6 +1327,8 @@ def diagram_svg(model):
         'path.head{{fill:{i}}}</style>'.format(i=_INK),
         _text(left, 22, heading, 14, "bold"),
     ]
+    if model.get("machine"):
+        parts.append(_text(left, 40, model["machine"], 12))
     x = left
     for index, (name, lines, box_w) in enumerate(boxes):
         term = by_name[name]
@@ -1569,8 +1621,8 @@ def _datasheet_sections(model):
     # 3
     lines = []
     for part in model.get("parts") or []:
-        price = (_money(part["unit_price"])
-                 if part.get("unit_price") is not None else "no price yet")
+        price = (_money(part["price_gbp"])
+                 if part.get("price_gbp") is not None else "no price yet")
         bits = [part.get("supplier") or "supplier not recorded"]
         if part.get("part_number"):
             bits.append("part number {}".format(part["part_number"]))
@@ -1583,18 +1635,21 @@ def _datasheet_sections(model):
             part["kind"].replace("_", " ").capitalize(), part["id"],
             part["model"], "; ".join(bits)))
     speed = model.get("rope_speed_mm_s")
-    out.append("## What was chosen\n\n" + "\n\n".join([
+    named = (["The machine is {}.".format(model["machine"])]
+             if model.get("machine") else [])
+    out.append("## What was chosen\n\n" + "\n\n".join(named + [
         "The chosen configuration is made of the parts below, in the order "
         "the load travels through them.",
         "\n\n".join(lines) if lines else "No parts are recorded.",
-        "Priced together, the parts come to {}. Prices are as seen on the "
-        "date recorded against each line in the spreadsheet; VAT is not "
-        "normalised between suppliers and delivery is excluded.".format(
-            _pounds(model.get("price"))),
+        "Priced together, the parts come to {}. Prices are pounds without VAT "
+        "as seen on the date recorded against each line in the spreadsheet: "
+        "other currencies at the catalogue's dated rate, VAT taken off where a "
+        "price included it, an unclear VAT basis taken as published, and "
+        "delivery excluded.".format(_pounds(model.get("price"))),
         "The rope speed is {}.".format(
             "{} mm/s".format(_num(speed)) if speed is not None
             else "not fixed by this configuration"),
-    ]))
+    ] + _cabinet_paragraphs(model)))
 
     # 4
     margin = tension.get("margin")
@@ -1710,6 +1765,47 @@ def _datasheet_sections(model):
         "a pass.",
         "\n\n".join(model.get("not_checked") or ["Nothing is recorded."]),
     ]))
+    return out
+
+
+def _cabinet_paragraphs(model):
+    """Each machine's cabinet as a table, or the line that says why there is
+    none."""
+
+    boxes = model.get("cabinets")
+    if boxes is None:
+        note = model.get("cabinets_note")
+        return ["No cabinet: {}.".format(str(note).rstrip("."))] if note else []
+
+    def cell(value):
+        return str(value).replace("|", "/")
+
+    out = []
+    for index, box in enumerate(boxes["cabinets"]):
+        rows = ["**Cabinet, machine {}**: {}, {}{}.".format(
+                    index + 1, _count(box["motors"], "motor"), _money(box["priced_gbp"]),
+                    ", {} unpriced".format(_count(box["unpriced"], "line"))
+                    if box["unpriced"] else ""),
+                "",
+                "| Part | Count | Rule | Unit, GBP | Line, GBP | Supplier | Quoted |",
+                "|---|---|---|---|---|---|---|"]
+        for line in box["lines"]:
+            unit = "no price" if line["unit_gbp"] is None else _money(line["unit_gbp"])
+            each = ("no price" if line["line_gbp"] is None else _money(line["line_gbp"]))
+            if not line["in_total"]:
+                each += ", not in the total"
+            who = cell(line.get("supplier") or "")
+            source = str(line.get("source") or "")
+            if source.startswith(("http://", "https://")):
+                who = "[{}]({})".format(who or "source", source)
+            rows.append("| {} | {} | {} | {} | {} | {} | {} |".format(
+                cell(line["model"]), line["count"], cell(line["rule"]), unit, each, who,
+                cell(line.get("quoted") or "")))
+        out.append("\n".join(rows))
+    out.append("The cabinets come to {}{}.".format(
+        _money(boxes["priced_gbp"]),
+        ", a floor: {} unpriced".format(_count(boxes["unpriced"], "line"))
+        if boxes["unpriced"] else ""))
     return out
 
 

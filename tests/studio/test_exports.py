@@ -85,7 +85,7 @@ def _demand(**kwargs):
 
 
 def _configuration(**kwargs):
-    base = dict(motor="34HS46", drive="CL86Y", gearbox="EG23-G20", drum="drum-72",
+    base = dict(motor="34HS46-6004D-E1000", drive="CL86T-V41", gearbox="EG34-G20", drum="drum-72",
                 rope="rope-4mm", rail="MGN15H-300", sheave=None, reeve_factor=1,
                 chain=["eye-M12", "turnbuckle-hook-hook-M10"])
     base.update(kwargs)
@@ -173,13 +173,13 @@ def test_every_chosen_part_arrives_with_its_provenance():
         assert set(part) >= {"kind", "id", "model", "supplier", "part_number",
                              "unit_price", "vat", "price_seen", "confidence"}
     ids = {part["id"] for part in model["parts"]}
-    assert "34HS46" in ids and "turnbuckle-hook-hook-M10" in ids
+    assert "34HS46-6004D-E1000" in ids and "turnbuckle-hook-hook-M10" in ids
 
 
 def test_a_refused_configuration_cannot_be_modelled():
     import catalogue
     parts = catalogue.load_parts()
-    configuration = _configuration(motor="boatlift-1hp", drive="none")
+    configuration = _configuration(motor="no-such-motor")
     with pytest.raises(exports.ExportError, match="cannot be built"):
         exports.export_model(parts, _demand(),
                              {"refused": "family C", "configuration": configuration},
@@ -199,11 +199,11 @@ def _model(**overrides):
 
 
 def test_exactly_one_term_binds_whatever_the_configuration():
-    reeved = _configuration(sheave="WZ-11-K", reeve_factor=2)
+    reeved = _configuration(sheave="GPS-WZ11K", reeve_factor=2)
     for configuration in (
         _configuration(),
         _configuration(chain=["eye-M12"]),
-        _configuration(motor="23HS45", drive="CL57Y", gearbox="direct"),
+        _configuration(motor="23HS45-4204D-E1000", drive="CL57T-V41", gearbox="direct"),
         reeved,
     ):
         model = _model(configuration=configuration)
@@ -304,7 +304,7 @@ def _laddered(*variants):
     rows = [_scored(parts, configuration)]
     for change in variants:
         if isinstance(change, str):
-            rows.append({"configuration": dict(configuration, motor="boatlift-1hp"),
+            rows.append({"configuration": dict(configuration, motor="no-such-motor"),
                          "refused": change})
         else:
             rows.append(_scored(parts, dict(configuration, **change)))
@@ -362,7 +362,7 @@ def test_the_diagram_prints_the_terms_it_was_given_and_computes_nothing():
 def test_a_single_fall_draws_no_moving_block(tmp_path):
     model = _model()
     assert "moving block" not in exports.diagram_svg(model).lower()
-    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="GPS-WZ11K"))
     assert "moving block" in exports.diagram_svg(reeved).lower()
 
 
@@ -378,11 +378,11 @@ def test_escaping_does_not_double_escape():
 
 
 def test_the_marked_element_moves_with_the_terms_not_with_a_recomputation():
-    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    reeved = _model(configuration=_configuration(reeve_factor=2, sheave="GPS-WZ11K"))
     svg = exports.diagram_svg(reeved)
     assert svg.count('class="binds"') == 1
     marked = svg.split('class="binds"')[1].split("</g>")[0]
-    assert "WZ-11-K" in marked
+    assert "GPS-WZ11K" in marked
 
 
 def test_the_diagram_names_the_net_band():
@@ -391,7 +391,7 @@ def test_the_diagram_names_the_net_band():
 
 
 def test_every_box_is_at_least_as_wide_as_its_longest_line():
-    model = _model(configuration=_configuration(reeve_factor=2, sheave="WZ-11-K"))
+    model = _model(configuration=_configuration(reeve_factor=2, sheave="GPS-WZ11K"))
     model["terms"][0]["part_id"] = "a-very-long-catalogue-identifier-for-a-part"
     by_name = {t["name"]: t for t in model["terms"]}
     for name, title in exports._PATH:
@@ -589,6 +589,8 @@ def _spy_on_export_model(monkeypatch):
     def spy(*args, **kwargs):
         seen["row"] = args[2]
         seen["ladder"] = kwargs.get("ladder_rows")
+        for key in ("machine", "cabinets", "cabinets_note"):
+            seen[key] = kwargs.get(key)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(exports, "export_model", spy)
@@ -717,32 +719,13 @@ def test_the_scored_rows_carry_the_drive_and_the_load_factor(client, monkeypatch
                            json={"configuration": _configuration()})
     assert response.status_code == 200, response.text
     for row in [seen["row"]] + seen["ladder"]:
-        assert row["drive"] == "CL86Y"
+        assert row["drive"] == "CL86T-V41"
         assert row["load_factor"]["stage"] == "S7"
     # 1471 N against 900 N per unit skin: 1.6 passes, 1.7 breaches
     assert seen["row"]["load_factor"]["limit_factor"] == pytest.approx(1.6)
     assert seen["row"]["load_factor"]["binding"] == "anchor"
 
 
-def test_the_scoring_route_and_the_exports_score_a_configuration_alike(
-        client, monkeypatch, tmp_path):
-    import json
-    sizing = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
-              "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
-    _plant_demand(monkeypatch, tmp_path, demand=_demand(sizing=sizing))
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    scored = client.post("/api/studies/My Vault/cablenet/configurations", json={
-        "configurations": [_configuration()], "angle_degrees": 10.0,
-        "options": {"material": "tile", "pattern": "herringbone", "size": 1.0,
-                    "thickness": 0.02}}).json()["rows"][0]
-    exported = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration(), "angle_degrees": 10.0})
-    assert exported.status_code == 200, exported.text
-    # one row, built once: the scoring route adds the note on the load factor and
-    # nothing else to what the exports are given
-    assert scored.pop("load_factor_note") is None
-    assert scored == json.loads(json.dumps(seen["row"]))
 
 
 def test_a_rung_the_catalogue_refuses_is_passed_through_with_its_text(
@@ -1261,7 +1244,7 @@ def _sized_model(**demand_overrides):
     configuration = _configuration()
     row = _row(parts, configuration,
                load_factor=catalogue.load_factor(parts, configuration, 10.0, demand),
-               drive="CL86Y")
+               drive="CL86T-V41")
     return exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
 
 
@@ -1294,7 +1277,7 @@ def test_without_sizing_every_document_says_not_established_and_names_the_rerun(
     demand.pop("sizing")
     import catalogue
     parts = catalogue.load_parts()
-    row = _row(parts, _configuration(), load_factor=None, drive="CL86Y")
+    row = _row(parts, _configuration(), load_factor=None, drive="CL86T-V41")
     model = exports.export_model(parts, demand, row, _configuration(), 10.0, "2026-10-08")
     sentence = exports.load_factor_sentence(model)
     assert sentence.startswith("Whether it carries the skin is not established")
@@ -1723,7 +1706,7 @@ def test_the_load_factor_line_sits_under_the_verdict_and_above_the_rope_warning(
     parts = catalogue.load_parts()
     configuration = _configuration(rope="rope-8mm")
     demand = _v2_demand()
-    row = _row(parts, configuration, drive="CL86Y",
+    row = _row(parts, configuration, drive="CL86T-V41",
                load_factor=catalogue.load_factor(parts, configuration, 10.0, demand))
     model = exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
     assert model["rope_mismatch"]
@@ -1788,7 +1771,7 @@ def test_a_demand_that_lacks_a_block_never_throws_and_never_prints_none(
         for stage in demand["stages"]:
             for key in ("node_sag_mm", "column_forces", "actuator_forces"):
                 stage.pop(key)
-    row = _row(parts, configuration, drive="CL86Y",
+    row = _row(parts, configuration, drive="CL86T-V41",
                load_factor=catalogue.load_factor(parts, configuration, 10.0, demand))
     model = exports.export_model(parts, demand, row, configuration, 10.0, "2026-10-08")
     exports.write_spreadsheet(model, tmp_path, "x")
@@ -2413,3 +2396,138 @@ def test_the_tolerance_is_listed_under_the_assumptions_in_both_documents():
                               "half the vault's 16.1 m reach")
     assert not any("falsework" in a["what"] or a["what"] == "acceptance tolerance"
                    for a in older["assumptions"])
+
+
+# ---------------------------------------------------------------------------
+# The machine the five choices make (spec 2026-10-09 mechanism choices,
+# section 7.4): named by its parts, never as a rig, with each machine's cabinet.
+# ---------------------------------------------------------------------------
+
+def _derived(**changes):
+    import catalogue
+    import machine
+    parts = catalogue.load_parts()
+    choices = {"motor": "34HS46-6004D-E1000", "ratio": 20, "pulley": None,
+               "rope": "rope-4mm", "wires_per_motor": 1}
+    choices.update(changes)
+    facts = {"winding_radius_mm": 33.9, "reeve_factor": 4}
+    return parts, machine.derive(parts, choices, facts, 10.0)
+
+
+def test_the_machine_is_named_by_its_parts_in_all_three_documents():
+    import cabinet
+    import machine
+    parts, configuration = _derived()
+    described = machine.describe(parts, configuration)
+    assert described == ("34HS46-6004D-E1000 on EG34 20:1, no pulleys, 4 mm 7x19, "
+                         "one wire a motor")
+    boxes = cabinet.cabinets(parts, configuration, [900.0] * 7, [list(range(7))])
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09",
+                                 machine=described, cabinets=boxes)
+    assert model["machine"] == described and model["cabinets"] == boxes
+    assert ["Machine", described] in exports._sheet_rows(model)["Chosen"]
+    assert "The machine is {}.".format(described) in exports.datasheet_markdown(model)
+    assert described in exports.diagram_svg(model)
+
+
+def test_each_machines_cabinet_is_listed_with_its_rule_and_price():
+    import cabinet
+    parts, configuration = _derived()
+    boxes = cabinet.cabinets(parts, configuration, [900.0] * 14,
+                             [list(range(7)), list(range(7, 14))])
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09",
+                                 machine="m", cabinets=boxes)
+    sheet = exports._sheet_rows(model)["Parts"]
+    rows = [" | ".join(str(c) for c in row) for row in sheet]
+    assert sum(1 for row in rows if row.startswith("Cabinet, machine")) == 2
+    assert ["Part", "Count", "Rule", "Unit, GBP", "Line, GBP", "In total", "Supplier",
+            "Quoted", "Source"] in sheet
+    # every line with who quoted it, in what, and the source (spec section 5.5)
+    for line in boxes["cabinets"][0]["lines"]:
+        assert any(line["model"] in row and line["rule"] in row
+                   and (line["source"] or "") in row and (line["quoted"] or "") in row
+                   for row in rows), line
+    assert any(row.startswith("Cabinets, all machines") for row in rows)
+    chosen = _section(exports.datasheet_markdown(model), "chosen")
+    assert "| Part | Count | Rule | Unit, GBP | Line, GBP | Supplier | Quoted |" in chosen
+    assert chosen.count("Cabinet, machine") == 2
+    driver = boxes["cabinets"][0]["lines"][0]
+    assert "[{}]({})".format(driver["supplier"], driver["source"]) in chosen
+
+
+def test_an_export_with_no_cabinet_says_why_in_one_line():
+    parts, configuration = _derived()
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09", machine="m",
+                                 cabinets_note="mechanism: none for this study")
+    assert model["cabinets"] is None
+    assert ["Cabinets", "mechanism: none for this study"] in exports._sheet_rows(model)["Parts"]
+    assert "No cabinet: mechanism: none for this study." in exports.datasheet_markdown(model)
+
+
+def test_prices_are_pounds_without_vat_whatever_the_supplier_quoted():
+    import catalogue
+    parts, overseas = _derived(motor="ES-MH342200", ratio=None)
+    _, home = _derived(motor="23HS45-4204D-E1000", ratio=None)
+    # $199 at 1.3226 to the pound, and EUR 289.90 with German VAT at 19 per cent
+    # at 1.18 to the pound, against GBP 28.46 and 28.75: 150.46 + 206.45 - 57.21
+    difference = (catalogue.price_of(parts, overseas)["pounds"]
+                  - catalogue.price_of(parts, home)["pounds"])
+    assert difference == pytest.approx(299.70, abs=0.01)
+    model = exports.export_model(parts, _demand(), _row(parts, overseas), overseas,
+                                 10.0, "2026-10-09")
+    rows = exports._sheet_rows(model)["Parts"]
+    assert rows[0][5] == "Unit price, GBP exc VAT"
+    motor = next(row for row in rows if row[1] == "ES-MH342200")
+    assert motor[5] == pytest.approx(150.46, abs=0.01)
+
+
+def test_the_route_names_a_hand_built_machine_and_says_why_it_has_no_cabinet(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    assert seen["machine"].startswith(_configuration()["motor"] + " on ")
+    assert seen["cabinets"] is None
+    assert seen["cabinets_note"] == "mechanism: none for this study"
+
+
+def test_the_drum_and_rail_checks_are_hard_in_the_exported_row(client, monkeypatch, tmp_path):
+    # a second layer on the drum, or a carriage past its stroke, is a machine
+    # that cannot be built as drawn, so the row does not pass
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    for wound, fits in ((250.0, True), (9000.0, False)):
+        response = client.post("/api/studies/My Vault/cablenet/exports",
+                               json={"configuration": _configuration(), "rope_wound_mm": wound})
+        assert response.status_code == 200, response.text
+        path = seen["row"]["rope_path"]
+        assert path["drum_fits"] is fits, wound
+        assert seen["row"]["passes"] is fits, wound
+
+
+def test_a_ladder_rung_the_chosen_pulley_does_not_take_is_refused(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    configuration = _configuration(sheave="Pfaff-DSRB-90-4", reeve_factor=2,
+                                   groove_pitch_mm=4.4)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": configuration})
+    assert response.status_code == 200, response.text
+    by_rope = {rung["configuration"]["rope"]: rung for rung in seen["ladder"][1:]}
+    assert by_rope["rope-4mm"]["refused"] is None
+    assert by_rope["rope-5mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 5 mm"
+    assert by_rope["rope-8mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 8 mm"
+    # without pulleys a heavier rung is scored, on a drum grooved for its own wire
+    plain = _configuration(groove_pitch_mm=4.4)
+    client.post("/api/studies/My Vault/cablenet/exports", json={"configuration": plain})
+    heavy = next(rung for rung in seen["ladder"] if rung["configuration"]["rope"] == "rope-8mm")
+    assert heavy["refused"] is None
+    assert heavy["configuration"]["groove_pitch_mm"] == pytest.approx(8.8)

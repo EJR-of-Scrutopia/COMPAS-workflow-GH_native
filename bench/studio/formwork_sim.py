@@ -69,7 +69,7 @@ def _world_mm(frame, local):
     return [c * 1000.0 for c in cablenet.frame_to_world(frame, local)]
 
 
-def rim_wires(mechanism_document, design_mm, supports, ea):
+def rim_wires(mechanism_document, design_mm, supports, ea, pulleys=True):
     """Each rim wire as the engine holds it (spec section 3.2): where it enters
     its anchor, the unit vector it runs in along, and the stiffness of the
     reeved rope inside, MA^2 EA / L_route, with the route's length.
@@ -80,6 +80,9 @@ def rim_wires(mechanism_document, design_mm, supports, ea):
     wire is taken to run straight from its node to that point. A rim node away
     from where its wire enters the anchor would hang on a free span of wire,
     which this engine does not model yet, so it is refused.
+
+    Without pulleys (pulleys False, the owner's "no" of 9 October 2026) every
+    wire runs straight off its drum on one fall, whatever its reeving.
     """
 
     try:
@@ -115,12 +118,12 @@ def rim_wires(mechanism_document, design_mm, supports, ea):
                 "wire would hang between them, and this engine does not model one yet "
                 "(spec section 3.2).".format(wire.name, gap, wire.net_vertex))
         length = _distance(ahead, anchor)
-        reeve = int(wire.reeve_factor) if wire.reeve_factor else 1
+        reeve = (int(wire.reeve_factor) if wire.reeve_factor else 1) if pulleys else 1
         out.append({
             "node": int(wire.net_vertex), "name": wire.name, "anchor": list(anchor),
             "into": [(a - b) / length for a, b in zip(ahead, anchor)],
             "stiffness": reeve ** 2 * float(ea) / route_mm, "route_mm": route_mm,
-            "reeve": reeve, "reeve_given": bool(wire.reeve_factor),
+            "reeve": reeve, "reeve_given": bool(wire.reeve_factor) or not pulleys,
         })
     return out
 
@@ -179,7 +182,8 @@ def frames_from(document):
     return out
 
 
-def check_documents(contract, mechanism_document, formwork_document, ea, wires_per_motor=1):
+def check_documents(contract, mechanism_document, formwork_document, ea, wires_per_motor=1,
+                    pulleys=True):
     """Everything the engine needs from the study's documents, read and checked
     before the cut: a study that cannot run is told now, not after it."""
 
@@ -198,7 +202,7 @@ def check_documents(contract, mechanism_document, formwork_document, ea, wires_p
         raise FormworkError("the formwork document was not read: {}".format(unread))
     vertices = geometry.mesh_arrays(contract)["vertices"]
     design_mm = [[c * 1000.0 for c in point] for point in vertices]
-    rim = rim_wires(mechanism_document, design_mm, geometry.support_ids(contract), ea)
+    rim = rim_wires(mechanism_document, design_mm, geometry.support_ids(contract), ea, pulleys)
     heads, members, feet = tree_inputs(document)
     machines = machines_of(mechanism_document, rim)
     if int(wires_per_motor) > 1 and not machines:

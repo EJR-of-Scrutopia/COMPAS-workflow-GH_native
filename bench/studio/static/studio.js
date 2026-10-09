@@ -11302,24 +11302,6 @@ const CABLENET_LAYERS = [
   ["reel", "Reel"],
 ];
 const CABLENET_LENS_NAMES = CABLENET_LAYERS.map(([name]) => name);
-const CABLENET_NOTES = {
-  tension: "Each member coloured by the tension it carries in the best "
-    + "tension-only state at this instant, pale to red; the key gives the scale. "
-    + "On a redundant net this is one tension-only state among many; the "
-    + "unbalanced force and the sag are the same for every one of them.",
-  nodeforce: "The force left unbalanced at each node, which is what an actuator "
-    + "there must supply. It is the field that chose the grabbed nodes.",
-  sag: "How far each node would move under that unbalanced force, to first "
-    + "order through the net's stiffness with the entered prestress as a floor: "
-    + "red past the acceptance line, amber near it, pale inside, the grabbed "
-    + "nodes in the accent colour. Arrows give the direction past the line.",
-  prestress: "At each wire's net end, an arrow along the wire: its length the "
-    + "tension, its colour the margin against the chosen system's ceiling "
-    + "(green within 60 percent of it, amber within it, red over).",
-  reel: "What each wire pays out (amber) or takes in (blue) since the previous "
-    + "computed instant, drawn along the wire; at a grabbed node the node's own "
-    + "travel, in the accent colour, which is travel and not rope.",
-};
 const THRUST_NOTE = "The push each springing gives the ground, the reaction "
   + "reversed: green stands near vertical, amber leans, red past 35 degrees is "
   + "a push the abutment or a tie must hold.";
@@ -11553,7 +11535,8 @@ function buildLayerToggles() {
   exaggerationRow.classList.add("hidden");
   buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true);
   const lenses = document.getElementById("cablenet-lenses");
-  if (lenses) buildLensButtons(lenses, CABLENET_LAYERS, CABLENET_NOTES, false);
+  // no notes: the panel is a tool, not a text (the owner's rule, 9 October 2026)
+  if (lenses) buildLensButtons(lenses, CABLENET_LAYERS, {}, false);
 }
 
 function setLayer(name, on) {

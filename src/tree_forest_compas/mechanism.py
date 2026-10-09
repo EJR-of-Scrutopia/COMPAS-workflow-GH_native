@@ -34,6 +34,8 @@ class Mechanism(NamedTuple):
     sheave_efficiency: float = 0.98
     spool_rope_mbl: object = None   # None means the same as rope_mbl
     sheave_swl: object = None       # None means no sheave limit is modelled
+    gearbox_torque: object = None   # N mm at the output; None means no gearbox limit
+    wires_per_motor: int = 1        # drums on one motor shaft, each at the judged tension
 
 
 def spool_rope_mbl_of(mechanism):
@@ -71,6 +73,11 @@ def _validate(mechanism, steps, max_factor, acceptance):
     need("sheave_efficiency", mechanism.sheave_efficiency, upper=1.0)
     if mechanism.sheave_swl is not None:
         need("sheave_swl", mechanism.sheave_swl)
+    if mechanism.gearbox_torque is not None:
+        need("gearbox_torque", mechanism.gearbox_torque)
+    need("wires_per_motor", mechanism.wires_per_motor)
+    if int(mechanism.wires_per_motor) != float(mechanism.wires_per_motor):
+        raise CapacityError("wires_per_motor must be a whole number of wires.")
     need("rope_mbl", mechanism.rope_mbl)
     need("spool_rope_mbl", spool_rope_mbl_of(mechanism))
     need("anchor_wll", mechanism.anchor_wll)
@@ -164,7 +171,13 @@ def checks(mechanism, worst_tension, deviation, acceptance):
                 "{:.6g} N on the moving block against {:.6g} N safe working "
                 "load".format(on_sheave, float(mechanism.sheave_swl))
             )
-    drum_torque = lead * float(mechanism.drum_radius)
+    # every drum on the shaft pulls at the judged tension, so the motor and its
+    # gearbox carry all of them
+    drum_torque = lead * float(mechanism.drum_radius) * int(mechanism.wires_per_motor)
+    if mechanism.gearbox_torque is not None and drum_torque > float(mechanism.gearbox_torque):
+        return "gearbox torque", "{:.6g} N mm at the output against {:.6g} N mm".format(
+            drum_torque, float(mechanism.gearbox_torque)
+        )
     available = (
         float(mechanism.motor_torque) * float(mechanism.gear_ratio)
         * float(mechanism.gear_efficiency) * float(mechanism.torque_margin)
@@ -247,13 +260,16 @@ def ceiling_terms(mechanism):
         terms["sheave"] = (
             float(mechanism.sheave_swl) * advantage / float(mechanism.reeve_factor)
         )
+    shaft = float(mechanism.drum_radius) * int(mechanism.wires_per_motor)
+    if mechanism.gearbox_torque is not None:
+        terms["gearbox torque"] = float(mechanism.gearbox_torque) * advantage / shaft
     terms["motor torque"] = (
         float(mechanism.motor_torque)
         * float(mechanism.gear_ratio)
         * float(mechanism.gear_efficiency)
         * float(mechanism.torque_margin)
         * advantage
-        / float(mechanism.drum_radius)
+        / shaft
     )
     return terms
 

@@ -4,8 +4,8 @@ Two rules this module exists to enforce. A load limit is never typed in: it is
 the minimum over a NAMED chain, resolved at the angle the wire actually pulls,
 because the weakest part in a load path is not the part a person thinks of
 first. And a motor's torque is never compared across families: a stepper is
-quoted holding torque at standstill and an induction motor continuous torque at
-rated speed, so the family decides how the figure is derived and derated.
+quoted holding torque at standstill and a servo its rated continuous torque, so
+the family decides how the figure is derated.
 """
 
 from __future__ import annotations
@@ -29,15 +29,87 @@ class CatalogueError(RuntimeError):
     """Raised when a configuration is not one that could be built."""
 
 
+PRICED_KINDS = ("motor", "drive", "gearbox", "drum", "rope", "turnbuckle", "eye_bolt",
+                "sheave", "rail", "load_cell", "cabinet")
+
+
+def _sheave_rating_kg(entry):
+    """The working load a pulley is judged at, in kilograms. A pulley in a
+    reeving block is wrapped half round, so its 180 degree rating applies; where
+    the maker prints a lower figure at 90 degrees the two conflict, and the lower
+    stands. A maker that gives one load with no angle is taken at it."""
+
+    if entry.get("swl_kg") is not None:
+        return float(entry["swl_kg"])
+    at_180, at_90 = entry.get("wll_kg_180"), entry.get("wll_kg_90")
+    if at_180 is not None:
+        return float(at_180) if at_90 is None else min(float(at_180), float(at_90))
+    if entry.get("wll_kg") is not None:
+        return float(entry["wll_kg"])
+    return None
+
+
+def price_gbp(parts, key, entry):
+    """A part's price in pounds, exclusive of VAT, or None when it is unpriced
+    (spec section 6): a price in another currency is converted at the
+    catalogue's dated rate, and one that includes VAT has it taken off at its own
+    rate (the UK's unless the entry gives another). A price whose VAT basis is
+    unclear is taken as published."""
+
+    price = entry.get("unit_price")
+    if price is None:
+        return None
+    value = float(price)
+    currency = entry.get("currency", "GBP")
+    if currency != "GBP":
+        rate = (parts.get("currency") or {}).get("{}_per_GBP".format(currency))
+        if rate is None:
+            raise CatalogueError("{}: no {} rate".format(key, currency))
+        value /= float(rate)
+    if entry.get("vat") == "inc":
+        value /= 1.0 + float(entry.get("vat_rate", (parts.get("rules") or {}).get("vat_rate", 0.2)))
+    return value
+
+
+def _check_offered(parts):
+    """Refuse, by name and when the studio starts, any part the five choices
+    offer that lacks a figure the rules need (spec section 7.1)."""
+
+    def need(key, entry, *names):
+        for name in names:
+            if entry.get(name) is None:
+                raise CatalogueError("{}: no {}".format(key, name.replace("_", " ")))
+
+    for key, entry in parts["motor"].items():
+        if not entry.get("frame"):
+            continue
+        need(key, entry, "torque_nm", "torque_basis", "rated_current_a", "drive")
+        drive = parts["drive"].get(entry["drive"])
+        if drive is None:
+            raise CatalogueError("{}: no drive {}".format(key, entry["drive"]))
+        need(entry["drive"], drive, "supply", "volts_min", "volts_max")
+        if drive["supply"] == "dc":
+            # the 48 V supply is sized from each motor's resistive loss (note 14)
+            need(key, entry, "phase_resistance_ohm")
+        if entry["family"] == "S":
+            need(key, entry, "rated_speed_rpm")
+    for key, entry in parts["gearbox"].items():
+        if entry.get("frame"):
+            need(key, entry, "gear_ratio", "gear_efficiency", "series")
+    for key, entry in parts["sheave"].items():
+        if entry.get("wire_min_mm") is not None and entry.get("wire_max_mm") is not None:
+            if entry.get("sheave_swl") is None:
+                raise CatalogueError("{}: no working load".format(key))
+    for key, entry in parts["rope"].items():
+        need(key, entry, "diameter_mm", "rope_mbl", "mass_per_metre_kg", "ea_newtons")
+
+
 def load_parts(path=None):
     """The catalogue with every derived figure resolved once.
 
     Working loads arrive in kilograms because that is what the supplier printed;
     newtons are computed here so the file never holds a number nobody published.
-    The same is true of family B and C motor torque, which comes from power and
-    the speed for that family's supply.
-
-    Every designed configuration is proved buildable here too, once.
+    Every part is checked here too, once, for the figures the rules need.
     """
 
     parts = json.loads(Path(path or PARTS_PATH).read_text(encoding="utf-8"))
@@ -48,44 +120,44 @@ def load_parts(path=None):
     for entry in parts["eye_bolt"].values():
         entry["axial_newtons"] = float(entry["axial_kg"]) * gravity
         entry["angled_newtons"] = float(entry["angled_kg"]) * gravity
+    rules = parts.get("rules") or {}
     for entry in parts["sheave"].values():
-        entry["sheave_swl"] = float(entry["swl_kg"]) * gravity
+        rating = _sheave_rating_kg(entry)
+        if rating is not None:
+            entry["sheave_swl"] = rating * gravity
+        if entry.get("sheave_efficiency") is None:
+            if entry.get("efficiency") is not None:
+                entry["sheave_efficiency"] = float(entry["efficiency"])
+                entry["efficiency_assumed"] = False
+            else:
+                # a maker that publishes no efficiency: the usual figure for the
+                # bearing, said to be assumed (spec section 2.3)
+                entry["sheave_efficiency"] = float(rules.get(
+                    "efficiency_ball" if entry.get("bearing") == "ball" else
+                    "efficiency_plain", 0.95))
+                entry["efficiency_assumed"] = True
     for entry in parts["motor"].values():
+        if entry.get("torque_nm") is not None:
+            entry["motor_torque"] = float(entry["torque_nm"]) * 1000.0
         if entry["family"] == "A":
             entry["torque_margin"] = 0.5
         else:
+            # a servo is quoted at its rated continuous torque, derated as a
+            # continuous-rated motor is
             entry["torque_margin"] = 0.8
-            entry["motor_torque"] = (
-                9550.0 * float(entry["power_kw"]) / float(entry["rated_speed_rpm"])
-                * 1000.0
-            )
-    # A designed rig that cannot be built fails here, with its part named, and
-    # not on a panel the first time somebody chooses it.
-    for key in configurations(parts):
-        try:
-            configuration = configuration_of(parts, key)
-            drive_for(parts, configuration["motor"])
-            mechanism_for(parts, configuration, AXIAL_ANGLE)
-        except CatalogueError as error:
-            raise CatalogueError(
-                "The configuration {!r} cannot be built: {}".format(key, error)
-            ) from None
-        except KeyError as error:
-            raise CatalogueError(
-                "The configuration {!r} names no {}.".format(key, error.args[0])
-            ) from None
-    # The pairings, said once by the functions that own them and handed to the
-    # panel as data, so the browser never reimplements them: the drive a motor
-    # follows, and the gearboxes its family is used with (none for a capacitor
-    # motor, which no gearbox makes hold a net).
-    pairing = {"drive_for": {}, "gearboxes_for": {}}
-    for key, entry in parts["motor"].items():
-        pairing["drive_for"][key] = drive_for(parts, key)
-        try:
-            pairing["gearboxes_for"][key] = gearboxes_for(parts, key)
-        except CatalogueError:
-            pairing["gearboxes_for"][key] = []
-    parts["pairing"] = pairing
+    for entry in parts["gearbox"].values():
+        if entry.get("output_torque_nm") is not None:
+            entry["gearbox_torque"] = float(entry["output_torque_nm"]) * 1000.0
+        else:
+            entry.setdefault("gearbox_torque", None)
+    for kind in PRICED_KINDS:
+        for key, entry in (parts.get(kind) or {}).items():
+            entry["price_gbp"] = price_gbp(parts, key, entry)
+            for reel in entry.get("reels") or []:
+                reel["price_gbp"] = price_gbp(parts, key, dict(entry, unit_price=reel["price"]))
+    for entry in (parts.get("load_cell") or {}).values():
+        entry["capacity_newtons"] = float(entry["capacity_kg"]) * gravity
+    _check_offered(parts)
     return parts
 
 
@@ -140,15 +212,6 @@ def mechanism_for(parts, configuration, angle_degrees):
 
     motor = _part(parts, "motor", configuration["motor"])
     drive = _part(parts, "drive", configuration["drive"])
-    if motor["family"] == "C":
-        raise CatalogueError(
-            "{} is a single-phase capacitor motor. Its run capacitor is sized "
-            "for one frequency, so an inverter loses it torque and overheats "
-            "it, and there is no third winding to control. It is a fixed speed "
-            "on and off device: adequate for a boat lift, no use for holding a "
-            "net within millimetres. Choose a three-phase motor with an "
-            "inverter instead.".format(configuration["motor"])
-        )
     if drive["family"] != motor["family"]:
         suitable = sorted(
             key for key, entry in parts["drive"].items()
@@ -177,7 +240,7 @@ def mechanism_for(parts, configuration, angle_degrees):
         )
 
     return Mechanism(
-        drum_radius=float(drum["drum_radius"]),
+        drum_radius=_winding_radius(configuration, drum),
         reeve_factor=falls,
         gear_ratio=float(gearbox["gear_ratio"]),
         motor_torque=float(motor["motor_torque"]),
@@ -192,7 +255,17 @@ def mechanism_for(parts, configuration, angle_degrees):
                   or configuration["rope"])["rope_mbl"]
         ),
         sheave_swl=float(sheave["sheave_swl"]) if sheave else None,
+        gearbox_torque=gearbox.get("gearbox_torque"),
+        wires_per_motor=int(configuration.get("wires_per_motor", 1)),
     )
+
+
+def _winding_radius(configuration, drum):
+    """The radius the rope winds at: the machine's own spool, when the machine
+    document gives it (spec section 3), else the catalogue drum's."""
+
+    radius = configuration.get("winding_radius_mm")
+    return float(radius) if radius is not None else float(drum["drum_radius"])
 
 
 def ceiling_for(parts, configuration, angle_degrees):
@@ -213,7 +286,8 @@ def ceiling_for(parts, configuration, angle_degrees):
 
 
 def price_of(parts, configuration):
-    """What the priced lines come to, and an honest flag when some are missing."""
+    """What the priced lines come to in pounds without VAT (price_gbp), and an
+    honest flag when some are missing."""
 
     pounds = 0.0
     unpriced = []
@@ -223,21 +297,21 @@ def price_of(parts, configuration):
         ("rope", configuration["rope"]), ("rail", configuration["rail"]),
     ):
         entry = _part(parts, kind, key)
-        price = entry.get("unit_price")
+        price = entry.get("price_gbp")
         if price is None:
             unpriced.append(key)
         else:
             pounds += float(price)
     for key in configuration["chain"]:
         entry = parts["eye_bolt"].get(key) or parts["turnbuckle"].get(key)
-        price = (entry or {}).get("unit_price")
+        price = (entry or {}).get("price_gbp")
         if price is None:
             unpriced.append(key)
         else:
             pounds += float(price)
     if configuration.get("sheave"):
         entry = _part(parts, "sheave", configuration["sheave"])
-        price = entry.get("unit_price")
+        price = entry.get("price_gbp")
         if price is None:
             unpriced.append(configuration["sheave"])
         else:
@@ -257,9 +331,11 @@ def rope_speed(parts, configuration):
         return None
     gearbox = _part(parts, "gearbox", configuration["gearbox"])
     drum = _part(parts, "drum", configuration["drum"])
+    # the wire at the net moves the drum's surface speed over its falls
     return (
         float(motor["rated_speed_rpm"]) / float(gearbox["gear_ratio"]) / 60.0
-        * 2.0 * math.pi * float(drum["drum_radius"])
+        * 2.0 * math.pi * _winding_radius(configuration, drum)
+        / int(configuration.get("reeve_factor", 1))
     )
 
 
@@ -269,8 +345,8 @@ def motor_rpm_for(parts, configuration, rope_speed_mm_s):
     gearbox = _part(parts, "gearbox", configuration["gearbox"])
     drum = _part(parts, "drum", configuration["drum"])
     return (
-        float(rope_speed_mm_s) * 60.0 * float(gearbox["gear_ratio"])
-        / (2.0 * math.pi * float(drum["drum_radius"]))
+        float(rope_speed_mm_s) * int(configuration.get("reeve_factor", 1)) * 60.0
+        * float(gearbox["gear_ratio"]) / (2.0 * math.pi * _winding_radius(configuration, drum))
     )
 
 
@@ -299,8 +375,9 @@ def drum_and_travel(parts, configuration, rope_wound_mm):
     if wound < 0.0:
         raise CatalogueError("The rope wound cannot be negative.")
     falls = int(configuration.get("reeve_factor", 1))
-    radius = float(drum["drum_radius"])
-    wraps = math.floor(float(drum["width_mm"]) / float(drum["groove_pitch_mm"]))
+    radius = _winding_radius(configuration, drum)
+    pitch = configuration.get("groove_pitch_mm") or drum["groove_pitch_mm"]
+    wraps = math.floor(float(drum["width_mm"]) / float(pitch))
     capacity = wraps * 2.0 * math.pi * radius
     travel = wound / falls
     stroke = float(rail["stroke_mm"])
@@ -322,31 +399,6 @@ def drum_and_travel(parts, configuration, rope_wound_mm):
     }
 
 
-PART_KEYS = ("motor", "drive", "gearbox", "drum", "rope", "rail", "sheave", "spool_rope")
-# keys that mean "none of this part", which price_of and the chooser already
-# treat as absence
-NO_PART = {"gearbox": "direct", "drive": "none"}
-
-
-def configurations(parts):
-    """The designed, complete, buildable mechanisms, each with its description."""
-
-    return parts.get("configurations") or {}
-
-
-def configuration_of(parts, key):
-    """A named configuration in the shape every route takes."""
-
-    entry = configurations(parts).get(key)
-    if entry is None:
-        raise CatalogueError("There is no configuration called {!r}.".format(key))
-    configuration = dict(entry["parts"])
-    configuration["chain"] = list(configuration.get("chain") or [])
-    configuration.setdefault("sheave", None)
-    configuration.setdefault("reeve_factor", 1)
-    return configuration
-
-
 def drive_for(parts, motor_key):
     """The drive a motor is paired with: named on the motor, same family.
 
@@ -366,32 +418,6 @@ def drive_for(parts, motor_key):
     return drive
 
 
-def gearboxes_for(parts, motor_key):
-    """The gearboxes a motor's family is used with: planetary (or none) for a
-    stepper, worm for a three-phase motor; a capacitor motor is refused."""
-
-    motor = _part(parts, "motor", motor_key)
-    if motor["family"] == "C":
-        raise CatalogueError(
-            "{} is a single-phase capacitor motor and cannot be inverter "
-            "controlled; no gearbox makes it hold a net.".format(motor_key))
-    kinds = ("planetary", "none") if motor["family"] == "A" else ("worm",)
-    return [key for key, entry in parts["gearbox"].items() if entry["kind"] in kinds]
-
-
-def part_count(configuration):
-    """How many separate parts a configuration is built from: the fewer, the
-    less there is to buy, fit and fail. A direct gearbox and a direct-on-line
-    drive are absences, not parts."""
-
-    count = 0
-    for key in PART_KEYS:
-        value = configuration.get(key)
-        if value and value != NO_PART.get(key):
-            count += 1
-    return count + len(configuration.get("chain") or [])
-
-
 def part_for_term(configuration, name):
     """The configuration key a ceiling term belongs to.
 
@@ -403,7 +429,8 @@ def part_for_term(configuration, name):
         return "shape"
     if name == "spool rope tension":
         return configuration.get("spool_rope") or configuration.get("rope")
-    key = {"rope tension": "rope", "motor torque": "motor", "sheave": "sheave"}.get(name)
+    key = {"rope tension": "rope", "gearbox torque": "gearbox", "motor torque": "motor",
+           "sheave": "sheave"}.get(name)
     return configuration.get(key) if key else None
 
 
@@ -481,7 +508,8 @@ _UNBOUND = 1e300
 
 def _with_terms_lifted(mechanism, names):
     """The mechanism with the named part terms taken out of the way: each one's
-    limit made too large to bind (the sheave's removed), the others untouched.
+    limit made too large to bind (the sheave's and the gearbox's removed), the
+    others untouched.
 
     capacity_from_curve then words a breach in the first term that is left. That
     is how load_factor gets the sentence of the tightest term when an earlier
@@ -498,6 +526,8 @@ def _with_terms_lifted(mechanism, names):
         changes["spool_rope_mbl"] = _UNBOUND
     if "sheave" in names:
         changes["sheave_swl"] = None
+    if "gearbox torque" in names:
+        changes["gearbox_torque"] = None
     return mechanism._replace(**changes)
 
 
@@ -583,96 +613,3 @@ def load_factor(parts, configuration, angle_degrees, demand, steps=200, max_fact
         "sufficient": bool(result.limit_factor >= 1.0),
         "acceptance_mm": acceptance,
     }
-
-
-def recommend(parts, angle_degrees, demand, reason=None):
-    """The configuration to build: the largest margin among those that carry
-    the skin, the fewest parts among ties, the first listed after that.
-
-    The margin is the ceiling over the tension the wires are judged at, which
-    every row's load factor carries uncapped. The load factor itself is capped
-    at the walk's largest factor (20), so at a small tension every rig reached
-    the cap, they tied, and the first listed won over a rig with two and a half
-    times its ceiling. The margin keeps them apart, and the reported load factor
-    keeps its cap ("at least 20.0 times").
-
-    With no load factor to rank by it ranks by ceiling and its rule says why.
-    reason, when the caller has one, is why there is no demand document at all (a
-    study that is not there, options that cannot be read); a document that is read
-    but has no sizing block is told to be run again; a block with no tension in it
-    has nothing to scale.
-
-    When the sag at the sizing stage is past the acceptance line, no part can change
-    that, and the load factors as judged say little about the parts: every rig is
-    stopped by the shape, or by a part that checks() tests before it. The document
-    says so directly, so the rule is decided from it and not from how the rigs happen
-    to bind. It names the shape, and the rigs are ranked by what their parts alone
-    carry: the same walk with the line set aside, which each row carries as
-    parts_factor beside its load_factor as judged.
-    """
-
-    rows = []
-    configured = {}
-    for position, key in enumerate(configurations(parts)):
-        try:
-            configuration = configuration_of(parts, key)
-            ceiling, binding = ceiling_for(parts, configuration, angle_degrees)
-            factor = load_factor(parts, configuration, angle_degrees, demand)
-        except CatalogueError as error:
-            rows.append({"key": key, "refused": str(error)})
-            continue
-        configured[key] = configuration
-        rows.append({"key": key, "position": position, "parts": part_count(configuration),
-                     "ceiling": float(ceiling), "binding": binding, "load_factor": factor})
-    usable = [row for row in rows if not row.get("refused")]
-    if not usable:
-        message = "No configuration in the catalogue can be built."
-        if rows:
-            message += " The first was refused: {}".format(rows[0]["refused"])
-        raise CatalogueError(message)
-    sized = [row for row in usable if row["load_factor"]
-             and row["load_factor"].get("limit_factor") is not None]
-    sizing = sizing_of(demand)
-    line = None if sizing is None else demand.get("acceptance")
-    shape_past_line = line is not None and float(sizing["worst_sag_mm"]) > float(line)
-    if sized and shape_past_line:
-        parts_alone = {**demand, "acceptance": None}
-        for row in sized:
-            row["parts_factor"] = load_factor(
-                parts, configured[row["key"]], angle_degrees, parts_alone)
-        best = max(sized, key=lambda r: (
-            r["parts_factor"]["margin"], -r["parts"], -r["position"]))
-        rule = ("the shape is past the acceptance line at the sizing stage and no "
-                "part can change it; ranked by what the parts alone carry: the "
-                "largest margin, the ceiling over the tension the wires are judged "
-                "at, then the fewest parts, then the first listed")
-        flag = False
-    elif sized:
-        sufficient = [row for row in sized if row["load_factor"]["sufficient"]]
-        if sufficient:
-            best = max(sufficient, key=lambda r: (
-                r["load_factor"]["margin"], -r["parts"], -r["position"]))
-            rule = ("the configuration that carries the skin with the largest margin, "
-                    "the ceiling over the tension the wires are judged at; among ties "
-                    "the fewest parts, then the first listed")
-            flag = True
-        else:
-            best = max(sized, key=lambda r: (
-                r["load_factor"]["limit_factor"], -r["parts"], -r["position"]))
-            rule = ("nothing in the catalogue carries the skin; this is the "
-                    "configuration with the highest load factor")
-            flag = False
-    else:
-        best = max(usable, key=lambda r: (r["ceiling"], -r["parts"], -r["position"]))
-        if demand is None and reason:
-            rule = ("no demand document: {}; this is the configuration with the "
-                    "highest ceiling, with no load factor".format(str(reason).rstrip(".")))
-        elif sizing_of(demand) is not None:
-            rule = ("the sizing stage of the demand document carries no wire tension, "
-                    "so there is nothing to scale; this is the configuration with the "
-                    "highest ceiling")
-        else:
-            rule = ("no sizing in the demand document, so the configuration with the "
-                    "highest ceiling; run the cable net analysis for a load factor")
-        flag = None
-    return {"key": best["key"], "sufficient": flag, "rule": rule, "rows": rows}

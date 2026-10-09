@@ -4,22 +4,23 @@
 // file only wires them to the page. studio.js owns the lenses and is told
 // through onDemand when a demand document arrives.
 //
-// Two rules live here. The speed dial annotates and never judges: no
-// prototype has said what rope speed the net wants, and finding that out is
-// the machine's whole purpose. And price never reaches the panel: it stays in
-// the exported documents, where a supplier or a supervisor needs it.
+// The speed dial annotates and never judges: no prototype has said what rope
+// speed the net wants. The mechanism is five choices (spec 2026-10-09
+// mechanism choices), remembered per study in this browser, and the panel
+// shows prices (the owner's ruling of 9 October 2026). It is a tool, not a
+// text: numbers, marks, tables and part names.
 
 import {
-  curveSvg, demandSentences, fallbackKey, grabText, isStale, modifiedFrom,
-  prestressFloor, prestressNote, ropeMismatch, ropeWound, rpmText, settledText, shapeOf,
-  toleranceNote, verdictOf,
+  buyHtml, choiceOptions, curveSvg, demandSentences, grabText, isStale, machineHtml,
+  prestressNote, priceHtml, recommendHtml, ropeMismatch, ropeWound, rpmText,
+  toleranceNote, travelHtml, validChoices, verdictHtml,
 } from "./cablenet_model.js";
 
 // The wire's angle to its eye bolt's axis is not recorded in the export, so
 // this is an assumption, not a computed figure. It selects the bolt's off-axis
 // rating, which is the conservative direction.
 const ASSUMED_ANGLE_DEGREES = 10.0;
-const REMEMBERED_KEY = "vaulted-cablenet-configuration";
+const REMEMBERED_PREFIX = "vaulted-cablenet-choices:";
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -70,14 +71,6 @@ function sentOptions(options) {
   return sent;
 }
 
-function configurationOf(parts, key) {
-  const entry = parts.configurations[key];
-  const configuration = { ...entry.parts, chain: [...(entry.parts.chain || [])] };
-  if (configuration.sheave === undefined) configuration.sheave = null;
-  if (configuration.reeve_factor === undefined) configuration.reeve_factor = 1;
-  return configuration;
-}
-
 export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) {
   const el = {
     run: byId("cablenet-run"), runStatus: byId("cablenet-run-status"),
@@ -85,10 +78,12 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     tolerance: byId("cablenet-tolerance"), toleranceValue: byId("cablenet-tolerance-value"),
     speed: byId("cablenet-speed"), speedValue: byId("cablenet-speed-value"),
     speedNote: byId("cablenet-speed-note"), demand: byId("cablenet-demand"),
-    select: byId("cablenet-configuration"), selectNote: byId("cablenet-configuration-note"),
+    motor: byId("cablenet-motor"), ratio: byId("cablenet-ratio"), pulley: byId("cablenet-pulley"),
+    rope: byId("cablenet-rope"), wires: byId("cablenet-wires"),
     recommend: byId("cablenet-recommend"), recommendNote: byId("cablenet-recommend-note"),
-    varyToggle: byId("cablenet-vary-toggle"), parts: byId("cablenet-parts"),
-    settled: byId("cablenet-settled"), holds: byId("cablenet-holds"), grab: byId("cablenet-grab"),
+    machine: byId("cablenet-machine"), holds: byId("cablenet-holds"),
+    travel: byId("cablenet-travel"), buy: byId("cablenet-buy"), price: byId("cablenet-price"),
+    grab: byId("cablenet-grab"),
     exportButton: byId("cablenet-export"), choose: byId("cablenet-export-choose"),
     path: byId("cablenet-export-path"), result: byId("cablenet-export-result"),
   };
@@ -104,146 +99,76 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   // the verdict's (which the parts and the demand move), the speed note's, and
   // the demand's own. watcher is the interval watching a run, if one is.
   const panel = {
-    parts: null, key: null, configuration: null, modified: false,
+    parts: null, options: null, choices: null,
     demand: null, demandNote: null, row: null, watcher: null,
     ticket: 0, speedTicket: 0, demandTicket: 0, speed: Number(el.speed.value),
   };
 
-  let remembered = null;
-  try { remembered = localStorage.getItem(REMEMBERED_KEY); } catch (_) { remembered = null; }
-
   async function loadParts() {
     if (panel.parts) return panel.parts;
     panel.parts = await getJson("/api/catalogue");
-    const fallback = fallbackKey(remembered, panel.parts.configurations);
-    panel.key = fallback.key;
-    panel.configuration = panel.key ? configurationOf(panel.parts, panel.key) : null;
-    panel.modified = false;
-    renderSelect(fallback.note);
-    renderParts();
+    panel.options = panel.parts.choices;
     return panel.parts;
   }
 
-  function renderSelect(note) {
-    el.select.innerHTML = "";
-    for (const [key, entry] of Object.entries(panel.parts.configurations)) {
-      const option = document.createElement("option");
-      option.value = key;
-      option.textContent = entry.name;
-      option.title = entry.for;
-      option.selected = key === panel.key;
-      el.select.appendChild(option);
-    }
-    const entry = panel.key ? panel.parts.configurations[panel.key] : null;
-    el.selectNote.innerHTML = (note ? `<p>${esc(note)}</p>` : "") +
-      (entry ? `<p>${esc(entry.for)}</p>` : "") +
-      (panel.modified ? `<p><b>Modified from ${esc(entry ? entry.name : panel.key)}.</b> ` +
-        `<button type="button" id="cablenet-reset" title="Return to the configuration as designed">Reset</button></p>` : "");
-    const reset = byId("cablenet-reset");
-    if (reset) reset.onclick = () => choose(panel.key);
-    el.settled.textContent = settledText(panel.configuration ? panel.configuration.drive : null);
+  // The study's own choices, as this browser last left them, else the first
+  // the catalogue can build.
+  function restoreChoices() {
+    let remembered = null;
+    try {
+      remembered = JSON.parse(localStorage.getItem(REMEMBERED_PREFIX + studyName()) || "null");
+    } catch (_) { remembered = null; }
+    panel.choices = validChoices(panel.options, remembered);
+    renderChoices();
   }
 
-  function choose(key) {
-    panel.key = key;
-    panel.configuration = configurationOf(panel.parts, key);
-    panel.modified = false;
-    try { localStorage.setItem(REMEMBERED_KEY, key); } catch (_) { /* a private window */ }
-    renderSelect(null);
-    renderParts();
-    refresh();
+  function saveChoices() {
+    try {
+      localStorage.setItem(REMEMBERED_PREFIX + studyName(), JSON.stringify(panel.choices));
+    } catch (_) { /* a private window */ }
   }
 
-  el.select.addEventListener("change", () => choose(el.select.value));
+  const SELECTS = [["motor", "motor"], ["ratio", "ratio"], ["pulley", "pulley"],
+                   ["rope", "rope"], ["wires", "wires_per_motor"]];
 
-  // Vary parts: the individual selects, collapsed until wanted. The drive is
-  // shown and never chosen; the gearbox list follows the motor's family.
-  // Both pairings come precomputed from the catalogue (parts.pairing).
-  el.varyToggle.addEventListener("click", () => {
-    el.parts.classList.toggle("hidden");
-    el.varyToggle.classList.toggle("active", !el.parts.classList.contains("hidden"));
-  });
-
-  function renderParts() {
-    const parts = panel.parts;
-    const current = panel.configuration;
-    el.parts.innerHTML = "";
-    if (!parts || !current) return;
-    const pairing = parts.pairing || { drive_for: {}, gearboxes_for: {} };
-    const row = (label, control) => {
-      const holder = document.createElement("div");
-      holder.className = "named";
-      const name = document.createElement("span");
-      name.textContent = label;
-      holder.appendChild(name);
-      holder.appendChild(control);
-      el.parts.appendChild(holder);
-    };
-    const select = (entries, chosen, labelOf, onChange) => {
-      const control = document.createElement("select");
-      for (const [key, entry] of entries) {
+  function renderChoices() {
+    const offered = choiceOptions(panel.options, panel.parts, panel.choices);
+    for (const [name, key] of SELECTS) {
+      const control = el[name];
+      control.innerHTML = "";
+      for (const item of offered[key]) {
         const option = document.createElement("option");
-        option.value = key;
-        option.textContent = labelOf(key, entry);
-        option.selected = key === chosen;
+        option.value = item.value == null ? "" : String(item.value);
+        option.textContent = item.label;
+        option.selected = item.value === panel.choices[key];
         control.appendChild(option);
       }
-      control.onchange = () => { onChange(control.value); varied(); };
-      return control;
-    };
-    const kinds = [["motor", "Motor"], ["gearbox", "Gearbox"], ["drum", "Drum"],
-                   ["rope", "Rope"], ["rail", "Rail"]];
-    for (const [kind, label] of kinds) {
-      let entries = Object.entries(parts[kind]);
-      if (kind === "gearbox") {
-        const allowed = pairing.gearboxes_for[current.motor] || [];
-        entries = entries.filter(([key]) => allowed.includes(key));
-      }
-      row(label, select(entries, current[kind],
-        (key, entry) => `${entry.model || key}${entry.confidence ? `, ${entry.confidence}` : ""}`,
-        (value) => {
-          current[kind] = value;
-          if (kind === "motor") {
-            current.drive = pairing.drive_for[value] || current.drive;
-            const allowed = pairing.gearboxes_for[value] || [];
-            if (!allowed.includes(current.gearbox)) current.gearbox = allowed[0] || current.gearbox;
-          }
-        }));
     }
-    const drive = document.createElement("span");
-    drive.textContent = `${current.drive} (follows the motor)`;
-    row("Drive", drive);
-    row("Turnbuckle", select(Object.entries(parts.turnbuckle), current.chain[1],
-      (key, entry) => `${String(entry.configuration).toUpperCase()} ${entry.thread}, ${entry.working_load_kg} kg working load`,
-      (value) => { current.chain = [current.chain[0], value]; }));
-    row("Eye bolt", select(Object.entries(parts.eye_bolt), current.chain[0],
-      (key, entry) => `${entry.thread} eye bolt, ${entry.angled_kg} kg at an angle`,
-      (value) => { current.chain = [value, current.chain[1]]; }));
-    const block = document.createElement("input");
-    block.type = "checkbox";
-    block.checked = Number(current.reeve_factor) > 1;
-    block.title = "Halves the force at the drum and doubles it through the sheave";
-    block.onchange = () => {
-      current.reeve_factor = block.checked ? 2 : 1;
-      current.sheave = block.checked ? Object.keys(parts.sheave)[0] : null;
-      varied();
-    };
-    row("Moving block", block);
   }
 
-  function varied() {
-    panel.modified = modifiedFrom(panel.key, panel.configuration, panel.parts.configurations);
-    renderSelect(null);
-    renderParts();
-    refresh();
+  function readChoice(key, value) {
+    if (key === "motor" || key === "rope") return value;
+    if (key === "pulley") return value === "" ? null : value;
+    if (key === "ratio") return value === "" ? null : Number(value);
+    return Number(value);
+  }
+
+  for (const [name, key] of SELECTS) {
+    el[name].addEventListener("change", () => {
+      panel.choices = validChoices(panel.options,
+                                   { ...panel.choices, [key]: readChoice(key, el[name].value) });
+      saveChoices();
+      renderChoices();
+      refresh();
+    });
   }
 
   // Export is there while there is a demand to describe, and says why when not.
   function showExport() {
     el.exportButton.disabled = !panel.demand;
     el.exportButton.title = panel.demand
-      ? "Write the configuration with its data: the spreadsheet, the diagram and the data sheet"
-      : "Nothing to export: this study has no cable net demand yet";
+      ? "Spreadsheet, diagram and data sheet"
+      : "No cable net demand";
   }
 
   // The demand in sentences, then what the chosen rope and the dial say about
@@ -254,7 +179,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     const sentences = panel.demandNote
       ? [`The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.`]
       : demandSentences(demand);
-    for (const note of [ropeMismatch(panel.parts, demand, panel.configuration),
+    for (const note of [ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope }),
                         prestressNote(demand, Number(el.prestress.value)),
                         toleranceNote(demand, Number(el.tolerance.value))]) {
       if (note) sentences.push(note);
@@ -276,44 +201,33 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   async function score(speed) {
     const options = studyOptions();
     const body = {
-      configurations: [panel.configuration], angle_degrees: ASSUMED_ANGLE_DEGREES,
+      choices: [panel.choices], angle_degrees: ASSUMED_ANGLE_DEGREES,
       rope_speed_mm_s: speed,
     };
-    if (options) {
-      body.options = sentOptions(options);
-    } else {
-      // No study options: the server has no demand to read, so the panel's own
-      // figures stand (the route takes the caller's when it reads none).
-      body.prestress_floor = panel.demand ? prestressFloor(panel.demand) : 0;
-      const wound = panel.demand ? ropeWound(panel.demand) : null;
-      if (wound != null) body.rope_wound_mm = wound;
-    }
+    if (options) body.options = sentOptions(options);
     const scored = await postJson(
       `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
     return scored.rows[0];
   }
 
+  // The machine the choices make, each wire's verdict, the drum and carriage,
+  // the wire to buy and the price: tables, from the model.
   function renderHolds() {
     const row = panel.row;
-    const floor = panel.demand ? prestressFloor(panel.demand) : 0;
-    const shape = panel.demand ? shapeOf(panel.demand) : null;
-    // With no load factor the route says why in load_factor_note. That reason
-    // goes to the model as the capacity's own detail, so the first line says
-    // what is true (no demand at all, or an old one) and says it once.
-    const capacity = !row ? null : (row.load_factor || (row.load_factor_note
-      ? { limit_factor: null, detail: row.load_factor_note } : null));
-    const verdict = verdictOf({ row, floor, shape, capacity });
-    el.holds.innerHTML = `<p><b>${esc(verdict.headline)}</b></p>` +
-      verdict.reasons.map((r) => `<p>${esc(r)}</p>`).join("") +
-      `<p>The eye bolt is rated at its off-axis figure (${ASSUMED_ANGLE_DEGREES.toFixed(0)} degrees) ` +
-      `because the wire's angle to the bolt is not recorded in the export. This is an assumption.</p>`;
-    onCeiling(row && !row.refused ? row.ceiling : null);
+    const ok = row && !row.refused;
+    el.machine.innerHTML = machineHtml(row, panel.parts);
+    el.holds.innerHTML = ok ? verdictHtml(row.verdict) +
+      `<p>Eye bolt at ${ASSUMED_ANGLE_DEGREES.toFixed(0)} degrees off its axis, assumed</p>` : "";
+    el.travel.innerHTML = ok ? travelHtml(row.travel) : "";
+    el.buy.innerHTML = ok ? buyHtml(row.price, row.cut_lengths) : "";
+    el.price.innerHTML = ok ? priceHtml(row.price) : "";
+    onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null);
   }
 
   // The parts changed, or the demand did: the verdict is redrawn, and the demand
   // readout with it, because its rope note follows the chosen rope.
   async function refresh() {
-    if (!panel.configuration) return;
+    if (!panel.choices) return;
     const mine = ++panel.ticket;
     panel.speedTicket += 1;           // this answer writes the speed note too
     const speed = panel.speed;
@@ -321,9 +235,8 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     if (!studyName()) {
       // nothing to score against until a study is open
       panel.row = null;
-      el.holds.innerHTML = "";
+      renderHolds();
       el.speedNote.textContent = rpmText(speed, null);
-      onCeiling(null);
       return;
     }
     try {
@@ -335,14 +248,14 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     } catch (error) {
       if (mine !== panel.ticket) return;
       panel.row = null;
-      el.holds.innerHTML = `<p>The numbers could not be fetched: ${esc(error.message)}</p>`;
-      onCeiling(null);
+      renderHolds();
+      el.holds.innerHTML = `<p>${esc(error.message)}</p>`;
     }
   }
 
   // The slider moved: only the rpm note is touched, never the verdict.
   async function annotateSpeed() {
-    if (!panel.configuration) return;
+    if (!panel.choices) return;
     const mine = ++panel.speedTicket;
     const speed = panel.speed;
     if (!studyName()) {
@@ -392,21 +305,19 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     try {
       const options = studyOptions();
       if (!studyName()) throw new Error("open a study first");
-      const request = { angle_degrees: ASSUMED_ANGLE_DEGREES };
+      const request = { search: "choices", angle_degrees: ASSUMED_ANGLE_DEGREES };
       if (options) request.options = sentOptions(options);
       const body = await postJson(
         `/api/studies/${encodeURIComponent(studyName())}/cablenet/recommend`, request);
-      panel.key = body.key;
-      panel.configuration = { ...body.configuration, chain: [...body.configuration.chain] };
-      panel.modified = false;
-      try { localStorage.setItem(REMEMBERED_KEY, body.key); } catch (_) { /* a private window */ }
-      el.recommendNote.innerHTML = `<p><b>${esc(body.name)}</b>: ${esc(body.rule)}.</p>` +
-        (body.demand_note ? `<p>${esc(body.demand_note)}</p>` : "");
-      renderSelect(null);
-      renderParts();
-      await refresh();
+      el.recommendNote.innerHTML = recommendHtml(body);
+      if (body.choices) {
+        panel.choices = validChoices(panel.options, body.choices);
+        saveChoices();
+        renderChoices();
+        await refresh();
+      }
     } catch (error) {
-      el.recommendNote.innerHTML = `<p>No recommendation: ${esc(error.message)}</p>`;
+      el.recommendNote.innerHTML = `<p>${esc(error.message)}</p>`;
     } finally {
       el.recommend.disabled = false;
     }
@@ -485,7 +396,11 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     panel.row = null;
     panel.demandNote = null;
     el.demand.innerHTML = "";
+    el.machine.innerHTML = "";
     el.holds.innerHTML = "";
+    el.travel.innerHTML = "";
+    el.buy.innerHTML = "";
+    el.price.innerHTML = "";
     el.grab.innerHTML = "";
     el.runStatus.textContent = "";
     el.recommendNote.innerHTML = "";
@@ -504,7 +419,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     try {
       const body = { ...sentOptions(options), prestress: Number(el.prestress.value),
                      tolerance_mm: Number(el.tolerance.value),
-                     rope: panel.configuration ? panel.configuration.rope : undefined };
+                     rope: panel.choices ? panel.choices.rope : undefined };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/cablenet/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       let started = null;
@@ -566,8 +481,9 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     el.result.textContent = "writing the documents";
     try {
       const wound = panel.demand ? ropeWound(panel.demand) : null;
+      if (!panel.row || panel.row.refused) throw new Error("no machine to export");
       const done = await postJson(`/api/studies/${encodeURIComponent(studyName())}/cablenet/exports`, {
-        ...sentOptions(options), configuration: panel.configuration, angle_degrees: ASSUMED_ANGLE_DEGREES,
+        ...sentOptions(options), configuration: panel.row.configuration, angle_degrees: ASSUMED_ANGLE_DEGREES,
         ...(wound != null ? { rope_wound_mm: wound } : {}),
       });
       el.result.innerHTML = `<p>Written to ${esc(done.folder)}:</p><ul>` +
@@ -585,9 +501,10 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   async function reload() {
     try {
       await loadParts();
+      restoreChoices();
       if (await loadDemand()) await refresh();
     } catch (error) {
-      el.holds.innerHTML = `<p>The cable net section could not load: ${esc(error.message)}</p>`;
+      el.holds.innerHTML = `<p>${esc(error.message)}</p>`;
     }
   }
 
