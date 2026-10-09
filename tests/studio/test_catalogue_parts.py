@@ -139,3 +139,20 @@ def test_the_presets_and_the_ranking_of_them_are_gone_from_the_catalogue():
     for name in ("configurations", "configuration_of", "recommend", "part_count",
                  "gearboxes_for"):
         assert not hasattr(catalogue, name), name
+
+
+def test_each_ratio_is_offered_once_with_the_strongest_gearbox_at_it():
+    """A frame can carry two series at one ratio: the NEMA 42 has the EG42-G100
+    and the PLG120-100. The ratio is offered once, with the stronger gearbox
+    (ties to the cheaper), so Recommend never judges one machine twice."""
+
+    import machine
+
+    parts = catalogue.load_parts()
+    for motor in machine.offered_motors(parts):
+        ratios = [option["ratio"] for option in machine.ratio_options(parts, motor)]
+        assert len(ratios) == len(set(ratios)), motor
+    offered = {option["ratio"]: option["gearbox"]
+               for option in machine.ratio_options(parts, "ES-MH342200")}
+    assert offered[100.0] == "EG42-G100"            # 260 N m against 175 N m
+    assert machine.gearbox_for(parts, "ES-MH342200", 100) == "EG42-G100"

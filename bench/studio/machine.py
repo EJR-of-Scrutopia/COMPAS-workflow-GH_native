@@ -47,16 +47,23 @@ def offered_motors(parts):
 
 def ratio_options(parts, motor_key):
     """The ratios a motor's frame offers, each with its gearbox, and none: only
-    a gearbox that publishes its output torque is offered."""
+    a gearbox that publishes its output torque is offered. Where two series on
+    the frame give one ratio, the stronger gearbox is offered (ties go to the
+    cheaper), so each ratio is one machine."""
 
     frame = _part(parts, "motor", motor_key).get("frame")
-    found = [{"ratio": None, "gearbox": "direct"}]
+    best = {}
     for key, entry in parts["gearbox"].items():
         if (entry.get("frame") == frame and entry.get("kind") == "planetary"
                 and entry.get("gearbox_torque") is not None):
-            found.append({"ratio": float(entry["gear_ratio"]), "gearbox": key})
-    found[1:] = sorted(found[1:], key=lambda option: (option["ratio"], option["gearbox"]))
-    return found
+            ratio = float(entry["gear_ratio"])
+            price = entry.get("price_gbp")
+            rank = (-float(entry["gearbox_torque"]), price is None,
+                    0.0 if price is None else float(price), key)
+            if ratio not in best or rank < best[ratio][0]:
+                best[ratio] = (rank, key)
+    return [{"ratio": None, "gearbox": "direct"}] + [
+        {"ratio": ratio, "gearbox": best[ratio][1]} for ratio in sorted(best)]
 
 
 def gearbox_for(parts, motor_key, ratio):
