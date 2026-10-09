@@ -222,11 +222,12 @@ function sentenceOf(text) {
   return /[.!?]$/.test(plain) ? plain : plain + ".";
 }
 
-// Where the acceptance line came from, in words. The engine records a
-// catalogue rib as "falsework <key>: <the catalogue entry as JSON>"
-// (solve_cablenet.resolve_acceptance) so the data sheet can quote it verbatim;
-// a sentence names the rib and its description instead. Any other source is
-// the study's own words, given as they are. Not escaped: the caller escapes.
+// Where the acceptance line came from, in words, for a document written before
+// the line became a tolerance (9 October 2026). The engine then recorded a
+// catalogue rib as "falsework <key>: <the catalogue entry as JSON>" so the data
+// sheet could quote it verbatim; a sentence names the rib and its description
+// instead. Any other source is the study's own words, given as they are. Not
+// escaped: the caller escapes.
 export function acceptanceSourceText(source) {
   const text = String(source);
   const match = /^falsework ([^:]+): (\{[\s\S]*\})$/.exec(text);
@@ -261,8 +262,11 @@ export function demandSentences(demand) {
     (sizingStage ? " The stage that sizes the parts is " + esc(sizingStage) + "." : ""));
   out.push(demand.acceptance == null
     ? "No acceptance line is set for this run, so sag has nothing to be judged against."
-    : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
-      (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
+    : demand.tolerance_mm != null
+      ? "The acceptance line is a tolerance of " + millimetres(demand.tolerance_mm) +
+        " mm from the designed form, set for this run."
+      : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
+        (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
   const courses = (demand.stages || []).filter((s) => !isFrame(s));
   const last = courses[courses.length - 1];
   if (last) {
@@ -324,6 +328,54 @@ export function prestressNote(demand, dialNewtons) {
   if (!Number.isFinite(used) || !Number.isFinite(dial) || used === dial) return "";
   return "The analysis on screen used a prestress of <b>" + newtons(used) + " N</b>; the dial reads " +
     newtons(dial) + " N. Run again to use the dial's value.";
+}
+
+// Whether the tolerance dial still matches the analysis on screen. The run
+// records the tolerance it was asked for; the dial is only the next run's. The
+// greedy walk picks the same nodes whatever the line, and stops at the first
+// point within it, at its cap of batches, or when no node is left unbalanced
+// (placement.greedy_actuators). So the curve it recorded gives the grab count
+// of any looser tolerance. A tighter one needs a new run only when the walk
+// stopped at its own line; otherwise a new run would end where this one did.
+export function toleranceNote(demand, dialMm) {
+  if (!demand || isStale(demand)) return "";
+  const dial = Number(dialMm);
+  if (!Number.isFinite(dial) || dial <= 0) return "";
+  const used = demand.tolerance_mm == null ? null : Number(demand.tolerance_mm);
+  if (used !== null && used === dial) return "";
+  const line = demand.acceptance == null ? null : Number(demand.acceptance);
+  const opening = used !== null
+    ? "The analysis on screen used a tolerance of <b>" + millimetres(used) +
+      " mm</b>; the dial reads " + millimetres(dial) + " mm."
+    : line !== null
+      ? "The analysis on screen judged the sag against a line of " + millimetres(line) +
+        " mm; the dial reads a tolerance of " + millimetres(dial) + " mm."
+      : "The analysis on screen had no acceptance line; the dial reads a tolerance of " +
+        millimetres(dial) + " mm.";
+  const placement = demand.placement || {};
+  const curve = (placement.curve || [])
+    .filter((point) => Number.isFinite(Number(point.worst_sag_mm)));
+  const met = curve.find((point) => Number(point.worst_sag_mm) <= dial);
+  const last = curve[curve.length - 1];
+  if (met) {
+    return opening + " At " + millimetres(dial) + " mm, this run's walk would " +
+      (Number(met.count) === 0 ? "grab no node"
+        : "stop at " + counted(Number(met.count), "grabbed node")) +
+      "; run again for the forces and the verdict.";
+  }
+  if (!last) return opening + " Run again to use the dial's value.";
+  const where = counted(Number(last.count), "grabbed node") + " with the worst sag at " +
+    millimetres(last.worst_sag_mm) + " mm";
+  if (placement.reached) {
+    return opening + " This run's walk stopped at its own line, at " + where +
+      ", so only a new run can say how many grabbed nodes " + millimetres(dial) +
+      " mm needs.";
+  }
+  const ended = curve.length === Number(placement.steps) + 1
+    ? "ended at its cap of " + counted(Number(placement.steps), "batch")
+    : "ended with no unbalanced node left to grab";
+  return opening + " This run's walk " + ended + ", at " + where + ", so a run at " +
+    millimetres(dial) + " mm would end at the same place without meeting it.";
 }
 
 // The skin, with its weight in kilonewtons when the sizing block gave one:

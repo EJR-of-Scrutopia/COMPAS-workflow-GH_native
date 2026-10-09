@@ -325,10 +325,19 @@ def wires_from_mechanism(document, vertex_count, supports):
     return wires
 
 
+def tolerance_source(tolerance_mm):
+    """The acceptance line's source when it is a tolerance, in the words the
+    panel and the documents print, its millimetres in two decimals as every
+    length is written there (exports._millimetres)."""
+
+    return "a tolerance of {:.2f} mm from the designed form, set for this run".format(
+        float(tolerance_mm))
+
+
 def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
                  acceptance_source, mass_per_metre, runner=None, python_exe=None,
-                 falsework=None, study=None, ea_provenance=None,
+                 tolerance_mm=None, study=None, ea_provenance=None,
                  formwork_document=None, batch=20, steps=40, note=None):
     """Everything step A does, from a contract to a written demand document.
 
@@ -337,12 +346,14 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     request dict and returns the demand document. python_exe overrides the
     interpreter the default runner starts.
 
-    falsework, when given, is the KEY of a parts.json falsework entry. The
-    acceptance line is then computed in the engine process, where the geometry
-    is, from that rib and this skin, and acceptance and acceptance_source are
-    ignored (pass None). With neither a falsework nor an acceptance (both
-    None) the run has no acceptance line: the document's acceptance is null,
-    every instant's reachable is unknown and placement never reaches.
+    tolerance_mm, when given, is the acceptance line: the most the net may
+    stray from its designed form, in millimetres, handed to the engine as the
+    line itself with a source that says so in words (tolerance_source) and
+    recorded in the document as it was asked for. acceptance and
+    acceptance_source are then left as None: a tolerance and an explicit line
+    together are refused. With neither the run has no acceptance line: the
+    document's acceptance is null, every instant's reachable is unknown and
+    placement never reaches.
     prestress is an input: a starting point for the cut rule, not a value
     derived from anything.
 
@@ -361,14 +372,29 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     from it.
     """
 
-    if falsework is not None and not (acceptance is None and acceptance_source is None):
-        raise CableNetError(
-            "This run names the falsework entry {!r} AND an explicit acceptance "
-            "line. The falsework computes the acceptance from that rib and this "
-            "skin, so the explicit one would be discarded without saying so, and "
-            "the figure on screen would not be the figure that was asked for. "
-            "Give one or the other.".format(falsework)
-        )
+    if tolerance_mm is not None:
+        if not (acceptance is None and acceptance_source is None):
+            raise CableNetError(
+                "This run names a tolerance of {!r} mm AND an explicit acceptance "
+                "line. The tolerance is the line, so the explicit one would be "
+                "discarded without saying so, and the figure on screen would not be "
+                "the figure that was asked for. Give one or the other.".format(
+                    tolerance_mm))
+        # a boolean is no number of millimetres, though float() would take it
+        if isinstance(tolerance_mm, bool):
+            raise CableNetError("The tolerance must be a number of millimetres, not "
+                                "{!r}.".format(tolerance_mm))
+        try:
+            tolerance_mm = float(tolerance_mm)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise CableNetError("The tolerance must be a number of millimetres, not "
+                                "{!r}.".format(tolerance_mm)) from error
+        if not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0):
+            raise CableNetError(
+                "The tolerance must be a finite number of millimetres greater than "
+                "zero, not {!r}: a line of nothing is one no net can meet.".format(
+                    tolerance_mm))
+        acceptance, acceptance_source = tolerance_mm, tolerance_source(tolerance_mm)
 
     vertices = arrays["vertices"]
     edges = [tuple(edge) for edge in arrays["edges"]]
@@ -419,13 +445,13 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "net_weight": net_weight,
         "ea": float(ea),
         "prestress": float(prestress),
-        # None is no line at all: a falsework computes one in the engine, an
-        # explicit acceptance is one the caller gives, and a run with neither
-        # has no line to hold the net to, which the document says as null
-        "acceptance": None if falsework or acceptance is None else float(acceptance),
-        "acceptance_source": (None if falsework or acceptance_source is None
-                              else str(acceptance_source)),
-        "falsework": falsework,
+        # None is no line at all: a tolerance is the line (its source says so
+        # in words), an explicit acceptance is one the caller gives, and a run
+        # with neither has no line to hold the net to, which the document says
+        # as null
+        "acceptance": None if acceptance is None else float(acceptance),
+        "acceptance_source": None if acceptance_source is None else str(acceptance_source),
+        "tolerance_mm": tolerance_mm,
         "thickness": float(thickness),
         "density": float(density),
         "stage_names": {

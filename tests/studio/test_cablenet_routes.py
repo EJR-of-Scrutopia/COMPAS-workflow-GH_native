@@ -315,35 +315,50 @@ def test_bad_run_options_are_400s_that_name_the_option(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
     base = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
     for bad, word in (({"prestress": 0}, "prestress"), ({"batch": 0}, "batch"),
-                      ({"rope": "string"}, "rope"), ({"falsework": "oak"}, "falsework"),
+                      ({"rope": "string"}, "rope"), ({"tolerance_mm": 0}, "tolerance"),
+                      ({"tolerance_mm": -5}, "tolerance"),
+                      # a JSON true is not one millimetre, and false is not a line
+                      ({"tolerance_mm": True}, "tolerance"),
+                      ({"tolerance_mm": False}, "tolerance"),
+                      ({"falsework": "plywood-rib-2000"}, "falsework"),
                       ({"size": "wide"}, "number")):
         response = client.post("/api/studies/Tiny/cablenet/run", json={**base, **bad})
         assert response.status_code == 400, bad
         assert word in response.json()["detail"], bad
 
 
-def test_a_run_with_no_falsework_entry_has_no_acceptance_line_and_is_not_refused(
+def test_a_body_that_still_names_a_falsework_is_told_the_line_is_a_tolerance_now(
         tmp_path, monkeypatch):
-    # a falsework of null is how the body says there is no line to reach: the
-    # request must carry no acceptance (the engine then reports every instant's
-    # reachable as unknown), not die turning None into a number
-    seen = {}
-
-    def fake(request):
-        seen.update(request)
-        return _v2_stub(request)
-
-    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=fake)
+    # The acceptance line is a tolerance from the designed form (the owner's
+    # ruling of 9 October 2026), so a body written for the rib it replaced is
+    # refused with the reason on both paths, rather than run against a line it
+    # did not ask for. A falsework of null once meant no line at all; it names
+    # the rib all the same, so it is refused too.
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
     (tmp_path / "upload" / "Tiny-mechanism.json").write_text(
         json.dumps(_tiny_mechanism()), encoding="utf-8")
-    started = client.post("/api/studies/Tiny/cablenet/run", json={
-        "material": "concrete", "pattern": "bonded-courses", "size": 0.9,
-        "falsework": None})
-    assert started.status_code == 202, started.text
-    state = wait_for(client, started.json()["run"])
-    assert state["state"] == "done", state["message"]
-    assert seen["falsework"] is None
-    assert seen["acceptance"] is None and seen["acceptance_source"] is None
+    study = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
+    for falsework in ("plywood-rib-2000", None):
+        own = client.post("/api/studies/Tiny/cablenet/run",
+                          json={**study, "falsework": falsework})
+        staged = client.post("/api/runs", json={
+            "export": "Tiny", **study, "cablenet": True,
+            "cablenet_options": {"falsework": falsework}})
+        for response in (own, staged):
+            assert response.status_code == 400, response.text
+            detail = response.json()["detail"]
+            assert "falsework" in detail and "tolerance_mm" in detail, detail
+
+
+def test_a_staged_run_refuses_a_tolerance_that_is_no_line(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
+    study = {"export": "Tiny", "material": "concrete", "pattern": "bonded-courses",
+             "size": 0.9, "cablenet": True}
+    for bad in (0, -5, "wide", True):
+        response = client.post("/api/runs", json={
+            **study, "cablenet_options": {"tolerance_mm": bad}})
+        assert response.status_code == 400, bad
+        assert "tolerance_mm" in response.json()["detail"], bad
 
 
 def test_a_staged_run_with_the_cable_net_phase_takes_the_same_runner(tmp_path, monkeypatch):
@@ -364,7 +379,8 @@ def test_a_staged_run_with_the_cable_net_phase_takes_the_same_runner(tmp_path, m
     assert started.status_code == 202, started.text
     state = wait_for(client, started.json()["run"])
     assert state["state"] == "done", state["message"]
-    assert seen["study"] == "Tiny" and seen["falsework"] == "plywood-rib-2000"
+    assert seen["study"] == "Tiny" and seen["tolerance_mm"] == 20.0
+    assert "falsework" not in seen
     written = studies / "tiny" / "studio" / "cablenet-concrete-bonded-courses-s900-t200.json"
     assert json.loads(written.read_text(encoding="utf-8"))["schema"] == "bench.cablenet/2"
 
@@ -479,13 +495,15 @@ def test_the_run_says_cable_net_while_the_engine_works_and_done_after(tmp_path, 
     assert state["state"] == "done" and state["phase"] == "done" and state["message"] == ""
 
 
-def test_a_falsework_or_a_count_that_cannot_be_read_is_a_400_not_a_500(tmp_path, monkeypatch):
+def test_a_tolerance_or_a_count_that_cannot_be_read_is_a_400_not_a_500(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
-    # raw JSON text: a browser cannot write Infinity, a script can, and a list
-    # where a falsework's name goes does not hash
+    # raw JSON text: a browser cannot write Infinity or NaN, a script can, and a
+    # list where a number goes is not one
     frame = '{"material": "concrete", "pattern": "bonded-courses", "size": 0.9, %s}'
-    for fragment, word in (('"falsework": ["oak"]', "falsework"),
-                           ('"falsework": {"a": 1}', "falsework"),
+    for fragment, word in (('"tolerance_mm": Infinity', "tolerance"),
+                           ('"tolerance_mm": NaN', "tolerance"),
+                           ('"tolerance_mm": "wide"', "number"),
+                           ('"tolerance_mm": ["oak"]', "number"),
                            ('"batch": Infinity', "number"),
                            ('"steps": Infinity', "number")):
         response = client.post("/api/studies/Tiny/cablenet/run", content=frame % fragment,
@@ -506,7 +524,7 @@ def _unpaired_formwork():
 # cut finely enough that the plan has four courses, so a plan that differed
 # between the two paths would show in the request
 _STUDY = {"material": "concrete", "pattern": "bonded-courses", "size": 0.3, "thickness": 0.05}
-_OPTIONS = {"prestress": 250.0, "rope": "rope-5mm", "falsework": "plywood-rib-2000"}
+_OPTIONS = {"prestress": 250.0, "rope": "rope-5mm", "tolerance_mm": 15.0}
 
 
 @pytest.mark.parametrize("formwork, fragment, frame_count, options", [
@@ -564,8 +582,11 @@ def test_the_staged_run_and_the_cable_net_run_hand_the_engine_the_same_request(
         # and the defaults are the ones the panel's first run will rely on
         assert own_request["prestress"] == 300.0
         assert own_request["batch"] == 20 and own_request["steps"] == 40
-        assert own_request["falsework"] == "plywood-rib-2000"
+        assert own_request["tolerance_mm"] == own_request["acceptance"] == 20.0
+        assert "falsework" not in own_request
         assert own_request["ea_provenance"].startswith("rope-4mm")
+    else:
+        assert own_request["tolerance_mm"] == own_request["acceptance"] == 15.0
     written = sorted(path.name for path in
                      (studies / "tiny" / "studio").glob("cablenet-*.json"))
     assert written == ["cablenet-concrete-bonded-courses-s300-t50.json"]
@@ -648,12 +669,10 @@ def test_both_writers_file_an_authored_cut_under_the_same_name(tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------------
-# The falsework is chosen before the engine runs. The engine refuses a rib that
-# spans less than half the study's greatest anchor-to-anchor distance, and the
-# catalogue's first rib is two metres long, so a large vault that asked for it
-# would fail its run on a rule the server can apply first: the rib asked for
-# when it spans the vault, else the shortest rib in the catalogue that does,
-# else none.
+# The acceptance line is a tolerance from the designed form (the owner's ruling
+# of 9 October 2026, which retired the falsework rib the line was once taken
+# from), handed to the engine as the line itself by both paths that write
+# cablenet-*.json.
 # ---------------------------------------------------------------------------
 
 
@@ -708,104 +727,43 @@ _BOTH_PATHS = pytest.mark.parametrize("path", ["staged", "cable net"])
 
 
 @_BOTH_PATHS
-def test_a_rib_that_spans_the_vault_is_kept_and_the_note_says_nothing_of_it(
+def test_the_tolerance_is_the_acceptance_line_the_engine_is_handed(
         tmp_path, monkeypatch, path):
-    # Tiny's supports are 2.83 m apart at most, so the plywood rib's 2 m is more
-    # than half of it
+    # left to its default: 20 mm, the placement tolerance the T1 brief sets at
+    # full scale, handed over as the line itself with its source in words
     seen = _request_the_engine_sees(tmp_path, monkeypatch, path)
-    assert seen["falsework"] == "plywood-rib-2000"
-    assert "falsework" not in seen["note"]
+    assert seen["tolerance_mm"] == 20.0 and seen["acceptance"] == 20.0
+    assert seen["acceptance_source"] == (
+        "a tolerance of 20.00 mm from the designed form, set for this run")
+    assert "falsework" not in seen
 
 
 @_BOTH_PATHS
-def test_a_longer_rib_than_the_vault_needs_is_kept_when_it_was_asked_for(
-        tmp_path, monkeypatch, path):
-    # it spans, so it is not changed, and nothing is said of it
+def test_a_tolerance_asked_for_is_the_one_the_engine_is_handed(tmp_path, monkeypatch, path):
     seen = _request_the_engine_sees(
-        tmp_path, monkeypatch, path, options={"falsework": "glulam-rib-9000"})
-    assert seen["falsework"] == "glulam-rib-9000"
-    assert "falsework" not in seen["note"]
+        tmp_path, monkeypatch, path, options={"tolerance_mm": 12.5})
+    assert seen["tolerance_mm"] == 12.5 and seen["acceptance"] == 12.5
+    assert seen["acceptance_source"] == (
+        "a tolerance of 12.50 mm from the designed form, set for this run")
 
 
 @_BOTH_PATHS
-def test_a_rib_too_short_for_the_vault_gives_way_to_the_shortest_that_spans_it(
+def test_a_large_vault_keeps_its_tolerance_and_its_note_says_nothing_of_ribs(
         tmp_path, monkeypatch, path):
-    # scaled by 5 the corners are 10 m apart and the diagonal 14.1 m: half of
-    # that is past the plywood rib's 2 m and within the glulam rib's 9 m
+    # scaled by 5 the supports are 14.1 m apart across, a size that once had the
+    # catalogue's 2 m rib swapped for a 9 m one nobody designed. A tolerance
+    # does not depend on the vault's reach: nothing is swapped, nothing is said
     seen = _request_the_engine_sees(tmp_path, monkeypatch, path, scale=5.0)
-    assert seen["falsework"] == "glulam-rib-9000"
-    # the engine works the line out from the rib, so the request carries none
-    assert seen["acceptance"] is None and seen["acceptance_source"] is None
-    note = seen["note"]
-    assert "glulam-rib-9000" in note and "plywood-rib-2000" in note
-    assert "14.1 m" in note
-    # one note: the formwork sentence the run already had, then this one
-    assert note.startswith("no formwork document") and note.index("formwork") < note.index("glulam")
+    assert seen["tolerance_mm"] == 20.0 and seen["acceptance"] == 20.0
+    assert seen["note"] == ("no formwork document, so no frames and no column heads: "
+                            "the net is analysed at the finished shape held by its "
+                            "drum ends alone")
 
 
-@_BOTH_PATHS
-def test_a_vault_no_catalogue_rib_spans_is_run_with_no_line_and_the_note_says_so(
-        tmp_path, monkeypatch, path):
-    # supports 30 m apart along a side and 42.4 m across: half of that is past
-    # even the glulam rib's 9 m
-    seen = _request_the_engine_sees(tmp_path, monkeypatch, path, scale=15.0)
-    assert seen["falsework"] is None
-    assert seen["acceptance"] is None and seen["acceptance_source"] is None
-    assert seen["note"].startswith("no formwork document")
-    assert seen["note"].endswith(
-        "no catalogue falsework spans half the vault's 42.4 m reach; "
-        "no acceptance line is set")
-
-
-def test_no_rib_asked_for_is_no_rib_chosen_even_where_a_rib_would_span(tmp_path, monkeypatch):
-    seen = _request_the_engine_sees(
-        tmp_path, monkeypatch, "cable net", scale=5.0, options={"falsework": None})
-    assert seen["falsework"] is None
-    assert "falsework" not in seen["note"]
-
-
-def test_the_reach_is_the_greatest_distance_between_two_supports_in_millimetres():
-    from conftest_data import tiny_contract
-
-    # the corners of a 2 m square: the diagonal, 2.83 m
-    assert studio_app._greatest_reach_mm(tiny_contract()) == pytest.approx(2000.0 * 2 ** 0.5)
-    assert studio_app._greatest_reach_mm(_scaled_contract(5.0)) == pytest.approx(10000.0 * 2 ** 0.5)
-    # fewer than two supports have no reach, which every rib spans
-    alone = tiny_contract()
-    alone["equilibrium"]["resolvedSupportNodeIds"] = [0]
-    assert studio_app._greatest_reach_mm(alone) == 0.0
-
-
-def test_the_rib_is_the_one_asked_for_when_it_spans_and_else_the_shortest_that_does():
-    ribs = {"long": {"span": 12000.0}, "short": {"span": 2000.0},
-            "middle": {"span": 6000.0}}
-    choose = studio_app._choose_falsework
-    # half of 10 m is 5 m: the short rib does not span it, the middle and the
-    # long both do, and the middle is the shorter
-    key, note = choose(ribs, "short", 10000.0)
-    assert key == "middle" and "middle" in note and "short" in note
-    assert "10.0 m" in note
-    # a rib that spans is kept even where a shorter one would also do
-    assert choose(ribs, "long", 10000.0) == ("long", None)
-    # exactly half is spanned: the engine refuses a rib only when it is LESS
-    assert choose(ribs, "middle", 12000.0) == ("middle", None)
-    # no rib spans it: no line, and the note says how far the vault reaches
-    assert choose(ribs, "short", 30000.0) == (
-        None, "no catalogue falsework spans half the vault's 30.0 m reach; "
-              "no acceptance line is set")
-    # no rib asked for is no line asked for, whatever the reach
-    assert choose(ribs, None, 30000.0) == (None, None)
-
-
-def test_the_catalogue_has_a_rib_for_a_large_vault_beside_the_plywood_one(client):
-    ribs = client.get("/api/catalogue").json()["falsework"]
-    assert ribs["plywood-rib-2000"] == {
-        "span": 2000.0, "spacing": 400.0, "depth": 100.0, "width": 18.0,
-        "e_modulus": 9000.0, "description": "plywood rib 2000 x 400, 100 x 18 deep"}
-    assert ribs["glulam-rib-9000"] == {
-        "span": 9000.0, "spacing": 600.0, "depth": 400.0, "width": 90.0,
-        "e_modulus": 11600.0,
-        "description": "glulam GL24h rib 9000 x 600, 400 x 90 deep"}
+def test_the_catalogue_carries_no_falsework_ribs(client):
+    # the ribs were the acceptance line's source until 9 October 2026; the line
+    # is a tolerance now, so the catalogue offers none to choose from
+    assert "falsework" not in client.get("/api/catalogue").json()
 
 
 def _write_demand(tmp_path, monkeypatch, demand):

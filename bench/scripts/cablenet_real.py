@@ -7,7 +7,8 @@ Usage, from the repo root under the solver interpreter:
 
     .venv/Scripts/python.exe bench/scripts/cablenet_real.py
         [--material tile] [--pattern bonded-courses] [--size 1.0]
-        [--thickness 0.02] [--prestress 300] [--study "5 sided form"]
+        [--thickness 0.02] [--prestress 300] [--tolerance 20]
+        [--study "5 sided form"]
 
 The export folder is the one the studio remembers in bench/studio/settings.json.
 The script reads it and writes only under bench/studies/.
@@ -96,6 +97,9 @@ def main():
     parser.add_argument("--size", type=float, default=1.0)
     parser.add_argument("--thickness", type=float, default=0.02)
     parser.add_argument("--prestress", type=float, default=300.0)
+    # the acceptance line, in millimetres from the designed form; the route's own
+    # default, the full-scale placement tolerance in the T1 brief
+    parser.add_argument("--tolerance", type=float, default=20.0)
     args = parser.parse_args()
     # redirected to a file, as the usage above does, a block-buffered run shows
     # nothing until it ends
@@ -119,7 +123,8 @@ def main():
     options = {"material": args.material, "pattern": args.pattern, "size": args.size,
                "thickness": args.thickness}
     started = client.post("/api/studies/{}/cablenet/run".format(args.study),
-                          json={**options, "prestress": args.prestress})
+                          json={**options, "prestress": args.prestress,
+                                "tolerance_mm": args.tolerance})
     print("run:", started.status_code, started.json())
     if started.status_code not in (202, 409):
         return 1

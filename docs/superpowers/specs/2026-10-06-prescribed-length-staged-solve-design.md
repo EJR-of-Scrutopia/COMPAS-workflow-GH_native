@@ -37,6 +37,8 @@ corrected to point here.
    than from the model alone.
 6. The acceptance line is the CNC-cut timber falsework the machine replaces,
    computed under the same load, not a tolerance chosen by hand.
+   Reversed by the owner on 9 October 2026: the line is a tolerance from the
+   designed form (2026-10-08-vaulted-cablenet-view-design.md, section 14).
 
 ## 3. Scope
 

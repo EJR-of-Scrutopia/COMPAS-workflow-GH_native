@@ -319,6 +319,9 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
             "prestress_input_newtons": demand.get("prestress"),
             **floor,
             "sizing_stage": demand.get("sizing_stage"),
+            # the tolerance the acceptance line came from, as the run was asked for
+            # it; None in a document written before the tolerance
+            "tolerance_mm": demand.get("tolerance_mm"),
             "density": demand.get("density"),
             "thickness": demand.get("thickness"),
             "density_kg_m3": demand.get("density"),
@@ -335,7 +338,6 @@ def export_model(parts, demand, row, configuration, angle_degrees, generated_at,
         "sizing": catalogue.sizing_of(demand),
         "placement": demand.get("placement"),
         "notes": _notes(demand),
-        "falsework": _falsework_key(parts, demand),
         "held": demand.get("held"),
         "hold": hold,
         "columns": _column_summary(hold),
@@ -650,14 +652,12 @@ def _assumptions(parts, configuration, demand, angle_degrees):
         "The prestress is the floor every member is given; the sag is judged at it."
         if version2 else "The cut rule assumes one uniform prestress across the net.",
         unit="N")
-    # the server changes a rib too short for the vault before the engine runs, and
-    # says so in the run's note: the line is then the deflection of a rib nobody
-    # asked for, which is an assumption made on the reader's behalf
-    changed = _falsework_note(demand)
-    if changed:
-        add("falsework: the catalogue rib used, chosen from the vault's reach",
-            _falsework_key(parts, demand) or "none",
-            "The run notes: \"{}\"".format(changed))
+    # the line the sag is judged against is a figure chosen, not measured
+    tolerance = demand.get("tolerance_mm")
+    if isinstance(tolerance, (int, float)) and not isinstance(tolerance, bool):
+        add("acceptance tolerance", float(tolerance),
+            "The most the net may stray from its designed form, set for this run: "
+            "the line its sag is judged against.", unit="mm")
     return out
 
 
@@ -674,35 +674,31 @@ def _notes(demand):
     return out
 
 
-def _falsework_note(demand):
-    """What the run's note says about the falsework, when the server changed the
-    rib it was asked for or found none that spans the vault. The route puts that
-    sentence last, after any formwork note and a "; " (app._cablenet_phase_options
-    and _choose_falsework), and it opens with the falsework it names."""
+def _line_words(demand, shape):
+    """The acceptance line, said after the falsework the machine replaces: why a
+    tolerance, and the tolerance this run was asked for; or, in a document
+    written before the line became a tolerance (9 October 2026), the line as
+    that document recorded it, quoted and not re-derived; or the plain absence
+    of one."""
 
-    note = demand.get("note")
-    if not isinstance(note, str):
-        return None
-    note = note.strip()
-    for opening in ("falsework ", "no catalogue falsework "):
-        if note.startswith(opening):
-            return note
-        at = note.find("; " + opening)
-        if at >= 0:
-            return note[at + 2:]
-    return None
-
-
-def _falsework_key(parts, demand):
-    """The catalogue rib the acceptance line was taken from, when the source
-    names one. The engine writes it as "falsework <key>: <the entry>"
-    (solve_cablenet.resolve_acceptance); any other source is the study's own."""
-
-    source = demand.get("acceptance_source")
-    if not isinstance(source, str) or not source.startswith("falsework "):
-        return None
-    key = source[len("falsework "):].split(":", 1)[0].strip()
-    return key if key in (parts.get("falsework") or {}) else None
+    tolerance = demand.get("tolerance_mm")
+    line = shape.get("acceptance_mm")
+    source = shape.get("acceptance_source")
+    if isinstance(tolerance, (int, float)) and not isinstance(tolerance, bool):
+        return ("A mould like that barely moves, so the machine is not judged against it "
+                "but against a tolerance: the most the net may stray from its designed "
+                "form while the skin goes on. This run holds the net to a tolerance of {} "
+                "mm from the designed form, set for this run, and that tolerance is the "
+                "acceptance line.".format(_millimetres(tolerance)))
+    if line is None:
+        return "No acceptance line is set for this run, so the net's shape is not judged."
+    if source:
+        return ("This document was written before the line became a tolerance from the "
+                "designed form: its acceptance line of {} mm was recorded in these words, "
+                "quoted verbatim: \"{}\". It is taken from that record and is not "
+                "re-derived here.".format(_millimetres(line), source))
+    return ("The acceptance line is {} mm. No source was recorded for it, so the reader "
+            "should treat the line with caution.".format(_millimetres(line)))
 
 
 # ---------------------------------------------------------------------------
@@ -1355,6 +1351,9 @@ def _assumed_value(item):
     if (item.get("unit") == "N" and isinstance(value, (int, float))
             and not isinstance(value, bool)):
         return "{} N".format(_newtons(value))
+    if (item.get("unit") == "mm" and isinstance(value, (int, float))
+            and not isinstance(value, bool)):
+        return "{} mm".format(_millimetres(value))
     return _num(value, 2)
 
 
@@ -1523,8 +1522,6 @@ def _datasheet_sections(model):
     out = []
 
     # 1
-    # a rib from the catalogue is the catalogue's record, not the study's
-    keeper = "catalogue" if model.get("falsework") else "study"
     notes = model.get("notes") or []
     if len(notes) == 1:
         noted = ["The analysis carries this note, quoted verbatim: \"{}\".".format(notes[0])]
@@ -1535,23 +1532,10 @@ def _datasheet_sections(model):
         noted = []
     out.append("## What this machine replaces\n\n" + "\n\n".join([
         "The winch machine described here stands in for the timber falsework "
-        "that would otherwise hold the vault up while it is built. The "
-        "falsework is the reference the machine is judged against: the "
-        "deflection of its rib becomes the acceptance line, the most the "
-        "net may stray from its intended shape before it is no better than "
-        "the timber it replaced.",
-        "The {} records the rib in these words, quoted verbatim: \"{}\".".format(
-            keeper, shape.get("acceptance_source") or "no source recorded"),
-    ] + noted + [
-        "That gives an acceptance line of {} mm. {}".format(
-            _millimetres(shape.get("acceptance_mm")),
-            ("It is taken from the catalogue's record of the rib, and is not "
-             "re-derived here." if keeper == "catalogue" else
-             "It is taken from the study's own record of the rib, and is not "
-             "re-derived here.") if shape.get("acceptance_source")
-            else "No source was recorded for it, so the reader should treat "
-                 "the line with caution."),
-    ]))
+        "that would otherwise hold the vault up while it is built: a mould cut "
+        "to the vault's exact surface and propped from below.",
+        _line_words(demand, shape),
+    ] + noted))
 
     # 2
     wires = demand.get("wires") or []

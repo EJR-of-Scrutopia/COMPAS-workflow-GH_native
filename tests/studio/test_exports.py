@@ -2333,77 +2333,83 @@ def test_what_binds_is_said_at_the_sizing_stage_in_a_version_2_document():
 
 
 # ---------------------------------------------------------------------------
-# The run's own notes reach the data sheet, and a rib the server chose for the
-# vault's reach is an assumption said in all the places assumptions are said
+# The acceptance line is a tolerance from the designed form (the owner's ruling
+# of 9 October 2026). The data sheet says why the machine is not judged against
+# the mould it replaces, then the tolerance, then the run's notes; the tolerance
+# is listed with the assumptions; a document from before keeps its line in its
+# own recorded words.
 # ---------------------------------------------------------------------------
 
-# the real study's source and note, as the engine and the route wrote them
+_TOLERANCE_SOURCE = "a tolerance of 20.00 mm from the designed form, set for this run"
+# the real study's line before the ruling: a catalogue rib nobody designed
 _GLULAM_SOURCE = (
     'falsework glulam-rib-9000: {"depth": 400.0, "description": "glulam GL24h rib 9000 x '
     '600, 400 x 90 deep", "e_modulus": 11600.0, "spacing": 600.0, "span": 9000.0, '
     '"width": 90.0}')
-_GLULAM_NOTE = ("falsework glulam-rib-9000 was used in place of plywood-rib-2000, which "
-                "spans 2000 mm, less than half the vault's 16.1 m reach")
-_CHOSEN = "falsework: the catalogue rib used, chosen from the vault's reach"
+_FORMWORK_NOTE = ("no formwork document, so no frames and no column heads: the net is "
+                  "analysed at the finished shape held by its drum ends alone")
 
 
-def test_the_runs_notes_are_printed_in_the_first_section_after_the_rib():
-    model = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE, note=_GLULAM_NOTE)
-    assert model["notes"] == [_GLULAM_NOTE]
-    assert model["falsework"] == "glulam-rib-9000"
+def test_the_first_section_says_why_a_tolerance_then_the_tolerance_then_the_notes():
+    model = _sized_model(acceptance=20.0, acceptance_source=_TOLERANCE_SOURCE,
+                         tolerance_mm=20.0, note=_FORMWORK_NOTE)
     section = _section(exports.datasheet_markdown(model), "replaces")
-    rib = section.index("The catalogue records the rib in these words, quoted verbatim: "
-                        "\"falsework glulam-rib-9000: ")
+    why = section.index("A mould like that barely moves, so the machine is not judged "
+                        "against it but against a tolerance: the most the net may stray "
+                        "from its designed form while the skin goes on.")
+    tolerance = section.index("This run holds the net to a tolerance of 20.00 mm from the "
+                              "designed form, set for this run, and that tolerance is the "
+                              "acceptance line.")
     note = section.index("The analysis carries this note, quoted verbatim: \"{}\".".format(
-        _GLULAM_NOTE))
-    line = section.index("That gives an acceptance line of 3.25 mm. It is taken from the "
-                         "catalogue's record of the rib, and is not re-derived here.")
-    assert rib < note < line
-    assert "The study records the rib" not in section and "study's own record" not in section
-    # the placement's note follows the run's
-    placement = {**_v2_demand()["placement"],
-                 "note": "the formwork document names no column heads, so none were held"}
-    both = _sized_model(note=_GLULAM_NOTE, placement=placement)
-    assert both["notes"] == [_GLULAM_NOTE, placement["note"]]
-    assert ("The analysis carries these notes, quoted verbatim: \"{}\" and \"{}\".".format(
-        _GLULAM_NOTE, placement["note"])) in _section(exports.datasheet_markdown(both), "replaces")
-    # no note says nothing, a blank one too, and a source of the study's own keeps its words
-    for quiet in (_sized_model(), _sized_model(note="   ")):
-        assert quiet["notes"] == []
-        plain = _section(exports.datasheet_markdown(quiet), "replaces")
-        assert "carries this note" not in plain
-        assert "The study records the rib in these words" in plain
-        assert "It is taken from the study's own record of the rib" in plain
-    # a source that names no rib the catalogue has is not the catalogue's
-    other = _sized_model(acceptance_source="falsework no-such-rib: {}")
-    assert other["falsework"] is None
-    assert "The study records the rib" in _section(exports.datasheet_markdown(other), "replaces")
+        _FORMWORK_NOTE))
+    assert why < tolerance < note
+    import re
+    assert not re.search(r"\brib\b|catalogue", section), "a tolerance names no rib"
+    # a tolerance that is not a whole millimetre keeps its figure
+    half = _sized_model(acceptance=12.5, tolerance_mm=12.5, acceptance_source=(
+        "a tolerance of 12.50 mm from the designed form, set for this run"))
+    assert "a tolerance of 12.50 mm from the designed form" in _section(
+        exports.datasheet_markdown(half), "replaces")
 
 
-def test_the_rib_the_server_chose_is_listed_under_the_assumptions_in_both_documents():
-    # the route puts the falsework's sentence after any formwork note
-    formwork = ("no formwork document, so no frames and no column heads: the net is "
-                "analysed at the finished shape held by its drum ends alone")
-    model = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE,
-                         note=formwork + "; " + _GLULAM_NOTE)
-    entry = next(a for a in model["assumptions"] if a["what"] == _CHOSEN)
-    assert entry["value"] == "glulam-rib-9000"
-    assert entry["why"] == "The run notes: \"{}\"".format(_GLULAM_NOTE)
+def test_a_document_from_before_the_tolerance_keeps_its_line_in_its_own_words():
+    # the real study's document of 8 October: its line came from a rib, in the
+    # engine's own words
+    older = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE)
+    section = _section(exports.datasheet_markdown(older), "replaces")
+    assert ("This document was written before the line became a tolerance from the "
+            "designed form: its acceptance line of 3.25 mm was recorded in these words, "
+            "quoted verbatim: \"{}\". It is taken from that record and is not re-derived "
+            "here.".format(_GLULAM_SOURCE)) in section
+    # and nothing before it says this document's line is a tolerance
+    assert "barely moves" not in section and "against a tolerance" not in section
+    # a line with no source, and no line at all, are each said plainly
+    unsourced = _section(exports.datasheet_markdown(
+        _sized_model(acceptance=3.25, acceptance_source=None)), "replaces")
+    assert ("The acceptance line is 3.25 mm. No source was recorded for it, so the reader "
+            "should treat the line with caution.") in unsourced
+    lineless = _section(exports.datasheet_markdown(
+        _sized_model(acceptance=None, acceptance_source=None)), "replaces")
+    assert "No acceptance line is set for this run, so the net's shape is not judged." in lineless
+
+
+def test_the_tolerance_is_listed_under_the_assumptions_in_both_documents():
+    model = _sized_model(acceptance=20.0, acceptance_source=_TOLERANCE_SOURCE,
+                         tolerance_mm=20.0)
+    entry = next(a for a in model["assumptions"] if a["what"] == "acceptance tolerance")
+    assert entry["value"] == 20.0 and entry["unit"] == "mm"
+    assert entry["why"] == ("The most the net may stray from its designed form, set for this "
+                            "run: the line its sag is judged against.")
     sheet = _section(exports.datasheet_markdown(model), "assumptions")
-    assert ("**{}.** Value: glulam-rib-9000. The run notes: \"{}\".".format(
-        _CHOSEN, _GLULAM_NOTE)) in sheet
+    assert ("**acceptance tolerance.** Value: 20.00 mm. The most the net may stray from its "
+            "designed form, set for this run: the line its sag is judged against.") in sheet
     rows = exports._sheet_rows(model)["Read this"]
-    chosen = [_CHOSEN, "glulam-rib-9000", "The run notes: \"{}\"".format(_GLULAM_NOTE)]
-    assert chosen in rows
-    assert rows.index(chosen) > rows.index(["Assumptions", "Value", "Why"])
-    # when no rib spans the vault, none was used and the note says why
-    unspanned = ("no catalogue falsework spans half the vault's 16.1 m reach; no "
-                 "acceptance line is set")
-    none = _sized_model(acceptance=None, acceptance_source=None,
-                        note=formwork + "; " + unspanned)
-    entry = next(a for a in none["assumptions"] if a["what"] == _CHOSEN)
-    assert entry["value"] == "none" and entry["why"] == "The run notes: \"{}\"".format(unspanned)
-    # the rib asked for stood: the run says nothing about the falsework, and nor do they
-    for quiet in (_sized_model(acceptance_source=_GLULAM_SOURCE),
-                  _sized_model(note=formwork), _model()):
-        assert not any(a["what"] == _CHOSEN for a in quiet["assumptions"])
+    assert any(row and row[0] == "acceptance tolerance" for row in rows)
+    # the rib the server once swapped in is no assumption of any document now,
+    # and a document with no tolerance lists none
+    older = _sized_model(acceptance=3.25, acceptance_source=_GLULAM_SOURCE,
+                         note=_FORMWORK_NOTE + "; falsework glulam-rib-9000 was used in "
+                              "place of plywood-rib-2000, which spans 2000 mm, less than "
+                              "half the vault's 16.1 m reach")
+    assert not any("falsework" in a["what"] or a["what"] == "acceptance tolerance"
+                   for a in older["assumptions"])

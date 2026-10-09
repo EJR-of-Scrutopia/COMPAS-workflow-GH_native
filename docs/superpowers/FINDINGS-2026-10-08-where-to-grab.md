@@ -146,3 +146,93 @@ recommend: stepper-seven-spool | the shape is past the acceptance line at the si
 The walk grabbed 800 nodes, which is all that its 40 batches of 20 allow, and it did not reach the line: the worst sag is 12.3 mm against 3.25 mm, and the worst unbalanced force is still 15.7 N. That is consistent with the measured expectation in section 13 that nearly every node the columns do not hold is unbalanced: the walk found 20 to take at every one of its 40 steps, took 800 of the 1055 nodes that are not column heads and left 255, so it needs more than 800 nodes to reach the line and no more than 1055. The worst column carries 1499.8 N, at node 120 from S17 on, against 215.7 N at S16, but the split of the skin between the columns and the grabbed nodes follows a convention of the fit, that a member between two held nodes carries nothing, so these forces are one tension-only state among many and not a measurement. The catalogue would build stepper-seven-spool, though only on the tie-break: judged against the shape every one of the six has a load factor of 0.0, and judged on the parts alone every one reaches 20.0. The load factor weighs the wires, whose worst tension is 14.6 N, and not the 435.1 N that a grabbed node needs, which a wire there would have to carry, so it does not yet show that any rig in the catalogue holds the 800. So the finding of section 13 stands: the actuators are necessary, 800 is not enough, and the walk's cap, not the net, set the count.
 
 The load factors in the table above were judged at the fit's own 14.6 N in the worst wire, while the shape half gave every member the entered 300 N as a floor on its stiffness. They are superseded by the rule the final review settled: a wire is judged at the larger of the entered prestress and the greatest tension the fit finds in any wire, worked out once in the engine's sizing block. Fitting the net with that floor, so that the imbalance the prestress leaves is charged to the grabbed nodes, is an open item for the owner, and it would change the grab count.
+
+
+## Addendum, 9 October 2026: judged against a 20 mm tolerance
+
+The owner ruled, on reading this document, that the acceptance line is a
+tolerance from the designed form, not the deflection of a falsework rib: the
+falsework the machine does away with is a mould cut to the vault's exact
+surface and propped from below, which barely moves. The 3.25 mm line above was
+the sag of a straight 9 m glulam beam that the server had swapped in for the
+catalogue's 2 m plywood rib, a beam nobody designed for this vault. The run was
+repeated with the same options and a tolerance of 20 mm, the placement
+tolerance the T1 brief sets at full scale; it took 80 s. The quoted lines
+are the run's own, copied by a program.
+
+```
+schema bench.cablenet/2  prestress 300.0 N  EA 450000.0 N  acceptance 20.00 mm (a tolerance of 20.00 mm from the designed form, set for this run)
+held: 105 wire nodes, 46 column heads, 740 actuators
+net: 1101 nodes, 2000 members; 1055 are not column heads, of which 740 were grabbed and 315 were not
+placement at S17: batch 20 steps 40 reached True
+```
+
+The walk picks the same nodes whatever the line, and this time it stopped at
+the first point within 20.00 mm, so its curve is the one above, point for
+point, ending at 740:
+
+```
+    680 grabbed  worst sag       37.4 mm  worst unbalanced     24.0 N  norm      256.1 N
+    700 grabbed  worst sag       33.3 mm  worst unbalanced     22.6 N  norm      232.8 N
+    720 grabbed  worst sag       27.1 mm  worst unbalanced     21.2 N  norm      210.9 N
+    740 grabbed  worst sag       19.6 mm  worst unbalanced     19.4 N  norm      187.9 N
+```
+
+```
+ stage    kind     wire N actuator N     dev mm   after mm     reach   column N
+   F45   raise        0.3        1.5       22.8        0.7      True        6.1
+   F60  finish        0.2        1.5       17.7        0.6      True        6.1
+   F75  finish        0.2        1.5       19.1        0.6      True        6.1
+   F90    hold        0.2        1.5       19.2        0.5      True        6.1
+  F100    hold        0.2        1.5       19.2        0.5      True        6.1
+    S1    tile       14.6       43.5       84.0        4.3      True       44.0
+    S2    tile       14.6       43.8      104.0        9.0      True       44.0
+    S3    tile       14.6       70.1      168.9       14.7      True       70.9
+    S4    tile       14.6       70.1      238.7       16.9      True       70.9
+    S5    tile       14.6       70.1      317.8       18.6      True       70.9
+    S6    tile       14.6       71.5      423.1       19.1      True       70.9
+    S7    tile       14.6       71.5      539.8       19.4      True       70.9
+    S8    tile       14.6       72.7      731.1       19.6      True       74.0
+    S9    tile       14.6       84.8      940.6       19.6      True       86.8
+   S10    tile       14.6       84.8     1301.0       19.6      True       86.8
+   S11    tile       14.6      103.1     1547.7       19.6      True      106.7
+   S12    tile       14.6      115.5     1685.4       19.6      True      106.7
+   S13    tile       14.6      133.5     1809.2       19.6      True      141.6
+   S14    tile       14.6      147.6     1914.3       19.6      True      141.6
+   S15    tile       14.6      218.0     1989.3       19.6      True      215.7
+   S16    tile       14.6      218.0     1989.3       19.6      True      215.7
+   S17    tile       14.6      435.1     2027.7       19.6      True     1499.8
+   S18    tile       14.6      435.1     2027.7       19.6      True     1499.8
+   S19    tile       14.6      435.1     2027.7       19.6      True     1499.8
+   S20    tile       14.6      435.1     2027.7       19.6      True     1499.8
+worst column: 1499.8 N at S17, node 120 (vertical part 1499.8 N)
+```
+
+```
+sizing: {'stage': 'S17', 'worst_wire_tension_newtons': 300.0, 'fitted_wire_tension_newtons': 14.580109307758057, 'prestress_newtons': 300.0, 'worst_actuator_newtons': 435.1058005569256, 'worst_sag_mm': 19.626526644687637, 'load_newtons': 67458.98645081984}
+```
+
+```
+  stepper-seven-spool          load factor 4.9 binds on turnbuckle-hook-hook-M10
+  stepper-seven-spool-block    load factor 4.0 binds on WZ-11-K
+  stepper-eye-eye              load factor 7.8 binds on 34HS46
+  stepper-heavy                load factor 12.5 binds on rope-6mm
+  inverter-worm                load factor 4.9 binds on turnbuckle-hook-hook-M10
+  inverter-worm-heavy          load factor 12.5 binds on rope-6mm
+recommend: stepper-heavy | the configuration that carries the skin with the largest margin, the ceiling over the tension the wires are judged at; among ties the fewest parts, then the first listed
+```
+
+At 20 mm and 300 N of prestress the walk reaches the line with 740 grabbed
+nodes of the 1055 the columns do not hold, and every instant, frames and
+courses, is within it: the worst sag after grabbing is 19.6 mm, from S8 on. The
+answer of 8 October, that 800 were not enough, was an answer to the invented
+3.25 mm line. The walk is the 8 October walk, node for node, up to 740: the
+same nodes in the same order, with the same sags and residuals, checked
+against the earlier document. With the shape inside the line the rigs are
+judged on their parts: the two heavy rigs have a load factor of 12.5, the
+eye-eye stepper 7.8 and the other three 4.0 to 4.9, and stepper-heavy is
+recommended on the margin, tied with inverter-worm-heavy and first listed.
+Two items stay open for the owner. The wires are judged at
+the 300 N prestress floor, not at the 14.6 N the skin drives through them, so
+each factor measures the prestress against the parts. And the 435.1 N a
+grabbed node needs is judged against no rig.

@@ -407,6 +407,45 @@ def test_without_a_formwork_document_the_request_says_no_heads_and_no_frames():
     assert seen["batch"] == 20 and seen["steps"] == 40
 
 
+def test_a_tolerance_is_handed_to_the_engine_as_the_line_and_said_in_words():
+    seen = {}
+
+    def fake(request):
+        seen.update(request)
+        return {"schema": "bench.cablenet/2", "stages": [{}]}
+
+    arrays = {"vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, -0.3], [2.0, 0.0, 0.0]],
+              "edges": [[0, 1], [2, 1]], "faces": []}
+    contract = {"equilibrium": {"resolvedSupportNodeIds": [0, 2]}}
+    mech = {"mechanism": {"wires": [
+        {"name": "w0", "net_vertex": 0, "frame_point": {"x": -3.0, "y": 0.0, "z": 0.9}},
+        {"name": "w2", "net_vertex": 2, "frame_point": {"x": 5.0, "y": 0.0, "z": 0.9}}]}}
+
+    def run(acceptance=None, source=None, **extra):
+        return cablenet.run_cablenet(contract, arrays, [], 0.02, 1800.0, tmp_demand_path(),
+                                     mech, 2.0e5, 300.0, acceptance, source, 0.061,
+                                     runner=fake, **extra)
+
+    run(tolerance_mm=20.0)
+    assert seen["tolerance_mm"] == 20.0 and seen["acceptance"] == 20.0
+    assert seen["acceptance_source"] == (
+        "a tolerance of 20.00 mm from the designed form, set for this run")
+    assert "falsework" not in seen
+    # a tolerance AND an explicit line would leave one of the two unused, unsaid
+    with pytest.raises(cablenet.CableNetError, match="tolerance"):
+        run(5.0, "test", tolerance_mm=20.0)
+    # no tolerance is a line that is zero, negative or not a finite number; a
+    # boolean is no number of millimetres, and one too large for a float is said
+    # as a refusal, not raised as an OverflowError
+    for bad in (0.0, -1.0, float("nan"), float("inf"), True, False, 10 ** 400):
+        with pytest.raises(cablenet.CableNetError, match="tolerance"):
+            run(tolerance_mm=bad)
+    # an explicit line with no tolerance records none
+    seen.clear()
+    run(5.0, "test")
+    assert seen["tolerance_mm"] is None and seen["acceptance"] == 5.0
+
+
 def test_a_column_head_outside_the_net_is_refused_by_name():
     arrays = {"vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, -0.3], [2.0, 0.0, 0.0]],
               "edges": [[0, 1], [2, 1]], "faces": []}

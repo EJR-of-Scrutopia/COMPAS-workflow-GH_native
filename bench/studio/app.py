@@ -147,62 +147,22 @@ RUNS_LOCK = threading.Lock()
 # both things that write cablenet-*.json, the staged run's cable net phase and
 # the cable net run of its own, so a default cannot differ between them and the
 # document change with the route that happened to write it.
+#
+# tolerance_mm is the acceptance line: the most the net may stray from its
+# designed form, in millimetres. 20 mm is the placement tolerance the T1 brief
+# sets at full scale (5 mm on the 1:4 rig). It replaced the falsework rib on the
+# owner's ruling of 9 October 2026: the mould the machine does away with is cut
+# to the vault's exact surface and propped, so it barely moves, and the net is
+# judged against a tolerance instead.
 CABLENET_DEFAULTS = {
-    "prestress": 300.0, "rope": "rope-4mm", "falsework": "plywood-rib-2000",
+    "prestress": 300.0, "rope": "rope-4mm", "tolerance_mm": 20.0,
     "batch": 20, "steps": 40,
 }
 
-
-def _greatest_reach_mm(contract) -> float:
-    """The greatest distance between two of the study's supports, in millimetres.
-
-    The rule solve_cablenet.resolve_acceptance applies, read from the contract
-    itself (its support ids and its equilibrium vertices, which are in metres),
-    so the falsework chosen here and the refusal made there are of one number.
-    Fewer than two supports have no reach.
-    """
-
-    supports = geometry.support_ids(contract)
-    vertices = contract["equilibrium"].get("vertices", [])
-    points = [[float(vertices[node][axis]) * 1000.0 for axis in ("x", "y", "z")]
-              for node in supports]
-    return max((math.dist(p, q) for i, p in enumerate(points) for q in points[i + 1:]),
-               default=0.0)
-
-
-def _choose_falsework(ribs, requested, reach_mm):
-    """The falsework to run with and the sentence to carry in the demand's note.
-
-    Returns (key, note); the note is None when nothing was changed.
-
-    The engine takes the acceptance line from the deflection of a timber rib and
-    refuses a rib that spans less than half the study's greatest anchor-to-anchor
-    distance, because a rib that short describes a different building
-    (solve_cablenet.resolve_acceptance). That refusal stays as the backstop. This
-    applies the same rule first, so a large vault is not refused for asking for
-    the catalogue's small rib: the rib asked for stands when it spans the vault;
-    else the shortest rib in the catalogue that does is used and the note says
-    which and why; else the run has no acceptance line and the note says so. No
-    rib asked for is no line asked for, and nothing is chosen.
-    """
-
-    # no rib asked for is no line asked for; a name the catalogue lacks is left
-    # for the routes and the engine to refuse, which both do by name
-    if requested is None or requested not in ribs:
-        return requested, None
-    half = reach_mm / 2.0
-    spans = {key: float(entry["span"]) for key, entry in ribs.items()}
-    if spans[requested] >= half:
-        return requested, None
-    reach = "{:.1f} m".format(reach_mm / 1000.0)
-    spanning = sorted((span, key) for key, span in spans.items() if span >= half)
-    if not spanning:
-        return None, ("no catalogue falsework spans half the vault's {} reach; "
-                      "no acceptance line is set".format(reach))
-    chosen = spanning[0][1]
-    return chosen, ("falsework {} was used in place of {}, which spans {:g} mm, less "
-                    "than half the vault's {} reach".format(
-                        chosen, requested, spans[requested], reach))
+# A body written for the rib the tolerance replaced is refused with the reason,
+# rather than run against a line it did not ask for.
+NO_FALSEWORK = ("falsework is no longer taken: the net is judged against a tolerance "
+                "from the designed form, so send tolerance_mm, in millimetres")
 
 
 MATERIALS = sorted(staging.DENSITIES)
@@ -1388,9 +1348,28 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
     # frame-less one. Both come here now.
     # ------------------------------------------------------------------
 
+    def _tolerance_mm(value, name):
+        """A tolerance in millimetres, or the 400 that says why it is none: the
+        line the sag is judged against is a finite number greater than zero."""
+
+        # a JSON true is not one millimetre, though float() would take it
+        if isinstance(value, bool):
+            raise HTTPException(400, "{} must be a number of millimetres, not {!r}".format(
+                name, value))
+        try:
+            tolerance = float(value)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(400, "{} must be a number of millimetres, not {!r}".format(
+                name, value))
+        if not (math.isfinite(tolerance) and tolerance > 0.0):
+            raise HTTPException(
+                400, "{} must be a finite number of millimetres greater than zero, "
+                     "not {!r}".format(name, value))
+        return tolerance
+
     def _cablenet_phase_options(export, contract, slug, material, key_pattern, size,
                                 thickness, density, prestress, rope_key,
-                                falsework_key, batch, steps) -> dict:
+                                tolerance_mm, batch, steps) -> dict:
         """The keyword arguments of cablenet.run_cablenet that belong to the study
         and to the caller's choices rather than to the cut: where the document is
         written, the mechanism and formwork documents, the rope, the line the net
@@ -1403,9 +1382,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         the contract beside it, it costs the run its frames and its column heads
         and leaves a sentence in the document saying so.
 
-        The falsework is chosen here too (_choose_falsework), from the study's
-        reach, so what the engine is handed is a rib it will not refuse or none;
-        a change from the rib asked for is said in the same note.
+        The acceptance line is the tolerance asked for, which run_cablenet
+        hands the engine as the line itself and says in words.
         """
 
         import catalogue
@@ -1435,26 +1413,18 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 formwork_document = None
         parts = catalogue.load_parts()
         rope = parts["rope"][rope_key]
-        # The rib the acceptance line is taken from is chosen here, before the
-        # engine runs, by the rule the engine would refuse it on: a rib that spans
-        # less than half the study's reach is changed for the shortest that does,
-        # or for none, and the note says so after the formwork's.
-        falsework_key, falsework_note = _choose_falsework(
-            parts.get("falsework") or {}, falsework_key, _greatest_reach_mm(contract))
-        if falsework_note:
-            note = "; ".join(part for part in (note, falsework_note) if part)
         options = {
             "out_path": bundle.cablenet_path(
                 slug, material, key_pattern, size, thickness, density),
             "mechanism_document": mechanism_document,
             # EA and mass come from the chosen rope's catalogue entry; the
-            # acceptance is computed from the named falsework inside the engine
-            # process, and a run with no falsework has no line at all.
+            # acceptance line is the tolerance, which run_cablenet hands the
+            # engine as the line itself and says in words.
             "ea": float(rope["ea_newtons"]),
             "mass_per_metre": float(rope["mass_per_metre_kg"]),
             "acceptance": None,
             "acceptance_source": None,
-            "falsework": falsework_key,
+            "tolerance_mm": tolerance_mm,
             "study": export,
             "ea_provenance": "{}: EA {} N, {}".format(
                 rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
@@ -1728,9 +1698,12 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                     raise HTTPException(
                         400, "cablenet_options.{} must be a number, not {!r}".format(
                             field, cablenet_options[field]))
+        if "falsework" in cablenet_options:
+            raise HTTPException(400, "cablenet_options: " + NO_FALSEWORK)
+        tolerance_mm = _tolerance_mm(
+            cablenet_options.get("tolerance_mm", CABLENET_DEFAULTS["tolerance_mm"]),
+            "cablenet_options.tolerance_mm")
         rope_key = str(cablenet_options.get("rope", CABLENET_DEFAULTS["rope"]))
-        falsework_key = str(
-            cablenet_options.get("falsework", CABLENET_DEFAULTS["falsework"]))
         prestress = float(
             cablenet_options.get("prestress", CABLENET_DEFAULTS["prestress"]))
         parts = None
@@ -1740,9 +1713,6 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             parts = catalogue.load_parts()
             if rope_key not in parts["rope"]:
                 raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
-            if falsework_key not in (parts.get("falsework") or {}):
-                raise HTTPException(
-                    400, "no falsework named {!r} in the catalogue".format(falsework_key))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -1805,7 +1775,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                         "cablenet_options": _cablenet_phase_options(
                             export, slot.contract, slug, material, key_pattern,
                             size, thickness, density, prestress, rope_key,
-                            falsework_key, CABLENET_DEFAULTS["batch"],
+                            tolerance_mm, CABLENET_DEFAULTS["batch"],
                             CABLENET_DEFAULTS["steps"]),
                     }
                 staging.run_staging(
@@ -1862,19 +1832,18 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             raise HTTPException(400, "batch must be at least one node")
         if steps < 0:
             raise HTTPException(400, "steps cannot be negative")
+        if "falsework" in body:
+            raise HTTPException(400, NO_FALSEWORK)
+        tolerance_mm = _tolerance_mm(
+            body.get("tolerance_mm", CABLENET_DEFAULTS["tolerance_mm"]), "tolerance_mm")
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
                 ", ".join(bundle.CUT_SOURCES)))
         rope_key = str(body.get("rope", CABLENET_DEFAULTS["rope"]))
-        falsework_key = body.get("falsework", CABLENET_DEFAULTS["falsework"])
-        if falsework_key is not None:
-            falsework_key = str(falsework_key)
         parts = catalogue.load_parts()
         if rope_key not in parts["rope"]:
             raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
-        if falsework_key is not None and falsework_key not in (parts.get("falsework") or {}):
-            raise HTTPException(400, "no falsework named {!r} in the catalogue".format(falsework_key))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -1911,7 +1880,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
                 slot = staging.cut_slot(pairs[export], pattern, source)
                 options = _cablenet_phase_options(
                     export, slot.contract, slug, material, slot.key_pattern, size,
-                    thickness, density, prestress, rope_key, falsework_key, batch,
+                    thickness, density, prestress, rope_key, tolerance_mm, batch,
                     steps)
                 cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
                 run["phase"] = "cable net"

@@ -143,23 +143,18 @@ def test_the_demand_document_round_trips_and_carries_both_sums():
     assert stage["placed_weight_newtons"] == stage["skin_load_sum_newtons"]
 
 
-def test_the_acceptance_line_comes_from_the_named_falsework():
-    import solve_cablenet
-    import cablenet
-
-    vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
-    request = {"falsework": "plywood-rib-2000", "thickness": 0.02, "density": 1800.0}
-    line, source = solve_cablenet.resolve_acceptance(request, vertices, [0, 1])
-    # a 2000 mm plywood rib under a 20 mm tile skin: a few millimetres, not
-    # micrometres and not metres
-    assert 0.5 < line < 50.0, line
-    assert "plywood-rib-2000" in source and "9000" in source
-    print("acceptance line mm", line)
-
-    far = [[0.0, 0.0, 0.0], [15.9, 0.0, 0.0]]
-    with pytest.raises(cablenet.CableNetError) as refused:
-        solve_cablenet.resolve_acceptance(request, far, [0, 1])
-    assert "2000" in str(refused.value) and "15900" in str(refused.value)
+def test_the_document_records_the_tolerance_it_was_judged_against():
+    pytest.importorskip("compas_fd")
+    # the run hands the tolerance over as the line and says so in words
+    # (cablenet.run_cablenet); the document keeps the figure asked for beside
+    # the line it became, and a request with none records none
+    document = solve_cablenet.solve(_grid_request(
+        acceptance=20.0, tolerance_mm=20.0,
+        acceptance_source="a tolerance of 20.00 mm from the designed form, set for this run"))
+    assert document["tolerance_mm"] == 20.0 and document["acceptance"] == 20.0
+    assert document["acceptance_source"] == (
+        "a tolerance of 20.00 mm from the designed form, set for this run")
+    assert solve_cablenet.solve(_grid_request())["tolerance_mm"] is None
 
 
 def test_solve_writes_study_density_thickness_and_ea_provenance():

@@ -31,6 +31,7 @@ def _function_body(js, name):
 
 def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
     for ident in ("cablenet-run", "cablenet-run-status", "cablenet-prestress", "cablenet-speed",
+                  "cablenet-tolerance", "cablenet-tolerance-value",
                   "cablenet-speed-note", "cablenet-demand", "cablenet-configuration",
                   "cablenet-configuration-note", "cablenet-recommend", "cablenet-recommend-note",
                   "cablenet-vary-toggle", "cablenet-parts", "cablenet-settled", "cablenet-holds",
@@ -42,9 +43,20 @@ def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
     # prestress sentence having moved into the model beside the rope's
     for name in ("verdictOf", "demandSentences", "grabText", "curveSvg", "modifiedFrom",
                  "fallbackKey", "settledText", "rpmText", "shapeOf",
-                 "ropeMismatch", "prestressNote"):
+                 "ropeMismatch", "prestressNote", "toleranceNote"):
         assert name in JS, name
     assert "export function mountCableNet({" in JS
+
+
+def test_the_run_sends_the_tolerance_dial_and_the_demand_says_when_it_has_moved():
+    assert "tolerance_mm: Number(el.tolerance.value)" in _function_body(JS, "startRun")
+    assert "toleranceNote(demand, Number(el.tolerance.value))" in _function_body(
+        JS, "renderDemand")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    # 20 mm: the placement tolerance the T1 brief sets at full scale
+    assert ('<input id="cablenet-tolerance" type="range" min="1" max="100" step="1" '
+            'value="20">') in html
+    assert '<b id="cablenet-tolerance-value">20</b><em>mm</em>' in html
 
 
 def test_price_never_reaches_the_panel():

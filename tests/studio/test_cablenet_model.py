@@ -138,6 +138,45 @@ out.sources = [
 const oddRib = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 oddRib.acceptance_source = 'falsework odd-rib: {"description": "a <b>rib</b> & more"}';
 out.sentOddRib = m.demandSentences(oddRib);
+// The line as a tolerance (9 October 2026): the sentence says so, and the dial
+// reads the walk the document recorded. The walk picks the same nodes whatever
+// the line and stops at the first point within it, or at its cap of batches, or
+// when no node is left unbalanced (placement.greedy_actuators).
+const toleranced = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
+toleranced.acceptance = 20;
+toleranced.tolerance_mm = 20;
+toleranced.acceptance_source = "a tolerance of 20.00 mm from the designed form, set for this run";
+toleranced.placement = { batch: 20, steps: 40, reached: true, curve: [
+  { count: 0, worst_sag_mm: 2027.7 }, { count: 600, worst_sag_mm: 62.8 },
+  { count: 720, worst_sag_mm: 27.1 }, { count: 740, worst_sag_mm: 18.6 } ] };
+out.sentTolerance = m.demandSentences(toleranced);
+out.toleranceSame = m.toleranceNote(toleranced, 20);
+out.toleranceLooser = m.toleranceNote(toleranced, 30);
+out.toleranceLoosest = m.toleranceNote(toleranced, 3000);
+out.toleranceTighter = m.toleranceNote(toleranced, 15);
+// on a point of the curve: the walk stops where the sag is AT the line or under
+// it, so the panel reads it the same way
+out.toleranceExact = m.toleranceNote(toleranced, 62.8);
+out.toleranceOlder = m.toleranceNote(ribbed, 20);
+out.toleranceNone = m.toleranceNote(null, 20);
+out.toleranceStale = m.toleranceNote({ schema: "bench.cablenet/1", acceptance: 2.18 }, 20);
+// no line: the engine then runs the walk to its cap and records it as not reached
+out.toleranceNoLine = m.toleranceNote({ ...toleranced, acceptance: null, tolerance_mm: null,
+  acceptance_source: null, placement: { ...toleranced.placement, reached: false } }, 20);
+// a walk that ended at its cap short of its own line: a run at a tighter line
+// walks the same nodes and ends at the same cap
+const capped = { ...toleranced, acceptance: 3.25, tolerance_mm: null,
+  acceptance_source: "falsework glulam-rib-9000: {}",
+  placement: { batch: 20, steps: 2, reached: false, curve: [
+    { count: 0, worst_sag_mm: 2027.7 }, { count: 20, worst_sag_mm: 1676.2 },
+    { count: 40, worst_sag_mm: 12.25 } ] } };
+out.toleranceCapped = m.toleranceNote(capped, 10);
+out.toleranceCappedLooser = m.toleranceNote(capped, 1700);
+// a walk that ran out of unbalanced nodes before its cap
+const exhausted = { ...toleranced, placement: { batch: 20, steps: 40, reached: false, curve: [
+  { count: 0, worst_sag_mm: 90 }, { count: 20, worst_sag_mm: 40 }, { count: 25, worst_sag_mm: 30 } ] } };
+out.toleranceExhausted = m.toleranceNote(exhausted, 15);
+out.toleranceNoCurve = m.toleranceNote({ ...toleranced, placement: null }, 15);
 const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 blank.note = "   ";
 out.sentBlankNote = m.demandSentences(blank);
@@ -456,6 +495,58 @@ def test_a_catalogue_rib_is_named_in_words_not_as_its_catalogue_entry(out):
     ]
     # the description is still the server's string, so the sentence escapes it
     assert "from falsework odd-rib (a &lt;b&gt;rib&lt;/b&gt; &amp; more)." in out["sentOddRib"][1]
+
+
+@needs_node
+def test_a_tolerance_is_said_as_one_and_the_dial_reads_the_walk_the_run_recorded(out):
+    # millimetres in two decimals, as every other length the panel writes
+    assert out["sentTolerance"][1] == (
+        "The acceptance line is a tolerance of 20.00 mm from the designed form, set for "
+        "this run.")
+    assert out["toleranceSame"] == ""
+    assert out["toleranceLooser"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 30.00 mm. "
+        "At 30.00 mm, this run's walk would stop at 720 grabbed nodes; run again for the "
+        "forces and the verdict.")
+    assert out["toleranceLoosest"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 3000.00 mm. "
+        "At 3000.00 mm, this run's walk would grab no node; run again for the forces and "
+        "the verdict.")
+    assert out["toleranceExact"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 62.80 mm. "
+        "At 62.80 mm, this run's walk would stop at 600 grabbed nodes; run again for the "
+        "forces and the verdict.")
+    # tighter than a walk that stopped at its own line: only a new run can say
+    assert out["toleranceTighter"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
+        "This run's walk stopped at its own line, at 740 grabbed nodes with the worst sag at "
+        "18.60 mm, so only a new run can say how many grabbed nodes 15.00 mm needs.")
+    # tighter than a walk that ended for another reason: a new run ends there too
+    assert out["toleranceCapped"] == (
+        "The analysis on screen judged the sag against a line of 3.25 mm; the dial reads a "
+        "tolerance of 10.00 mm. This run's walk ended at its cap of 2 batches, at 40 grabbed "
+        "nodes with the worst sag at 12.25 mm, so a run at 10.00 mm would end at the same "
+        "place without meeting it.")
+    assert out["toleranceCappedLooser"] == (
+        "The analysis on screen judged the sag against a line of 3.25 mm; the dial reads a "
+        "tolerance of 1700.00 mm. At 1700.00 mm, this run's walk would stop at 20 grabbed "
+        "nodes; run again for the forces and the verdict.")
+    assert out["toleranceExhausted"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
+        "This run's walk ended with no unbalanced node left to grab, at 25 grabbed nodes "
+        "with the worst sag at 30.00 mm, so a run at 15.00 mm would end at the same place "
+        "without meeting it.")
+    assert out["toleranceOlder"] == (
+        "The analysis on screen judged the sag against a line of 2.18 mm; the dial reads a "
+        "tolerance of 20.00 mm. Run again to use the dial's value.")
+    assert out["toleranceNone"] == "" and out["toleranceStale"] == ""
+    assert out["toleranceNoLine"] == (
+        "The analysis on screen had no acceptance line; the dial reads a tolerance of 20.00 mm. "
+        "At 20.00 mm, this run's walk would stop at 740 grabbed nodes; run again for the "
+        "forces and the verdict.")
+    assert out["toleranceNoCurve"] == (
+        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
+        "Run again to use the dial's value.")
 
 
 @needs_node
