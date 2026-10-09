@@ -514,6 +514,9 @@
     <label title="The least tension every net member is given: the floor the sag is judged at"><span>Prestress</span>
       <input id="cablenet-prestress" type="range" min="100" max="5000" step="50" value="300">
       <b id="cablenet-prestress-value">300</b><em>N</em></label>
+    <label title="The most the net may stray from its designed form while the skin goes on: the line its sag is judged against. 20 mm is the full-scale placement tolerance"><span>Tolerance</span>
+      <input id="cablenet-tolerance" type="range" min="1" max="100" step="1" value="20">
+      <b id="cablenet-tolerance-value">20</b><em>mm</em></label>
     <label title="How fast the rope is wanted to run. Nothing passes or fails on it: no prototype has said what rate the net wants, and finding out is what the machine is for"><span>Rope speed</span>
       <input id="cablenet-speed" type="range" min="1" max="400" step="1" value="50">
       <b id="cablenet-speed-value">50</b><em>mm/s</em></label>

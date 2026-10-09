@@ -12,7 +12,7 @@
 import {
   curveSvg, demandSentences, fallbackKey, grabText, isStale, modifiedFrom,
   prestressFloor, prestressNote, ropeMismatch, ropeWound, rpmText, settledText, shapeOf,
-  verdictOf,
+  toleranceNote, verdictOf,
 } from "./cablenet_model.js";
 
 // The wire's angle to its eye bolt's axis is not recorded in the export, so
@@ -82,6 +82,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   const el = {
     run: byId("cablenet-run"), runStatus: byId("cablenet-run-status"),
     prestress: byId("cablenet-prestress"), prestressValue: byId("cablenet-prestress-value"),
+    tolerance: byId("cablenet-tolerance"), toleranceValue: byId("cablenet-tolerance-value"),
     speed: byId("cablenet-speed"), speedValue: byId("cablenet-speed-value"),
     speedNote: byId("cablenet-speed-note"), demand: byId("cablenet-demand"),
     select: byId("cablenet-configuration"), selectNote: byId("cablenet-configuration-note"),
@@ -254,7 +255,8 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       ? [`The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.`]
       : demandSentences(demand);
     for (const note of [ropeMismatch(panel.parts, demand, panel.configuration),
-                        prestressNote(demand, Number(el.prestress.value))]) {
+                        prestressNote(demand, Number(el.prestress.value)),
+                        toleranceNote(demand, Number(el.tolerance.value))]) {
       if (note) sentences.push(note);
     }
     el.demand.innerHTML = sentences.map((s) => `<p>${s.replace(/<(?!\/?b>)/g, "&lt;")}</p>`).join("");
@@ -358,14 +360,21 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   }
 
   // Each dial states the value it has: its reading follows the track, and the
-  // prestress dial also re-says whether it still matches the analysis on screen.
+  // prestress and tolerance dials also re-say whether they still match the
+  // analysis on screen.
   function showDials() {
     el.prestressValue.textContent = el.prestress.value;
+    el.toleranceValue.textContent = el.tolerance.value;
     el.speedValue.textContent = el.speed.value;
   }
   showDials();
 
   el.prestress.addEventListener("input", () => {
+    showDials();
+    renderDemand();
+  });
+
+  el.tolerance.addEventListener("input", () => {
     showDials();
     renderDemand();
   });
@@ -494,6 +503,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     el.runStatus.textContent = "starting";
     try {
       const body = { ...sentOptions(options), prestress: Number(el.prestress.value),
+                     tolerance_mm: Number(el.tolerance.value),
                      rope: panel.configuration ? panel.configuration.rope : undefined };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/cablenet/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

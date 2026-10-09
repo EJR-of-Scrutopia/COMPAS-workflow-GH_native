@@ -195,14 +195,6 @@
       "part_number": "MGN15H-300", "unit_price": 16.99, "vat": "inc",
       "price_seen": "2026-09-22", "confidence": "confirmed", "source_url": ""}
   },
-  "falsework": {
-    "plywood-rib-2000": {"span": 2000.0, "spacing": 400.0, "depth": 100.0,
-      "width": 18.0, "e_modulus": 9000.0,
-      "description": "plywood rib 2000 x 400, 100 x 18 deep"},
-    "glulam-rib-9000": {"span": 9000.0, "spacing": 600.0, "depth": 400.0,
-      "width": 90.0, "e_modulus": 11600.0,
-      "description": "glulam GL24h rib 9000 x 600, 400 x 90 deep"}
-  },
   "configurations": {
     "stepper-seven-spool": {
       "name": "Seven-spool stepper rig",
