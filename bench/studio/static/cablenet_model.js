@@ -300,6 +300,120 @@ export function curveSvg(points, acceptance, width = 240, height = 72) {
     "</svg>";
 }
 
+// The Graphs tab (spec 2026-10-09 Cable net display, section 4.3) ---------
+
+function finiteMax(values) {
+  let top = null;
+  for (const value of values || []) {
+    if (typeof value === "number" && Number.isFinite(value) && (top === null || value > top)) top = value;
+  }
+  return top;
+}
+
+function magnitude(vector) {
+  if (!Array.isArray(vector) || vector.length !== 3) return null;
+  const parts = vector.map(Number);
+  return parts.every(Number.isFinite) ? Math.hypot(...parts) : null;
+}
+
+// Each stage's worst wire tension (N), worst sag (mm) and worst node force
+// (N, the size of a node's unbalanced force), in the run's order; null where a
+// stage records none.
+export function stageSeries(demand) {
+  const stages = (demand && !isStale(demand) && demand.stages) || [];
+  return stages.map((stage) => ({
+    name: String(stage.name == null ? stage.stage : stage.name),
+    tension: finiteMax(stage.wire_tensions),
+    sag: finiteMax(stage.node_sag_mm),
+    force: finiteMax((stage.node_residual || []).map(magnitude)),
+  }));
+}
+
+// One series as inline SVG: the stages along the bottom, the value up the side
+// from zero, the line (a ceiling or the tolerance) dashed. Empty when the
+// series has no value at all.
+export function stageSvg(series, key, line, width = 240, height = 72) {
+  const values = (series || []).map((point) => point[key]);
+  const known = values.filter((value) => value != null);
+  if (!known.length) return "";
+  const text = key === "sag" ? millimetres : newtons;
+  const pad = { left: 40, right: 6, top: 6, bottom: 14 };
+  let top = Math.max(...known);
+  if (line != null && Number.isFinite(Number(line))) top = Math.max(top, Number(line));
+  if (!(top > 0)) top = 1;
+  const span = Math.max(1, values.length - 1);
+  const lx = (i) => pad.left + (i / span) * (width - pad.left - pad.right);
+  const ly = (y) => pad.top + (1 - y / top) * (height - pad.top - pad.bottom);
+  let path = "";
+  values.forEach((value, i) => {
+    if (value == null) return;
+    path += (path ? "L" : "M") + lx(i).toFixed(1) + " " + ly(value).toFixed(1) + " ";
+  });
+  const dashed = line == null || !Number.isFinite(Number(line)) ? "" :
+    '<line class="line" x1="' + pad.left + '" y1="' + ly(Number(line)).toFixed(1) +
+    '" x2="' + (width - pad.right) + '" y2="' + ly(Number(line)).toFixed(1) + '"/>';
+  const first = series[0].name;
+  const last = series[series.length - 1].name;
+  return '<svg class="cablenet-graph-svg" viewBox="0 0 ' + width + " " + height +
+    '" role="img">' +
+    '<line class="axis" x1="' + pad.left + '" y1="' + (height - pad.bottom) + '" x2="' +
+    (width - pad.right) + '" y2="' + (height - pad.bottom) + '"/>' +
+    '<path class="series" d="' + path.trim() + '"/>' + dashed +
+    '<text x="2" y="' + (pad.top + 8) + '">' + esc(text(top)) + "</text>" +
+    '<text x="2" y="' + (height - pad.bottom) + '">0</text>' +
+    '<text x="' + pad.left + '" y="' + (height - 3) + '">' + esc(first) + "</text>" +
+    '<text x="' + (width - pad.right) + '" y="' + (height - 3) + '" text-anchor="end">' +
+    esc(last) + "</text></svg>";
+}
+
+// The net in numbers, as rows of [name, value].
+export function netRows(demand) {
+  const sizing = sizingOf(demand) || {};
+  const held = (demand && demand.held) || {};
+  const courses = ((demand && demand.stages) || []).filter((s) => !isFrame(s));
+  // the last course that records the figure: a course with none hides nothing
+  const lastOf = (key) => [...courses].reverse().find((s) => s[key] != null) || {};
+  const last = { skin_load_sum_newtons: lastOf("skin_load_sum_newtons").skin_load_sum_newtons,
+                 net_weight_newtons: lastOf("net_weight_newtons").net_weight_newtons };
+  const tolerance = demand && (demand.tolerance_mm != null ? demand.tolerance_mm : demand.acceptance);
+  const count = (list) => String((list || []).length);
+  const stage = sizing.stage || (demand && demand.sizing_stage);
+  return [
+    ["Floor", newtons(wireFloor(demand).newtons) + (wireFloor(demand).newtons == null ? "" : " N")],
+    ["Tolerance", tolerance == null ? "not recorded" : millimetres(tolerance) + " mm"],
+    ["Skin", last.skin_load_sum_newtons == null ? "not recorded" : kilonewtons(last.skin_load_sum_newtons) + " kN"],
+    ["Net", last.net_weight_newtons == null ? "not recorded" : kilonewtons(last.net_weight_newtons) + " kN"],
+    ["Wires", count(held.wire_nodes)],
+    ["Column heads", count(held.column_heads)],
+    ["Grabbed nodes", count(held.actuators)],
+    ["Largest grabbed pull", sizing.worst_actuator_newtons == null ? "not recorded"
+      : newtons(sizing.worst_actuator_newtons) + " N"],
+    ["Worst sag", sizing.worst_sag_mm == null ? "not recorded" : millimetres(sizing.worst_sag_mm) + " mm"],
+    ["Sizing stage", stage == null ? "not recorded" : String(stage)],
+  ];
+}
+
+export function netHtml(demand) {
+  return '<table class="cablenet-net">' + netRows(demand).map(([name, value]) =>
+    `<tr><th>${name}</th><td>${esc(value)}</td></tr>`).join("") + "</table>";
+}
+
+// The whole tab: three graphs stage by stage, the walk, and the net.
+export function graphsHtml(demand, ceiling) {
+  if (!demand || isStale(demand)) return "";
+  const series = stageSeries(demand);
+  const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
+  const graphs = [
+    ["Worst wire tension, N", stageSvg(series, "tension", ceiling)],
+    ["Worst sag, mm", stageSvg(series, "sag", acceptance)],
+    ["Worst node force, N", stageSvg(series, "force", null)],
+    ["Sag against nodes grabbed, mm", demand.placement ? curveSvg(demand.placement.curve, acceptance) : ""],
+  ];
+  return graphs.filter(([, svg]) => svg).map(([title, svg]) =>
+    `<div class="cablenet-graph"><div class="cablenet-graph-title">${title}</div>${svg}</div>`).join("") +
+    netHtml(demand);
+}
+
 // Annotation only: a number and its unit, never a comparison.
 export function rpmText(speed, row) {
   const rpm = row && !row.refused ? row.motor_rpm_for_wanted_speed : null;
