@@ -154,9 +154,10 @@ def test_the_five_selects_offer_only_what_the_catalogue_can_build():
     for ident in ("cablenet-motor", "cablenet-ratio", "cablenet-pulley", "cablenet-rope",
                   "cablenet-wires"):
         assert 'id="{}"'.format(ident) in html, ident
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
     for gone in ("cablenet-configuration", "cablenet-vary-toggle", "cablenet-parts",
                  "cablenet-settled"):
-        assert gone not in html and gone not in JS, gone
+        assert gone not in html and gone not in JS and gone not in css, gone
 
 
 def test_the_choices_are_remembered_per_study_in_this_browser():

@@ -1605,5 +1605,3 @@ body.stilling #fixture-panel { display: none; }
 #panel .cablenet-curve .line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; }
 #panel .cablenet-curve .axis { stroke: var(--line); stroke-width: 1; }
 #panel .cablenet-curve text { fill: var(--ink-3); font-size: 9px; }
-#panel #cablenet-parts { margin-left: var(--s3); }
-#panel #cablenet-parts .named { margin: var(--s1) 0; }
