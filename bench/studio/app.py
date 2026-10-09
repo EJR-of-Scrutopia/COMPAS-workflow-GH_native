@@ -164,6 +164,16 @@ CABLENET_DEFAULTS = {
 NO_FALSEWORK = ("falsework is no longer taken: the net is judged against a tolerance "
                 "from the designed form, so send tolerance_mm, in millimetres")
 
+# What a formwork run takes for each option its caller leaves out (spec
+# 2026-10-09). The prestress is the cable net run's starting point for the cut
+# rule, until part 3 works it out from the load. One wire a motor is the
+# machine as it is built. The trees are CHS 60.3 steel tube, and a 3.2 mm wall
+# is where the owner chose to start, a run deciding whether it can be thinner
+# or must be thicker (his ruling of 9 October 2026).
+FORMWORK_DEFAULTS = {"prestress": 300.0, "rope": "rope-4mm", "wires_per_motor": 1,
+                     "wall": 3.2}
+FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
+
 
 MATERIALS = sorted(staging.DENSITIES)
 # 0.1 on his word: "I would like to make the piece size go down to
@@ -223,8 +233,8 @@ def _ffmpeg_present() -> bool:
 
 
 def _invalidate_studio_cache(slug: str) -> None:
-    """Drop every cached bundle, staging and cable net file for a study after
-    re-import.
+    """Drop every cached bundle, staging, cable net and formwork file for a study
+    after re-import.
 
     A changed export must never keep serving a stale bundle built from the
     old geometry, and the cable net demand is the same: it is keyed by the
@@ -238,9 +248,28 @@ def _invalidate_studio_cache(slug: str) -> None:
     studio_dir = bundle.STUDIES_DIR / slug / "studio"
     if not studio_dir.is_dir():
         return
-    for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json"):
+    for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json",
+                    "formwork-sim-*.json"):
         for stale in studio_dir.glob(pattern):
             stale.unlink()
+
+
+def _known_material(material: str) -> None:
+    if material not in staging.DENSITIES:
+        raise HTTPException(400, "unknown material {!r}: use one of {}".format(
+            material, ", ".join(MATERIALS)))
+
+
+def _in_study_folder(path: Path, export: str) -> Path:
+    """path, unless the study's options have taken it out of the study's own
+    folder: a material or a pattern carrying ".." does, and Windows resolves
+    ".." even through a folder that is not there."""
+
+    folder = (bundle.STUDIES_DIR / geometry.slugify(export) / "studio").resolve()
+    if path.resolve().parent != folder:
+        raise HTTPException(400, "the study options name a file outside the study's "
+                                 "folder")
+    return path
 
 
 def _validate(export: str, material: str, pattern: str, size: float,
@@ -249,9 +278,7 @@ def _validate(export: str, material: str, pattern: str, size: float,
     if export not in pairs:
         raise HTTPException(404, "no export named {!r}. Available: {}".format(
             export, ", ".join(sorted(pairs))))
-    if material not in staging.DENSITIES:
-        raise HTTPException(400, "unknown material {!r}: use one of {}".format(
-            material, ", ".join(MATERIALS)))
+    _known_material(material)
     if pattern not in generators.GENERATORS:
         planned = generators.PLANNED.get(pattern)
         detail = ("the {} pattern arrives in {}".format(pattern, planned)
@@ -829,7 +856,8 @@ def _aligned(values, raw_count, kept):
     return out
 
 
-def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
+def create_app(runner=None, cra_runner=None, cablenet_runner=None,
+               formwork_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
     def _study_stamp(name: str) -> float:
@@ -1177,12 +1205,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             # an unknown source, or the authored cut of a study that has none:
             # the refusal the bundle route gives, carried through unchanged
             raise HTTPException(400, str(error))
+        _known_material(material)
         try:
             path = bundle.cablenet_path(
                 geometry.slugify(export), material, slot.key_pattern, size,
                 thickness, density)
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "the study options are unreadable: {}".format(error))
+        path = _in_study_folder(path, export)
         if not path.is_file():
             # the Cable net section's own Run is the way to one now; the staged
             # run's cable net phase still writes the same document
@@ -1904,6 +1934,150 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
         threading.Thread(target=work, daemon=True).start()
         return {"run": run_id}
 
+    # ------------------------------------------------------------------
+    # The formwork engine (spec 2026-10-09): the raise and the tiling
+    # simulated once in a run of its own and kept as captures for the studio
+    # to replay. Keyed and cut exactly as the cable net run is.
+    # ------------------------------------------------------------------
+
+    @app.post("/api/studies/{export}/formwork/run", status_code=202)
+    def start_formwork_run(export: str, body: dict):
+        """The formwork engine on this study: the net cut once and laid out,
+        the raise followed frame by frame as the trees lift it, the skin a row
+        at a time, every state captured and written where GET /formwork/sim
+        reads it. Several minutes on the real study. The study's documents are
+        read and checked before the cut, so a study that cannot run is told
+        before the slow part."""
+
+        import catalogue
+
+        material = str(body.get("material", "tile"))
+        pattern = str(body.get("pattern", "herringbone"))
+        try:
+            size = float(body.get("size", 1.0))
+            thickness = float(body.get("thickness", 0.02))
+            density = float(body["density"]) if body.get("density") else None
+            prestress = float(body.get("prestress", FORMWORK_DEFAULTS["prestress"]))
+            wall = float(body.get("wall", FORMWORK_DEFAULTS["wall"]))
+        except (TypeError, ValueError, OverflowError) as error:
+            raise HTTPException(400, "a number was unreadable: {}".format(error))
+        if not (math.isfinite(prestress) and prestress > 0.0):
+            raise HTTPException(400, "prestress must be greater than zero newtons")
+        if not (math.isfinite(wall) and 0.0 < wall < FORMWORK_TUBE_MM / 2.0):
+            raise HTTPException(
+                400, "wall must be the tube's wall in millimetres, more than 0 and less "
+                     "than {:g}, not {!r}".format(FORMWORK_TUBE_MM / 2.0, body.get("wall")))
+        wires_per_motor = body.get("wires_per_motor", FORMWORK_DEFAULTS["wires_per_motor"])
+        # a JSON true is not one wire, though int() would take it
+        if (isinstance(wires_per_motor, bool) or not isinstance(wires_per_motor, int)
+                or not 1 <= wires_per_motor <= 7):
+            raise HTTPException(
+                400, "wires_per_motor must be a whole number of wires from 1 to 7, the "
+                     "spools a machine carries, not {!r}".format(wires_per_motor))
+        source = body.get("source")
+        if source is not None and source not in bundle.CUT_SOURCES:
+            raise HTTPException(400, "source must be one of {} when given".format(
+                ", ".join(bundle.CUT_SOURCES)))
+        rope_key = str(body.get("rope", FORMWORK_DEFAULTS["rope"]))
+        parts = catalogue.load_parts()
+        if rope_key not in parts["rope"]:
+            raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
+        rope = parts["rope"][rope_key]
+        _validate(export, material, pattern, size, thickness)
+        slug = geometry.slugify(export)
+        with RUNS_LOCK:
+            for run in RUNS.values():
+                if run["slug"] == slug and run["state"] in ("queued", "running"):
+                    return JSONResponse({"run": run["id"]}, status_code=409)
+            run_id = uuid.uuid4().hex[:12]
+            RUNS[run_id] = {
+                "id": run_id, "export": export, "slug": slug,
+                "material": material, "pattern": pattern, "size": size,
+                "thickness": thickness, "source": source,
+                "kind": "formwork",
+                "state": "queued", "stage": 0, "of": 0, "phase": "queued",
+                "message": "",
+            }
+
+        def work():
+            run = RUNS[run_id]
+            try:
+                # inside the try: an import that fails is a failed run with its
+                # reason, not a run left queued that locks the study with 409s
+                import formwork_sim
+
+                run["state"] = "running"
+                run["phase"] = "cutting"
+                run["message"] = "reading the study's documents"
+                pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+                if export not in pairs:
+                    raise ValueError("no export named {!r}".format(export))
+                slot = staging.cut_slot(pairs[export], pattern, source)
+                inputs = formwork_sim.check_documents(
+                    slot.contract,
+                    bundle._read_optional(bundle.mechanism_sidecar(export)),
+                    bundle._read_optional(bundle.frames_sidecar(export)),
+                    float(rope["ea_newtons"]), wires_per_motor)
+                run["message"] = "cutting the tessellation"
+                cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
+                run["phase"] = "formwork"
+                run["message"] = ("laying the net out, raising it and tiling it: several "
+                                  "minutes on a large study")
+
+                def progress(done, total, what):
+                    run["stage"], run["of"], run["message"] = done, total, what
+
+                formwork_sim.run_formwork(
+                    inputs, cut.arrays, cut.binding, cut.plan, thickness,
+                    staging.resolve_density(material, density),
+                    bundle.formwork_sim_path(slug, material, slot.key_pattern, size,
+                                             thickness, density),
+                    ea=float(rope["ea_newtons"]),
+                    mass_per_metre=float(rope["mass_per_metre_kg"]),
+                    prestress=prestress, wires_per_motor=wires_per_motor, wall=wall,
+                    study=export,
+                    options={"material": material, "pattern": pattern, "size": size,
+                             "thickness": thickness, "density": density, "source": source,
+                             "rope": rope_key, "prestress": prestress,
+                             "wires_per_motor": wires_per_motor, "wall": wall},
+                    runner=formwork_runner, progress=progress)
+                run["state"] = "done"
+                run["phase"] = "done"
+                run["message"] = ""
+            except Exception as error:
+                run["state"] = "failed"
+                run["phase"] = "failed"
+                run["message"] = "{}: {}".format(type(error).__name__, error)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"run": run_id}
+
+    @app.get("/api/studies/{export}/formwork/sim")
+    def study_formwork_sim(export: str, material: str = "tile", pattern: str = "herringbone",
+                           size: float = 1.0, thickness: float = 0.02,
+                           density: Optional[float] = None, source: Optional[str] = None):
+        """The capture document the formwork run wrote for this study and these
+        options, served as it lies: several megabytes, never parsed here. Found
+        by the cut the run made, through staging.cut_slot, as the cable net
+        demand is."""
+
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(404, "There is no export named {!r}, so no formwork run has "
+                                     "been made for it.".format(export))
+        _known_material(material)
+        try:
+            slot = staging.cut_slot(pairs[export], pattern, source)
+        except ValueError as error:
+            raise HTTPException(400, str(error))
+        path = _in_study_folder(bundle.formwork_sim_path(
+            geometry.slugify(export), material, slot.key_pattern, size, thickness, density),
+            export)
+        if not path.is_file():
+            raise HTTPException(404, "This study has no formwork run for these options yet; "
+                                     "a formwork run writes one.")
+        return FileResponse(path, media_type="application/json")
+
     @app.get("/api/runs/{run_id}")
     def run_state(run_id: str):
         run = RUNS.get(run_id)
@@ -1914,7 +2088,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None) -> FastAPI:
             # phase says what is happening while "of" is still 0, which is
             # the whole duration of the cut.
             "phase": run.get("phase", ""),
-            # "staged" or "cable net": which of the two runs a 409 is naming
+            # "staged", "cable net" or "formwork": which run a 409 is naming
             "kind": run.get("kind", ""),
             "message": run["message"],
             "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}{}".format(

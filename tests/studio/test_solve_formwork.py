@@ -1,0 +1,107 @@
+"""The formwork engine's own process and its capture document (spec 2026-10-09
+sections 4.3, 4.5 and 7)."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+np = pytest.importorskip("numpy")
+pytest.importorskip("scipy")
+
+STUDIO = Path(__file__).resolve().parents[2] / "bench" / "studio"
+sys.path.insert(0, str(STUDIO))
+
+import solve_formwork  # noqa: E402
+
+
+def _request():
+    # the sequence tests' toy as the studio sends it, in millimetres and
+    # newtons: a 3 x 3 net, its corners on wires, one tree lifting the centre
+    # 400 mm, the edge midpoints hanging 250 mm in and 50 mm up, and one row of
+    # skin going on a quarter at a time
+    design = [[i * 1000.0, j * 1000.0, 0.0] for j in range(3) for i in range(3)]
+    design[4][2] = 400.0
+    for node, (dx, dy) in ((1, (0.0, 250.0)), (3, (250.0, 0.0)), (5, (-250.0, 0.0)),
+                           (7, (0.0, -250.0))):
+        design[node] = [design[node][0] + dx, design[node][1] + dy, 50.0]
+    flat = [[x, y, 0.0] for x, y, _ in design]
+    edges = ([[j * 3 + i, j * 3 + i + 1] for j in range(3) for i in range(2)]
+             + [[j * 3 + i, (j + 1) * 3 + i] for j in range(2) for i in range(3)])
+    out = {0: (-1.0, -1.0), 2: (1.0, -1.0), 6: (-1.0, 1.0), 8: (1.0, 1.0)}
+    rim = [{"node": node, "name": "w{}".format(node), "anchor": design[node],
+            "into": [x / 2.0 ** 0.5, y / 2.0 ** 0.5, 0.0], "stiffness": 50.0}
+           for node, (x, y) in out.items()]
+
+    def trees(z):
+        return [[1000.0, 1000.0, 0.0], [1000.0, 1000.0, z]]
+
+    return {
+        "study": "Tiny", "units": "mm, N",
+        "design": design, "edges": edges, "ea": 1.0e5, "prestress": 50.0,
+        "weight": [[0.0, 0.0, -0.5]] * 9,
+        "rim": rim, "machines": [[0, 2, 6, 8]], "wires_per_motor": 1,
+        "heads": [[4, 1]], "tree_members": [[0, 1]], "tree_feet": [0],
+        "frames": [{"time": 30.0, "phase": "raise", "net": flat, "trees": trees(0.0)},
+                   {"time": 60.0, "phase": "finish", "net": design, "trees": trees(400.0)},
+                   {"time": 100.0, "phase": "hold", "net": design, "trees": trees(400.0)}],
+        "rows": [{"name": "S1", "quarters": [{"nodes": [1, 3, 5, 7][:q], "z": [-20.0] * q}
+                                             for q in range(1, 5)]}],
+        "wall": 3.2, "options": {"prestress": 50.0}, "note": None, "assumptions": ["a toy"],
+    }
+
+
+def test_an_array_survives_the_trip_through_the_document():
+    values = np.array([[1.5, -2.25, 3.0], [1.0e5, 0.0, -7.125]])
+    entry = solve_formwork.pack(values)
+    assert entry["shape"] == [2, 3] and isinstance(entry["f32"], str)
+    assert np.array_equal(solve_formwork.unpack(entry), values.astype(np.float32))
+
+
+def test_the_document_carries_every_capture_with_its_arrays_in_shape():
+    document = solve_formwork.solve(_request())
+    json.dumps(document, allow_nan=False)                  # nothing a browser cannot read
+    assert document["schema"] == "bench.formwork-sim/1" and document["units"] == "mm, N"
+    captures = document["captures"]
+    assert [c["phase"] for c in captures] == ["raise", "finish", "hold"] + ["tiling"] * 4
+    assert [(c["row"], c["quarter"]) for c in captures[3:]] == [("S1", q) for q in (1, 2, 3, 4)]
+    shapes = {"x": (9, 3), "tension": (12,), "deviation": (9,), "head_push": (1, 3),
+              "anchor_force": (4, 3), "wire_tension": (4,), "reel": (4,), "let_out": (4,),
+              "tree_x": (2, 3), "tree_axial": (1,), "tree_utilisation": (1,)}
+    for c in captures:
+        for field, shape in shapes.items():
+            assert solve_formwork.unpack(c[field]).shape == shape, field
+    hold = captures[2]
+    assert solve_formwork.unpack(hold["x"])[4] == pytest.approx([1000.0, 1000.0, 400.0])
+    assert document["rim"]["nodes"] == [0, 2, 6, 8] and document["rim"]["motors"] is None
+    assert document["trees"]["thinnest_wall"] == 2.3
+    summary = document["summary"]
+    assert summary["captures"] == 7
+    assert summary["raise_deviation_max_mm"] == pytest.approx(
+        float(solve_formwork.unpack(hold["deviation"]).max()), rel=1.0e-6)
+
+
+def test_the_entry_runs_as_its_own_process_reporting_progress(tmp_path):
+    (tmp_path / "request.json").write_text(json.dumps(_request()), encoding="utf-8")
+    done = subprocess.run([sys.executable, str(STUDIO / "solve_formwork.py"),
+                           str(tmp_path / "request.json"), str(tmp_path / "out.json")],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    lines = [line for line in done.stdout.splitlines() if line.startswith("progress ")]
+    assert [line.split()[1:3] for line in lines] == [[str(k), "7"] for k in range(1, 8)]
+    document = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert len(document["captures"]) == 7
+
+
+def test_the_entry_refuses_with_the_reason_and_writes_nothing(tmp_path):
+    request = _request()
+    request["frames"] = []
+    (tmp_path / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    done = subprocess.run([sys.executable, str(STUDIO / "solve_formwork.py"),
+                           str(tmp_path / "request.json"), str(tmp_path / "out.json")],
+                          capture_output=True, text=True)
+    assert done.returncode == 1
+    assert "no frames" in done.stderr
+    assert not (tmp_path / "out.json").exists()

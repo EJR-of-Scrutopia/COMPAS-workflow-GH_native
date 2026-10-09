@@ -1056,3 +1056,20 @@ def test_a_wanted_speed_adds_the_motor_speed_and_a_figure_that_is_not_a_number_r
         assert response.status_code == 200, field
         for row in response.json()["rows"]:
             assert row["refused"].startswith("ValueError"), (field, row["refused"])
+
+
+def test_the_cable_net_read_never_reads_outside_the_study_folder(tmp_path, monkeypatch):
+    # the formwork captures' route's refusal, here too: a material or a pattern
+    # carrying ".." reached a decoy planted beside the study's folder
+    client, studies = make_client(tmp_path, monkeypatch)
+    beside = studies / "tiny"
+    beside.mkdir(parents=True, exist_ok=True)
+    for name in ("decoy-bonded-courses-s900-t20.json", "decoy-s900-t20.json"):
+        (beside / name).write_text('{"secret": true}', encoding="utf-8")
+    options = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
+    by_material = client.get("/api/studies/Tiny/cablenet",
+                             params=dict(options, material="../../../decoy"))
+    assert by_material.status_code == 400 and "decoy" in by_material.json()["detail"]
+    by_pattern = client.get("/api/studies/Tiny/cablenet",
+                            params=dict(options, pattern="../../../decoy"))
+    assert by_pattern.status_code == 400 and "outside" in by_pattern.json()["detail"]
