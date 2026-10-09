@@ -5,7 +5,11 @@
     "source_url": "https://www.bankofengland.co.uk/boeapps/database/Rates.asp?TD=8&TM=Oct&TY=2026&into=GBP&rateview=D"},
   "rules": {"vat_rate": 0.2, "efficiency_ball": 0.98, "efficiency_plain": 0.95,
     "groove_pitch_factor": 1.1, "dead_turns": 2,
-    "dead_turns_source": "BS EN 14492-1:2006 clause 5.7.6: at least two rope windings remain on the drum"},
+    "dead_turns_source": "BS EN 14492-1:2006 clause 5.7.6: at least two rope windings remain on the drum",
+    "cutting_allowance_mm": 250.0,
+    "termination": {"rule": "per end, 30 d for the eye (each leg at least 15 d from the ferrule) plus the pressed ferrule length L; derived, no maker publishes a rope allowance",
+      "ferrule_length_mm": {"2": 9.0, "3": 14.0, "4": 18.0, "5": 23.0, "6": 27.0, "8": 36.0},
+      "source": "Talurit ferrule data sheet", "source_url": "https://pimcore-prod-endpoint-c4c6d4gmbsgecvhg.a03.azurefd.net/assets/sites/certex-se/documents/02.%20st%C3%A5llinetillbeh%C3%B6r/Ferrule%20T,%20TKH_Talurit%20data%20sheet.pdf"}},
   "motor": {
     "23HS45-4204D-E1000": {"family": "A", "kind": "closed-loop stepper",
       "frame": "NEMA 23", "model": "23HS45-4204D-E1000", "torque_nm": 3.0,

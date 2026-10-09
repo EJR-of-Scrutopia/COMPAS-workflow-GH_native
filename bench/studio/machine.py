@@ -336,3 +336,66 @@ def travel(parts, configuration, take_ups):
         "worst_drum": worst_drum, "worst_carriage": worst_carriage,
         "fits": all(row["drum_fits"] and row["rail_fits"] for row in rows),
     }
+
+
+def termination_mm(parts, rope_key):
+    """The rope one ferrule-secured eye takes, by the catalogue's derived rule:
+    30 rope diameters for the eye and the pressed ferrule's length; None where
+    the ferrule maker gives no length for the size."""
+
+    termination = parts["rules"]["termination"]
+    diameter = float(parts["rope"][rope_key]["diameter_mm"])
+    length = termination["ferrule_length_mm"].get("{:g}".format(diameter))
+    return None if length is None else 30.0 * diameter + float(length)
+
+
+def cut_lengths(parts, configuration, routes_mm, paid_out_mm=None):
+    """The length to cut for each wire (spec section 4.6): its route, the extra
+    rope in the reeving's falls over the longest span the block can stand off,
+    any rope the drum must pay out past its start, the dead turns, an eye at
+    each end and a cutting allowance. A length with no eye figure is a floor."""
+
+    rules = parts["rules"]
+    reeve = int(configuration["reeve_factor"])
+    span = float(parts["rail"][configuration["rail"]]["stroke_mm"])
+    turn = 2.0 * math.pi * float(configuration["winding_radius_mm"])
+    eye = termination_mm(parts, configuration["rope"])
+    rows = []
+    for w, route in enumerate(routes_mm):
+        paid = 0.0 if paid_out_mm is None else float(paid_out_mm[w])
+        length = (float(route) + (reeve - 1) * span + reeve * paid
+                  + int(rules["dead_turns"]) * turn + 2.0 * (eye or 0.0)
+                  + float(rules["cutting_allowance_mm"]))
+        rows.append({"wire": w, "length_mm": length, "is_floor": eye is None})
+    return rows
+
+
+def rope_to_buy(parts, configuration, lengths_mm):
+    """The rope for every cut length, priced as the cheaper of buying each by
+    the metre and packing them onto one size of the supplier's reels, longest
+    first, a cut length never spanning two reels."""
+
+    rope = parts["rope"][configuration["rope"]]
+    total_m = sum(float(length) for length in lengths_mm) / 1000.0
+    options = []
+    if rope.get("price_gbp") is not None:
+        options.append({"buy": "by the metre", "metres": total_m,
+                        "cost_gbp": total_m * float(rope["price_gbp"])})
+    for reel in rope.get("reels") or []:
+        size = float(reel["length_m"]) * 1000.0
+        if reel.get("price_gbp") is None or any(float(l) > size for l in lengths_mm):
+            continue
+        reels = []
+        for length in sorted((float(l) for l in lengths_mm), reverse=True):
+            for i, room in enumerate(reels):
+                if room >= length:
+                    reels[i] = room - length
+                    break
+            else:
+                reels.append(size - length)
+        options.append({"buy": "{:g} m reels".format(float(reel["length_m"])),
+                        "reels": len(reels), "metres": len(reels) * size / 1000.0,
+                        "cost_gbp": len(reels) * float(reel["price_gbp"])})
+    best = min(options, key=lambda option: option["cost_gbp"], default=None)
+    return {"total_m": total_m, "options": options, "best": best,
+            "is_floor": best is None}
