@@ -223,6 +223,17 @@ def _term_part(parts, configuration, name, angle_degrees):
     return catalogue.part_for_term(configuration, name)
 
 
+def reeve_of(configuration, wire, reeves=None):
+    """A wire's falls: one without pulleys, else its own reeving where the
+    export gives it, else the machine's."""
+
+    if configuration.get("sheave") is None:
+        return 1
+    if reeves is not None and wire < len(reeves) and reeves[wire]:
+        return int(reeves[wire])
+    return int(configuration["reeve_factor"])
+
+
 def judge(parts, configuration, demands, machines, angle_degrees, motors=None, reeves=None):
     """Each wire's limit against its demand, and the worst wire of each machine
     (spec section 4).
@@ -248,8 +259,7 @@ def judge(parts, configuration, demands, machines, angle_degrees, motors=None, r
     def alone(w):
         """A wire's own terms and its reeving's advantage, worked out once for
         each reeve factor, since Recommend judges thousands of machines."""
-        reeve = 1 if configuration.get("sheave") is None else int(
-            (reeves[w] if reeves is not None else None) or configuration["reeve_factor"])
+        reeve = reeve_of(configuration, w, reeves)
         if reeve not in figures:
             single = mechanism._replace(reeve_factor=reeve, wires_per_motor=1)
             terms = {name: value for name, value in catalogue.ceiling_terms(single).items()
@@ -325,7 +335,7 @@ def take_ups_from_commands(stage_commands):
     return series or []
 
 
-def travel(parts, configuration, take_ups):
+def travel(parts, configuration, take_ups, reeves=None):
     """The drum and the carriage of each wire (spec section 4.5): the most rope
     ever on the drum at once against its single layer, the carriage's travel
     against the rail's stroke, and, with no verdict, the rope turned in and out
@@ -333,7 +343,7 @@ def travel(parts, configuration, take_ups):
     rope's.
 
     take_ups: each wire's rope taken in at its anchor over the sequence, in mm,
-    from where it started."""
+    from where it started. reeves: each wire's own reeving, as judge takes it."""
 
     drum = parts["drum"][configuration["drum"]]
     rail = parts["rail"][configuration["rail"]]
@@ -344,11 +354,11 @@ def travel(parts, configuration, take_ups):
     turn = 2.0 * math.pi * radius
     capacity = turns * turn
     dead = int(parts["rules"]["dead_turns"]) * turn
-    reeve = int(configuration["reeve_factor"])
     stroke = float(rail["stroke_mm"])
     pulley = configuration.get("sheave")
     rows = []
     for w, series in enumerate(take_ups):
+        reeve = reeve_of(configuration, w, reeves)
         values = [0.0] + [float(v) for v in series]
         most, least = max(values), min(values)
         stored = reeve * max(0.0, -least)
@@ -385,19 +395,19 @@ def termination_mm(parts, rope_key):
     return None if length is None else 30.0 * diameter + float(length)
 
 
-def cut_lengths(parts, configuration, routes_mm, paid_out_mm=None):
+def cut_lengths(parts, configuration, routes_mm, paid_out_mm=None, reeves=None):
     """The length to cut for each wire (spec section 4.6): its route, the extra
     rope in the reeving's falls over the longest span the block can stand off,
     any rope the drum must pay out past its start, the dead turns, an eye at
     each end and a cutting allowance. A length with no eye figure is a floor."""
 
     rules = parts["rules"]
-    reeve = int(configuration["reeve_factor"])
     span = float(parts["rail"][configuration["rail"]]["stroke_mm"])
     turn = 2.0 * math.pi * float(configuration["winding_radius_mm"])
     eye = termination_mm(parts, configuration["rope"])
     rows = []
     for w, route in enumerate(routes_mm):
+        reeve = reeve_of(configuration, w, reeves)
         paid = 0.0 if paid_out_mm is None else float(paid_out_mm[w])
         length = (float(route) + (reeve - 1) * span + reeve * paid
                   + int(rules["dead_turns"]) * turn + 2.0 * (eye or 0.0)

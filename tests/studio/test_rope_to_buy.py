@@ -93,3 +93,28 @@ def test_a_rope_with_no_price_at_all_is_a_floor(parts):
         reel["price_gbp"] = None
     bought = machine.rope_to_buy(bare, _built(bare), [3000.0])
     assert bought["best"] is None and bought["is_floor"]
+
+
+def test_each_wire_falls_on_its_own_reeving_where_the_export_gives_one(parts):
+    """An export that reeves one wire on four falls and the next on two: the
+    drum, the cut length and the pulleys bought follow each wire's own."""
+
+    import recommend
+
+    built = _built(parts)
+    reeves = [4, 2]
+    travel = machine.travel(parts, built, [[0.0, 10.0], [0.0, 10.0]], reeves=reeves)
+    first, second = travel["wires"]
+    # 10 mm taken in at the anchor is 40 mm on four falls, 20 mm on two
+    assert first["drum_rope_mm"] - second["drum_rope_mm"] == pytest.approx(20.0)
+    cuts = machine.cut_lengths(parts, built, [1000.0, 1000.0], reeves=reeves)
+    # two more falls over the 300 mm stroke
+    assert cuts[0]["length_mm"] - cuts[1]["length_mm"] == pytest.approx(2 * 300.0)
+    price = recommend.study_price(parts, built, [300.0, 300.0], [[0, 1]], [1000.0, 1000.0],
+                                  reeves=reeves)
+    pulleys = next(line for line in price["lines"] if line["part"] == "Pfaff-DSRB-90-4")
+    assert pulleys["count"] == 4 + 2
+    # without pulleys every wire runs on one fall, whatever the export says
+    plain = _built(parts, pulley=None)
+    same = machine.cut_lengths(parts, plain, [1000.0, 1000.0], reeves=reeves)
+    assert same[0]["length_mm"] == pytest.approx(same[1]["length_mm"])

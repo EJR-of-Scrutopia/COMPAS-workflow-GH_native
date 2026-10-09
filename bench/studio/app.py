@@ -1334,7 +1334,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         try:
             built = machine.derive(parts, choices, inputs["facts"], angle)
             paid = [max(0.0, -min([0.0] + list(series))) for series in inputs["take_ups"]]
-            cuts = machine.cut_lengths(parts, built, inputs["facts"]["routes_mm"], paid)
+            reeves = inputs["facts"].get("reeves")
+            cuts = machine.cut_lengths(parts, built, inputs["facts"]["routes_mm"], paid, reeves)
             row_speed = {"rope_speed_mm_s": catalogue.rope_speed(parts, built)}
             if speed:
                 row_speed["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
@@ -1345,11 +1346,12 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 "described": machine.describe(parts, built),
                 "verdict": machine.judge(parts, built, inputs["demands"], inputs["machines"],
                                          angle, reeves=inputs["facts"]["reeves"]),
-                "travel": machine.travel(parts, built, inputs["take_ups"]),
+                "travel": machine.travel(parts, built, inputs["take_ups"], reeves),
                 "cut_lengths": cuts,
                 "price": recommend.study_price(parts, built, inputs["demands"],
                                                inputs["machines"],
-                                               inputs["facts"]["routes_mm"], paid),
+                                               inputs["facts"]["routes_mm"], paid,
+                                               reeves=reeves),
                 "refused": None,
             }
         except (machine.MachineError, catalogue.CatalogueError, cabinet.CabinetError) as error:

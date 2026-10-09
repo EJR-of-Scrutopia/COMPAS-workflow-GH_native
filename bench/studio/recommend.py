@@ -23,7 +23,7 @@ def _price(parts, kind, key):
 
 
 def study_price(parts, configuration, demands, machines, routes_mm, paid_out_mm=None,
-                _cabinets=None, _rope=None):
+                _cabinets=None, _rope=None, reeves=None):
     """What every machine of the study and every cabinet come to, in pounds
     without VAT, and the parts with no price, which make the total a floor."""
 
@@ -35,7 +35,8 @@ def study_price(parts, configuration, demands, machines, routes_mm, paid_out_mm=
              "drum": configuration.get("spools", machine.SPOOLS) * len(machines),
              "rail": wires,
              "sheave": 0 if configuration.get("sheave") is None
-             else wires * int(configuration["reeve_factor"])}
+             else sum(machine.reeve_of(configuration, w, reeves)
+                      for members in machines for w in members)}
     keys = {"motor": configuration["motor"], "gearbox": configuration["gearbox"],
             "drum": configuration["drum"], "rail": configuration["rail"],
             "sheave": configuration.get("sheave")}
@@ -56,7 +57,7 @@ def study_price(parts, configuration, demands, machines, routes_mm, paid_out_mm=
         if unit is None:
             unpriced.append(key)
     if _rope is None:
-        cuts = machine.cut_lengths(parts, configuration, routes_mm, paid_out_mm)
+        cuts = machine.cut_lengths(parts, configuration, routes_mm, paid_out_mm, reeves)
         _rope = machine.rope_to_buy(parts, configuration, [row["length_mm"] for row in cuts])
     if _rope["best"] is None:
         unpriced.append(configuration["rope"])
@@ -124,11 +125,12 @@ def recommend(parts, facts, demands, machines, routes_mm, take_ups, angle_degree
             continue
         rope_key = (built["rope"], built["reeve_factor"])
         if rope_key not in rope_cache:
-            cuts = machine.cut_lengths(parts, built, routes_mm, paid)
+            cuts = machine.cut_lengths(parts, built, routes_mm, paid, reeves)
             rope_cache[rope_key] = machine.rope_to_buy(parts, built,
                                                        [row["length_mm"] for row in cuts])
         price = study_price(parts, built, demands, machines, routes_mm, paid,
-                            _cabinets=cabinet_cache[key], _rope=rope_cache[rope_key])
+                            _cabinets=cabinet_cache[key], _rope=rope_cache[rope_key],
+                            reeves=reeves)
         rows.append((bool(_chosen_unpriced(parts, built)), price["priced_gbp"], choices, built,
                      price))
     rows.sort(key=lambda row: (row[0], row[1]))
@@ -138,7 +140,7 @@ def recommend(parts, facts, demands, machines, routes_mm, take_ups, angle_degree
                    and built["wires_per_motor"] == run.get("wires_per_motor") else None)
         verdict = machine.judge(parts, built, demands, machines, angle_degrees,
                                 motors=pairing, reeves=reeves)
-        travel = machine.travel(parts, built, take_ups)
+        travel = machine.travel(parts, built, take_ups, reeves)
         judged += 1
         worst = verdict["worst"]
         margin = None if worst is None else worst["margin"]
