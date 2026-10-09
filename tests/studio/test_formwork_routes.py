@@ -120,3 +120,21 @@ def test_a_second_run_on_a_live_study_is_409(tmp_path, monkeypatch):
     assert second.status_code == 409 and second.json()["run"] == first.json()["run"]
     release.set()
     assert wait_for(client, first.json()["run"])["state"] == "done"
+
+
+def test_the_captures_route_never_reads_outside_the_study_folder(tmp_path, monkeypatch):
+    # a material or a pattern carrying ".." must not name a file outside the
+    # study's own folder (Windows resolves ".." through a folder that is not
+    # there, so each of these reached a decoy planted beside it): a 400 that
+    # says why, and the decoys stay unread
+    client, studies = make_client(tmp_path, monkeypatch)
+    beside = studies / "tiny"
+    beside.mkdir(parents=True, exist_ok=True)
+    for name in ("decoy-bonded-courses-s900-t20.json", "decoy-s900-t20.json"):
+        (beside / name).write_text('{"secret": true}', encoding="utf-8")
+    by_material = client.get("/api/studies/Tiny/formwork/sim",
+                             params=dict(RUN, material="../../../decoy"))
+    assert by_material.status_code == 400 and "decoy" in by_material.json()["detail"]
+    by_pattern = client.get("/api/studies/Tiny/formwork/sim",
+                            params=dict(RUN, pattern="../../../decoy"))
+    assert by_pattern.status_code == 400 and "outside" in by_pattern.json()["detail"]

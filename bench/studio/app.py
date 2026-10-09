@@ -254,15 +254,31 @@ def _invalidate_studio_cache(slug: str) -> None:
             stale.unlink()
 
 
+def _known_material(material: str) -> None:
+    if material not in staging.DENSITIES:
+        raise HTTPException(400, "unknown material {!r}: use one of {}".format(
+            material, ", ".join(MATERIALS)))
+
+
+def _in_study_folder(path: Path, export: str) -> Path:
+    """path, unless the study's options have taken it out of the study's own
+    folder: a material or a pattern carrying ".." does, and Windows resolves
+    ".." even through a folder that is not there."""
+
+    folder = (bundle.STUDIES_DIR / geometry.slugify(export) / "studio").resolve()
+    if path.resolve().parent != folder:
+        raise HTTPException(400, "the study options name a file outside the study's "
+                                 "folder")
+    return path
+
+
 def _validate(export: str, material: str, pattern: str, size: float,
               thickness: float) -> None:
     pairs = geometry.available_exports(bundle.UPLOAD_DIR)
     if export not in pairs:
         raise HTTPException(404, "no export named {!r}. Available: {}".format(
             export, ", ".join(sorted(pairs))))
-    if material not in staging.DENSITIES:
-        raise HTTPException(400, "unknown material {!r}: use one of {}".format(
-            material, ", ".join(MATERIALS)))
+    _known_material(material)
     if pattern not in generators.GENERATORS:
         planned = generators.PLANNED.get(pattern)
         detail = ("the {} pattern arrives in {}".format(pattern, planned)
@@ -1189,12 +1205,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             # an unknown source, or the authored cut of a study that has none:
             # the refusal the bundle route gives, carried through unchanged
             raise HTTPException(400, str(error))
+        _known_material(material)
         try:
             path = bundle.cablenet_path(
                 geometry.slugify(export), material, slot.key_pattern, size,
                 thickness, density)
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "the study options are unreadable: {}".format(error))
+        path = _in_study_folder(path, export)
         if not path.is_file():
             # the Cable net section's own Run is the way to one now; the staged
             # run's cable net phase still writes the same document
@@ -2047,12 +2065,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         if export not in pairs:
             raise HTTPException(404, "There is no export named {!r}, so no formwork run has "
                                      "been made for it.".format(export))
+        _known_material(material)
         try:
             slot = staging.cut_slot(pairs[export], pattern, source)
         except ValueError as error:
             raise HTTPException(400, str(error))
-        path = bundle.formwork_sim_path(geometry.slugify(export), material, slot.key_pattern,
-                                        size, thickness, density)
+        path = _in_study_folder(bundle.formwork_sim_path(
+            geometry.slugify(export), material, slot.key_pattern, size, thickness, density),
+            export)
         if not path.is_file():
             raise HTTPException(404, "This study has no formwork run for these options yet; "
                                      "a formwork run writes one.")
