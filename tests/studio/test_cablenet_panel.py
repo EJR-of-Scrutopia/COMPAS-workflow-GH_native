@@ -276,3 +276,11 @@ def test_the_controller_loads_where_there_is_no_page(tmp_path):
 def test_the_studio_mounts_the_section_and_not_the_data_tab():
     assert "cablenet-panel" not in STUDIO
     assert "mountCableNet({" in STUDIO
+
+
+def test_the_scoring_call_sends_the_choices_and_the_study_and_nothing_else():
+    # the route judges the choices on the study's demand; a floor or a wound
+    # length of the panel's own is read by nothing
+    body = _function_body(JS, "score")
+    assert "choices: [panel.choices]" in body
+    assert "prestress_floor" not in body and "rope_wound_mm" not in body

@@ -12,7 +12,7 @@
 
 import {
   buyHtml, choiceOptions, curveSvg, demandSentences, grabText, isStale, machineHtml,
-  prestressFloor, prestressNote, priceHtml, recommendHtml, ropeMismatch, ropeWound, rpmText,
+  prestressNote, priceHtml, recommendHtml, ropeMismatch, ropeWound, rpmText,
   toleranceNote, travelHtml, validChoices, verdictHtml,
 } from "./cablenet_model.js";
 
@@ -204,15 +204,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       choices: [panel.choices], angle_degrees: ASSUMED_ANGLE_DEGREES,
       rope_speed_mm_s: speed,
     };
-    if (options) {
-      body.options = sentOptions(options);
-    } else {
-      // No study options: the server has no demand to read, so the panel's own
-      // figures stand (the route takes the caller's when it reads none).
-      body.prestress_floor = panel.demand ? prestressFloor(panel.demand) : 0;
-      const wound = panel.demand ? ropeWound(panel.demand) : null;
-      if (wound != null) body.rope_wound_mm = wound;
-    }
+    if (options) body.options = sentOptions(options);
     const scored = await postJson(
       `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
     return scored.rows[0];
