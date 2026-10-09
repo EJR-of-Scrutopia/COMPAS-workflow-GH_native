@@ -248,3 +248,11 @@ def test_a_number_that_is_not_finite_is_a_400(tmp_path, monkeypatch):
                       json={"options": OPTIONS, "angle_degrees": "nan"})
     assert nan.status_code == 400
     assert nan.json()["detail"] == "angle_degrees must be a number, not 'nan'"
+
+
+def test_wires_a_motor_of_true_is_not_one_wire(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    rows = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "choices": [dict(CHOICE, wires_per_motor=True)], "options": OPTIONS}).json()["rows"]
+    assert rows[0]["refused"] == "wires per motor: True, not 1 to 7"

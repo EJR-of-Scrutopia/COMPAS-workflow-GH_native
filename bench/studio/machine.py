@@ -153,7 +153,8 @@ def derive(parts, choices, facts, angle_degrees):
         wires_per_motor = int(choices["wires_per_motor"])
     except (TypeError, ValueError):
         raise MachineError("wires per motor: {!r}".format(choices["wires_per_motor"]))
-    if not 1 <= wires_per_motor <= SPOOLS or wires_per_motor != choices["wires_per_motor"]:
+    if (isinstance(choices["wires_per_motor"], bool) or not 1 <= wires_per_motor <= SPOOLS
+            or wires_per_motor != choices["wires_per_motor"]):
         raise MachineError("wires per motor: {!r}, not 1 to {}".format(
             choices["wires_per_motor"], SPOOLS))
     radius = facts.get("winding_radius_mm")
