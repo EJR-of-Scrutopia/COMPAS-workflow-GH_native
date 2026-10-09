@@ -116,3 +116,63 @@ def test_the_exports_name_the_machine_by_its_parts_and_list_each_cabinet(
     assert "The machine is {}.".format(row["described"]) in text
     assert text.count("Cabinet, machine") == len(row["price"]["cabinets"]["cabinets"])
     assert not re.search(r"\brigs?\b", text, re.IGNORECASE)
+
+
+def test_the_scoring_route_takes_the_five_choices_and_nothing_else(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    response = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "configurations": [{"motor": "34HS46-6004D-E1000"}], "options": OPTIONS})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "choices: none sent"
+
+
+def test_recommend_searches_the_five_choices_without_being_asked(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    result = client.post("/api/studies/Tiny/cablenet/recommend",
+                         json={"options": OPTIONS}).json()
+    assert result["holds"] is True
+    assert set(result["choices"]) == {"motor", "ratio", "pulley", "rope", "wires_per_motor"}
+
+
+def test_a_malformed_choice_is_a_refused_row_not_a_500(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    missing = {key: value for key, value in CHOICE.items() if key != "motor"}
+    response = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "choices": ["not a dict", 5, dict(CHOICE, ratio="x"), missing, CHOICE],
+        "options": OPTIONS})
+    assert response.status_code == 200
+    assert [row["refused"] for row in response.json()["rows"]] == [
+        "choices: not a set of five", "choices: not a set of five", "ratio: 'x'",
+        "choices: motor missing", None]
+
+
+def test_a_number_that_is_not_one_is_a_400_and_an_angle_past_the_table_is_said(
+        tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    url = "/api/studies/Tiny/cablenet/configurations"
+    steep = client.post(url, json={"choices": [CHOICE], "options": OPTIONS,
+                                   "angle_degrees": "steep"})
+    assert steep.status_code == 400
+    assert steep.json()["detail"].startswith("angle_degrees must be a number")
+    fast = client.post(url, json={"choices": [CHOICE], "options": OPTIONS,
+                                  "rope_speed_mm_s": "fast"})
+    assert fast.status_code == 400
+    assert fast.json()["detail"] == "rope_speed_mm_s: 'fast', not a number"
+    # past the eye bolts' published table no chain holds, and Recommend says so
+    past = client.post("/api/studies/Tiny/cablenet/recommend",
+                       json={"options": OPTIONS, "angle_degrees": 50.0})
+    assert past.status_code == 400 and "stops at 45" in past.json()["detail"]
+
+
+def test_a_wanted_speed_gives_the_motor_speed(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    row = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "choices": [CHOICE], "options": OPTIONS, "rope_speed_mm_s": 50}).json()["rows"][0]
+    # 50 mm/s at the net on four falls, through 20:1, onto a 33.9 mm spool:
+    # 50 x 4 x 60 x 20 / (2 pi x 33.9) = 1126.8 rpm
+    assert row["motor_rpm_for_wanted_speed"] == pytest.approx(1126.8, abs=0.1)

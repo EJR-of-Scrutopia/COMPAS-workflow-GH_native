@@ -1268,18 +1268,6 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         floor = catalogue.wire_floor(demand)["newtons"]
         return 0.0 if floor is None else float(floor)
 
-    def _demand_for(export: str, options):
-        """The demand the study's options name, and why there is none when there
-        is none: (demand, None) or (None, the reason)."""
-
-        if not isinstance(options, dict):
-            return None, ("no study options were sent, so there is no cable net "
-                          "demand to size against")
-        try:
-            return _cablenet_demand(export, options), None
-        except HTTPException as error:
-            return None, error.detail
-
     def _machine_inputs(export: str, options, parts) -> dict:
         """Everything the five choices are judged with on a study (spec
         2026-10-09 mechanism choices, sections 3 and 4): the cable net demand,
@@ -1355,8 +1343,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
 
     def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
                           demand=None):
-        """One scored row. The configurations route and the exports both score
-        through this, so the row is built in one place and cannot drift; a
+        """One scored row of the exports' ladder, built in one place; a
         configuration the catalogue refuses keeps its reason as `refused`."""
 
         try:
@@ -1402,55 +1389,24 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
     def score_configurations(export: str, body: dict):
         import catalogue
 
-        if "choices" in body:
-            # the five choices (spec 2026-10-09 mechanism choices, section 7.4)
-            choices = body.get("choices")
-            if not isinstance(choices, list) or not choices:
-                raise HTTPException(400, "choices: none sent")
-            parts = catalogue.load_parts()
+        # the five choices (spec 2026-10-09 mechanism choices, section 7.4)
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise HTTPException(400, "choices: none sent")
+        try:
             angle = float(body.get("angle_degrees", 10.0))
-            inputs = _machine_inputs(export, body.get("options"), parts)
-            speed = body.get("rope_speed_mm_s")
-            return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
-                    "angle_degrees": angle}
-        configurations = body.get("configurations")
-        if not isinstance(configurations, list) or not configurations:
-            raise HTTPException(
-                status_code=400,
-                detail="No configurations were sent to score.",
-            )
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "angle_degrees must be a number: {}".format(error))
+        speed = body.get("rope_speed_mm_s")
+        if speed is not None:
+            try:
+                speed = float(speed)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "rope_speed_mm_s: {!r}, not a number".format(speed))
         parts = catalogue.load_parts()
-        angle = float(body.get("angle_degrees", 10.0))
-        # The study's options, when they are sent, name the demand document, and
-        # the floor, the rope to wind and the load factor are read from it.
-        # Without them the caller's own figures stand.
-        demand, demand_note = _demand_for(export, body.get("options"))
-        wanted_speed = body.get("rope_speed_mm_s")
-        if demand is not None:
-            floor = _demand_floor(demand)
-            wound = _rope_wound_mm(demand)
-        else:
-            floor = float(body.get("prestress_floor") or 0.0)
-            # Total rope one wire must wind over the whole build, millimetres.
-            wound = body.get("rope_wound_mm")
-        rows = []
-        for configuration in configurations:
-            row = _score_for_export(
-                catalogue, parts, configuration, angle, floor, wound, demand)
-            if not row.get("refused"):
-                try:
-                    row["load_factor_note"] = (
-                        None if row["load_factor"] is not None else
-                        (demand_note if demand is None else
-                         "the demand document has no sizing block; run the cable "
-                         "net analysis again"))
-                    if wanted_speed:
-                        row["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
-                            parts, configuration, float(wanted_speed))
-                except Exception as error:
-                    row = _refusal(configuration, error)
-            rows.append(row)
-        return {"rows": rows, "angle_degrees": angle, "prestress_floor": floor}
+        inputs = _machine_inputs(export, body.get("options"), parts)
+        return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
+                "angle_degrees": angle}
 
     # ------------------------------------------------------------------
     # The cable net phase, assembled once. Two things write cablenet-*.json: the
@@ -1635,30 +1591,23 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         except (TypeError, ValueError) as error:
             raise HTTPException(
                 400, "angle_degrees must be a number: {}".format(error))
-        if body.get("search") == "choices":
-            # every combination of the five choices (spec section 6)
-            import machine
-            import recommend
+        # every combination of the five choices (spec 2026-10-09 mechanism
+        # choices, section 6)
+        import cabinet
+        import machine
+        import recommend
 
-            inputs = _machine_inputs(export, body.get("options"), parts)
-            rope = str((body.get("options") or {}).get("rope") or "rope-4mm")
+        inputs = _machine_inputs(export, body.get("options"), parts)
+        rope = str((body.get("options") or {}).get("rope") or "rope-4mm")
+        try:
             result = recommend.recommend(
                 parts, inputs["facts"], inputs["demands"], inputs["machines"],
                 inputs["facts"]["routes_mm"], inputs["take_ups"], angle,
                 run={"rope": rope, "pulleys": True, "wires_per_motor": None})
-            if result["choices"] is not None:
-                result["row"] = _choice_row(parts, inputs, result["choices"], angle)
-            return result
-        # why there is no demand, when there is none, is said in the rule and
-        # returned as demand_note, as the scoring route says it on each row
-        demand, demand_note = _demand_for(export, body.get("options"))
-        try:
-            result = catalogue.recommend(parts, angle, demand, reason=demand_note)
-        except catalogue.CatalogueError as error:
+        except (machine.MachineError, catalogue.CatalogueError, cabinet.CabinetError) as error:
             raise HTTPException(400, str(error))
-        result["configuration"] = catalogue.configuration_of(parts, result["key"])
-        result["name"] = parts["configurations"][result["key"]]["name"]
-        result["demand_note"] = demand_note
+        if result["choices"] is not None:
+            result["row"] = _choice_row(parts, inputs, result["choices"], angle)
         return result
 
     def _exports_folder() -> Path:

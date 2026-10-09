@@ -78,7 +78,7 @@ export function shapeOf(demand) {
   const withinLine = worst !== null && acceptance !== null && worst.residual <= acceptance;
   // A version 2 residual is the sag with the grabbed nodes held, and a stage
   // is unreachable when that sag stays past the line; the first version's was
-  // what its wires could not correct. verdictOf says each in its own words.
+  // what its wires could not correct (exports._shape_verdict).
   const grabbed = !!demand && demand.schema === SCHEMA;
   return { known, whyUnknown, worst, allReachable, acceptance, grabbed,
            holds: known && allReachable && withinLine };
@@ -378,147 +378,6 @@ export function toleranceNote(demand, dialMm) {
     millimetres(dial) + " mm would end at the same place without meeting it.";
 }
 
-// The skin, with its weight in kilonewtons when the sizing block gave one:
-// an unknown weight is left out of the sentence, never written as zero
-// (exports._skin_words).
-function skinWords(capacity) {
-  const weight = capacity.skin_newtons;
-  if (typeof weight !== "number" || !Number.isFinite(weight)) return "skin";
-  return kilonewtons(weight) + " kN skin";
-}
-
-// What stops the factor rising, as a clause that follows "before"
-// (exports._binder).
-function binder(capacity) {
-  const part = capacity.binding_part || capacity.binding;
-  if (part === "shape") {
-    return "the shape binds, because the net sags past the acceptance line at any load";
-  }
-  return String(part) + " binds";
-}
-
-// The same sentence exports.load_factor_sentence renders, word for word, so the
-// panel and the documents agree in words as well as numbers. The two share no
-// code; test_cablenet_model.py puts them side by side.
-export function loadFactorText(capacity) {
-  if (!capacity || capacity.limit_factor == null) {
-    const why = (capacity && capacity.detail) ||
-      "the demand document has no sizing block; run the cable net analysis again";
-    return "Whether it carries the skin is not established: " +
-      String(why).replace(/\.+$/, "") + ".";
-  }
-  const skin = skinWords(capacity);
-  const times = factor(capacity.limit_factor);
-  if (capacity.binding === "none") {
-    // the walk ran to its end with nothing past a limit: a floor, not a ceiling
-    return "Carries at least " + times + " times the " + skin +
-      ": nothing binds up to that load.";
-  }
-  if (capacity.sufficient) {
-    return "Carries " + times + " times the " + skin + " before " + binder(capacity) + ".";
-  }
-  return "Carries only " + times + " times the " + skin +
-    ", so it does not hold the skin: " + binder(capacity) + ".";
-}
-
-// Holding is three questions now: does the system carry the skin, can the
-// parts carry the tension, and does the net keep its shape. The weight leads.
-export function verdictOf({ row, floor, shape, capacity }) {
-  if (!row || row.refused) {
-    return { headline: row ? String(row.refused) : "No answer.", reasons: [] };
-  }
-  const reasons = [loadFactorText(capacity)];
-  const path = row.rope_path || null;
-  if (!(floor > 0)) {
-    return { headline: "No demand to compare against yet.", reasons };
-  }
-  const carries = row.ceiling >= floor;
-  const pathOk = !path || (path.drum_fits && path.rail_fits);
-  const weightFails = !!capacity && capacity.sufficient === false;
-  const shapeFails = !!shape && shape.known && !shape.holds;
-  const shapeUnknown = !shape || !shape.known;
-  const weightUnknown = !capacity || capacity.limit_factor == null;
-  let headline;
-  if (!carries || !pathOk || shapeFails || weightFails) headline = "It does not hold.";
-  else if (shapeUnknown || weightUnknown) headline = "Whether it holds has not been established.";
-  else headline = "It holds.";
-  reasons.push(carries
-    ? "The parts can carry the tension: the ceiling is " + newtons(row.ceiling) +
-      " N, set by " + String(row.binding) + (row.margin == null ? "" :
-      ", " + Number(row.margin).toFixed(2) + " times the demand") + "."
-    : "The parts cannot carry the tension: the ceiling is " + newtons(row.ceiling) +
-      " N against " + newtons(floor) + " N demanded.");
-  if (path && !path.drum_fits) {
-    reasons.push("The rope does not fit the drum in one layer (" +
-      path.rope_wound_mm.toFixed(0) + " mm against " + path.drum_capacity_mm.toFixed(0) +
-      " mm). A second layer changes the effective radius, so every torque figure here would be wrong.");
-  }
-  if (path && !path.rail_fits) {
-    reasons.push("The carriage would travel " + path.carriage_travel_mm.toFixed(0) +
-      " mm but the rail's stroke is " + path.rail_stroke_mm.toFixed(0) + " mm.");
-  }
-  if (shape && shape.known && shape.worst) {
-    const line = shape.acceptance == null ? "no acceptance line set"
-      : millimetres(shape.acceptance) + " mm acceptance line";
-    if (!shape.holds) {
-      reasons.push("The net misses the shape by " + millimetres(shape.worst.residual) +
-        " mm at stage " + String(shape.worst.name) + " against a " + line +
-        (shape.allReachable ? "" : shape.grabbed
-          ? " and at least one stage stays past the line with the grabbed nodes held"
-          : " and at least one stage cannot be corrected at all") +
-        ". This comes from the vault, the wires and the prestress, so no change of parts here will cure it.");
-    } else {
-      reasons.push("The net stays within the shape: the worst miss is " +
-        millimetres(shape.worst.residual) + " mm against a " + line + ".");
-    }
-  } else if (shape && !shape.known) {
-    reasons.push("Whether the net keeps its shape has not been established, because " +
-      String(shape.whyUnknown) + ".");
-  } else {
-    reasons.push("Whether the net keeps its shape has not been established.");
-  }
-  return { headline, reasons };
-}
-
-export function configurationLabel(entry) {
-  return entry && entry.name ? String(entry.name) : "unnamed configuration";
-}
-
-function sameValue(a, b) {
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
-      a.every((v, i) => v === b[i]);
-  }
-  return (a == null ? null : a) === (b == null ? null : b);
-}
-
-// Whether the current parts differ from the named configuration's. Every key
-// the configuration carries is compared, the chain as a list.
-export function modifiedFrom(key, current, configurations) {
-  const entry = configurations && configurations[key];
-  if (!entry || !current) return false;
-  const parts = entry.parts || {};
-  const keys = new Set([...Object.keys(parts), ...Object.keys(current)]);
-  for (const k of keys) {
-    if (!sameValue(parts[k], current[k])) return true;
-  }
-  return false;
-}
-
-export function fallbackKey(remembered, configurations) {
-  const keys = Object.keys(configurations || {});
-  if (!keys.length) return { key: null, note: "The catalogue has no configurations." };
-  if (remembered && configurations[remembered]) return { key: remembered, note: null };
-  const first = keys[0];
-  return {
-    key: first,
-    note: remembered
-      ? "The remembered system \"" + String(remembered) + "\" is no longer in the " +
-        "catalogue; showing " + configurationLabel(configurations[first]) + "."
-      : null,
-  };
-}
-
 export function stageCaption(stage) {
   if (!stage) return "";
   if (isFrame(stage)) {
@@ -643,15 +502,6 @@ export function curveSvg(points, acceptance, width = 240, height = 72) {
     '<text x="2" y="' + (pad.top + 8) + '">' + esc(millimetres(yMax)) + "</text>" +
     '<text x="2" y="' + (height - pad.bottom) + '">' + esc(millimetres(yMin)) + "</text>" +
     "</svg>";
-}
-
-// What is settled is said, not offered.
-export function settledText(drive) {
-  return "Settled: the drive is " + String(drive || "the motor's own") +
-    ", which follows the motor; the drum is the workshop's 72 mm grooved drum and the " +
-    "rail the MGN15H-300. The controller, the single board computer, the power " +
-    "supply, the amplifiers and the terminals carry no mechanical load and change no " +
-    "number on this panel.";
 }
 
 // Annotation only: a number and its unit, never a comparison.

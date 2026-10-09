@@ -114,3 +114,28 @@ def test_a_price_in_a_currency_with_no_rate_is_refused(tmp_path):
         del data["currency"]["USD_per_GBP"]
     with pytest.raises(catalogue.CatalogueError, match="no USD rate"):
         _loaded_with(tmp_path, change)
+
+
+def test_the_catalogue_holds_only_what_the_five_choices_reach():
+    """Spec section 7.1: the six configurations, the AC and boat-lift motors,
+    the worm gearboxes, the inverter and the "none" drive are gone. Every motor
+    is one the selects offer, every driver is some motor's, every gearbox is a
+    planetary on a frame or none, and every pulley names the wire it takes."""
+
+    import machine
+
+    parts = catalogue.load_parts()
+    assert "configurations" not in parts and "pairing" not in parts
+    assert machine.offered_motors(parts) == list(parts["motor"])
+    assert {entry["family"] for entry in parts["motor"].values()} == {"A", "S"}
+    assert {entry["drive"] for entry in parts["motor"].values()} == set(parts["drive"])
+    for key, entry in parts["gearbox"].items():
+        assert key == "direct" or (entry["kind"] == "planetary" and entry.get("frame")), key
+    for key, entry in parts["sheave"].items():
+        assert entry.get("wire_min_mm") is not None, key
+
+
+def test_the_presets_and_the_ranking_of_them_are_gone_from_the_catalogue():
+    for name in ("configurations", "configuration_of", "recommend", "part_count",
+                 "gearboxes_for"):
+        assert not hasattr(catalogue, name), name

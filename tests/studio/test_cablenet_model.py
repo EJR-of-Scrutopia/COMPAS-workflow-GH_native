@@ -32,12 +32,6 @@ out.empty = m.instantAt([], { duringFormwork: true, machineTime: 50, courseIndex
 out.frameCaption = m.stageCaption(stages[0]);
 out.courseCaption = m.stageCaption(stages[3]);
 out.bands = [m.sagBand(3, 2.18), m.sagBand(1.5, 2.18), m.sagBand(0.2, 2.18), m.sagBand(3, null), m.sagBand(null, 2.18)];
-const configurations = { a: { name: "A", parts: { motor: "m1", rope: "r1", chain: ["e1", "t1"], sheave: null, reeve_factor: 1 } } };
-out.same = m.modifiedFrom("a", { motor: "m1", rope: "r1", chain: ["e1", "t1"], sheave: null, reeve_factor: 1 }, configurations);
-out.changed = m.modifiedFrom("a", { motor: "m1", rope: "r2", chain: ["e1", "t1"], sheave: null, reeve_factor: 1 }, configurations);
-out.chainChanged = m.modifiedFrom("a", { motor: "m1", rope: "r1", chain: ["e1", "t9"], sheave: null, reeve_factor: 1 }, configurations);
-out.fallbackKnown = m.fallbackKey("a", configurations);
-out.fallbackGone = m.fallbackKey("zzz", configurations);
 const placement = { batch: 20, steps: 40, reached: true, curve: [
   { count: 0, worst_sag_mm: 2009, worst_residual_newtons: 83 },
   { count: 20, worst_sag_mm: 900, worst_residual_newtons: 70 },
@@ -48,18 +42,10 @@ out.grabNone = m.grabText(null, null, 2.18);
 out.svg = m.curveSvg(placement.curve, 2.18, 240, 72);
 out.svgNoLine = m.curveSvg(placement.curve, null, 240, 72);
 out.stale = [m.isStale({ schema: "bench.cablenet/1" }), m.isStale({ schema: "bench.cablenet/2" }), m.isStale(null)];
-out.loadHolds = m.loadFactorText({ limit_factor: 2.9, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 66890 });
-out.loadFails = m.loadFactorText({ limit_factor: 0.4, sufficient: false, binding_part: "shape", skin_newtons: 66890 });
-out.loadNone = m.loadFactorText(null);
-out.verdict = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.63, rope_path: null },
-  floor: 900, shape: { known: true, holds: true, worst: { residual: 1.4, name: "S7" }, acceptance: 2.18, allReachable: true },
-  capacity: { limit_factor: 1.6, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
-out.verdictFails = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 0.49, rope_path: null },
-  floor: 3000, shape: { known: true, holds: true, worst: { residual: 1.4, name: "S7" }, acceptance: 2.18, allReachable: true },
-  capacity: { limit_factor: 0.4, sufficient: false, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
 out.newtons = [1471, 1470.96, 0, null].map(m.newtons);
 out.rpm = [m.rpmText(50, { motor_rpm_for_wanted_speed: 318.3 }), m.rpmText(50, { refused: "x" }), m.rpmText(50, null)];
-out.settled = m.settledText("CL86Y");
+out.retired = ["verdictOf", "loadFactorText", "modifiedFrom", "fallbackKey", "settledText",
+  "configurationLabel"].filter((name) => name in m);
 
 // The raise is shown and never judged: a frame of it enters neither the worst
 // residual, nor the reachable test, nor the verdict. A stage with neither a
@@ -78,14 +64,11 @@ out.shapeFramesOnly = m.shapeOf({ acceptance: 2.18, stages: [raise] });
 out.shapeNoLine = m.shapeOf({ acceptance: null, stages: inside });
 out.shapeEmpty = m.shapeOf({ acceptance: 2.18, stages: [] });
 out.shapeNoDemand = m.shapeOf(null);
-// A stage past the line: a version 2 document says it stays past it with the
-// grabbed nodes held; the first version said its wires could not correct it.
+// A stage past the line: a version 2 document's sag is with the grabbed nodes
+// held; the first version's was what its wires could not correct.
 const unreached = [raise, ...inside, third(3.1, false)];
-const verdictWith = (shape) => m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.63, rope_path: null },
-  floor: 900, shape,
-  capacity: { limit_factor: 1.6, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
-out.verdictGrabbed = verdictWith(m.shapeOf({ schema: "bench.cablenet/2", acceptance: 2.18, stages: unreached }));
-out.verdictCorrected = verdictWith(m.shapeOf({ schema: "bench.cablenet/1", acceptance: 2.18, stages: unreached }));
+out.shapeGrabbed = m.shapeOf({ schema: "bench.cablenet/2", acceptance: 2.18, stages: unreached });
+out.shapeCorrected = m.shapeOf({ schema: "bench.cablenet/1", acceptance: 2.18, stages: unreached });
 
 // The same reading in the timeline: an older stage is a course there too.
 const older = [{ name: "A", skin_load_sum_newtons: 1000 }, { name: "B", skin_load_sum_newtons: 2000 }];
@@ -190,10 +173,6 @@ held.prestress = 3000;
 held.sizing = { ...held.sizing, worst_wire_tension_newtons: 3000, prestress_newtons: 3000 };
 out.sentHeld = m.demandSentences(held);
 out.floorHeld = m.prestressFloor(held);
-out.verdictHeld = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 0.49, rope_path: null },
-  floor: m.prestressFloor(held),
-  shape: { known: true, holds: true, worst: { residual: 1.4, name: "S2" }, acceptance: 2.18, allReachable: true },
-  capacity: { limit_factor: 0.4, sufficient: false, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
 // A document written before the block carried the two figures: its one figure
 // is the fit's (the real study's 14.6 N), judged against the 300 N it records.
 const beforeTheRule = demandOf([10, 14.6, 2], [7, 12, 1], [8, 13, 1], "S2");
@@ -209,10 +188,6 @@ dominant.sizing = { stage: "S2", worst_wire_tension_newtons: 1000, fitted_wire_t
                     prestress_newtons: 300, worst_actuator_newtons: 2800 };
 out.sentDominant = m.demandSentences(dominant);
 out.floorDominant = m.prestressFloor(dominant);
-out.verdictDominant = m.verdictOf({ row: { ceiling: 1471, binding: "turnbuckle-hook-hook-M10", margin: 1.47, rope_path: null },
-  floor: m.prestressFloor(dominant),
-  shape: { known: true, holds: true, worst: { residual: 1.4, name: "S2" }, acceptance: 2.18, allReachable: true },
-  capacity: { limit_factor: 1.6, sufficient: true, binding_part: "turnbuckle-hook-hook-M10", skin_newtons: 12000 } });
 const calm = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
 calm.sizing.worst_actuator_newtons = 0;
 out.sentNoPull = m.demandSentences(calm);
@@ -295,18 +270,6 @@ def test_sag_bands_and_the_missing_line(out):
 
 
 @needs_node
-def test_modified_from_compares_every_part_including_the_chain(out):
-    assert out["same"] is False and out["changed"] is True and out["chainChanged"] is True
-
-
-@needs_node
-def test_a_remembered_key_that_left_the_catalogue_falls_back_and_says_so(out):
-    assert out["fallbackKnown"] == {"key": "a", "note": None}
-    assert out["fallbackGone"]["key"] == "a"
-    assert "no longer in the catalogue" in out["fallbackGone"]["note"]
-
-
-@needs_node
 def test_the_grab_text_states_count_batches_line_and_the_heuristic(out):
     assert out["grab"].startswith("Grab 40 nodes (2 batches of 20) to bring the net inside the 2.18 mm line")
     assert "2009.00 mm" in out["grab"] and "heuristic" in out["grab"]
@@ -327,29 +290,10 @@ def test_stale_documents_are_recognised(out):
 
 
 @needs_node
-def test_the_load_factor_reads_as_the_documents_do(out):
-    assert out["loadHolds"] == "Carries 2.9 times the 66.9 kN skin before turnbuckle-hook-hook-M10 binds."
-    assert out["loadFails"].startswith("Carries only 0.4 times the 66.9 kN skin, so it does not hold the skin")
-    assert "shape binds" in out["loadFails"]
-    assert out["loadNone"].startswith("Whether it carries the skin is not established")
-
-
-@needs_node
-def test_the_verdict_leads_with_the_weight_and_keeps_both_halves(out):
-    assert out["verdict"]["headline"] == "It holds."
-    assert out["verdict"]["reasons"][0].startswith("Carries 1.6 times")
-    assert any("carry the tension" in r for r in out["verdict"]["reasons"])
-    assert any("stays within the shape" in r for r in out["verdict"]["reasons"])
-    assert out["verdictFails"]["headline"] == "It does not hold."
-    assert out["verdictFails"]["reasons"][0].startswith("Carries only 0.4 times")
-
-
-@needs_node
-def test_forces_rpm_and_the_settled_block(out):
+def test_forces_and_the_rope_speed(out):
     assert out["newtons"] == ["1471.0", "1471.0", "0.0", "not recorded"]
     assert out["rpm"][0] == "50 mm/s, 318 rpm at the motor"
     assert out["rpm"][1] == "50 mm/s" and out["rpm"][2] == "50 mm/s"
-    assert "CL86Y" in out["settled"] and "carry no mechanical load" in out["settled"]
 
 
 @needs_node
@@ -383,18 +327,12 @@ def test_a_stage_with_neither_a_time_nor_a_course_is_a_course(out):
 
 
 @needs_node
-def test_a_stage_past_the_line_is_said_in_the_words_of_its_own_version(out):
-    grabbed = out["verdictGrabbed"]
-    assert grabbed["headline"] == "It does not hold."
-    assert ("The net misses the shape by 3.10 mm at stage S3 against a 2.18 mm acceptance line "
-            "and at least one stage stays past the line with the grabbed nodes held. This comes "
-            "from the vault, the wires and the prestress, so no change of parts here will cure "
-            "it.") in grabbed["reasons"]
-    assert not any("cannot be corrected" in r for r in grabbed["reasons"])
-    corrected = out["verdictCorrected"]
-    assert any(r.startswith("The net misses the shape by 3.10 mm at stage S3 against a 2.18 mm "
-                            "acceptance line and at least one stage cannot be corrected at all.")
-               for r in corrected["reasons"])
+def test_a_stage_past_the_line_is_read_by_its_own_version(out):
+    grabbed, corrected = out["shapeGrabbed"], out["shapeCorrected"]
+    assert grabbed["grabbed"] is True and corrected["grabbed"] is False
+    for shape in (grabbed, corrected):
+        assert shape["holds"] is False and shape["allReachable"] is False
+        assert shape["worst"] == {"residual": 3.1, "name": "S3"}
     assert out["shapeFrame"]["grabbed"] is False and out["shapeNoDemand"]["grabbed"] is False
 
 
@@ -450,11 +388,6 @@ def test_the_wires_are_judged_at_no_less_than_the_entered_prestress(out):
         "prestress (3000.0 N) and the greatest tension the fit found in any wire (1471.0 N), "
         "set by the entered prestress. That is a property of the vault, the skin and the "
         "prestress, so it does not move when parts change. The stage that sizes the parts is S2.")
-    # the ceiling of 1471 N does not carry it, whatever the fit found
-    verdict = out["verdictHeld"]
-    assert verdict["headline"] == "It does not hold."
-    assert ("The parts cannot carry the tension: the ceiling is 1471.0 N against 3000.0 N "
-            "demanded.") in verdict["reasons"]
     # an older block carries the fit's figure alone, and is read by the same rule
     assert out["floorOlder"] == {"newtons": 300, "fitted": 14.6, "prestress": 300}
     assert out["sentOlder"][0].startswith(
@@ -568,11 +501,6 @@ def test_an_actuator_that_pulls_harder_than_any_wire_leaves_the_floor_to_the_wir
         "reached at the raise's instant F60. That is")
     assert "The grabbed nodes need up to 2800.0 N each, which a wire there would have to carry." in dominant
     assert "<b>2800" not in " ".join(dominant), "the actuator's figure is not the wires' floor"
-    # the verdict follows the wires as the server's row does: a ceiling of 1471 N passes 1000 N
-    verdict = out["verdictDominant"]
-    assert verdict["headline"] == "It holds."
-    assert any("the ceiling is 1471.0 N, set by turnbuckle-hook-hook-M10, 1.47 times the demand" in r
-               for r in verdict["reasons"])
     # no pull recorded, or none above zero: nothing is said about the grabbed nodes' force
     assert not any("grabbed nodes need" in s for s in out["sentNoPull"])
     assert not any("grabbed nodes need" in s for s in out["sentPullAbsent"])
@@ -616,15 +544,14 @@ def test_the_prestress_note_is_said_only_when_the_dial_has_left_the_analysis(out
     assert out["noteNotANumber"] == ["", ""]
 
 
-# The panel and the documents say the load factor and the grab in the same
-# words. The two runtimes share no code, so this puts the Python sentences
-# beside the JavaScript ones over every branch they have.
+# The panel and the documents say the grab in the same words. The two runtimes
+# share no code, so this puts the Python sentences beside the JavaScript ones
+# over every branch they have.
 PARITY = """
 import * as m from %(module)r;
 import { readFileSync } from "node:fs";
 const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
 console.log(JSON.stringify({
-  load: cases.load.map((c) => m.loadFactorText(c)),
   grab: cases.grab.map((c) => m.grabText(c.placement, c.held, c.line)),
 }));
 """
@@ -638,24 +565,6 @@ WALK = {"batch": 20, "steps": 40, "reached": True, "curve": [
 def _nodes(count):
     return {"actuators": list(range(count))}
 
-
-LOAD_CASES = [
-    {"limit_factor": 2.9, "sufficient": True, "binding": "anchor",
-     "binding_part": "turnbuckle-hook-hook-M10", "skin_newtons": 66890},
-    {"limit_factor": 0.4, "sufficient": False, "binding": "anchor",
-     "binding_part": "turnbuckle-hook-hook-M10", "skin_newtons": 66890},
-    {"limit_factor": 0.4, "sufficient": False, "binding": "deviation",
-     "binding_part": "shape", "skin_newtons": 66890},
-    {"limit_factor": 20.0, "sufficient": True, "binding": "none",
-     "binding_part": None, "skin_newtons": 12000},
-    {"limit_factor": 1.6, "sufficient": True, "binding": "rope tension", "binding_part": "rope-x"},
-    {"limit_factor": 1.6, "sufficient": True, "binding": "motor torque",
-     "binding_part": None, "skin_newtons": None},
-    {"limit_factor": None, "detail": "the walk found no wire tension to scale."},
-    {"limit_factor": None},
-    {},
-    None,
-]
 
 GRAB_CASES = [
     {"placement": None, "held": _nodes(3), "line": 2.18},
@@ -677,13 +586,13 @@ GRAB_CASES = [
 
 
 @needs_node
-def test_the_panel_says_the_load_factor_and_the_grab_as_the_documents_do(tmp_path):
+def test_the_panel_says_the_grab_as_the_documents_do(tmp_path):
     studio = str(STATIC.parent)
     if studio not in sys.path:
         sys.path.insert(0, studio)
     exports = pytest.importorskip("exports")
     cases = tmp_path / "cases.json"
-    cases.write_text(json.dumps({"load": LOAD_CASES, "grab": GRAB_CASES}), encoding="utf-8")
+    cases.write_text(json.dumps({"grab": GRAB_CASES}), encoding="utf-8")
     script = tmp_path / "parity.mjs"
     module = (STATIC / "cablenet_model.js").resolve().as_uri()
     script.write_text(PARITY % {"module": module, "cases": str(cases)}, encoding="utf-8")
@@ -691,8 +600,6 @@ def test_the_panel_says_the_load_factor_and_the_grab_as_the_documents_do(tmp_pat
     assert result.returncode == 0, result.stderr
     panel = json.loads(result.stdout)
 
-    for case, said in zip(LOAD_CASES, panel["load"]):
-        assert said == exports.load_factor_sentence({"capacity": case}), case
     for case, said in zip(GRAB_CASES, panel["grab"]):
         model = {"placement": case["placement"], "held": case["held"],
                  "sag": {"acceptance_mm": case["line"]}}
@@ -846,3 +753,10 @@ def test_the_panel_warns_about_the_rope_in_the_cases_the_documents_do(tmp_path):
             assert exports._newtons(document["chosen_ea_newtons"]) in sentence, case
             assert case["configuration"]["rope"] in sentence, case
     assert 0 < warned < len(cases), "the cases must include both answers"
+
+
+@needs_node
+def test_the_preset_panels_functions_are_gone(out):
+    # the panel judges through machineHtml and verdictHtml now (spec 2026-10-09
+    # mechanism choices, section 7.3); nothing calls these
+    assert out["retired"] == []

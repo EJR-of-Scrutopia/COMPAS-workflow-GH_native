@@ -112,12 +112,17 @@ def derive(parts, choices, facts, angle_degrees):
     radius) and reeve_factor (its reeving); spools when the machine has other
     than seven."""
 
+    if not isinstance(choices, dict):
+        raise MachineError("choices: not a set of five")
     missing = [key for key in CHOICE_KEYS if key not in choices]
     if missing:
         raise MachineError("choices: {} missing".format(", ".join(missing)))
     motor = choices["motor"]
     if motor not in offered_motors(parts):
         raise MachineError("{}: not offered".format(motor))
+    ratio = choices["ratio"]
+    if ratio is not None and (isinstance(ratio, bool) or not isinstance(ratio, (int, float))):
+        raise MachineError("ratio: {!r}".format(ratio))
     rope = choices["rope"]
     rope_entry = _part(parts, "rope", rope)
     pulley = choices["pulley"]
