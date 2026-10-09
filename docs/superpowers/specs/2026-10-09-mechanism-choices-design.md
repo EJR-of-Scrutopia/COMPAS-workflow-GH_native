@@ -437,8 +437,8 @@ catalogue and marked converted.
 
 The demand Recommend judges against is the one on screen. The wire, the
 pulleys and wires per motor change how the net moves, and with it the demand,
-so a combination that changes any of them is marked "to confirm by a run with
-these choices", and choosing it offers that run.
+so a combination that changes any of them is tagged "run to confirm", and
+choosing it offers that run.
 
 ## 7. Where it shows and how it flows
 
@@ -478,7 +478,14 @@ models that take the chosen wire; the wire; wires per motor. The choices are
 remembered per study in the browser. Below them: the derived machine, each
 wire's limit with the part that sets it, the verdict against the net's
 demand, the travel checks, the wire to buy, and the cabinet list with its
-total. Recommend fills the five selects.
+total.
+
+The panel is a tool, not a text (the owner's rule, 9 October 2026): numbers
+with their units, colour keys, tables that sort and fly the view to a row, and
+the names of parts. A verdict is a mark, a margin and the limiting part's
+name; no sentence says why. Tooltips name the quantity and its unit. The
+explanatory notes the section carries today (the paragraphs under each lens)
+are removed. Recommend fills the five selects.
 The Formwork tab (part 4) reuses the same block.
 
 ### 7.4 The routes
@@ -497,11 +504,12 @@ The Formwork tab (part 4) reuses the same block.
 
 ## 8. Refusals
 
-Every refusal is a sentence that names both sides, never a bare exception:
+Every refusal is one short line naming the conflict, never a bare exception
+and never an explanation:
 
-- a ratio the motor's frame does not offer ("EG23 offers no 30:1");
-- a wire outside the chosen pulley's range ("the Pfaff DSRB 185/8 takes 8 mm
-  wire, not 4");
+- a ratio the motor's frame does not offer ("EG23: no 30:1");
+- a wire outside the chosen pulley's range ("Pfaff DSRB 185/8: 8 mm wire, not
+  4 mm");
 - a machine document with no winding radius;
 - rope on a drum beyond its single layer, or a carriage travelling beyond its
   rail's stroke, each with the two figures;
