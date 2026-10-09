@@ -100,6 +100,17 @@ def cablenet_path(slug: str, material: str, pattern: str, size: float,
         _density_suffix(density))
 
 
+def formwork_sim_path(slug: str, material: str, pattern: str, size: float,
+                      thickness: float, density=None) -> Path:
+    """The formwork engine's capture document for a study and its cut's options
+    (spec 2026-10-09 section 4.5), beside the cable net demand and cleared with
+    it when the study is uploaded again."""
+
+    return STUDIES_DIR / slug / "studio" / "formwork-sim-{}-{}-s{}-t{}{}.json".format(
+        material, pattern, round(size * 1000), round(thickness * 1000),
+        _density_suffix(density))
+
+
 def _sidecar(export_name: str, *suffixes: str) -> Path:
     """The first of these documents that exists, or the last name tried.
 
