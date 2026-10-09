@@ -30,7 +30,7 @@ class CatalogueError(RuntimeError):
 
 
 PRICED_KINDS = ("motor", "drive", "gearbox", "drum", "rope", "turnbuckle", "eye_bolt",
-                "sheave", "rail")
+                "sheave", "rail", "load_cell", "cabinet")
 
 
 def _sheave_rating_kg(entry):
@@ -164,6 +164,8 @@ def load_parts(path=None):
             entry["price_gbp"] = price_gbp(parts, key, entry)
             for reel in entry.get("reels") or []:
                 reel["price_gbp"] = price_gbp(parts, key, dict(entry, unit_price=reel["price"]))
+    for entry in (parts.get("load_cell") or {}).values():
+        entry["capacity_newtons"] = float(entry["capacity_kg"]) * gravity
     _check_offered(parts)
     # A designed rig that cannot be built fails here, with its part named, and
     # not on a panel the first time somebody chooses it.
