@@ -331,7 +331,8 @@ def ceiling_for(parts, configuration, angle_degrees):
 
 
 def price_of(parts, configuration):
-    """What the priced lines come to, and an honest flag when some are missing."""
+    """What the priced lines come to in pounds without VAT (price_gbp), and an
+    honest flag when some are missing."""
 
     pounds = 0.0
     unpriced = []
@@ -341,21 +342,21 @@ def price_of(parts, configuration):
         ("rope", configuration["rope"]), ("rail", configuration["rail"]),
     ):
         entry = _part(parts, kind, key)
-        price = entry.get("unit_price")
+        price = entry.get("price_gbp")
         if price is None:
             unpriced.append(key)
         else:
             pounds += float(price)
     for key in configuration["chain"]:
         entry = parts["eye_bolt"].get(key) or parts["turnbuckle"].get(key)
-        price = (entry or {}).get("unit_price")
+        price = (entry or {}).get("price_gbp")
         if price is None:
             unpriced.append(key)
         else:
             pounds += float(price)
     if configuration.get("sheave"):
         entry = _part(parts, "sheave", configuration["sheave"])
-        price = entry.get("unit_price")
+        price = entry.get("price_gbp")
         if price is None:
             unpriced.append(configuration["sheave"])
         else:

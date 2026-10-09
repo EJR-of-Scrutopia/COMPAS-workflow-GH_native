@@ -93,3 +93,26 @@ def test_recommend_searches_the_five_choices_and_judges_its_pick(tmp_path, monke
     assert set(result["choices"]) == {"motor", "ratio", "pulley", "rope", "wires_per_motor"}
     assert result["row"]["verdict"]["holds"] is True
     assert result["row"]["described"] == result["described"]
+
+
+def test_the_exports_name_the_machine_by_its_parts_and_list_each_cabinet(
+        tmp_path, monkeypatch):
+    import re
+    from pathlib import Path
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    folder = tmp_path / "out"
+    folder.mkdir()
+    assert client.post("/api/cablenet/exports/folder",
+                       json={"path": str(folder)}).status_code == 200
+    row = client.post("/api/studies/Tiny/cablenet/configurations",
+                      json={"choices": [CHOICE], "options": OPTIONS}).json()["rows"][0]
+    done = client.post("/api/studies/Tiny/cablenet/exports",
+                       json={**OPTIONS, "configuration": row["configuration"]})
+    assert done.status_code == 200, done.text
+    sheet = next(Path(p) for p in done.json()["paths"] if p.endswith(".md"))
+    text = sheet.read_text(encoding="utf-8")
+    assert "The machine is {}.".format(row["described"]) in text
+    assert text.count("Cabinet, machine") == len(row["price"]["cabinets"]["cabinets"])
+    assert not re.search(r"\brigs?\b", text, re.IGNORECASE)

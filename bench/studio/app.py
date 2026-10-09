@@ -1724,11 +1724,33 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 400, "The exports folder {} cannot be read: {}. Choose another "
                 "folder and run the export again.".format(folder, error))
 
+        # the machine named by its parts, and each machine's cabinet (spec
+        # 2026-10-09 mechanism choices, section 7.4); a study with no machine to
+        # count cabinets on is exported with the line that says why
+        import cabinet
+        import machine
+
+        described = None
+        if not row.get("refused"):
+            try:
+                described = machine.describe(parts, configuration)
+            except (machine.MachineError, KeyError) as error:
+                raise HTTPException(400, "configuration: {}".format(error))
+        boxes, boxes_note = None, None
+        try:
+            inputs = _machine_inputs(export, body, parts)
+            boxes = cabinet.cabinets(parts, configuration, inputs["demands"],
+                                     inputs["machines"])
+        except HTTPException as error:
+            boxes_note = error.detail
+        except cabinet.CabinetError as error:
+            boxes_note = str(error)
         try:
             model = exports.export_model(
                 parts, demand, row, configuration, angle,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                ladder_rows=ladder_rows)
+                ladder_rows=ladder_rows, machine=described, cabinets=boxes,
+                cabinets_note=boxes_note)
         except exports.ExportError as error:
             raise HTTPException(400, str(error))
         try:

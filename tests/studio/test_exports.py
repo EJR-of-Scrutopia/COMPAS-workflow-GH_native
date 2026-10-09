@@ -589,6 +589,8 @@ def _spy_on_export_model(monkeypatch):
     def spy(*args, **kwargs):
         seen["row"] = args[2]
         seen["ladder"] = kwargs.get("ladder_rows")
+        for key in ("machine", "cabinets", "cabinets_note"):
+            seen[key] = kwargs.get(key)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(exports, "export_model", spy)
@@ -2413,3 +2415,102 @@ def test_the_tolerance_is_listed_under_the_assumptions_in_both_documents():
                               "half the vault's 16.1 m reach")
     assert not any("falsework" in a["what"] or a["what"] == "acceptance tolerance"
                    for a in older["assumptions"])
+
+
+# ---------------------------------------------------------------------------
+# The machine the five choices make (spec 2026-10-09 mechanism choices,
+# section 7.4): named by its parts, never as a rig, with each machine's cabinet.
+# ---------------------------------------------------------------------------
+
+def _derived(**changes):
+    import catalogue
+    import machine
+    parts = catalogue.load_parts()
+    choices = {"motor": "34HS46-6004D-E1000", "ratio": 20, "pulley": None,
+               "rope": "rope-4mm", "wires_per_motor": 1}
+    choices.update(changes)
+    facts = {"winding_radius_mm": 33.9, "reeve_factor": 4}
+    return parts, machine.derive(parts, choices, facts, 10.0)
+
+
+def test_the_machine_is_named_by_its_parts_in_all_three_documents():
+    import cabinet
+    import machine
+    parts, configuration = _derived()
+    described = machine.describe(parts, configuration)
+    assert described == ("34HS46-6004D-E1000 on EG34 20:1, no pulleys, 4 mm 7x19, "
+                         "one wire a motor")
+    boxes = cabinet.cabinets(parts, configuration, [900.0] * 7, [list(range(7))])
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09",
+                                 machine=described, cabinets=boxes)
+    assert model["machine"] == described and model["cabinets"] == boxes
+    assert ["Machine", described] in exports._sheet_rows(model)["Chosen"]
+    assert "The machine is {}.".format(described) in exports.datasheet_markdown(model)
+    assert described in exports.diagram_svg(model)
+
+
+def test_each_machines_cabinet_is_listed_with_its_rule_and_price():
+    import cabinet
+    parts, configuration = _derived()
+    boxes = cabinet.cabinets(parts, configuration, [900.0] * 14,
+                             [list(range(7)), list(range(7, 14))])
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09",
+                                 machine="m", cabinets=boxes)
+    sheet = exports._sheet_rows(model)["Parts"]
+    rows = [" | ".join(str(c) for c in row) for row in sheet]
+    assert sum(1 for row in rows if row.startswith("Cabinet, machine")) == 2
+    assert ["Part", "Count", "Rule", "Unit, GBP", "Line, GBP", "In total", "Supplier",
+            "Quoted", "Source"] in sheet
+    # every line with who quoted it, in what, and the source (spec section 5.5)
+    for line in boxes["cabinets"][0]["lines"]:
+        assert any(line["model"] in row and line["rule"] in row
+                   and (line["source"] or "") in row and (line["quoted"] or "") in row
+                   for row in rows), line
+    assert any(row.startswith("Cabinets, all machines") for row in rows)
+    chosen = _section(exports.datasheet_markdown(model), "chosen")
+    assert "| Part | Count | Rule | Unit, GBP | Line, GBP | Supplier | Quoted |" in chosen
+    assert chosen.count("Cabinet, machine") == 2
+    driver = boxes["cabinets"][0]["lines"][0]
+    assert "[{}]({})".format(driver["supplier"], driver["source"]) in chosen
+
+
+def test_an_export_with_no_cabinet_says_why_in_one_line():
+    parts, configuration = _derived()
+    model = exports.export_model(parts, _demand(), _row(parts, configuration),
+                                 configuration, 10.0, "2026-10-09", machine="m",
+                                 cabinets_note="mechanism: none for this study")
+    assert model["cabinets"] is None
+    assert ["Cabinets", "mechanism: none for this study"] in exports._sheet_rows(model)["Parts"]
+    assert "No cabinet: mechanism: none for this study." in exports.datasheet_markdown(model)
+
+
+def test_prices_are_pounds_without_vat_whatever_the_supplier_quoted():
+    import catalogue
+    parts, overseas = _derived(motor="ES-MH342200", ratio=None)
+    _, home = _derived(motor="23HS45-4204D-E1000", ratio=None)
+    # $199 at 1.3226 to the pound, and EUR 289.90 with German VAT at 19 per cent
+    # at 1.18 to the pound, against GBP 28.46 and 28.75: 150.46 + 206.45 - 57.21
+    difference = (catalogue.price_of(parts, overseas)["pounds"]
+                  - catalogue.price_of(parts, home)["pounds"])
+    assert difference == pytest.approx(299.70, abs=0.01)
+    model = exports.export_model(parts, _demand(), _row(parts, overseas), overseas,
+                                 10.0, "2026-10-09")
+    rows = exports._sheet_rows(model)["Parts"]
+    assert rows[0][5] == "Unit price, GBP exc VAT"
+    motor = next(row for row in rows if row[1] == "ES-MH342200")
+    assert motor[5] == pytest.approx(150.46, abs=0.01)
+
+
+def test_the_route_names_a_hand_built_machine_and_says_why_it_has_no_cabinet(
+        client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": _configuration()})
+    assert response.status_code == 200, response.text
+    assert seen["machine"].startswith(_configuration()["motor"] + " on ")
+    assert seen["cabinets"] is None
+    assert seen["cabinets_note"] == "mechanism: none for this study"
