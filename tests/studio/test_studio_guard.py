@@ -31,8 +31,9 @@ FORBIDDEN = re.compile(
 def test_studio_never_imports_the_solver_stacks():
     offenders = []
     for module in STUDIO.rglob("*.py"):
-        if module.name in ("solve_stage.py", "solve_cra.py", "solve_cablenet.py"):
-            # The three deliberate exceptions: each executes inside a solver
+        if module.name in ("solve_stage.py", "solve_cra.py", "solve_cablenet.py",
+                           "solve_formwork.py"):
+            # The four deliberate exceptions: each executes inside a solver
             # interpreter as its own process, never in the server process;
             # staging.py, the CRA caller and cablenet.py only ever run them
             # as a subprocess under that interpreter.
@@ -47,6 +48,10 @@ def test_studio_never_imports_the_solver_stacks():
             # moving the solve behind a subprocess boundary, which is what it
             # was asking for. cablenet.py itself stays on the forbidden side
             # and must never import a solver stack.
+            #
+            # solve_formwork.py joined them on 9 October 2026 on the same terms:
+            # formwork_sim.py builds its request without numpy and only ever
+            # runs it as a subprocess.
             continue
         if FORBIDDEN.search(module.read_text(encoding="utf-8")):
             offenders.append(str(module.relative_to(STUDIO)))
