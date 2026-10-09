@@ -99,7 +99,7 @@ def cabinet_for(parts, configuration, peaks_n):
 
     rules = parts["rules"]
     spools = int(configuration.get("spools", machine.SPOOLS))
-    motors = machine.motors_per_machine(configuration["wires_per_motor"], spools)
+    motors = machine.motors_per_machine(configuration.get("wires_per_motor", 1), spools)
     drive = parts["drive"][configuration["drive"]]
     lines = []
     in_kit = bool(drive.get("in_kit"))

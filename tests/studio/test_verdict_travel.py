@@ -139,3 +139,19 @@ def test_the_drum_and_pulley_diameters_over_the_ropes_are_numbers_with_no_verdic
 def test_the_cable_net_runs_reel_commands_become_each_wires_take_up():
     series = machine.take_ups_from_commands([[-5.0, 0.0], [-3.0, 2.0], [4.0, 0.0]])
     assert series == [[5.0, 8.0, 4.0], [0.0, -2.0, -2.0]]
+
+
+def test_a_wire_held_by_its_shared_gearbox_reports_the_ceiling_its_margin_gives(parts):
+    """Seven wires at 300 N on one 34HS31 through a 50:1 EG34 put 71,190 N mm
+    on its 100 N m: a margin of 1.40, set by the gearbox. The wire's ceiling is
+    the tension at that margin, not its own rope's 2,600 N, so the panel's
+    colour key and its verdict agree."""
+
+    built = _built(parts, motor="34HS31-6004D-E1000", ratio=50, pulley=None,
+                   rope="rope-5mm", wires_per_motor=7)
+    verdict = machine.judge(parts, built, [300.0] * 7, [list(range(7))], 10.0)
+    worst = verdict["worst"]
+    assert worst["limit"] == "gearbox torque"
+    assert worst["margin"] == pytest.approx(100000.0 / (300.0 * 33.9 * 7))
+    assert worst["ceiling"] == pytest.approx(worst["margin"] * 300.0)
+    assert worst["own_ceiling"] == pytest.approx(2600.0)

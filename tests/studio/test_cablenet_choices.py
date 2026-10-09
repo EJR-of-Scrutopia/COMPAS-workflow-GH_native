@@ -36,6 +36,10 @@ out.travel = m.travelHtml(given.row.travel);
 out.buy = m.buyHtml(given.row.price, given.row.cut_lengths);
 out.price = m.priceHtml(given.row.price);
 out.recommend = m.recommendHtml(given.recommend);
+const boxes = given.row.price.cabinets;
+const second = { ...boxes.cabinets[0], priced_gbp: boxes.cabinets[0].priced_gbp + 100 };
+out.twoCabinets = m.priceHtml({ ...given.row.price,
+  cabinets: { ...boxes, cabinets: [boxes.cabinets[0], second] } });
 out.none = m.recommendHtml({ holds: false, choices: null, closest: {
   described: "rope <b>", limit: "rope tension", part: "rope-8mm", margin: 0.183 } });
 out.escaped = m.escapeHtml(`<a href="x">'&'</a>`);
@@ -129,7 +133,7 @@ def test_travel_wire_and_price_are_numbers_against_their_limits(out):
     total = out["given"]["row"]["price"]["priced_gbp"]
     assert "£{:.2f}".format(total) in price
     assert "1 cabinets, exc VAT" in price
-    assert "23HS45-4204D-E1000" in price and "Cabinet, each" in price
+    assert "23HS45-4204D-E1000" in price and "Cabinet, machine 1" in price
     # the workshop drum has no price, so the total is a floor
     assert "floor" in price and "no price" in price
 
@@ -162,3 +166,13 @@ def test_nothing_is_written_without_escaping_and_no_sentence_says_why(out):
     for key in ("machine", "verdict", "travel", "buy", "price", "recommend"):
         for word in ("because", "should", "cannot", "means"):
             assert word not in out[key].lower(), (key, word)
+
+
+def test_every_cabinet_has_its_own_total_and_the_lines_say_whose_they_are(out):
+    html = out["twoCabinets"]
+    first = out["given"]["row"]["price"]["cabinets"]["cabinets"][0]
+    assert "Cabinet, each" not in html
+    assert "<th>Machine</th><th>Motors</th><th>Total</th><th>Unpriced</th>" in html
+    assert "£{:.2f}".format(first["priced_gbp"]) in html
+    assert "£{:.2f}".format(first["priced_gbp"] + 100) in html
+    assert "<p>Cabinet, machine 1: " in html

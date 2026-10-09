@@ -657,10 +657,13 @@ export function priceHtml(price) {
   const cabinet = first ? first.lines.map((l) => [escapeHtml(l.model), String(l.count),
     escapeHtml(l.rule), pounds(l.unit_gbp), l.in_total ? pounds(l.line_gbp) : "not in total",
     sourced(l), escapeHtml(l.quoted || "")]) : [];
+  const boxes = price.cabinets.cabinets.map((c, i) => [String(i + 1), String(c.motors),
+    pounds(c.priced_gbp), String(c.unpriced)]);
   return `<p><b>${pounds(price.priced_gbp)}${floor ? " floor" : ""}</b>, ` +
     `${price.cabinets.cabinets.length} cabinets, exc VAT</p>` +
     table(["Part", "Count", "Unit", "Line"], study) +
-    (first ? `<p>Cabinet, each: ${pounds(first.priced_gbp)}, ${first.unpriced} lines unpriced</p>` +
+    (first ? table(["Machine", "Motors", "Total", "Unpriced"], boxes) +
+      `<p>Cabinet, machine 1: ${pounds(first.priced_gbp)}, ${first.unpriced} lines unpriced</p>` +
       table(["Part", "Count", "Rule", "Unit", "Line", "Supplier", "Quoted"], cabinet) : "");
 }
 

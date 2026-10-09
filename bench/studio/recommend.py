@@ -11,6 +11,8 @@ per motor changes how the net moves, so it is tagged to be confirmed by a run.
 
 from __future__ import annotations
 
+import math
+
 import cabinet
 import catalogue
 import machine
@@ -26,7 +28,7 @@ def study_price(parts, configuration, demands, machines, routes_mm, paid_out_mm=
     without VAT, and the parts with no price, which make the total a floor."""
 
     wires = sum(len(members) for members in machines)
-    motors = machine.motors_per_machine(configuration["wires_per_motor"],
+    motors = machine.motors_per_machine(configuration.get("wires_per_motor", 1),
                                         configuration.get("spools", machine.SPOOLS))
     count = {"motor": motors * len(machines),
              "gearbox": 0 if configuration["gearbox"] == "direct" else motors * len(machines),
@@ -145,7 +147,7 @@ def recommend(parts, facts, demands, machines, routes_mm, take_ups, angle_degree
                     "priced_gbp": total, "unpriced": _chosen_unpriced(parts, built),
                     "limit": None if worst is None else worst["limit"],
                     "part": None if worst is None else worst["part"], "margin": margin,
-                    "confirm_run": _differs(run, built), "judged": judged, "holds": True}
+                    "confirm_run": _differs(run, built, parts), "judged": judged, "holds": True}
         if margin is not None and (closest is None or margin > closest["margin"]):
             closest = {"choices": choices, "described": machine.describe(parts, built),
                        "priced_gbp": total, "limit": worst["limit"], "part": worst["part"],
@@ -153,9 +155,20 @@ def recommend(parts, facts, demands, machines, routes_mm, take_ups, angle_degree
     return {"choices": None, "holds": False, "closest": closest, "judged": judged}
 
 
-def _differs(run, built):
+def _differs(run, built, parts):
+    """Whether a combination changes what the run was made with, judged only on
+    what the run recorded: the wire by its stiffness (or its key), the pulleys,
+    and wires a motor."""
+
     if run is None:
         return False
-    return (built["rope"] != run.get("rope")
-            or (built.get("sheave") is not None) != bool(run.get("pulleys"))
-            or built["wires_per_motor"] != run.get("wires_per_motor"))
+    if run.get("ea_newtons") is not None:
+        rope = not math.isclose(float(parts["rope"][built["rope"]]["ea_newtons"]),
+                                float(run["ea_newtons"]), rel_tol=1e-6)
+    else:
+        rope = run.get("rope") is not None and built["rope"] != run["rope"]
+    pulleys = (run.get("pulleys") is not None
+               and (built.get("sheave") is not None) != bool(run["pulleys"]))
+    wires = (run.get("wires_per_motor") is not None
+             and built["wires_per_motor"] != run["wires_per_motor"])
+    return rope or pulleys or wires

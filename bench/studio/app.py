@@ -1297,6 +1297,13 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         if facts["winding_radius_mm"] is None:
             raise HTTPException(400, "machine: no winding radius")
         demands, take_ups = machine.cable_net_demands(demand)
+        if not demand.get("stages"):
+            raise HTTPException(400, "demand: no stages; run the cable net again")
+        if len(demands) != len(facts["nodes"]):
+            def wires(count):
+                return "{} wire{}".format(count, "" if count == 1 else "s")
+            raise HTTPException(400, "demand: {}, machine: {}; run the cable net again".format(
+                wires(len(demands)), wires(len(facts["nodes"]))))
         machines = facts["machines"] or [list(range(len(demands)))]
         return {"demand": demand, "facts": facts, "demands": demands,
                 "take_ups": take_ups, "machines": machines}
@@ -1598,12 +1605,11 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         import recommend
 
         inputs = _machine_inputs(export, body.get("options"), parts)
-        rope = str((body.get("options") or {}).get("rope") or "rope-4mm")
         try:
             result = recommend.recommend(
                 parts, inputs["facts"], inputs["demands"], inputs["machines"],
                 inputs["facts"]["routes_mm"], inputs["take_ups"], angle,
-                run={"rope": rope, "pulleys": True, "wires_per_motor": None})
+                run=machine.run_of(parts, inputs["demand"]))
         except (machine.MachineError, catalogue.CatalogueError, cabinet.CabinetError) as error:
             raise HTTPException(400, str(error))
         if result["choices"] is not None:
@@ -1646,9 +1652,25 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         wound = wound_body if wound_body is not None else _rope_wound_mm(demand)
         floor = _demand_floor(demand)
         parts = catalogue.load_parts()
-        ladder_rows = [
-            _score_for_export(catalogue, parts, rung, angle, floor, wound, demand)
-            for rung in [dict(configuration)] + _export_ladder(configuration)]
+        import machine
+
+        ladder_rows = [_score_for_export(catalogue, parts, dict(configuration), angle, floor,
+                                         wound, demand)]
+        for rung in _export_ladder(configuration):
+            # a heavier wire is wound in a groove of its own pitch, and refused
+            # by a pulley that does not take it
+            if (rung.get("groove_pitch_mm") is not None
+                    and rung.get("rope") != configuration.get("rope")):
+                rung["groove_pitch_mm"] = (
+                    float(parts["rope"][rung["rope"]]["diameter_mm"])
+                    * float(parts["rules"]["groove_pitch_factor"]))
+            try:
+                refusal = machine.pulley_refusal(parts, rung.get("sheave"), rung["rope"])
+            except machine.MachineError as error:
+                refusal = str(error)
+            ladder_rows.append({"configuration": rung, "refused": refusal} if refusal else
+                               _score_for_export(catalogue, parts, rung, angle, floor, wound,
+                                                 demand))
         row = ladder_rows[0]
 
         # Not deliver_output: that swallows an OSError and hands back the
@@ -1686,14 +1708,16 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             except (machine.MachineError, KeyError) as error:
                 raise HTTPException(400, "configuration: {}".format(error))
         boxes, boxes_note = None, None
-        try:
-            inputs = _machine_inputs(export, body, parts)
-            boxes = cabinet.cabinets(parts, configuration, inputs["demands"],
-                                     inputs["machines"])
-        except HTTPException as error:
-            boxes_note = error.detail
-        except cabinet.CabinetError as error:
-            boxes_note = str(error)
+        if not row.get("refused"):
+            try:
+                inputs = _machine_inputs(export, body, parts)
+                boxes = cabinet.cabinets(parts, configuration, inputs["demands"],
+                                         inputs["machines"])
+            except HTTPException as error:
+                boxes_note = error.detail
+            except (cabinet.CabinetError, catalogue.CatalogueError, machine.MachineError,
+                    KeyError) as error:
+                boxes_note = str(error)
         try:
             model = exports.export_model(
                 parts, demand, row, configuration, angle,

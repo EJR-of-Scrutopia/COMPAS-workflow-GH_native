@@ -31,6 +31,8 @@ class MachineError(ValueError):
 
 
 def _part(parts, kind, key):
+    if not isinstance(key, str):
+        raise MachineError("{}: not in the catalogue".format(key))
     entry = parts.get(kind, {}).get(key)
     if entry is None:
         raise MachineError("{}: not in the catalogue".format(key))
@@ -77,6 +79,24 @@ def pulleys_for(parts, rope_key):
     return [key for key, entry in parts["sheave"].items()
             if entry.get("wire_min_mm") is not None and entry.get("wire_max_mm") is not None
             and float(entry["wire_min_mm"]) <= diameter <= float(entry["wire_max_mm"])]
+
+
+def pulley_refusal(parts, pulley, rope_key):
+    """The one line that says a pulley does not take a wire, or None when it
+    does, or when there is no pulley."""
+
+    if pulley is None:
+        return None
+    entry = _part(parts, "sheave", pulley)
+    if pulley in pulleys_for(parts, rope_key):
+        return None
+    low, high = entry.get("wire_min_mm"), entry.get("wire_max_mm")
+    takes = ("no stated wire size" if low is None or high is None else
+             "{:g} mm wire".format(float(low)) if float(low) == float(high) else
+             "{:g} to {:g} mm wire".format(float(low), float(high)))
+    return "{}: {}, not {:g} mm".format(
+        entry.get("name") or entry.get("model", pulley), takes,
+        float(_part(parts, "rope", rope_key)["diameter_mm"]))
 
 
 def lightest_chain(parts, rope_key, angle_degrees):
@@ -126,15 +146,9 @@ def derive(parts, choices, facts, angle_degrees):
     rope = choices["rope"]
     rope_entry = _part(parts, "rope", rope)
     pulley = choices["pulley"]
-    if pulley is not None:
-        entry = _part(parts, "sheave", pulley)
-        if pulley not in pulleys_for(parts, rope):
-            low, high = entry.get("wire_min_mm"), entry.get("wire_max_mm")
-            takes = ("no stated wire size" if low is None or high is None else
-                     "{:g} mm wire".format(float(low)) if float(low) == float(high) else
-                     "{:g} to {:g} mm wire".format(float(low), float(high)))
-            raise MachineError("{}: {}, not {:g} mm".format(
-                entry.get("name") or entry.get("model", pulley), takes, float(rope_entry["diameter_mm"])))
+    refusal = pulley_refusal(parts, pulley, rope)
+    if refusal:
+        raise MachineError(refusal)
     try:
         wires_per_motor = int(choices["wires_per_motor"])
     except (TypeError, ValueError):
@@ -264,8 +278,12 @@ def judge(parts, configuration, demands, machines, angle_degrees, motors=None, r
                        (shared.get(w), shaft)]
             options = [option for option in options if option[0] is not None]
             margin, limit = min(options) if options else (None, own)
-            wires[w] = {"wire": w, "machine": m, "tension": tension, "ceiling": terms[own],
-                        "margin": margin, "limit": limit,
+            # where the shared motor or gearbox holds the wire, its ceiling is the
+            # tension at that margin, so the lens and the verdict agree
+            ceiling = (terms[own] if limit == own or margin is None or tension <= 0.0
+                       else margin * tension)
+            wires[w] = {"wire": w, "machine": m, "tension": tension, "ceiling": ceiling,
+                        "own_ceiling": terms[own], "margin": margin, "limit": limit,
                         "part": _term_part(parts, configuration, limit, angle_degrees),
                         "holds": margin is None or margin >= 1.0}
         rows = [wires[w] for w in members]
@@ -457,6 +475,20 @@ def facts_from(document, design_mm, supports, ea):
             "nodes": [wire["node"] for wire in rim],
             "reeves": reeves, "routes_mm": [wire["route_mm"] for wire in rim],
             "machines": machines, "spools": int(cited.get("wireCount") or SPOOLS)}
+
+
+def run_of(parts, demand):
+    """What the cable net run was made with, from its demand document: the
+    wire's stiffness, and whether its wires were reeved. The run does not use
+    wires a motor. None where the document does not say."""
+
+    demand = demand or {}
+    ea = demand.get("ea_newtons")
+    reeves = [wire.get("reeve_factor") for wire in demand.get("wires") or []
+              if isinstance(wire, dict) and wire.get("reeve_factor") is not None]
+    return {"ea_newtons": None if ea is None else float(ea),
+            "pulleys": None if not reeves else any(int(r) > 1 for r in reeves),
+            "wires_per_motor": None}
 
 
 def cable_net_demands(demand):

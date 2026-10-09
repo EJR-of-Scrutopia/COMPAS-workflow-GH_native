@@ -2510,3 +2510,24 @@ def test_the_drum_and_rail_checks_are_hard_in_the_exported_row(client, monkeypat
         path = seen["row"]["rope_path"]
         assert path["drum_fits"] is fits, wound
         assert seen["row"]["passes"] is fits, wound
+
+
+def test_a_ladder_rung_the_chosen_pulley_does_not_take_is_refused(client, monkeypatch, tmp_path):
+    _plant_demand(monkeypatch, tmp_path)
+    _into(monkeypatch, tmp_path / "out")
+    seen = _spy_on_export_model(monkeypatch)
+    configuration = _configuration(sheave="Pfaff-DSRB-90-4", reeve_factor=2,
+                                   groove_pitch_mm=4.4)
+    response = client.post("/api/studies/My Vault/cablenet/exports",
+                           json={"configuration": configuration})
+    assert response.status_code == 200, response.text
+    by_rope = {rung["configuration"]["rope"]: rung for rung in seen["ladder"][1:]}
+    assert by_rope["rope-4mm"]["refused"] is None
+    assert by_rope["rope-5mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 5 mm"
+    assert by_rope["rope-8mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 8 mm"
+    # without pulleys a heavier rung is scored, on a drum grooved for its own wire
+    plain = _configuration(groove_pitch_mm=4.4)
+    client.post("/api/studies/My Vault/cablenet/exports", json={"configuration": plain})
+    heavy = next(rung for rung in seen["ladder"] if rung["configuration"]["rope"] == "rope-8mm")
+    assert heavy["refused"] is None
+    assert heavy["configuration"]["groove_pitch_mm"] == pytest.approx(8.8)

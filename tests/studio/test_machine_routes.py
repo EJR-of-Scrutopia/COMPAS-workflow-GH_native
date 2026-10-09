@@ -93,6 +93,9 @@ def test_recommend_searches_the_five_choices_and_judges_its_pick(tmp_path, monke
     assert set(result["choices"]) == {"motor", "ratio", "pulley", "rope", "wires_per_motor"}
     assert result["row"]["verdict"]["holds"] is True
     assert result["row"]["described"] == result["described"]
+    # the planted demand records neither its wire nor its reeving, so nothing
+    # says the pick differs from the run
+    assert result["confirm_run"] is False
 
 
 def test_the_exports_name_the_machine_by_its_parts_and_list_each_cabinet(
@@ -176,3 +179,56 @@ def test_a_wanted_speed_gives_the_motor_speed(tmp_path, monkeypatch):
     # 50 mm/s at the net on four falls, through 20:1, onto a 33.9 mm spool:
     # 50 x 4 x 60 x 20 / (2 pi x 33.9) = 1126.8 rpm
     assert row["motor_rpm_for_wanted_speed"] == pytest.approx(1126.8, abs=0.1)
+
+
+def test_a_demand_and_a_machine_of_different_wire_counts_is_a_400(tmp_path, monkeypatch):
+    import bundle
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    path = bundle.cablenet_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
+    for stages, detail in (
+            ([{"name": "S1", "wire_tensions": [500.0], "wire_reel_commands": [-2.0]}],
+             "demand: 1 wire, machine: 2 wires; run the cable net again"),
+            ([], "demand: no stages; run the cable net again")):
+        path.write_text(json.dumps({"schema": "bench.cablenet/2", "prestress": 300.0,
+                                    "stages": stages}), encoding="utf-8")
+        for url, body in (("configurations", {"choices": [CHOICE], "options": OPTIONS}),
+                          ("recommend", {"options": OPTIONS})):
+            response = client.post("/api/studies/Tiny/cablenet/" + url, json=body)
+            assert response.status_code == 400, (url, response.text)
+            assert response.json()["detail"] == detail, url
+
+
+def test_a_part_named_by_a_list_is_a_refused_row_not_a_500(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    rows = client.post("/api/studies/Tiny/cablenet/configurations", json={
+        "choices": [dict(CHOICE, rope=["rope-4mm"]), dict(CHOICE, pulley=["x"])],
+        "options": OPTIONS}).json()["rows"]
+    assert [row["refused"] for row in rows] == ["['rope-4mm']: not in the catalogue",
+                                                "['x']: not in the catalogue"]
+
+
+def test_an_export_of_a_refused_or_older_configuration_is_a_400_or_a_document(
+        tmp_path, monkeypatch):
+    from pathlib import Path
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    folder = tmp_path / "out"
+    folder.mkdir()
+    client.post("/api/cablenet/exports/folder", json={"path": str(folder)})
+    row = client.post("/api/studies/Tiny/cablenet/configurations",
+                      json={"choices": [CHOICE], "options": OPTIONS}).json()["rows"][0]
+    refused = client.post("/api/studies/Tiny/cablenet/exports",
+                          json={**OPTIONS, "configuration": dict(row["configuration"],
+                                                                 drive="nonsense")})
+    assert refused.status_code == 400 and "cannot be built" in refused.json()["detail"]
+    # a configuration saved before the five choices carries no wires a motor
+    older = {key: value for key, value in row["configuration"].items()
+             if key not in ("wires_per_motor", "choices")}
+    done = client.post("/api/studies/Tiny/cablenet/exports", json={**OPTIONS, "configuration": older})
+    assert done.status_code == 200, done.text
+    sheet = next(Path(p) for p in done.json()["paths"] if p.endswith(".md"))
+    assert "Cabinet, machine 1" in sheet.read_text(encoding="utf-8")

@@ -89,3 +89,31 @@ def test_a_combination_with_an_unpriced_chosen_part_ranks_after_every_priced_one
     second = recommend.recommend(hidden, FACTS, [300.0] * 14, MACHINES, ROUTES, TAKE_UPS, 10.0)
     assert second["holds"] and second["unpriced"] == []
     assert second["choices"]["motor"] != first["choices"]["motor"]
+
+
+def test_the_run_is_read_from_its_demand_document(parts):
+    ea = parts["rope"]["rope-5mm"]["ea_newtons"]
+    reeved = {"ea_newtons": ea, "wires": [{"reeve_factor": 4}, {"reeve_factor": 4}]}
+    assert machine.run_of(parts, reeved) == {"ea_newtons": ea, "pulleys": True,
+                                             "wires_per_motor": None}
+    straight = {"ea_newtons": ea, "wires": [{"reeve_factor": 1}]}
+    assert machine.run_of(parts, straight)["pulleys"] is False
+    assert machine.run_of(parts, {}) == {"ea_newtons": None, "pulleys": None,
+                                         "wires_per_motor": None}
+
+
+def test_only_what_the_run_recorded_can_differ_from_it(parts):
+    built = _built(parts)                        # 4 mm wire, pulleys, two wires a motor
+    ea4 = parts["rope"]["rope-4mm"]["ea_newtons"]
+    run = {"ea_newtons": ea4, "pulleys": True, "wires_per_motor": None}
+    assert recommend._differs(run, built, parts) is False
+    assert recommend._differs(dict(run, ea_newtons=ea4 * 2), built, parts) is True
+    assert recommend._differs(dict(run, pulleys=False), built, parts) is True
+    assert recommend._differs(dict(run, wires_per_motor=1), built, parts) is True
+    assert recommend._differs({"ea_newtons": None, "pulleys": None, "wires_per_motor": None},
+                              built, parts) is False
+    # two wires of one stiffness are the same net to the run
+    two = _built(parts, rope="rope-2mm-7x7", pulley=None)
+    same = {"ea_newtons": parts["rope"]["rope-2mm-7x19-ss"]["ea_newtons"], "pulleys": False,
+            "wires_per_motor": None}
+    assert recommend._differs(same, two, parts) is False
