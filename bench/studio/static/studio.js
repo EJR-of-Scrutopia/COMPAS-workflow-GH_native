@@ -6,7 +6,9 @@ import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
-import { instantAt, sagBand, stageCaption } from "./cablenet_model.js";
+import {
+  instantAt, labelTargets, lensLegend, pickHtml, sagBand, stageCaption,
+} from "./cablenet_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
   buildSegmented, paintSegmented,
@@ -172,6 +174,10 @@ const state = {
   // lens is up, which is what ghosts the skin in applyShowMode.
   cablenet: null,
   cablenetCeiling: null,
+  // the scored row's verdict, each wire's own ceiling and margin for the card
+  cablenetVerdict: null,
+  // which Cable net lenses draw their arrows (spec 2026-10-09 Cable net display, 5.2)
+  cablenetArrows: { nodeforce: false, prestress: true, reel: true },
   cablenetGhost: false,
   // Whether the demand fits the net on screen, worked out once per demand
   // and bundle (demandFitsNet), and what the lenses last drew: the instant
@@ -1116,6 +1122,7 @@ function renderView() {
   // One projection of one point: the badge rides its prop as the camera
   // moves, rather than sitting where the prop used to be on screen.
   placeHoverBadge();
+  placeModelLabels();
   settleAtmosphereFloor();
   armShafts();
   composer.render();
@@ -11302,6 +11309,8 @@ const CABLENET_LAYERS = [
   ["reel", "Reel"],
 ];
 const CABLENET_LENS_NAMES = CABLENET_LAYERS.map(([name]) => name);
+// the lenses whose arrows stand behind a tick of their own
+const CABLENET_ARROW_LENSES = ["nodeforce", "prestress", "reel"];
 const THRUST_NOTE = "The push each springing gives the ground, the reaction "
   + "reversed: green stands near vertical, amber leans, red past 35 degrees is "
   + "a push the abutment or a tie must hold.";
@@ -11521,6 +11530,23 @@ function buildLensButtons(holder, table, notes, alwaysShown) {
       row.appendChild(caption);
       row.appendChild(slider);
       holder.appendChild(row);
+    }
+    if (CABLENET_ARROW_LENSES.includes(name)) {
+      const tick = document.createElement("label");
+      tick.className = "layer-slider" + (state.layers[name] ? "" : " hidden");
+      tick.title = "Arrows";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!state.cablenetArrows[name];
+      box.addEventListener("change", () => {
+        state.cablenetArrows[name] = box.checked;
+        paintCableNetLenses(true);
+      });
+      const caption = document.createElement("span");
+      caption.textContent = "Arrows";
+      tick.appendChild(box);
+      tick.appendChild(caption);
+      holder.appendChild(tick);
     }
   }
 }
@@ -12138,6 +12164,7 @@ function paintCableNetLenses(force = false) {
   applyCableNetPaint();
   updateCableNetVectors();
   paintCableNetStageLine();
+  updateModelLabels(stage);
 }
 
 // forceMagnitude's rule over any list: the 95th percentile of the sizes,
@@ -12199,19 +12226,41 @@ function wiresPainted() {
 // instance colours with the force lens, which EXCLUSIVE_LAYERS keeps to one
 // at a time; applyWireForces resets the wires to white when it is down, so
 // this only ever paints, and only ever resets the nodes.
+// Node force colours the nodes by the size of each node's unbalanced force,
+// pale to red (spec 2026-10-09 Cable net display, section 5.2).
+function paintNodeForces(stage) {
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.instanceColor) return;
+  const sizes = (stage.node_residual || []).map((v) => (v ? Math.hypot(v[0], v[1], v[2]) : 0));
+  const top = Math.max(1e-9, ...sizes);
+  for (let i = 0; i < nodes.count; i++) nodes.setColorAt(i, TENSION_SCALE(sizes[i] || 0, top));
+  nodes.instanceColor.needsUpdate = true;
+}
+
+// The legend of a lens that keys its own figures: Node force, Prestress, Reel.
+function paintLensLegend(lens, stage) {
+  const legend = lensLegend(lens, state.cablenet, stage, state.cablenetCeiling);
+  if (legend) paintScalarLegend(legend.title, legend.min, "", legend.max);
+}
+
 function applyCableNetPaint() {
   const wires = state.objects.wires, nodes = state.objects.nodes;
   if (!wires || !nodes || !wires.userData.baseMatrices || !state.bundle) return;
-  // The instant is read only for a painter that can draw: a document that
-  // does not fit the net (demandFitsNet) is never walked, so it cannot throw.
+  // The instant is read only for a lens that can draw: a document that does
+  // not fit the net (demandFitsNet) is never walked, so it cannot throw.
   const tensionUp = !!(state.layers.tension && layerAvailability("tension").on);
   const sagUp = !!(state.layers.sag && layerAvailability("sag").on);
-  const stage = tensionUp || sagUp ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
+  const up = (name) => !!(state.layers[name] && layerAvailability(name).on);
+  const keyed = ["nodeforce", "prestress", "reel"].filter(up);
+  const stage = tensionUp || sagUp || keyed.length ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
   const tensionOn = tensionUp && !!stage;
   const sagOn = sagUp && !!stage;
+  const forceNodes = !sagOn && !!stage && keyed.includes("nodeforce");
   if (!tensionOn && !sagOn) {
-    resetNodeColours();
-    if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
+    if (forceNodes) paintNodeForces(stage);
+    else resetNodeColours();
+    if (stage && keyed.length) paintLensLegend(keyed[0], stage);
+    else if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
       document.getElementById("legend").classList.add("hidden");
     }
     return;
@@ -12224,7 +12273,8 @@ function applyCableNetPaint() {
     for (let i = 0; i < wires.count; i++) {
       wires.setColorAt(i, TENSION_SCALE(Number(values[i]) || 0, magnitude));
     }
-    resetNodeColours();
+    if (forceNodes) paintNodeForces(stage);
+    else resetNodeColours();
     // One decimal, the panel's way with a force: under the net's own weight
     // the whole scale is under a newton, and a key reading 0 to 0 over red
     // wires would contradict itself.
@@ -12274,7 +12324,7 @@ function updateCableNetVectors() {
     const length = Math.hypot(d[0], d[1], d[2]) || 1;
     return d.map((c) => c / length);
   };
-  if (state.layers.nodeforce && Array.isArray(stage.node_residual)) {
+  if (state.layers.nodeforce && state.cablenetArrows.nodeforce && Array.isArray(stage.node_residual)) {
     // A balanced node has no direction to draw, as a reel that did not turn
     // has none below: arrowField would stand a zero vector straight down.
     const entries = [];
@@ -12298,7 +12348,7 @@ function updateCableNetVectors() {
       scene.add(state.objects.sagArrows);
     }
   }
-  if (state.layers.reel && Array.isArray(demand.wires)) {
+  if (state.layers.reel && state.cablenetArrows.reel && Array.isArray(demand.wires)) {
     const paysOut = [], takesIn = [], travel = [];
     let magnitudeMax = 1e-9;
     demand.wires.forEach((wire, i) => {
@@ -12324,7 +12374,7 @@ function updateCableNetVectors() {
     state.objects.reelArrows = group;
     scene.add(group);
   }
-  if (state.layers.prestress && Array.isArray(demand.wires)) {
+  if (state.layers.prestress && state.cablenetArrows.prestress && Array.isArray(demand.wires)) {
     const ceiling = state.cablenetCeiling;
     const buckets = { within: [], near: [], over: [], plain: [] };
     let magnitudeMax = 1e-9;
@@ -12348,6 +12398,123 @@ function updateCableNetVectors() {
     scene.add(group);
   }
 }
+
+// ---------- numbers on the model, and the card a click opens ----------
+// Each lens's labels (spec 2026-10-09 Cable net display, section 5.3), from the
+// model's targets, recomputed with the lenses and placed every frame by
+// projecting each point, as the hover badge is: one behind the eye or off the
+// view is not drawn. At most MODEL_LABEL_MAX at once. The instant is the one
+// the lenses were painted at, kept for the card a click opens.
+const MODEL_LABEL_MAX = 125;
+const modelLabels = { items: [], stage: null, projected: new THREE.Vector3() };
+
+function cablenetLabelPoint(target, vertices, edges) {
+  if (target.kind === "member") {
+    const edge = edges[target.index];
+    if (!edge) return null;
+    const p = vertices[edge[0]], q = vertices[edge[1]];
+    return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
+  }
+  return vertices[target.kind === "wire" ? target.node : target.index] || null;
+}
+
+function updateModelLabels(stage) {
+  const holder = document.getElementById("model-labels");
+  if (!holder) return;
+  holder.innerHTML = "";
+  modelLabels.items = [];
+  modelLabels.stage = stage && state.bundle && state.cablenet ? stage : null;
+  if (!modelLabels.stage) {
+    const card = document.getElementById("cablenet-pick");
+    if (card) card.classList.add("hidden");
+    return;
+  }
+  const { vertices, edges } = state.bundle.analysis_mesh;
+  const targets = [];
+  for (const lens of ["prestress", "reel", "nodeforce", "tension"]) {
+    if (state.layers[lens] && layerAvailability(lens).on) {
+      targets.push(...labelTargets(lens, state.cablenet, stage, state.cablenetCeiling));
+    }
+  }
+  for (const target of targets.slice(0, MODEL_LABEL_MAX)) {
+    const point = cablenetLabelPoint(target, vertices, edges);
+    if (!point) continue;
+    const label = document.createElement("div");
+    label.className = "model-label" + (target.band ? " " + target.band : "")
+      + (target.side ? " " + target.side : "");
+    label.textContent = target.text;
+    holder.appendChild(label);
+    modelLabels.items.push({ label, at: new THREE.Vector3(point[0], point[1], point[2]) });
+  }
+}
+
+function placeModelLabels() {
+  if (!modelLabels.items.length) return;
+  const rect = canvas.getBoundingClientRect();
+  // the net is drawn lifted clear of the skin; its labels ride with it
+  const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
+  const projected = modelLabels.projected;
+  for (const item of modelLabels.items) {
+    projected.copy(item.at);
+    projected.z += lift;
+    projected.project(camera);
+    const x = projected.x * 0.5 + 0.5;
+    const y = -projected.y * 0.5 + 0.5;
+    const shown = projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1;
+    item.label.style.display = shown ? "" : "none";
+    if (shown) {
+      item.label.style.left = Math.round(rect.left + x * rect.width) + "px";
+      item.label.style.top = Math.round(rect.top + y * rect.height) + "px";
+    }
+  }
+}
+
+// A click on a node while a Cable net lens is up shows its numbers beside it;
+// a click anywhere else closes the card. A drag (an orbit) is not a click, and
+// a press a stamp, an aim, a carry or prop editing owns is not one either:
+// taken at the press, before the studio's own handler acts on it.
+const cablenetPick = { down: null };
+
+function pickCableNetNode(event) {
+  const card = document.getElementById("cablenet-pick");
+  if (!card) return;
+  card.classList.add("hidden");
+  const stage = modelLabels.stage;
+  if (!stage || !cableNetLensUp()) return;
+  const rect = canvas.getBoundingClientRect();
+  const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
+  const point = new THREE.Vector3();
+  let best = null;
+  let nearest = 14;
+  state.bundle.analysis_mesh.vertices.forEach((v, i) => {
+    point.set(v[0], v[1], v[2] + lift).project(camera);
+    if (point.z > 1) return;
+    const x = rect.left + (point.x * 0.5 + 0.5) * rect.width;
+    const y = rect.top + (-point.y * 0.5 + 0.5) * rect.height;
+    const distance = Math.hypot(x - event.clientX, y - event.clientY);
+    if (distance < nearest) { nearest = distance; best = { i, x, y }; }
+  });
+  if (!best) return;
+  card.innerHTML = pickHtml(state.cablenet, stage, best.i, state.cablenetVerdict);
+  card.style.left = Math.round(Math.min(innerWidth - 220, best.x + 14)) + "px";
+  card.style.top = Math.round(Math.max(12, best.y - 20)) + "px";
+  card.classList.remove("hidden");
+}
+
+function noteCableNetPress(event) {
+  const free = event.button === 0 && !stampRig && !aimingLight && !state.carrying && !state.propEdit;
+  cablenetPick.down = free ? [event.clientX, event.clientY] : null;
+}
+
+function releaseCableNetPress(event) {
+  const down = cablenetPick.down;
+  cablenetPick.down = null;
+  if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 4) return;
+  pickCableNetNode(event);
+}
+
+canvas.addEventListener("pointerdown", noteCableNetPress);
+canvas.addEventListener("pointerup", releaseCableNetPress);
 
 // ---------- the build stage index ----------
 // How many courses have a piece down at build time: one past the highest
@@ -15731,8 +15898,9 @@ const cableNet = mountCableNet({
     paintCableNetLenses(true);
     applyShowMode();
   },
-  onCeiling: (ceiling) => {
+  onCeiling: (ceiling, verdict) => {
     state.cablenetCeiling = ceiling;
+    state.cablenetVerdict = verdict || null;
     if (state.layers.prestress && state.bundle && state.objects.wires) paintCableNetLenses(true);
     buildLayerToggles();
   },
@@ -18030,6 +18198,12 @@ function applyShowMode() {
 // ghost is on (a heatmap, a new skin) is ghosted by the next applyShowMode.
 // The program is asked to change only when something did: transparent is
 // compiled into it, and applyShowMode runs on every frame of a take.
+// Under a Cable net lens the skin is light transparent grey, without its
+// texture, so the lens's colours read through it (spec 2026-10-09 Cable net
+// display, section 5.1); each piece's own look comes back after.
+const GHOST_GREY = 0xdcdcdc;
+const GHOST_OPACITY = 0.3;
+
 function ghostPiece(segment, on) {
   const material = segment.material;
   if (!material) return;
@@ -18039,16 +18213,24 @@ function ghostPiece(segment, on) {
     kept.ghostOpacity = material.opacity;
     kept.ghostTransparent = material.transparent;
     kept.ghostDepthWrite = material.depthWrite;
+    kept.ghostColor = material.color ? material.color.getHex() : null;
+    kept.ghostMap = material.map || null;
     material.transparent = true;
-    material.opacity = 0.35;
+    material.opacity = GHOST_OPACITY;
     material.depthWrite = false;
+    if (material.color) material.color.setHex(GHOST_GREY);
+    material.map = null;
   } else {
     material.opacity = kept.ghostOpacity;
     material.transparent = kept.ghostTransparent;
     material.depthWrite = kept.ghostDepthWrite;
+    if (kept.ghostColor != null && material.color) material.color.setHex(kept.ghostColor);
+    material.map = kept.ghostMap;
     delete kept.ghostOpacity;
     delete kept.ghostTransparent;
     delete kept.ghostDepthWrite;
+    delete kept.ghostColor;
+    delete kept.ghostMap;
   }
   material.needsUpdate = true;
 }

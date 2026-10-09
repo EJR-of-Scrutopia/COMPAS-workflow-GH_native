@@ -303,7 +303,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     renderDemand();
     renderGraphs();
     renderMotors();
-    onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null);
+    onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null, ok ? row.verdict : null);
   }
 
   // The parts changed, or the demand did: the verdict is redrawn, and the demand

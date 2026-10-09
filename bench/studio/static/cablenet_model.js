@@ -399,6 +399,38 @@ export function lensLegend(lens, demand, stage, ceiling) {
   return null;
 }
 
+// The card a click on a node opens (spec section 5.3): the node, its force and
+// its sag, held or grabbed; for a wire's rim node also the wire, its tension,
+// its own ceiling and margin from the scored row, and its reel so far.
+export function pickHtml(demand, stage, node, verdict) {
+  if (!demand || !stage || node == null) return "";
+  const residual = (stage.node_residual || [])[node];
+  const sag = (stage.node_sag_mm || [])[node];
+  // a held node (a wire's or a column's) has no sag of its own; its force is
+  // the support's, not an unbalanced one
+  const held = Array.isArray(stage.node_sag_mm) ? sag == null : residual == null;
+  const rows = [
+    ["Node", String(node)],
+    ["Force", held ? "held" : newtons(magnitude(residual || [0, 0, 0])) + " N"],
+    ["Sag", held || sag == null ? "held" : millimetres(sag) + " mm"],
+  ];
+  if (((demand.held || {}).actuators || []).includes(node)) rows.push(["Grabbed", "yes"]);
+  const wire = (demand.wires || []).findIndex((item) => item && item.net_vertex === node);
+  if (wire >= 0) {
+    const tension = (stage.wire_tensions || [])[wire];
+    rows.push(["Wire", String(demand.wires[wire].name)],
+              ["Tension", tension == null ? "not recorded" : newtons(tension) + " N"]);
+    const own = verdict && verdict.wires ? verdict.wires[wire] : null;
+    if (own) {
+      rows.push(["Ceiling", newtons(own.ceiling) + " N"],
+                ["Margin", own.margin == null ? "" : factor(own.margin) + "x"]);
+    }
+    rows.push(["Reel", (reelSoFar(demand.stages, stage)[wire] || 0).toFixed(1) + " mm"]);
+  }
+  return "<table>" + rows.map(([name, value]) =>
+    `<tr><th>${name}</th><td>${escapeHtml(value)}</td></tr>`).join("") + "</table>";
+}
+
 // The Graphs tab (spec 2026-10-09 Cable net display, section 4.3) ---------
 
 function finiteMax(values) {

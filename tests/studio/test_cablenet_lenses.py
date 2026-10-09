@@ -44,6 +44,17 @@ out.legends = {
   reel: m.lensLegend("reel", demand, s1, null),
   sag: m.lensLegend("sag", demand, s1, null),
 };
+// The card a click on a node opens: its force, its sag, held or grabbed, and
+// for a wire's rim node the wire's figures against its own ceiling.
+const held = { ...demand, held: { actuators: [4] } };
+f60.node_sag_mm = [null, 5.5, 2.0, 1.0, 0.5];
+const verdict = { wires: [{ ceiling: 2400, margin: 2.0 }, { ceiling: 1690, margin: 2.0 }, null] };
+out.pickNode = m.pickHtml(held, f60, 1, verdict);
+out.pickHeld = m.pickHtml(held, f60, 0, verdict);
+out.pickGrabbed = m.pickHtml(held, f60, 4, verdict);
+out.pickWire = m.pickHtml({ ...held, wires: [{ name: "w<0>", net_vertex: 3 }] }, f60, 3, verdict);
+out.pickNoVerdict = m.pickHtml({ ...held, wires: [{ name: "w0", net_vertex: 3 }] }, f60, 3, null);
+out.pickNothing = [m.pickHtml(null, f60, 1, null), m.pickHtml(held, null, 1, null), m.pickHtml(held, f60, null, null)];
 console.log(JSON.stringify(out));
 """
 
@@ -109,3 +120,20 @@ def test_every_lens_has_a_legend_with_its_unit_and_range(out):
                                     "min": "0", "max": "1200.0"}
     assert legends["prestressPlain"]["title"] == "wire tension, N"
     assert legends["reel"] == {"title": "reel, mm: in / out", "min": "-4.2", "max": "2.0"}
+
+
+def test_a_clicked_node_shows_its_force_and_sag_and_a_wires_figures(out):
+    assert "<th>Node</th><td>1</td>" in out["pickNode"]
+    assert "<th>Force</th><td>5.0 N</td>" in out["pickNode"]
+    assert "<th>Sag</th><td>5.50 mm</td>" in out["pickNode"]
+    # a held node carries no unbalanced force and has no sag of its own
+    assert "<th>Force</th><td>held</td>" in out["pickHeld"]
+    assert "<th>Sag</th><td>held</td>" in out["pickHeld"]
+    assert "<th>Grabbed</th><td>yes</td>" in out["pickGrabbed"]
+    wire = out["pickWire"]
+    assert "<th>Wire</th><td>w&lt;0&gt;</td>" in wire
+    assert "<th>Tension</th><td>1200.0 N</td>" in wire
+    assert "<th>Ceiling</th><td>2400.0 N</td>" in wire and "<th>Margin</th><td>2.0x</td>" in wire
+    assert "<th>Reel</th><td>-3.2 mm</td>" in wire
+    assert "Ceiling" not in out["pickNoVerdict"] and "<th>Tension</th>" in out["pickNoVerdict"]
+    assert out["pickNothing"] == ["", "", ""]

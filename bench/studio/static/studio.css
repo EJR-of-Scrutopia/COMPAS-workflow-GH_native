@@ -1661,3 +1661,21 @@ body.stilling #fixture-panel { display: none; }
   stroke: var(--line); stroke-width: 1; }
 #cablenet-popup .cablenet-graph-svg text, #cablenet-popup .cablenet-curve text {
   fill: var(--ink-3); font-size: 9px; }
+
+/* Numbers on the model, and the card a click on a node opens. */
+#model-labels { position: fixed; inset: 0; pointer-events: none; z-index: 23; }
+#model-labels .model-label { position: absolute; transform: translate(-50%, calc(-100% - 6px));
+  padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);
+  font-size: 10px; line-height: 1.3; white-space: nowrap; }
+#model-labels .model-label.within { color: #7fd695; }
+#model-labels .model-label.near, #model-labels .model-label.out { color: #d6bd7f; }
+#model-labels .model-label.over { color: #d68f7f; }
+#model-labels .model-label.in { color: #66aaff; }
+body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
+#cablenet-pick { position: fixed; z-index: 24; min-width: 180px; padding: var(--s2) var(--s3);
+  background: var(--scrim); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--t-2); }
+#cablenet-pick.hidden { display: none; }
+#cablenet-pick table { border-collapse: collapse; }
+#cablenet-pick th { color: var(--ink-3); font-weight: 400; text-align: left; padding: 1px 8px 1px 0; }
+#cablenet-pick td { color: var(--ink); text-align: right; }
