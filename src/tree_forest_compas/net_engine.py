@@ -41,6 +41,7 @@ NEWTON_CAP = 300            # damped Newton steps before relaxation takes over
 RELAX_CAP = 200000          # relaxation steps before the rest is refused
 GEOMETRIC_FLOOR_N = 1.0e-3  # the tension a slack rope's geometric stiffness keeps
 SETTLE_ROUNDS = 50          # rounds of contact updates before the rest is refused
+HEAD_REACH_MM = 30.15       # a head catches a node over it within its tube's radius (60.3 mm)
 
 
 class EngineError(RuntimeError):
@@ -389,6 +390,22 @@ class Contacts(NamedTuple):
     left: frozenset = frozenset()     # nodes a head let go of that have not been above it since
 
 
+def _over(p, point):
+    """Whether p is over the head at point, within its reach, not beside it."""
+
+    return float(np.hypot(p[0] - float(point[0]), p[1] - float(point[1]))) <= HEAD_REACH_MM
+
+
+def _onto(start, end, top):
+    """Where a node going from start to end comes down to a head's top: the
+    crossing of its path with that level, or start when it set out on or
+    under it, as when the head comes up under it."""
+
+    if start[2] <= top:
+        return start
+    return start + (start[2] - top) / (start[2] - end[2]) * (end - start)
+
+
 def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, slide=False):
     """The net at rest with its contacts kept up to date (spec sections 3.2 and
     3.5).
@@ -402,12 +419,16 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
     balances it, and its foundation holds it on the anchor while the wire
     would pull it in further, pushing back what the net does not take, and
     lets go when it would have to pull. A node that would pass down through
-    its head is taken by the head; one that would pass into the ground is
-    taken by the ground where it crossed; one its wire would pull into the
-    anchor is taken by the foundation. A node let go in a round is not taken
-    back in the same round, and a node its head lets go of is not taken back
-    by that head until it has been above the head again: it left the notch
-    sideways, so only coming down onto the head from above puts it back.
+    its head is taken by the head when it comes down onto it: where its path
+    crosses the head's top, or where it set out if it set out on or under the
+    head (the head coming up under it), it is within HEAD_REACH_MM of the
+    head's axis. One that would pass into the ground is taken by the ground
+    where it crossed; one its wire would pull into the anchor is taken by the
+    foundation. A node let go in a round is not taken back in the same round,
+    and a node its head lets go of is not taken back by that head until it
+    has been above the head again, over it and higher than its top: it left
+    the notch sideways, so only coming down onto the head from above puts it
+    back.
     With slide, the ground holds its nodes up but not in place, as when the
     net is laid out by hand: they slide until nothing pulls them along it,
     and rest where they came to. Returns (Rest, Contacts)."""
@@ -438,6 +459,7 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
             if node in wires:
                 x[node] = wires[node].anchor
                 held[node] = True
+        before = x.copy()                                  # where the free nodes set out from
         rest = bring_to_rest(x, held, net, loads,
                              {node: wire for node, wire in wires.items() if not held[node]},
                              [node for node in resting if not held[node]])
@@ -466,10 +488,12 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
         changes.extend(sorted(released))
         for node, point in contacts.heads.items():
             node = int(node)
-            if node in left and x[node, 2] > float(point[2]) + 1.0e-6:
+            top = float(point[2]) + 1.0e-6
+            if node in left and any(_over(p, point) and p[2] > top for p in (before[node], x[node])):
                 left.discard(node)                         # above its head again
             if (node not in engaged and node not in fixed and node not in released
-                    and node not in left and x[node, 2] <= float(point[2]) + 1.0e-6):
+                    and node not in left and x[node, 2] <= top
+                    and _over(_onto(before[node], x[node], top), point)):
                 engaged.add(node)
                 changes.append(node)
         for node in np.nonzero(x[:, 2] < -1.0e-6)[0]:

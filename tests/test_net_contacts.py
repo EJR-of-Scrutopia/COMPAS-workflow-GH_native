@@ -90,6 +90,67 @@ def test_a_node_its_head_let_go_of_is_not_taken_back_from_beside_the_head():
                                       abs=0.01)
 
 
+def test_a_head_rising_past_a_node_beside_it_does_not_take_it():
+    # node 0 hangs 300 mm to one side of its head on a rope from a point 1000 mm
+    # above it; the head rises to 650 mm, past the node's height but nowhere
+    # under it, so the node never comes down onto the head and stays where it
+    # hangs (taken on height alone, it was carried 300 mm sideways and 50 mm up
+    # into a notch it never touched)
+    hang = 1600.0 - 1000.0 * (1.0 + 10.0 / 1.0e5)
+    x0 = np.array([[300.0, 0.0, hang], [300.0, 0.0, 1600.0]])
+    net = ne.ropes([(0, 1)], [1000.0], 1.0e5)
+    loads = np.array([[0.0, 0.0, -10.0], [0.0, 0.0, 0.0]])
+    contacts = ne.Contacts(heads={0: np.array([0.0, 0.0, 650.0])}, engaged=frozenset(),
+                           resting={})
+    rest, after = ne.settle(x0, net, loads, {1: x0[1].copy()}, contacts)
+    assert after.engaged == frozenset()
+    assert rest.x[0] == pytest.approx([300.0, 0.0, hang], abs=0.01)
+
+
+def test_a_node_its_head_let_go_of_is_not_forgiven_for_rising_beside_the_head():
+    # node 0, let go of by its head, hangs 300 mm to one side of it and 150 mm
+    # higher than its top: higher, but not over it, so it has not been above
+    # the head again and the head still may not take it back
+    hang = 1800.0 - 1000.0 * (1.0 + 10.0 / 1.0e5)
+    x0 = np.array([[300.0, 0.0, hang], [300.0, 0.0, 1800.0]])
+    net = ne.ropes([(0, 1)], [1000.0], 1.0e5)
+    loads = np.array([[0.0, 0.0, -10.0], [0.0, 0.0, 0.0]])
+    contacts = ne.Contacts(heads={0: np.array([0.0, 0.0, 650.0])}, engaged=frozenset(),
+                           resting={}, left=frozenset({0}))
+    rest, after = ne.settle(x0, net, loads, {1: x0[1].copy()}, contacts)
+    assert after.left == frozenset({0}) and after.engaged == frozenset()
+
+
+def test_a_node_coming_down_onto_its_head_from_above_is_caught_in_the_notch():
+    # node 0 hangs 10 mm to one side of its head's axis on a rope that would
+    # let it down to 599.9 mm, through the head's top at 650 mm: it comes down
+    # onto the head, which takes it into its notch and carries its weight
+    x0 = np.array([[10.0, 0.0, 800.0], [10.0, 0.0, 1700.0]])
+    net = ne.ropes([(0, 1)], [1100.0], 1.0e5)
+    loads = np.array([[0.0, 0.0, -10.0], [0.0, 0.0, 0.0]])
+    contacts = ne.Contacts(heads={0: np.array([0.0, 0.0, 650.0])}, engaged=frozenset(),
+                           resting={})
+    rest, after = ne.settle(x0, net, loads, {1: x0[1].copy()}, contacts)
+    assert after.engaged == frozenset({0})
+    assert rest.x[0] == pytest.approx([0.0, 0.0, 650.0], abs=1.0e-9)
+    assert rest.reaction[0, 2] == pytest.approx(10.0, abs=0.01)
+
+
+def test_a_node_swinging_down_through_its_head_is_caught_where_it_crosses():
+    # node 0 sets out 100 mm to one side of its head and 100 mm above its top,
+    # and its rope would swing it to 100 mm the other side and 100 mm below:
+    # neither end is over the head, but its path comes down through the head's
+    # top on the axis, so the head catches it there
+    hang = 1100.0 / (1.0 + 10.0 / 1.0e5)
+    x0 = np.array([[-100.0, 0.0, 100.0], [100.0, 0.0, 1000.0]])
+    net = ne.ropes([(0, 1)], [hang], 1.0e5)
+    loads = np.array([[0.0, 0.0, -10.0], [0.0, 0.0, 0.0]])
+    contacts = ne.Contacts(heads={0: np.zeros(3)}, engaged=frozenset(), resting={})
+    rest, after = ne.settle(x0, net, loads, {1: x0[1].copy()}, contacts)
+    assert after.engaged == frozenset({0})
+    assert rest.x[0] == pytest.approx([0.0, 0.0, 0.0], abs=1.0e-9)
+
+
 def test_laid_out_by_hand_a_stretched_net_slides_on_the_ground_until_it_is_not():
     # node 1 lies on the ground 500 mm from one held node and 1500 mm from
     # another, on ropes 1000 mm long. Held where it lies, by the ground's
