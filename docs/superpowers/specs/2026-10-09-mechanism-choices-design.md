@@ -177,7 +177,10 @@ whole machine:
   belong to the machine as drawn.
 - Drum: the winding radius the machine document gives (machine.spoolRadius,
   33.9 mm on the real study), not the catalogue's 36 mm drum, which stays for
-  its width and its price. The rail is the catalogue's MGN15H, as now.
+  its width and its price. The drum is grooved to suit the chosen rope: its
+  groove pitch is the rope's diameter times 1.1 (an assumption, section 10),
+  so a drum 150 mm wide holds floor(150 / pitch) turns in one layer. The rail
+  is the catalogue's MGN15H, as now.
 - Anchor chain: derived, not chosen. The lightest catalogued eye bolt and
   turnbuckle whose working load, at the angle the wire pulls, covers the
   rope's working load (its breaking load over 5), so the chain never gives way
@@ -235,7 +238,83 @@ The rope speed (from the motor's speed, the ratio, the drum and the reeving)
 is reported, not judged: how fast the trees extend is not in the export, so
 the raise's duration cannot be checked yet.
 
-### 4.5 What reaches part 1's engine
+### 4.5 Travel
+
+In the owner's formwork the trees lift the net and the wires only hold the rim
+on its anchors, so a drum never hauls the net up: it takes up the wire's
+stretch as its tension rises and pays it out as it falls. The rope the drum
+winds is the wire's take-up at the anchor times the reeve factor; the carriage
+that carries the reeving's moving block travels the take-up itself.
+
+The take-up comes from the run the section shows: in the Formwork tab, the
+engine's reel for each wire over every capture (part 1 records it); in the
+Cable net section, the cable net run's reel commands, as today.
+
+Two hard checks, as catalogue.drum_and_travel makes them today, now on the
+machine's own winding radius and the drum grooved for the chosen rope:
+
+- the most rope ever on the drum at once, the dead turns (section 4.6), plus
+  any rope stored to pay out, plus the most the drum ever takes in, fits the
+  drum's single layer, floor(width / pitch) turns of 2 pi r;
+- the carriage's travel, from the least to the most the wire is ever taken in,
+  fits the rail's stroke (300 mm on the MGN15H-300).
+
+Past the single layer a second layer changes the winding radius and
+invalidates every torque figure; past the stroke the carriage cannot reach.
+Both are refusals, not warnings. The total the drum turns in and out over the
+whole sequence is reported beside them, for wear, with no verdict. So are the
+drum's and each pulley's diameter over the rope's, as the catalogue reports
+the pulley's today: the governing minimum (ISO 4308-1) is not confirmed, and
+a verdict against an unconfirmed limit is worse than none.
+
+On the real study, part 1's run takes any wire in by at most 64 mm at its
+anchor, at machine time 60; with the reeve factor of 4 that is 256 mm onto the
+drum, about 1.2 turns of the 33.9 mm spool, and 64 mm of carriage travel. Over
+the whole sequence a wire goes in and back out by at most 128 mm at the
+anchor, 512 mm at the drum; the median wire moves 15 mm.
+
+### 4.6 The wire to buy
+
+For each wire, the length to cut:
+
+```text
+rope length = route length
+            + (reeve factor - 1) x reeving span
+            + reeve factor x the most the drum pays out past its start
+            + dead turns x 2 pi r
+            + termination allowance x 2
+            + cutting allowance
+```
+
+- Route length: the length of the wire's route in the machine document, from
+  the drum to the net node, as part 1 already measures it (route_mm).
+- Paid out past the start: the rope the drum takes in is not extra rope; it
+  comes off the span onto the drum as the stretch is taken up, and only the
+  drum's capacity must allow for it (section 4.5). What the cut length needs
+  is the rope a drum must pay out beyond where it starts, which must be on the
+  drum from the beginning. On the real study that is none: no wire is ever
+  reeled out past its laid-out length.
+- Reeving span: the export draws the route once, not each fall of the
+  reeving, so the extra rope in the falls is counted over the longest the
+  moving block can stand off its fixed pulleys, the rail's stroke, until the
+  export carries the real span (section 10).
+- Dead turns: turns that never leave the drum. At least two is the usual rule
+  for a winch drum; the studio uses three, about 0.64 m on the real study's
+  spool, until the figure is confirmed against the winch standard (section
+  10).
+- Termination allowance: the rope a ferrule loop takes at each end, from the
+  ferrule maker's table. Until it is sourced the line says so, and the length
+  is a floor.
+- Cutting allowance: 0.25 m per cut length, assumed.
+
+The cut lengths add up per machine (seven wires) and per study (every machine
+in the export). The rope is priced as the cheaper of buying each cut length by
+the metre and packing the cut lengths onto the reels the supplier sells
+(GS Products sells 100 m and 250 m reels and by the metre), longest first, a
+cut length never spanning two reels. This replaces today's price_of, which
+charges one metre of rope per wire.
+
+### 4.7 What reaches part 1's engine
 
 Three choices change how the net moves and go into the formwork run: the wire
 (its stiffness and weight), the pulleys (the reeving sets each wire's
@@ -343,9 +422,11 @@ wire, and 1 to 7 wires per motor: some tens of thousands of combinations,
 each judged directly from section 4's formulas, not by running the engine.
 
 It fills the five selects with the cheapest combination that holds, and names
-the part that limits it. The price is the study's whole: every machine's
-motors, drivers, gearboxes, drums, pulleys, rope, anchor chains and load
-cells, and every cabinet, so sharing a motor is credited for the drivers and
+the part that limits it. A combination whose rope overruns its drum's single
+layer or whose carriage overruns its rail (section 4.5) does not hold. The
+price is the study's whole: every machine's motors, drivers, gearboxes,
+drums, pulleys, rope (by the length section 4.6 works out), anchor chains and
+load cells, and every cabinet, so sharing a motor is credited for the drivers and
 supplies it saves. A combination with an unpriced part ranks after every
 priced one and says which price is missing.
 
@@ -380,8 +461,10 @@ studio starts, any part that lacks a figure the rules need.
 
 - bench/studio/catalogue.py keeps the limits, price and speed machinery and
   takes a derived machine where it took a configuration: mechanism_for,
-  ceiling_for, price_of, rope_speed and load_factor move from preset keys to
-  the machine section 3 derives.
+  ceiling_for, price_of, rope_speed, drum_and_travel and load_factor move from
+  preset keys to the machine section 3 derives; drum_and_travel takes the
+  machine's winding radius and the drum grooved for the rope (section 4.5),
+  and price_of prices the rope by length (section 4.6).
 - A new bench/studio/machine.py derives the machine from the five choices and
   the export (section 3) and searches the combinations (section 6).
 - A new bench/studio/cabinet.py applies note 14's rules (section 5).
@@ -394,7 +477,8 @@ selects: the motor; the ratios its frame offers; the pulleys, none or the
 models that take the chosen wire; the wire; wires per motor. The choices are
 remembered per study in the browser. Below them: the derived machine, each
 wire's limit with the part that sets it, the verdict against the net's
-demand, and the cabinet list with its total. Recommend fills the five selects.
+demand, the travel checks, the wire to buy, and the cabinet list with its
+total. Recommend fills the five selects.
 The Formwork tab (part 4) reuses the same block.
 
 ### 7.4 The routes
@@ -403,7 +487,7 @@ The Formwork tab (part 4) reuses the same block.
   (which ratios each motor's frame offers, which pulleys take each wire).
 - POST /api/studies/{export}/cablenet/configurations takes choices instead of
   configurations and returns, for each, the derived machine, the limits, the
-  verdict and the cabinet.
+  verdict, the travel checks, the wire to buy and the cabinet.
 - POST /api/studies/{export}/cablenet/recommend searches the choices.
 - POST /api/studies/{export}/cablenet/exports and its GET name the machine by
   its parts ("34HS46 on EG34 20:1, Pfaff DSRB 90 pulleys, 4 mm 7x19, two wires
@@ -419,6 +503,8 @@ Every refusal is a sentence that names both sides, never a bare exception:
 - a wire outside the chosen pulley's range ("the Pfaff DSRB 185/8 takes 8 mm
   wire, not 4");
 - a machine document with no winding radius;
+- rope on a drum beyond its single layer, or a carriage travelling beyond its
+  rail's stroke, each with the two figures;
 - a part missing a figure a rule needs, at start-up;
 - a cabinet whose 24 V load exceeds its buck converter, or whose motors exceed
   what any number of catalogued supplies can carry.
@@ -437,6 +523,11 @@ Each rule gets a test worked by hand:
 - a 230 V driver's cabinet has no 48 V supply and a 24 V DIN supply instead;
 - each wire's load cell is the smallest H3 that covers its peak;
 - the anchor chain is the lightest that holds the rope's working load;
+- the drum's single layer and the carriage's travel, worked by hand on the
+  real study's figures (64 mm taken in, 256 mm onto a 33.9 mm spool grooved
+  for 4 mm rope, 64 mm against a 300 mm stroke), and both refusals;
+- the rope length of one wire worked by hand, with no rope paid out past the
+  start and with some, and the reel packing never splitting a cut length;
 - Recommend finds the known cheapest on a small hand-made catalogue, and ranks
   an unpriced combination last;
 - load_parts refuses a part missing a needed figure, by name;
@@ -459,7 +550,13 @@ That is the finding part 3 acts on.
   polyamide pulleys' load per size; the 48 mm sheave's wire size; each Zemic
   H3 capacity's price and thread; the ES-DH2306 driver's price; the AD60-G10
   and AD90-G10 prices; and the HTG, MG and TG gearboxes' torques.
-- Parts to source: a 24 V DIN-rail supply; each mains-fed driver's fuse or
+- The drum's groove pitch, taken as 1.1 times the rope's diameter; the
+  number of dead turns, taken as three against the usual rule of at least
+  two, to confirm against the winch standard; the reeving span, taken as the
+  rail's stroke until the export carries the real one; and the cutting
+  allowance, taken as 0.25 m.
+- Parts to source: a 24 V DIN-rail supply; the termination allowance of a
+  ferrule loop for each rope size, from the ferrule maker's table; each mains-fed driver's fuse or
   breaker size; a continuous-duty rating for the pawl solenoid, which note 14
   flagged.
 - The currency rates: the source and the date, chosen when the catalogue is
