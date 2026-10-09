@@ -584,6 +584,41 @@ function table(head, rows) {
     "</table>";
 }
 
+// The chosen machine's limits a wire, N, each with its part; the one that
+// binds is marked (spec 2026-10-09 Cable net display, section 4.1).
+const TERM_NAMES = { "rope tension": "Wire", anchor: "Anchor chain", "spool rope tension": "Spool rope",
+                     sheave: "Pulleys", "gearbox torque": "Gearbox", "motor torque": "Motor" };
+
+export function limitsHtml(terms) {
+  if (!terms || !terms.length) return "";
+  return table(["Limit", "N a wire", "Part", ""], terms.map((term) => [
+    escapeHtml(TERM_NAMES[term.name] || term.name), newtons(term.newtons),
+    escapeHtml(term.part == null ? "" : term.part), term.binds ? "binds" : ""]));
+}
+
+// Every motor at the other choices: one row each, the chosen one marked, a row
+// a click chooses.
+export function motorsHtml(rows, chosen) {
+  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price"];
+  const body = (rows || []).map((row) => {
+    const choice = row.choices || {};
+    const motor = escapeHtml(choice.motor);
+    const open = `<tr data-motor="${motor}"${choice.motor === chosen ? ' class="chosen"' : ""}>`;
+    if (row.refused) return open + `<td>${motor}</td><td colspan="5">${escapeHtml(row.refused)}</td></tr>`;
+    const worst = row.verdict && row.verdict.worst;
+    const cells = [motor, ratioLabel(choice.ratio), worst ? newtons(worst.ceiling) : "",
+                   worst && worst.margin != null ? factor(worst.margin) + "x" : "",
+                   mark(row.verdict && row.verdict.holds),
+                   row.price ? pounds(row.price.priced_gbp) : ""];
+    return open + cells.map((cell) => `<td>${cell}</td>`).join("") + "</tr>";
+  });
+  return "<table><tr>" + head.map((h) => `<th>${h}</th>`).join("") + "</tr>" + body.join("") + "</table>";
+}
+
+export function eyeBoltHtml(angle) {
+  return `<table><tr><th>Eye bolt angle</th><td>${Number(angle).toFixed(0)}°, assumed</td></tr></table>`;
+}
+
 export function machineHtml(row, parts) {
   if (!row) return "";
   if (row.refused) return `<p>${escapeHtml(row.refused)}</p>`;

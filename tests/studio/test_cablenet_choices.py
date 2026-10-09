@@ -36,6 +36,10 @@ out.travel = m.travelHtml(given.row.travel);
 out.buy = m.buyHtml(given.row.price, given.row.cut_lengths);
 out.price = m.priceHtml(given.row.price);
 out.recommend = m.recommendHtml(given.recommend);
+out.limits = m.limitsHtml(given.row.terms);
+out.motors = m.motorsHtml([given.row, { choices: { motor: "X<1>", ratio: null }, refused: "X: not offered" }],
+  given.choice.motor);
+out.eye = m.eyeBoltHtml(10);
 const boxes = given.row.price.cabinets;
 const second = { ...boxes.cabinets[0], priced_gbp: boxes.cabinets[0].priced_gbp + 100 };
 out.twoCabinets = m.priceHtml({ ...given.row.price,
@@ -176,3 +180,25 @@ def test_every_cabinet_has_its_own_total_and_the_lines_say_whose_they_are(out):
     assert "£{:.2f}".format(first["priced_gbp"]) in html
     assert "£{:.2f}".format(first["priced_gbp"] + 100) in html
     assert "<p>Cabinet, machine 1: " in html
+
+
+def test_the_limits_a_wire_name_each_part_and_mark_the_one_that_binds(out):
+    html = out["limits"]
+    assert "<th>Limit</th><th>N a wire</th><th>Part</th>" in html
+    for name in ("Wire", "Anchor chain", "Spool rope", "Pulleys", "Gearbox", "Motor"):
+        assert "<td>{}</td>".format(name) in html, name
+    assert html.count("<td>binds</td>") == 1
+    assert "<td>23HS45-4204D-E1000</td>" in html
+
+
+def test_every_motor_is_a_row_with_its_ceiling_margin_mark_and_price(out):
+    html = out["motors"]
+    assert "<th>Motor</th><th>Ratio</th><th>N a wire</th><th>Margin</th>" in html
+    assert '<tr data-motor="23HS45-4204D-E1000" class="chosen">' in html
+    assert "<td>20:1</td>" in html and "£" in html
+    # a motor the catalogue cannot build is its one line, escaped
+    assert 'data-motor="X&lt;1&gt;"' in html and "X: not offered" in html
+
+
+def test_the_eye_bolts_angle_is_a_row(out):
+    assert out["eye"] == '<table><tr><th>Eye bolt angle</th><td>10°, assumed</td></tr></table>'

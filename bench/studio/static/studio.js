@@ -15736,9 +15736,16 @@ const cableNet = mountCableNet({
     if (state.layers.prestress && state.bundle && state.objects.wires) paintCableNetLenses(true);
     buildLayerToggles();
   },
+  onPopup: () => {
+    // the Cable net pop-up takes the left: the data sheet shuts, the live graphs tuck
+    document.getElementById("data-panel").classList.add("hidden");
+    document.getElementById("data-button").classList.remove("active");
+    if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
+  },
 });
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
+  if (panel.classList.contains("hidden")) cableNet.closePopup();
   renderDataPanel(state.bundle ? state.bundle.verification : null);
   renderAnalysisTab();
   showDataTab("data-analysis");

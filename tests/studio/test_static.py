@@ -4631,7 +4631,8 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     for ident in ("cablenet-run", "cablenet-prestress", "cablenet-speed", "cablenet-lenses",
                   "cablenet-stage", "cablenet-motor", "cablenet-recommend",
                   "cablenet-wires", "cablenet-price", "cablenet-holds",
-                  "cablenet-grab", "cablenet-export", "cablenet-export-choose"):
+                  "cablenet-graphs", "cablenet-export", "cablenet-export-choose",
+                  "cablenet-popup", "cablenet-popup-toggle"):
         assert 'id="{}"'.format(ident) in html, ident
     # the run is the section's one primary action. The slice starts AFTER the
     # section's own opening tag, or the count of nested <details> below could
