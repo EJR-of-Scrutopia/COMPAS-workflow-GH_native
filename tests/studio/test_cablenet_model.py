@@ -1,4 +1,6 @@
-"""The cable net panel's judgement, run under node against small documents."""
+"""The cable net panel's figures, run under node against small documents. The
+panel answers in values, marks and tables (spec 2026-10-09 Cable net display,
+sections 3 and 6): no function here returns a sentence."""
 
 from __future__ import annotations
 
@@ -36,16 +38,14 @@ const placement = { batch: 20, steps: 40, reached: true, curve: [
   { count: 0, worst_sag_mm: 2009, worst_residual_newtons: 83 },
   { count: 20, worst_sag_mm: 900, worst_residual_newtons: 70 },
   { count: 40, worst_sag_mm: 2.0, worst_residual_newtons: 10 } ] };
-out.grab = m.grabText(placement, { actuators: new Array(40).fill(1) }, 2.18);
-out.grabNot = m.grabText({ ...placement, reached: false }, { actuators: new Array(800).fill(1) }, 2.18);
-out.grabNone = m.grabText(null, null, 2.18);
 out.svg = m.curveSvg(placement.curve, 2.18, 240, 72);
 out.svgNoLine = m.curveSvg(placement.curve, null, 240, 72);
 out.stale = [m.isStale({ schema: "bench.cablenet/1" }), m.isStale({ schema: "bench.cablenet/2" }), m.isStale(null)];
 out.newtons = [1471, 1470.96, 0, null].map(m.newtons);
 out.rpm = [m.rpmText(50, { motor_rpm_for_wanted_speed: 318.3 }), m.rpmText(50, { refused: "x" }), m.rpmText(50, null)];
 out.retired = ["verdictOf", "loadFactorText", "modifiedFrom", "fallbackKey", "settledText",
-  "configurationLabel"].filter((name) => name in m);
+  "configurationLabel", "demandSentences", "floorSentence", "acceptanceSourceText", "grabText",
+  "prestressNote", "toleranceNote", "ropeMismatch"].filter((name) => name in m);
 
 // The raise is shown and never judged: a frame of it enters neither the worst
 // residual, nor the reachable test, nor the verdict. A stage with neither a
@@ -64,8 +64,6 @@ out.shapeFramesOnly = m.shapeOf({ acceptance: 2.18, stages: [raise] });
 out.shapeNoLine = m.shapeOf({ acceptance: null, stages: inside });
 out.shapeEmpty = m.shapeOf({ acceptance: 2.18, stages: [] });
 out.shapeNoDemand = m.shapeOf(null);
-// A stage past the line: a version 2 document's sag is with the grabbed nodes
-// held; the first version's was what its wires could not correct.
 const unreached = [raise, ...inside, third(3.1, false)];
 out.shapeGrabbed = m.shapeOf({ schema: "bench.cablenet/2", acceptance: 2.18, stages: unreached });
 out.shapeCorrected = m.shapeOf({ schema: "bench.cablenet/1", acceptance: 2.18, stages: unreached });
@@ -81,125 +79,13 @@ const both = { name: "X", kind: "tile", time: 10, course: 0, skin_load_sum_newto
 out.bothKeys = m.instantAt([both, stages[0]], { duringFormwork: true, machineTime: 12, courseIndex: null }).name;
 out.bothCaption = m.stageCaption(both);
 
-// The demand sentences name the instant where the worst wire tension occurs,
-// found by scanning the stages, and the stage that sizes the parts apart.
-const demandOf = (frame, first, second, sizing) => ({
-  schema: "bench.cablenet/2", acceptance: 2.18, acceptance_source: "the rib and its skin",
-  thickness: 0.02, density: 2200, prestress: 300,
-  // as the engine writes it: the fit's 1471 N is the larger of it and the 300 N entered
-  sizing: { stage: sizing, worst_wire_tension_newtons: 1471, fitted_wire_tension_newtons: 1471,
-            prestress_newtons: 300, worst_actuator_newtons: 800 },
-  held: { wire_nodes: [1, 2, 3], column_heads: [9], actuators: [4, 5] },
-  stages: [
-    { name: "F60", kind: "finish", time: 60, course: null, wire_tensions: frame, skin_load_sum_newtons: 0, net_weight_newtons: 900 },
-    { name: "S1", kind: "tile", time: null, course: 0, wire_tensions: first, skin_load_sum_newtons: 4000, net_weight_newtons: 900 },
-    { name: "S2", kind: "tile", time: null, course: 1, wire_tensions: second, skin_load_sum_newtons: 12000, net_weight_newtons: 900 } ] });
-out.sentFrame = m.demandSentences(demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2"));
-out.sentCourse = m.demandSentences(demandOf([900, 1000, 200], [700, 1200, 100], [800, 1471, 100], "S1"));
-out.sentTie = m.demandSentences(demandOf([900, 1471, 200], [700, 1200, 100], [800, 1471, 100], "S2"));
-out.sentNoInstant = m.demandSentences(demandOf([900, 1000, 200], [700, 1200, 100], [800, 1300, 100], "S2"));
-const hostile = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S<2>");
-hostile.stages[0].name = "F<60>";
-hostile.acceptance_source = "the rib & its <b>skin</b>";
-hostile.note = "no formwork <i>document</i> & frames";
-out.sentHostile = m.demandSentences(hostile);
-const noted = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-noted.note = "the formwork document was not read.";
-out.sentNoted = m.demandSentences(noted);
-// The acceptance source as the engine records a catalogue rib, "falsework
-// <key>: <the entry as JSON>": the data sheet quotes it, the sentence names it.
-const ribbed = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-ribbed.acceptance_source = 'falsework glulam-rib-9000: {"depth": 400.0, "description": "glulam GL24h rib 9000 x 600, 400 x 90 deep", "e_modulus": 11600.0, "spacing": 600.0, "span": 9000.0, "width": 90.0}';
-out.sentRibbed = m.demandSentences(ribbed);
-out.sources = [
-  m.acceptanceSourceText(ribbed.acceptance_source),
-  m.acceptanceSourceText('falsework plywood-rib-2000: {"span": 2000.0}'),
-  m.acceptanceSourceText("falsework broken: {not json"),
-  m.acceptanceSourceText("the rib and its skin"),
-  m.acceptanceSourceText('falsework odd-rib: {"description": "a <b>rib</b> & more"}'),
-];
-const oddRib = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-oddRib.acceptance_source = 'falsework odd-rib: {"description": "a <b>rib</b> & more"}';
-out.sentOddRib = m.demandSentences(oddRib);
-// The line as a tolerance (9 October 2026): the sentence says so, and the dial
-// reads the walk the document recorded. The walk picks the same nodes whatever
-// the line and stops at the first point within it, or at its cap of batches, or
-// when no node is left unbalanced (placement.greedy_actuators).
-const toleranced = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-toleranced.acceptance = 20;
-toleranced.tolerance_mm = 20;
-toleranced.acceptance_source = "a tolerance of 20.00 mm from the designed form, set for this run";
-toleranced.placement = { batch: 20, steps: 40, reached: true, curve: [
-  { count: 0, worst_sag_mm: 2027.7 }, { count: 600, worst_sag_mm: 62.8 },
-  { count: 720, worst_sag_mm: 27.1 }, { count: 740, worst_sag_mm: 18.6 } ] };
-out.sentTolerance = m.demandSentences(toleranced);
-out.toleranceSame = m.toleranceNote(toleranced, 20);
-out.toleranceLooser = m.toleranceNote(toleranced, 30);
-out.toleranceLoosest = m.toleranceNote(toleranced, 3000);
-out.toleranceTighter = m.toleranceNote(toleranced, 15);
-// on a point of the curve: the walk stops where the sag is AT the line or under
-// it, so the panel reads it the same way
-out.toleranceExact = m.toleranceNote(toleranced, 62.8);
-out.toleranceOlder = m.toleranceNote(ribbed, 20);
-out.toleranceNone = m.toleranceNote(null, 20);
-out.toleranceStale = m.toleranceNote({ schema: "bench.cablenet/1", acceptance: 2.18 }, 20);
-// no line: the engine then runs the walk to its cap and records it as not reached
-out.toleranceNoLine = m.toleranceNote({ ...toleranced, acceptance: null, tolerance_mm: null,
-  acceptance_source: null, placement: { ...toleranced.placement, reached: false } }, 20);
-// a walk that ended at its cap short of its own line: a run at a tighter line
-// walks the same nodes and ends at the same cap
-const capped = { ...toleranced, acceptance: 3.25, tolerance_mm: null,
-  acceptance_source: "falsework glulam-rib-9000: {}",
-  placement: { batch: 20, steps: 2, reached: false, curve: [
-    { count: 0, worst_sag_mm: 2027.7 }, { count: 20, worst_sag_mm: 1676.2 },
-    { count: 40, worst_sag_mm: 12.25 } ] } };
-out.toleranceCapped = m.toleranceNote(capped, 10);
-out.toleranceCappedLooser = m.toleranceNote(capped, 1700);
-// a walk that ran out of unbalanced nodes before its cap
-const exhausted = { ...toleranced, placement: { batch: 20, steps: 40, reached: false, curve: [
-  { count: 0, worst_sag_mm: 90 }, { count: 20, worst_sag_mm: 40 }, { count: 25, worst_sag_mm: 30 } ] } };
-out.toleranceExhausted = m.toleranceNote(exhausted, 15);
-out.toleranceNoCurve = m.toleranceNote({ ...toleranced, placement: null }, 15);
-const blank = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-blank.note = "   ";
-out.sentBlankNote = m.demandSentences(blank);
-out.sentTopLevel = m.demandSentences({ ...demandOf([1], [1], [1], "S2"), sizing: undefined,
-  sizing_stage: "S9", prestress: undefined });
-// The wires are judged at no less than the entered prestress: a re-run at 3000 N
-// of a net whose fit finds 1471 N in its worst wire is held at 3000 N, and a rig
-// whose ceiling is 1471 N does not hold it, whatever the fit found.
-const held = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-held.prestress = 3000;
-held.sizing = { ...held.sizing, worst_wire_tension_newtons: 3000, prestress_newtons: 3000 };
-out.sentHeld = m.demandSentences(held);
-out.floorHeld = m.prestressFloor(held);
-// A document written before the block carried the two figures: its one figure
-// is the fit's (the real study's 14.6 N), judged against the 300 N it records.
-const beforeTheRule = demandOf([10, 14.6, 2], [7, 12, 1], [8, 13, 1], "S2");
-beforeTheRule.sizing = { stage: "S2", worst_wire_tension_newtons: 14.6, worst_actuator_newtons: 435.1 };
-out.sentOlder = m.demandSentences(beforeTheRule);
-out.floorOlder = m.wireFloor(beforeTheRule);
-// An actuator that pulls harder than any wire does not move the wires' floor:
-// the floor and the first sentence stay the wires', the instant is found, the
-// verdict follows the wires as the server's row does, and the grabbed nodes'
-// own figure is a sentence of its own.
-const dominant = demandOf([900, 1000, 200], [700, 900, 100], [800, 950, 100], "S2");
-dominant.sizing = { stage: "S2", worst_wire_tension_newtons: 1000, fitted_wire_tension_newtons: 1000,
-                    prestress_newtons: 300, worst_actuator_newtons: 2800 };
-out.sentDominant = m.demandSentences(dominant);
-out.floorDominant = m.prestressFloor(dominant);
-const calm = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-calm.sizing.worst_actuator_newtons = 0;
-out.sentNoPull = m.demandSentences(calm);
-const unsaid = demandOf([900, 1471, 200], [700, 1200, 100], [800, 1300, 100], "S2");
-delete unsaid.sizing.worst_actuator_newtons;
-out.sentPullAbsent = m.demandSentences(unsaid);
-out.sentSlack = m.demandSentences({ schema: "bench.cablenet/2", acceptance: 2.18, stages: [
-  { name: "S1", kind: "tile", time: null, course: 0, wire_tensions: [0, 0], skin_load_sum_newtons: 0, net_weight_newtons: 0 } ] });
-out.sentNone = m.demandSentences(null);
-out.sentStale = m.demandSentences({ schema: "bench.cablenet/1<x>" });
+const demandOf = (prestress, judged) => ({
+  schema: "bench.cablenet/2", acceptance: 20, tolerance_mm: 20, prestress, ea_newtons: 450000,
+  sizing: { stage: "S2", worst_wire_tension_newtons: judged, fitted_wire_tension_newtons: 30.2,
+            prestress_newtons: prestress, worst_actuator_newtons: 904.8 },
+  stages: [{ name: "S2", kind: "tile", time: null, course: 1, wire_tensions: [30.2, 12.0] }] });
 out.floors = [
-  m.prestressFloor(demandOf([1], [1], [1], "S2")),
+  m.prestressFloor(demandOf(300, 300)),
   m.prestressFloor({ sizing: { worst_wire_tension_newtons: 500, worst_actuator_newtons: 900 }, stages: [] }),
   m.prestressFloor({ stages: [{ wire_tensions: [100, 700] }, { wire_tensions: [300] }] }),
   m.prestressFloor(null),
@@ -208,29 +94,42 @@ out.wound = [
   m.ropeWound({ stages: [{ wire_reel_commands: [10, -5] }, { wire_reel_commands: [-20, 5] }] }),
   m.ropeWound({ stages: [] }) ];
 
-// The rope the analysis ran for against the rope chosen here: exports._rope_mismatch's
-// test, said in the panel's words. Empty whenever there is nothing to compare.
-const ropeParts = { rope: { "rope-4mm": { ea_newtons: 450000 }, "rope-5mm": { ea_newtons: 700000 },
-  "rope-6mm": { ea_newtons: 1010000 } } };
-const analysedWith = (ea) => ({ schema: "bench.cablenet/2", ea_newtons: ea });
-out.ropeSame = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-4mm" });
-out.ropeInside = m.ropeMismatch(ropeParts, analysedWith(450000.4), { rope: "rope-4mm" });
-out.ropeOutside = m.ropeMismatch(ropeParts, analysedWith(450000.5), { rope: "rope-4mm" });
-out.ropeOther = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-6mm" });
-out.ropeNoDemand = m.ropeMismatch(ropeParts, null, { rope: "rope-6mm" });
-out.ropeNoEa = m.ropeMismatch(ropeParts, { schema: "bench.cablenet/2" }, { rope: "rope-6mm" });
-out.ropeUnknown = m.ropeMismatch(ropeParts, analysedWith(450000), { rope: "rope-9mm" });
-out.ropeNoParts = m.ropeMismatch(null, analysedWith(450000), { rope: "rope-6mm" });
-out.ropeNoConfiguration = m.ropeMismatch(ropeParts, analysedWith(450000), null);
-out.ropeHostile = m.ropeMismatch({ rope: { "<i>x</i>": { ea_newtons: 700000 } } }, analysedWith(450000), { rope: "<i>x</i>" });
+// The menu's three answers: what the form needs, what the chosen machine gives
+// a wire, the most any machine makes.
+const row = { refused: null, verdict: { holds: true, worst: { ceiling: 1123.4, margin: 3.74 } } };
+const strongest = { ceiling_newtons: 6660, described: "ES-MH342200 on EG42 100:1, no pulleys, 8 mm 7x19, one wire a motor" };
+out.answers = m.menuAnswers(demandOf(300, 300), row, strongest);
+out.answersHtml = m.answersHtml(out.answers);
+out.answersNone = m.menuAnswers(null, null, null);
+out.answersNoneHtml = m.answersHtml(out.answersNone);
+out.answersRefused = m.menuAnswers(demandOf(300, 300), { refused: "NEMA 23: no 30:1" }, strongest);
+out.answersStale = m.menuAnswers({ schema: "bench.cablenet/1" }, row, null);
+out.answersFails = m.answersHtml(m.menuAnswers(demandOf(3000, 3000),
+  { refused: null, verdict: { holds: false, worst: { ceiling: 1123.4, margin: 0.37 } } }, null));
+out.answersHostile = m.answersHtml(m.menuAnswers(null, null, { ceiling_newtons: 1, described: "<b>x</b>" }));
 
-// The dial against the prestress the analysis on screen was run with.
-out.noteSame = m.prestressNote({ prestress: 300 }, 300);
-out.noteDiffers = m.prestressNote({ prestress: 300 }, 500);
-out.noteFraction = m.prestressNote({ prestress: 275.5 }, 300);
-out.noteNoDemand = m.prestressNote(null, 500);
-out.noteNoRecord = [m.prestressNote({}, 500), m.prestressNote({ prestress: null }, 500)];
-out.noteNotANumber = [m.prestressNote({ prestress: "soft" }, 500), m.prestressNote({ prestress: 300 }, NaN)];
+// The run on screen against the dials and the chosen wire: one line each.
+const parts = { rope: { "rope-4mm": { ea_newtons: 450000 }, "rope-5mm": { ea_newtons: 700000 } } };
+const dials = { prestress: 300, tolerance: 20 };
+out.warnSame = m.runWarnings(demandOf(300, 300), dials, parts, "rope-4mm");
+out.warnPrestress = m.runWarnings(demandOf(300, 300), { ...dials, prestress: 2650 }, parts, "rope-4mm");
+out.warnTolerance = m.runWarnings(demandOf(300, 300), { ...dials, tolerance: 15 }, parts, "rope-4mm");
+out.warnRope = m.runWarnings(demandOf(300, 300), dials, parts, "rope-5mm");
+out.warnAll = m.runWarnings(demandOf(300, 300), { prestress: 2650, tolerance: 15 }, parts, "rope-5mm");
+out.warnNone = m.runWarnings(null, dials, parts, "rope-4mm");
+out.warnStale = m.runWarnings({ schema: "bench.cablenet/1<x>" }, dials, parts, "rope-4mm");
+out.warnNotNumbers = m.runWarnings(demandOf(300, 300), { prestress: NaN, tolerance: "wide" }, parts, "rope-4mm");
+out.warnOlder = m.runWarnings({ ...demandOf(300, 300), tolerance_mm: null }, { ...dials, tolerance: 15 }, parts, "rope-4mm");
+
+// The stiffness the analysis ran for against the chosen wire's.
+const analysedWith = (ea) => ({ schema: "bench.cablenet/2", ea_newtons: ea });
+out.eaSame = m.eaMismatch(parts, analysedWith(450000), "rope-4mm");
+out.eaInside = m.eaMismatch(parts, analysedWith(450000.4), "rope-4mm");
+out.eaOutside = m.eaMismatch(parts, analysedWith(450000.5), "rope-4mm");
+out.eaOther = m.eaMismatch(parts, analysedWith(450000), "rope-5mm");
+out.eaNothing = [m.eaMismatch(parts, null, "rope-5mm"), m.eaMismatch(parts, { schema: "bench.cablenet/2" }, "rope-5mm"),
+  m.eaMismatch(parts, analysedWith(450000), "rope-9mm"), m.eaMismatch(null, analysedWith(450000), "rope-5mm"),
+  m.eaMismatch(parts, analysedWith(450000), null)];
 console.log(JSON.stringify(out));
 """
 
@@ -242,7 +141,8 @@ def out(tmp_path_factory):
     script = tmp_path_factory.mktemp("cablenet") / "harness.mjs"
     module = (STATIC / "cablenet_model.js").resolve().as_uri()
     script.write_text(HARNESS % {"module": module}, encoding="utf-8")
-    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True,
+                            encoding="utf-8")
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -259,22 +159,14 @@ def test_the_instant_clamps_to_the_nearest_computed_one(out):
 
 
 @needs_node
-def test_the_stage_line_names_the_instant_and_what_it_carries(out):
-    assert out["frameCaption"] == "Frame at machine time 60 (finish): the net's own weight only."
-    assert out["courseCaption"] == "Course 2 of the skin (S2): 12.0 kN placed."
+def test_the_stage_line_is_the_instant_and_what_it_carries(out):
+    assert out["frameCaption"] == "F60 finish, t 60"
+    assert out["courseCaption"] == "S2 tile, course 2, 12.0 kN"
 
 
 @needs_node
 def test_sag_bands_and_the_missing_line(out):
     assert out["bands"] == ["over", "near", "inside", "unknown", "unknown"]
-
-
-@needs_node
-def test_the_grab_text_states_count_batches_line_and_the_heuristic(out):
-    assert out["grab"].startswith("Grab 40 nodes (2 batches of 20) to bring the net inside the 2.18 mm line")
-    assert "2009.00 mm" in out["grab"] and "heuristic" in out["grab"]
-    assert "did not reach the line" in out["grabNot"] and "800 nodes" in out["grabNot"]
-    assert "run the cable net analysis" in out["grabNone"]
 
 
 @needs_node
@@ -309,7 +201,6 @@ def test_the_raise_is_shown_and_never_judged(out):
     # Frames alone measure nothing: not established, never a pass.
     only = out["shapeFramesOnly"]
     assert only["known"] is False and only["holds"] is False and only["worst"] is None
-    assert "no stage records a residual after correction" in only["whyUnknown"]
 
 
 @needs_node
@@ -321,9 +212,9 @@ def test_a_stage_with_neither_a_time_nor_a_course_is_a_course(out):
     assert out["olderFormwork"] == "A", "no frames: the first course stands in"
     assert out["mixedCourse"] == "B", "the frame is skipped, the older stage is the first course"
     assert out["framesOnlyBuild"] == "F100", "no courses: the nearest frame stands in"
-    assert out["olderCaption"] == "Stage A: 1.0 kN placed.", "no course number to count, so none is invented"
+    assert out["olderCaption"] == "A, 1.0 kN", "no course number to count, so none is invented"
     # one definition of a frame everywhere: a stage that carries a course is a course
-    assert out["bothKeys"] == "F60" and out["bothCaption"] == "Course 1 of the skin (X): 1.0 kN placed."
+    assert out["bothKeys"] == "F60" and out["bothCaption"] == "X tile, course 1, 1.0 kN"
 
 
 @needs_node
@@ -337,286 +228,81 @@ def test_a_stage_past_the_line_is_read_by_its_own_version(out):
 
 
 @needs_node
-def test_the_shape_says_why_it_is_not_established(out):
-    assert out["shapeNoLine"]["known"] is False and "no acceptance line" in out["shapeNoLine"]["whyUnknown"]
-    assert out["shapeEmpty"]["known"] is False and "no stages" in out["shapeEmpty"]["whyUnknown"]
+def test_the_shape_is_not_established_without_a_line_or_stages(out):
+    assert out["shapeNoLine"]["known"] is False
+    assert out["shapeEmpty"]["known"] is False
     assert out["shapeNoDemand"]["known"] is False and out["shapeNoDemand"]["holds"] is False
-
-
-@needs_node
-def test_the_demand_names_the_instant_the_worst_tension_occurs(out):
-    # The largest tension is in a frame of the raise: it says so.
-    frame = out["sentFrame"]
-    assert frame[0] == (
-        "The net is held at a prestress floor of <b>1471.0 N</b>, the larger of the entered "
-        "prestress (300.0 N) and the greatest tension the fit found in any wire (1471.0 N), "
-        "reached at the raise's instant F60. "
-        "That is a property of the vault, the skin and the prestress, so it does not move when "
-        "parts change. The stage that sizes the parts is S2.")
-    assert frame[1] == "The acceptance line is 2.18 mm, from the rib and its skin."
-    assert frame[2] == "The skin weighs <b>12.0 kN</b> placed, 20 mm at 2200 kg/m3; the net itself weighs 0.9 kN."
-    assert frame[3] == "Held by 3 wires and 1 column head."
-    assert frame[4] == "The grabbed nodes need up to 800.0 N each, which a wire there would have to carry."
-    assert len(frame) == 5, "no note, no sixth sentence"
-    # In a course: the stage, and the sizing stage is a different one.
-    course = out["sentCourse"][0]
-    assert "in any wire (1471.0 N), reached at stage S2." in course
-    assert course.endswith("The stage that sizes the parts is S1.")
-    # Two instants share the figure: the first in the document's order is named.
-    assert "reached at the raise's instant F60." in out["sentTie"][0]
-    # The sizing stage is read from the top level when the block is not there.
-    assert out["sentTopLevel"][0].endswith("The stage that sizes the parts is S9.")
-    assert "reached at the raise's instant F60." in out["sentTopLevel"][0]
-    # A net with no tension in it has no instant at which the tension is greatest.
-    assert out["sentSlack"][0].startswith(
-        "The net is held at a prestress floor of <b>0.0 N</b>, the larger of the entered prestress "
-        "(not recorded) and the greatest tension the fit found in any wire (0.0 N). That is")
-    # No stage carries the floor (the sizing block and the stages disagree): no instant is invented.
-    assert "reached" not in out["sentNoInstant"][0]
-    assert out["sentNoInstant"][0].startswith(
-        "The net is held at a prestress floor of <b>1471.0 N</b>, the larger of the entered prestress "
-        "(300.0 N) and the greatest tension the fit found in any wire (1471.0 N). That is")
-
-
-@needs_node
-def test_the_wires_are_judged_at_no_less_than_the_entered_prestress(out):
-    # the engine's block when the prestress is the larger: the floor is set by it,
-    # and no instant is named, since the prestress holds the wires at every one
-    assert out["floorHeld"] == 3000
-    assert out["sentHeld"][0] == (
-        "The net is held at a prestress floor of <b>3000.0 N</b>, the larger of the entered "
-        "prestress (3000.0 N) and the greatest tension the fit found in any wire (1471.0 N), "
-        "set by the entered prestress. That is a property of the vault, the skin and the "
-        "prestress, so it does not move when parts change. The stage that sizes the parts is S2.")
-    # an older block carries the fit's figure alone, and is read by the same rule
-    assert out["floorOlder"] == {"newtons": 300, "fitted": 14.6, "prestress": 300}
-    assert out["sentOlder"][0].startswith(
-        "The net is held at a prestress floor of <b>300.0 N</b>, the larger of the entered "
-        "prestress (300.0 N) and the greatest tension the fit found in any wire (14.6 N), set by "
-        "the entered prestress. That is")
-
-
-@needs_node
-def test_every_server_string_in_the_demand_is_escaped_and_the_note_is_its_own_sentence(out):
-    hostile = out["sentHostile"]
-    joined = " ".join(hostile)
-    assert "reached at the raise's instant F&lt;60&gt;." in hostile[0]
-    assert "The stage that sizes the parts is S&lt;2&gt;." in hostile[0]
-    assert "from the rib &amp; its &lt;b&gt;skin&lt;/b&gt;." in hostile[1]
-    assert hostile[-1] == "no formwork &lt;i&gt;document&lt;/i&gt; &amp; frames."
-    assert "<i>" not in joined and "<script" not in joined
-    assert joined.count("<b>") == joined.count("</b>") == 2, "only the figures the model wrote carry a tag"
-    assert out["sentNoted"][-1] == "the formwork document was not read." and len(out["sentNoted"]) == 6
-    assert len(out["sentBlankNote"]) == 5, "a blank note says nothing"
-    assert out["sentNone"][0].startswith("This study has no cable net demand yet")
-    assert "an earlier analysis (bench.cablenet/1&lt;x&gt;)" in out["sentStale"][0]
-
-
-@needs_node
-def test_a_catalogue_rib_is_named_in_words_not_as_its_catalogue_entry(out):
-    # the engine records the rib as "falsework <key>: <entry as JSON>" so the data
-    # sheet can quote it verbatim; the panel's sentence names the rib and its words
-    assert out["sentRibbed"][1] == ("The acceptance line is 2.18 mm, from falsework "
-                                    "glulam-rib-9000 (glulam GL24h rib 9000 x 600, 400 x 90 deep).")
-    assert "{" not in " ".join(out["sentRibbed"])
-    assert out["sources"] == [
-        "falsework glulam-rib-9000 (glulam GL24h rib 9000 x 600, 400 x 90 deep)",
-        "falsework plywood-rib-2000",
-        "falsework broken: {not json",
-        "the rib and its skin",
-        "falsework odd-rib (a <b>rib</b> & more)",
-    ]
-    # the description is still the server's string, so the sentence escapes it
-    assert "from falsework odd-rib (a &lt;b&gt;rib&lt;/b&gt; &amp; more)." in out["sentOddRib"][1]
-
-
-@needs_node
-def test_a_tolerance_is_said_as_one_and_the_dial_reads_the_walk_the_run_recorded(out):
-    # millimetres in two decimals, as every other length the panel writes
-    assert out["sentTolerance"][1] == (
-        "The acceptance line is a tolerance of 20.00 mm from the designed form, set for "
-        "this run.")
-    assert out["toleranceSame"] == ""
-    assert out["toleranceLooser"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 30.00 mm. "
-        "At 30.00 mm, this run's walk would stop at 720 grabbed nodes; run again for the "
-        "forces and the verdict.")
-    assert out["toleranceLoosest"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 3000.00 mm. "
-        "At 3000.00 mm, this run's walk would grab no node; run again for the forces and "
-        "the verdict.")
-    assert out["toleranceExact"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 62.80 mm. "
-        "At 62.80 mm, this run's walk would stop at 600 grabbed nodes; run again for the "
-        "forces and the verdict.")
-    # tighter than a walk that stopped at its own line: only a new run can say
-    assert out["toleranceTighter"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
-        "This run's walk stopped at its own line, at 740 grabbed nodes with the worst sag at "
-        "18.60 mm, so only a new run can say how many grabbed nodes 15.00 mm needs.")
-    # tighter than a walk that ended for another reason: a new run ends there too
-    assert out["toleranceCapped"] == (
-        "The analysis on screen judged the sag against a line of 3.25 mm; the dial reads a "
-        "tolerance of 10.00 mm. This run's walk ended at its cap of 2 batches, at 40 grabbed "
-        "nodes with the worst sag at 12.25 mm, so a run at 10.00 mm would end at the same "
-        "place without meeting it.")
-    assert out["toleranceCappedLooser"] == (
-        "The analysis on screen judged the sag against a line of 3.25 mm; the dial reads a "
-        "tolerance of 1700.00 mm. At 1700.00 mm, this run's walk would stop at 20 grabbed "
-        "nodes; run again for the forces and the verdict.")
-    assert out["toleranceExhausted"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
-        "This run's walk ended with no unbalanced node left to grab, at 25 grabbed nodes "
-        "with the worst sag at 30.00 mm, so a run at 15.00 mm would end at the same place "
-        "without meeting it.")
-    assert out["toleranceOlder"] == (
-        "The analysis on screen judged the sag against a line of 2.18 mm; the dial reads a "
-        "tolerance of 20.00 mm. Run again to use the dial's value.")
-    assert out["toleranceNone"] == "" and out["toleranceStale"] == ""
-    assert out["toleranceNoLine"] == (
-        "The analysis on screen had no acceptance line; the dial reads a tolerance of 20.00 mm. "
-        "At 20.00 mm, this run's walk would stop at 740 grabbed nodes; run again for the "
-        "forces and the verdict.")
-    assert out["toleranceNoCurve"] == (
-        "The analysis on screen used a tolerance of <b>20.00 mm</b>; the dial reads 15.00 mm. "
-        "Run again to use the dial's value.")
 
 
 @needs_node
 def test_the_floor_and_the_rope_wound(out):
     # wires only: a sizing block that names an actuator pulling harder than any wire
     # still gives the wires' figure, and a block with no wire figure falls to the stages
-    assert out["floors"] == [1471, 500, 700, 0, 300]
+    assert out["floors"] == [300, 500, 700, 0, 300]
     assert out["wound"] == [30, None]
 
 
 @needs_node
-def test_an_actuator_that_pulls_harder_than_any_wire_leaves_the_floor_to_the_wires(out):
-    # the sizing block: wire 1000 N, grabbed node 2800 N. The server's row passes against 1000 N.
-    assert out["floorDominant"] == 1000
-    dominant = out["sentDominant"]
-    assert dominant[0].startswith(
-        "The net is held at a prestress floor of <b>1000.0 N</b>, the larger of the entered "
-        "prestress (300.0 N) and the greatest tension the fit found in any wire (1000.0 N), "
-        "reached at the raise's instant F60. That is")
-    assert "The grabbed nodes need up to 2800.0 N each, which a wire there would have to carry." in dominant
-    assert "<b>2800" not in " ".join(dominant), "the actuator's figure is not the wires' floor"
-    # no pull recorded, or none above zero: nothing is said about the grabbed nodes' force
-    assert not any("grabbed nodes need" in s for s in out["sentNoPull"])
-    assert not any("grabbed nodes need" in s for s in out["sentPullAbsent"])
-
-
-ROPE_SENTENCE = (
-    "<b>The chosen rope is not the rope that was analysed.</b> The analysis used EA {} N; {} is EA {} N. "
-    "The ceiling below is for the chosen rope. The prestress floor, the residuals and the cut lengths "
-    "are for the analysed rope and do not describe this one.")
-
-
-@needs_node
-def test_a_rope_that_is_not_the_analysed_one_is_said_and_only_then(out):
-    assert out["ropeOther"] == ROPE_SENTENCE.format("450000.0", "rope-6mm", "1010000.0")
-    assert out["ropeOther"].count("<b>") == out["ropeOther"].count("</b>") == 1
-    # a millionth of the larger stiffness is the tolerance, as in the documents
-    assert out["ropeSame"] == "" and out["ropeInside"] == ""
-    assert out["ropeOutside"].startswith(
-        "<b>The chosen rope is not the rope that was analysed.</b> "
-        "The analysis used EA 450000.5 N; rope-4mm is EA 450000.0 N.")
-    # nothing to compare: no demand, no stiffness in it, a rope the catalogue lacks,
-    # no catalogue, no system chosen
-    for name in ("ropeNoDemand", "ropeNoEa", "ropeUnknown", "ropeNoParts", "ropeNoConfiguration"):
-        assert out[name] == "", name
-    # the rope's key is the server's string
-    assert "<i>" not in out["ropeHostile"]
-    assert "&lt;i&gt;x&lt;/i&gt; is EA 700000.0 N" in out["ropeHostile"]
+def test_the_menu_answers_in_values(out):
+    assert out["answers"] == {
+        "needed": 300,
+        "gives": {"newtons": 1123.4, "holds": True, "margin": 3.74},
+        "most": {"newtons": 6660,
+                 "described": "ES-MH342200 on EG42 100:1, no pulleys, 8 mm 7x19, one wire a motor"}}
+    html = out["answersHtml"]
+    assert "<th>Needed</th><td>300.0 N</td>" in html
+    assert "<th>Gives</th><td>1123.4 N a wire ✓ 3.7x</td>" in html
+    assert ("<th>Most</th><td>6660.0 N a wire, ES-MH342200 on EG42 100:1, no pulleys, "
+            "8 mm 7x19, one wire a motor</td>") in html
+    assert out["answersNone"] == {"needed": None, "gives": None, "most": None}
+    none = out["answersNoneHtml"]
+    assert "<td>not run</td>" in none and "<td>no machine</td>" in none and "<td>none</td>" in none
+    # a refused machine gives nothing; an older document has no floor to read
+    assert out["answersRefused"]["gives"] is None
+    assert out["answersStale"]["needed"] is None
+    assert "<td>1123.4 N a wire ✗ 0.4x</td>" in out["answersFails"]
+    assert "&lt;b&gt;x&lt;/b&gt;" in out["answersHostile"]
 
 
 @needs_node
-def test_the_prestress_note_is_said_only_when_the_dial_has_left_the_analysis(out):
-    assert out["noteSame"] == ""
-    assert out["noteDiffers"] == (
-        "The analysis on screen used a prestress of <b>300.0 N</b>; the dial reads 500.0 N. "
-        "Run again to use the dial's value.")
-    assert out["noteFraction"].startswith(
-        "The analysis on screen used a prestress of <b>275.5 N</b>; the dial reads 300.0 N.")
-    # nothing recorded, or nothing that can be compared: nothing is said
-    assert out["noteNoDemand"] == ""
-    assert out["noteNoRecord"] == ["", ""]
-    assert out["noteNotANumber"] == ["", ""]
-
-
-# The panel and the documents say the grab in the same words. The two runtimes
-# share no code, so this puts the Python sentences beside the JavaScript ones
-# over every branch they have.
-PARITY = """
-import * as m from %(module)r;
-import { readFileSync } from "node:fs";
-const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
-console.log(JSON.stringify({
-  grab: cases.grab.map((c) => m.grabText(c.placement, c.held, c.line)),
-}));
-"""
-
-WALK = {"batch": 20, "steps": 40, "reached": True, "curve": [
-    {"count": 0, "worst_sag_mm": 2009, "worst_residual_newtons": 83},
-    {"count": 20, "worst_sag_mm": 900, "worst_residual_newtons": 70},
-    {"count": 40, "worst_sag_mm": 2.0, "worst_residual_newtons": 10}]}
-
-
-def _nodes(count):
-    return {"actuators": list(range(count))}
-
-
-GRAB_CASES = [
-    {"placement": None, "held": _nodes(3), "line": 2.18},
-    {"placement": WALK, "held": None, "line": 2.18},
-    {"placement": WALK, "held": {}, "line": 2.18},
-    {"placement": WALK, "held": {"actuators": None}, "line": 2.18},
-    {"placement": WALK, "held": _nodes(40), "line": 2.18},
-    {"placement": WALK, "held": _nodes(30), "line": 2.18},
-    {"placement": WALK, "held": _nodes(1), "line": 2.18},
-    {"placement": WALK, "held": _nodes(0), "line": 2.18},
-    {"placement": {**WALK, "reached": False}, "held": _nodes(800), "line": 2.18},
-    {"placement": {**WALK, "reached": False}, "held": _nodes(0), "line": 2.18},
-    {"placement": WALK, "held": _nodes(40), "line": None},
-    {"placement": {**WALK, "curve": []}, "held": _nodes(40), "line": 2.18},
-    {"placement": {**WALK, "curve": [{"count": 0}, {"count": 40}]}, "held": _nodes(40), "line": 2.18},
-    {"placement": {**WALK, "batch": 1}, "held": _nodes(2), "line": 2.18},
-    {"placement": {**WALK, "batch": None}, "held": _nodes(2), "line": 2.18},
-]
+def test_a_run_that_differs_from_the_dials_or_the_wire_is_one_line_each(out):
+    assert out["warnSame"] == []
+    assert out["warnPrestress"] == ["Run again: dial 2650.0 N, run 300.0 N"]
+    assert out["warnTolerance"] == ["Run again: tolerance 15.00 mm, run 20.00 mm"]
+    assert out["warnRope"] == ["Run again: wire EA 700000.0 N, run 450000.0 N"]
+    assert out["warnAll"] == ["Run again: dial 2650.0 N, run 300.0 N",
+                              "Run again: tolerance 15.00 mm, run 20.00 mm",
+                              "Run again: wire EA 700000.0 N, run 450000.0 N"]
+    assert out["warnNone"] == []
+    assert out["warnStale"] == ["Run again: older analysis, bench.cablenet/1<x>"]
+    assert out["warnNotNumbers"] == []
+    # a document from before the tolerance has none to compare
+    assert out["warnOlder"] == []
 
 
 @needs_node
-def test_the_panel_says_the_grab_as_the_documents_do(tmp_path):
-    studio = str(STATIC.parent)
-    if studio not in sys.path:
-        sys.path.insert(0, studio)
-    exports = pytest.importorskip("exports")
-    cases = tmp_path / "cases.json"
-    cases.write_text(json.dumps({"grab": GRAB_CASES}), encoding="utf-8")
-    script = tmp_path / "parity.mjs"
-    module = (STATIC / "cablenet_model.js").resolve().as_uri()
-    script.write_text(PARITY % {"module": module, "cases": str(cases)}, encoding="utf-8")
-    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    panel = json.loads(result.stdout)
+def test_the_wire_stiffness_is_compared_within_a_millionth(out):
+    assert out["eaSame"] is None and out["eaInside"] is None
+    assert out["eaOutside"] == {"analysed": 450000.5, "chosen": 450000}
+    assert out["eaOther"] == {"analysed": 450000, "chosen": 700000}
+    assert out["eaNothing"] == [None] * 5
 
-    for case, said in zip(GRAB_CASES, panel["grab"]):
-        model = {"placement": case["placement"], "held": case["held"],
-                 "sag": {"acceptance_mm": case["line"]}}
-        assert said == exports.grab_sentence(model), case
+
+@needs_node
+def test_the_retired_functions_are_gone(out):
+    # the panel answers in values (spec 2026-10-09 Cable net display, section 6)
+    assert out["retired"] == []
 
 
 # The floor every wire is judged at, read by the server's row and the load factor
 # (catalogue.wire_floor), the exports (exports._floor_block) and the panel
 # (prestressFloor, wireFloor): one figure on every document shape, with and
-# without the engine's block, and one sentence for it on the panel and the data
-# sheet.
+# without the engine's block.
 FLOOR_PARITY = """
 import * as m from %(module)r;
 import { readFileSync } from "node:fs";
 const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
-console.log(JSON.stringify(cases.map((d) => ({
-  floor: m.prestressFloor(d), wire: m.wireFloor(d), sentence: m.floorSentence(d) }))));
+console.log(JSON.stringify(cases.map((d) => ({ floor: m.prestressFloor(d), wire: m.wireFloor(d) }))));
 """
 
 
@@ -666,9 +352,7 @@ FLOOR_CASES = [
      "stages": _stages([400.0], [900.0])},
     {"schema": "bench.cablenet/2", "prestress": "300",
      "stages": _stages([400.0, "x", None, True], [900.0, False])},
-    # a stage with no name is named by its number, and one with neither is not named
     {"schema": "bench.cablenet/2", "stages": [{"stage": 4, "wire_tensions": [50.0]}]},
-    {"schema": "bench.cablenet/2", "stages": [{"wire_tensions": [50.0]}]},
     {"schema": "bench.cablenet/1", "prestress": 300.0, "stages": _stages([400.0], [900.0])},
     None,
 ]
@@ -696,28 +380,19 @@ def test_the_panel_judges_the_wires_at_the_floor_the_server_and_the_documents_do
                                  "prestress": floor["prestress_newtons"]}, case
         # the server's row judges a configuration against this figure (app._demand_floor)
         assert panel["floor"] == (0.0 if floor["newtons"] is None else floor["newtons"]), case
-        block = exports._floor_block(case)
-        assert block["prestress_floor_newtons"] == floor["newtons"], case
-        plain = panel["sentence"].replace("<b>", "").replace("</b>", "")
-        assert plain == exports.floor_sentence(block, True), case
-    sentences = [panel["sentence"] for panel in said]
-    assert any("set by the entered prestress" in s for s in sentences)
-    assert any("reached at the raise's instant F60" in s for s in sentences)
-    assert any("reached at stage S2" in s for s in sentences)
-    assert any("reached at stage 4" in s for s in sentences)
-    assert any(s.startswith("No prestress floor is recorded") for s in sentences)
+        assert exports._floor_block(case)["prestress_floor_newtons"] == floor["newtons"], case
 
 
-ROPE_PARITY = """
+EA_PARITY = """
 import * as m from %(module)r;
 import { readFileSync } from "node:fs";
 const cases = JSON.parse(readFileSync(%(cases)r, "utf-8"));
-console.log(JSON.stringify(cases.map((c) => m.ropeMismatch(c.parts, c.demand, c.configuration))));
+console.log(JSON.stringify(cases.map((c) => m.eaMismatch(c.parts, c.demand, c.configuration.rope))));
 """
 
 
 @needs_node
-def test_the_panel_warns_about_the_rope_in_the_cases_the_documents_do(tmp_path):
+def test_the_panel_warns_about_the_wire_in_the_cases_the_documents_do(tmp_path):
     studio = str(STATIC.parent)
     if studio not in sys.path:
         sys.path.insert(0, studio)
@@ -737,26 +412,17 @@ def test_the_panel_warns_about_the_rope_in_the_cases_the_documents_do(tmp_path):
     path.write_text(json.dumps(cases), encoding="utf-8")
     script = tmp_path / "ropes.mjs"
     module = (STATIC / "cablenet_model.js").resolve().as_uri()
-    script.write_text(ROPE_PARITY % {"module": module, "cases": str(path)}, encoding="utf-8")
+    script.write_text(EA_PARITY % {"module": module, "cases": str(path)}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     said = json.loads(result.stdout)
 
     warned = 0
-    for case, sentence in zip(cases, said):
+    for case, panel in zip(cases, said):
         document = exports._rope_mismatch(parts, case["demand"], case["configuration"])
-        assert bool(sentence) == (document is not None), case
+        assert (panel is not None) == (document is not None), case
         if document is not None:
             warned += 1
-            # the same figures, to the same decimal, and the same rope named
-            assert exports._newtons(document["analysed_ea_newtons"]) in sentence, case
-            assert exports._newtons(document["chosen_ea_newtons"]) in sentence, case
-            assert case["configuration"]["rope"] in sentence, case
+            assert panel == {"analysed": document["analysed_ea_newtons"],
+                             "chosen": document["chosen_ea_newtons"]}, case
     assert 0 < warned < len(cases), "the cases must include both answers"
-
-
-@needs_node
-def test_the_preset_panels_functions_are_gone(out):
-    # the panel judges through machineHtml and verdictHtml now (spec 2026-10-09
-    # mechanism choices, section 7.3); nothing calls these
-    assert out["retired"] == []

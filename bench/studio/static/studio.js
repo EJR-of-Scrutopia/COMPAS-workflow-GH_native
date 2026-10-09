@@ -12121,7 +12121,7 @@ function paintCableNetStageLine() {
   const line = document.getElementById("cablenet-stage");
   if (!line) return;
   const stage = cableNetLensUp() ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
-  line.textContent = stage ? stageCaption(stage) + " Drawn on the finished net." : "";
+  line.textContent = stage ? stageCaption(stage) : "";
 }
 
 // The lenses are drawn for one instant and one set of raised lenses. The

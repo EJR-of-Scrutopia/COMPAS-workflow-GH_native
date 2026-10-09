@@ -104,9 +104,9 @@ function listed(value) {
 // two is read by the same rule from what it does carry (the block's one figure
 // is the fit's, or the wires stage by stage when there is no block), with the
 // prestress it records. Wires only: the force a grabbed node's actuator
-// supplies is another figure, said in a sentence of its own by
-// demandSentences; folded in here it would be a number on the panel that no
-// document agrees with, and a verdict that disagrees with the server's.
+// supplies is another figure, shown on its own; folded in here it would be a
+// number on the panel that no document agrees with, and a verdict that
+// disagrees with the server's.
 export function wireFloor(demand) {
   const sizing = sizingOf(demand);
   const judged = sizing ? force(sizing.worst_wire_tension_newtons) : null;
@@ -135,63 +135,6 @@ export function prestressFloor(demand) {
   return floor === null ? 0 : floor;
 }
 
-// Where the floor is set, read off the larger of its two figures
-// (exports._floor_instant). When the entered prestress is the larger, a tie
-// included, it sets the floor at every instant and no stage is named:
-// { prestress: true }. When the fit's figure is, the first stage in the
-// document's order whose own greatest wire tension is that figure, with
-// whether it is a frame of the raise. It is not the sizing stage, which is
-// chosen among the courses; the fit's figure is the greatest over every
-// instant, the raise included. Null when there is no floor, when the fit's
-// figure is not above zero, when no stage carries it (a hand-edited document
-// whose sizing block and stages disagree), or when the stage has no name: an
-// instant is named only when the document says which it is.
-function floorInstant(demand, floor) {
-  if (floor.newtons === null) return null;
-  if (floor.prestress !== null && (floor.fitted === null || floor.prestress >= floor.fitted)) {
-    return { prestress: true };
-  }
-  // a net with no tension in it has no instant at which the tension is greatest
-  if (!(floor.fitted > 0)) return null;
-  for (const stage of listed(demand && demand.stages)) {
-    if (!stage || typeof stage !== "object") continue;
-    let top = null;
-    for (const tension of listed(stage.wire_tensions)) {
-      const value = force(tension);
-      if (value !== null && (top === null || value > top)) top = value;
-    }
-    if (top !== null && top === floor.fitted) {
-      const name = stage.name == null ? stage.stage : stage.name;
-      return name == null ? null : { name, frame: isFrame(stage) };
-    }
-  }
-  return null;
-}
-
-// A force with its unit, or the words that say it is missing
-// (exports._force_text).
-function forceText(value) {
-  return value == null ? "not recorded" : newtons(value) + " N";
-}
-
-// One sentence on the floor every wire is judged at, the two figures it is the
-// larger of and where it is set: exports.floor_sentence for a version 2
-// document, word for word, with the floor in bold. The stage name is the
-// server's string and is escaped.
-export function floorSentence(demand) {
-  const floor = wireFloor(demand);
-  if (floor.newtons === null) {
-    return "No prestress floor is recorded: the document gives neither an entered " +
-      "prestress nor a wire tension.";
-  }
-  const instant = floorInstant(demand, floor);
-  const where = !instant ? "" : instant.prestress ? ", set by the entered prestress"
-    : (instant.frame ? ", reached at the raise's instant " : ", reached at stage ") + esc(instant.name);
-  return "The net is held at a prestress floor of <b>" + newtons(floor.newtons) + " N</b>, " +
-    "the larger of the entered prestress (" + forceText(floor.prestress) + ") and the " +
-    "greatest tension the fit found in any wire (" + forceText(floor.fitted) + ")" + where + ".";
-}
-
 // Total rope one wire winds over the whole build, taken at the worst wire.
 export function ropeWound(demand) {
   const totals = [];
@@ -208,187 +151,83 @@ function esc(value) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// "1 wire", "2 wires", "2 batches": the noun agrees with the count
-// (exports._count).
-function counted(number, noun) {
-  const plural = noun + (/(ch|sh|s|x|z)$/.test(noun) ? "es" : "s");
-  return number + " " + (number === 1 ? noun : plural);
+// The wire the analysis ran for, against the wire chosen here, by stiffness: the
+// test is exports._rope_mismatch's (both numbers, differing by more than a
+// millionth of the larger), so the panel and the documents warn in the same
+// cases. Null when there is nothing to compare.
+const EA_TOLERANCE = 1e-6;
+
+export function eaMismatch(parts, demand, rope) {
+  const chosen = (((parts && parts.rope) || {})[rope] || {}).ea_newtons;
+  const analysed = demand && demand.ea_newtons;
+  const number = (value) => typeof value === "number" && Number.isFinite(value);
+  if (!number(chosen) || !number(analysed)) return null;
+  const larger = Math.max(Math.abs(chosen), Math.abs(analysed));
+  if (Math.abs(chosen - analysed) <= EA_TOLERANCE * larger) return null;
+  return { analysed, chosen };
 }
 
-// A sentence of the server's own, as the exports write one: ended with a full
-// stop when it has none (exports._sentence).
-function sentenceOf(text) {
-  const plain = String(text).trim();
-  return /[.!?]$/.test(plain) ? plain : plain + ".";
+// The menu's three answers (spec 2026-10-09 Cable net display, section 3): the
+// prestress the form needs (the run's floor until part 3 computes it), what the
+// chosen machine gives its weakest wire, and the most any machine makes. Each
+// null where nothing gives it.
+export function menuAnswers(demand, row, strongest) {
+  const floor = demand && !isStale(demand) ? wireFloor(demand).newtons : null;
+  const worst = row && !row.refused && row.verdict ? row.verdict.worst : null;
+  return {
+    needed: floor,
+    gives: worst ? { newtons: worst.ceiling, holds: !!row.verdict.holds, margin: worst.margin } : null,
+    most: strongest ? { newtons: strongest.ceiling_newtons, described: strongest.described } : null,
+  };
 }
 
-// Where the acceptance line came from, in words, for a document written before
-// the line became a tolerance (9 October 2026). The engine then recorded a
-// catalogue rib as "falsework <key>: <the catalogue entry as JSON>" so the data
-// sheet could quote it verbatim; a sentence names the rib and its description
-// instead. Any other source is the study's own words, given as they are. Not
-// escaped: the caller escapes.
-export function acceptanceSourceText(source) {
-  const text = String(source);
-  const match = /^falsework ([^:]+): (\{[\s\S]*\})$/.exec(text);
-  if (!match) return text;
-  let entry;
-  try { entry = JSON.parse(match[2]); } catch (error) { return text; }
-  const description = entry && typeof entry.description === "string" ? entry.description.trim() : "";
-  return "falsework " + match[1].trim() + (description ? " (" + description + ")" : "");
+export function answersHtml(answers) {
+  const gives = answers.gives;
+  const rows = [
+    ["Needed", answers.needed == null ? "not run" : newtons(answers.needed) + " N"],
+    ["Gives", gives == null ? "no machine" : newtons(gives.newtons) + " N a wire " +
+      mark(gives.holds) + (gives.margin == null ? "" : " " + factor(gives.margin) + "x")],
+    ["Most", answers.most == null ? "none" : newtons(answers.most.newtons) + " N a wire, " +
+      escapeHtml(answers.most.described)],
+  ];
+  return '<table class="cablenet-answers">' +
+    rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("") + "</table>";
 }
 
-// The demand, in sentences. They carry <b> tags the model writes itself, so
-// every string the server supplied (the stage names, the acceptance source,
-// the run's note, the schema) is escaped here, and the caller sets the result
-// as markup without escaping it a second time.
-export function demandSentences(demand) {
-  if (!demand) {
-    return ["This study has no cable net demand yet. Run the cable net analysis " +
-            "and the figures below will have something to answer."];
-  }
-  if (isStale(demand)) {
-    return ["This demand document is from an earlier analysis (" +
-            esc(demand.schema || "unknown schema") + "). Run the cable net " +
-            "analysis again for the lenses, the load factor and the grab count."];
-  }
+// One line for each thing the run on screen differs from: the prestress dial,
+// the tolerance dial, the chosen wire's stiffness. Plain text: the caller
+// escapes it.
+export function runWarnings(demand, dials, parts, rope) {
+  if (!demand) return [];
+  if (isStale(demand)) return ["Run again: older analysis, " + String(demand.schema || "unknown")];
   const out = [];
-  const sizing = sizingOf(demand);
-  // the document names the stage twice, in the sizing block and at the top level
-  const sizingStage = (sizing && sizing.stage) || demand.sizing_stage;
-  out.push(floorSentence(demand) +
-    (wireFloor(demand).newtons === null ? "" : " That is a property of the vault, the " +
-      "skin and the prestress, so it does not move when parts change.") +
-    (sizingStage ? " The stage that sizes the parts is " + esc(sizingStage) + "." : ""));
-  out.push(demand.acceptance == null
-    ? "No acceptance line is set for this run, so sag has nothing to be judged against."
-    : demand.tolerance_mm != null
-      ? "The acceptance line is a tolerance of " + millimetres(demand.tolerance_mm) +
-        " mm from the designed form, set for this run."
-      : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
-        (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
-  const courses = (demand.stages || []).filter((s) => !isFrame(s));
-  const last = courses[courses.length - 1];
-  if (last) {
-    out.push("The skin weighs <b>" + kilonewtons(last.skin_load_sum_newtons) + " kN</b> placed" +
-      (demand.thickness != null && demand.density != null
-        ? ", " + Math.round(Number(demand.thickness) * 1000) + " mm at " +
-          Math.round(Number(demand.density)) + " kg/m3" : "") +
-      "; the net itself weighs " + kilonewtons(last.net_weight_newtons) + " kN.");
+  const number = (value) => (value == null || value === "" ? NaN : Number(value));
+  const usedPrestress = number(demand.prestress);
+  const dialPrestress = number(dials && dials.prestress);
+  if (Number.isFinite(usedPrestress) && Number.isFinite(dialPrestress) && usedPrestress !== dialPrestress) {
+    out.push("Run again: dial " + newtons(dialPrestress) + " N, run " + newtons(usedPrestress) + " N");
   }
-  const held = demand.held || {};
-  out.push("Held by " + counted((held.wire_nodes || []).length, "wire") + " and " +
-    counted((held.column_heads || []).length, "column head") + ".");
-  // The grabbed nodes' own figure, apart from the wires' floor above: it is
-  // said when the document carries one above zero (exports._grab_section).
-  const pull = sizing && sizing.worst_actuator_newtons != null
-    ? Number(sizing.worst_actuator_newtons) : 0;
-  if (Number.isFinite(pull) && pull > 0) {
-    out.push("The grabbed nodes need up to " + newtons(pull) + " N each, " +
-      "which a wire there would have to carry.");
+  const usedTolerance = number(demand.tolerance_mm);
+  const dialTolerance = number(dials && dials.tolerance);
+  if (Number.isFinite(usedTolerance) && Number.isFinite(dialTolerance) && usedTolerance !== dialTolerance) {
+    out.push("Run again: tolerance " + millimetres(dialTolerance) + " mm, run " +
+      millimetres(usedTolerance) + " mm");
   }
-  const note = demand.note == null ? "" : String(demand.note).trim();
-  if (note) out.push(esc(sentenceOf(note)));
+  const ea = eaMismatch(parts, demand, rope);
+  if (ea) out.push("Run again: wire EA " + newtons(ea.chosen) + " N, run " + newtons(ea.analysed) + " N");
   return out;
 }
 
-// The rope the analysis ran for, against the rope chosen here. The rope sets the
-// stiffness the net was solved and cut for, so another rope leaves the ceiling
-// (parts arithmetic) valid and quietly invalidates the prestress floor, the
-// residuals and the cut lengths. It is said and not refused: trying another rope
-// is how the choice is made. The test is exports._rope_mismatch's (both
-// stiffnesses numbers, differing by more than a millionth of the larger), so the
-// panel and the three documents warn in the same cases; the words are the
-// panel's own. The sentence carries a <b> the model wrote, and the rope's key, a
-// server string, is escaped. Empty when there is nothing to compare: no demand,
-// no stiffness in it, a rope the catalogue does not have.
-const EA_TOLERANCE = 1e-6;
-
-export function ropeMismatch(parts, demand, configuration) {
-  const key = configuration && configuration.rope;
-  const chosen = (((parts && parts.rope) || {})[key] || {}).ea_newtons;
-  const analysed = demand && demand.ea_newtons;
-  const number = (value) => typeof value === "number" && Number.isFinite(value);
-  if (!number(chosen) || !number(analysed)) return "";
-  const larger = Math.max(Math.abs(chosen), Math.abs(analysed));
-  if (Math.abs(chosen - analysed) <= EA_TOLERANCE * larger) return "";
-  return "<b>The chosen rope is not the rope that was analysed.</b> The analysis used EA " +
-    newtons(analysed) + " N; " + esc(key) + " is EA " + newtons(chosen) + " N. " +
-    "The ceiling below is for the chosen rope. The prestress floor, the residuals and " +
-    "the cut lengths are for the analysed rope and do not describe this one.";
-}
-
-// Whether the prestress dial still matches the analysis on screen. The document
-// records the prestress it was run with; the dial is only the next run's, so
-// when they differ the panel says which of the two the figures came from.
-export function prestressNote(demand, dialNewtons) {
-  if (!demand || demand.prestress == null) return "";
-  const used = Number(demand.prestress);
-  const dial = Number(dialNewtons);
-  if (!Number.isFinite(used) || !Number.isFinite(dial) || used === dial) return "";
-  return "The analysis on screen used a prestress of <b>" + newtons(used) + " N</b>; the dial reads " +
-    newtons(dial) + " N. Run again to use the dial's value.";
-}
-
-// Whether the tolerance dial still matches the analysis on screen. The run
-// records the tolerance it was asked for; the dial is only the next run's. The
-// greedy walk picks the same nodes whatever the line, and stops at the first
-// point within it, at its cap of batches, or when no node is left unbalanced
-// (placement.greedy_actuators). So the curve it recorded gives the grab count
-// of any looser tolerance. A tighter one needs a new run only when the walk
-// stopped at its own line; otherwise a new run would end where this one did.
-export function toleranceNote(demand, dialMm) {
-  if (!demand || isStale(demand)) return "";
-  const dial = Number(dialMm);
-  if (!Number.isFinite(dial) || dial <= 0) return "";
-  const used = demand.tolerance_mm == null ? null : Number(demand.tolerance_mm);
-  if (used !== null && used === dial) return "";
-  const line = demand.acceptance == null ? null : Number(demand.acceptance);
-  const opening = used !== null
-    ? "The analysis on screen used a tolerance of <b>" + millimetres(used) +
-      " mm</b>; the dial reads " + millimetres(dial) + " mm."
-    : line !== null
-      ? "The analysis on screen judged the sag against a line of " + millimetres(line) +
-        " mm; the dial reads a tolerance of " + millimetres(dial) + " mm."
-      : "The analysis on screen had no acceptance line; the dial reads a tolerance of " +
-        millimetres(dial) + " mm.";
-  const placement = demand.placement || {};
-  const curve = (placement.curve || [])
-    .filter((point) => Number.isFinite(Number(point.worst_sag_mm)));
-  const met = curve.find((point) => Number(point.worst_sag_mm) <= dial);
-  const last = curve[curve.length - 1];
-  if (met) {
-    return opening + " At " + millimetres(dial) + " mm, this run's walk would " +
-      (Number(met.count) === 0 ? "grab no node"
-        : "stop at " + counted(Number(met.count), "grabbed node")) +
-      "; run again for the forces and the verdict.";
-  }
-  if (!last) return opening + " Run again to use the dial's value.";
-  const where = counted(Number(last.count), "grabbed node") + " with the worst sag at " +
-    millimetres(last.worst_sag_mm) + " mm";
-  if (placement.reached) {
-    return opening + " This run's walk stopped at its own line, at " + where +
-      ", so only a new run can say how many grabbed nodes " + millimetres(dial) +
-      " mm needs.";
-  }
-  const ended = curve.length === Number(placement.steps) + 1
-    ? "ended at its cap of " + counted(Number(placement.steps), "batch")
-    : "ended with no unbalanced node left to grab";
-  return opening + " This run's walk " + ended + ", at " + where + ", so a run at " +
-    millimetres(dial) + " mm would end at the same place without meeting it.";
-}
-
+// The instant on screen as data: "F60 finish, t 60", "S2 tile, course 2, 12.0 kN".
 export function stageCaption(stage) {
   if (!stage) return "";
-  if (isFrame(stage)) {
-    return "Frame at machine time " + Number(stage.time) + " (" + String(stage.kind) +
-      "): the net's own weight only.";
-  }
-  const placed = kilonewtons(stage.skin_load_sum_newtons) + " kN placed.";
+  const name = String(stage.name == null ? stage.stage : stage.name) +
+    (stage.kind ? " " + String(stage.kind) : "");
+  if (isFrame(stage)) return name + ", t " + Number(stage.time);
+  const placed = kilonewtons(stage.skin_load_sum_newtons) + " kN";
   // an older document carries no course number to count, and none is invented
-  if (stage.course == null) return "Stage " + String(stage.name) + ": " + placed;
-  return "Course " + (Number(stage.course) + 1) + " of the skin (" + String(stage.name) +
-    "): " + placed;
+  if (stage.course == null) return name + ", " + placed;
+  return name + ", course " + (Number(stage.course) + 1) + ", " + placed;
 }
 
 export function nearestInstant(stages, machineTime) {
@@ -426,49 +265,6 @@ export function sagBand(mm, acceptance) {
   if (mm > acceptance) return "over";
   if (mm > 0.5 * acceptance) return "near";
   return "inside";
-}
-
-// A sag with its unit, or the words that say it is missing: never "not
-// recorded mm" (exports._mm_text).
-function sagText(value) {
-  return value == null ? "not recorded" : millimetres(value) + " mm";
-}
-
-// The same sentence exports.grab_sentence renders, word for word: how many
-// nodes to grab, in how many batches (the last may be short), and whether
-// grabbing them brings the net inside the line. A document that names no held
-// set has not said that none are held, so it is not read as an empty one.
-export function grabText(placement, held, acceptance) {
-  if (!placement) {
-    return "Where to grab the net is not established: the demand document has no " +
-      "placement; run the cable net analysis again.";
-  }
-  const nodes = held && Array.isArray(held.actuators) ? held.actuators : null;
-  if (nodes === null) {
-    return "Where to grab the net is not established: the demand document has no " +
-      "held set; run the cable net analysis again.";
-  }
-  const count = nodes.length;
-  const batch = Math.max(1, Math.trunc(Number(placement.batch)) || 1);
-  const batches = count ? Math.ceil(count / batch) : 0;
-  // the last batch is short when the count is not a multiple of the size
-  const how = counted(batches, "batch") + " of " + (count % batch ? "up to " : "") + batch;
-  const line = acceptance == null ? "a line nobody set" : "the " + millimetres(acceptance) + " mm line";
-  const curve = placement.curve || [];
-  const none = curve.length ? sagText(curve[0].worst_sag_mm) : "not recorded";
-  const last = curve.length ? sagText(curve[curve.length - 1].worst_sag_mm) : "not recorded";
-  const method = "The placement is greedy by unbalanced force, a heuristic and not an optimum.";
-  if (placement.reached) {
-    if (!count) {
-      return "No node needs grabbing: with none grabbed the worst sag is " + none +
-        ", already inside " + line + ".";
-    }
-    return "Grab " + counted(count, "node") + " (" + how + ") to bring the net inside " +
-      line + "; the worst sag with none grabbed is " + none + ". " + method;
-  }
-  return "Grabbing " + counted(count, "node") + " (" + how + ") did not reach the line: " +
-    "the worst sag is still " + last + " against " + line + ", from " + none +
-    " with none grabbed. " + method;
 }
 
 // The walk as inline SVG: grabbed nodes along the bottom, worst sag up the

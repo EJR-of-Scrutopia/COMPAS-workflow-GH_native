@@ -459,8 +459,7 @@ def _force_text(value):
 def floor_sentence(block, version2=True):
     """One sentence on the floor every wire is judged at: the larger of the
     entered prestress and the greatest tension the analysis found in any wire,
-    and where it is set. The panel says it in the same words for a version 2
-    document (cablenet_model.floorSentence, with the floor in bold). It reads
+    and where it is set. It reads
     the model's demand block and computes nothing."""
 
     floor = block.get("prestress_floor_newtons")

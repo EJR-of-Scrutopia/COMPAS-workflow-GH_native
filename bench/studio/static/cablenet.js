@@ -1,7 +1,7 @@
 // The Cable net section's controller: it fetches, fills the skeleton in
-// index.html, runs the analysis and writes the exports. Every judgement and
-// every sentence comes from cablenet_model.js, which runs under node; this
-// file only wires them to the page. studio.js owns the lenses and is told
+// index.html, runs the analysis and writes the exports. Every figure and table
+// comes from cablenet_model.js, which runs under node; this file only wires
+// them to the page. studio.js owns the lenses and is told
 // through onDemand when a demand document arrives.
 //
 // The speed dial annotates and never judges: no prototype has said what rope
@@ -11,9 +11,9 @@
 // text: numbers, marks, tables and part names.
 
 import {
-  buyHtml, choiceOptions, curveSvg, demandSentences, grabText, isStale, machineHtml,
-  prestressNote, priceHtml, recommendHtml, ropeMismatch, ropeWound, rpmText,
-  toleranceNote, travelHtml, validChoices, verdictHtml,
+  answersHtml, buyHtml, choiceOptions, curveSvg, isStale, machineHtml, menuAnswers,
+  priceHtml, recommendHtml, ropeWound, rpmText, runWarnings, travelHtml, validChoices,
+  verdictHtml,
 } from "./cablenet_model.js";
 
 // The wire's angle to its eye bolt's axis is not recorded in the export, so
@@ -171,31 +171,24 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       : "No cable net demand";
   }
 
-  // The demand in sentences, then what the chosen rope and the dial say about
-  // the analysis on screen. All of it is the model's words, escaped there; the
-  // rope note follows the system chosen, so every change of system redraws this.
+  // The menu's answers (Needed, Gives, Most), then one line for each dial or
+  // wire the run on screen differs from. Values only: the model writes them.
   function renderDemand() {
     const demand = panel.demand;
-    const sentences = panel.demandNote
-      ? [`The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.`]
-      : demandSentences(demand);
-    for (const note of [ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope }),
-                        prestressNote(demand, Number(el.prestress.value)),
-                        toleranceNote(demand, Number(el.tolerance.value))]) {
-      if (note) sentences.push(note);
-    }
-    el.demand.innerHTML = sentences.map((s) => `<p>${s.replace(/<(?!\/?b>)/g, "&lt;")}</p>`).join("");
+    const warnings = panel.demandNote
+      ? ["Cable net demand: " + String(panel.demandNote).replace(/\.+$/, "")]
+      : runWarnings(demand, { prestress: Number(el.prestress.value), tolerance: Number(el.tolerance.value) }, panel.parts, panel.choices && panel.choices.rope);
+    el.demand.innerHTML = answersHtml(menuAnswers(demand, panel.row, panel.strongest)) +
+      warnings.map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
     showExport();
   }
 
+  // The walk: worst sag against the nodes grabbed.
   function renderGrab() {
     const demand = panel.demand;
-    if (!demand || isStale(demand)) { el.grab.innerHTML = ""; return; }
+    if (!demand || isStale(demand) || !demand.placement) { el.grab.innerHTML = ""; return; }
     const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
-    el.grab.innerHTML = `<p>${esc(grabText(demand.placement, demand.held, acceptance))}</p>` +
-      (demand.placement ? curveSvg(demand.placement.curve, acceptance) : "") +
-      (demand.held && demand.held.actuators && demand.held.actuators.length
-        ? `<p>The grabbed nodes light in the accent colour under the Sag and Node force lenses.</p>` : "");
+    el.grab.innerHTML = curveSvg(demand.placement.curve, acceptance);
   }
 
   async function score(speed) {
@@ -207,6 +200,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     if (options) body.options = sentOptions(options);
     const scored = await postJson(
       `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
+    panel.strongest = scored.strongest || null;
     return scored.rows[0];
   }
 
@@ -221,6 +215,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     el.travel.innerHTML = ok ? travelHtml(row.travel) : "";
     el.buy.innerHTML = ok ? buyHtml(row.price, row.cut_lengths) : "";
     el.price.innerHTML = ok ? priceHtml(row.price) : "";
+    renderDemand();
     onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null);
   }
 

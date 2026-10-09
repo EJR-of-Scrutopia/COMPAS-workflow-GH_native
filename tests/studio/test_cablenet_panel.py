@@ -40,19 +40,17 @@ def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
                   "cablenet-export-path", "cablenet-export-result"):
         assert '"{}"'.format(ident) in JS, ident
     assert 'from "./cablenet_model.js"' in JS
-    # newtons is not among them: the controller writes no force of its own, the
-    # prestress sentence having moved into the model beside the rope's
-    for name in ("demandSentences", "grabText", "curveSvg", "rpmText", "choiceOptions",
-                 "validChoices", "machineHtml", "verdictHtml", "travelHtml", "buyHtml",
-                 "priceHtml", "recommendHtml", "ropeMismatch", "prestressNote", "toleranceNote"):
+    # newtons is not among them: the controller writes no force of its own
+    for name in ("menuAnswers", "answersHtml", "runWarnings", "curveSvg", "rpmText",
+                 "choiceOptions", "validChoices", "machineHtml", "verdictHtml", "travelHtml",
+                 "buyHtml", "priceHtml", "recommendHtml"):
         assert name in JS, name
     assert "export function mountCableNet({" in JS
 
 
 def test_the_run_sends_the_tolerance_dial_and_the_demand_says_when_it_has_moved():
     assert "tolerance_mm: Number(el.tolerance.value)" in _function_body(JS, "startRun")
-    assert "toleranceNote(demand, Number(el.tolerance.value))" in _function_body(
-        JS, "renderDemand")
+    assert "tolerance: Number(el.tolerance.value)" in _function_body(JS, "renderDemand")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     # 20 mm: the placement tolerance the T1 brief sets at full scale
     assert ('<input id="cablenet-tolerance" type="range" min="1" max="100" step="1" '
@@ -197,17 +195,27 @@ def test_the_machine_verdict_travel_wire_and_price_are_the_models_tables():
     assert "verdictOf" not in JS
 
 
-def test_the_demand_readout_carries_the_models_two_notes_and_follows_the_chosen_rope():
-    """The rope the analysis ran for and the prestress it ran at are said in the
-    model's words beside the demand. The rope note depends on the system chosen
-    here, so every change of system redraws the readout: each of them ends in
-    refresh."""
+def test_the_menu_answers_in_values_and_warns_in_one_line_each():
+    """Needed, Gives and Most, then a line for each dial or wire the run on
+    screen differs from (spec 2026-10-09 Cable net display, section 3). The
+    answers follow the machine chosen, so the scored row redraws them."""
 
     body = _function_body(JS, "renderDemand")
-    assert "ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope })" in body
-    assert "prestressNote(demand, Number(el.prestress.value))" in body
-    assert "the dial reads" not in JS, "that sentence is the model's, not the controller's"
+    assert "answersHtml(menuAnswers(demand, panel.row, panel.strongest))" in body
+    assert ("runWarnings(demand, { prestress: Number(el.prestress.value), "
+            "tolerance: Number(el.tolerance.value) }, panel.parts, "
+            "panel.choices && panel.choices.rope)") in body
+    assert '<div class="cablenet-warning">${esc(line)}</div>' in body
+    assert "<p>" not in body
     assert "renderDemand();" in _function_body(JS, "refresh")
+    assert "renderDemand();" in _function_body(JS, "renderHolds")
+    assert "panel.strongest = scored.strongest || null;" in _function_body(JS, "score")
+
+
+def test_the_grab_readout_is_the_walk_curve_alone():
+    body = _function_body(JS, "renderGrab")
+    assert "curveSvg(demand.placement.curve, acceptance)" in body
+    assert "<p>" not in body
 
 
 def test_a_late_demand_cannot_replace_a_newer_one():
@@ -253,7 +261,7 @@ def test_export_is_off_while_it_writes_and_given_back_with_its_reason():
 
 def test_every_server_string_is_escaped_and_nothing_is_rounded_to_whole_newtons():
     # the tables escape inside the model (test_cablenet_choices.py)
-    assert JS.count("esc(") >= 11
+    assert JS.count("esc(") >= 9
     assert not re.search(r"toFixed\(\d\)\}? N\b", JS)
 
 
