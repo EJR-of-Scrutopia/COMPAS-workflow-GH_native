@@ -512,12 +512,13 @@ through the whole sequence, and what it found changed the design:
   taut at machine time 30, and the worst node is 445 mm from where the frame
   drew it.
 - In the finish phase, machine time 60 to 90, 45 of the 46 heads slide
-  outward, level, by up to 994 mm, to their final places. At machine time 62,
-  at full height but up to a metre inside them, they pull a rope to about
-  67 kN and a wire to about 34 kN, and put the trees at 1.9 times the
-  resistance of a 3.2 mm wall; all of it falls away as the heads slide out,
-  to 30 N in a wire by the hold. A 4 mm rope breaks at about 10 kN. No
-  standard wall holds every capture, because of machine time 62.
+  outward, level, by up to 994 mm, to their final places. At machine time 60,
+  as the phase begins, at full height but up to a metre inside them, they
+  pull a rope to about 74 kN and a wire to about 36 kN, and put the trees at
+  2.3 times the resistance of a 3.2 mm wall; all of it falls away as the
+  heads slide out, to 30 N in a wire by the hold. A 4 mm rope breaks at
+  about 10 kN. No standard wall holds every capture, because of machine
+  time 60.
 - Each wire on the real mechanism drops straight down 30 mm into its anchor,
   so it feels only the net's uplift at its rim node, and the anchor body takes
   the sideways pull. Every route is drawn in its machine instance's own frame,
