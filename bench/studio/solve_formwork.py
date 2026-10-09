@@ -129,6 +129,8 @@ def solve(request, progress=None):
     seconds = time.perf_counter() - began
     rim = sorted(model.rim)
     names = {int(wire["node"]): wire.get("name") for wire in request["rim"]}
+    reeves = {int(wire["node"]): int(wire.get("reeve") or 1) for wire in request["rim"]}
+    routes = {int(wire["node"]): wire.get("route_mm") for wire in request["rim"]}
     return {
         "schema": SCHEMA,
         "study": request.get("study"),
@@ -147,6 +149,11 @@ def solve(request, progress=None):
             "anchors": pack([model.rim[node].anchor for node in rim]),
             "into": pack([model.rim[node].into for node in rim]),
             "stiffness": pack([model.rim[node].stiffness for node in rim]),
+            # each wire's reeving and route, so a tension becomes its drum's
+            # (spec 2026-10-09 mechanism choices, section 4.7)
+            "reeve": [reeves.get(node, 1) for node in rim],
+            "route_mm": [None if routes.get(node) is None else float(routes[node])
+                         for node in rim],
             "machines": model.machines, "wires_per_motor": model.wires_per_motor,
             # per machine, the spools each motor carries; null at one a motor
             "motors": None if result.groups is None else [

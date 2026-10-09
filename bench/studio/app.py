@@ -2065,6 +2065,11 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(
                 400, "wires_per_motor must be a whole number of wires from 1 to 7, the "
                      "spools a machine carries, not {!r}".format(wires_per_motor))
+        # pulleys: the export's reeving, or each wire straight off its drum
+        # (spec 2026-10-09 mechanism choices, section 2.3)
+        pulleys = body.get("pulleys", True)
+        if not isinstance(pulleys, bool):
+            raise HTTPException(400, "pulleys: true or false, not {!r}".format(pulleys))
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
@@ -2108,7 +2113,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                     slot.contract,
                     bundle._read_optional(bundle.mechanism_sidecar(export)),
                     bundle._read_optional(bundle.frames_sidecar(export)),
-                    float(rope["ea_newtons"]), wires_per_motor)
+                    float(rope["ea_newtons"]), wires_per_motor, pulleys)
                 run["message"] = "cutting the tessellation"
                 cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
                 run["phase"] = "formwork"
@@ -2130,7 +2135,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                     options={"material": material, "pattern": pattern, "size": size,
                              "thickness": thickness, "density": density, "source": source,
                              "rope": rope_key, "prestress": prestress,
-                             "wires_per_motor": wires_per_motor, "wall": wall},
+                             "wires_per_motor": wires_per_motor, "wall": wall,
+                             "pulleys": pulleys},
                     runner=formwork_runner, progress=progress)
                 run["state"] = "done"
                 run["phase"] = "done"
