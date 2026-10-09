@@ -54,9 +54,18 @@ All from 9 October 2026, in conversation:
   is recomputed to play.
 - Holds are column branches: props from below that push and never pull.
 - The column trees are steel tube, S355. The formwork export draws them 60 mm
-  across (radius 0.03 m), which is the 60.3 mm standard tube; the wall is not
-  in the export, so 3.2 mm is assumed and marked as assumed everywhere it is
-  used, until the plugin exports the section (part 5).
+  across (radius 0.03 m), which is the 60.3 mm standard tube. The wall starts
+  at 3.2 mm, which the owner judges strong; it is an input, and a run says
+  whether a thinner or a thicker wall is needed (section 3.4).
+- The anchors are foundations built on site: immovable. The wires run through
+  them on their way from the machines to the net, and the permanent tension
+  ties connect the anchors and hold them in place, so the foundations resist
+  part of the strain and help the system keep its form. How the wires move
+  through an anchor needs more thought; section 3.2 states what this part
+  assumes.
+- The skin goes on one row of tiles at a time, from the bottom, each row
+  placed going around, as the studio's animation does now.
+- The net is judged on whatever force really goes through each member.
 - Several wires may share one motor, and the studio chooses which spools of
   each machine share it, so that sharing costs the least deviation.
 - Prestress is computed, not dialled (part 3 searches it). The engine takes it
@@ -78,27 +87,49 @@ force    T = EA * e     when L > L0
          T = 0          when L <= L0        (slack: a rope cannot push)
 ```
 
-EA and the mass per metre are the net rope's. The unstretched lengths L0 are
-cut from the designed shape at a prestress P, the rule the Cable net run uses
-today, so that the net would carry P in every member if it sat exactly on the
-designed shape:
+EA and the mass per metre are the net rope's. The net is cut once, to fixed
+lengths, before it is raised. Each member is cut to the tension it really
+carries when the net is held exactly at the designed shape with no skin on:
+the tension-only equilibrium of the net at that shape under its own weight,
+held by the anchors' wires and the column heads (the fit the Cable net view
+already makes), never less than the prestress P:
 
 ```
-L0 = L_design / (1 + P / EA)
+F_i  = max(fitted tension of member i, P)
+L0_i = L_design_i / (1 + F_i / EA)
 ```
 
-How the net is cut, and which P, are inputs. Part 3 searches P; whether the
-cut should instead follow the designed form's own member forces is an open
-item for part 3 (section 11).
+The form export's own member forces cannot be used for this: all 2000 are
+the finished vault's compression (-0.12 to -2.12 kN), which a net that only
+pulls cannot carry. P is an input here; part 3 searches it. Once the net is
+cut, nothing about it is assumed again: every frame is judged on whatever
+force the engine finds in each member.
 
-### 3.2 The machine wires
+### 3.2 The machine wires and the anchors
 
-All 105 wires run from their spool (the frame point of their machine instance
-in the mechanism export, 15 instances of seven spools) to their rim node.
-Each wire is split into segments of at most 250 mm, and each segment is a
-rope element like the net's, with the wire rope's EA. The rope's own weight
-is lumped at the segment nodes, so a slack wire droops as the real one would.
-A wire's total unstretched length is what its drum has paid out.
+All 105 wires run from their spool, on one of the 15 seven-spool machine
+instances in the mechanism export, through their side's anchor, to their rim
+node: each of the five anchors lists the 21 rim nodes its wires reach.
+
+- An anchor is a foundation: immovable. A wire passes through it as through a
+  fixed fairlead and slides through as it is reeled, with the same tension on
+  both sides (no friction at the fairlead in this part). The anchor takes the
+  vector sum of the two pulls, and that force is reported, frame by frame, as
+  the load its foundation must resist.
+- The run from the anchor to the rim node is split into segments of at most
+  250 mm, each a rope element like the net's, with the wire rope's EA and its
+  own weight lumped at the segment nodes, so a slack wire droops as the real
+  one would. The short run from the spool to the anchor stays taut inside the
+  machine and is taken as straight.
+- The drum pays out the whole wire; the anchor-to-node run receives that
+  length less the straight spool-to-anchor run.
+- The permanent tension ties connect the five anchors. Because the anchors do
+  not move, the ties change nothing in the net's motion. The anchor forces are
+  what the ties and the foundations must resist together; how that is shared
+  between them is an open item (section 11).
+- Where on its anchor each wire passes is taken from the mechanism export,
+  the anchor's frame and its wire order; if that does not fix the point, the
+  plan resolves it from the machine's own document.
 
 ### 3.3 Motors, drums, pulleys and pairing
 
@@ -130,7 +161,7 @@ elastic shortening is negligible against the tolerance: a 3 m member of 60.3
 by 3.2 mm tube carrying 1.5 kN shortens about 0.04 mm.
 
 ```
-A  = pi/4 * (D^2 - (D - 2t)^2)    D = 60.3 mm, t = 3.2 mm (assumed)
+A  = pi/4 * (D^2 - (D - 2t)^2)    D = 60.3 mm, t = 3.2 mm (the starting wall)
 EA = 210000 N/mm2 * A
 ```
 
@@ -141,7 +172,10 @@ members is a load the joint would have to resist in bending; it is reported
 at that fork, never hidden. Each member's axial force is set against its
 flexural buckling resistance to EN 1993-1-1 (buckling curve a, the member's
 own length as its effective length), which gives the utilisation the strain
-colour will show in part 4.
+colour will show in part 4. The run reports the utilisation at the wall in
+use and the thinnest standard wall of 60.3 mm tube that keeps every member
+within its resistance, so a run says whether a thinner or a thicker wall is
+needed.
 
 ### 3.5 Heads and holds
 
@@ -166,10 +200,10 @@ weight goes into their member forces, not into the net.
 
 ### 3.7 Not modelled in this part
 
-Listed so that none of it is mistaken for having been considered: the
-mechanism's permanent tension tie; wind; temperature; creep; a rope's bending
-stiffness; winding layers on a drum; friction in pulleys; inertia (swing and
-bounce).
+Listed so that none of it is mistaken for having been considered: friction
+where the wires pass through the anchors; wind; temperature; creep; a rope's
+bending stiffness; winding layers on a drum; friction in pulleys; inertia
+(swing and bounce).
 
 ## 4. The sequence: computed once, captured, replayed
 
@@ -181,7 +215,8 @@ frame:
 
 1. the trees stand at that frame's node positions;
 2. each wire's required paid-out length is the straight distance from its
-   spool to its rim node's designed position at that frame;
+   spool through its anchor to its rim node's designed position at that
+   frame;
 3. each motor reels its common change (section 3.3);
 4. the engine solves for the shape the net takes, and the state is captured.
 
@@ -191,10 +226,12 @@ to be is the deviation, frame by frame.
 ### 4.2 The tiling
 
 From the hold frame on, the reels hold where they are: closed-loop steppers
-hold position. Each course's weight goes on in four equal steps, each solved
-and captured, so a course is seen landing and the net settling under it.
-Whether the machine should re-reel between courses to win back the shape is
-part 3's question.
+hold position. The skin goes on one row of tiles at a time, from the bottom,
+each row placed going around, in the order the studio's animation places
+them. Each row goes on in four steps, a quarter of the way round at a time,
+so the load lands unevenly as it really does; every step is solved and
+captured. Whether the machine should re-reel between rows to win back the
+shape is part 3's question.
 
 ### 4.3 The captures
 
@@ -202,7 +239,7 @@ Every solved state is one capture. It holds:
 
 - the position of every net node, wire segment node and tree node;
 - every net member's and wire segment's tension, or that it is slack;
-- every head's and hold's push;
+- every head's and hold's push, and every anchor's force;
 - every tree member's axial force, utilisation and any fork's bending load;
 - every motor's common reel and its drum tension;
 - every net node's deviation from the frame's designed position;
@@ -213,8 +250,9 @@ Every solved state is one capture. It holds:
 
 Each capture carries a time on the real build's clock. Between raise frames
 that is the largest reel change of any motor divided by the rope speed (the
-Rope speed dial). No placement rate is recorded for the tiles yet (section
-11), so until one is, each tiling step is given one second.
+Rope speed dial). The rows take the studio animation's own timing, one row
+at a time as it plays them now, so the replay and the studio's animation stay
+in step.
 
 Play replays the captures at that clock, so the raise is seen at the speed
 the machine would really run it; scrubbing jumps to any capture. Nothing is
@@ -232,9 +270,10 @@ that is about 130 captures of about 60 kB each, roughly 8 MB.
 
 ## 5. The solver
 
-Unknowns: the positions of every node not held. Held: the spools (the wires'
-fixed ends) and the tree nodes (prescribed). Net nodes on heads or holds are
-free and pushed by contact, not fixed.
+Unknowns: the positions of every node not held. Held: the anchors' fairleads,
+where each wire's sagging run begins (how much wire lies beyond them is set
+by its reel), and the tree nodes (prescribed). Net nodes on heads or holds
+are free and pushed by contact, not fixed.
 
 Each step is solved by Newton's method from the previous capture's state:
 
@@ -303,6 +342,13 @@ owner's vault:
 9. Every capture's loads and reactions sum to zero within 0.1 N.
 10. On the real study, before the skin, the end of the raise sits close to the
     designed shape; how close is reported, not judged.
+11. A wire through a fixed fairlead: the tension is the same on both sides, the
+    wire slides through as it is reeled, and the anchor's force is the vector
+    sum of the two pulls.
+12. The cut: with the net held exactly at the designed shape and no skin, each
+    member carries the larger of its fitted tension and P, within 0.1 N.
+13. The tiling order: a row's four steps add its tiles in the animation's
+    order around the ring, and together they add exactly the row's weight.
 
 ## 9. Performance
 
@@ -320,15 +366,9 @@ script's findings and images.
 
 ## 11. Open items
 
-1. The mechanism's permanent tension tie is not modelled; whether it bears on
-   the net during the raise is the owner's to say.
-2. No tile placement rate is recorded, so tiling steps play at one second
-   each until one is given.
-3. The cut: a uniform prestress in every member (today's rule) or the
-   designed form's own member forces plus a prestress. Part 3 decides it with
-   the prestress search.
-4. The tree tube's wall thickness is assumed at 3.2 mm until the plugin
-   exports the section (part 5).
-5. Whether the machine re-reels between courses to win back the shape is
-   part 3's.
-6. Bending at the forks is reported, not modelled.
+1. How the anchor forces are shared between the tension ties and the
+   foundations, and how the wires move through an anchor (a plain fairlead
+   here, with no friction), need more thought, in the owner's words.
+2. Whether the machine re-reels between rows to win back the shape is part
+   3's.
+3. Bending at the forks is reported, not modelled.
