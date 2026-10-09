@@ -533,4 +533,4 @@ through the whole sequence, and what it found changed the design:
   Newton was allowed 300 damped steps. At 60, relaxation took over a dozen
   times in the first ten frames, at about 12,000 steps each, and doubled the
   time. At two wires a motor the shared reels let the rim out by at most
-  0.72 mm.
+  0.74 mm, at machine time 60.
