@@ -18994,6 +18994,7 @@ function startPlaying(fromTheTop) {
 }
 
 function togglePlay() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   if (state.timeline.playing) {
     state.timeline.playing = false;
@@ -19004,6 +19005,7 @@ function togglePlay() {
 }
 
 function restartTake() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   startPlaying(true);
 }
@@ -19013,6 +19015,7 @@ function restartTake() {
 // to nought through applyTimeline, so the scene and the camera both stand
 // where the take begins, and the view stays the animation's.
 function rewindTake() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   state.timeline.playing = false;
   paintPlayButtons("Play");

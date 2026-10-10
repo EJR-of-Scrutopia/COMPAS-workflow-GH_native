@@ -193,6 +193,15 @@ def test_the_studio_s_own_act_is_hidden_and_the_take_comes_back_as_it_was():
     assert STUDIO.index(boot) > STUDIO.index("window.__studioReady = true;")
 
 
+def test_the_take_stands_still_while_the_tab_is_open():
+    # final review 2: the shelf's Play and Restart and the space bar would
+    # switch the studio into the take's view under the tab
+    for name in ("togglePlay", "restartTake", "rewindTake"):
+        body = _top(STUDIO, name)
+        first = body.split("{", 1)[1].strip().splitlines()[0]
+        assert first == "if (formworkTab && formworkTab.active()) return;", name
+
+
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
     assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
             "{ display: none; }") in CSS
