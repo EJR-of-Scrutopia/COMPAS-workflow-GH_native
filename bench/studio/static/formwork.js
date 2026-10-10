@@ -6,7 +6,7 @@
 
 import {
   captureLabel, captureTimes, colourKey, formworkLabels, formworkPickHtml, formworkWarnings,
-  frameLine, frameLineHtml, playhead, readSim, worstHtml, worstTables,
+  frameLine, frameLineHtml, labelKindsInView, playhead, readSim, worstHtml, worstTables,
 } from "./formwork_model.js";
 import { spreadLabels } from "./cablenet_model.js";
 
@@ -165,7 +165,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       el.scrubValue.textContent = String(head.nearer + 1);
       if (document.activeElement !== el.scrub) el.scrub.value = String(head.nearer + 1);
       el.line.innerHTML = frameLineHtml(frameLine(tab.sim, head.nearer));
-      rebuildLabels(head.nearer, now.labels);
+      rebuildLabels(head.nearer, labelKindsInView(now.labels, now.show));
       if (tab.pickNode != null) el.pick.innerHTML = formworkPickHtml(tab.sim, head.nearer, tab.pickNode);
       tab.shown = head.nearer;
       tab.settingsKey = key;

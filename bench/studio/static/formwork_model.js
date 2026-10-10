@@ -265,6 +265,14 @@ function largestIndices(values, count) {
   return found.slice(0, count);
 }
 
+// The label kinds ticked whose part is in view: rope and deviation stand on
+// the net, contact on the heads (found on screen: deviation labels over the
+// trees alone).
+export function labelKindsInView(kinds, show) {
+  const part = { rope: "net", deviation: "net", contact: "heads" };
+  return (kinds || []).filter((kind) => !!(show || {})[part[kind]]);
+}
+
 // The labels a capture puts on the model for the ticked kinds, each kind's
 // largest first, so where they crowd the largest is the one kept: rope kN at a
 // member, deviation mm at a node, the push of each head touching its node.

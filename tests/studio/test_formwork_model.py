@@ -116,6 +116,10 @@ out.points = [{ kind: "member", index: 1 }, { kind: "node", index: 2 }, { kind: 
   .map((target) => m.targetPoint(sim, 1, target));
 out.labels2 = m.formworkLabels(sim, 2, ["rope", "deviation", "contact"], 2);
 out.contact3 = m.formworkLabels(sim, 3, ["contact"]);
+out.inView = [m.labelKindsInView(["rope", "deviation", "contact"], { net: true, heads: true }),
+              m.labelKindsInView(["rope", "deviation", "contact"], { net: false, heads: true }),
+              m.labelKindsInView(["rope", "deviation", "contact"], { net: true, heads: false }),
+              m.labelKindsInView(["deviation"], { trees: true })];
 out.pickHead = m.formworkPickHtml(sim, 1, 2);
 out.pickRim = m.formworkPickHtml(sim, 1, 0);
 out.pickNone = m.formworkPickHtml(sim, 1, 9);
@@ -263,6 +267,14 @@ def test_the_labels_are_the_largest_of_each_ticked_kind(out):
         {"kind": "node", "index": 2, "text": "900 N"}]
     # a head that has let go of its node pushes nothing, and says nothing
     assert out["contact3"] == []
+
+
+def test_the_labels_are_for_what_is_in_view(out):
+    # rope and deviation labels stand on the net, contact labels on the heads
+    # (found on screen: deviation labels over the trees alone)
+    every, no_net, no_heads, trees = out["inView"]
+    assert every == ["rope", "deviation", "contact"]
+    assert no_net == ["contact"] and no_heads == ["rope", "deviation"] and trees == []
 
 
 def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):

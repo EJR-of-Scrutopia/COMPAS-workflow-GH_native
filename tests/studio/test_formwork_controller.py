@@ -70,6 +70,7 @@ def test_the_player_draws_blended_and_shows_the_nearer_capture():
     assert "view.show(head, now);" in draw and "hooks.showMachine(!!now.show.wires);" in draw
     assert "el.label.textContent = captureLabel(capture);" in draw
     assert "el.line.innerHTML = frameLineHtml(frameLine(tab.sim, head.nearer));" in draw
+    assert "rebuildLabels(head.nearer, labelKindsInView(now.labels, now.show));" in draw
     assert "hooks.legend(colourKey(now.colour, tab.sim, now.tolerance));" in draw
     tick = _inner(JS, "tick")
     assert "tab.at = Math.min(tab.at + seconds * tab.speed, end());" in tick
