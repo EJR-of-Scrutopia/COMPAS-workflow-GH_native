@@ -254,6 +254,26 @@ def test_a_search_run_writes_the_kept_run_its_holds_never_a_head_or_a_wire_node(
     assert not set(seen[-1]) & (wired | set(heads))
 
 
+def test_each_node_belongs_to_the_side_it_is_fewest_steps_from():
+    # spec 2026-10-11 one Cable net tab, section 6: the rim's wire nodes chained
+    # along the boundary split into runs, a side each; every node goes to the
+    # side it is fewest net steps from, ties to the lower side
+    faces, heads, node = _strip_net()
+    edges = sorted({tuple(sorted((f[i], f[(i + 1) % 4]))) for f in faces for i in range(4)})
+    # two runs of wires: the far end (x = 4) and the near end (x = 0)
+    far = [node(4, j) for j in range(-2, 3)]
+    near = [node(0, j) for j in range(-2, 3)]
+    sides = formwork_sim.sides_of(faces, edges, far + near, 25)
+    assert [sides[n] for n in far] == [0] * 5 and [sides[n] for n in near] == [1] * 5
+    assert sides[node(3, 0)] == 0 and sides[node(1, 0)] == 1
+    assert sides[node(2, 0)] == 0                   # two steps from each: the lower side
+    # wires not joined along the boundary are sides of their own
+    corners = [node(0, -2), node(4, -2), node(0, 2), node(4, 2)]
+    assert [formwork_sim.sides_of(faces, edges, corners, 25)[n] for n in corners] == [0, 1, 2, 3]
+    # a net with no faces has no boundary to find sides by
+    assert formwork_sim.sides_of([], edges, far, 25) is None
+
+
 def test_the_spacings_are_named_as_the_tab_says_them():
     assert [formwork_sim.spacing_name(s, 10) for s in (10, 5, 2, 1)] == [
         "the open edges", "every 5th line", "every 2nd line", "every line"]

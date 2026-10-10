@@ -23,6 +23,9 @@ PARTS_PATH = Path(__file__).resolve().parent / "parts.json"
 GRAVITY = 9.80665
 MAX_RATED_ANGLE = 45.0
 AXIAL_ANGLE = 5.0
+# A rope's working load is its breaking load over this: the mechanism's limits
+# and the Cable net tab's Ropes key read the one figure.
+SAFETY_FACTOR = 5.0
 
 
 class CatalogueError(RuntimeError):
@@ -248,7 +251,7 @@ def mechanism_for(parts, configuration, angle_degrees):
         rope_mbl=float(rope["rope_mbl"]),
         anchor_wll=float(anchor),
         torque_margin=float(motor["torque_margin"]),
-        safety_factor=5.0,
+        safety_factor=SAFETY_FACTOR,
         sheave_efficiency=float(sheave["sheave_efficiency"]) if sheave else 0.98,
         spool_rope_mbl=float(
             _part(parts, "rope", configuration.get("spool_rope")
@@ -397,6 +400,12 @@ def drum_and_travel(parts, configuration, rope_wound_mm):
         "rail_fits": bool(travel <= stroke),
         "sheave_over_rope_diameter": ratio,
     }
+
+
+def rope_working_load(parts, rope_key):
+    """A rope's working load, N: its breaking load over SAFETY_FACTOR."""
+
+    return float(_part(parts, "rope", rope_key)["rope_mbl"]) / SAFETY_FACTOR
 
 
 def drive_for(parts, motor_key):
