@@ -373,6 +373,65 @@ def strongest(parts, facts, angle_degrees):
             "limit": best[2]["name"], "part": best[2]["part"]}
 
 
+def have(parts, configuration, angle_degrees):
+    """One spool's pull, N (spec 2026-10-11 one Cable net tab, section 4.1):
+    the binding (lowest) of the configuration's limits a wire, the motor's or
+    the gearbox's torque shared across the wires on a motor. Never a total."""
+
+    top = next(term for term in limit_terms(parts, configuration, angle_degrees)
+               if term["binds"])
+    return {"newtons": top["newtons"], "limit": top["name"], "part": top["part"]}
+
+
+def preset_label(parts, configuration, newtons):
+    """A whole mechanism by its real names and its pull: "ES-MH342200, 50:1,
+    190 mm pulleys, 8 mm 7x19: 3,411 N a spool"."""
+
+    gearbox = configuration["gearbox"]
+    ratio = ("direct" if gearbox == "direct" else
+             "{:g}:1".format(float(_part(parts, "gearbox", gearbox)["gear_ratio"])))
+    pulley = configuration.get("sheave")
+    pulleys = ("no pulleys" if pulley is None else
+               "{:g} mm pulleys".format(float(_part(parts, "sheave", pulley)["diameter_mm"])))
+    rope = _part(parts, "rope", configuration["rope"])
+    return "{}, {}, {}, {:g} mm {}: {:,.0f} N a spool".format(
+        configuration["motor"], ratio, pulleys, float(rope["diameter_mm"]),
+        rope.get("construction", "").strip(), float(newtons))
+
+
+def presets(parts, facts, angle_degrees, wires_per_motor=1):
+    """The dropdown's whole spooling mechanisms (spec 2026-10-11 one Cable net
+    tab, section 8.1): for each motor the catalogue builds on this machine, the
+    ratio, rope and pulley that give it the most pull a spool at these wires a
+    motor, strongest first; among equals the catalogue's order. Motors the
+    catalogue cannot build are left out."""
+
+    found = []
+    for motor in offered_motors(parts):
+        best = None
+        for option in ratio_options(parts, motor):
+            for rope in parts["rope"]:
+                for pulley in [None] + pulleys_for(parts, rope):
+                    choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
+                               "rope": rope, "wires_per_motor": int(wires_per_motor)}
+                    try:
+                        built = derive(parts, choices, facts, angle_degrees)
+                        pull = have(parts, built, angle_degrees)
+                    except (MachineError, catalogue.CatalogueError):
+                        continue
+                    if best is None or pull["newtons"] > best[0]["newtons"]:
+                        best = (pull, built, choices)
+        if best is None:
+            continue
+        pull, built, choices = best
+        found.append({"choices": choices, "have_newtons": pull["newtons"],
+                      "limit": pull["limit"], "part": pull["part"],
+                      "described": describe(parts, built),
+                      "label": preset_label(parts, built, pull["newtons"])})
+    found.sort(key=lambda entry: -entry["have_newtons"])
+    return found
+
+
 def take_ups_from_commands(stage_commands):
     """Each wire's rope taken in at its anchor, stage by stage, from the cable
     net run's reel commands (changes of each wire's rest length, negative
