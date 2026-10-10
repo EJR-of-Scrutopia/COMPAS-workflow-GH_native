@@ -29,7 +29,7 @@ const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const RUN = process.env.RUN === "1";
-const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "skin", "design"];
+const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "skin", "design", "holds"];
 const COLOURS = ["tension", "deviation", "utilisation", "wire", "off"];
 const PARTS = ["ropes", "wires", "trees", "nodes", "machines"];
 
@@ -218,6 +218,11 @@ try {
     note("run " + JSON.stringify(report.run));
     await shot(page, "02-after-run");
   }
+  report.holds = await page.evaluate(() => {
+    const el = document.getElementById("formwork-holds");
+    return el ? el.innerText : null;
+  });
+  note("holds " + JSON.stringify(report.holds));
 
   // Which capture is which, read off the document the tab plays.
   const captures = await page.evaluate(async (study, cut) => {
@@ -236,6 +241,8 @@ try {
     ["03-raise", first((c) => c.phase === "raise" && c.time >= 46)],
     ["04-finish", first((c) => c.phase === "finish" && c.time >= 76)],
     ["05-hold", captures.map((c) => c.phase).lastIndexOf("hold")],
+    ...(captures.some((c) => c.phase === "holds")
+      ? [["05b-jacked", captures.findIndex((c) => c.phase === "holds")]] : []),
     ["06-tiling", tiling[Math.floor(tiling.length / 2)] ?? captures.length - 1],
     ["07-end", captures.length - 1],
   ];
