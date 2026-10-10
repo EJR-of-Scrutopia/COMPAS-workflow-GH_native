@@ -4630,7 +4630,7 @@ def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
                   "formwork-scrub", "formwork-speed", "formwork-back", "formwork-play",
                   "formwork-on", "formwork-label", "formwork-line", "formwork-show",
                   "formwork-colour", "formwork-label-ticks", "formwork-worst-toggle",
-                  "formwork-warnings"):
+                  "formwork-warnings", "formwork-record", "formwork-record-status"):
         assert 'id="{}"'.format(ident) in section, ident
     assert section.count('class="primary"') == 1 and section.count("<details") == 0
     for tag in re.findall(r"<button[^>]*>", section):

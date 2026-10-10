@@ -377,6 +377,90 @@ export function formworkWarnings(sim, chosen) {
   return out;
 }
 
+// ---------- what a recorded frame carries ----------
+// The Formwork tab's recording (the owner's choice of 10 October 2026): the
+// page's labels, key and frame line are HTML, which never reach the canvas
+// the recorder reads, so each frame is copied into a 2D canvas and these are
+// drawn over it.
+
+// The frame line on one line, the capture first.
+export function recordingCaption(sim, index) {
+  const line = frameLine(sim, index);
+  if (!line) return "";
+  return [captureLabel(sim.captures[index]), "Rope max " + kilonewtons(line.rope),
+    "Wire max " + newtons(line.wire), "Trees " + line.trees.toFixed(2),
+    "Deviation max " + millimetres(line.deviation),
+    "Heads touching " + line.touching + "/" + line.heads].join("   ");
+}
+
+const OVERLAY_INK = "#f2efe8";
+const OVERLAY_GROUND = "rgba(20, 22, 26, 0.72)";
+
+// Draw the caption along the top, each label standing on its point (x, y in
+// the frame's pixels), and the key at the bottom right, sized from the page's
+// own at 900 pixels high.
+export function paintOverlay(ctx, { width, height, caption, labels, key }) {
+  const s = height / 900;
+  const px = (n) => Math.round(n * s);
+  ctx.save();
+  ctx.textBaseline = "middle";
+  if (caption) {
+    ctx.font = px(14) + "px sans-serif";
+    const w = ctx.measureText(caption).width + 2 * px(8);
+    ctx.fillStyle = OVERLAY_GROUND;
+    ctx.fillRect(px(16), px(16), w, px(28));
+    ctx.fillStyle = OVERLAY_INK;
+    ctx.fillText(caption, px(24), px(30));
+  }
+  ctx.font = px(11) + "px sans-serif";
+  for (const label of labels || []) {
+    const w = ctx.measureText(label.text).width + 2 * px(4);
+    const h = px(16);
+    const x = label.x - w / 2;
+    const y = label.y - h - px(6);
+    ctx.fillStyle = OVERLAY_GROUND;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = OVERLAY_INK;
+    ctx.fillText(label.text, x + px(4), y + h / 2);
+  }
+  if (key) {
+    const bw = px(220);
+    const bh = px(70);
+    const x0 = width - bw - px(16);
+    const y0 = height - bh - px(16);
+    const barX = x0 + px(10);
+    const barW = bw - px(20);
+    const barY = y0 + px(28);
+    const barH = px(14);
+    ctx.fillStyle = OVERLAY_GROUND;
+    ctx.fillRect(x0, y0, bw, bh);
+    ctx.fillStyle = OVERLAY_INK;
+    ctx.font = px(12) + "px sans-serif";
+    ctx.fillText(key.title, barX, y0 + px(14));
+    if (key.bands) {
+      const each = barW / key.bands.length;
+      key.bands.forEach((band, i) => {
+        ctx.fillStyle = band.colour;
+        ctx.fillRect(barX + i * each, barY, each - 1, barH);
+        ctx.fillStyle = "#111111";
+        ctx.font = px(10) + "px sans-serif";
+        ctx.fillText(band.name, barX + i * each + px(4), barY + barH / 2);
+      });
+    } else {
+      const ramp = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+      ramp.addColorStop(0, "#f2efe8");
+      ramp.addColorStop(1, "#cc2211");
+      ctx.fillStyle = ramp;
+      ctx.fillRect(barX, barY, barW, barH);
+    }
+    ctx.fillStyle = OVERLAY_INK;
+    ctx.font = px(11) + "px sans-serif";
+    ctx.fillText(key.min, barX, barY + barH + px(12));
+    ctx.fillText(key.max, barX + barW - ctx.measureText(key.max).width, barY + barH + px(12));
+  }
+  ctx.restore();
+}
+
 // ---------- the worst tables ----------
 
 export const WORST_PARTS = [["ropes", "Ropes"], ["wires", "Wires"], ["trees", "Trees"],

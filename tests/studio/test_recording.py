@@ -107,3 +107,26 @@ def test_an_unreachable_folder_does_not_lose_the_take(tmp_path, monkeypatch):
         "a failed delivery reports the copy that exists, not a path that "
         "was never written"
     )
+
+
+def test_a_recording_of_the_raise_is_named_for_it(tmp_path, monkeypatch):
+    # the Formwork tab's recording lands beside the takes, named for the raise
+    settings = tmp_path / "settings.json"
+    target = tmp_path / "delivered"
+    settings.write_text(
+        '{"recordings_folder": "%s"}' % str(target).replace("\\", "\\\\"),
+        encoding="utf-8")
+    monkeypatch.setattr(studio_app, "SETTINGS_PATH", settings)
+    video = tmp_path / "recording.mp4"
+    video.write_bytes(b"the raise")
+    delivered = studio_app.deliver_recording("study-trial-2", video, "formwork")
+    assert delivered.parent == target
+    assert delivered.name.startswith("trial-2-formwork-") and delivered.suffix == ".mp4"
+
+
+def test_the_stitch_takes_only_a_kind_it_knows(tmp_path, monkeypatch):
+    from test_app import make_client
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    response = client.post("/api/frames/study-tiny/stitch?fps=60&kind=other")
+    assert response.status_code == 400 and "kind" in response.json()["detail"]

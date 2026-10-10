@@ -1922,7 +1922,8 @@ def test_the_recorder_owns_the_camera_and_the_canvas_during_a_take():
     # delta * speed, the recorder by frameIndex * speed / fps, which is
     # the same range at the same rate.
     assert "applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed," in js
-    assert "      applyTimeline(frameIndex * speed / fps);" in js
+    # (the take's own clock; a recording of the Formwork tab steps its player)
+    assert "      else applyTimeline(frameIndex * speed / fps);" in js
 
 
 def test_the_recordings_output_folder_has_a_button():
