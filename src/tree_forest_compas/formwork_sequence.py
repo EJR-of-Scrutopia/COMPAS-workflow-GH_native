@@ -273,7 +273,8 @@ def simulate(model, progress=None):
                                  "them".format(missing))
     rest_lengths, cut_force = cut(model)
     net = ne.ropes(model.edges, rest_lengths, model.ea)
-    per_run = len(model.frames) + sum(len(row.quarters) for row in model.rows)
+    per_run = (len(model.frames) + (1 if model.holds else 0)
+               + sum(len(row.quarters) for row in model.rows))
     total = per_run * (2 if shared else 1)
 
     def report(offset):

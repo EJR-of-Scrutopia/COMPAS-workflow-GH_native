@@ -156,6 +156,13 @@ def test_the_holds_are_jacked_to_the_design_after_the_raise_and_push_only():
     assert all(c.hold_push.shape == (0, 3) for c in plain.captures)
 
 
+def test_the_progress_counts_the_capture_after_the_jacking():
+    # found on the real study: "capture 101 of 100"
+    told = []
+    fs.simulate(_toy()._replace(holds=(1, 3, 5, 7)), lambda done, total, what: told.append((done, total)))
+    assert told[-1] == (8, 8) and {total for _, total in told} == {8}
+
+
 def test_the_holds_are_never_tied(monkeypatch):
     # the principal lines are tied; a hold is a prop from below
     seen = []
