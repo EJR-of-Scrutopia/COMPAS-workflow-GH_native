@@ -12264,6 +12264,45 @@ function paintHoldNodes() {
       : HOLD_COLOURS.other);
   }
   nodes.instanceColor.needsUpdate = true;
+  paintHoldMarkers(hold, heads);
+}
+
+// The held nodes and the column heads drawn HOLD_MARKER_SCALE times a node's
+// size, so the nodes to hold read at a whole-vault framing: the net's own
+// node spheres, enlarged in place, with the net's lift.
+const HOLD_MARKER_SCALE = 3;
+
+function clearHoldMarkers() {
+  const markers = state.objects.holdMarkers;
+  if (!markers) return;
+  if (markers.parent) markers.parent.remove(markers);
+  markers.material.dispose();
+  markers.dispose();
+  state.objects.holdMarkers = null;
+}
+
+function paintHoldMarkers(hold, heads) {
+  clearHoldMarkers();
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.parent) return;
+  const marked = [...hold, ...[...heads].filter((i) => !hold.has(i))].filter((i) => i < nodes.count);
+  if (!marked.length) return;
+  const markers = new THREE.InstancedMesh(nodes.geometry,
+    new THREE.MeshBasicMaterial({ color: 0xffffff }), marked.length);
+  const at = new THREE.Matrix4();
+  const grow = new THREE.Matrix4().makeScale(HOLD_MARKER_SCALE, HOLD_MARKER_SCALE, HOLD_MARKER_SCALE);
+  marked.forEach((node, k) => {
+    nodes.getMatrixAt(node, at);
+    markers.setMatrixAt(k, at.clone().multiply(grow));
+    markers.setColorAt(k, hold.has(node) ? HOLD_COLOURS.hold : HOLD_COLOURS.head);
+  });
+  markers.position.copy(nodes.position);
+  markers.quaternion.copy(nodes.quaternion);
+  markers.scale.copy(nodes.scale);
+  markers.instanceMatrix.needsUpdate = true;
+  markers.instanceColor.needsUpdate = true;
+  nodes.parent.add(markers);
+  state.objects.holdMarkers = markers;
 }
 
 function paintLensLegend(lens, stage) {
@@ -12301,6 +12340,7 @@ function applyCableNetPaint() {
   const tensionOn = tensionUp && !!stage;
   const sagOn = sagUp && !!stage;
   const holdNodes = !sagOn && !!stage && keyed.includes("holds");
+  if (!holdNodes) clearHoldMarkers();
   const forceNodes = !sagOn && !!stage && !holdNodes && keyed.includes("nodeforce");
   if (!tensionOn && !sagOn) {
     if (holdNodes) paintHoldNodes();

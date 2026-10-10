@@ -37,6 +37,17 @@ def test_the_holds_lens_paints_the_nodes_to_hold_and_follows_the_machine():
     holds = _function_body(JS, "paintHoldNodes")
     assert "holdsFor(state.cablenet, state.cablenetCeiling)" in holds
     assert "HOLD_COLOURS.hold" in holds and "HOLD_COLOURS.head" in holds
+    # the held nodes and the column heads marked large enough to be seen at a
+    # whole-vault framing (found on screen: 640 red dots the size of the net's
+    # nodes could not be made out), riding with the net, gone with the lens
+    assert "paintHoldMarkers(hold, heads);" in holds
+    markers = _function_body(JS, "paintHoldMarkers")
+    assert "new THREE.InstancedMesh(nodes.geometry" in markers
+    assert "nodes.getMatrixAt(" in markers and "HOLD_MARKER_SCALE" in markers
+    assert "markers.position.copy(nodes.position);" in markers
+    assert "clearHoldMarkers();" in markers
+    assert "const HOLD_MARKER_SCALE = 3;" in JS
+    assert "if (!holdNodes) clearHoldMarkers();" in paint
     assert '"holds"' in _function_body(JS, "updateModelLabels")
     assert ("lensLegend(lens, state.cablenet, stage, state.cablenetCeiling, state.cablenetMost)"
             in _function_body(JS, "paintLensLegend"))
