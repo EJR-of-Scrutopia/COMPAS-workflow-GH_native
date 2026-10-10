@@ -429,3 +429,14 @@ export function worstHtml(part, rows, sim, sort = { key: "value", descending: tr
     + columns.map(([key]) => `<td>${worstCell(part, key, row, sim)}</td>`).join("") + "</tr>").join("");
   return `<table class="worst"><tr>${head}</tr>${body}</table>`;
 }
+
+// The faces the skin has on it at a capture: every tiling quarter's up to it
+// (spec section 8). An older run names none.
+export function placedFaces(sim, index) {
+  const out = [];
+  if (!sim) return out;
+  for (let k = 0; k <= index && k < sim.captures.length; k++) {
+    for (const face of sim.captures[k].addedFaces || []) out.push(face);
+  }
+  return out;
+}
