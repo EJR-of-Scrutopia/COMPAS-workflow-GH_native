@@ -98,9 +98,16 @@ out.propsBefore = props().visible;
 view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
 out.propPushing = [props().visible, props().count, at(props(), 0), colourAt(props(), 0)];
 view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
-out.propLifted = colourAt(props(), 0);
+out.propPulling = [at(props(), 0), colourAt(props(), 0)];
 view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: every, colour: "off", tolerance: 20 });
 out.propUnticked = props().visible;
+view.clear();
+// a hold set leaning: pulling 50 N down and sideways after the jacking
+view.build(m.readSim(%(leaning)s));
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propLeaning = [at(props(), 0), colourAt(props(), 0)];
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propIdle = [at(props(), 0), colourAt(props(), 0)];
 view.clear();
 console.log(JSON.stringify(out));
 """
@@ -109,6 +116,13 @@ console.log(JSON.stringify(out));
 def _held():
     doc = with_holds(document())
     doc["net"]["holds"] = [2]                      # a node with a height, for its prop
+    return doc
+
+
+def _leaning():
+    doc = _held()
+    doc["captures"][2]["hold_push"] = doc["captures"][3]["hold_push"]     # 30, 0, -40
+    doc["captures"][3]["hold_push"] = doc["captures"][0]["hold_push"]     # nothing
     return doc
 
 
@@ -121,7 +135,8 @@ def out(tmp_path_factory):
         "three": (STATIC / "vendor" / "three.module.js").resolve().as_uri(),
         "model": (STATIC / "formwork_model.js").resolve().as_uri(),
         "view": (STATIC / "formwork_view.js").resolve().as_uri(),
-        "doc": json.dumps(document()), "held": json.dumps(_held())}, encoding="utf-8")
+        "doc": json.dumps(document()), "held": json.dumps(_held()),
+        "leaning": json.dumps(_leaning())}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
     assert result.returncode == 0, result.stderr
@@ -230,16 +245,35 @@ def test_closing_the_tab_removes_everything(out):
     assert out["cleared"] == [0, None, None]
 
 
-def test_each_hold_is_a_prop_from_the_ground_to_its_design_point_from_the_jacking_on(out):
-    # ten objects with the props
+GREEN = linear([0x3f / 255, 0x9e / 255, 0x57 / 255])
+BLUE = linear([0x2f / 255, 0x6f / 255, 0xd0 / 255])
+GREY = linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255])
+
+
+def test_each_hold_is_a_rod_from_the_ground_along_its_force_from_the_jacking_on(out):
+    # ten objects with the holds' rods
     assert out["propsCount"] == 11
     # not in before the jacking
     assert out["propsBefore"] is False
     visible, count, prop, colour = out["propPushing"]
     assert visible is True and count == 1
-    # node 2's design point is (1, 1, 0.5): a prop half a metre tall under it
+    # node 2's design point is (1, 1, 0.5), pushed straight up after the
+    # jacking: a strut half a metre tall standing under it, green
     assert prop["p"] == pytest.approx([1.0, 1.0, 0.25]) and prop["s"][1] == pytest.approx(0.5)
-    assert colour == pytest.approx(linear([0x3f / 255, 0x9e / 255, 0x57 / 255]))
-    # its node lifted off: grey; and the tick hides them
-    assert out["propLifted"] == pytest.approx(linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255]))
+    assert colour == pytest.approx(GREEN)
+    # later it pulls: the rod stays where it was set, blue
+    later, pulling = out["propPulling"]
+    assert later["p"] == pytest.approx([1.0, 1.0, 0.25]) and pulling == pytest.approx(BLUE)
+    # the tick hides them
     assert out["propUnticked"] is False
+
+
+def test_a_hold_set_pulling_sideways_is_a_tie_down_along_its_pull(out):
+    # 30, 0, -40 N at (1, 1, 0.5): the tie runs 0.6 out and 0.8 down a unit,
+    # 0.625 m to the ground at (1.375, 1, 0), its middle at (1.1875, 1, 0.25)
+    rod, colour = out["propLeaning"]
+    assert rod["p"] == pytest.approx([1.1875, 1.0, 0.25]) and rod["s"][1] == pytest.approx(0.625)
+    assert colour == pytest.approx(BLUE)
+    # carrying nothing later: grey, still set at its angle
+    idle, grey = out["propIdle"]
+    assert idle["p"] == pytest.approx([1.1875, 1.0, 0.25]) and grey == pytest.approx(GREY)

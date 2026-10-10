@@ -43,13 +43,14 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
 
 
 def with_holds(doc):
-    # node 3 held from the jacking on: a capture after the hold, pushing 40 N,
-    # then 0 (lifted off), and the search that chose it
+    # node 3 held from the jacking on: the capture after the hold, pushing
+    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie),
+    # and the search that chose it
     doc = json.loads(json.dumps(doc))
     doc["net"]["holds"] = [3]
-    pushes = [0, 0, 40, 0]
+    pushes = [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     for c, push in zip(doc["captures"], pushes):
-        c["hold_push"] = pack([[0, 0, push]])
+        c["hold_push"] = pack([push])
     doc["holds"] = {"spacing": 5, "bands": [5, 10], "count": 190, "tolerance_mm": 20.0,
                     "met": True, "tried": [
                         {"spacing": 10, "count": 95, "deviation_max_mm": 412.3},
@@ -175,6 +176,10 @@ out.holdsTable = m.holdsHtml(held);
 out.holdsMissed = m.holdsHtml({ ...held, search: { ...held.search, met: false, spacing: 1, count: 950,
   tried: [{ spacing: 10, count: 95, deviation_max_mm: 412.3 }, { spacing: 1, count: 950, deviation_max_mm: 31.5 }] } });
 out.holdsNone = [m.holdsHtml(sim), m.holdsHtml(null)];
+// each hold a rod along its own force (his ruling of 10 October 2026)
+out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0]].map((f) => m.holdRod(f));
+out.jackedAt = [m.jackedAt(held), m.jackedAt(sim),
+  m.jackedAt({ captures: [{ phase: "hold" }, { phase: "holds" }, { phase: "tiling" }] })];
 out.names = [10, 5, 2, 1, 3].map((s) => m.spacingName(s, s === 3 ? 9 : 10));
 // what a recorded frame carries over the picture (the owner's choice of
 // 10 October 2026: record the raise with the tab's labels and key)
@@ -452,22 +457,41 @@ def test_the_holds_are_read_with_each_holds_push(out):
     read = out["heldRead"]
     assert read["holds"] == [3]
     assert read["search"]["spacing"] == 5 and read["search"]["met"] is True
-    assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [0, 0, 0]]
+    assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     # a run with no holds reads none
     holds, search, push = out["plainHolds"]
     assert holds == [] and search is None and push == []
 
 
-def test_the_frame_line_and_the_card_count_the_holds(out):
-    line, html, lifted = out["heldLine"]
-    assert (line["holds"], line["holdsPushing"]) == (1, 1)
-    assert "<th>Holds pushing</th><td>1/1</td>" in html
-    assert "<th>Holds pushing</th><td>0/1</td>" in lifted
-    assert "Holds pushing" not in out["plainLine"]
-    pushing, off, other = out["heldPick"]
-    assert "<th>Hold</th><td>40 N</td>" in pushing
-    assert "<th>Hold</th><td>0 N</td>" in off
+def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):
+    line, html, pulling = out["heldLine"]
+    assert (line["holds"], line["struts"], line["ties"]) == (1, 1, 0)
+    assert "<th>Struts</th><td>1/1</td>" in html and "<th>Ties</th><td>0/1</td>" in html
+    assert "<th>Struts</th><td>0/1</td>" in pulling and "<th>Ties</th><td>1/1</td>" in pulling
+    assert "Struts" not in out["plainLine"] and "Ties" not in out["plainLine"]
+    pushing, pulled, other = out["heldPick"]
+    assert "<th>Hold</th><td>strut 40 N</td>" in pushing
+    assert "<th>Hold</th><td>tie 50 N</td>" in pulled
     assert "<th>Hold</th>" not in other
+
+
+def test_each_hold_is_a_rod_along_its_own_force(out):
+    strut, tie, level, idle = out["rods"]
+    # pushing straight up: a strut standing straight under its node
+    assert strut["kind"] == "strut" and strut["u"] == pytest.approx([0, 0, 1])
+    assert strut["lean"] == pytest.approx(0)
+    # pulling down and sideways: a tie running down from its node along the
+    # pull; u points from its foot up to the node
+    assert tie["kind"] == "tie" and tie["u"] == pytest.approx([-0.6, 0, 0.8])
+    assert tie["lean"] == pytest.approx(36.8699, abs=1e-3)
+    # a force near level is drawn at 80 degrees; its true lean is kept
+    assert level["kind"] == "strut" and level["lean"] == pytest.approx(89.427, abs=1e-3)
+    assert level["u"] == pytest.approx([0.98481, 0, 0.17365], abs=1e-5)
+    # carrying nothing: upright
+    assert idle["kind"] == "none" and idle["u"] == pytest.approx([0, 0, 1])
+    # the rods are set at the capture after the jacking: its own, or the
+    # first of the tiling in a document from before it had one
+    assert out["jackedAt"] == [2, 2, 1]
 
 
 def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):
@@ -476,6 +500,10 @@ def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):
     assert "<th>Worst</th><td>14 mm ✓</td>" in table
     assert "<th>Tried</th><td>the open edges, 95: 412 mm</td>" in table
     assert "<td>every 5th line, 190: 14 mm</td>" in table
+    # then the rods as they are set, from the capture after the jacking
+    assert "<th>Struts</th><td>1</td>" in table and "<th>Ties</th><td>0</td>" in table
+    assert "<th>Push max</th><td>40 N</td>" in table and "<th>Pull max</th><td>0 N</td>" in table
+    assert "<th>Lean max</th><td>0°</td>" in table
     missed = out["holdsMissed"]
     assert "<th>Holds</th><td>every line, 950</td>" in missed
     assert "<th>Worst</th><td>32 mm ✗</td>" in missed or "<th>Worst</th><td>31 mm ✗</td>" in missed

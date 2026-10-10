@@ -122,9 +122,11 @@ def test_the_sequence_ties_every_head_to_its_node_from_the_layout_on(monkeypatch
     assert seen and all(tied == frozenset({4}) for tied in seen)
 
 
-def test_the_holds_are_jacked_to_the_design_after_the_raise_and_push_only():
-    # spec 2026-10-10 formwork holds, section 3: once the net is up, each hold
-    # takes its node to its design point, then pushes and never pulls
+def test_the_holds_are_jacked_to_the_design_after_the_raise_and_held_there():
+    # spec 2026-10-10 formwork holds, section 3 (his ruling: a hold is a
+    # gripped rod): once the net is up, each hold takes its node to its design
+    # point and grips it there from then on, like a column head, pushing or
+    # pulling as the net asks
     model = _toy()._replace(holds=(1, 3, 5, 7))
     result = fs.simulate(model)
     captures = result.captures
@@ -133,23 +135,16 @@ def test_the_holds_are_jacked_to_the_design_after_the_raise_and_push_only():
     assert jacked.time == 100.0 and jacked.row is None
     for c in captures:
         assert c.hold_push.shape == (4, 3)
-        assert np.all(c.hold_push[:, 2] >= 0.0)            # a hold never pulls
     for c in captures[:3]:
         assert np.all(c.hold_push == 0.0)                  # none before the jacking
-    # the jack only pushes up: no node is left below its design height (in the
-    # toy the net carries the edge midpoints 10 mm above theirs, so the props
-    # stand just under them)
-    for node in (1, 3, 5, 7):
-        assert jacked.x[node, 2] >= model.design[node, 2] - 1.0e-6
-    # the skin brings them down onto their props, which then hold them at
-    # their design points
-    touched = 0
+    # from the jacking on every held node is at its design point (in the toy
+    # the net would carry the edge midpoints 10 mm above theirs, so their
+    # holds pull), and its hold carries what the net puts on it
     for c in captures[3:]:
-        for k, node in enumerate((1, 3, 5, 7)):
-            if np.linalg.norm(c.hold_push[k]) > 0.0:
-                touched += 1
-                assert c.x[node] == pytest.approx(model.design[node], abs=1.0e-6)
-    assert touched >= 3
+        for node in (1, 3, 5, 7):
+            assert c.x[node] == pytest.approx(model.design[node], abs=1.0e-6)
+        assert np.all(np.linalg.norm(c.hold_push, axis=1) > 0.0)
+    assert np.any(jacked.hold_push[:, 2] < 0.0)
     # and a run with no holds is the sequence as it was
     plain = fs.simulate(_toy())
     assert [c.phase for c in plain.captures] == ["raise", "finish", "hold"] + ["tiling"] * 4
@@ -163,11 +158,11 @@ def test_the_progress_counts_the_capture_after_the_jacking():
     assert told[-1] == (8, 8) and {total for _, total in told} == {8}
 
 
-def test_the_holds_grip_their_nodes_while_jacked_and_push_only_after(monkeypatch):
-    # found on the real study: jacked push-only from where the net hangs, the
-    # props were pulled off their nodes at every step and the net never rose.
-    # A jack grips its node in its cradle while it lifts it; from the end of
-    # the jacking the prop pushes and never pulls
+def test_the_holds_grip_their_nodes_from_the_jacking_on_and_never_let_go(monkeypatch):
+    # found on the real study: push-only props were pulled off their nodes,
+    # held the net sideways and let it slide out of their cradles at every
+    # spacing. His ruling: a hold grips its node like a column head, from the
+    # jacking on, and never lets go
     seen = []
     real = ne.settle
 
@@ -179,10 +174,7 @@ def test_the_holds_grip_their_nodes_while_jacked_and_push_only_after(monkeypatch
     fs.simulate(_toy()._replace(holds=(1, 3, 5, 7)))
     gripped = [i for i, (tied, _) in enumerate(seen) if tied]
     assert gripped, "the jacks grip their nodes"
-    # every settle while gripped has them engaged; none after the jacking grips
-    assert all(seen[i][1] for i in gripped)
-    assert not any(tied for tied, _ in seen[gripped[-1] + 1:])
-    assert any(engaged for _, engaged in seen[gripped[-1] + 1:])
+    assert all(tied and engaged for tied, engaged in seen[gripped[0]:])
 
 
 def test_every_capture_names_the_nodes_the_ground_holds():
