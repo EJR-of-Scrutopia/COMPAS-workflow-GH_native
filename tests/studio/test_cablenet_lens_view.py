@@ -85,7 +85,7 @@ def test_node_force_colours_the_nodes_and_each_new_lens_draws_its_legend():
     bands = _function_body(JS, "paintBandLegend")
     assert 'legend.classList.add("bands");' in bands and "escapeHtml(band.name)" in bands
     for writer in ("paintScalarLegend", "paintForceLegend", "updateLegend"):
-        assert 'legend.classList.remove("bands");' in _function_body(JS, writer), writer
+        assert 'legend.classList.remove("bands", "ramp");' in _function_body(JS, writer), writer
     assert '<div id="legend-bands"></div>' in HTML
     assert "#legend.bands #legend-bar { display: none; }" in CSS
     assert "#legend.bands #legend-bands { display: flex; }" in CSS

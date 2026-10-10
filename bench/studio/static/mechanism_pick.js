@@ -22,7 +22,8 @@ async function getJson(url) {
   return response.json();
 }
 
-// onChange(choices): the five choices of the mechanism now chosen, or null.
+// onChange(choices, byHand): the five choices of the mechanism now chosen, or
+// null, and whether his hand chose it (a list read again did not).
 // onPopup(): the pop-up has opened, so the others on the left close.
 export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
   const el = {
@@ -84,7 +85,7 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
     state.index = pickIndex(list, remembered());
     render();
     if (note) el.have.innerHTML = `<div class="cablenet-warning">${note.replace(/[<>&]/g, "")}</div>`;
-    if (JSON.stringify(chosen()) !== before) onChange(chosen());
+    if (JSON.stringify(chosen()) !== before) onChange(chosen(), false);
   }
 
   function clear() {
@@ -99,7 +100,7 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
     state.index = Number(el.select.value);
     remember();
     render();
-    onChange(chosen());
+    onChange(chosen(), true);
   });
 
   function setPopup(open) {
