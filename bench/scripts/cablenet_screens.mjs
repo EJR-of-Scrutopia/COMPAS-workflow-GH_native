@@ -9,7 +9,9 @@
 // Env: STUDIO_URL (default http://127.0.0.1:8601), BROWSER_EXE (the
 // Playwright Chromium), SCREENS_OUT, STUDY (default the 5 sided form), CUT
 // (JSON, default its tile cut: a demand keyed with no density, which a fresh
-// browser reads; the timber demand is keyed by the owner's skin's density).
+// browser reads; the timber demand is keyed by the owner's skin's density),
+// RUN=1 to press Run cable net analysis first and look at what it writes.
+// A run rewrites the cut's demand under bench/studies: copy it aside first.
 
 import puppeteer from "./probe-env/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -27,7 +29,8 @@ const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const LENSES = [["tension", "Wire tension"], ["nodeforce", "Node force"], ["sag", "Sag"],
-                ["prestress", "Prestress"], ["reel", "Reel"]];
+                ["prestress", "Prestress"], ["reel", "Reel"], ["holds", "Holds"]];
+const RUN = process.env.RUN === "1";
 
 mkdirSync(OUT, { recursive: true });
 const report = { study: STUDY, cut: CUT, shots: [], errors: [], requests: [] };
@@ -126,6 +129,29 @@ try {
   }
   // the scored row, which Gives, Most, the limits and the motors read
   await waitFor(page, () => (document.getElementById("cablenet-holds") || {}).innerHTML, 120000);
+  if (RUN) {
+    // the analysis as the panel runs it, designed for the machine chosen; done
+    // when the demand on screen carries its prestress table
+    const before = Date.now();
+    await clickOn(page, "#cablenet-run");
+    const done = await waitFor(page, () => {
+      const demand = window.__studio.state.cablenet;
+      const status = (document.getElementById("cablenet-run-status") || {}).textContent || "";
+      return !!(demand && demand.needs) || /failed|refused|error/i.test(status);
+    }, 1800000);
+    report.run = {
+      seconds: Math.round((Date.now() - before) / 1000),
+      status: await page.evaluate(() => document.getElementById("cablenet-run-status").textContent),
+      needs: await page.evaluate(() => {
+        const needs = (window.__studio.state.cablenet || {}).needs;
+        return needs ? { ceiling: needs.ceiling_newtons, steps: needs.steps.length,
+                         needed: needs.steps[0].prestress_newtons } : null;
+      }),
+    };
+    if (!done || !report.run.needs) report.errors.push("the run gave no prestress table: " + report.run.status);
+    note("run " + JSON.stringify(report.run));
+    await waitFor(page, () => (document.getElementById("cablenet-holds") || {}).innerHTML, 120000);
+  }
   // The net in clear view: the study's props (its trees) put away, and the
   // camera three-quarter on to the net from its own extent.
   report.view = await page.evaluate(() => {
