@@ -342,3 +342,90 @@ export function formworkWarnings(sim, chosen) {
   }
   return out;
 }
+
+// ---------- the worst tables ----------
+
+export const WORST_PARTS = [["ropes", "Ropes"], ["wires", "Wires"], ["trees", "Trees"],
+  ["nodes", "Nodes"], ["machines", "Machines"]];
+export const WORST_ROWS = 50;
+
+// Each element's largest value over every capture, and the first capture it
+// reaches it at.
+function worstOver(sim, field) {
+  const best = [];
+  sim.captures.forEach((c, k) => {
+    const values = c[field];
+    if (!values) return;
+    for (let i = 0; i < values.length; i++) {
+      if (best[i] == null || values[i] > best[i].value) best[i] = { index: i, value: values[i], capture: k };
+    }
+  });
+  return best.filter(Boolean);
+}
+
+function worstFirst(rows) {
+  return rows.sort((a, b) => b.value - a.value || a.index - b.index).slice(0, WORST_ROWS);
+}
+
+// The worst tables (spec section 10): each part's worst over the whole
+// sequence with the capture it happens at, the WORST_ROWS worst of each. A
+// machine's worst is its worst wire's.
+export function worstTables(sim) {
+  if (!sim) return null;
+  const wires = worstOver(sim, "wireTension").map((row) => ({
+    ...row, node: sim.rim.nodes[row.index], name: sim.rim.names[row.index] || "#" + row.index }));
+  const machines = sim.rim.machines.map((nodes, m) => {
+    let worst = null;
+    for (const node of nodes) {
+      const row = wires.find((r) => r.node === node);
+      if (row && (!worst || row.value > worst.value)) {
+        worst = { index: m, value: row.value, capture: row.capture, wire: row.name };
+      }
+    }
+    return worst;
+  }).filter(Boolean);
+  return { ropes: worstFirst(worstOver(sim, "tension")), wires: worstFirst(wires),
+           trees: worstFirst(worstOver(sim, "treeUtilisation")),
+           nodes: worstFirst(worstOver(sim, "deviation")), machines: worstFirst(machines) };
+}
+
+export function sortRows(rows, key, descending) {
+  const sign = descending ? -1 : 1;
+  return [...rows].sort((a, b) => sign * (a[key] - b[key]) || a.index - b.index);
+}
+
+const WORST_COLUMNS = {
+  ropes: [["index", "Member"], ["value", "kN"], ["capture", "Capture"]],
+  wires: [["index", "Wire"], ["value", "N"], ["capture", "Capture"]],
+  trees: [["index", "Member"], ["value", "Utilisation"], ["capture", "Capture"]],
+  nodes: [["index", "Node"], ["value", "mm"], ["capture", "Capture"]],
+  machines: [["index", "Machine"], ["value", "Worst wire, N"], ["capture", "Capture"]],
+};
+const WORST_KIND = { ropes: "member", wires: "wire", trees: "tree", nodes: "node", machines: "machine" };
+
+function worstCell(part, key, row, sim) {
+  if (key === "capture") return escapeHtml(captureLabel(sim.captures[row.capture]));
+  if (key === "index") {
+    if (part === "wires") return escapeHtml(row.name);
+    if (part === "machines") return "M" + (row.index + 1);
+    return String(row.index);
+  }
+  if (part === "ropes") return (row.value / 1000).toFixed(1);
+  if (part === "trees") return row.value.toFixed(2);
+  if (part === "nodes") return row.value >= 10 ? row.value.toFixed(0) : row.value.toFixed(1);
+  return row.value.toFixed(0);
+}
+
+// A worst table: a header a column, which sorts (the sorted one marked); a row
+// a part, carrying its capture and the part to turn the camera onto.
+export function worstHtml(part, rows, sim, sort = { key: "value", descending: true }) {
+  const columns = WORST_COLUMNS[part];
+  if (!columns || !sim) return "";
+  const head = columns.map(([key, name]) => `<th data-sort="${key}"`
+    + (key === sort.key ? ` class="sorted ${sort.descending ? "down" : "up"}"` : "")
+    + `>${escapeHtml(name)}</th>`).join("");
+  const body = sortRows(rows || [], sort.key, sort.descending).map((row) =>
+    `<tr data-capture="${row.capture}" data-kind="${WORST_KIND[part]}" data-index="${row.index}">`
+    + columns.map(([key]) => `<td>${worstCell(part, key, row, sim)}</td>`).join("") + "</tr>").join("");
+  return `<table class="worst"><tr>${head}</tr>${body}</table>`;
+}

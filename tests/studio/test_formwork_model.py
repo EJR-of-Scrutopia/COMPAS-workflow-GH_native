@@ -127,6 +127,15 @@ out.warn = [m.formworkWarnings(null, chosen), m.formworkWarnings(sim, chosen),
   m.formworkWarnings(sim, { ...chosen, prestress: 725 }),
   m.formworkWarnings(sim, { ...chosen, wall: 2.6 }),
   m.formworkWarnings(sim, { ...chosen, prestress: null })];
+// the worst tables (spec section 10)
+const tables = m.worstTables(sim);
+out.worst = tables;
+out.worstHtml = Object.fromEntries(m.WORST_PARTS.map(([part]) => [part, m.worstHtml(part, tables[part], sim)]));
+out.byIndex = m.worstHtml("ropes", tables.ropes, sim, { key: "index", descending: false });
+out.many = m.worstTables({ captures: [{ tension: Float32Array.from({ length: 60 }, (_, i) => i + 1) }],
+  edges: [], rim: { nodes: [], names: [], machines: [] }, trees: { members: [], heads: [] } }).ropes;
+out.noTables = m.worstTables(null);
+out.worstRows = m.WORST_ROWS;
 console.log(JSON.stringify(out));
 """
 
@@ -279,3 +288,43 @@ def test_the_warnings_are_one_line_each(out):
                        "run rope-4mm, 1 a motor, pulleys"]
     assert prestress == ["Run again: prestress 6660.0 N, run 723.4 N"]
     assert wall == ["Run again: wall 2.6 mm, run 3.2 mm"]
+
+
+def test_each_worst_table_holds_each_parts_worst_over_the_run_and_where(out):
+    worst = out["worst"]
+    assert [(r["index"], r["value"], r["capture"]) for r in worst["ropes"]] == [
+        (1, 3000, 2), (2, 450, 3), (0, 200, 2), (3, 70, 3)]
+    assert worst["wires"] == [{"index": 0, "value": 1500, "capture": 2, "node": 0, "name": "w0"},
+                              {"index": 1, "value": 1100, "capture": 3, "node": 1, "name": "w1"}]
+    assert [(r["index"], r["capture"]) for r in worst["trees"]] == [(0, 3)]
+    assert worst["trees"][0]["value"] == pytest.approx(1.2)
+    # a node's worst is its first capture at that value
+    assert [(r["index"], r["value"], r["capture"]) for r in worst["nodes"]] == [
+        (2, 500, 0), (3, 40, 2), (0, 5, 2), (1, 1, 3)]
+    assert worst["machines"] == [{"index": 0, "value": 1500, "capture": 2, "wire": "w0"}]
+    assert out["noTables"] is None
+
+
+def test_each_table_keeps_its_fifty_worst(out):
+    assert out["worstRows"] == 50
+    assert len(out["many"]) == 50 and out["many"][0]["value"] == 60
+
+
+def test_a_worst_table_sorts_by_its_headers_and_its_rows_fly_to_the_part(out):
+    ropes = out["worstHtml"]["ropes"]
+    assert ropes.startswith('<table class="worst"><tr><th data-sort="index">Member</th>'
+                            '<th data-sort="value" class="sorted down">kN</th>'
+                            '<th data-sort="capture">Capture</th></tr>')
+    assert ('<tr data-capture="2" data-kind="member" data-index="1"><td>1</td><td>3.0</td>'
+            '<td>S1 q1</td></tr>') in ropes
+    assert ropes.index('data-index="1"') < ropes.index('data-index="2"')
+    by_index = out["byIndex"]
+    assert '<th data-sort="index" class="sorted up">Member</th>' in by_index
+    assert by_index.index('data-index="0"') < by_index.index('data-index="1"')
+    html = out["worstHtml"]
+    assert '<td>w0</td><td>1500</td><td>S1 q1</td>' in html["wires"]
+    assert 'data-kind="wire"' in html["wires"]
+    assert '<td>0</td><td>1.20</td><td>S1 q2</td>' in html["trees"]
+    assert ('<tr data-capture="0" data-kind="node" data-index="2"><td>2</td><td>500</td>'
+            '<td>t 30 raise</td></tr>') in html["nodes"]
+    assert '<tr data-capture="2" data-kind="machine" data-index="0"><td>M1</td><td>1500</td>' in html["machines"]
