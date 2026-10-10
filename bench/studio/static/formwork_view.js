@@ -16,6 +16,7 @@ const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
 const HEAD_CLEAR = [0x9a / 255, 0xa4 / 255, 0xb2 / 255];
 const SKIN_COLOUR = 0xc8b49a;
 const DESIGN_COLOUR = 0x9aa4b2;
+const ANCHOR = [0x66 / 255, 0xaa / 255, 0xff / 255];
 
 export function createFormworkView(THREE) {
   const group = new THREE.Group();
@@ -86,7 +87,7 @@ export function createFormworkView(THREE) {
       heads: marks(new THREE.SphereGeometry(HEAD_M, 12, 8), heads,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
       anchors: marks(new THREE.BoxGeometry(2 * MARK_M, 2 * MARK_M, 2 * MARK_M), rim,
-                     new THREE.MeshBasicMaterial({ color: 0x66aaff })),
+                     new THREE.MeshBasicMaterial({ color: 0xffffff })),
       ground: marks(new THREE.SphereGeometry(MARK_M / 2, 8, 6), sim.nodes,
                     new THREE.MeshBasicMaterial({ color: 0xc99a2e })),
       skin: skin(),
@@ -210,9 +211,13 @@ export function createFormworkView(THREE) {
       const tint = (by === "wire" ? colourOf("wire", near.wireTension[w], sim, tolerance) : null) || PLAIN;
       putColour(wires.color.array, 6 * w, tint);
       putColour(wires.color.array, 6 * w + 3, tint);
+      // a wire runs straight down into its anchor, so its stub is hidden in
+      // the rim beam: the anchor's mark wears the wire's colour (found on screen)
+      parts.anchors.setColorAt(w, tone(by === "wire" ? tint : ANCHOR));
     });
     wires.position.needsUpdate = true;
     wires.color.needsUpdate = true;
+    if (parts.anchors.instanceColor) parts.anchors.instanceColor.needsUpdate = true;
 
     const ground = near.ground || [];
     ground.forEach((groundNode, k) => {

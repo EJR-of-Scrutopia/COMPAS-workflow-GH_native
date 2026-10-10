@@ -65,9 +65,11 @@ out.utilisation = [colourAt(parts.trees, 0), arr(parts.net.geometry.attributes.c
                    colourAt(parts.heads, 0)];
 view.show({ from: 1, to: 1, blend: 0, nearer: 1 }, { show: every, colour: "wire", tolerance: 20 });
 out.wireColour = arr(parts.wires.geometry.attributes.color, 0, 3);
+out.anchorColours = [colourAt(parts.anchors, 0), colourAt(parts.anchors, 1)];
 view.show({ from: 1, to: 1, blend: 0, nearer: 1 },
           { show: { ...every, trees: false, heads: false, design: false, ground: false },
             colour: "off", tolerance: 20 });
+out.anchorPlain = colourAt(parts.anchors, 0);
 out.hidden = [parts.trees.visible, parts.heads.visible, parts.push.visible, parts.design.visible,
               parts.ground.visible, parts.net.visible, parts.wires.visible, parts.anchors.visible];
 // a camera looking straight down on the square, 400 px a side for 4 m
@@ -146,6 +148,18 @@ def test_each_wire_runs_from_its_node_the_way_it_runs_in(out):
     assert out["wireColour"] == pytest.approx(
         linear([(c + (r - c) * f) / 255 for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])]),
         abs=1e-6)
+
+
+def test_under_colour_by_wires_each_anchor_wears_its_wires_colour(out):
+    # a wire runs straight down into its anchor, so its stub is hidden in the
+    # rim beam: the anchor mark carries the wire's colour (found on screen)
+    ramp = lambda f: linear([(c + (r - c) * f) / 255
+                             for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])])
+    first, second = out["anchorColours"]
+    assert first == pytest.approx(ramp(1200 / 1500), abs=1e-6)
+    assert second == pytest.approx(ramp(900 / 1500), abs=1e-6)
+    # and the anchors' own blue under any other choice
+    assert out["anchorPlain"] == pytest.approx(linear([0x66 / 255, 0xaa / 255, 0xff / 255]), abs=1e-6)
 
 
 def test_the_ground_contacts_are_the_nearer_captures(out):
