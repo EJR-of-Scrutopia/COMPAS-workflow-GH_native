@@ -93,7 +93,9 @@ out.olderRead = m.readSim(older).older;
 out.spike = m.percentile95([...Array(20).fill(100), 10000]);
 out.spikeNone = m.percentile95([]);
 out.refused = [m.readSim(null), m.readSim({ schema: "bench.cablenet/2", captures: [{}] }),
-               m.readSim({ ...doc, captures: [] })];
+               m.readSim({ ...doc, captures: [] }),
+               m.readSim({ ...doc, captures: [...doc.captures.slice(0, 3), { ...doc.captures[3], x: undefined }] }),
+               m.readSim({ ...doc, captures: [{ ...doc.captures[0], tree_x: undefined }] })];
 out.labels = sim.captures.map(m.captureLabel);
 out.times = m.captureTimes(sim.captures);
 // the real study's shape: 36 raise, finish and hold captures from machine time
@@ -198,7 +200,9 @@ def test_the_push_scale_is_the_95th_percentile_so_one_spike_does_not_set_it(out)
 
 def test_an_older_run_is_said_to_be_one_and_a_wrong_document_is_none(out):
     assert out["olderRead"] is True
-    assert out["refused"] == [None, None, None]
+    # and one whose capture lacks its positions (final review 9: it would
+    # throw in the drawing, inside the studio's render loop)
+    assert out["refused"] == [None, None, None, None, None]
 
 
 def test_a_capture_is_labelled_by_its_machine_time_or_its_row_and_quarter(out):

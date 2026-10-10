@@ -250,11 +250,18 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   });
 
   // Every frame while the tab is open: the player's clock.
+  // A throw here would end the studio's render loop, which reschedules itself
+  // only on a normal exit: the player stops and says why (final review 9).
   function tick(seconds) {
     if (!tab.active || !tab.playing) return;
-    tab.at = Math.min(tab.at + seconds * tab.speed, end());
-    if (tab.at >= end()) setPlaying(false);
-    draw();
+    try {
+      tab.at = Math.min(tab.at + seconds * tab.speed, end());
+      if (tab.at >= end()) setPlaying(false);
+      draw();
+    } catch (error) {
+      setPlaying(false);
+      el.runStatus.textContent = error.message;
+    }
   }
 
   function placeCard(x, y) {

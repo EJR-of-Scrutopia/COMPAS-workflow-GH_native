@@ -70,6 +70,9 @@ export function readSim(doc) {
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
   }));
+  // a capture with no positions cannot be drawn: the document is not read
+  // (final review 9)
+  if (captures.some((c) => !c.x || !c.treeX)) return null;
   const scale = (field) => Math.max(0, ...captures.map((c) => largestOf(c[field])));
   // the heads' pushes, which the drawing scales by their 95th percentile, so
   // one spike does not shrink every other push to nothing (final review 4)

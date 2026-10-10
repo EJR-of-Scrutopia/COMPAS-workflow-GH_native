@@ -202,6 +202,14 @@ def test_the_take_stands_still_while_the_tab_is_open():
         assert first == "if (formworkTab && formworkTab.active()) return;", name
 
 
+def test_a_throw_in_the_player_stops_the_player_and_not_the_studio():
+    # final review 9: frame() reschedules itself only on a normal exit
+    tick = _inner(JS, "tick")
+    assert "try {" in tick and "} catch (error) {" in tick
+    assert "setPlaying(false);" in tick[tick.index("} catch (error) {"):]
+    assert "el.runStatus.textContent = error.message;" in tick
+
+
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
     assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
             "{ display: none; }") in CSS
