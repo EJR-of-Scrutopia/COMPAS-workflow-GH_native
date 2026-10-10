@@ -121,6 +121,38 @@ def test_the_exports_name_the_machine_by_its_parts_and_list_each_cabinet(
     assert not re.search(r"\brigs?\b", text, re.IGNORECASE)
 
 
+def test_the_exports_judge_the_drum_as_the_panel_does(tmp_path, monkeypatch):
+    """Spec 2026-10-10 prestress and holds, section 9: the exports' ladder
+    judged the drum by one wound figure without the reeving; it takes each
+    wire's own take-up and reeving now, so the documents and the panel agree."""
+
+    import exports
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    folder = tmp_path / "out"
+    folder.mkdir()
+    assert client.post("/api/cablenet/exports/folder",
+                       json={"path": str(folder)}).status_code == 200
+    row = client.post("/api/studies/Tiny/cablenet/configurations",
+                      json={"choices": [CHOICE], "options": OPTIONS}).json()["rows"][0]
+    seen = {}
+    real = exports.export_model
+
+    def spy(*args, **kwargs):
+        seen["row"] = args[2]
+        seen["ladder"] = kwargs.get("ladder_rows")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(exports, "export_model", spy)
+    done = client.post("/api/studies/Tiny/cablenet/exports",
+                       json={**OPTIONS, "configuration": row["configuration"]})
+    assert done.status_code == 200, done.text
+    assert seen["row"]["travel"] == row["travel"]
+    assert "rope_path" not in seen["row"]
+    assert all("travel" in rung for rung in seen["ladder"][1:] if not rung.get("refused"))
+
+
 def test_the_scoring_route_takes_the_five_choices_and_nothing_else(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     _plant(tmp_path)

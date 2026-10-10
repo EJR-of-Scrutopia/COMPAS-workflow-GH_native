@@ -1365,9 +1365,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 "refused": "{}: {}".format(type(error).__name__, error)}
 
     def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
-                          demand=None):
+                          demand=None, travel_inputs=None):
         """One scored row of the exports' ladder, built in one place; a
-        configuration the catalogue refuses keeps its reason as `refused`."""
+        configuration the catalogue refuses keeps its reason as `refused`.
+
+        travel_inputs, each wire's take-up and reeving, judge the drum and the
+        carriage as the panel does (machine.travel; spec 2026-10-10 prestress
+        and holds, section 9). Without them, a hand-built configuration or a
+        study with no machine, the one wound figure is judged as before."""
 
         try:
             ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
@@ -1389,7 +1394,15 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             row["load_factor"] = (
                 catalogue.load_factor(parts, configuration, angle, demand)
                 if demand is not None else None)
-            if wound is not None:
+            if travel_inputs is not None:
+                import machine
+
+                travel = machine.travel(parts, configuration, *travel_inputs)
+                row["travel"] = travel
+                if not travel["fits"]:
+                    # the same hard checks: a second layer, a carriage past its stroke
+                    row["passes"] = False
+            elif wound is not None:
                 path = catalogue.drum_and_travel(parts, configuration, wound)
                 row["rope_path"] = path
                 if not (path["drum_fits"] and path["rail_fits"]):
@@ -1701,8 +1714,17 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         parts = catalogue.load_parts()
         import machine
 
+        # each wire's own take-up and reeving, for a configuration the five
+        # choices derived on a study with a machine
+        travel_inputs = None
+        if configuration.get("winding_radius_mm") is not None:
+            try:
+                found = _machine_inputs(export, body, parts)
+                travel_inputs = (found["take_ups"], found["facts"].get("reeves"))
+            except (HTTPException, KeyError, ValueError, machine.MachineError):
+                travel_inputs = None
         ladder_rows = [_score_for_export(catalogue, parts, dict(configuration), angle, floor,
-                                         wound, demand)]
+                                         wound, demand, travel_inputs)]
         for rung in _export_ladder(configuration):
             # a heavier wire is wound in a groove of its own pitch, and refused
             # by a pulley that does not take it
@@ -1717,7 +1739,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 refusal = str(error)
             ladder_rows.append({"configuration": rung, "refused": refusal} if refusal else
                                _score_for_export(catalogue, parts, rung, angle, floor, wound,
-                                                 demand))
+                                                 demand, travel_inputs))
         row = ladder_rows[0]
 
         # Not deliver_output: that swallows an OSError and hands back the
