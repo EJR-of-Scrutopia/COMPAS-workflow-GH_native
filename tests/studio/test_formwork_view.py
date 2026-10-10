@@ -51,12 +51,14 @@ out.netColour = arr(parts.net.geometry.attributes.color, 6, 3);
 out.tree = at(parts.trees, 0);
 out.head = [at(parts.heads, 0).p, colourAt(parts.heads, 0)];
 out.push = arr(parts.push.geometry.attributes.position, 0, 6);
+out.tip = at(parts.tips, 0);
 out.wire = [arr(parts.wires.geometry.attributes.position, 0, 6), arr(parts.wires.geometry.attributes.color, 0, 3)];
 out.ground = [parts.ground.count, at(parts.ground, 0).p];
 out.skin = [parts.skin.geometry.index.count, parts.skin.visible];
 out.point = view.point({ kind: "node", index: 2 });
 // the first tiling quarter: its face on, the skin riding the net
 view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: every, colour: "deviation", tolerance: 20 });
+out.pushLongest = arr(parts.push.geometry.attributes.position, 0, 6);
 out.skinOn = [Array.from(parts.skin.geometry.index.array), parts.skin.visible,
               arr(parts.skin.geometry.attributes.position, 6, 3)];
 out.deviation = [arr(parts.net.geometry.attributes.color, 0, 3), arr(parts.net.geometry.attributes.color, 9, 3)];
@@ -70,7 +72,8 @@ view.show({ from: 1, to: 1, blend: 0, nearer: 1 },
           { show: { ...every, trees: false, heads: false, design: false, ground: false },
             colour: "off", tolerance: 20 });
 out.anchorPlain = colourAt(parts.anchors, 0);
-out.hidden = [parts.trees.visible, parts.heads.visible, parts.push.visible, parts.design.visible,
+out.hidden = [parts.trees.visible, parts.heads.visible && parts.tips.visible === parts.heads.visible,
+              parts.push.visible, parts.design.visible,
               parts.ground.visible, parts.net.visible, parts.wires.visible, parts.anchors.visible];
 // a camera looking straight down on the square, 400 px a side for 4 m
 const camera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 100);
@@ -105,8 +108,8 @@ def out(tmp_path_factory):
 
 
 def test_the_view_builds_its_own_objects_and_the_still_ones_once(out):
-    # net, design, wires, push, trees, heads, anchors, ground and skin
-    assert out["children"] == 9
+    # net, design, wires, push, its heads, trees, heads, anchors, ground and skin
+    assert out["children"] == 10
     # the designed form as a light line net: the second member, node 1 to 2
     assert out["design"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.5])
     first, second, count = out["anchors"]
@@ -132,10 +135,15 @@ def test_a_head_is_marked_while_it_pushes_and_its_push_is_drawn(out):
     position, colour = out["head"]
     assert position == pytest.approx([1.0, 1.0, 0.25])
     assert colour == pytest.approx(linear([0x3f / 255, 0x9e / 255, 0x57 / 255]))
-    # 800 N up, on the run's own scale: its largest push, 900 N, drawn 1 m
-    # long (found on screen: at half a metre a kilonewton the finish's pushes
-    # ran metres out of the picture)
+    # 800 N up, on the run's own scale: the 95th percentile of its pushes,
+    # 900 N here, drawn 1 m long (found on screen: at half a metre a
+    # kilonewton the finish's pushes ran metres out of the picture; final
+    # review 4: by the single largest, a spike, they vanished elsewhere)
     assert out["push"] == pytest.approx([1.0, 1.0, 0.25, 1.0, 1.0, 0.25 + 800 / 900])
+    # and its head at the tip, pointing along the push
+    assert out["tip"]["p"] == pytest.approx([1.0, 1.0, 0.25 + 800 / 900])
+    # a push at the scale or over it is drawn 1 m long, no longer
+    assert out["pushLongest"] == pytest.approx([1.0, 1.0, 0.5, 1.0, 1.0, 1.5])
     # and a head that has let go is drawn clear
     assert out["utilisation"][2] == pytest.approx(linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255]))
 

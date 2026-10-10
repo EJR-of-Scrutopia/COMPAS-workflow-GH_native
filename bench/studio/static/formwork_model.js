@@ -31,6 +31,13 @@ function metres(values) {
   return out;
 }
 
+// The 95th percentile of some values, nought for none.
+export function percentile95(values) {
+  if (!values || !values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)];
+}
+
 function largestOf(values) {
   let top = 0;
   if (!values) return top;
@@ -64,13 +71,17 @@ export function readSim(doc) {
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
   }));
   const scale = (field) => Math.max(0, ...captures.map((c) => largestOf(c[field])));
-  // the largest push of any head on its node, which the drawing scales by
-  const push = Math.max(0, ...captures.map((c) => {
-    let top = 0;
+  // the heads' pushes, which the drawing scales by their 95th percentile, so
+  // one spike does not shrink every other push to nothing (final review 4)
+  const pushes = [];
+  for (const c of captures) {
     const p = c.headPush;
-    for (let i = 0; p && i + 2 < p.length; i += 3) top = Math.max(top, Math.hypot(p[i], p[i + 1], p[i + 2]));
-    return top;
-  }));
+    for (let i = 0; p && i + 2 < p.length; i += 3) {
+      const size = Math.hypot(p[i], p[i + 1], p[i + 2]);
+      if (size > 0) pushes.push(size);
+    }
+  }
+  const push = percentile95(pushes);
   return {
     study: doc.study, options: doc.options || {},
     nodes: Number(net.nodes) || 0, edges: net.edges || [],

@@ -9,7 +9,8 @@ import { colourOf, placedFaces, targetPoint } from "./formwork_model.js";
 const WIRE_STUB_M = 0.3;        // each rim wire drawn 300 mm along the way it runs in
 const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact's
 const HEAD_M = 0.08;            // a head's mark
-const PUSH_LONGEST_M = 1.0;     // the run's largest head push, drawn this long
+const PUSH_LONGEST_M = 1.0;     // a push at the run's 95th percentile and over, drawn this long
+const TIP_M = 0.08;             // the head on a push, this long
 const PLAIN = [0.86, 0.86, 0.86];
 const TREE_PLAIN = [0.72, 0.74, 0.78];
 const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
@@ -82,6 +83,8 @@ export function createFormworkView(THREE) {
         color: DESIGN_COLOUR, transparent: true, opacity: 0.45 }), false),
       wires: lines(rim, new THREE.LineBasicMaterial({ vertexColors: true }), true),
       push: lines(heads, new THREE.LineBasicMaterial({ color: 0x3f9e57 }), false),
+      tips: marks(new THREE.ConeGeometry(TIP_M / 3, TIP_M, 8), heads,
+                  new THREE.MeshBasicMaterial({ color: 0x3f9e57 })),
       trees: marks(new THREE.CylinderGeometry(radius, radius, 1, 12), sim.trees.members.length,
                    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.3 })),
       heads: marks(new THREE.SphereGeometry(HEAD_M, 12, 8), heads,
@@ -193,11 +196,24 @@ export function createFormworkView(THREE) {
       const tint = touching ? HEAD_TOUCHING : HEAD_CLEAR;
       parts.heads.setColorAt(h, tone(tint));
       const from = node(netNode);
-      const scale = sim.scales.push > 0 ? PUSH_LONGEST_M / sim.scales.push : 0;
+      const size = Math.hypot(force[0], force[1], force[2]);
+      const length = sim.scales.push > 0 ? Math.min(1, size / sim.scales.push) * PUSH_LONGEST_M : 0;
+      const tip = size > 0 ? from.map((value, k) => value + force[k] / size * length) : from;
       put(push.array, 6 * h, from);
-      put(push.array, 6 * h + 3, from.map((value, k) => value + force[k] * scale));
+      put(push.array, 6 * h + 3, tip);
+      // the head on the push, pointing along it; none where nothing pushes
+      if (size > 0) {
+        start.set(force[0] / size, force[1] / size, force[2] / size);
+        turn.setFromUnitVectors(up, start);
+        matrix.compose(middle.set(tip[0], tip[1], tip[2]), turn, stretch.set(1, 1, 1));
+      } else {
+        matrix.makeScale(0, 0, 0);
+      }
+      parts.tips.setMatrixAt(h, matrix);
     });
     parts.heads.count = sim.trees.heads.length;
+    parts.tips.count = sim.trees.heads.length;
+    parts.tips.instanceMatrix.needsUpdate = true;
     parts.heads.instanceMatrix.needsUpdate = true;
     if (parts.heads.instanceColor) parts.heads.instanceColor.needsUpdate = true;
     push.needsUpdate = true;
@@ -249,6 +265,7 @@ export function createFormworkView(THREE) {
     parts.trees.visible = !!on.trees;
     parts.heads.visible = !!on.heads;
     parts.push.visible = !!on.heads;
+    parts.tips.visible = !!on.heads;
     parts.wires.visible = !!on.wires;
     parts.anchors.visible = !!on.anchors;
     parts.ground.visible = !!on.ground;

@@ -89,6 +89,9 @@ out.read = { nodes: sim.nodes, edges: sim.edges, faces: sim.faces, older: sim.ol
   tension2: Array.from(sim.captures[2].tension), scales: sim.scales,
   heads: sim.trees.heads, machines: sim.rim.machines, names: sim.rim.names };
 out.olderRead = m.readSim(older).older;
+// one spike among the pushes: the scale is the 95th percentile, not the spike
+out.spike = m.percentile95([...Array(20).fill(100), 10000]);
+out.spikeNone = m.percentile95([]);
 out.refused = [m.readSim(null), m.readSim({ schema: "bench.cablenet/2", captures: [{}] }),
                m.readSim({ ...doc, captures: [] })];
 out.labels = sim.captures.map(m.captureLabel);
@@ -184,6 +187,12 @@ def test_each_scale_is_the_largest_over_the_whole_run(out):
     # so a colour means the same newtons in every capture (spec section 9)
     assert out["read"]["scales"] == pytest.approx(
         {"tension": 3000, "wire": 1500, "deviation": 500, "utilisation": 1.2, "push": 900})
+
+
+def test_the_push_scale_is_the_95th_percentile_so_one_spike_does_not_set_it(out):
+    # final review 4: the real run's largest push, 115 kN at one capture, made
+    # every other push a few centimetres long
+    assert out["spike"] == 100 and out["spikeNone"] == 0
 
 
 def test_an_older_run_is_said_to_be_one_and_a_wrong_document_is_none(out):
