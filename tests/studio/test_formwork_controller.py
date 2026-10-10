@@ -210,6 +210,35 @@ def test_a_throw_in_the_player_stops_the_player_and_not_the_studio():
     assert "el.runStatus.textContent = error.message;" in tick
 
 
+def test_the_tab_records_the_raise_through_the_studio_s_recorder():
+    # the owner's choice of 10 October 2026: Record in the Formwork tab plays
+    # the captures through the studio's recorder, with the tab's labels and key
+    assert 'el.record.addEventListener("click", () => hooks.record());' in JS
+    assert "record: toggleRecording," in STUDIO
+    seek = JS[JS.index("    seek(seconds) {"):]
+    seek = seek[:seek.index("\n    },")]
+    assert "tab.at = Math.min(Math.max(seconds, 0), end());" in seek and "draw();" in seek
+    overlay = JS[JS.index("    overlay(ctx, width, height) {"):]
+    overlay = overlay[:overlay.index("\n    },")]
+    assert "const rect = { left: 0, top: 0, width, height };" in overlay
+    assert "labelKindsInView(now.labels, now.show)" in overlay
+    assert "paintOverlay(ctx, { width, height, caption: recordingCaption(tab.sim, head.nearer)," in overlay
+    take = _top(STUDIO, "recordAnimation")
+    assert "const formwork = !!(formworkTab && formworkTab.active());" in take
+    assert ('const status = document.getElementById(formwork ? "formwork-record-status" '
+            ': "record-status");') in take
+    assert "const speed = formwork ? formworkTab.recording.speed() : state.timeline.speed;" in take
+    assert "Math.ceil(formworkTab.recording.duration() / speed * fps)" in take
+    # the camera stays where he put it: no turntable, no take view
+    assert "if (!formwork) captureOrbitBase(0);" in take
+    assert "if (formwork) formworkTab.recording.seek(frameIndex * speed / fps);" in take
+    assert "if (formwork) blob = await formworkFrame(canvas);" in take
+    assert '(formwork ? "&kind=formwork" : "")' in take
+    frame = _top(STUDIO, "formworkFrame")
+    assert "ctx.drawImage(source, 0, 0);" in frame
+    assert "formworkTab.recording.overlay(ctx, source.width, source.height);" in frame
+
+
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
     assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
             "{ display: none; }") in CSS

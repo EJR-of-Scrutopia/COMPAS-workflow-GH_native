@@ -6,7 +6,8 @@
 
 import {
   captureLabel, captureTimes, colourKey, formworkLabels, formworkPickHtml, formworkWarnings,
-  frameLine, frameLineHtml, labelKindsInView, playhead, readSim, worstHtml, worstTables,
+  frameLine, frameLineHtml, labelKindsInView, paintOverlay, playhead, readSim, recordingCaption,
+  worstHtml, worstTables,
 } from "./formwork_model.js";
 import { spreadLabels } from "./cablenet_model.js";
 
@@ -57,7 +58,7 @@ function simUrl(studyName, options) {
 
 // hooks: enter() and leave() (the studio's timeline and objects), legend(key)
 // (null hides it), showMachine(on), aim(point), camera(), canvasRect(),
-// viewRight(), onPopup().
+// viewRight(), onPopup(), record() (the studio's recorder: start, or stop).
 export function mountFormwork({ studyName, studyOptions, machine, designPrestress, tolerance, view,
                                 hooks }) {
   const el = {
@@ -72,6 +73,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     warnings: byId("formwork-warnings"), popup: byId("formwork-popup"),
     popupClose: byId("formwork-popup-close"), worst: byId("formwork-worst"),
     labels: byId("formwork-labels"), pick: byId("formwork-pick"),
+    record: byId("formwork-record"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
@@ -426,6 +428,35 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     }
   }
   el.run.addEventListener("click", startRun);
+  el.record.addEventListener("click", () => hooks.record());
+
+  // The recording of the raise (studio.js recordAnimation): the player's
+  // length and speed, a seek that draws the capture at a second, and what
+  // each frame carries over the picture, projected on the frame's own pixels.
+  const recording = {
+    duration: () => end(),
+    speed: () => tab.speed,
+    seek(seconds) {
+      tab.at = Math.min(Math.max(seconds, 0), end());
+      setPlaying(false);
+      draw();
+    },
+    overlay(ctx, width, height) {
+      const head = playhead(tab.times, tab.at);
+      if (!tab.sim || !head) return;
+      const now = settings();
+      const rect = { left: 0, top: 0, width, height };
+      const scale = height / 900;
+      const targets = formworkLabels(tab.sim, head.nearer, labelKindsInView(now.labels, now.show))
+        .slice(0, LABEL_MAX);
+      const points = targets.map((target) => view.project(view.point(target), hooks.camera(), rect));
+      const shown = spreadLabels(points, LABEL_GAP_X * scale, LABEL_GAP_Y * scale);
+      const labels = targets.map((target, i) => (shown[i]
+        ? { text: target.text, x: points[i][0], y: points[i][1] } : null)).filter(Boolean);
+      paintOverlay(ctx, { width, height, caption: recordingCaption(tab.sim, head.nearer),
+                          labels, key: colourKey(now.colour, tab.sim, now.tolerance) });
+    },
+  };
 
   // The tab opened or left (studio.js activateTab).
   function setActive(on) {
@@ -484,5 +515,5 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   }
 
   return { active: () => tab.active, setActive, tick, place, pick, clear, reload, refresh,
-           closePopup: () => setPopup(false) };
+           closePopup: () => setPopup(false), recording };
 }

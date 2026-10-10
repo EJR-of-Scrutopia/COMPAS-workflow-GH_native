@@ -1700,6 +1700,7 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
   cursor: pointer; }
 #panel #formwork-worst-toggle.active { background: var(--accent-bg); color: var(--accent-ink);
   border-color: var(--accent); }
+#panel #formwork-record-status { color: var(--ink-2); font-size: var(--t-2); min-height: 1.2em; }
 #formwork-popup { position: fixed; left: 16px; top: 58px; width: 440px; max-height: 80vh;
   overflow: auto; background: var(--scrim); -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px); padding: var(--s4); border: 1px solid var(--line);

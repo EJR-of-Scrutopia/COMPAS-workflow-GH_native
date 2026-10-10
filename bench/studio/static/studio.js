@@ -16141,6 +16141,20 @@ function paintFormworkLegend(key) {
   else paintScalarLegend(key.title, key.min, "", key.max);
 }
 
+// One frame of the raise as recorded: the picture just rendered, copied into a
+// 2D canvas, with the Formwork tab's labels, key and figures drawn over it;
+// the page's own are HTML and never reach the WebGL canvas the recorder reads.
+const formworkCompose = document.createElement("canvas");
+
+function formworkFrame(source) {
+  formworkCompose.width = source.width;
+  formworkCompose.height = source.height;
+  const ctx = formworkCompose.getContext("2d");
+  ctx.drawImage(source, 0, 0);
+  formworkTab.recording.overlay(ctx, source.width, source.height);
+  return new Promise((resolve) => formworkCompose.toBlob(resolve, RECORD_MIME, RECORD_QUALITY));
+}
+
 // A worst table's row turns the camera onto its part, from where it stands.
 function aimFormworkAt(point) {
   if (!point) return;
@@ -16167,6 +16181,7 @@ formworkTab = mountFormwork({
     camera: () => camera,
     canvasRect: () => canvas.getBoundingClientRect(),
     viewRight,
+    record: toggleRecording,
     onPopup: () => {
       // the worst tables take the left: the data sheet and the Cable net pop-up shut
       document.getElementById("data-panel").classList.add("hidden");
@@ -18606,7 +18621,12 @@ const RECORD_MIME = "image/jpeg";
 const RECORD_QUALITY = 0.95;
 
 async function recordAnimation() {
-  const status = document.getElementById("record-status");
+  // With the Formwork tab open the recording is the engine's raise: the tab's
+  // player is stepped instead of the take's clock, the camera stays where it
+  // stands, and the tab's labels, key and figures are drawn over each frame
+  // (the owner's choice of 10 October 2026).
+  const formwork = !!(formworkTab && formworkTab.active());
+  const status = document.getElementById(formwork ? "formwork-record-status" : "record-status");
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
   // F1: capture the peak from the same source the day-cycle button reads,
   // not the slider -- applyDayCycle's own writes below clamp that slider
@@ -18615,8 +18635,9 @@ async function recordAnimation() {
   if (state.dayCycle.record) state.dayCycle.peakElevation = state.sunElevationSetting;
   const target = "study-" + state.bundle.slug;
   const fps = 60;
-  const speed = state.timeline.speed;
-  const total = Math.ceil(timelineDuration() / speed * fps);
+  const speed = formwork ? formworkTab.recording.speed() : state.timeline.speed;
+  const total = formwork ? Math.ceil(formworkTab.recording.duration() / speed * fps)
+    : Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at " + recordingFrame().width + "x"
     + recordingFrame().height;
   const wasPlaying = state.timeline.playing;
@@ -18633,12 +18654,15 @@ async function recordAnimation() {
   // set by pressing Play, which is why a recording taken after Play looked
   // fine and a fresh one came out frozen.
   const wasShowMode = state.showMode;
-  state.showMode = "timeline";
-  paintShowButtons();
+  if (!formwork) {
+    state.showMode = "timeline";
+    paintShowButtons();
+  }
   settleControls();
   // A recording always runs from frame zero, so its bearing is captured
-  // for t = 0 -- whatever the clock read when Record was pressed.
-  captureOrbitBase(0);
+  // for t = 0 -- whatever the clock read when Record was pressed. The raise
+  // is recorded from where he stands.
+  if (!formwork) captureOrbitBase(0);
   // The chosen frame rides into the take: ratio, FOV and the grade are
   // all camera truths the recording must keep.
   const frame = recordingFrame();
@@ -18705,14 +18729,19 @@ async function recordAnimation() {
       let at = performance.now();
       // The take's own clock, so the same take blows the same way twice.
       windAir.windTime.value = frameIndex / fps;
-      applyTimeline(frameIndex * speed / fps);
+      if (formwork) formworkTab.recording.seek(frameIndex * speed / fps);
+      else applyTimeline(frameIndex * speed / fps);
       // A lens up is in the picture, so it follows the take's clock; it
       // repaints only when the take reaches another computed instant.
-      if (cableNetLensUp()) paintCableNetLenses();
+      if (!formwork) {
+        if (cableNetLensUp()) paintCableNetLenses();
+      }
       renderView();
       spent.render += performance.now() - at;
       at = performance.now();
-      const blob = await new Promise(
+      let blob = null;
+      if (formwork) blob = await formworkFrame(canvas);
+      else blob = await new Promise(
         (resolve) => canvas.toBlob(resolve, RECORD_MIME, RECORD_QUALITY));
       spent.encode += performance.now() - at;
       // Last frame's upload lands here, having run under this frame's
@@ -18753,7 +18782,8 @@ async function recordAnimation() {
       return;
     }
     status.textContent = "stitching...";
-    const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps, { method: "POST" });
+    const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps
+      + (formwork ? "&kind=formwork" : ""), { method: "POST" });
     const body = await stitched.json();
     status.textContent = stitched.ok
       ? "saved " + body.video
@@ -18810,7 +18840,8 @@ function paintRecordButton() {
 function toggleRecording() {
   if (state.recording) {
     state.recordStop = true;
-    document.getElementById("record-status").textContent = "stopping...";
+    document.getElementById(formworkTab && formworkTab.active()
+      ? "formwork-record-status" : "record-status").textContent = "stopping...";
     return;
   }
   recordAnimation();
