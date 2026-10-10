@@ -166,13 +166,16 @@ def _run(model, net, plan, progress):
     # laid out by hand (spec section 4.1): every node but the rim's and the
     # heads' lies on the ground under where the first frame has it, and slides
     # there until no member is stretched, the rim on its anchors and each head
-    # node on its head; then the ground's friction takes hold
+    # node on its head, tied to it from then on (the owner's ruling of 10
+    # October 2026: the net is fixed to the column ends, which keep the form's
+    # shape); then the ground's friction takes hold
     lying = [i for i in range(len(x)) if i not in anchors and i not in tree_of]
     x[lying, 2] = 0.0
     resting = {i: x[i].copy() for i in lying}
     first = {node: np.asarray(model.frames[0].trees[tree], dtype=float)
              for node, tree in tree_of.items()}
-    contacts = ne.Contacts(first, frozenset(tree_of), resting, frozenset(rim))
+    contacts = ne.Contacts(first, frozenset(tree_of), resting, frozenset(rim),
+                           tied=frozenset(tree_of))
     rest, contacts = ne.settle(x, net, model.weight, anchors, contacts, slide=True)
     x = rest.x
     reel = {node: 0.0 for node in rim}

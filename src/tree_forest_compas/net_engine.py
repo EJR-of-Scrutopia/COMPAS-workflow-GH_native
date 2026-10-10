@@ -388,6 +388,10 @@ class Contacts(NamedTuple):
     resting: dict           # net node -> (3,) the point on the ground where it rests
     seated: frozenset = frozenset()   # the nodes on wires their foundations hold on the anchor
     left: frozenset = frozenset()     # nodes a head let go of that have not been above it since
+    tied: frozenset = frozenset()     # the net nodes tied to their heads: held in every
+                                      # direction, pulled as well as pushed, never let go (the
+                                      # owner's ruling of 10 October 2026: the net is fixed
+                                      # to the column ends)
 
 
 def _over(p, point):
@@ -412,7 +416,9 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
 
     fixed maps the nodes always held to where they are held. A head or a hold
     holds its node in its notch, in every direction, while it pushes it up,
-    and lets go the moment holding it would mean pulling it down. The ground
+    and lets go the moment holding it would mean pulling it down; a node tied
+    to its head (contacts.tied) is held in every direction whatever the force,
+    and never let go. The ground
     holds a node resting on it where it rests while it pushes it up, and lets
     go when it would have to pull. wires maps a node on a wire to its Wire:
     the node slides along its wire, let out of the anchor until its wire
@@ -470,6 +476,8 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
         changes = []
         released = set()
         for node in sorted(engaged):
+            if node in contacts.tied:                      # tied: it pulls as well as pushes
+                continue
             if rest.reaction[node, 2] < -LEFTOVER_N:       # the head would have to pull
                 engaged.discard(node)
                 released.add(node)
@@ -508,6 +516,6 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
         if not changes:
             return (rest._replace(iterations=iterations),
                     Contacts(contacts.heads, frozenset(engaged), resting, frozenset(seated),
-                             frozenset(left)))
+                             frozenset(left), contacts.tied))
     raise EngineError("the contacts did not settle in {} rounds; still changing at nodes "
                       "{}".format(rounds, sorted(set(changes))[:20]))
