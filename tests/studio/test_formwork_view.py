@@ -130,8 +130,10 @@ def test_a_head_is_marked_while_it_pushes_and_its_push_is_drawn(out):
     position, colour = out["head"]
     assert position == pytest.approx([1.0, 1.0, 0.25])
     assert colour == pytest.approx(linear([0x3f / 255, 0x9e / 255, 0x57 / 255]))
-    # 800 N up, half a metre a kilonewton
-    assert out["push"] == pytest.approx([1.0, 1.0, 0.25, 1.0, 1.0, 0.65])
+    # 800 N up, on the run's own scale: its largest push, 900 N, drawn 1 m
+    # long (found on screen: at half a metre a kilonewton the finish's pushes
+    # ran metres out of the picture)
+    assert out["push"] == pytest.approx([1.0, 1.0, 0.25, 1.0, 1.0, 0.25 + 800 / 900])
     # and a head that has let go is drawn clear
     assert out["utilisation"][2] == pytest.approx(linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255]))
 

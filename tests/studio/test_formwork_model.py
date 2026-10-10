@@ -178,7 +178,7 @@ def test_the_document_is_read_once_into_metres_newtons_and_millimetres(out):
 def test_each_scale_is_the_largest_over_the_whole_run(out):
     # so a colour means the same newtons in every capture (spec section 9)
     assert out["read"]["scales"] == pytest.approx(
-        {"tension": 3000, "wire": 1500, "deviation": 500, "utilisation": 1.2})
+        {"tension": 3000, "wire": 1500, "deviation": 500, "utilisation": 1.2, "push": 900})
 
 
 def test_an_older_run_is_said_to_be_one_and_a_wrong_document_is_none(out):

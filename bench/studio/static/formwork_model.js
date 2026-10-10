@@ -64,6 +64,13 @@ export function readSim(doc) {
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
   }));
   const scale = (field) => Math.max(0, ...captures.map((c) => largestOf(c[field])));
+  // the largest push of any head on its node, which the drawing scales by
+  const push = Math.max(0, ...captures.map((c) => {
+    let top = 0;
+    const p = c.headPush;
+    for (let i = 0; p && i + 2 < p.length; i += 3) top = Math.max(top, Math.hypot(p[i], p[i + 1], p[i + 2]));
+    return top;
+  }));
   return {
     study: doc.study, options: doc.options || {},
     nodes: Number(net.nodes) || 0, edges: net.edges || [],
@@ -75,7 +82,7 @@ export function readSim(doc) {
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
-              deviation: scale("deviation"), utilisation: scale("treeUtilisation") },
+              deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
   };
 }

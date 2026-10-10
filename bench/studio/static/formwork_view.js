@@ -9,7 +9,7 @@ import { colourOf, placedFaces, targetPoint } from "./formwork_model.js";
 const WIRE_STUB_M = 0.3;        // each rim wire drawn 300 mm along the way it runs in
 const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact's
 const HEAD_M = 0.08;            // a head's mark
-const PUSH_M_PER_KN = 0.5;      // a head's push, half a metre a kilonewton
+const PUSH_LONGEST_M = 1.0;     // the run's largest head push, drawn this long
 const PLAIN = [0.86, 0.86, 0.86];
 const TREE_PLAIN = [0.72, 0.74, 0.78];
 const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
@@ -192,7 +192,7 @@ export function createFormworkView(THREE) {
       const tint = touching ? HEAD_TOUCHING : HEAD_CLEAR;
       parts.heads.setColorAt(h, tone(tint));
       const from = node(netNode);
-      const scale = PUSH_M_PER_KN / 1000;
+      const scale = sim.scales.push > 0 ? PUSH_LONGEST_M / sim.scales.push : 0;
       put(push.array, 6 * h, from);
       put(push.array, 6 * h + 3, from.map((value, k) => value + force[k] * scale));
     });
