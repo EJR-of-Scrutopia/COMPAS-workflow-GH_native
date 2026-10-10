@@ -39,6 +39,10 @@ const rows = [
 out.motors = m.motorsHtml(rows, "A", demand);
 out.motorsOlder = m.motorsHtml(rows, "A", { schema: "bench.cablenet/2" });
 out.graphs = m.graphsHtml(demand, 1123.4);
+// the pop-up's verdict names the nodes the run held
+const held = { ...demand, held: { actuators: [5, 6] } };
+out.verdict = m.verdictHtml({ holds: true, pairing: "bound", machines: [],
+  worst: { margin: 1.1, limit: "motor torque", part: "M", wire: 0 }, wires: [] }, held);
 out.graphsOlder = m.graphsHtml({ ...demand, needs: undefined }, 1123.4);
 // The Holds lens: a label at each held batch's first node, its legend, the card.
 const stage = demand.stages[0];
@@ -75,9 +79,10 @@ def test_a_ceiling_holds_the_fewest_steps_whose_prestress_it_covers(out):
     assert covered == {"step": 0, "count": 0, "nodes": [], "covered": True, "prestress": 300}
     assert two == {"step": 1, "count": 2, "nodes": [5, 6], "covered": True, "prestress": 150}
     assert exact["step"] == 1
-    # a ceiling no step meets: the whole walk held, at the ceiling, not covered
+    # a ceiling no step meets: the whole walk held, at what its last step
+    # needs, not covered
     assert short == {"step": 2, "count": 4, "nodes": [5, 6, 7, 8], "covered": False,
-                     "prestress": 0.5}
+                     "prestress": 1}
     assert out["holdsNone"] == [None, None, None]
 
 
@@ -94,7 +99,9 @@ def test_the_sag_and_the_roof_are_read_off_the_ladder_in_the_logarithm(out):
 
 def test_every_motor_shows_the_nodes_it_needs_held_and_its_sag(out):
     html = out["motors"]
-    assert "<th>Holds</th><th>Sag, mm</th>" in html
+    # the sag with the column heads alone, said so beside the holds it ignores
+    # (final review 11, found on screen: 792.41 beside 640 holds)
+    assert "<th>Holds</th><th>Sag alone, mm</th>" in html
     assert "<td>none</td><td>2.39</td>" in html
     assert "<td>2</td><td>18.23</td>" in html
     assert "B&lt;1&gt;" in html
@@ -121,6 +128,11 @@ def test_the_holds_lens_labels_each_batch_held_and_keys_the_reason(out):
     assert out["reasons"] == ["machine", "every machine", "every machine", "every machine"]
     assert "<th>Hold</th><td>yes</td>" in out["pickHold"]
     assert "<th>Hold</th>" not in out["pickFree"]
+
+
+def test_the_verdict_says_it_judged_the_run_with_its_nodes_held(out):
+    assert "<th>Wires hold</th><td>✓</td>" in out["verdict"]
+    assert "<th>Nodes held</th><td>2</td>" in out["verdict"]
 
 
 def test_the_graphs_add_the_prestress_needed_against_the_nodes_held(out):

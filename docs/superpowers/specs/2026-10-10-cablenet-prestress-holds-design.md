@@ -34,7 +34,7 @@ At the heaviest instant, as now:
 2. **The prestress each step needs.** For every step k, the least prestress that keeps the worst sag within the tolerance with that step's nodes held: found by bisection on the logarithm of the prestress between 1 N and 1 MN, to 1 percent. A step that cannot reach the tolerance even at 1 MN records none. Ruling: the bounds are 1 N and 1 MN, which bracket every wire in the catalogue many times over.
 3. **The sag ladder.** With the column heads alone, the worst sag at each prestress of a ladder of 25 values from 100 N to 100 kN, evenly spaced in the logarithm. This is the accuracy column of section 6.
 4. **The roof ladder.** For the same ladder, the largest factor on the whole load (skin, net and everything the instant carries) that keeps the worst sag within the tolerance with the column heads alone, by bisection to 1 percent between 0 and 100. Ruling: the whole load is scaled, not the skin alone; the net's own weight is under 1 percent of the skin on the real study.
-5. **The design point.** With a ceiling C, the run holds the fewest steps k* whose prestress is at most C, and analyses every instant (as now) with those nodes held at that step's prestress. With no ceiling, k* is 0 and the prestress is step 0's. If no step reaches C, k* is the last step and the prestress is C; the placement is not reached.
+5. **The design point.** With a ceiling C, the run holds the fewest steps k* whose prestress is at most C, and analyses every instant (as now) with those nodes held at that step's prestress. With no ceiling, k* is 0 and the prestress is step 0's. If no step reaches C, k* is the last step and the prestress is what that step needs (1 MN when even that is beyond the search), so the machine's verdict reads the shortfall. Amended after the final review: the first ruling, designing at C, made the verdict pass at exactly 1.0x for the machine that did not reach.
 
 The document stays `bench.cablenet/2` and gains one block, `needs`:
 
@@ -57,7 +57,7 @@ Ruling: the run's added cost is about 40 refits and some 700 sag solves, of the 
 | Row | What |
 |---|---|
 | Needed | the prestress the form needs with its column heads alone: `needs.steps[0]`, N; `more than 1 MN` when step 0 records none |
-| Gives | the chosen machine's worst wire ceiling, N a wire, with a mark: ✓ when it is at least Needed |
+| Gives | the chosen machine's worst wire ceiling, N a wire, with a mark and a margin: ✓ when it is at least Needed and the run's verdict holds; the margin is the worse of the ceiling over Needed and the verdict's own (amended after the final review, so the menu and the pop-up never mark one machine both ways) |
 | Most | the strongest machine's ceiling, N a wire, with a mark against Needed and its name |
 | Holds | the nodes the chosen machine needs held: `none`, or `340 nodes, this machine short` (Most is at least Needed), or `340 nodes, every machine short` (Most is below Needed) |
 | Roof | the load factor the chosen machine's ceiling gives with the column heads alone, from the roof ladder: `0.4x the skin`, `2.6x the skin` |
@@ -68,7 +68,8 @@ Ruling: Holds for a machine is the fewest steps whose prestress it covers, count
 
 ## 6. The pop-up
 
-- **Mechanism, every motor:** two columns join the table: Holds (the nodes that motor's ceiling needs held, by the rule above) and Sag, mm (the worst sag at that ceiling with the column heads alone, from the sag ladder, interpolated in the logarithm of the prestress). That is what a change of motor does to the accuracy.
+- **Mechanism, every motor:** two columns join the table: Holds (the nodes that motor's ceiling needs held, by the rule above) and Sag alone, mm (the worst sag at that ceiling with the column heads alone, from the sag ladder, interpolated in the logarithm of the prestress). That is what a change of motor does to the accuracy.
+- **Mechanism, the verdict:** headed Wires hold, with a Nodes held row: it judges the run as designed, with its holds, which the menu's Holds row counts.
 - **Graphs:** a fifth graph, the prestress needed against nodes held (`needs.steps`), with the chosen ceiling as a line.
 
 ## 7. The Holds lens

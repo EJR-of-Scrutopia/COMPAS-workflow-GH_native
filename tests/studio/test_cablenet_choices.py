@@ -124,7 +124,9 @@ def test_the_verdict_is_the_worst_margin_and_a_row_per_machine(out):
     html = out["verdict"]
     verdict = out["given"]["row"]["verdict"]
     worst = verdict["worst"]
-    assert html.startswith("<table><tr><th>Holds</th><td>" + ("✓" if verdict["holds"] else "✗"))
+    # the wires as the run was designed, said apart from the menu's Holds
+    # (final review 1)
+    assert html.startswith("<table><tr><th>Wires hold</th><td>" + ("✓" if verdict["holds"] else "✗"))
     assert "<th>Margin</th><td>{:.1f}x</td>".format(worst["margin"]) in html
     assert "<th>Worst wire</th><td>{}</td>".format(worst["wire"]) in html
     assert "<th>Pairing</th><td>bound</td>" in html

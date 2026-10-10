@@ -187,8 +187,9 @@ export function holdsFor(demand, ceiling) {
   const at = steps.findIndex((s) => s.prestress_newtons != null && s.prestress_newtons <= c);
   const step = at < 0 ? steps.length - 1 : at;
   const nodes = steps.slice(1, step + 1).flatMap((s) => s.added || []);
+  const last = steps[steps.length - 1].prestress_newtons;
   return { step, count: nodes.length, nodes, covered: at >= 0,
-           prestress: at < 0 ? c : steps[at].prestress_newtons };
+           prestress: at >= 0 ? steps[at].prestress_newtons : last == null ? c : last };
 }
 
 // Why nodes need holding: a stronger machine would need none ("machine"), or
@@ -233,10 +234,21 @@ export function menuAnswers(demand, row, strongest) {
   const worst = row && !row.refused && row.verdict ? row.verdict.worst : null;
   const needed = needs ? needs.steps[0].prestress_newtons : null;
   const known = needed != null;
+  // beyond 1 MN every machine is short; with no table, nothing is judged
+  const judged = (ceiling) => (!needs ? null : known ? ceiling >= needed : false);
   const most = strongest ? { newtons: strongest.ceiling_newtons, described: strongest.described,
-                             holds: known ? strongest.ceiling_newtons >= needed : null } : null;
-  const gives = worst ? { newtons: worst.ceiling, holds: known ? worst.ceiling >= needed : null,
-                          margin: known ? worst.ceiling / needed : null } : null;
+                             holds: judged(strongest.ceiling_newtons) } : null;
+  // Gives is short of the prestress the form needs, or of what the run's
+  // verdict judged its wires at (a fitted peak above the ceiling), whichever
+  // is worse (final review 2)
+  let gives = null;
+  if (worst) {
+    const ratios = !needs || !known ? []
+      : [worst.ceiling / needed, ...(worst.margin == null ? [] : [worst.margin])];
+    const margin = ratios.length ? Math.min(...ratios) : null;
+    gives = { newtons: worst.ceiling, margin,
+              holds: !needs ? null : margin != null && margin >= 1 && row.verdict.holds !== false };
+  }
   const held = gives && needs ? holdsFor(demand, worst.ceiling) : null;
   return {
     needed: needs ? { newtons: needed } : null,
@@ -250,6 +262,12 @@ export function menuAnswers(demand, row, strongest) {
   };
 }
 
+// A ratio as the menu shows it: one decimal, or two figures under a tenth, so
+// 0.023 is not printed as nought (found on screen: 0.0x).
+function ratio(value) {
+  return Number(value) >= 0.095 ? factor(value) : Number(value).toPrecision(2);
+}
+
 export function answersHtml(answers) {
   const gives = answers.gives;
   const marked = (answer) => (answer.holds == null ? "" : " " + mark(answer.holds));
@@ -259,13 +277,13 @@ export function answersHtml(answers) {
     ["Needed", answers.needed == null ? "not run"
       : answers.needed.newtons == null ? "more than 1 MN" : newtons(answers.needed.newtons) + " N"],
     ["Gives", gives == null ? "no machine" : newtons(gives.newtons) + " N a wire" + marked(gives) +
-      (gives.margin == null ? "" : " " + factor(gives.margin) + "x")],
+      (gives.margin == null ? "" : " " + ratio(gives.margin) + "x")],
     ["Most", answers.most == null ? "none" : newtons(answers.most.newtons) + " N a wire" +
       marked(answers.most) + ", " + escapeHtml(answers.most.described)],
     ["Holds", holds == null ? missing : holds.count === 0 && holds.covered ? "none"
       : (holds.covered ? "" : "more than ") + holds.count + " nodes, " +
         (holds.reason === "machine" ? "this machine short" : "every machine short")],
-    ["Roof", answers.roof == null ? missing : factor(answers.roof) + "x the skin"],
+    ["Roof", answers.roof == null ? missing : ratio(answers.roof) + "x the skin"],
   ];
   return '<table class="cablenet-answers">' +
     rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("") + "</table>";
@@ -779,7 +797,7 @@ export function limitsHtml(terms) {
 // Every motor at the other choices: one row each, the chosen one marked, a row
 // a click chooses.
 export function motorsHtml(rows, chosen, demand) {
-  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price", "Holds", "Sag, mm"];
+  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price", "Holds", "Sag alone, mm"];
   const body = (rows || []).map((row) => {
     const choice = row.choices || {};
     const motor = escapeHtml(choice.motor);
@@ -823,14 +841,19 @@ export function machineHtml(row, parts) {
   ]);
 }
 
-export function verdictHtml(verdict) {
+// The machine's verdict on the run as designed: its wires at the run's
+// prestress with the run's nodes held, said apart from the menu's Holds
+// (final review 1).
+export function verdictHtml(verdict, demand) {
   if (!verdict) return "";
   const worst = verdict.worst;
+  const held = needsOf(demand) ? [["Nodes held",
+    String((((demand.held || {}).actuators) || []).length)]] : [];
   const head = keyed(worst
-    ? [["Holds", mark(verdict.holds)], ["Margin", factor(worst.margin) + "x"],
+    ? [["Wires hold", mark(verdict.holds)], ["Margin", factor(worst.margin) + "x"],
        ["Limit", escapeHtml(worst.limit)], ["Part", escapeHtml(worst.part)],
-       ["Worst wire", String(worst.wire)], ["Pairing", escapeHtml(verdict.pairing)]]
-    : [["Holds", mark(verdict.holds)], ["Tension", "none"]]);
+       ["Worst wire", String(worst.wire)], ["Pairing", escapeHtml(verdict.pairing)], ...held]
+    : [["Wires hold", mark(verdict.holds)], ["Tension", "none"], ...held]);
   const rows = verdict.machines.map((m) => {
     const w = verdict.wires[m.worst_wire];
     return [String(m.machine + 1), String(m.worst_wire), newtons(w.tension),

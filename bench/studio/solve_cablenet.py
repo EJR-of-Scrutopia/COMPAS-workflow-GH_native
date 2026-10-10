@@ -422,8 +422,9 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     to keep the worst sag within the line, and the sag and the roof at a
     ladder of prestresses with the column heads alone. A prestress of None is
     worked out from it: the least that the fewest held nodes need within
-    `ceiling` (the machine's, N), or the column heads' own with no ceiling; a
-    ceiling no step meets is designed at, and the line is then not reached.
+    `ceiling` (the machine's, N), or the column heads' own with no ceiling; for
+    a ceiling no step meets, what the walk's last step needs (MOST_NEWTONS when
+    even that is none), so the machine's verdict reads the shortfall.
     """
 
     import numpy as np
@@ -517,8 +518,9 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
         if prestress is None:
             covered = [s.prestress for s in walked if s.prestress is not None
                        and (ceiling is None or s.prestress <= float(ceiling))]
+            last = walked[-1].prestress
             prestress = (covered[0] if covered
-                         else float(ceiling) if ceiling is not None else MOST_NEWTONS)
+                         else last if last is not None else MOST_NEWTONS)
 
     # the floor every member is given, as a force density at the finished shape
     floor = float(prestress) / member_lengths

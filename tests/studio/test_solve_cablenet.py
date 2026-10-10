@@ -583,11 +583,15 @@ def test_a_run_with_no_prestress_takes_the_least_its_ceiling_allows():
     assert held["prestress"] <= ceiling
     assert len(held["held"]["actuators"]) <= steps[-1]["count"]
     assert held["placement"]["reached"] is True
-    # a ceiling no step of a walk cut short meets: the run is designed at the
-    # ceiling and says the line was not reached (a full walk holds all four
-    # midpoints, and then any prestress is enough)
+    # a ceiling no step of a walk cut short meets: the run is designed at what
+    # the walk's last step needs, above the ceiling, so the machine's verdict
+    # reads the shortfall rather than passing at exactly its own ceiling (final
+    # review 1; a full walk holds all four midpoints, and then any prestress is
+    # enough)
     short = solve_cablenet.solve(_grid_request(prestress=None, ceiling_newtons=0.5, steps=0))
-    assert short["prestress"] == 0.5 and short["placement"]["reached"] is False
+    last = short["needs"]["steps"][-1]["prestress_newtons"]
+    assert short["prestress"] == last and last > 0.5
+    assert short["sizing"]["worst_wire_tension_newtons"] >= last
 
 
 def test_a_run_with_no_prestress_needs_a_line_and_a_ceiling_above_nothing():

@@ -39,7 +39,7 @@ def test_the_holds_for_a_ceiling_are_the_fewest_steps_it_covers():
     assert exports.holds_for(NEEDS, 200.0) == {"step": 1, "nodes": [2, 1], "covered": True,
                                               "prestress_newtons": 150.0}
     assert exports.holds_for(NEEDS, 0.5) == {"step": 2, "nodes": [2, 1, 0], "covered": False,
-                                            "prestress_newtons": 0.5}
+                                            "prestress_newtons": 1.0}
     assert exports.holds_for(None, 200.0) is None and exports.holds_for(NEEDS, None) is None
 
 

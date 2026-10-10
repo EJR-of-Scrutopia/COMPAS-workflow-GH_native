@@ -315,7 +315,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     const ok = row && !row.refused;
     el.machine.innerHTML = machineHtml(row, panel.parts);
     el.limits.innerHTML = ok ? limitsHtml(row.terms) : "";
-    el.holds.innerHTML = ok ? verdictHtml(row.verdict) + eyeBoltHtml(ASSUMED_ANGLE_DEGREES) : "";
+    el.holds.innerHTML = ok ? verdictHtml(row.verdict, panel.demand) + eyeBoltHtml(ASSUMED_ANGLE_DEGREES) : "";
     el.travel.innerHTML = ok ? travelHtml(row.travel) : "";
     el.buy.innerHTML = ok ? buyHtml(row.price, row.cut_lengths) : "";
     el.price.innerHTML = ok ? priceHtml(row.price) : "";

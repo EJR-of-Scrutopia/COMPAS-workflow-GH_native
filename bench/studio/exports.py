@@ -1853,8 +1853,10 @@ def holds_for(needs, ceiling):
                and float(s["prestress_newtons"]) <= c), None)
     step = len(steps) - 1 if at is None else at
     nodes = [int(n) for s in steps[1:step + 1] for n in (s.get("added") or [])]
+    last = steps[-1].get("prestress_newtons")
+    uncovered = c if last is None else float(last)
     return {"step": step, "nodes": nodes, "covered": at is not None,
-            "prestress_newtons": c if at is None else float(steps[at]["prestress_newtons"])}
+            "prestress_newtons": uncovered if at is None else float(steps[at]["prestress_newtons"])}
 
 
 def holds_document(demand, ceiling, most, study, cut):

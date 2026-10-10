@@ -211,7 +211,7 @@ def test_recommend_searches_the_choices_and_fills_the_selects():
 
 def test_the_machine_verdict_travel_wire_and_price_are_the_models_tables():
     body = _function_body(JS, "renderHolds")
-    for call in ("machineHtml(row, panel.parts)", "verdictHtml(row.verdict)",
+    for call in ("machineHtml(row, panel.parts)", "verdictHtml(row.verdict, panel.demand)",
                  "travelHtml(row.travel)"):
         assert call in body, call
     assert "verdictOf" not in JS

@@ -127,6 +127,16 @@ out.answersBeyond = m.answersHtml(m.menuAnswers(withNeeds(demandOf(300, 300),
 // a ceiling below every step: even the whole walk is not enough
 out.answersUncovered = m.answersHtml(m.menuAnswers(withNeeds(demandOf(300, 300), NEEDS),
   { refused: null, verdict: { holds: true, worst: { ceiling: 0.5, margin: 1 } } }, strongest));
+// a machine that covers the prestress but whose wires the verdict fails (a
+// fitted peak above its ceiling): Gives is short (final review 2)
+out.answersFitted = m.answersHtml(m.menuAnswers(withNeeds(demandOf(300, 300), NEEDS),
+  { refused: null, verdict: { holds: false, worst: { ceiling: 1123.4, margin: 0.6 } } }, strongest));
+// a figure under a tenth is not printed as nought (found on screen: 0.0x)
+out.answersTiny = m.answersHtml(m.menuAnswers(withNeeds(demandOf(300, 300),
+  { ...NEEDS, steps: [{ count: 0, added: [], prestress_newtons: 33151.9 }, ...NEEDS.steps.slice(1)],
+    ladder: [{ prestress_newtons: 100, worst_sag_mm: 25, roof: 0.0021 },
+             { prestress_newtons: 1000, worst_sag_mm: 2.5, roof: 0.021 }] }),
+  { refused: null, verdict: { holds: true, worst: { ceiling: 1000, margin: 1.1 } } }, strongest));
 // an analysis from before the table: the machine's figure, nothing judged
 out.answersOlder = m.answersHtml(m.menuAnswers(demandOf(300, 300), row, strongest));
 out.answersHostile = m.answersHtml(m.menuAnswers(null, null, { ceiling_newtons: 1, described: "<b>x</b>" }));
@@ -276,7 +286,8 @@ def test_the_menu_answers_in_values(out):
     answers = out["answers"]
     assert answers["needed"] == {"newtons": 300}
     assert answers["gives"]["newtons"] == 1123.4 and answers["gives"]["holds"] is True
-    assert answers["gives"]["margin"] == pytest.approx(1123.4 / 300)
+    # the worse of the prestress needed and the run's own verdict
+    assert answers["gives"]["margin"] == pytest.approx(min(1123.4 / 300, 3.74))
     assert answers["most"] == {
         "newtons": 6660, "holds": True,
         "described": "ES-MH342200 on EG42 100:1, no pulleys, 8 mm 7x19, one wire a motor"}
@@ -311,6 +322,12 @@ def test_a_machine_short_of_the_prestress_names_the_nodes_to_hold_and_why(out):
     assert "<th>Most</th><td>250.0 N a wire ✗, x</td>" in out["answersEvery"]
     # a form that 1 MN does not hold to the line with its column heads alone
     assert "<th>Needed</th><td>more than 1 MN</td>" in out["answersBeyond"]
+    # beyond 1 MN every machine is short, and the marks say so (final review 7)
+    assert "<th>Gives</th><td>200.0 N a wire ✗</td>" in out["answersBeyond"]
+    assert "<th>Most</th><td>6660.0 N a wire ✗," in out["answersBeyond"]
+    assert "<th>Gives</th><td>1123.4 N a wire ✗ 0.6x</td>" in out["answersFitted"]
+    assert "<th>Gives</th><td>1000.0 N a wire ✗ 0.030x</td>" in out["answersTiny"]
+    assert "<th>Roof</th><td>0.021x the skin</td>" in out["answersTiny"]
     assert "<th>Holds</th><td>2 nodes, every machine short</td>" in out["answersBeyond"]
     assert "<th>Holds</th><td>more than 4 nodes, this machine short</td>" in out["answersUncovered"]
     older = out["answersOlder"]
