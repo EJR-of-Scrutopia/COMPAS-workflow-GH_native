@@ -588,6 +588,9 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
       const done = await postJson(`/api/studies/${encodeURIComponent(studyName())}/cablenet/exports`, {
         ...sentOptions(options), configuration: panel.row.configuration, angle_degrees: ASSUMED_ANGLE_DEGREES,
         ...(wound != null ? { rope_wound_mm: wound } : {}),
+        // the holds file is for the machine chosen (spec 2026-10-10, section 8)
+        ceiling_newtons: chosenCeiling(),
+        most_newtons: panel.strongest ? panel.strongest.ceiling_newtons : null,
       });
       el.result.innerHTML = `<div>Written to ${esc(done.folder)}:</div><ul>` +
         (done.paths || []).map((p) => `<li>${esc(p)}</li>`).join("") + "</ul>" +

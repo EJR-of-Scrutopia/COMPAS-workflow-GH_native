@@ -14,6 +14,7 @@ acceptance line contradicted each other for exactly that reason.
 from __future__ import annotations
 
 import csv
+import json
 import math
 from pathlib import Path
 from typing import Dict, List
@@ -1827,4 +1828,71 @@ def write_datasheet(model, directory, stem):
 
     path = Path(directory) / "{}.md".format(stem)
     path.write_text(datasheet_markdown(model), encoding="utf-8")
+    return path
+
+
+# The holds file for Grasshopper (spec 2026-10-10 prestress and holds, section
+# 8): the nodes the chosen machine needs held, at the finished shape, which the
+# plugin's Columns component grows its branches to.
+
+HOLDS_SCHEMA = "bench.holds/1"
+
+
+def holds_for(needs, ceiling):
+    """The nodes a machine of this ceiling needs held, by the panel's rule
+    (cablenet_model.holdsFor): the fewest steps of the walk whose prestress the
+    ceiling covers, every node those steps added, and the prestress it is then
+    set to; a ceiling no step meets holds the whole walk at the ceiling, not
+    covered. None with no table or no ceiling."""
+
+    if not needs or not needs.get("steps") or ceiling is None:
+        return None
+    steps = needs["steps"]
+    c = float(ceiling)
+    at = next((i for i, s in enumerate(steps) if s.get("prestress_newtons") is not None
+               and float(s["prestress_newtons"]) <= c), None)
+    step = len(steps) - 1 if at is None else at
+    nodes = [int(n) for s in steps[1:step + 1] for n in (s.get("added") or [])]
+    return {"step": step, "nodes": nodes, "covered": at is not None,
+            "prestress_newtons": c if at is None else float(steps[at]["prestress_newtons"])}
+
+
+def holds_document(demand, ceiling, most, study, cut):
+    """The bench.holds/1 document: each node to hold with its contract
+    coordinates in metres at the finished shape and the step of the walk that
+    added it, the ceiling it is for, the prestress then set, and why (a
+    stronger machine would need none: "machine"; none would: "every machine";
+    nothing to hold: None)."""
+
+    needs = demand.get("needs")
+    if not needs or not needs.get("steps"):
+        raise ExportError("This analysis has no prestress table: run the cable net "
+                          "analysis again for the holds.")
+    held = holds_for(needs, ceiling)
+    if held is None:
+        raise ExportError("No machine is chosen, so there are no holds to write.")
+    net = demand.get("net") or {}
+    vertices = net.get("vertices") or []
+    node_of = {int(k): int(v) for k, v in (net.get("node_of") or {}).items()}
+    step_of = {}
+    for index, step in enumerate(needs["steps"][1:held["step"] + 1], start=1):
+        for node in step.get("added") or []:
+            step_of[int(node)] = index
+    nodes = []
+    for node in held["nodes"]:
+        x, y, z = (float(c) / 1000.0 for c in vertices[node_of[node]])
+        nodes.append({"node": node, "x": x, "y": y, "z": z, "step": step_of[node]})
+    needed = needs["steps"][0].get("prestress_newtons")
+    reason = None
+    if nodes:
+        stronger = needed is not None and most is not None and float(most) >= float(needed)
+        reason = "machine" if stronger else "every machine"
+    return {"schema": HOLDS_SCHEMA, "study": study, "cut": cut,
+            "tolerance_mm": needs.get("tolerance_mm"), "ceiling_newtons": float(ceiling),
+            "prestress_newtons": held["prestress_newtons"], "reason": reason, "nodes": nodes}
+
+
+def write_holds(document, directory, stem):
+    path = Path(directory) / "{}-holds.json".format(stem)
+    path.write_text(json.dumps(document, indent=1), encoding="utf-8")
     return path

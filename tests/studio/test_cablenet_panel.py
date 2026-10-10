@@ -321,6 +321,14 @@ def test_every_motor_is_scored_once_for_what_it_depends_on():
     assert "panel.motorsKey = null;" in clear and "panel.motorsRows = null;" in clear
 
 
+def test_the_export_sends_the_machines_ceiling_and_the_most_for_the_holds_file():
+    # spec 2026-10-10 prestress and holds, section 8
+    start = JS.index("cablenet/exports`, {")
+    call = JS[start:JS.index("});", start)]
+    assert "ceiling_newtons: chosenCeiling()," in call
+    assert "most_newtons: panel.strongest ? panel.strongest.ceiling_newtons : null," in call
+
+
 def test_the_wires_slider_chooses_wires_a_motor():
     listener = JS[JS.index('el.wires.addEventListener("change"'):]
     listener = listener[:listener.index("\n  });")]

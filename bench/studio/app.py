@@ -1687,6 +1687,11 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             angle = float(body.get("angle_degrees", 10.0))
             wound_body = body.get("rope_wound_mm")
             wound_body = None if wound_body is None else float(wound_body)
+            # the machine the holds file is for, and the most any makes, from
+            # the panel (spec 2026-10-10 prestress and holds, section 8)
+            ceiling_body = (None if body.get("ceiling_newtons") is None
+                            else float(body["ceiling_newtons"]))
+            most_body = None if body.get("most_newtons") is None else float(body["most_newtons"])
         except (TypeError, ValueError) as error:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
 
@@ -1772,6 +1777,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             written = list(exports.write_spreadsheet(model, folder, stem))
             written.append(exports.write_diagram(model, folder, stem))
             written.append(exports.write_datasheet(model, folder, stem))
+            # an older analysis has no prestress table, and no holds to write
+            if ceiling_body is not None and (demand.get("needs") or {}).get("steps"):
+                cut = {key: body[key] for key in
+                       ("material", "pattern", "size", "thickness", "density", "source")
+                       if body.get(key) is not None}
+                written.append(exports.write_holds(
+                    exports.holds_document(demand, ceiling_body, most_body, export, cut),
+                    folder, stem))
         except OSError as error:
             raise HTTPException(
                 500, "Could not write the exports into {}: {}".format(folder, error))
@@ -1786,11 +1799,11 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         import io
         import zipfile
 
-        if kind not in ("spreadsheet", "diagram", "datasheet"):
+        if kind not in ("spreadsheet", "diagram", "datasheet", "holds"):
             raise HTTPException(
-                400, "kind must be spreadsheet, diagram or datasheet, not {!r}".format(kind))
+                400, "kind must be spreadsheet, diagram, datasheet or holds, not {!r}".format(kind))
         suffixes = {"spreadsheet": (".xlsx", ".csv"), "diagram": (".svg",),
-                    "datasheet": (".md",)}[kind]
+                    "datasheet": (".md",), "holds": (".json",)}[kind]
         newest = _newest_export(export, suffixes)
         if newest is None:
             raise HTTPException(
