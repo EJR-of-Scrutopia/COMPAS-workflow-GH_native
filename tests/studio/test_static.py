@@ -4630,7 +4630,8 @@ def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
                   "formwork-scrub", "formwork-speed", "formwork-back", "formwork-play",
                   "formwork-on", "formwork-label", "formwork-line", "formwork-show",
                   "formwork-colour", "formwork-label-ticks", "formwork-worst-toggle",
-                  "formwork-warnings", "formwork-record", "formwork-record-status"):
+                  "formwork-warnings", "formwork-record", "formwork-record-status",
+                  "formwork-holds-choice", "formwork-holds"):
         assert 'id="{}"'.format(ident) in section, ident
     assert section.count('class="primary"') == 1 and section.count("<details") == 0
     for tag in re.findall(r"<button[^>]*>", section):
@@ -4638,7 +4639,11 @@ def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
     # the eight show ticks, the five colour choices (Deviation first on), the
     # three label ticks
     assert re.findall(r'data-show="([a-z]+)"', section) == [
-        "net", "trees", "heads", "wires", "anchors", "ground", "skin", "design"]
+        "net", "trees", "heads", "wires", "anchors", "ground", "skin", "design", "holds"]
+    # the holds: a search to the tolerance (the default) or none (spec
+    # 2026-10-10 formwork holds, section 5)
+    assert re.findall(r'name="formwork-holds" value="([a-z]+)"', section) == ["search", "none"]
+    assert 'value="search" checked' in section
     assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
         "tension", "deviation", "utilisation", "wire", "off"]
     assert 'value="deviation" checked' in section

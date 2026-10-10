@@ -6,8 +6,8 @@
 
 import {
   captureLabel, captureTimes, colourKey, formworkLabels, formworkPickHtml, formworkWarnings,
-  frameLine, frameLineHtml, labelKindsInView, paintOverlay, playhead, readSim, recordingCaption,
-  worstHtml, worstTables,
+  frameLine, frameLineHtml, holdsHtml, labelKindsInView, paintOverlay, playhead, readSim,
+  recordingCaption, worstHtml, worstTables,
 } from "./formwork_model.js";
 import { spreadLabels } from "./cablenet_model.js";
 
@@ -74,6 +74,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     popupClose: byId("formwork-popup-close"), worst: byId("formwork-worst"),
     labels: byId("formwork-labels"), pick: byId("formwork-pick"),
     record: byId("formwork-record"),
+    holdsChoice: byId("formwork-holds-choice"), holds: byId("formwork-holds"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
@@ -110,6 +111,13 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
              wires_per_motor: choices ? choices.wires_per_motor : 1,
              pulleys: choices ? choices.pulley != null : true,
              wall: Number(el.wall.value), prestress: designPrestress() };
+  }
+
+  // The holds the run is asked for (spec 2026-10-10 formwork holds): a search
+  // of evenly spaced whole lines to the tolerance, or none.
+  function holdsChoice() {
+    const picked = el.holdsChoice.querySelector("input[name=formwork-holds]:checked");
+    return picked ? picked.value : "search";
   }
 
   function renderMachine() {
@@ -336,6 +344,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     tab.sim = sim;
     tab.times = sim ? captureTimes(sim.captures) : [];
     tab.worst = sim ? worstTables(sim) : null;
+    el.holds.innerHTML = sim ? holdsHtml(sim) : "";
     tab.at = 0;
     tab.shown = -1;
     setPlaying(false);
@@ -400,7 +409,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     el.runStatus.textContent = "starting: about two minutes";
     try {
       const body = { ...sentOptions(options), wires_per_motor: c.wires_per_motor,
-                     pulleys: c.pulleys, wall: c.wall };
+                     pulleys: c.pulleys, wall: c.wall, holds: holdsChoice(), tolerance_mm: Number(tolerance()) };
       if (c.rope != null) body.rope = c.rope;
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -496,6 +505,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     el.labels.innerHTML = "";
     el.pick.classList.add("hidden");
     el.line.innerHTML = "";
+    el.holds.innerHTML = "";
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;
