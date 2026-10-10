@@ -55,6 +55,8 @@ out.pickGrabbed = m.pickHtml(held, f60, 4, verdict);
 out.pickWire = m.pickHtml({ ...held, wires: [{ name: "w<0>", net_vertex: 3 }] }, f60, 3, verdict);
 out.pickNoVerdict = m.pickHtml({ ...held, wires: [{ name: "w0", net_vertex: 3 }] }, f60, 3, null);
 out.pickNothing = [m.pickHtml(null, f60, 1, null), m.pickHtml(held, null, 1, null), m.pickHtml(held, f60, null, null)];
+// Labels that would print over one another: the one placed first stands.
+out.spread = m.spreadLabels([[100, 100], [120, 104], [100, 130], null, [300, 100], [310, 300]], 44, 16);
 console.log(JSON.stringify(out));
 """
 
@@ -94,10 +96,17 @@ def test_the_wire_lenses_label_every_wire_at_its_rim_node(out):
         {"kind": "wire", "index": 0, "node": 10, "text": "1.2 kN", "band": "over"},
         {"kind": "wire", "index": 1, "node": 11, "text": "845 N", "band": "near"},
         {"kind": "wire", "index": 2, "node": 12, "text": "30.2 N", "band": "within"}]
-    # a wire that has not moved reads 0.0 mm, never nothing
+    # a wire that has not moved reads 0.0 mm, never nothing; the largest come
+    # first, so where the wires crowd together the largest is the one shown
     assert [(t["node"], t["text"], t["side"]) for t in out["reel"]] == [
-        (10, "-4.2 mm", "in"), (11, "0.0 mm", "still"), (12, "2.0 mm", "out")]
+        (10, "-4.2 mm", "in"), (12, "2.0 mm", "out"), (11, "0.0 mm", "still")]
     assert out["noStage"] == []
+
+
+def test_crowded_labels_give_way_to_the_one_placed_first(out):
+    # found on screen: a machine's seven rim nodes sit so close that their
+    # labels printed into one unreadable bar
+    assert out["spread"] == [True, False, True, False, True, True]
 
 
 def test_node_force_and_member_tension_label_their_largest(out):

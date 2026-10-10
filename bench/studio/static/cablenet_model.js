@@ -350,22 +350,30 @@ function largest(values, count) {
 // The points a lens labels, with their text: every machine wire at its rim node
 // under Prestress and Reel, the largest node forces under Node force, the
 // largest member tensions under Wire tension. Sag labels nothing.
+// The largest first: where the wires crowd together, spreadLabels keeps the
+// first of a crowd, so the one shown is the largest.
+function largestFirst(rows) {
+  return rows.map((row, at) => ({ row, at }))
+    .sort((a, b) => Math.abs(b.row.value) - Math.abs(a.row.value) || a.at - b.at)
+    .map(({ row }) => row.target);
+}
+
 export function labelTargets(lens, demand, stage, ceiling, count = 20) {
   if (!stage || !demand) return [];
   const wires = demand.wires || [];
   if (lens === "prestress") {
-    const out = [];
+    const rows = [];
     (stage.wire_tensions || []).forEach((tension, index) => {
       if (tension == null || !wires[index]) return;
-      out.push({ kind: "wire", index, node: wires[index].net_vertex, text: forceLabel(tension),
-                 band: prestressBand(tension, ceiling) });
+      rows.push({ value: Number(tension), target: { kind: "wire", index, node: wires[index].net_vertex,
+        text: forceLabel(tension), band: prestressBand(tension, ceiling) } });
     });
-    return out;
+    return largestFirst(rows);
   }
   if (lens === "reel") {
-    return reelSoFar(demand.stages, stage).map((mm, index) => (!wires[index] ? null : {
-      kind: "wire", index, node: wires[index].net_vertex, text: mm.toFixed(1) + " mm",
-      side: reelSide(mm) })).filter(Boolean);
+    return largestFirst(reelSoFar(demand.stages, stage).map((mm, index) => (!wires[index] ? null : {
+      value: mm, target: { kind: "wire", index, node: wires[index].net_vertex,
+        text: mm.toFixed(1) + " mm", side: reelSide(mm) } })).filter(Boolean));
   }
   if (lens === "nodeforce") {
     return largest((stage.node_residual || []).map(magnitude), count)
@@ -376,6 +384,19 @@ export function labelTargets(lens, demand, stage, ceiling, count = 20) {
       .map(({ value, index }) => ({ kind: "member", index, text: forceLabel(value) }));
   }
   return [];
+}
+
+// Which labels to draw where they would print over one another: each screen
+// point ([x, y], or null for one off the view) in the order given; one that
+// falls within gapX across and gapY down of a label already kept is not drawn.
+export function spreadLabels(points, gapX, gapY) {
+  const kept = [];
+  return (points || []).map((point) => {
+    if (!point) return false;
+    if (kept.some((k) => Math.abs(k[0] - point[0]) < gapX && Math.abs(k[1] - point[1]) < gapY)) return false;
+    kept.push(point);
+    return true;
+  });
 }
 
 // The legend a lens draws: its quantity and unit, and its range at the

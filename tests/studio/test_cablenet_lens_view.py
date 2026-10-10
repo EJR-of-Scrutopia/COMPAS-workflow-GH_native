@@ -72,6 +72,11 @@ def test_numbers_ride_the_model_from_the_models_targets():
     # projected every frame as the hover badge is; behind the eye or off the view: not drawn
     assert ".project(camera)" in place
     assert "projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1" in place
+    # labels that would print over one another give way (found on screen)
+    assert "const LABEL_GAP_X = 44;" in JS and "const LABEL_GAP_Y = 16;" in JS
+    assert "spreadLabels(points, LABEL_GAP_X, LABEL_GAP_Y)" in place
+    # under the legend, never over it
+    assert "#model-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }" in CSS
     assert "placeModelLabels();" in _function_body(JS, "renderView")
     assert "body.stilling #model-labels" in CSS
 
@@ -91,6 +96,10 @@ def test_a_click_on_a_node_opens_its_card_and_a_drag_does_not():
     assert "const stage = modelLabels.stage;" in pick and "cableNetLensUp()" in pick
     assert "pickHtml(state.cablenet, stage, best.i, state.cablenetVerdict)" in pick
     assert 'card.classList.add("hidden");' in pick
+    # above the bottom shelf (z-index 25) and inside the view, found on screen
+    # cut off under the shelf
+    assert "#cablenet-pick { position: fixed; z-index: 27;" in CSS
+    assert "innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM" in pick
 
 
 def test_the_card_reads_each_wires_own_ceiling_from_the_scored_row():

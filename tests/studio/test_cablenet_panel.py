@@ -299,6 +299,14 @@ def test_the_wires_slider_chooses_wires_a_motor():
         JS, "renderChoices")
 
 
+def test_the_chosen_motor_is_marked_by_more_than_a_tint():
+    # found on screen: the chosen row's colour alone read like every other row
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    rule = css[css.index("#cablenet-motors tr.chosen td {"):]
+    rule = rule[:rule.index("}")]
+    assert "background: var(--raised);" in rule and "font-weight: 600;" in rule
+
+
 def test_the_limits_and_the_eye_bolt_are_tables_and_no_readout_is_a_paragraph():
     body = _function_body(JS, "renderHolds")
     assert "limitsHtml(row.terms)" in body

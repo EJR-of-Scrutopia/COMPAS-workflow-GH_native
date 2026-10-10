@@ -7,7 +7,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
 import {
-  instantAt, labelTargets, lensLegend, pickHtml, sagBand, stageCaption,
+  instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels, stageCaption,
 } from "./cablenet_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
@@ -12406,6 +12406,10 @@ function updateCableNetVectors() {
 // view is not drawn. At most MODEL_LABEL_MAX at once. The instant is the one
 // the lenses were painted at, kept for the card a click opens.
 const MODEL_LABEL_MAX = 125;
+// A label is about this wide and tall, in pixels: one nearer than that to a
+// label already drawn is not drawn (spreadLabels).
+const LABEL_GAP_X = 44;
+const LABEL_GAP_Y = 16;
 const modelLabels = { items: [], stage: null, projected: new THREE.Vector3() };
 
 function cablenetLabelPoint(target, vertices, edges) {
@@ -12454,19 +12458,23 @@ function placeModelLabels() {
   // the net is drawn lifted clear of the skin; its labels ride with it
   const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
   const projected = modelLabels.projected;
-  for (const item of modelLabels.items) {
+  const points = modelLabels.items.map((item) => {
     projected.copy(item.at);
     projected.z += lift;
     projected.project(camera);
     const x = projected.x * 0.5 + 0.5;
     const y = -projected.y * 0.5 + 0.5;
-    const shown = projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1;
-    item.label.style.display = shown ? "" : "none";
-    if (shown) {
-      item.label.style.left = Math.round(rect.left + x * rect.width) + "px";
-      item.label.style.top = Math.round(rect.top + y * rect.height) + "px";
+    return projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1
+      ? [Math.round(rect.left + x * rect.width), Math.round(rect.top + y * rect.height)] : null;
+  });
+  const shown = spreadLabels(points, LABEL_GAP_X, LABEL_GAP_Y);
+  modelLabels.items.forEach((item, i) => {
+    item.label.style.display = shown[i] ? "" : "none";
+    if (shown[i]) {
+      item.label.style.left = points[i][0] + "px";
+      item.label.style.top = points[i][1] + "px";
     }
-  }
+  });
 }
 
 // A click on a node while a Cable net lens is up shows its numbers beside it;
@@ -12474,6 +12482,8 @@ function placeModelLabels() {
 // a press a stamp, an aim, a carry or prop editing owns is not one either:
 // taken at the press, before the studio's own handler acts on it.
 const cablenetPick = { down: null };
+// The room the card leaves at the foot of the window for the bottom shelf.
+const CARD_CLEAR_BOTTOM = 70;
 
 function pickCableNetNode(event) {
   const card = document.getElementById("cablenet-pick");
@@ -12496,9 +12506,10 @@ function pickCableNetNode(event) {
   });
   if (!best) return;
   card.innerHTML = pickHtml(state.cablenet, stage, best.i, state.cablenetVerdict);
-  card.style.left = Math.round(Math.min(innerWidth - 220, best.x + 14)) + "px";
-  card.style.top = Math.round(Math.max(12, best.y - 20)) + "px";
   card.classList.remove("hidden");
+  card.style.left = Math.round(Math.min(innerWidth - 220, best.x + 14)) + "px";
+  card.style.top = Math.round(Math.max(12,
+    Math.min(innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM, best.y - 20))) + "px";
 }
 
 function noteCableNetPress(event) {
