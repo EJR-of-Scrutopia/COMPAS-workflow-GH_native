@@ -543,3 +543,58 @@ def test_without_frames_the_courses_size_it_and_without_courses_every_instant_do
     assert frames_only["sizing"]["stage"] in ("F60", "F100")
     assert frames_only["sizing"]["worst_sag_mm"] == max(
         s["residual_after"] for s in frames_only["stages"])
+
+
+# The prestress the form needs (spec 2026-10-10 prestress and holds, section 4).
+
+def test_the_run_tables_the_prestress_each_step_of_the_walk_needs_and_the_ladder():
+    pytest.importorskip("compas_fd")
+    needs = solve_cablenet.solve(_grid_request())["needs"]
+    assert needs["stage"] == "S2" and needs["tolerance_mm"] == 5.0
+    assert needs["ceiling_newtons"] is None
+    steps = needs["steps"]
+    assert steps[0]["count"] == 0 and steps[0]["added"] == []
+    assert steps[0]["prestress_newtons"] > 0.0
+    assert [s["count"] for s in steps] == sorted(s["count"] for s in steps)
+    assert set(n for s in steps for n in s["added"]) <= {1, 3, 5, 7}
+    found = [s["prestress_newtons"] for s in steps]
+    assert all(b <= a * 1.01 for a, b in zip(found, found[1:]))
+    ladder = needs["ladder"]
+    assert len(ladder) == 25 and ladder[0]["prestress_newtons"] == pytest.approx(100.0)
+    sags = [r["worst_sag_mm"] for r in ladder]
+    roofs = [r["roof"] for r in ladder]
+    assert all(b <= a + 1e-9 for a, b in zip(sags, sags[1:]))
+    assert all(b >= a - 1e-9 for a, b in zip(roofs, roofs[1:]))
+
+
+def test_a_run_with_no_prestress_takes_the_least_its_ceiling_allows():
+    pytest.importorskip("compas_fd")
+    steps = solve_cablenet.solve(_grid_request(prestress=None))["needs"]["steps"]
+    # no ceiling: the prestress the column heads alone need, and nothing grabbed
+    free = solve_cablenet.solve(_grid_request(prestress=None))
+    assert free["prestress"] == steps[0]["prestress_newtons"]
+    assert free["sizing"]["prestress_newtons"] == steps[0]["prestress_newtons"]
+    assert free["held"]["actuators"] == [] and free["placement"]["reached"] is True
+    # a ceiling the last step meets: no more than that step's nodes, at no more
+    # than the ceiling, within the line
+    ceiling = steps[-1]["prestress_newtons"]
+    held = solve_cablenet.solve(_grid_request(prestress=None, ceiling_newtons=ceiling))
+    assert held["needs"]["ceiling_newtons"] == ceiling
+    assert held["prestress"] <= ceiling
+    assert len(held["held"]["actuators"]) <= steps[-1]["count"]
+    assert held["placement"]["reached"] is True
+    # a ceiling no step of a walk cut short meets: the run is designed at the
+    # ceiling and says the line was not reached (a full walk holds all four
+    # midpoints, and then any prestress is enough)
+    short = solve_cablenet.solve(_grid_request(prestress=None, ceiling_newtons=0.5, steps=0))
+    assert short["prestress"] == 0.5 and short["placement"]["reached"] is False
+
+
+def test_a_run_with_no_prestress_needs_a_line_and_a_ceiling_above_nothing():
+    pytest.importorskip("compas_fd")
+    with pytest.raises(solve_cablenet.CableNetError, match="tolerance"):
+        solve_cablenet.solve(_grid_request(prestress=None, acceptance=None,
+                                           acceptance_source=None))
+    with pytest.raises(solve_cablenet.CableNetError, match="ceiling"):
+        solve_cablenet.solve(_grid_request(prestress=None, ceiling_newtons=0.0))
+
