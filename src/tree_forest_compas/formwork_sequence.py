@@ -220,9 +220,12 @@ def _run(model, net, plan, progress):
     tree_x = model.frames[-1].trees
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each prop is put under its node and jacked to the node's design point, at
-    # most SUB_STEP_MM a step, holding it in its notch while it pushes; from
-    # then on it pushes and never pulls
+    # most SUB_STEP_MM a step, gripping it in its cradle while it lifts it (a
+    # prop that only pushed was pulled off its node at every step on the real
+    # study, and the net never rose); then the grip is let go, and from then on
+    # the prop pushes and never pulls
     holds = [int(node) for node in model.holds]
+    tied = contacts.tied
     if holds:
         start = {node: np.array(x[node], dtype=float) for node in holds}
         target = {node: np.asarray(model.design[node], dtype=float) for node in holds}
@@ -232,9 +235,13 @@ def _run(model, net, plan, progress):
             jacks = {node: start[node] + (target[node] - start[node]) * step / steps
                      for node in holds}
             contacts = contacts._replace(heads={**contacts.heads, **jacks},
-                                         engaged=contacts.engaged | frozenset(holds))
+                                         engaged=contacts.engaged | frozenset(holds),
+                                         tied=tied | frozenset(holds))
             rest, contacts = ne.settle(x, net, model.weight, {}, contacts, wires=wires)
             x = rest.x
+        contacts = contacts._replace(tied=tied)
+        rest, contacts = ne.settle(x, net, model.weight, {}, contacts, wires=wires)
+        x = rest.x
         captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
                                  "holds", 100.0, None, None))
         if progress is not None:

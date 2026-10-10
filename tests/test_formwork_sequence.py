@@ -163,19 +163,26 @@ def test_the_progress_counts_the_capture_after_the_jacking():
     assert told[-1] == (8, 8) and {total for _, total in told} == {8}
 
 
-def test_the_holds_are_never_tied(monkeypatch):
-    # the principal lines are tied; a hold is a prop from below
+def test_the_holds_grip_their_nodes_while_jacked_and_push_only_after(monkeypatch):
+    # found on the real study: jacked push-only from where the net hangs, the
+    # props were pulled off their nodes at every step and the net never rose.
+    # A jack grips its node in its cradle while it lifts it; from the end of
+    # the jacking the prop pushes and never pulls
     seen = []
     real = ne.settle
 
     def spy(*args, **kwargs):
-        seen.append((args[4].tied, args[4].engaged))
+        seen.append(({1, 3, 5, 7} <= args[4].tied, {1, 3, 5, 7} <= args[4].engaged))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(ne, "settle", spy)
     fs.simulate(_toy()._replace(holds=(1, 3, 5, 7)))
-    assert all(not ({1, 3, 5, 7} & tied) for tied, _ in seen)
-    assert any({1, 3, 5, 7} <= engaged for _, engaged in seen)
+    gripped = [i for i, (tied, _) in enumerate(seen) if tied]
+    assert gripped, "the jacks grip their nodes"
+    # every settle while gripped has them engaged; none after the jacking grips
+    assert all(seen[i][1] for i in gripped)
+    assert not any(tied for tied, _ in seen[gripped[-1] + 1:])
+    assert any(engaged for _, engaged in seen[gripped[-1] + 1:])
 
 
 def test_every_capture_names_the_nodes_the_ground_holds():
