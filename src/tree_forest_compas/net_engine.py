@@ -447,6 +447,9 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
     resting = {int(node): np.asarray(point, dtype=float) for node, point in contacts.resting.items()}
     seated = set(int(node) for node in contacts.seated)
     left = set(int(node) for node in contacts.left)
+    let_go = set()      # the nodes a head or hold has let go of in this settle
+    gone = set()        # let go twice in it: it stays off, so a node that snaps through
+                        # its prop cannot be taken back and let go round after round
     iterations = 0
     changes = []
     for _ in range(rounds):
@@ -475,13 +478,20 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
             resting[node] = np.array([x[node, 0], x[node, 1], 0.0])
         changes = []
         released = set()
-        for node in sorted(engaged):
-            if node in contacts.tied:                      # tied: it pulls as well as pushes
-                continue
-            if rest.reaction[node, 2] < -LEFTOVER_N:       # the head would have to pull
-                engaged.discard(node)
-                released.add(node)
-                left.add(node)
+        # the head or hold that would have to pull hardest lets go, one a round:
+        # freeing one changes what the others carry, and freeing them together
+        # let a node fall down through its own prop (found on the holds, spec
+        # 2026-10-10 formwork holds); a tied node pulls as well as pushes
+        pulled = [node for node in sorted(engaged) if node not in contacts.tied
+                  and rest.reaction[node, 2] < -LEFTOVER_N]
+        if pulled:
+            node = min(pulled, key=lambda n: (float(rest.reaction[n, 2]), n))
+            engaged.discard(node)
+            released.add(node)
+            left.add(node)
+            if node in let_go:
+                gone.add(node)
+            let_go.add(node)
         for node in sorted(resting):
             if rest.reaction[node, 2] < -LEFTOVER_N:       # the ground would have to pull
                 del resting[node]
@@ -497,8 +507,12 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
         for node, point in contacts.heads.items():
             node = int(node)
             top = float(point[2]) + 1.0e-6
-            if node in left and any(_over(p, point) and p[2] > top for p in (before[node], x[node])):
-                left.discard(node)                         # above its head again
+            # above its head again, or still at its top where it was let go: a
+            # node let go that then comes down over its prop is taken back, not
+            # passed through it (found on the holds)
+            if node in left and node not in gone and any(_over(p, point) and p[2] > top - 2.0e-6
+                                                         for p in (before[node], x[node])):
+                left.discard(node)
             if (node not in engaged and node not in fixed and node not in released
                     and node not in left and x[node, 2] <= top
                     and _over(_onto(before[node], x[node], top), point)):

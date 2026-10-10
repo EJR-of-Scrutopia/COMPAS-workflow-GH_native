@@ -122,6 +122,55 @@ def test_the_sequence_ties_every_head_to_its_node_from_the_layout_on(monkeypatch
     assert seen and all(tied == frozenset({4}) for tied in seen)
 
 
+def test_the_holds_are_jacked_to_the_design_after_the_raise_and_push_only():
+    # spec 2026-10-10 formwork holds, section 3: once the net is up, each hold
+    # takes its node to its design point, then pushes and never pulls
+    model = _toy()._replace(holds=(1, 3, 5, 7))
+    result = fs.simulate(model)
+    captures = result.captures
+    assert [c.phase for c in captures] == ["raise", "finish", "hold", "holds"] + ["tiling"] * 4
+    jacked = captures[3]
+    assert jacked.time == 100.0 and jacked.row is None
+    for c in captures:
+        assert c.hold_push.shape == (4, 3)
+        assert np.all(c.hold_push[:, 2] >= 0.0)            # a hold never pulls
+    for c in captures[:3]:
+        assert np.all(c.hold_push == 0.0)                  # none before the jacking
+    # the jack only pushes up: no node is left below its design height (in the
+    # toy the net carries the edge midpoints 10 mm above theirs, so the props
+    # stand just under them)
+    for node in (1, 3, 5, 7):
+        assert jacked.x[node, 2] >= model.design[node, 2] - 1.0e-6
+    # the skin brings them down onto their props, which then hold them at
+    # their design points
+    touched = 0
+    for c in captures[3:]:
+        for k, node in enumerate((1, 3, 5, 7)):
+            if np.linalg.norm(c.hold_push[k]) > 0.0:
+                touched += 1
+                assert c.x[node] == pytest.approx(model.design[node], abs=1.0e-6)
+    assert touched >= 3
+    # and a run with no holds is the sequence as it was
+    plain = fs.simulate(_toy())
+    assert [c.phase for c in plain.captures] == ["raise", "finish", "hold"] + ["tiling"] * 4
+    assert all(c.hold_push.shape == (0, 3) for c in plain.captures)
+
+
+def test_the_holds_are_never_tied(monkeypatch):
+    # the principal lines are tied; a hold is a prop from below
+    seen = []
+    real = ne.settle
+
+    def spy(*args, **kwargs):
+        seen.append((args[4].tied, args[4].engaged))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ne, "settle", spy)
+    fs.simulate(_toy()._replace(holds=(1, 3, 5, 7)))
+    assert all(not ({1, 3, 5, 7} & tied) for tied, _ in seen)
+    assert any({1, 3, 5, 7} <= engaged for _, engaged in seen)
+
+
 def test_every_capture_names_the_nodes_the_ground_holds():
     # laid out, every node but the rim's and the head's rests on the ground
     # (spec 2026-10-10 formwork tab, section 4); raised, the tree lifts the
