@@ -155,7 +155,7 @@ RUNS_LOCK = threading.Lock()
 # to the vault's exact surface and propped, so it barely moves, and the net is
 # judged against a tolerance instead.
 CABLENET_DEFAULTS = {
-    "prestress": 300.0, "rope": "rope-4mm", "tolerance_mm": 20.0,
+    "prestress": None, "ceiling_newtons": None, "rope": "rope-4mm", "tolerance_mm": 20.0,
     "batch": 20, "steps": 40,
 }
 
@@ -1473,9 +1473,23 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                      "not {!r}".format(name, value))
         return tolerance
 
+    def _positive_newtons(value, name):
+        """A force a body may give or leave out: None when left out, else a
+        finite number of newtons above zero, or a 400 that names it."""
+
+        if value is None:
+            return None
+        try:
+            newtons = float(value)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "{} must be a number, not {!r}".format(name, value))
+        if not (math.isfinite(newtons) and newtons > 0.0):
+            raise HTTPException(400, "{} must be greater than zero newtons".format(name))
+        return newtons
+
     def _cablenet_phase_options(export, contract, slug, material, key_pattern, size,
                                 thickness, density, prestress, rope_key,
-                                tolerance_mm, batch, steps) -> dict:
+                                tolerance_mm, batch, steps, ceiling=None) -> dict:
         """The keyword arguments of cablenet.run_cablenet that belong to the study
         and to the caller's choices rather than to the cut: where the document is
         written, the mechanism and formwork documents, the rope, the line the net
@@ -1534,8 +1548,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             "study": export,
             "ea_provenance": "{}: EA {} N, {}".format(
                 rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
-            # a starting point for the cut rule, not derived
+            # None unless asked for: the engine works it out from the load,
+            # under the machine's ceiling when the panel has one
             "prestress": prestress,
+            "ceiling_newtons": ceiling,
             "formwork_document": formwork_document,
             "batch": batch,
             "steps": steps,
@@ -1838,8 +1854,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         cablenet_options = body.get("cablenet_options") or {}
         if not isinstance(cablenet_options, dict):
             raise HTTPException(400, "cablenet_options must be an object")
-        for field in ("prestress",):
-            if field in cablenet_options:
+        for field in ("prestress", "ceiling_newtons"):
+            if cablenet_options.get(field) is not None:
                 try:
                     float(cablenet_options[field])
                 except (TypeError, ValueError):
@@ -1852,8 +1868,14 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             cablenet_options.get("tolerance_mm", CABLENET_DEFAULTS["tolerance_mm"]),
             "cablenet_options.tolerance_mm")
         rope_key = str(cablenet_options.get("rope", CABLENET_DEFAULTS["rope"]))
-        prestress = float(
-            cablenet_options.get("prestress", CABLENET_DEFAULTS["prestress"]))
+        # no prestress unless one is asked for: the engine works it out from
+        # the load, under the machine's ceiling (spec 2026-10-10, section 4)
+        prestress = _positive_newtons(
+            cablenet_options.get("prestress", CABLENET_DEFAULTS["prestress"]),
+            "cablenet_options.prestress")
+        ceiling = _positive_newtons(
+            cablenet_options.get("ceiling_newtons", CABLENET_DEFAULTS["ceiling_newtons"]),
+            "cablenet_options.ceiling_newtons")
         parts = None
         if include_cablenet:
             import catalogue
@@ -1924,7 +1946,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                             export, slot.contract, slug, material, key_pattern,
                             size, thickness, density, prestress, rope_key,
                             tolerance_mm, CABLENET_DEFAULTS["batch"],
-                            CABLENET_DEFAULTS["steps"]),
+                            CABLENET_DEFAULTS["steps"], ceiling=ceiling),
                     }
                 staging.run_staging(
                     pairs[export], material, pattern, size,
@@ -1969,13 +1991,17 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             # that both omit it agree on the file; _validate allows 0.02
             thickness = float(body.get("thickness", 0.02))
             density = float(body["density"]) if body.get("density") else None
-            prestress = float(body.get("prestress", CABLENET_DEFAULTS["prestress"]))
+            prestress = None if body.get("prestress") is None else float(body["prestress"])
+            ceiling = (None if body.get("ceiling_newtons") is None
+                       else float(body["ceiling_newtons"]))
             batch = int(body.get("batch", CABLENET_DEFAULTS["batch"]))
             steps = int(body.get("steps", CABLENET_DEFAULTS["steps"]))
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
-        if not prestress > 0.0:
+        if prestress is not None and not (math.isfinite(prestress) and prestress > 0.0):
             raise HTTPException(400, "prestress must be greater than zero newtons")
+        if ceiling is not None and not (math.isfinite(ceiling) and ceiling > 0.0):
+            raise HTTPException(400, "ceiling_newtons must be greater than zero newtons")
         if batch < 1:
             raise HTTPException(400, "batch must be at least one node")
         if steps < 0:
@@ -2029,11 +2055,12 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 options = _cablenet_phase_options(
                     export, slot.contract, slug, material, slot.key_pattern, size,
                     thickness, density, prestress, rope_key, tolerance_mm, batch,
-                    steps)
+                    steps, ceiling=ceiling)
                 cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
                 run["phase"] = "cable net"
-                run["message"] = ("fitting the net at every instant and placing the "
-                                  "actuators: about a minute on a large study")
+                run["message"] = ("fitting the net at every instant, working out the "
+                                  "prestress it needs and where to hold it: two or "
+                                  "three minutes on a large study")
                 # the call run_staging makes for the same phase
                 out_path = options.pop("out_path")
                 cablenet.run_cablenet(

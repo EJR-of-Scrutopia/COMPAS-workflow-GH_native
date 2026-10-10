@@ -186,6 +186,31 @@ def test_the_cable_net_run_writes_the_demand_where_the_panel_reads_it(tmp_path, 
     assert got.json()["schema"] == "bench.cablenet/2"
 
 
+def test_the_run_hands_the_engine_the_machines_ceiling_and_no_prestress(tmp_path, monkeypatch):
+    # spec 2026-10-10 prestress and holds, section 4: the prestress is worked
+    # out from the load, under the ceiling of the machine the panel has chosen
+    seen = {}
+
+    def fake(request):
+        seen.update(request)
+        return _v2_stub(request)
+
+    client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=fake)
+    upload = tmp_path / "upload"
+    (upload / "Tiny-mechanism.json").write_text(json.dumps(_tiny_mechanism()), encoding="utf-8")
+    started = client.post("/api/studies/Tiny/cablenet/run", json={
+        "material": "concrete", "pattern": "bonded-courses", "size": 0.9,
+        "ceiling_newtons": 772.5})
+    assert started.status_code == 202, started.text
+    state = wait_for(client, started.json()["run"])
+    assert state["state"] == "done", state["message"]
+    assert seen["ceiling_newtons"] == 772.5 and seen["prestress"] is None
+    staged = client.post("/api/runs", json={
+        "export": "Tiny", "material": "concrete", "pattern": "bonded-courses", "size": 0.9,
+        "cablenet": True, "cablenet_options": {"ceiling_newtons": "strong"}})
+    assert staged.status_code == 400 and "ceiling_newtons" in staged.json()["detail"]
+
+
 def test_a_study_with_no_mechanism_fails_the_run_with_the_reason(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
     started = client.post("/api/studies/Tiny/cablenet/run", json={
@@ -258,6 +283,7 @@ def test_bad_run_options_are_400s_that_name_the_option(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, cablenet_runner=_v2_stub)
     base = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
     for bad, word in (({"prestress": 0}, "prestress"), ({"batch": 0}, "batch"),
+                      ({"ceiling_newtons": 0}, "ceiling"), ({"ceiling_newtons": "strong"}, "number"),
                       ({"rope": "string"}, "rope"), ({"tolerance_mm": 0}, "tolerance"),
                       ({"tolerance_mm": -5}, "tolerance"),
                       # a JSON true is not one millimetre, and false is not a line
@@ -522,8 +548,9 @@ def test_the_staged_run_and_the_cable_net_run_hand_the_engine_the_same_request(
     else:
         assert fragment in own_request["note"]
     if not options:
-        # and the defaults are the ones the panel's first run will rely on
-        assert own_request["prestress"] == 300.0
+        # and the defaults are the ones the panel's first run will rely on: no
+        # prestress, which the engine works out from the load, and no ceiling
+        assert own_request["prestress"] is None and own_request["ceiling_newtons"] is None
         assert own_request["batch"] == 20 and own_request["steps"] == 40
         assert own_request["tolerance_mm"] == own_request["acceptance"] == 20.0
         assert "falsework" not in own_request

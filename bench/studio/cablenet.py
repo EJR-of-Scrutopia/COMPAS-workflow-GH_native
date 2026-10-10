@@ -338,7 +338,8 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
                  mechanism_document, ea, prestress, acceptance,
                  acceptance_source, mass_per_metre, runner=None, python_exe=None,
                  tolerance_mm=None, study=None, ea_provenance=None,
-                 formwork_document=None, batch=20, steps=40, note=None):
+                 formwork_document=None, batch=20, steps=40, note=None,
+                 ceiling_newtons=None):
     """Everything step A does, from a contract to a written demand document.
 
     The engine runs in solve_cablenet.py under a solver interpreter, never in
@@ -354,8 +355,10 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
     together are refused. With neither the run has no acceptance line: the
     document's acceptance is null, every instant's reachable is unknown and
     placement never reaches.
-    prestress is an input: a starting point for the cut rule, not a value
-    derived from anything.
+    prestress None is worked out by the engine from the load: the least that
+    keeps the net within the line, under ceiling_newtons (the machine's, N)
+    when it is given (spec 2026-10-10 prestress and holds, section 4). A
+    prestress given is used as it is.
 
     formwork_document, when given, is the study's formwork document as
     frames.py reads it: its frames are sampled at FRAME_SAMPLE_TIMES and sent
@@ -444,7 +447,8 @@ def run_cablenet(contract, arrays, plan, thickness, density, out_path,
         "loads_by_stage": loads_by_stage,
         "net_weight": net_weight,
         "ea": float(ea),
-        "prestress": float(prestress),
+        "prestress": None if prestress is None else float(prestress),
+        "ceiling_newtons": None if ceiling_newtons is None else float(ceiling_newtons),
         # None is no line at all: a tolerance is the line (its source says so
         # in words), an explicit acceptance is one the caller gives, and a run
         # with neither has no line to hold the net to, which the document says
