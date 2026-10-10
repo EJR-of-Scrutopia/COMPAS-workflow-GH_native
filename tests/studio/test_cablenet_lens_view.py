@@ -23,6 +23,29 @@ def _function_body(js, name):
     return js[start:js.index("\n" + indent + "}", start)]
 
 
+def test_the_holds_lens_paints_the_nodes_to_hold_and_follows_the_machine():
+    # spec 2026-10-10 prestress and holds, section 7
+    table = JS[JS.index("const CABLENET_LAYERS = ["):]
+    assert '["holds", "Holds"]' in table[:table.index("];")]
+    availability = _function_body(JS, "layerAvailability")
+    assert 'name === "holds" && !(state.cablenet.needs && Array.isArray(state.cablenet.needs.steps))' in availability
+    paint = _function_body(JS, "applyCableNetPaint")
+    assert 'const keyed = ["holds", "nodeforce", "prestress", "reel"].filter(up);' in paint
+    assert 'const holdNodes = !sagOn && !!stage && keyed.includes("holds");' in paint
+    assert 'const forceNodes = !sagOn && !!stage && !holdNodes && keyed.includes("nodeforce");' in paint
+    assert "paintHoldNodes()" in paint
+    holds = _function_body(JS, "paintHoldNodes")
+    assert "holdsFor(state.cablenet, state.cablenetCeiling)" in holds
+    assert "HOLD_COLOURS.hold" in holds and "HOLD_COLOURS.head" in holds
+    assert '"holds"' in _function_body(JS, "updateModelLabels")
+    assert ("lensLegend(lens, state.cablenet, stage, state.cablenetCeiling, state.cablenetMost)"
+            in _function_body(JS, "paintLensLegend"))
+    mount = JS[JS.index("const cableNet = mountCableNet({"):]
+    assert "onCeiling: (ceiling, verdict, most) => {" in mount
+    assert "state.cablenetMost = most == null ? null : most;" in mount
+    assert "(state.layers.prestress || state.layers.holds)" in mount
+
+
 def test_the_shell_is_light_transparent_grey_while_a_lens_is_up_and_itself_after():
     assert "const GHOST_GREY = 0xdcdcdc;" in JS and "const GHOST_OPACITY = 0.3;" in JS
     ghost = _function_body(JS, "ghostPiece")
@@ -37,15 +60,15 @@ def test_the_shell_is_light_transparent_grey_while_a_lens_is_up_and_itself_after
 
 def test_node_force_colours_the_nodes_and_each_new_lens_draws_its_legend():
     paint = _function_body(JS, "applyCableNetPaint")
-    assert 'const keyed = ["nodeforce", "prestress", "reel"].filter(up);' in paint
     assert "paintNodeForces(stage)" in paint
-    # sag colours the nodes itself, so node force paints them only when sag is down
-    assert 'const forceNodes = !sagOn && !!stage && keyed.includes("nodeforce");' in paint
+    # sag colours the nodes itself, so node force paints them only when sag is
+    # down (and Holds, which colours them too, is not up)
+    assert 'keyed.includes("nodeforce")' in paint and "!sagOn" in paint
     assert "paintLensLegend(keyed[0], stage)" in paint
     nodes = _function_body(JS, "paintNodeForces")
     assert "TENSION_SCALE(sizes[i] || 0, top)" in nodes
     legend = _function_body(JS, "paintLensLegend")
-    assert "lensLegend(lens, state.cablenet, stage, state.cablenetCeiling)" in legend
+    assert "lensLegend(lens, state.cablenet, stage, state.cablenetCeiling" in legend
     # a banded lens is keyed by its bands, and every other legend clears them
     assert "if (legend.bands) paintBandLegend(legend.title, legend.bands, legend.min, legend.max);" in legend
     bands = _function_body(JS, "paintBandLegend")
@@ -128,7 +151,8 @@ def test_a_click_on_a_node_opens_its_card_and_a_drag_does_not():
 
 def test_the_card_reads_each_wires_own_ceiling_from_the_scored_row():
     assert ("onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null, "
-            "ok ? row.verdict : null);") in CONTROLLER
+            "ok ? row.verdict : null, panel.strongest ? panel.strongest.ceiling_newtons : null);"
+            ) in CONTROLLER
     mount = JS[JS.index("const cableNet = mountCableNet({"):]
-    assert "onCeiling: (ceiling, verdict) => {" in mount
+    assert "onCeiling: (ceiling, verdict, most) => {" in mount
     assert "state.cablenetVerdict = verdict || null;" in mount

@@ -40,6 +40,19 @@ out.motors = m.motorsHtml(rows, "A", demand);
 out.motorsOlder = m.motorsHtml(rows, "A", { schema: "bench.cablenet/2" });
 out.graphs = m.graphsHtml(demand, 1123.4);
 out.graphsOlder = m.graphsHtml({ ...demand, needs: undefined }, 1123.4);
+// The Holds lens: a label at each held batch's first node, its legend, the card.
+const stage = demand.stages[0];
+out.holdLabels = [200, 0.5, 1123.4, null].map((c) => m.labelTargets("holds", demand, stage, c));
+out.holdLegends = [m.lensLegend("holds", demand, stage, 200, 6660),
+                   m.lensLegend("holds", demand, stage, 200, 250),
+                   m.lensLegend("holds", demand, stage, 1123.4, 6660),
+                   m.lensLegend("holds", demand, stage, 0.5, 6660),
+                   m.lensLegend("holds", demand, stage, null, 6660)];
+out.reasons = [m.holdsReason(300, 6660), m.holdsReason(300, 250), m.holdsReason(null, 6660),
+               m.holdsReason(300, null)];
+const withSag = { ...stage, node_sag_mm: [0, 0, 0, 0, 0, 1.0, 2.0, 3.0, 4.0, 0.5] };
+out.pickHold = m.pickHtml(demand, withSag, 5, { wires: [], worst: { ceiling: 200 } });
+out.pickFree = m.pickHtml(demand, withSag, 9, { wires: [], worst: { ceiling: 200 } });
 console.log(JSON.stringify(out));
 """
 
@@ -89,6 +102,25 @@ def test_every_motor_shows_the_nodes_it_needs_held_and_its_sag(out):
     assert '<td colspan="7">C: not offered</td>' in html
     # with no table, the two columns are blank, never a guess
     assert "<td></td><td></td>" in out["motorsOlder"]
+
+
+def test_the_holds_lens_labels_each_batch_held_and_keys_the_reason(out):
+    two, every, none, unscored = out["holdLabels"]
+    assert two == [{"kind": "node", "index": 5, "text": "+2"}]
+    assert every == [{"kind": "node", "index": 5, "text": "+2"}, {"kind": "node", "index": 7, "text": "+2"}]
+    assert none == [] and unscored == []
+    short, all_short, covered, beyond, no_machine = out["holdLegends"]
+    bands = [{"name": "hold", "colour": "#c24936"}, {"name": "column head", "colour": "#66aaff"}]
+    assert short == {"title": "holds: 2 nodes, this machine short", "min": "", "max": "",
+                     "bands": bands}
+    assert all_short["title"] == "holds: 2 nodes, every machine short"
+    assert covered["title"] == "holds: none"
+    assert beyond["title"] == "holds: more than 4 nodes, this machine short"
+    assert no_machine["title"] == "holds: no machine"
+    # the reason: a stronger machine would need none, or none would
+    assert out["reasons"] == ["machine", "every machine", "every machine", "every machine"]
+    assert "<th>Hold</th><td>yes</td>" in out["pickHold"]
+    assert "<th>Hold</th>" not in out["pickFree"]
 
 
 def test_the_graphs_add_the_prestress_needed_against_the_nodes_held(out):

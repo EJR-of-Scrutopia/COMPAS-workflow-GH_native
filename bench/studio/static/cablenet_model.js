@@ -191,6 +191,12 @@ export function holdsFor(demand, ceiling) {
            prestress: at < 0 ? c : steps[at].prestress_newtons };
 }
 
+// Why nodes need holding: a stronger machine would need none ("machine"), or
+// no machine reaches what the form needs ("every machine").
+export function holdsReason(needed, most) {
+  return needed != null && most != null && most >= needed ? "machine" : "every machine";
+}
+
 // A figure of the ladder at a prestress: straight across between two rungs in
 // the logarithm of the prestress, the end's own figure beyond either end.
 function ladderAt(demand, prestress, key) {
@@ -237,7 +243,8 @@ export function menuAnswers(demand, row, strongest) {
     gives,
     most,
     holds: held ? { count: held.count, covered: held.covered,
-                    reason: held.count === 0 ? null : most && most.holds ? "machine" : "every machine" }
+                    reason: held.count === 0 ? null
+                      : holdsReason(needed, strongest ? strongest.ceiling_newtons : null) }
       : null,
     roof: gives && needs ? roofAt(demand, worst.ceiling) : null,
   };
@@ -463,6 +470,13 @@ export function labelTargets(lens, demand, stage, ceiling, count = 20) {
     return largest((stage.member_tensions || []).map((v) => (v == null ? null : Number(v))), count)
       .map(({ value, index }) => ({ kind: "member", index, text: forceLabel(value) }));
   }
+  if (lens === "holds") {
+    // one label a batch the machine needs held, at the batch's first node
+    const held = holdsFor(demand, ceiling);
+    if (!held) return [];
+    return needsOf(demand).steps.slice(1, held.step + 1).filter((s) => (s.added || []).length)
+      .map((s) => ({ kind: "node", index: s.added[0], text: "+" + s.added.length }));
+  }
   return [];
 }
 
@@ -483,12 +497,22 @@ export function spreadLabels(points, gapX, gapY) {
 // updateCableNetVectors), which their legends key: within, near and over the
 // machine's ceiling, none scored; rope taken in and paid out.
 const BAND_COLOURS = { within: "#3f9e57", near: "#c99a2e", over: "#c24936", plain: "#9aa4b2",
-                       in: "#66aaff", out: "#c99a2e" };
+                       in: "#66aaff", out: "#c99a2e", hold: "#c24936", head: "#66aaff" };
 
 // The legend a lens draws: its quantity and unit, and its range at the
 // instant. Wire tension and Sag keep the legends they draw today: null.
-export function lensLegend(lens, demand, stage, ceiling) {
+export function lensLegend(lens, demand, stage, ceiling, most = null) {
   if (!stage) return null;
+  if (lens === "holds") {
+    const held = holdsFor(demand, ceiling);
+    const title = !held ? "holds: no machine" : held.count === 0 && held.covered ? "holds: none"
+      : "holds: " + (held.covered ? "" : "more than ") + held.count + " nodes, " +
+        (holdsReason(needsOf(demand).steps[0].prestress_newtons, most) === "machine"
+          ? "this machine short" : "every machine short");
+    return { title, min: "", max: "",
+             bands: [{ name: "hold", colour: BAND_COLOURS.hold },
+                     { name: "column head", colour: BAND_COLOURS.head }] };
+  }
   if (lens === "nodeforce") {
     const top = finiteMax((stage.node_residual || []).map(magnitude));
     return { title: "node force, N", min: "0", max: top == null ? "0" : newtons(top) };
@@ -525,6 +549,9 @@ export function pickHtml(demand, stage, node, verdict) {
     ["Sag", held || sag == null ? "held" : millimetres(sag) + " mm"],
   ];
   if (((demand.held || {}).actuators || []).includes(node)) rows.push(["Grabbed", "yes"]);
+  // one of the nodes the scored machine needs held (spec 2026-10-10, section 7)
+  const holds = holdsFor(demand, verdict && verdict.worst ? verdict.worst.ceiling : null);
+  if (holds && holds.nodes.includes(node)) rows.push(["Hold", "yes"]);
   const wire = (demand.wires || []).findIndex((item) => item && item.net_vertex === node);
   if (wire >= 0) {
     const tension = (stage.wire_tensions || [])[wire];

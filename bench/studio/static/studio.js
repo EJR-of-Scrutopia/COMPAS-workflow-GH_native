@@ -7,7 +7,8 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
 import {
-  escapeHtml, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels, stageCaption,
+  escapeHtml, holdsFor, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels,
+  stageCaption,
 } from "./cablenet_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
@@ -176,6 +177,8 @@ const state = {
   cablenetCeiling: null,
   // the scored row's verdict, each wire's own ceiling and margin for the card
   cablenetVerdict: null,
+  // the most any machine makes, which says why nodes need holding
+  cablenetMost: null,
   // which Cable net lenses draw their arrows (spec 2026-10-09 Cable net display, 5.2)
   cablenetArrows: { nodeforce: false, prestress: true, reel: true },
   cablenetGhost: false,
@@ -11307,6 +11310,7 @@ const CABLENET_LAYERS = [
   ["sag", "Sag"],
   ["prestress", "Prestress"],
   ["reel", "Reel"],
+  ["holds", "Holds"],
 ];
 const CABLENET_LENS_NAMES = CABLENET_LAYERS.map(([name]) => name);
 // the lenses whose arrows stand behind a tick of their own
@@ -11471,6 +11475,9 @@ function layerAvailability(name) {
     if (!demandFitsNet()) {
       return { on: false,
         why: "this demand is from an earlier geometry; run the cable net analysis again" };
+    }
+    if (name === "holds" && !(state.cablenet.needs && Array.isArray(state.cablenet.needs.steps))) {
+      return { on: false, why: "no prestress table: run the cable net analysis again" };
     }
     if (name === "prestress" && state.cablenetCeiling == null) {
       return { on: true, why: "no system scored yet: the tags show tension alone" };
@@ -12241,8 +12248,26 @@ function paintNodeForces(stage) {
 }
 
 // The legend of a lens that keys its own figures: Node force, Prestress, Reel.
+// Holds (spec 2026-10-10 prestress and holds, section 7): the nodes the chosen
+// machine needs held in red, the column heads in blue, every other node grey.
+const HOLD_COLOURS = { hold: new THREE.Color(0xc24936), head: new THREE.Color(0x66aaff),
+                       other: new THREE.Color(0x9aa4b2) };
+
+function paintHoldNodes() {
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.instanceColor) return;
+  const held = holdsFor(state.cablenet, state.cablenetCeiling);
+  const hold = new Set(held ? held.nodes : []);
+  const heads = new Set(((state.cablenet && state.cablenet.held) || {}).column_heads || []);
+  for (let i = 0; i < nodes.count; i++) {
+    nodes.setColorAt(i, hold.has(i) ? HOLD_COLOURS.hold : heads.has(i) ? HOLD_COLOURS.head
+      : HOLD_COLOURS.other);
+  }
+  nodes.instanceColor.needsUpdate = true;
+}
+
 function paintLensLegend(lens, stage) {
-  const legend = lensLegend(lens, state.cablenet, stage, state.cablenetCeiling);
+  const legend = lensLegend(lens, state.cablenet, stage, state.cablenetCeiling, state.cablenetMost);
   if (!legend) return;
   if (legend.bands) paintBandLegend(legend.title, legend.bands, legend.min, legend.max);
   else paintScalarLegend(legend.title, legend.min, "", legend.max);
@@ -12271,13 +12296,15 @@ function applyCableNetPaint() {
   const tensionUp = !!(state.layers.tension && layerAvailability("tension").on);
   const sagUp = !!(state.layers.sag && layerAvailability("sag").on);
   const up = (name) => !!(state.layers[name] && layerAvailability(name).on);
-  const keyed = ["nodeforce", "prestress", "reel"].filter(up);
+  const keyed = ["holds", "nodeforce", "prestress", "reel"].filter(up);
   const stage = tensionUp || sagUp || keyed.length ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
   const tensionOn = tensionUp && !!stage;
   const sagOn = sagUp && !!stage;
-  const forceNodes = !sagOn && !!stage && keyed.includes("nodeforce");
+  const holdNodes = !sagOn && !!stage && keyed.includes("holds");
+  const forceNodes = !sagOn && !!stage && !holdNodes && keyed.includes("nodeforce");
   if (!tensionOn && !sagOn) {
-    if (forceNodes) paintNodeForces(stage);
+    if (holdNodes) paintHoldNodes();
+    else if (forceNodes) paintNodeForces(stage);
     else resetNodeColours();
     if (stage && keyed.length) paintLensLegend(keyed[0], stage);
     else if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
@@ -12293,7 +12320,8 @@ function applyCableNetPaint() {
     for (let i = 0; i < wires.count; i++) {
       wires.setColorAt(i, TENSION_SCALE(Number(values[i]) || 0, magnitude));
     }
-    if (forceNodes) paintNodeForces(stage);
+    if (holdNodes) paintHoldNodes();
+    else if (forceNodes) paintNodeForces(stage);
     else resetNodeColours();
     // One decimal, the panel's way with a force: under the net's own weight
     // the whole scale is under a newton, and a key reading 0 to 0 over red
@@ -12472,7 +12500,7 @@ function updateModelLabels(stage) {
   }
   const { vertices, edges } = state.bundle.analysis_mesh;
   const targets = [];
-  for (const lens of ["prestress", "reel", "nodeforce", "tension"]) {
+  for (const lens of ["prestress", "reel", "holds", "nodeforce", "tension"]) {
     if (state.layers[lens] && layerAvailability(lens).on) {
       targets.push(...labelTargets(lens, state.cablenet, stage, state.cablenetCeiling));
     }
@@ -15974,10 +16002,13 @@ const cableNet = mountCableNet({
     paintCableNetLenses(true);
     applyShowMode();
   },
-  onCeiling: (ceiling, verdict) => {
+  onCeiling: (ceiling, verdict, most) => {
     state.cablenetCeiling = ceiling;
     state.cablenetVerdict = verdict || null;
-    if (state.layers.prestress && state.bundle && state.objects.wires) paintCableNetLenses(true);
+    state.cablenetMost = most == null ? null : most;
+    if ((state.layers.prestress || state.layers.holds) && state.bundle && state.objects.wires) {
+      paintCableNetLenses(true);
+    }
     buildLayerToggles();
   },
   onPopup: () => {
