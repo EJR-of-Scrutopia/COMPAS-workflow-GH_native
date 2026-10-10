@@ -11,6 +11,10 @@ export const SCHEMA = "bench.formwork-sim/1";
 // (the owner's answer of 10 October 2026).
 export const ACT_SECONDS = 12;
 export const TILING_BEAT = 0.5;
+// The jacking of the holds, at machine time 100 like the hold before it, takes
+// this long, so the player reaches both (found by the final review: the hold
+// could not be reached and Back stuck at the jacking).
+export const JACK_SECONDS = 2;
 
 // One packed array (solve_formwork.pack): base64 of little-endian float32,
 // read through a DataView so the byte order is the document's on any machine.
@@ -115,16 +119,20 @@ export function captureLabel(capture) {
 }
 
 // When the player reaches each capture, in seconds at 1x: the raise, finish
-// and hold at the act's rate from the first capture's machine time, each
-// tiling quarter TILING_BEAT after the capture before it.
+// and hold at the act's rate from the first capture's machine time, the
+// capture after the jacking JACK_SECONDS after the hold, each tiling quarter
+// TILING_BEAT after the capture before it.
 export function captureTimes(captures) {
   const at = [];
   let t = 0;
   let machine = null;
   (captures || []).forEach((c, i) => {
     if (i > 0) {
-      t += c.phase !== "tiling" && c.time != null && machine != null
-        ? (Number(c.time) - machine) * ACT_SECONDS / 100 : TILING_BEAT;
+      if (c.phase === "holds") t += JACK_SECONDS;
+      else {
+        t += c.phase !== "tiling" && c.time != null && machine != null
+          ? (Number(c.time) - machine) * ACT_SECONDS / 100 : TILING_BEAT;
+      }
     }
     at.push(t);
     if (c.time != null) machine = Number(c.time);
@@ -206,13 +214,15 @@ export function holdForce(capture, hold) {
 // its node; a strut where the hold pushes, a tie where it pulls, none while it
 // carries nothing; lean, the force's true angle from vertical in degrees.
 // Ruling: a rod leaning more than ROD_LEAN_MAX is drawn at it, so a force
-// near level does not run off the picture.
+// near level does not run off the picture. A force under HOLD_FLOOR_N, the
+// engine's own rest (net_engine.LEFTOVER_N), is the engine's residue: none.
 export const ROD_LEAN_MAX = 80;
+export const HOLD_FLOOR_N = 0.01;
 
 export function holdRod(force) {
   const [fx, fy, fz] = force;
   const size = Math.hypot(fx, fy, fz);
-  if (!(size > 0)) return { kind: "none", u: [0, 0, 1], lean: 0 };
+  if (!(size > HOLD_FLOOR_N)) return { kind: "none", u: [0, 0, 1], lean: 0 };
   const sign = fz < 0 ? -1 : 1;
   let u = [sign * fx / size, sign * fy / size, sign * fz / size];
   const lean = Math.atan2(Math.hypot(fx, fy), Math.abs(fz)) * 180 / Math.PI;
@@ -450,7 +460,9 @@ export function recordingCaption(sim, index) {
   return [captureLabel(sim.captures[index]), "Rope max " + kilonewtons(line.rope),
     "Wire max " + newtons(line.wire), "Trees " + line.trees.toFixed(2),
     "Deviation max " + millimetres(line.deviation),
-    "Heads touching " + line.touching + "/" + line.heads].join("   ");
+    "Heads touching " + line.touching + "/" + line.heads,
+    ...(line.holds ? ["Struts " + line.struts + "/" + line.holds, "Ties " + line.ties + "/" + line.holds]
+      : [])].join("   ");
 }
 
 const OVERLAY_INK = "#f2efe8";

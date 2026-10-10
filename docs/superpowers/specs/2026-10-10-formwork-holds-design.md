@@ -51,13 +51,17 @@ Progress says which try and which capture: `every 5th line: capture 37 of 101`. 
 - Show gains a tick, Holds: each hold drawn as a thin rod along its force at the capture after the jacking (the angle it is set at), its foot on the ground: a strut runs down from its node against its push, a tie runs down from its node along its pull. Ruling: a rod leaning more than 80 degrees is drawn at 80, so a force near level does not run off the picture; the table gives the true lean. Green while its hold pushes, blue while it pulls, grey while it carries nothing.
 - The frame line gains `Struts n/N` and `Ties n/N` when the run has holds.
 - The card says `Hold: strut n N` or `Hold: tie n N` for a held node.
-- The capture after the jacking is labelled `t 100 holds`.
+- The capture after the jacking is labelled `t 100 holds`. It comes JACK_SECONDS (2 s at 1x) after the hold, which is also at machine time 100, so the player shows the jacking and reaches both (amended after the final review: the two shared one second and the hold could not be reached).
+- While a search runs, the status line names the try beside the counter (`every 5th line: capture 37 of 101`), and starts with "a few minutes, one run a spacing tried".
+- A hold's force under 0.01 N (the engine's own rest) counts as carrying nothing: grey, upright, neither strut nor tie.
+- The recording's caption carries `Struts n/N` and `Ties n/N` like the frame line.
 
 ## 6. Tests
 
 - The bands on a small quad net with one principal line: each node's band, the open edge as the widest band, the spacings and their holds; a net that does not sort is refused.
-- The engine on the toy: the holds jacked to their design points, pushing; a hold the net pulls up lets go; the `holds` capture and `hold_push` in every capture.
+- The engine on the toy: the holds jacked to their design points and gripped there from then on, never let go; a strut and a tie side by side (up is push); the `holds` capture and `hold_push` in every capture.
 - The document's `holds` and `hold_push`; an older document without them still reads.
 - The search with a stand-in engine: stops at the first spacing that meets the tolerance; keeps the every-line run when none does; `none` runs once with no holds.
-- The tab's model under node: the result table, the frame line, the card, the label; the drawing of the props under node with three.js; the page by its text.
+- The tab's model under node: the result table, the frame line, the card, the label, the recording's caption; the hold and the capture after the jacking each reachable in the player; the drawing of the rods under node with three.js; the page by its text.
+- The run: a search through to the written document, its holds never a head or a wire node.
 - On screen: the real study's search, the tab at the holds capture and the last tile, the props ticked, and a new recording.

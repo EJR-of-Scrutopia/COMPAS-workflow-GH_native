@@ -376,7 +376,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       try {
         const run = await getJson(`/api/runs/${encodeURIComponent(runId)}`);
         if (tab.watcher !== poll) return;
-        el.runStatus.textContent = run.of > 0 ? `capture ${run.stage} of ${run.of}`
+        // a search names its try: the server's message is "<try>: <what>"
+        const counter = `capture ${run.stage} of ${run.of}`;
+        const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");
+        el.runStatus.textContent = run.of > 0
+          ? (named ? run.message.split(": ")[0] + ": " + counter : counter)
           : `${run.state} (${run.phase})`;
         if (run.state === "done") {
           stopWatching();
@@ -406,7 +410,8 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     if (!options || !studyName()) { el.runStatus.textContent = "open a study first"; return; }
     const c = chosen();
     el.run.disabled = true;
-    el.runStatus.textContent = "starting: about two minutes";
+    tab.searching = holdsChoice() === "search";
+    el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a spacing tried" : "starting: about two minutes";
     try {
       const body = { ...sentOptions(options), wires_per_motor: c.wires_per_motor,
                      pulleys: c.pulleys, wall: c.wall, holds: holdsChoice(), tolerance_mm: Number(tolerance()) };

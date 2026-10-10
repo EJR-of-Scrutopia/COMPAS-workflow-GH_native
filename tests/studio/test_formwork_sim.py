@@ -231,6 +231,29 @@ def test_when_no_spacing_meets_the_tolerance_the_every_line_run_is_kept():
     assert [t["deviation_max_mm"] for t in document["holds"]["tried"]] == [50.0, 12.0]
 
 
+def test_a_search_run_writes_the_kept_run_its_holds_never_a_head_or_a_wire_node(tmp_path, monkeypatch):
+    # found by the final review: the study's heads and wires reached the
+    # search only on screen; here run_formwork takes them to a written document
+    import json
+    from types import SimpleNamespace
+
+    faces, heads, node = _strip_net()
+    wired = {node(4, j) for j in range(-2, 3)}
+    monkeypatch.setattr(formwork_sim, "request_from", lambda *a, **k: {"study": "Strip"})
+    inputs = SimpleNamespace(heads=[(n, k) for k, n in enumerate(heads)],
+                             rim=[{"node": n} for n in sorted(wired)])
+    seen = []
+    out = tmp_path / "sim.json"
+    formwork_sim.run_formwork(inputs, {"faces": faces}, None, None, 0.02, 1000.0, out, 1.0, 0.1,
+                              500.0, 1, 3.2, runner=_stand_in({8: 50.0, 16: 12.0}, seen),
+                              holds="search", tolerance_mm=20.0)
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["holds"]["spacing"] == 1 and written["holds"]["met"] is True
+    assert [t["count"] for t in written["holds"]["tried"]] == [8, 16]
+    assert [len(holds) for holds in seen] == [8, 16]
+    assert not set(seen[-1]) & (wired | set(heads))
+
+
 def test_the_spacings_are_named_as_the_tab_says_them():
     assert [formwork_sim.spacing_name(s, 10) for s in (10, 5, 2, 1)] == [
         "the open edges", "every 5th line", "every 2nd line", "every line"]

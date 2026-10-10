@@ -61,7 +61,8 @@ class Model(NamedTuple):
     wires_per_motor: int
     wall: float             # the tree tube's wall, mm
     holds: tuple = ()       # net nodes jacked to their design points after the raise and
-                            # held from below, push only (spec 2026-10-10 formwork holds)
+                            # gripped there in every direction from then on, like a head:
+                            # a rod along its own force (spec 2026-10-10 formwork holds)
 
 
 class Capture(NamedTuple):
@@ -73,7 +74,9 @@ class Capture(NamedTuple):
     tension: np.ndarray     # (m,) every rope, N
     deviation: np.ndarray   # (n,) from where the frame (tiling: the design) puts each node, mm
     head_push: np.ndarray   # (heads, 3) each head's push on its node, zero when not touching
-    hold_push: np.ndarray   # (holds, 3) each hold's push on its node, zero when not touching
+    hold_push: np.ndarray   # (holds, 3) the force each hold puts on its node, N: up where
+                            # it pushes (a strut), down where it pulls (a tie); zero
+                            # before the jacking
     anchor_force: np.ndarray  # (rim, 3) the force each rim node puts on its anchor: its
                               # wire's pull, the foundation's push and the sideways hold, N
     wire_tension: np.ndarray  # (rim,) N

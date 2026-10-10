@@ -56,6 +56,13 @@ def test_the_run_sends_the_cut_the_machine_and_the_wall_and_never_a_prestress():
     assert "/formwork/run" in body and "prestress" not in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
+    # a search says which try it is on, and that it takes longer (found by the
+    # final review: the counter climbed to 101 and dropped back with no word)
+    assert 'tab.searching = holdsChoice() === "search";' in body
+    assert ('el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a '
+            'spacing tried" : "starting: about two minutes";') in body
+    assert 'const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");' in watch
+    assert 'named ? run.message.split(": ")[0] + ": " + counter : counter' in watch
 
 
 def test_the_machine_is_the_cable_net_tabs_one_a_study():

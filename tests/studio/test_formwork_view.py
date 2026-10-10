@@ -109,6 +109,13 @@ out.propLeaning = [at(props(), 0), colourAt(props(), 0)];
 view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
 out.propIdle = [at(props(), 0), colourAt(props(), 0)];
 view.clear();
+// a run with the capture after the jacking, after the hold at the same time
+view.build(m.readSim(%(jacked)s));
+view.show({ from: 1, to: 1, blend: 0, nearer: 1 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.jackedHold = props().visible;
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.jackedSet = [props().visible, at(props(), 0), colourAt(props(), 0)];
+view.clear();
 console.log(JSON.stringify(out));
 """
 
@@ -116,6 +123,16 @@ console.log(JSON.stringify(out));
 def _held():
     doc = with_holds(document())
     doc["net"]["holds"] = [2]                      # a node with a height, for its prop
+    return doc
+
+
+def _jacked():
+    # the hold, then the capture after the jacking at the same machine time,
+    # the hold pushing 40 N straight up
+    doc = _held()
+    jacked = json.loads(json.dumps(doc["captures"][2]))
+    jacked.update({"phase": "holds", "time": 100.0, "row": None, "quarter": None})
+    doc["captures"].insert(2, jacked)
     return doc
 
 
@@ -136,7 +153,7 @@ def out(tmp_path_factory):
         "model": (STATIC / "formwork_model.js").resolve().as_uri(),
         "view": (STATIC / "formwork_view.js").resolve().as_uri(),
         "doc": json.dumps(document()), "held": json.dumps(_held()),
-        "leaning": json.dumps(_leaning())}, encoding="utf-8")
+        "leaning": json.dumps(_leaning()), "jacked": json.dumps(_jacked())}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
     assert result.returncode == 0, result.stderr
@@ -266,6 +283,13 @@ def test_each_hold_is_a_rod_from_the_ground_along_its_force_from_the_jacking_on(
     assert later["p"] == pytest.approx([1.0, 1.0, 0.25]) and pulling == pytest.approx(BLUE)
     # the tick hides them
     assert out["propUnticked"] is False
+
+
+def test_the_rods_stand_from_the_capture_after_the_jacking_and_not_at_the_hold(out):
+    assert out["jackedHold"] is False
+    visible, rod, colour = out["jackedSet"]
+    assert visible is True and colour == pytest.approx(GREEN)
+    assert rod["p"] == pytest.approx([1.0, 1.0, 0.25]) and rod["s"][1] == pytest.approx(0.5)
 
 
 def test_a_hold_set_pulling_sideways_is_a_tie_down_along_its_pull(out):

@@ -144,7 +144,11 @@ def test_the_holds_are_jacked_to_the_design_after_the_raise_and_held_there():
         for node in (1, 3, 5, 7):
             assert c.x[node] == pytest.approx(model.design[node], abs=1.0e-6)
         assert np.all(np.linalg.norm(c.hold_push, axis=1) > 0.0)
-    assert np.any(jacked.hold_push[:, 2] < 0.0)
+    # up is push: jacked, all four pull their nodes down (ties); the first
+    # quarter's skin sits on node 1, so its hold then pushes up (a strut)
+    # while the other three still pull
+    assert np.all(jacked.hold_push[:, 2] < 0.0)
+    assert captures[4].hold_push[0, 2] > 0.0 and np.all(captures[4].hold_push[1:, 2] < 0.0)
     # and a run with no holds is the sequence as it was
     plain = fs.simulate(_toy())
     assert [c.phase for c in plain.captures] == ["raise", "finish", "hold"] + ["tiling"] * 4

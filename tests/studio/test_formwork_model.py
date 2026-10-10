@@ -177,7 +177,16 @@ out.holdsMissed = m.holdsHtml({ ...held, search: { ...held.search, met: false, s
   tried: [{ spacing: 10, count: 95, deviation_max_mm: 412.3 }, { spacing: 1, count: 950, deviation_max_mm: 31.5 }] } });
 out.holdsNone = [m.holdsHtml(sim), m.holdsHtml(null)];
 // each hold a rod along its own force (his ruling of 10 October 2026)
-out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0]].map((f) => m.holdRod(f));
+out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0], [0, 0, -1e-9]].map((f) => m.holdRod(f));
+// a run with holds: the hold and the capture after the jacking both at
+// machine time 100 (found by the final review: the player could not reach the
+// hold, and Back stuck at the jacking)
+const jackRun = [{ phase: "raise", time: 30 }, { phase: "finish", time: 60 }, { phase: "hold", time: 100 },
+  { phase: "holds", time: 100 }, { phase: "tiling" }, { phase: "tiling" }];
+out.jackTimes = m.captureTimes(jackRun);
+out.jackNearer = [2, 3, 4].map((i) => m.playhead(out.jackTimes, out.jackTimes[i]).nearer);
+out.jackLabel = m.captureLabel(jackRun[3]);
+out.heldCaption = [m.recordingCaption(held, 2), m.recordingCaption(held, 3)];
 out.jackedAt = [m.jackedAt(held), m.jackedAt(sim),
   m.jackedAt({ captures: [{ phase: "hold" }, { phase: "holds" }, { phase: "tiling" }] })];
 out.names = [10, 5, 2, 1, 3].map((s) => m.spacingName(s, s === 3 ? 9 : 10));
@@ -476,7 +485,7 @@ def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):
 
 
 def test_each_hold_is_a_rod_along_its_own_force(out):
-    strut, tie, level, idle = out["rods"]
+    strut, tie, level, idle, residue = out["rods"]
     # pushing straight up: a strut standing straight under its node
     assert strut["kind"] == "strut" and strut["u"] == pytest.approx([0, 0, 1])
     assert strut["lean"] == pytest.approx(0)
@@ -487,11 +496,29 @@ def test_each_hold_is_a_rod_along_its_own_force(out):
     # a force near level is drawn at 80 degrees; its true lean is kept
     assert level["kind"] == "strut" and level["lean"] == pytest.approx(89.427, abs=1e-3)
     assert level["u"] == pytest.approx([0.98481, 0, 0.17365], abs=1e-5)
-    # carrying nothing: upright
+    # carrying nothing, or only the engine's residue (under its 0.01 N): upright
     assert idle["kind"] == "none" and idle["u"] == pytest.approx([0, 0, 1])
+    assert residue["kind"] == "none"
     # the rods are set at the capture after the jacking: its own, or the
     # first of the tiling in a document from before it had one
     assert out["jackedAt"] == [2, 2, 1]
+
+
+def test_the_hold_and_the_capture_after_the_jacking_each_have_their_own_beat(out):
+    # both at machine time 100: the jacking takes JACK_SECONDS of its own, so
+    # the player reaches the net as it hangs and the net jacked up, and Back
+    # from the jacking reaches the hold
+    times = out["jackTimes"]
+    assert times == pytest.approx([0, 3.6, 8.4, 10.4, 10.9, 11.4])
+    assert out["jackNearer"] == [2, 3, 4]
+    assert out["jackLabel"] == "t 100 holds"
+
+
+def test_a_recorded_frame_counts_the_struts_and_the_ties(out):
+    pushing, pulling = out["heldCaption"]
+    assert pushing.endswith("   Struts 1/1   Ties 0/1")
+    assert pulling.endswith("   Struts 0/1   Ties 1/1")
+    assert "Struts" not in out["caption"]
 
 
 def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):

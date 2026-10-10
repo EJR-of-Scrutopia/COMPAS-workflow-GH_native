@@ -4643,6 +4643,7 @@ def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
     # the holds: a search to the tolerance (the default) or none (spec
     # 2026-10-10 formwork holds, section 5)
     assert re.findall(r'name="formwork-holds" value="([a-z]+)"', section) == ["search", "none"]
+    assert 'title="The holds\' rods: green a strut, blue a tie"' in section
     assert 'value="search" checked' in section
     assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
         "tension", "deviation", "utilisation", "wire", "off"]

@@ -432,9 +432,13 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
     where it crossed; one its wire would pull into the anchor is taken by the
     foundation. A node let go in a round is not taken back in the same round,
     and a node its head lets go of is not taken back by that head until it
-    has been above the head again, over it and higher than its top: it left
-    the notch sideways, so only coming down onto the head from above puts it
-    back.
+    has been above the head again, over it and higher than its top (or still
+    at its top where it was let go): it left the notch sideways, so only
+    coming down onto the head from above puts it back. A node let go twice in
+    one settle stays off for the rest of it, so a node snapping through its
+    head and back cannot stop the contacts settling. These rules are for an
+    untied head; the formwork sequence ties its heads and its holds, so it
+    never lets one go.
     With slide, the ground holds its nodes up but not in place, as when the
     net is laid out by hand: they slide until nothing pulls them along it,
     and rest where they came to. Returns (Rest, Contacts)."""
