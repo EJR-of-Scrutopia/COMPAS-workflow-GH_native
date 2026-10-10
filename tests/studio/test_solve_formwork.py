@@ -17,6 +17,9 @@ sys.path.insert(0, str(STUDIO))
 import solve_formwork  # noqa: E402
 
 
+FACES = [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7]]
+
+
 def _request():
     # the sequence tests' toy as the studio sends it, in millimetres and
     # newtons: a 3 x 3 net, its corners on wires, one tree lifting the centre
@@ -47,8 +50,10 @@ def _request():
         "frames": [{"time": 30.0, "phase": "raise", "net": flat, "trees": trees(0.0)},
                    {"time": 60.0, "phase": "finish", "net": design, "trees": trees(400.0)},
                    {"time": 100.0, "phase": "hold", "net": design, "trees": trees(400.0)}],
-        "rows": [{"name": "S1", "quarters": [{"nodes": [1, 3, 5, 7][:q], "z": [-20.0] * q}
+        "rows": [{"name": "S1", "quarters": [{"nodes": [1, 3, 5, 7][:q], "z": [-20.0] * q,
+                                              "faces": [q - 1]}
                                              for q in range(1, 5)]}],
+        "faces": FACES,
         "wall": 3.2, "options": {"prestress": 50.0}, "note": None, "assumptions": ["a toy"],
     }
 
@@ -81,6 +86,27 @@ def test_the_document_carries_every_capture_with_its_arrays_in_shape():
     assert summary["captures"] == 7
     assert summary["raise_deviation_max_mm"] == pytest.approx(
         float(solve_formwork.unpack(hold["deviation"]).max()), rel=1.0e-6)
+
+
+def test_the_document_carries_the_faces_the_skin_goes_on_and_the_grounds_nodes():
+    # what the Formwork tab draws the skin and the ground contacts from (spec
+    # 2026-10-10 formwork tab, section 4)
+    document = solve_formwork.solve(_request())
+    assert document["net"]["faces"] == FACES
+    captures = document["captures"]
+    assert [c["added_faces"] for c in captures] == [None] * 3 + [[0], [1], [2], [3]]
+    assert captures[0]["ground"] == [1, 3, 5, 7]
+    assert all(isinstance(c["ground"], list) for c in captures)
+    # an older request, with no faces: none written, the ground still is
+    older = _request()
+    del older["faces"]
+    for row in older["rows"]:
+        for quarter in row["quarters"]:
+            del quarter["faces"]
+    document = solve_formwork.solve(older)
+    assert document["net"]["faces"] is None
+    assert all(c["added_faces"] is None for c in document["captures"])
+    assert document["captures"][0]["ground"] == [1, 3, 5, 7]
 
 
 def test_the_entry_runs_as_its_own_process_reporting_progress(tmp_path):

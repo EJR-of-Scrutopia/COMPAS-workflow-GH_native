@@ -246,7 +246,9 @@ def rows_from(arrays, binding, plan, thickness, density):
             loads = cablenet.stage_node_loads(vertices, faces, [{"faces": placed}],
                                               thickness, density)[0]
             nodes = [i for i, load in enumerate(loads) if load[2] != 0.0]
-            quarters.append({"nodes": nodes, "z": [loads[i][2] for i in nodes]})
+            # the faces it placed, for the Formwork tab's skin (spec 2026-10-10)
+            quarters.append({"nodes": nodes, "z": [loads[i][2] for i in nodes],
+                             "faces": added})
         if quarters:
             rows.append({"name": "S{}".format(entry["stage"]), "quarters": quarters})
     return rows
@@ -264,6 +266,8 @@ def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per
         "units": "mm, N",
         "design": [[c * 1000.0 for c in point] for point in vertices],
         "edges": edges,
+        # the cut mesh's faces, which the skin goes on (spec 2026-10-10)
+        "faces": [[int(i) for i in face] for face in arrays["faces"]],
         "ea": float(ea), "prestress": float(prestress),
         "weight": cablenet.net_weight_loads(vertices, edges, mass_per_metre),
         "rim": inputs.rim, "machines": inputs.machines, "wires_per_motor": int(wires_per_motor),

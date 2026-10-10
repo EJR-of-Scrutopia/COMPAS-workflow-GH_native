@@ -95,6 +95,20 @@ def test_the_sequence_captures_every_frame_and_every_quarter():
     _held_by_wire_and_foundation(model, hold)
 
 
+def test_every_capture_names_the_nodes_the_ground_holds():
+    # laid out, every node but the rim's and the head's rests on the ground
+    # (spec 2026-10-10 formwork tab, section 4); raised, the tree lifts the
+    # centre and the edge midpoints with it, so fewer rest there, and the ground
+    # only ever holds a node at its own height
+    result = fs.simulate(_toy())
+    first, hold = result.captures[0], result.captures[2]
+    assert first.ground == (1, 3, 5, 7)
+    assert len(hold.ground) < len(first.ground)
+    for c in result.captures:
+        assert list(c.ground) == sorted(c.ground)
+        assert all(abs(float(c.x[i, 2])) < 1.0e-6 for i in c.ground)
+
+
 def test_the_net_is_laid_out_where_the_first_frame_has_it_as_near_as_it_allows():
     # the animation has node 1 300 mm up and 650 mm further out than its ropes
     # reach: the people laying the net out put it on the ground, and held there

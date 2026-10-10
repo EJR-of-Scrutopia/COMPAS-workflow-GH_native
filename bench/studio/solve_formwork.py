@@ -81,7 +81,7 @@ def model_from(request):
         wires_per_motor=int(request["wires_per_motor"]), wall=float(request["wall"]))
 
 
-def _capture_entry(capture):
+def _capture_entry(capture, added_faces=None):
     return {
         "phase": capture.phase, "time": capture.time, "row": capture.row,
         "quarter": capture.quarter, "solver": capture.solver,
@@ -94,6 +94,11 @@ def _capture_entry(capture):
         "tree_utilisation": pack(capture.tree_utilisation),
         "tree_bending": {str(node): [float(v) for v in load]
                          for node, load in capture.tree_bending.items()},
+        # what the Formwork tab draws the ground contacts and the skin from
+        # (spec 2026-10-10 formwork tab, section 4): the nodes the ground
+        # holds, and for a tiling quarter the faces it placed
+        "ground": [int(node) for node in capture.ground],
+        "added_faces": None if added_faces is None else [int(face) for face in added_faces],
     }
 
 
@@ -129,6 +134,10 @@ def solve(request, progress=None):
     seconds = time.perf_counter() - began
     rim = sorted(model.rim)
     names = {int(wire["node"]): wire.get("name") for wire in request["rim"]}
+    # each tiling quarter's faces, in the order the sequence captures them; an
+    # older request names none
+    added = [quarter.get("faces") for row in request["rows"] for quarter in row["quarters"]]
+    tiled = iter(added)
     reeves = {int(wire["node"]): int(wire.get("reeve") or 1) for wire in request["rim"]}
     routes = {int(wire["node"]): wire.get("route_mm") for wire in request["rim"]}
     return {
@@ -143,6 +152,8 @@ def solve(request, progress=None):
             "nodes": len(model.design), "edges": model.edges.tolist(),
             "ea": model.ea, "prestress": model.prestress, "design": pack(model.design),
             "rest_lengths": pack(result.rest_lengths), "cut_force": pack(result.cut_force),
+            "faces": None if request.get("faces") is None else [
+                [int(i) for i in face] for face in request["faces"]],
         },
         "rim": {
             "nodes": rim, "names": [names.get(node) for node in rim],
@@ -165,7 +176,8 @@ def solve(request, progress=None):
             "diameter": tr.DIAMETER, "wall": result.wall,
             "thinnest_wall": result.thinnest_wall,
         },
-        "captures": [_capture_entry(capture) for capture in result.captures],
+        "captures": [_capture_entry(capture, next(tiled) if capture.phase == "tiling" else None)
+                     for capture in result.captures],
         "summary": _summary(result),
     }
 
