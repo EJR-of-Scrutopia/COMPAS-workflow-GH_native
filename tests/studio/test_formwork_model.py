@@ -147,6 +147,36 @@ out.many = m.worstTables({ captures: [{ tension: Float32Array.from({ length: 60 
   edges: [], rim: { nodes: [], names: [], machines: [] }, trees: { members: [], heads: [] } }).ropes;
 out.noTables = m.worstTables(null);
 out.worstRows = m.WORST_ROWS;
+// what a recorded frame carries over the picture (the owner's choice of
+// 10 October 2026: record the raise with the tab's labels and key)
+out.caption = m.recordingCaption(sim, 1);
+out.noCaption = m.recordingCaption(sim, 9);
+function fakeContext() {
+  const drawn = { texts: [], rects: 0, gradients: 0 };
+  const ctx = { font: "", fillStyle: "", textBaseline: "", save() {}, restore() {},
+    measureText: (text) => ({ width: String(text).length * 6 }),
+    fillRect: () => { drawn.rects += 1; },
+    fillText: (text, x, y) => { drawn.texts.push([String(text), Math.round(x), Math.round(y)]); },
+    createLinearGradient: () => { drawn.gradients += 1; return { addColorStop() {} }; } };
+  return [ctx, drawn];
+}
+{
+  const [ctx, drawn] = fakeContext();
+  m.paintOverlay(ctx, { width: 1920, height: 1080, caption: out.caption,
+    labels: [{ text: "3.0 kN", x: 500, y: 400 }], key: m.colourKey("deviation", sim, 20) });
+  out.overlayBands = drawn;
+}
+{
+  const [ctx, drawn] = fakeContext();
+  m.paintOverlay(ctx, { width: 1920, height: 1080, caption: "", labels: [],
+    key: m.colourKey("tension", sim, 20) });
+  out.overlayRamp = drawn;
+}
+{
+  const [ctx, drawn] = fakeContext();
+  m.paintOverlay(ctx, { width: 1920, height: 1080, caption: "", labels: [], key: null });
+  out.overlayNone = drawn;
+}
 console.log(JSON.stringify(out));
 """
 
@@ -363,3 +393,26 @@ def test_a_worst_table_sorts_by_its_headers_and_its_rows_fly_to_the_part(out):
     assert ('<tr data-capture="0" data-kind="node" data-index="2"><td>2</td><td>500</td>'
             '<td>t 30 raise</td></tr>') in html["nodes"]
     assert '<tr data-capture="2" data-kind="machine" data-index="0"><td>M1</td><td>1500</td>' in html["machines"]
+
+
+def test_a_recorded_frame_carries_the_captures_figures(out):
+    # the page's frame line, on one line along the top of the video
+    assert out["caption"] == ("t 100 hold   Rope max 2.5 kN   Wire max 1200 N   Trees 0.40   "
+                              "Deviation max 30 mm   Heads touching 1/1")
+    assert out["noCaption"] == ""
+
+
+def test_a_recorded_frame_carries_the_labels_and_the_key(out):
+    # the page's labels and key are HTML, which never reach the canvas the
+    # recorder reads, so they are drawn over each frame
+    texts = [text for text, _, _ in out["overlayBands"]["texts"]]
+    assert texts == [out["caption"], "3.0 kN", "deviation, mm: tolerance 20",
+                     "within", "near", "over", "0", "500"]
+    label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
+    # standing on its point, as the page's labels do
+    assert abs(label[1] - 500) < 30 and label[2] < 400
+    assert out["overlayBands"]["rects"] >= 6
+    ramp = out["overlayRamp"]
+    assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0"]
+    assert ramp["gradients"] == 1
+    assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0

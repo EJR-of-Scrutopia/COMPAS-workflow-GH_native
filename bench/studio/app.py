@@ -489,7 +489,7 @@ def apply_saved_folders() -> dict:
     return applied
 
 
-def deliver_recording(run_id: str, video: Path) -> Path:
+def deliver_recording(run_id: str, video: Path, kind: str = "") -> Path:
     """The take lands where the animations live, stamped and named.
 
     Param: "can we also set a new animation record output folder" -- the
@@ -499,12 +499,14 @@ def deliver_recording(run_id: str, video: Path) -> Path:
     timestamp) so a re-record never overwrites yesterday's. The repo copy
     stays where it was: if the delivery fails (folder unreachable,
     OneDrive offline) the recording still exists and the original path is
-    returned instead.
+    returned instead. A recording of the Formwork tab's raise (kind
+    "formwork") is named for it, beside the takes.
     """
 
     slug = run_id[len("study-"):] if run_id.startswith("study-") else run_id
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    return deliver_output(video, "{}-{}.mp4".format(slug, stamp))
+    name = "{}-{}-{}.mp4".format(slug, kind, stamp) if kind else "{}-{}.mp4".format(slug, stamp)
+    return deliver_output(video, name)
 
 
 def deliver_still(run_id: str, plate: Path, width: int, height: int) -> Path:
@@ -3381,7 +3383,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         return {"frame": frame}
 
     @app.post("/api/frames/{run_id}/stitch")
-    def stitch(run_id: str, fps: int = Query(60)):
+    def stitch(run_id: str, fps: int = Query(60), kind: str = Query("")):
+        if kind not in ("", "formwork"):
+            raise HTTPException(400, "kind must be formwork or left out, not {!r}".format(kind))
         directory = frames_dir(run_id)
         # Whichever format the take actually wrote. Frames are JPEG from
         # 2026-09-09, but a folder left by an older take is still stitchable
@@ -3421,7 +3425,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(
                 500, "ffmpeg exited cleanly but wrote no video; the frames "
                      "are still in {}".format(directory))
-        return {"video": str(deliver_recording(run_id, video))}
+        return {"video": str(deliver_recording(run_id, video, kind))}
 
     # ---------- the print-resolution still ----------
     # A SEPARATE DIRECTORY FROM THE FRAMES, and that is not tidiness.
