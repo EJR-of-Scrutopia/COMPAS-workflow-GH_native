@@ -167,45 +167,118 @@ export function eaMismatch(parts, demand, rope) {
   return { analysed, chosen };
 }
 
-// The menu's three answers (spec 2026-10-09 Cable net display, section 3): the
-// prestress the form needs (the run's floor until part 3 computes it), what the
-// chosen machine gives its weakest wire, and the most any machine makes. Each
-// null where nothing gives it.
+// The prestress the form needs (spec 2026-10-10 prestress and holds) -------
+
+// The needs table of a current document, or null.
+function needsOf(demand) {
+  const needs = demand && !isStale(demand) ? demand.needs : null;
+  return needs && Array.isArray(needs.steps) && needs.steps.length ? needs : null;
+}
+
+// The nodes a machine of this ceiling needs held: the fewest steps of the walk
+// whose prestress the ceiling covers, every node those steps added, and the
+// prestress it is then set to. A ceiling no step meets holds the whole walk
+// at the ceiling, not covered. Null with no table or no ceiling.
+export function holdsFor(demand, ceiling) {
+  const needs = needsOf(demand);
+  if (!needs || ceiling == null || !Number.isFinite(Number(ceiling))) return null;
+  const c = Number(ceiling);
+  const steps = needs.steps;
+  const at = steps.findIndex((s) => s.prestress_newtons != null && s.prestress_newtons <= c);
+  const step = at < 0 ? steps.length - 1 : at;
+  const nodes = steps.slice(1, step + 1).flatMap((s) => s.added || []);
+  return { step, count: nodes.length, nodes, covered: at >= 0,
+           prestress: at < 0 ? c : steps[at].prestress_newtons };
+}
+
+// A figure of the ladder at a prestress: straight across between two rungs in
+// the logarithm of the prestress, the end's own figure beyond either end.
+function ladderAt(demand, prestress, key) {
+  const needs = needsOf(demand);
+  const ladder = needs && Array.isArray(needs.ladder) ? needs.ladder : [];
+  if (!ladder.length || prestress == null || !(Number(prestress) > 0)) return null;
+  const p = Number(prestress);
+  const first = ladder[0], last = ladder[ladder.length - 1];
+  if (p <= first.prestress_newtons) return first[key];
+  if (p >= last.prestress_newtons) return last[key];
+  const i = ladder.findIndex((r, k) => k + 1 < ladder.length && ladder[k + 1].prestress_newtons > p);
+  const a = ladder[i], b = ladder[i + 1];
+  const t = Math.log(p / a.prestress_newtons) / Math.log(b.prestress_newtons / a.prestress_newtons);
+  return a[key] + t * (b[key] - a[key]);
+}
+
+// The worst sag, mm, with the column heads alone at this prestress.
+export function sagAt(demand, prestress) {
+  return ladderAt(demand, prestress, "worst_sag_mm");
+}
+
+// The factor on the load that keeps the net within the line at this prestress.
+export function roofAt(demand, prestress) {
+  return ladderAt(demand, prestress, "roof");
+}
+
+// The menu's answers (spec 2026-10-10 prestress and holds, section 5): the
+// prestress the form needs with its column heads alone, what the chosen
+// machine gives a wire and the most any machine makes, each marked against it,
+// the nodes the chosen machine needs held and why, and the roof its ceiling
+// gives. Each null where nothing gives it.
 export function menuAnswers(demand, row, strongest) {
-  const floor = demand && !isStale(demand) ? wireFloor(demand).newtons : null;
+  const needs = needsOf(demand);
   const worst = row && !row.refused && row.verdict ? row.verdict.worst : null;
+  const needed = needs ? needs.steps[0].prestress_newtons : null;
+  const known = needed != null;
+  const most = strongest ? { newtons: strongest.ceiling_newtons, described: strongest.described,
+                             holds: known ? strongest.ceiling_newtons >= needed : null } : null;
+  const gives = worst ? { newtons: worst.ceiling, holds: known ? worst.ceiling >= needed : null,
+                          margin: known ? worst.ceiling / needed : null } : null;
+  const held = gives && needs ? holdsFor(demand, worst.ceiling) : null;
   return {
-    needed: floor,
-    gives: worst ? { newtons: worst.ceiling, holds: !!row.verdict.holds, margin: worst.margin } : null,
-    most: strongest ? { newtons: strongest.ceiling_newtons, described: strongest.described } : null,
+    needed: needs ? { newtons: needed } : null,
+    gives,
+    most,
+    holds: held ? { count: held.count, covered: held.covered,
+                    reason: held.count === 0 ? null : most && most.holds ? "machine" : "every machine" }
+      : null,
+    roof: gives && needs ? roofAt(demand, worst.ceiling) : null,
   };
 }
 
 export function answersHtml(answers) {
   const gives = answers.gives;
+  const marked = (answer) => (answer.holds == null ? "" : " " + mark(answer.holds));
+  const holds = answers.holds;
+  const missing = answers.needed == null ? "not run" : "no machine";
   const rows = [
-    ["Needed", answers.needed == null ? "not run" : newtons(answers.needed) + " N"],
-    ["Gives", gives == null ? "no machine" : newtons(gives.newtons) + " N a wire " +
-      mark(gives.holds) + (gives.margin == null ? "" : " " + factor(gives.margin) + "x")],
-    ["Most", answers.most == null ? "none" : newtons(answers.most.newtons) + " N a wire, " +
-      escapeHtml(answers.most.described)],
+    ["Needed", answers.needed == null ? "not run"
+      : answers.needed.newtons == null ? "more than 1 MN" : newtons(answers.needed.newtons) + " N"],
+    ["Gives", gives == null ? "no machine" : newtons(gives.newtons) + " N a wire" + marked(gives) +
+      (gives.margin == null ? "" : " " + factor(gives.margin) + "x")],
+    ["Most", answers.most == null ? "none" : newtons(answers.most.newtons) + " N a wire" +
+      marked(answers.most) + ", " + escapeHtml(answers.most.described)],
+    ["Holds", holds == null ? missing : holds.count === 0 && holds.covered ? "none"
+      : (holds.covered ? "" : "more than ") + holds.count + " nodes, " +
+        (holds.reason === "machine" ? "this machine short" : "every machine short")],
+    ["Roof", answers.roof == null ? missing : factor(answers.roof) + "x the skin"],
   ];
   return '<table class="cablenet-answers">' +
     rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("") + "</table>";
 }
 
-// One line for each thing the run on screen differs from: the prestress dial,
-// the tolerance dial, the chosen wire's stiffness. Plain text: the caller
-// escapes it.
+// One line for each thing the run on screen differs from: the machine it was
+// designed for, the tolerance dial, the chosen wire's stiffness. Plain text:
+// the caller escapes it.
 export function runWarnings(demand, dials, parts, rope) {
   if (!demand) return [];
   if (isStale(demand)) return ["Run again: older analysis, " + String(demand.schema || "unknown")];
+  if (!needsOf(demand)) return ["Run again: older analysis, no prestress table"];
   const out = [];
   const number = (value) => (value == null || value === "" ? NaN : Number(value));
-  const usedPrestress = number(demand.prestress);
-  const dialPrestress = number(dials && dials.prestress);
-  if (Number.isFinite(usedPrestress) && Number.isFinite(dialPrestress) && usedPrestress !== dialPrestress) {
-    out.push("Run again: dial " + newtons(dialPrestress) + " N, run " + newtons(usedPrestress) + " N");
+  const chosen = number(dials && dials.ceiling);
+  const designed = number(demand.needs.ceiling_newtons);
+  if (Number.isFinite(chosen) && (!Number.isFinite(designed) ||
+      Math.abs(chosen - designed) > 0.01 * Math.max(chosen, designed))) {
+    out.push("Run again: machine " + newtons(chosen) + " N, run " +
+      (Number.isFinite(designed) ? newtons(designed) + " N" : "no machine"));
   }
   const usedTolerance = number(demand.tolerance_mm);
   const dialTolerance = number(dials && dials.tolerance);
@@ -576,6 +649,9 @@ export function graphsHtml(demand, ceiling) {
     ["Worst sag, mm", stageSvg(series, "sag", acceptance)],
     ["Worst node force, N", stageSvg(series, "force", null)],
     ["Sag against nodes grabbed, mm", demand.placement ? curveSvg(demand.placement.curve, acceptance) : ""],
+    ["Prestress needed against nodes held, N", needsOf(demand) ? stageSvg(
+      needsOf(demand).steps.map((s) => ({ name: String(s.count), prestress: s.prestress_newtons })),
+      "prestress", ceiling) : ""],
   ];
   return graphs.filter(([, svg]) => svg).map(([title, svg]) =>
     `<div class="cablenet-graph"><div class="cablenet-graph-title">${title}</div>${svg}</div>`).join("") +
@@ -675,18 +751,25 @@ export function limitsHtml(terms) {
 
 // Every motor at the other choices: one row each, the chosen one marked, a row
 // a click chooses.
-export function motorsHtml(rows, chosen) {
-  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price"];
+export function motorsHtml(rows, chosen, demand) {
+  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price", "Holds", "Sag, mm"];
   const body = (rows || []).map((row) => {
     const choice = row.choices || {};
     const motor = escapeHtml(choice.motor);
     const open = `<tr data-motor="${motor}"${choice.motor === chosen ? ' class="chosen"' : ""}>`;
-    if (row.refused) return open + `<td>${motor}</td><td colspan="5">${escapeHtml(row.refused)}</td></tr>`;
+    if (row.refused) return open + `<td>${motor}</td><td colspan="7">${escapeHtml(row.refused)}</td></tr>`;
     const worst = row.verdict && row.verdict.worst;
+    // what this motor's ceiling needs held, and the sag it leaves with the
+    // column heads alone: what a change of motor does to the accuracy
+    const held = worst ? holdsFor(demand, worst.ceiling) : null;
+    const sag = worst ? sagAt(demand, worst.ceiling) : null;
     const cells = [motor, ratioLabel(choice.ratio), worst ? newtons(worst.ceiling) : "",
                    worst && worst.margin != null ? factor(worst.margin) + "x" : "",
                    mark(row.verdict && row.verdict.holds),
-                   row.price ? pounds(row.price.priced_gbp) : ""];
+                   row.price ? pounds(row.price.priced_gbp) : "",
+                   held == null ? "" : held.count === 0 && held.covered ? "none"
+                     : (held.covered ? "" : "more than ") + held.count,
+                   sag == null ? "" : millimetres(sag)];
     return open + cells.map((cell) => `<td>${cell}</td>`).join("") + "</tr>";
   });
   return "<table><tr>" + head.map((h) => `<th>${h}</th>`).join("") + "</tr>" + body.join("") + "</table>";
